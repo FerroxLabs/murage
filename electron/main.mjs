@@ -8,32 +8,59 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
-const SERVER_PORT = 8799;
+let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 
 // Packaged: the harness server ships in Resources (compiled JS, zero deps)
 // and runs on Electron's own Node via utilityProcess. It serves the built
 // UI too, so the window talks to one origin and there is no dev proxy.
+// A stray server on the default port must not brick the app — fall back to
+// alternate ports until one binds AND identifies as ours (the probe checks
+// our API shape, not just a 200).
 let serverProc = null;
-async function startServerPackaged() {
+async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
-  serverProc = utilityProcess.fork(entry, [], {
+  const proc = utilityProcess.fork(entry, [], {
     env: {
       ...process.env,
       OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
-      OMB_PORT: String(SERVER_PORT),
+      OMB_PORT: String(port),
     },
     stdio: "inherit",
   });
+  let exited = false;
+  proc.once("exit", () => {
+    exited = true;
+  });
   // wait for the port to answer (fresh machine: first boot writes data dirs)
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 40; i++) {
+    if (exited) return null;
     try {
-      const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots`);
-      if (res.ok) return true;
+      const res = await fetch(`http://127.0.0.1:${port}/api/bots`);
+      if (res.ok) {
+        const body = await res.json().catch(() => null);
+        if (body && Array.isArray(body.bots)) return proc; // it's ours
+        break; // someone else owns this port
+      }
     } catch {
       /* not up yet */
     }
     await new Promise((r) => setTimeout(r, 500));
+  }
+  try {
+    proc.kill();
+  } catch {}
+  return null;
+}
+
+async function startServerPackaged() {
+  for (const port of [8799, 18799, 28799]) {
+    const proc = await startServerOn(port);
+    if (proc) {
+      serverProc = proc;
+      SERVER_PORT = port;
+      return true;
+    }
   }
   return false;
 }

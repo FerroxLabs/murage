@@ -80,7 +80,7 @@ export async function authorizeService(cfg, slug) {
     return { url };
 }
 // Curated fallback — the services agentcal's connectors page ships plus the
-// long tail seen in Grok Bot's marketplace. Logos resolve client-side:
+// long marketplace tail. Logos resolve client-side:
 // logo → favicon(domain) → monogram.
 const CURATED = [
     { slug: "slack", label: "Slack", blurb: "Post updates and read channels", domain: "slack.com", logo: null },
