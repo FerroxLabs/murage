@@ -200,13 +200,18 @@ function stopScreenPoller(botId: string): Frame | null {
 }
 
 // Local computer-use contract written by Electron main on startup
-// (~/Library/Application Support/OpenMausBot/cua-connection.json). Read
-// fresh each turn — Electron may restart or permissions may change.
+// (Electron's userData dir: ~/Library/Application Support on macOS,
+// %APPDATA% on Windows — <dir>/cua-connection.json). Read fresh each turn —
+// Electron may restart or permissions may change.
 function readCuaConnection(): { command: string; args: string[]; env: Record<string, string> } | null {
+  const base =
+    process.platform === "win32"
+      ? (process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"))
+      : join(homedir(), "Library", "Application Support");
   // new name first; pre-rename desktop builds used the old directory
   for (const dir of ["OpenMausBot", "openmausbot", "OpenGrokBot", "opengrokbot"]) {
     try {
-      const p = join(homedir(), "Library", "Application Support", dir, "cua-connection.json");
+      const p = join(base, dir, "cua-connection.json");
       const conn = JSON.parse(readFileSync(p, "utf8"));
       if (!conn || conn.mode === "unavailable" || !conn.mcpCommand) continue;
       return { command: conn.mcpCommand, args: conn.mcpArgs ?? ["mcp"], env: conn.mcpEnv ?? {} };
