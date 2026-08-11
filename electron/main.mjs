@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, shell, utilityProcess } from "electron";
+import { app, BrowserWindow, desktopCapturer, ipcMain, shell, systemPreferences, utilityProcess } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
@@ -101,6 +101,21 @@ ipcMain.handle("screen:frame", async () => {
     thumbnailSize: { width: 1280, height: 800 },
   });
   return sources[0]?.thumbnail.toDataURL() ?? null;
+});
+
+// Onboarding permission checks. Status reads are free; the mic request
+// pops the real TCC prompt attributed to the app. Screen Recording has no
+// programmatic request — the first desktopCapturer call prompts.
+ipcMain.handle("perm:status", () => ({
+  mic: systemPreferences.getMediaAccessStatus?.("microphone") ?? "unknown",
+  screen: systemPreferences.getMediaAccessStatus?.("screen") ?? "unknown",
+}));
+ipcMain.handle("perm:request-mic", async () => {
+  try {
+    return await systemPreferences.askForMediaAccess("microphone");
+  } catch {
+    return false;
+  }
 });
 
 ipcMain.handle("speech:start", (event) => {

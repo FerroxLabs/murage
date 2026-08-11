@@ -17,4 +17,8 @@ contextBridge.exposeInMainWorld("ogb", {
     ipcRenderer.on("speech:end", handler);
     return () => ipcRenderer.removeListener("speech:end", handler);
   },
+  /** {mic, screen} TCC status strings: granted|denied|not-determined|unknown */
+  permStatus: () => ipcRenderer.invoke("perm:status"),
+  /** Triggers the macOS microphone prompt; resolves true when granted. */
+  permRequestMic: () => ipcRenderer.invoke("perm:request-mic"),
 });

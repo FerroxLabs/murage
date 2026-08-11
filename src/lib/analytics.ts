@@ -19,9 +19,15 @@ export function initAnalytics() {
     persistence: "localStorage",
   });
   ready = true;
-  posthog.capture("app_opened", {
-    platform: navigator.userAgent.includes("Electron") ? "desktop" : "browser",
-  });
+  const platform = navigator.userAgent.includes("Electron") ? "desktop" : "browser";
+  // one-time install marker — app_first_open counts installs (the closest
+  // truth to "downloads that mattered"; raw download counts live on the
+  // GitHub release assets)
+  if (!localStorage.getItem("omb-installed")) {
+    localStorage.setItem("omb-installed", new Date().toISOString());
+    posthog.capture("app_first_open", { platform });
+  }
+  posthog.capture("app_opened", { platform });
 }
 
 export function track(event: string, props?: Record<string, unknown>) {
