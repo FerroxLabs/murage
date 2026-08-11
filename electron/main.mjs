@@ -1,4 +1,5 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, shell, systemPreferences, utilityProcess } from "electron";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
@@ -120,6 +121,23 @@ ipcMain.handle("perm:request-mic", async () => {
     return false;
   }
 });
+// Screen Recording: an app only APPEARS in the Settings pane after TCC
+// registers a capture attempt, and Electron's thumbnail API doesn't always
+// register one on newer macOS. A child `screencapture` probe inherits the
+// app's TCC identity — it registers OpenMausBot in the pane and triggers
+// the system dialog on first use.
+ipcMain.handle("perm:request-screen", async () => {
+  await new Promise((resolve) => {
+    execFile(
+      "/usr/sbin/screencapture",
+      ["-x", "-t", "png", path.join(app.getPath("temp"), "omb-perm-probe.png")],
+      { timeout: 10_000 },
+      () => resolve(),
+    );
+  });
+  return systemPreferences.getMediaAccessStatus?.("screen") ?? "unknown";
+});
+
 // macOS never re-prompts a denied permission — the only path is System
 // Settings; deep-link straight to the right privacy pane.
 ipcMain.handle("perm:open-settings", (_event, pane) => {

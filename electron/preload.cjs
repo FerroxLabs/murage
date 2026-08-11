@@ -23,4 +23,6 @@ contextBridge.exposeInMainWorld("ogb", {
   permRequestMic: () => ipcRenderer.invoke("perm:request-mic"),
   /** Opens System Settings on the given privacy pane: mic|screen|speech. */
   permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
+  /** Registers a screen-capture attempt (adds the app to the TCC pane). */
+  permRequestScreen: () => ipcRenderer.invoke("perm:request-screen"),
 });

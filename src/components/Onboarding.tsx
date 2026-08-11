@@ -231,7 +231,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   <button
                     onClick={() =>
                       window.ogb
-                        ?.screenFrame?.()
+                        ?.permRequestScreen?.()
                         .then(() => window.ogb?.permStatus?.().then(setPerms))
                         .catch(() => window.ogb?.permOpenSettings?.("screen"))
                     }

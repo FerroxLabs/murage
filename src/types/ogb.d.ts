@@ -17,6 +17,8 @@ declare global {
       permRequestMic(): Promise<boolean>;
       /** Opens System Settings on a privacy pane: mic|screen|speech. */
       permOpenSettings(pane: "mic" | "screen" | "speech"): Promise<void>;
+      /** Registers a screen-capture attempt (adds the app to the TCC pane). */
+      permRequestScreen(): Promise<string>;
     };
   }
 }
