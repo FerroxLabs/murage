@@ -33,6 +33,7 @@
           fill="url(#mascot-grey)"
         />
 
+        <!-- Large reference-style pill eyes and a smile that survive Dock scale. -->
         <rect x="84.5" y="75" width="9" height="24" rx="4.5" fill="#101114" transform="rotate(-15 89 87)" />
         <rect x="108.5" y="75" width="9" height="24" rx="4.5" fill="#101114" transform="rotate(-7 113 87)" />
         <path d="M86 106 Q101 124 117 105" stroke="#101114" stroke-width="7" stroke-linecap="round" fill="none" />

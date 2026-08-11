@@ -7,6 +7,7 @@ import { startSpeech, stopSpeech } from "./speech.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://localhost:5199";
 const SERVER_PORT = 8799;
+const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 
 // Packaged: the harness server ships in Resources (compiled JS, zero deps)
 // and runs on Electron's own Node via utilityProcess. It serves the built
@@ -41,6 +42,7 @@ function createWindow() {
     height: 920,
     minWidth: 900,
     minHeight: 600,
+    icon: APP_ICON,
     backgroundColor: "#070707",
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 16 },
@@ -79,6 +81,7 @@ ipcMain.handle("speech:start", (event) => {
 ipcMain.handle("speech:stop", () => stopSpeech());
 
 app.whenReady().then(async () => {
+  if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
   registerCuaIpc();
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
