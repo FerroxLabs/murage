@@ -146,7 +146,7 @@ flowchart LR
 ## Quick start
 
 ```sh
-git clone https://github.com/milind-soni/OpenGrokBot && cd OpenGrokBot
+git clone https://github.com/milind-soni/OpenMausBot && cd OpenMausBot
 pnpm install
 
 pnpm dev:server    # harness server → 127.0.0.1:8799
