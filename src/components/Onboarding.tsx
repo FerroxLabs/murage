@@ -230,10 +230,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 ) : (
                   <button
                     onClick={() =>
-                      window.ogb
-                        ?.permRequestScreen?.()
+                      navigator.mediaDevices
+                        .getDisplayMedia({ video: true })
+                        .then((stream) => stream.getTracks().forEach((t) => t.stop()))
+                        .catch(() => {})
                         .then(() => window.ogb?.permStatus?.().then(setPerms))
-                        .catch(() => window.ogb?.permOpenSettings?.("screen"))
                     }
                     className="shrink-0 rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover"
                   >

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -171,6 +171,19 @@ ipcMain.handle("speech:stop", () => stopSpeech());
 
 app.whenReady().then(async () => {
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
+  // getDisplayMedia in the renderer → this handler → ScreenCaptureKit, all
+  // inside the app's own processes — the one capture path macOS reliably
+  // attributes to the app (registers it in the Screen Recording pane and
+  // prompts). Used by the onboarding "Enable screen preview" button.
+  session.defaultSession.setDisplayMediaRequestHandler(
+    (_request, callback) => {
+      desktopCapturer
+        .getSources({ types: ["screen"] })
+        .then((sources) => callback(sources[0] ? { video: sources[0] } : {}))
+        .catch(() => callback({}));
+    },
+    { useSystemPicker: false },
+  );
   registerCuaIpc();
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
