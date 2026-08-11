@@ -32,15 +32,18 @@ async function startServerOn(port) {
   proc.once("exit", () => {
     exited = true;
   });
-  // wait for the port to answer (fresh machine: first boot writes data dirs)
+  // wait for the port to answer (fresh machine: first boot writes data dirs).
+  // Identity check is by PID: a dev harness server has the same API shape,
+  // so only the child we actually forked (matching pid + static serving)
+  // counts as ours.
   for (let i = 0; i < 40; i++) {
     if (exited) return null;
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/bots`);
+      const res = await fetch(`http://127.0.0.1:${port}/api/health`);
       if (res.ok) {
         const body = await res.json().catch(() => null);
-        if (body && Array.isArray(body.bots)) return proc; // it's ours
-        break; // someone else owns this port
+        if (body?.app === "openmausbot" && body.pid === proc.pid && body.static) return proc;
+        break; // someone else owns this port — try the next one
       }
     } catch {
       /* not up yet */

@@ -465,6 +465,13 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
 
+    // identity handshake for the packaged app's port fallback: the forked
+    // child proves it is OURS by echoing its pid (a stray dev server has
+    // the same API shape but a different pid)
+    if (method === "GET" && path === "/api/health") {
+      return json(res, 200, { app: "openmausbot", pid: process.pid, static: Boolean(STATIC_DIR) });
+    }
+
     // ── provider instances (model picker) ──
     if (method === "GET" && path === "/api/instances") {
       return json(res, 200, { instances: await registry.describe() });
