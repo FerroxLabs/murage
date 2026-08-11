@@ -116,7 +116,7 @@ export async function boxStatus(cfg: AppConfig, botId: string) {
  */
 export async function provisionBox(cfg: AppConfig, botId: string, botName: string) {
   if (!boxConfigured(cfg)) {
-    throw new Error('box provider not enabled — add {"box":{"token":"…"}} to ~/.opengrokbot/config.json');
+    throw new Error('box provider not enabled — add {"box":{"token":"…"}} to ~/.openmausbot/config.json');
   }
   const vmName = await boxNameFor(botId);
   let box = await findBox(cfg, botId);
@@ -162,7 +162,7 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
     // guard on the module name is safe here — the pattern cannot match this
     // bootstrap's own shell (agentcal's pgrep self-match trap)
     'if [ -f /opt/ogb/cua-ready ] && ! pgrep -f "computer_server" >/dev/null 2>&1; then DISPLAY=${DISPLAY:-:0} nohup /opt/ogb/venv/bin/python -m computer_server --host 127.0.0.1 --port 8000 --width 1280 --height 800 > /tmp/ogb-cua-server.log 2>&1 & fi',
-    `tmux has-session -t work 2>/dev/null || tmux new-session -d -s work 'echo; echo "  ▦ ${botName.replace(/["'\\\\]/g, "")}'"'"'s computer — OpenGrokBot"; echo; exec bash -i'`,
+    `tmux has-session -t work 2>/dev/null || tmux new-session -d -s work 'echo; echo "  ▦ ${botName.replace(/["'\\\\]/g, "")}'"'"'s computer — OpenMausBot"; echo; exec bash -i'`,
     "echo bootstrapped",
   ].join("\n");
   let boot;

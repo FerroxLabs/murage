@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, shell } from "electron";
+import { app, BrowserWindow, desktopCapturer, ipcMain, shell, utilityProcess } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
@@ -6,6 +6,34 @@ import { startSpeech, stopSpeech } from "./speech.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://localhost:5199";
+const SERVER_PORT = 8799;
+
+// Packaged: the harness server ships in Resources (compiled JS, zero deps)
+// and runs on Electron's own Node via utilityProcess. It serves the built
+// UI too, so the window talks to one origin and there is no dev proxy.
+let serverProc = null;
+async function startServerPackaged() {
+  const entry = path.join(process.resourcesPath, "server", "index.js");
+  serverProc = utilityProcess.fork(entry, [], {
+    env: {
+      ...process.env,
+      OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
+      OMB_PORT: String(SERVER_PORT),
+    },
+    stdio: "inherit",
+  });
+  // wait for the port to answer (fresh machine: first boot writes data dirs)
+  for (let i = 0; i < 60; i++) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots`);
+      if (res.ok) return true;
+    } catch {
+      /* not up yet */
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -28,7 +56,7 @@ function createWindow() {
   });
 
   if (app.isPackaged) {
-    win.loadFile(path.join(__dirname, "../dist/index.html"));
+    win.loadURL(`http://127.0.0.1:${SERVER_PORT}`);
   } else {
     win.loadURL(DEV_URL);
   }
@@ -56,6 +84,7 @@ app.whenReady().then(async () => {
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.
   startCua().catch((e) => console.error("[cua] start failed:", e));
+  if (app.isPackaged) await startServerPackaged();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -72,6 +101,9 @@ let cuaCleanedUp = false;
 app.on("before-quit", (e) => {
   if (cuaCleanedUp) return;
   e.preventDefault();
+  try {
+    serverProc?.kill();
+  } catch {}
   stopCua().finally(() => {
     cuaCleanedUp = true;
     app.quit();

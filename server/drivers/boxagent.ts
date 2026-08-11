@@ -85,7 +85,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
       const boxId = turn.integrations?.computer?.boxId;
-      if (!token) throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.opengrokbot/config.json');
+      if (!token) throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.openmausbot/config.json');
       if (!boxId) throw new Error("this bot has no computer yet — open the Computer panel and provision one");
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const turnId = newId();
@@ -197,7 +197,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       if (!token) {
-        return { state: "unavailable", reason: 'no Box token — add {"box":{"token":"…"}} to ~/.opengrokbot/config.json' };
+        return { state: "unavailable", reason: 'no Box token — add {"box":{"token":"…"}} to ~/.openmausbot/config.json' };
       }
       try {
         await api("/me");

@@ -48,8 +48,17 @@ const MODELS = {
   ],
 };
 
-const PROXY_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "computer-proxy.ts");
-const PERM_PROXY_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "permission-proxy.ts");
+// proxy entry files live next to this one as .ts in dev (node type
+// stripping) and .js in the compiled dist-server the packaged app ships
+const proxyPath = (basename: string) => {
+  const ts = join(dirname(fileURLToPath(import.meta.url)), "..", `${basename}.ts`);
+  return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
+};
+const PROXY_PATH = proxyPath("computer-proxy");
+const PERM_PROXY_PATH = proxyPath("permission-proxy");
+// in the packaged app process.execPath is the Electron binary — this env
+// makes it behave as plain node for the spawned MCP proxies (harmless in dev)
+const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 
 // ── permission broker (ported from agentcal drivers/claude.js) ─────────
 // A headless run that hits a permission acceptEdits doesn't cover should
@@ -67,8 +76,8 @@ interface Ask {
 }
 
 const DENY_TIMEOUT_NOTE =
-  "OpenGrokBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
-const QUESTION_TIMEOUT_NOTE = "OpenGrokBot: nobody answered in time. Use your best judgment and continue.";
+  "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+const QUESTION_TIMEOUT_NOTE = "OpenMausBot: nobody answered in time. Use your best judgment and continue.";
 
 /** One human-readable line for an ask — what the card subtitle shows. */
 function askSummary(ask: Ask): string {
@@ -149,8 +158,8 @@ function createPermissionBroker(opts: {
     },
     close() {
       for (const p of [...pending.values()]) {
-        if (p.ask.kind === "question") p.finish("answer", "OpenGrokBot: the turn is ending — wrap up.", "shutdown");
-        else p.finish("deny", "OpenGrokBot: the turn ended", "shutdown");
+        if (p.ask.kind === "question") p.finish("answer", "OpenMausBot: the turn is ending — wrap up.", "shutdown");
+        else p.finish("deny", "OpenMausBot: the turn ended", "shutdown");
       }
       try {
         server.close();
@@ -245,6 +254,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           command: process.execPath,
           args: [PROXY_PATH],
           env: {
+            ...NODE_ENV_FLAG,
             OGB_BOX_ID: turn.integrations.computer.boxId,
             OGB_BOX_TOKEN: turn.integrations.computer.token,
           },
@@ -285,7 +295,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             }),
         });
         args.push("--permission-prompt-tool", "mcp__ogb__approve");
-        mcpServers.ogb = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath] };
+        mcpServers.ogb = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG } };
         allowed.push("mcp__ogb");
       }
       if (Object.keys(mcpServers).length) {

@@ -29,7 +29,7 @@ function parseMcpResponse(text: string) {
 
 export async function composioTool(cfg: AppConfig, name: string, args: unknown) {
   if (!cfg.composio?.key) {
-    throw new Error('no Composio key configured — add {"composio":{"key":"ck_…"}} to ~/.opengrokbot/config.json');
+    throw new Error('no Composio key configured — add {"composio":{"key":"ck_…"}} to ~/.openmausbot/config.json');
   }
   const res = await fetch(cfg.composio.url || CONNECT_URL, {
     method: "POST",

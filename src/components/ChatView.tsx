@@ -8,17 +8,80 @@ import { Composer } from "./Composer";
 import { ModelPicker } from "./ModelPicker";
 import { cn } from "@/lib/cn";
 
+// Minimal markdown for bot bubbles: **bold**, `code`, headings, lists.
+// Rendered as React nodes — model output never reaches the DOM as HTML.
+function inlineMd(text: string, keyBase: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let last = 0;
+  let i = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith("**")) {
+      parts.push(<strong key={`${keyBase}-${i++}`}>{tok.slice(2, -2)}</strong>);
+    } else {
+      parts.push(
+        <code key={`${keyBase}-${i++}`} className="rounded bg-inset px-1 py-px text-[13px]">
+          {tok.slice(1, -1)}
+        </code>,
+      );
+    }
+    last = m.index + tok.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+function Markdownish({ text }: { text: string }) {
+  return (
+    <>
+      {text.split("\n").map((line, i) => {
+        const heading = line.match(/^#{1,4}\s+(.*)$/);
+        if (heading) {
+          return (
+            <div key={i} className="mt-1.5 font-semibold">
+              {inlineMd(heading[1], `h${i}`)}
+            </div>
+          );
+        }
+        const bullet = line.match(/^\s*[-•*]\s+(.*)$/);
+        if (bullet) {
+          return (
+            <div key={i} className="flex gap-2 pl-1">
+              <span className="text-ink-secondary">•</span>
+              <span className="min-w-0">{inlineMd(bullet[1], `b${i}`)}</span>
+            </div>
+          );
+        }
+        const numbered = line.match(/^\s*(\d+)\.\s+(.*)$/);
+        if (numbered) {
+          return (
+            <div key={i} className="flex gap-2 pl-1">
+              <span className="text-ink-secondary">{numbered[1]}.</span>
+              <span className="min-w-0">{inlineMd(numbered[2], `n${i}`)}</span>
+            </div>
+          );
+        }
+        if (!line.trim()) return <div key={i} className="h-2.5" />;
+        return <div key={i}>{inlineMd(line, `p${i}`)}</div>;
+      })}
+    </>
+  );
+}
+
 function Bubble({ message }: { message: Message }) {
   const user = message.role === "user";
   return (
     <div className={cn("flex w-full", user ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[70%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
-          user ? "bg-bubble-user text-ink" : "bg-card text-ink",
+          "max-w-[70%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
+          user ? "whitespace-pre-wrap bg-bubble-user text-ink" : "bg-card text-ink",
         )}
       >
-        {message.text}
+        {user ? message.text : <Markdownish text={message.text ?? ""} />}
       </div>
     </div>
   );
@@ -65,8 +128,8 @@ function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
 function StreamingBubble({ text }: { text: string }) {
   return (
     <div className="flex w-full justify-start">
-      <div className="max-w-[70%] whitespace-pre-wrap rounded-2xl bg-raised px-4 py-2.5 text-[15px] leading-relaxed text-ink">
-        {text}
+      <div className="max-w-[70%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+        <Markdownish text={text} />
         <span className="ml-0.5 inline-block h-[14px] w-[2px] animate-pulse bg-ink-secondary align-middle" />
       </div>
     </div>

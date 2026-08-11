@@ -1,14 +1,14 @@
-// OpenGrokBot server — the harness host. Clients hold no transports
+// OpenMausBot server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
-import { readFileSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
-import { ensureDirs, instanceConfigs, loadConfig, saveConfig } from "./config.ts";
+import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -16,7 +16,18 @@ import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { Store, type Message } from "./store.ts";
 
-const PORT = Number(process.env.OGB_PORT || 8799);
+const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
+const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
+const MIME: Record<string, string> = {
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".css": "text/css",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".json": "application/json",
+  ".woff2": "font/woff2",
+};
 
 ensureDirs();
 const cfg = loadConfig();
@@ -189,17 +200,21 @@ function stopScreenPoller(botId: string): Frame | null {
 }
 
 // Local computer-use contract written by Electron main on startup
-// (~/Library/Application Support/OpenGrokBot/cua-connection.json). Read
+// (~/Library/Application Support/OpenMausBot/cua-connection.json). Read
 // fresh each turn — Electron may restart or permissions may change.
 function readCuaConnection(): { command: string; args: string[]; env: Record<string, string> } | null {
-  try {
-    const p = join(homedir(), "Library", "Application Support", "OpenGrokBot", "cua-connection.json");
-    const conn = JSON.parse(readFileSync(p, "utf8"));
-    if (!conn || conn.mode === "unavailable" || !conn.mcpCommand) return null;
-    return { command: conn.mcpCommand, args: conn.mcpArgs ?? ["mcp"], env: conn.mcpEnv ?? {} };
-  } catch {
-    return null;
+  // new name first; pre-rename Electron builds wrote under OpenGrokBot
+  for (const dir of ["OpenMausBot", "openmausbot", "OpenGrokBot", "opengrokbot"]) {
+    try {
+      const p = join(homedir(), "Library", "Application Support", dir, "cua-connection.json");
+      const conn = JSON.parse(readFileSync(p, "utf8"));
+      if (!conn || conn.mode === "unavailable" || !conn.mcpCommand) continue;
+      return { command: conn.mcpCommand, args: conn.mcpArgs ?? ["mcp"], env: conn.mcpEnv ?? {} };
+    } catch {
+      /* try the next location */
+    }
   }
+  return null;
 }
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
@@ -227,7 +242,7 @@ async function startTurn(botId: string, text: string) {
     .map((m) => ({ role: m.role === "user" ? ("user" as const) : ("assistant" as const), text: m.text! }));
 
   const persona = [
-    `You are ${bot.name}, a personal bot in OpenGrokBot.`,
+    `You are ${bot.name}, a personal bot in OpenMausBot.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
   ]
@@ -377,7 +392,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "PATCH") {
       const body = await readBody(req);
       const patch: Record<string, unknown> = {};
-      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression"] as const) {
+      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       const bot = store.patchBot(m[1], patch);
@@ -385,6 +400,23 @@ const server = createServer(async (req, res) => {
       broadcast({ kind: "bot", bot });
       return json(res, 200, { bot });
     }
+    m = path.match(/^\/api\/bots\/([\w-]+)$/);
+    if (m && method === "DELETE") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      // a running turn dies with its bot
+      await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => {});
+      stopScreenPoller(bot.id);
+      store.deleteBot(bot.id);
+      for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
+        try {
+          unlinkSync(join(dir, `${bot.threadId}.ndjson`));
+        } catch {}
+      }
+      broadcast({ kind: "bot.deleted", botId: bot.id });
+      return json(res, 200, { ok: true });
+    }
+
     // onboarding/ask cards persist their answered/dismissed state
     m = path.match(/^\/api\/bots\/([\w-]+)\/cards\/([\w-]+)$/);
     if (m && method === "PATCH") {
@@ -497,6 +529,27 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // packaged app: the server serves the built UI too (window → :8799 for
+    // everything, no dev proxy to die). OMB_STATIC_DIR is set by Electron.
+    if (method === "GET" && !path.startsWith("/api/") && STATIC_DIR) {
+      const safe = path === "/" ? "/index.html" : path.replace(/\.\./g, "");
+      const file = join(STATIC_DIR, safe);
+      try {
+        const data = readFileSync(file);
+        res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
+        return res.end(data);
+      } catch {
+        // SPA fallback
+        try {
+          const data = readFileSync(join(STATIC_DIR, "index.html"));
+          res.writeHead(200, { "content-type": "text/html" });
+          return res.end(data);
+        } catch {
+          /* fall through to 404 */
+        }
+      }
+    }
+
     return json(res, 404, { error: `no route: ${method} ${path}` });
   } catch (e) {
     const status = (e as any)?.status ?? 500;
@@ -505,7 +558,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`opengrokbot server on http://127.0.0.1:${PORT}`);
+  console.log(`openmausbot server on http://127.0.0.1:${PORT}`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

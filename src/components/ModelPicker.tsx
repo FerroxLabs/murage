@@ -52,7 +52,7 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
         className="flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 py-1 pl-2 pr-2.5 text-[13px] text-ink hover:bg-raised"
         title={active ? `${active.displayName} · ${modelLabel(active, selection.model)}` : selection.model}
       >
-        <ProviderMark driverKind={active?.driverKind ?? "?"} size={14} />
+        {active && <ProviderMark driverKind={active.driverKind} size={14} />}
         <span className="max-w-[160px] truncate">{modelLabel(active, selection.model)}</span>
         <ChevronDown size={14} className="text-ink-secondary" />
       </button>

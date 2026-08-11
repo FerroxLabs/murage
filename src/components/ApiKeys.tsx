@@ -1,5 +1,5 @@
 // Paste-a-key rows for PUT /api/config. The server persists to
-// ~/.opengrokbot/config.json and hot-reloads the provider fleet; secrets
+// ~/.openmausbot/config.json and hot-reloads the provider fleet; secrets
 // are write-only — GET /api/config returns configured flags, never values.
 import { useState } from "react";
 import { Check, Loader2 } from "lucide-react";

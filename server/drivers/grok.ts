@@ -185,7 +185,7 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
       if (!apiKey) {
         return {
           state: "unavailable",
-          reason: `no xAI API key — add {"xai":{"key":"xai-…"}} to ~/.opengrokbot/config.json or set ${config.apiKeyEnv}`,
+          reason: `no xAI API key — add {"xai":{"key":"xai-…"}} to ~/.openmausbot/config.json or set ${config.apiKeyEnv}`,
         };
       }
       return { state: "available", authenticated: true, version: null };

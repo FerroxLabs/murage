@@ -237,7 +237,7 @@ async function handle(msg: any) {
       result: {
         protocolVersion: msg.params?.protocolVersion ?? "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "opengrokbot-computer", version: "2" },
+        serverInfo: { name: "openmausbot-computer", version: "2" },
       },
     });
   }

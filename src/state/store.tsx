@@ -58,6 +58,8 @@ export interface Bot {
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "local" | "off";
+  pinned?: boolean;
+  hidden?: boolean;
   messages: Message[];
 }
 
@@ -111,6 +113,9 @@ type Action =
   | { type: "dismissCard"; botId: string; messageId: string }
   | { type: "newBot" }
   | { type: "botAdded"; bot: Bot }
+  | { type: "deleteBot"; botId: string }
+  | { type: "duplicateBot"; botId: string }
+  | { type: "markUnread"; botId: string }
   | { type: "botPatched"; bot: Partial<Bot> & { id: string } }
   | { type: "messageAdded"; threadId: string; message: Message }
   | { type: "messagePatched"; threadId: string; message: Message }
@@ -129,7 +134,12 @@ type Action =
   | {
       type: "updateBot";
       botId: string;
-      patch: Partial<Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression">>;
+      patch: Partial<
+        Pick<
+          Bot,
+          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden"
+        >
+      >;
     };
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
@@ -167,6 +177,14 @@ function reducer(state: AppState, action: Action): AppState {
       return patchCard(state, action.botId, action.messageId, { dismissed: true });
     case "botAdded":
       return { ...state, bots: [action.bot, ...state.bots], selectedId: action.bot.id };
+    case "deleteBot": {
+      const bots = state.bots.filter((b) => b.id !== action.botId);
+      const selectedId =
+        state.selectedId === action.botId ? (bots.find((b) => !b.hidden)?.id ?? bots[0]?.id ?? "") : state.selectedId;
+      return { ...state, bots, selectedId };
+    }
+    case "markUnread":
+      return updateBot(state, action.botId, (b) => ({ ...b, unread: true }));
     case "botPatched":
       return updateBot(state, action.bot.id, (b) => ({ ...b, ...action.bot, messages: b.messages }));
     case "messageAdded": {
@@ -254,6 +272,7 @@ function reducer(state: AppState, action: Action): AppState {
     // handled entirely by the async wrapper
     case "send":
     case "newBot":
+    case "duplicateBot":
     case "interrupt":
       return state;
   }
@@ -363,6 +382,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             .then(({ bot }) => rawDispatch({ type: "botAdded", bot }))
             .catch(showError);
           break;
+        case "duplicateBot": {
+          const source = stateRef.current.bots.find((b) => b.id === action.botId);
+          if (!source) break;
+          api("/api/bots", { method: "POST" })
+            .then(({ bot }) =>
+              api(`/api/bots/${bot.id}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                  name: `${source.name} copy`,
+                  title: source.title,
+                  description: source.description,
+                  notifications: source.notifications,
+                  modelSelection: source.modelSelection,
+                  ...(source.computer ? { computer: source.computer } : {}),
+                }),
+              }).then(({ bot: patched }) =>
+                rawDispatch({ type: "botAdded", bot: { ...bot, ...patched, messages: bot.messages } }),
+              ),
+            )
+            .catch(showError);
+          break;
+        }
+        case "deleteBot":
+          api(`/api/bots/${action.botId}`, { method: "DELETE" }).catch(showError);
+          break;
+        case "markUnread":
+          api(`/api/bots/${action.botId}`, { method: "PATCH", body: JSON.stringify({ unread: true }) }).catch(
+            () => {},
+          );
+          break;
         case "select": {
           const bot = stateRef.current.bots.find((b) => b.id === action.id);
           if (bot?.unread) {
@@ -464,6 +513,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "computer":
           rawDispatch({ type: "provisioning", botId: frame.botId, on: frame.state === "provisioning" });
+          break;
+        case "bot.deleted":
+          rawDispatch({ type: "deleteBot", botId: frame.botId });
           break;
         // a key changed and the fleet hot-reloaded — refresh the picker so
         // newly available providers un-dim immediately

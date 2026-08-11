@@ -2,7 +2,7 @@
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { DATA_DIR } from "./config.ts";
@@ -72,6 +72,8 @@ export interface BotRecord {
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
   computer?: "cloud" | "local" | "off";
+  pinned?: boolean;
+  hidden?: boolean;
   busy?: boolean;
   createdAt: number;
 }
@@ -180,6 +182,18 @@ export class Store {
     });
     this.appendMessage(bot.threadId, { role: "bot", kind: "options", card: onboardingCard() });
     return bot;
+  }
+
+  deleteBot(id: string): boolean {
+    const bot = this.bot(id);
+    if (!bot) return false;
+    this.bots = this.bots.filter((b) => b.id !== id);
+    this.messages.delete(bot.threadId);
+    this.saveBots();
+    try {
+      unlinkSync(messagesFile(bot.threadId));
+    } catch {}
+    return true;
   }
 
   patchBot(id: string, patch: Partial<BotRecord>): BotRecord | null {

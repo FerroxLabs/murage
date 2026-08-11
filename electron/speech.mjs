@@ -6,14 +6,20 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { app } from "electron";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(__dirname, "resources", "speech-helper.swift");
-const BIN = path.join(__dirname, "resources", "speech-helper");
+// packaged: the helper ships pre-built + signed in Resources (a signed app
+// bundle must never be written into — lazy compile would break the seal)
+const BIN = app.isPackaged
+  ? path.join(process.resourcesPath, "speech-helper")
+  : path.join(__dirname, "resources", "speech-helper");
 
 let child = null;
 
 function ensureBuilt() {
+  if (app.isPackaged) return; // pre-built at package time
   const stale = !existsSync(BIN) || statSync(BIN).mtimeMs < statSync(SRC).mtimeMs;
   if (!stale) return;
   // Xcode CLT required; ~2s once, then cached until the source changes

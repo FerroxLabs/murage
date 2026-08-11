@@ -1,7 +1,7 @@
-// Config + data dirs. One file, ~/.opengrokbot/config.json, env fallbacks:
+// Config + data dirs. One file, ~/.openmausbot/config.json, env fallbacks:
 //   { "xai": {"key":"xai-…"}, "composio": {"key":"ck_…"}, "box": {"token":"…"},
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -17,11 +17,21 @@ export interface AppConfig {
   instances?: InstanceConfigMap;
 }
 
-export const DATA_DIR = join(homedir(), ".opengrokbot");
+export const DATA_DIR = join(homedir(), ".openmausbot");
+const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
 
 export function ensureDirs() {
+  // one-time migration from the pre-rename data dir — bots, transcripts,
+  // config and keys all carry over
+  if (!existsSync(DATA_DIR) && existsSync(LEGACY_DATA_DIR)) {
+    try {
+      renameSync(LEGACY_DATA_DIR, DATA_DIR);
+    } catch {
+      /* cross-device or busy — fall through to a fresh dir */
+    }
+  }
   for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true });
 }
 
@@ -38,7 +48,7 @@ export function loadConfig(): AppConfig {
   return cfg;
 }
 
-/** Merge a partial config into ~/.opengrokbot/config.json (secrets never
+/** Merge a partial config into ~/.openmausbot/config.json (secrets never
  * echoed back — callers report configured-or-not booleans only). */
 export function saveConfig(patch: Partial<AppConfig>): void {
   const p = join(DATA_DIR, "config.json");

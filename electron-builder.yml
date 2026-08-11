@@ -1,0 +1,51 @@
+appId: com.openmausbot.app
+productName: OpenMausBot
+artifactName: OpenMausBot-${version}-${arch}.${ext}
+
+directories:
+  buildResources: build
+  output: release
+
+# The app is three self-contained pieces, none needing node_modules at
+# runtime: the Electron main/preload (plain .mjs/.cjs), the built UI
+# (Vite → ui/), and the compiled harness server (tsc → server/), both
+# shipped in Resources and run on Electron's own Node via
+# ELECTRON_RUN_AS_NODE (the agentcal-hq pattern).
+files:
+  - electron/**
+  - "!electron/resources/speech-helper"
+  - "!**/node_modules/**"
+  - package.json
+
+asar: true
+
+extraResources:
+  - from: dist
+    to: ui
+  - from: dist-server
+    to: server
+  - from: electron/resources/speech-helper
+    to: speech-helper
+
+mac:
+  target:
+    - target: dmg
+      arch: arm64
+    - target: zip
+      arch: arm64
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: OpenMausBot uses the microphone for voice dictation into the composer.
+    NSSpeechRecognitionUsageDescription: OpenMausBot transcribes your voice on-device to type messages for you.
+  # Notarization runs manually after the build (notarytool + staple),
+  # mirroring the BlueyLite ship_release.sh flow.
+  notarize: false
+
+dmg:
+  sign: true
+  artifactName: OpenMausBot-${version}.dmg

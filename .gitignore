@@ -5,3 +5,4 @@ dist-electron
 .DS_Store
 *.tsbuildinfo
 electron/resources/speech-helper
+release
