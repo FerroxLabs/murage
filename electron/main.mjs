@@ -19,6 +19,7 @@ const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 // alternate ports until one binds AND identifies as ours (the probe checks
 // our API shape, not just a 200).
 let serverProc = null;
+let serverReady = true;
 async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
   const proc = utilityProcess.fork(entry, [], {
@@ -58,16 +59,27 @@ async function startServerOn(port) {
 }
 
 async function startServerPackaged() {
-  for (const port of [8799, 18799, 28799]) {
-    const proc = await startServerOn(port);
-    if (proc) {
-      serverProc = proc;
-      SERVER_PORT = port;
-      return true;
+  // two passes: a quit-and-reopen relaunch can race the dying instance's
+  // server during teardown — one settle-and-retry covers it
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const port of [8799, 18799, 28799]) {
+      const proc = await startServerOn(port);
+      if (proc) {
+        serverProc = proc;
+        SERVER_PORT = port;
+        return true;
+      }
     }
+    await new Promise((r) => setTimeout(r, 2500));
   }
   return false;
 }
+
+const ERROR_PAGE =
+  "data:text/html;charset=utf-8," +
+  encodeURIComponent(
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen OpenMausBot — if it keeps happening, restart your Mac.</p></div></body>`,
+  );
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -91,7 +103,7 @@ function createWindow() {
   });
 
   if (app.isPackaged) {
-    win.loadURL(`http://127.0.0.1:${SERVER_PORT}`);
+    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
   } else {
     win.loadURL(DEV_URL);
   }
@@ -164,7 +176,7 @@ app.whenReady().then(async () => {
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.
   startCua().catch((e) => console.error("[cua] start failed:", e));
-  if (app.isPackaged) await startServerPackaged();
+  if (app.isPackaged) serverReady = await startServerPackaged();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
