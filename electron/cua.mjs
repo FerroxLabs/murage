@@ -77,7 +77,7 @@ export async function startCua() {
   }
 
   const wantEmbedded =
-    app.isPackaged || process.env.OPENGROKBOT_CUA_EMBEDDED === "1";
+    app.isPackaged || process.env.OPENMAUSBOT_CUA_EMBEDDED === "1";
 
   if (wantEmbedded) {
     try {

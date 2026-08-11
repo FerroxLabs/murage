@@ -1,4 +1,4 @@
-// Box agent driver — the truest Grok Bot mechanic: the turn runs ON the
+// Box agent driver — the purest form of the idea: the turn runs ON the
 // bot's own cloud computer (box.ascii.dev), not on this machine. Uses the
 // Box substrate's native agent facility:
 //   POST /boxes/{id}/prompt   {provider: codex|claude-code, model, prompt}

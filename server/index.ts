@@ -141,7 +141,7 @@ bus.subscribe((event: RuntimeEvent) => {
       break;
     case "turn.completed": {
       // the last live frame becomes a settled inline screen message —
-      // Grok Bot's screenshot-in-chat
+      // the screenshot-in-chat moment
       const frame = stopScreenPoller(bot.id);
       if (frame) pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
       store.patchBot(bot.id, { busy: false, unread: true });
@@ -203,7 +203,7 @@ function stopScreenPoller(botId: string): Frame | null {
 // (~/Library/Application Support/OpenMausBot/cua-connection.json). Read
 // fresh each turn — Electron may restart or permissions may change.
 function readCuaConnection(): { command: string; args: string[]; env: Record<string, string> } | null {
-  // new name first; pre-rename Electron builds wrote under OpenGrokBot
+  // new name first; pre-rename desktop builds used the old directory
   for (const dir of ["OpenMausBot", "openmausbot", "OpenGrokBot", "opengrokbot"]) {
     try {
       const p = join(homedir(), "Library", "Application Support", dir, "cua-connection.json");

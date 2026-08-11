@@ -5,7 +5,9 @@ import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
 import { startSpeech, stopSpeech } from "./speech.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEV_URL = process.env.ELECTRON_START_URL ?? "http://localhost:5199";
+// 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
+// resolve to ::1 and paint a black window
+const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 const SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 

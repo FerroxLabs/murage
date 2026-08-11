@@ -100,7 +100,7 @@ export interface ToolkitCard {
 }
 
 // Curated fallback — the services agentcal's connectors page ships plus the
-// long tail seen in Grok Bot's marketplace. Logos resolve client-side:
+// long marketplace tail. Logos resolve client-side:
 // logo → favicon(domain) → monogram.
 const CURATED: ToolkitCard[] = [
   { slug: "slack", label: "Slack", blurb: "Post updates and read channels", domain: "slack.com", logo: null },

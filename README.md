@@ -22,9 +22,9 @@ Talk to them like contacts. Watch them work. Approve what matters.
 
 ## Why
 
-[Grok Bot](https://x.ai) reimagined AI as a *messaging app* — a roster of bots you chat with instead of one
-assistant in one box. OpenMausBot is an open, local-first take on that idea, built on the agents you already
-have:
+One assistant in one box is the wrong shape for agents. OpenMausBot treats AI as a *messaging app*: a roster
+of bots you chat with — each with its own personality, memory of its thread, model, computer, and apps — built
+on the agents you already have:
 
 - **Bring your own agents.** Bots run on the `claude` and `codex` CLIs installed on your Mac — your existing
   logins and subscriptions, no new accounts, no proxy in the middle.
