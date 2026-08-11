@@ -21,4 +21,6 @@ contextBridge.exposeInMainWorld("ogb", {
   permStatus: () => ipcRenderer.invoke("perm:status"),
   /** Triggers the macOS microphone prompt; resolves true when granted. */
   permRequestMic: () => ipcRenderer.invoke("perm:request-mic"),
+  /** Opens System Settings on the given privacy pane: mic|screen|speech. */
+  permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
 });

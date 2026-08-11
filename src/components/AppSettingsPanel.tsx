@@ -9,7 +9,7 @@ export function AppSettingsPanel() {
   const { dispatch } = useStore();
 
   return (
-    <aside className="flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
+    <aside className="animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
       <div className="flex items-center justify-between px-4 py-3">
         <span className="w-6" />
         <span className="text-[15px] font-semibold text-ink">App Settings</span>

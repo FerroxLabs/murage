@@ -15,6 +15,8 @@ declare global {
       permStatus(): Promise<{ mic: string; screen: string }>;
       /** Triggers the macOS microphone prompt; resolves true when granted. */
       permRequestMic(): Promise<boolean>;
+      /** Opens System Settings on a privacy pane: mic|screen|speech. */
+      permOpenSettings(pane: "mic" | "screen" | "speech"): Promise<void>;
     };
   }
 }

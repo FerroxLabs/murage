@@ -60,7 +60,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         .catch(() => setInstances([]));
     }
     if (step === 2 && isElectron) {
-      window.ogb?.permStatus?.().then(setPerms).catch(() => {});
+      const poll = () => window.ogb?.permStatus?.().then(setPerms).catch(() => {});
+      poll();
+      // keep polling — the user may grant in System Settings and come back
+      const t = setInterval(poll, 2000);
+      return () => clearInterval(t);
     }
   }, [step, instances]);
 
@@ -77,7 +81,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const byKind = (kind: string) => instances?.find((i) => i.driverKind === kind);
   const claude = byKind("claudeAgent");
   const codex = byKind("codex");
-  const computer = byKind("boxAgent");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-app">
@@ -156,16 +159,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                         : "Optional. Install: npm i -g @openai/codex"
                     }
                   />
-                  <StatusRow
-                    ok={computer?.snapshot.state === "available"}
-                    warn
-                    title="Cloud computer"
-                    detail={
-                      computer?.snapshot.state === "available"
-                        ? "Connected — each bot can get its own cloud desktop."
-                        : "Optional. Paste a Box token in Settings → API keys to give bots their own cloud computer."
-                    }
-                  />
                 </>
               )}
             </div>
@@ -197,6 +190,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 </div>
                 {perms?.mic === "granted" ? (
                   <Check size={16} className="shrink-0 text-[#38d591]" />
+                ) : perms?.mic === "denied" || perms?.mic === "restricted" ? (
+                  <button
+                    onClick={() => window.ogb?.permOpenSettings?.("mic")}
+                    className="shrink-0 rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover"
+                  >
+                    Open Settings
+                  </button>
                 ) : (
                   <button
                     onClick={() =>
@@ -220,10 +220,20 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 </div>
                 {perms?.screen === "granted" ? (
                   <Check size={16} className="shrink-0 text-[#38d591]" />
+                ) : perms?.screen === "denied" || perms?.screen === "restricted" ? (
+                  <button
+                    onClick={() => window.ogb?.permOpenSettings?.("screen")}
+                    className="shrink-0 rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover"
+                  >
+                    Open Settings
+                  </button>
                 ) : (
                   <button
                     onClick={() =>
-                      window.ogb?.screenFrame?.().then(() => window.ogb?.permStatus?.().then(setPerms))
+                      window.ogb
+                        ?.screenFrame?.()
+                        .then(() => window.ogb?.permStatus?.().then(setPerms))
+                        .catch(() => window.ogb?.permOpenSettings?.("screen"))
                     }
                     className="shrink-0 rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover"
                   >

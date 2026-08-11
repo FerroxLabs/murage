@@ -120,6 +120,18 @@ ipcMain.handle("perm:request-mic", async () => {
     return false;
   }
 });
+// macOS never re-prompts a denied permission — the only path is System
+// Settings; deep-link straight to the right privacy pane.
+ipcMain.handle("perm:open-settings", (_event, pane) => {
+  const panes = {
+    mic: "Privacy_Microphone",
+    screen: "Privacy_ScreenCapture",
+    speech: "Privacy_SpeechRecognition",
+  };
+  return shell.openExternal(
+    `x-apple.systempreferences:com.apple.preference.security?${panes[pane] ?? "Privacy"}`,
+  );
+});
 
 ipcMain.handle("speech:start", (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
