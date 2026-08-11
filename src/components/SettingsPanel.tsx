@@ -1,6 +1,12 @@
 import { ChevronLeft, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
-import { BlobAvatar } from "./Avatar";
+import { MausAvatar } from "./Avatar";
+import {
+  expressionForBot,
+  MAUS_COLORS,
+  MAUS_COLOR_NAMES,
+  MAUS_EXPRESSIONS,
+} from "@/lib/mascot";
 import { ModelPicker } from "./ModelPicker";
 import { cn } from "@/lib/cn";
 
@@ -25,8 +31,11 @@ const inputCls =
 export function SettingsPanel({ bot }: { bot: Bot }) {
   const { dispatch } = useStore();
   const patch = (
-    p: Partial<Pick<Bot, "name" | "title" | "description" | "notifications" | "computer">>,
+    p: Partial<
+      Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression">
+    >,
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
+  const activeExpression = expressionForBot(bot);
 
   return (
     <aside className="flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
@@ -48,11 +57,66 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 pb-5">
-        <div className="flex justify-center py-6">
-          <BlobAvatar color={bot.color} size={72} />
+        <div className="flex justify-center py-5">
+          <MausAvatar color={bot.color} expression={activeExpression} size={112} />
         </div>
 
         <div className="flex flex-col gap-4">
+          <div className="overflow-hidden rounded-xl border border-hairline/40 bg-card">
+            <div className="flex items-center justify-between border-b border-hairline/40 px-3 py-2.5">
+              <span className="rounded-lg bg-raised px-3 py-1.5 text-[14px] font-medium text-ink">
+                Bot
+              </span>
+              <button
+                onClick={() => patch({ color: "green", mascotExpression: null })}
+                className="rounded-md px-2 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+              >
+                Reset
+              </button>
+            </div>
+
+            <div className="p-3">
+              <div className="mb-2 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
+                Expression
+              </div>
+              <div className="grid grid-cols-5 gap-2">
+                {MAUS_EXPRESSIONS.map((expression) => (
+                  <button
+                    key={expression}
+                    onClick={() => patch({ mascotExpression: expression })}
+                    className={cn(
+                      "flex h-[58px] items-center justify-center rounded-xl bg-inset transition-colors hover:bg-raised",
+                      activeExpression === expression && "ring-2 ring-accent-border",
+                    )}
+                    title={expression}
+                    aria-label={`Use ${expression} expression`}
+                  >
+                    <MausAvatar color={bot.color} expression={expression} size={42} />
+                  </button>
+                ))}
+              </div>
+
+              <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
+                Color
+              </div>
+              <div className="flex flex-wrap gap-2.5">
+                {MAUS_COLOR_NAMES.map((color) => (
+                  <button
+                    key={color}
+                    onClick={() => patch({ color })}
+                    className={cn(
+                      "size-8 rounded-full border-2 border-transparent transition-transform hover:scale-110",
+                      bot.color === color && "ring-2 ring-accent-border ring-offset-2 ring-offset-card",
+                    )}
+                    style={{ backgroundColor: MAUS_COLORS[color] }}
+                    title={color}
+                    aria-label={`Use ${color} mascot color`}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
           <Field label="Name">
             <input
               className={inputCls}

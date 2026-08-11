@@ -11,8 +11,9 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import type { MausColor, MausExpression } from "@/lib/mascot";
 
-export type BlobColor = "red" | "orange" | "blue" | "green" | "purple";
+export type { MausColor } from "@/lib/mascot";
 
 export interface OptionCardData {
   title: string;
@@ -50,7 +51,8 @@ export interface Bot {
   title: string;
   description: string;
   notifications: boolean;
-  color: BlobColor;
+  color: MausColor;
+  mascotExpression?: MausExpression | null;
   unread: boolean;
   busy?: boolean;
   modelSelection: ModelSelection;
@@ -127,7 +129,7 @@ type Action =
   | {
       type: "updateBot";
       botId: string;
-      patch: Partial<Pick<Bot, "name" | "title" | "description" | "notifications" | "computer">>;
+      patch: Partial<Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression">>;
     };
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {

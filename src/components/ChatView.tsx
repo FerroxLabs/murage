@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { Check, Loader2, Monitor, Square, X } from "lucide-react";
 import { useStore, formatTime, type Bot, type Message } from "@/state/store";
-import { BlobAvatar } from "./Avatar";
+import { MausAvatar } from "./Avatar";
+import { expressionForBot } from "@/lib/mascot";
 import { OptionCard } from "./OptionCard";
 import { Composer } from "./Composer";
 import { ModelPicker } from "./ModelPicker";
@@ -94,7 +95,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           className="flex items-center gap-2.5 rounded-lg px-1.5 py-1 hover:bg-raised/50"
           title="Bot settings"
         >
-          <BlobAvatar color={bot.color} size={28} />
+          <MausAvatar color={bot.color} expression={expressionForBot(bot)} size={28} />
           <span className="text-[15px] font-semibold text-ink">{bot.name}</span>
           {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
         </button>

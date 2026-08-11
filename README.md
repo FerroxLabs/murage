@@ -21,7 +21,8 @@ Two processes:
 
 Features wired end-to-end:
 
-- **Sidebar** — bot list with squishy blob avatars, previews, unread dots,
+- **Sidebar** — bot list with SupaMaus cursor mascots, role-aware expressions,
+  ten-color identities, previews, unread dots,
   new-bot button, Plugins + profile footer
 - **Chat** — streaming replies (token deltas), tool-run activity chips,
   approval/question cards answered inline, screenshots of the bot's cloud

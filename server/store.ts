@@ -8,7 +8,29 @@ import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 
-export type BlobColor = "red" | "orange" | "blue" | "green" | "purple";
+export type MausColor =
+  | "green"
+  | "blue"
+  | "red"
+  | "orange"
+  | "purple"
+  | "cyan"
+  | "pink"
+  | "yellow"
+  | "teal"
+  | "coral";
+
+export type MausExpression =
+  | "deadpan"
+  | "friendly"
+  | "focused"
+  | "thinking"
+  | "excited"
+  | "sleepy"
+  | "surprised"
+  | "skeptical"
+  | "worried"
+  | "mischievous";
 
 export interface OptionCardData {
   title: string;
@@ -41,7 +63,8 @@ export interface BotRecord {
   title: string;
   description: string;
   notifications: boolean;
-  color: BlobColor;
+  color: MausColor;
+  mascotExpression?: MausExpression | null;
   unread: boolean;
   modelSelection: ModelSelection;
   /** provider-native continuation per instance (e.g. claude session id) */
@@ -56,7 +79,18 @@ export interface BotRecord {
 const BOTS_FILE = join(DATA_DIR, "bots.json");
 const messagesFile = (threadId: string) => join(DATA_DIR, `messages-${threadId}.json`);
 
-const COLORS: BlobColor[] = ["blue", "red", "orange", "green", "purple"];
+const COLORS: MausColor[] = [
+  "green",
+  "blue",
+  "red",
+  "orange",
+  "purple",
+  "cyan",
+  "pink",
+  "yellow",
+  "teal",
+  "coral",
+];
 
 const onboardingCard = (): OptionCardData => ({
   title: "What do you mostly want help with?",

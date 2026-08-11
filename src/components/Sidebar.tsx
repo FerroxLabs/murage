@@ -1,6 +1,7 @@
 import { Plus, Search, Puzzle, Settings } from "lucide-react";
 import { useStore, formatTime, type Bot } from "@/state/store";
-import { BlobAvatar, InitialsAvatar } from "./Avatar";
+import { MausAvatar, InitialsAvatar } from "./Avatar";
+import { expressionForBot } from "@/lib/mascot";
 import { cn } from "@/lib/cn";
 
 const isElectron = navigator.userAgent.includes("Electron");
@@ -27,7 +28,7 @@ function BotListItem({ bot }: { bot: Bot }) {
         selected ? "bg-raised" : "hover:bg-raised/50",
       )}
     >
-      <BlobAvatar color={bot.color} size={44} />
+      <MausAvatar color={bot.color} expression={expressionForBot(bot)} size={44} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span className="truncate text-[15px] font-semibold text-ink">
