@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "build:server": "tsc -p tsconfig.server.build.json",
     "build:speech": "swiftc -O electron/resources/speech-helper.swift -o electron/resources/speech-helper",
-    "package": "pnpm build && pnpm build:server && pnpm build:speech && electron-builder --mac --publish never"
+    "package": "pnpm build && pnpm build:server && pnpm build:speech && pnpm build:perm && electron-builder --mac --publish never",
+    "build:perm": "swiftc -O electron/resources/perm-helper.swift -o electron/resources/perm-helper"
   },
   "dependencies": {
     "@trycua/cua-driver": "^0.19.3",

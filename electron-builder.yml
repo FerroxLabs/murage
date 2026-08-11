@@ -14,6 +14,7 @@ directories:
 files:
   - electron/**
   - "!electron/resources/speech-helper"
+  - "!electron/resources/perm-helper"
   - "!**/node_modules/**"
   - package.json
 
@@ -26,6 +27,8 @@ extraResources:
     to: server
   - from: electron/resources/speech-helper
     to: speech-helper
+  - from: electron/resources/perm-helper
+    to: perm-helper
 
 mac:
   target:

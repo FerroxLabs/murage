@@ -126,14 +126,14 @@ ipcMain.handle("perm:request-mic", async () => {
 // register one on newer macOS. A child `screencapture` probe inherits the
 // app's TCC identity — it registers OpenMausBot in the pane and triggers
 // the system dialog on first use.
+const PERM_HELPER = app.isPackaged
+  ? path.join(process.resourcesPath, "perm-helper")
+  : path.join(__dirname, "resources", "perm-helper");
 ipcMain.handle("perm:request-screen", async () => {
+  // CGRequestScreenCaptureAccess via the helper — registers the app in the
+  // pane and shows the system dialog; child inherits the app's TCC identity
   await new Promise((resolve) => {
-    execFile(
-      "/usr/sbin/screencapture",
-      ["-x", "-t", "png", path.join(app.getPath("temp"), "omb-perm-probe.png")],
-      { timeout: 10_000 },
-      () => resolve(),
-    );
+    execFile(PERM_HELPER, ["request"], { timeout: 15_000 }, () => resolve());
   });
   return systemPreferences.getMediaAccessStatus?.("screen") ?? "unknown";
 });
