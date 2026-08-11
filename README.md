@@ -14,6 +14,17 @@ Talk to them like contacts. Watch them work. Approve what matters.
 ![Agents](https://img.shields.io/badge/agents-Claude%20·%20Codex-d97757)
 ![PRs](https://img.shields.io/badge/PRs-welcome-38d591)
 
+<br>
+
+<a href="https://github.com/milind-soni/openmausbot-releases/releases/latest">
+  <img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20%20Download%20for%20macOS-.dmg-1084fe?style=for-the-badge&labelColor=070707" alt="Download OpenMausBot for macOS" height="40">
+</a>
+
+<sub>Apple silicon · signed & notarized · [all releases](https://github.com/milind-soni/openmausbot-releases/releases)</sub>
+
+<br>
+<br>
+
 <img src="docs/screenshots/hero.png" alt="OpenMausBot — a Telegram-style chat app where every chat is a real AI agent" width="900">
 
 </div>
@@ -144,6 +155,11 @@ flowchart LR
 | Desktop | `electron/` | macOS shell: dictation helper (SFSpeechRecognizer), local screen capture, CUA bridge. |
 
 ## Quick start
+
+**Easiest:** [download the latest .dmg](https://github.com/milind-soni/openmausbot-releases/releases/latest),
+drag it to Applications, open it. The harness server is embedded — no setup.
+
+**From source:**
 
 ```sh
 git clone https://github.com/milind-soni/OpenMausBot && cd OpenMausBot
