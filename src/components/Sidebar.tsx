@@ -1,3 +1,4 @@
+import { track } from "@/lib/analytics";
 import { useEffect, useState } from "react";
 import {
   BellDot,
@@ -197,7 +198,7 @@ export function Sidebar() {
           </div>
         )}
         <button
-          onClick={() => dispatch({ type: "newBot" })}
+          onClick={() => { track("bot_created"); dispatch({ type: "newBot" }); }}
           className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
           title="New bot"

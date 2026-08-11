@@ -1,5 +1,8 @@
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { StoreProvider, useStore } from "@/state/store";
+import { EmailGate } from "@/components/EmailGate";
+import { emailGateDone, initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { SettingsPanel } from "@/components/SettingsPanel";
@@ -37,9 +40,14 @@ function Shell() {
 }
 
 export default function App() {
+  const [gated, setGated] = useState(() => !emailGateDone());
+  useEffect(() => {
+    initAnalytics();
+  }, []);
   return (
     <StoreProvider>
       <Shell />
+      {gated && <EmailGate onDone={() => setGated(false)} />}
     </StoreProvider>
   );
 }
