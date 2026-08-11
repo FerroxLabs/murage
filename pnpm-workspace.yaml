@@ -1,0 +1,4 @@
+allowBuilds:
+  electron: true # postinstall downloads the Electron dist
+  esbuild: true # postinstall validates the platform binary
+  electron-winstaller: false # unused — Windows builds ship NSIS
