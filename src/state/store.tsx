@@ -68,6 +68,8 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
+  /** who's using the app — collected in onboarding, shown in the sidebar */
+  profile?: { name: string; email: string };
 }
 
 /** One row of GET /api/instances — the model picker's data. */
@@ -607,7 +609,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "config":
           rawDispatch({
             type: "configStatus",
-            config: { xai: frame.xai, composio: frame.composio, box: frame.box },
+            config: { xai: frame.xai, composio: frame.composio, box: frame.box, profile: frame.profile },
           });
           api("/api/instances")
             .then(({ instances }) => rawDispatch({ type: "instances", instances }))

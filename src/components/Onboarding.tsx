@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, AlertTriangle, Loader2, Mic, Monitor } from "lucide-react";
+import { Check, AlertTriangle, Loader2, Mic } from "lucide-react";
 import { MausAvatar } from "./Avatar";
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 
@@ -46,10 +46,23 @@ function StatusRow({
 
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(0);
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [instances, setInstances] = useState<InstanceRow[] | null>(null);
-  const [perms, setPerms] = useState<{ mic: string; screen: string } | null>(null);
+  const [perms, setPerms] = useState<{ mic: string } | null>(null);
   const valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+
+  const saveProfile = () => {
+    identifyEmail(email.trim().toLowerCase());
+    // persisted server-side (~/.openmausbot/config.json) — the sidebar
+    // footer reads it back through /api/config
+    void fetch("/api/config", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profile: { name: name.trim(), email: email.trim().toLowerCase() } }),
+    }).catch(() => {});
+    setStep(1);
+  };
 
   useEffect(() => {
     track("onboarding_step", { step });
@@ -72,7 +85,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     track("onboarding_completed", {
       engines_available: instances?.filter((i) => i.snapshot.state === "available").length ?? -1,
       mic: perms?.mic ?? "n/a",
-      screen: perms?.screen ?? "n/a",
     });
     setEmailGateDone("submitted");
     onDone();
@@ -91,23 +103,27 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             <MausAvatar color="green" expression="friendly" size={72} />
             <h1 className="mt-4 text-[20px] font-semibold text-ink">Welcome to OpenMausBot</h1>
             <p className="mt-1.5 text-center text-[14px] leading-relaxed text-ink-secondary">
-              Bots that do real work on their own computer. Drop your email and
-              we&rsquo;ll let you know when big things ship.
+              Bots that do real work on their own computer. Tell us who you are
+              and we&rsquo;ll let you know when big things ship.
             </p>
             <input
               autoFocus
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Your name"
+              className="mt-5 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
+            />
+            <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && valid && (identifyEmail(email.trim().toLowerCase()), setStep(1))}
+              onKeyDown={(e) => e.key === "Enter" && valid && saveProfile()}
               placeholder="you@example.com"
-              className="mt-5 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
+              className="mt-3 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
             />
             <button
-              onClick={() => {
-                identifyEmail(email.trim().toLowerCase());
-                setStep(1);
-              }}
+              onClick={saveProfile}
               disabled={!valid}
               className="mt-3 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white disabled:opacity-40"
             >
@@ -221,40 +237,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   </button>
                 )}
               </div>
-              <div className="flex items-center justify-between gap-3 rounded-xl bg-card p-3.5">
-                <div className="flex items-start gap-3">
-                  <Monitor size={18} className="mt-0.5 shrink-0 text-ink-secondary" />
-                  <div>
-                    <div className="text-[14px] font-medium text-ink">Screen preview</div>
-                    <div className="mt-0.5 text-[12.5px] text-ink-secondary">
-                      Shows this Mac&rsquo;s screen in the Computer panel when a bot works locally.
-                    </div>
-                  </div>
-                </div>
-                {perms?.screen === "granted" ? (
-                  <Check size={16} className="shrink-0 text-[#38d591]" />
-                ) : perms?.screen === "denied" || perms?.screen === "restricted" ? (
-                  <button
-                    onClick={() => window.ogb?.permOpenSettings?.("screen")}
-                    className="shrink-0 rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover"
-                  >
-                    Open Settings
-                  </button>
-                ) : (
-                  <button
-                    onClick={() =>
-                      navigator.mediaDevices
-                        .getDisplayMedia({ video: true })
-                        .then((stream) => stream.getTracks().forEach((t) => t.stop()))
-                        .catch(() => {})
-                        .then(() => window.ogb?.permStatus?.().then(setPerms))
-                    }
-                    className="shrink-0 rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover"
-                  >
-                    Enable
-                  </button>
-                )}
-              </div>
+              {/* Screen Recording deliberately has no row here: macOS 15+
+                  makes a pre-grant unreliable (per-process status caching,
+                  helper misattribution, periodic re-prompts) — the OS flow
+                  triggers on the first real capture in the Computer panel,
+                  which is the moment the user has context for the dialog. */}
             </div>
             <button onClick={finish} className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white">
               Start using OpenMausBot

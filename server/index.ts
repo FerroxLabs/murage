@@ -410,6 +410,8 @@ function configStatus() {
     xai: { configured: Boolean(cfg.xai?.key) },
     composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
     box: { configured: Boolean(cfg.box?.token) },
+    // not a secret — the sidebar shows it
+    profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
   };
 }
 
@@ -625,13 +627,15 @@ const server = createServer(async (req, res) => {
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
       const patch: Record<string, object> = {};
-      for (const key of ["xai", "composio", "box"] as const) {
+      for (const key of ["xai", "composio", "box", "profile"] as const) {
         if (body[key] && typeof body[key] === "object") patch[key] = body[key];
       }
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
       saveConfig(patch);
       Object.assign(cfg, loadConfig());
-      await reloadProviders();
+      // provider keys change the fleet; a profile edit must not kill
+      // in-flight turns with a pointless reload
+      if (Object.keys(patch).some((k) => k !== "profile")) await reloadProviders();
       const status = configStatus();
       broadcast({ kind: "config", ...status });
       return json(res, 200, status);
