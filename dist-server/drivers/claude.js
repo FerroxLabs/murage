@@ -237,6 +237,14 @@ export const ClaudeDriver = {
                 mcpServers.computer = { ...turn.integrations.localComputer };
                 allowed.push("mcp__computer");
             }
+            // peer-agent comms (list_bots/ask_bot) — the harness builds the whole
+            // spawn contract (command/args/env incl. the boot token) in
+            // agentsIntegration(); pre-allowing matters doubly here, or the CLI's
+            // own ListAgents look-alike shadows it and "@Bot" asks go nowhere
+            if (turn.integrations?.agents) {
+                mcpServers.agents = { ...turn.integrations.agents };
+                allowed.push("mcp__agents");
+            }
             // permission broker: anything acceptEdits would silently deny becomes
             // an Allow/Deny card in chat, and the agent gets ask_user. Skipped in
             // bypassPermissions (fullAuto) — nothing would ever ask.
@@ -438,7 +446,7 @@ export const ClaudeDriver = {
             snapshot,
             adapter: {
                 provider: DRIVER_KIND,
-                capabilities: { sessionModelSwitch: "in-session" },
+                capabilities: { sessionModelSwitch: "in-session", agentsMcp: true },
                 sendTurn,
                 interruptTurn: async (threadId) => active.get(threadId)?.stop(),
                 respondToRequest: async (threadId, requestId, decision) => {
