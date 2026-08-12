@@ -25,4 +25,23 @@ contextBridge.exposeInMainWorld("ogb", {
   permRequestMic: () => ipcRenderer.invoke("perm:request-mic"),
   /** Opens System Settings on the given privacy pane: mic|screen|speech. */
   permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
+
+  /** In-app auto-update. State object:
+   *  { status: "idle"|"checking"|"available"|"downloading"|"downloaded"|"error",
+   *    version?, percent?, message? }. onState fires immediately with the
+   *    current state, then on every transition. Dormant in dev (no bridge). */
+  updater: {
+    check: () => ipcRenderer.invoke("update:check"),
+    download: () => ipcRenderer.invoke("update:download"),
+    install: () => ipcRenderer.invoke("update:install"),
+    onState: (cb) => {
+      ipcRenderer
+        .invoke("update:get-state")
+        .then((s) => cb(s))
+        .catch(() => {});
+      const handler = (_event, s) => cb(s);
+      ipcRenderer.on("update:state", handler);
+      return () => ipcRenderer.removeListener("update:state", handler);
+    },
+  },
 });
