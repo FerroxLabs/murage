@@ -105,6 +105,10 @@ export interface SendTurnInput {
      * MUST be spawned by Electron main; the harness only points the agent
      * CLI at the already-running socket via this MCP proxy command). */
     localComputer?: { command: string; args: string[]; env: Record<string, string> };
+    /** Peer-agent comms: an MCP proxy (list_bots / ask_bot) that routes back
+     * through the harness so this bot can message other bots. The harness
+     * owns turns, permissions, and recursion limits; the proxy only forwards. */
+    agents?: { command: string; args: string[]; env: Record<string, string> };
   };
   cwd?: string;
 }
