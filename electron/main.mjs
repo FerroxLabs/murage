@@ -126,18 +126,19 @@ function createWindow() {
     minHeight: 600,
     icon: APP_ICON,
     backgroundColor: "#070707",
+    autoHideMenuBar: process.platform !== "darwin",
     // macOS keeps inset traffic lights, Windows keeps its custom overlay,
     // and Linux uses the native desktop title bar and window controls.
     ...(isMac
       ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 16 } }
       : process.platform === "win32"
         ? {
-          titleBarStyle: "hidden",
-          // height MUST match the ChatView/GroupView header strip (px-5 py-3
-          // around a 36px control row = 60). Windows draws the caption buttons
-          // to fill the overlay, so anything shorter leaves a dead band under
-          // them and anything taller overhangs the header.
-          titleBarOverlay: { color: "#070707", symbolColor: "#b5b5b5", height: 60 },
+            titleBarStyle: "hidden",
+            // height MUST match the ChatView/GroupView header strip (px-5 py-3
+            // around a 36px control row = 60). Windows draws the caption buttons
+            // to fill the overlay, so anything shorter leaves a dead band under
+            // them and anything taller overhangs the header.
+            titleBarOverlay: { color: "#070707", symbolColor: "#b5b5b5", height: 60 },
           }
         : {}),
     webPreferences: {
