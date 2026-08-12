@@ -195,6 +195,9 @@ app.on("window-all-closed", () => {
 
 // EMBEDDING.md lifecycle rule: defer the first quit until the embedded
 // daemon's async cleanup completes — it can't run after the host exits.
+// The defer is capped: a wedged daemon whose stop never settles must not
+// be able to hold the app hostage, so quit anyway after the timeout.
+const CUA_STOP_TIMEOUT_MS = 2500;
 let cuaCleanedUp = false;
 app.on("before-quit", (e) => {
   if (cuaCleanedUp) return;
@@ -202,7 +205,11 @@ app.on("before-quit", (e) => {
   try {
     serverProc?.kill();
   } catch {}
-  stopCua().finally(() => {
+  const cleanup = Promise.race([
+    stopCua(),
+    new Promise((resolve) => setTimeout(resolve, CUA_STOP_TIMEOUT_MS).unref()),
+  ]);
+  cleanup.finally(() => {
     cuaCleanedUp = true;
     app.quit();
   });
