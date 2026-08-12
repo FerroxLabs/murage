@@ -24,8 +24,15 @@ func fail(_ message: String) -> Never {
 
 SFSpeechRecognizer.requestAuthorization { status in
   guard status == .authorized else { fail("speech-not-authorized") }
-  guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
-    recognizer.isAvailable
+  // Recognize in the user's language: a hardcoded en-US recognizer
+  // transcribes everyone else into nonsense. First preference that has an
+  // available recognizer wins, with en-US as the last resort.
+  let candidates =
+    Locale.preferredLanguages.map { Locale(identifier: $0) }
+    + [Locale.current, Locale(identifier: "en-US")]
+  guard
+    let recognizer = candidates.lazy.compactMap({ SFSpeechRecognizer(locale: $0) })
+      .first(where: { $0.isAvailable })
   else { fail("recognizer-unavailable") }
 
   let request = SFSpeechAudioBufferRecognitionRequest()
