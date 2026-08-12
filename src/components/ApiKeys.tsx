@@ -1,7 +1,7 @@
 // Paste-a-key rows for PUT /api/config. The server persists to
 // ~/.openmausbot/config.json and hot-reloads the provider fleet; secrets
 // are write-only — GET /api/config returns configured flags, never values.
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Check, CircleHelp, ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -61,34 +61,71 @@ const CREDENTIALS: Record<
 
 function CredentialHelp({ section }: { section: ConfigSection }) {
   const credential = CREDENTIALS[section];
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popoverId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      buttonRef.current?.focus();
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
 
   return (
-    <details className="group relative ml-auto">
-      <summary
+    <div ref={rootRef} className="relative ml-auto">
+      <button
+        ref={buttonRef}
+        type="button"
         aria-label={`About ${credential.label}`}
-        className="flex size-6 cursor-pointer list-none items-center justify-center rounded-md text-ink-secondary outline-none transition-colors hover:bg-raised hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/70 [&::-webkit-details-marker]:hidden"
+        aria-expanded={open}
+        aria-controls={popoverId}
+        onClick={() => setOpen((current) => !current)}
+        className="flex size-6 items-center justify-center rounded-md text-ink-secondary outline-none transition-colors hover:bg-raised hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/70"
       >
         <CircleHelp size={14} aria-hidden="true" />
-      </summary>
-      <div className="animate-pop-in absolute right-0 z-30 mt-1.5 w-[270px] rounded-xl border border-hairline bg-panel p-3 text-left shadow-2xl">
-        <div className="text-[12px] leading-[1.45] text-ink-secondary">{credential.description}</div>
-        {credential.warning && (
-          <div className="mt-2 flex gap-1.5 rounded-lg border border-warning/25 bg-warning/10 px-2 py-1.5 text-[11px] leading-[1.4] text-warning">
-            <TriangleAlert size={13} className="mt-px shrink-0" aria-hidden="true" />
-            <span>{credential.warning}</span>
-          </div>
-        )}
-        <a
-          href={credential.href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-2.5 flex items-center gap-1.5 text-[12px] font-medium text-accent hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+      </button>
+      {open && (
+        <div
+          id={popoverId}
+          role="group"
+          aria-label={`${credential.label} help`}
+          className="animate-pop-in absolute right-0 z-30 mt-1.5 w-[270px] rounded-xl border border-hairline bg-panel p-3 text-left shadow-2xl"
         >
-          {credential.linkLabel}
-          <ExternalLink size={12} aria-hidden="true" />
-        </a>
-      </div>
-    </details>
+          <div className="text-[12px] leading-[1.45] text-ink-secondary">{credential.description}</div>
+          {credential.warning && (
+            <div className="mt-2 flex gap-1.5 rounded-lg border border-warning/25 bg-warning/10 px-2 py-1.5 text-[11px] leading-[1.4] text-warning">
+              <TriangleAlert size={13} className="mt-px shrink-0" aria-hidden="true" />
+              <span>{credential.warning}</span>
+            </div>
+          )}
+          <a
+            href={credential.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setOpen(false)}
+            className="mt-2.5 flex items-center gap-1.5 text-[12px] font-medium text-accent hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+          >
+            {credential.linkLabel}
+            <ExternalLink size={12} aria-hidden="true" />
+          </a>
+        </div>
+      )}
+    </div>
   );
 }
 
