@@ -1,7 +1,49 @@
-import { MAUS_STATES, STATE_GROUPS, type MausState } from "@/lib/maus-engine";
+import { CURSOR_STATES, type CursorState } from "@/components/CursorAvatar";
 
-export { MAUS_STATES, STATE_GROUPS };
-export type { MausState };
+/** The mascot's behaviour vocabulary — CursorAvatar's 39 states, under the
+ * app's historical names. */
+export type MausState = CursorState;
+export const MAUS_STATES = CURSOR_STATES;
+
+/** CursorAvatar ships French group labels; the app shows these instead. The
+ * memberships mirror its STATE_GROUPS exactly. */
+export const STATE_GROUPS: Record<string, MausState[]> = {
+  Lifecycle: ["sleeping", "waking", "idle", "listening", "thinking", "searching", "working"],
+  Reactions: [
+    "excited",
+    "surprised",
+    "suspicious",
+    "angry",
+    "drowsy",
+    "happy",
+    "curious",
+    "confused",
+    "bored",
+    "proud",
+    "shy",
+    "sad",
+    "laughing",
+    "scared",
+    "playful",
+    "celebrate",
+  ],
+  "Agent morphs": ["orbit", "radar", "progress"],
+  "Product cycle": [
+    "spawning",
+    "humming",
+    "loading",
+    "dictating",
+    "writing",
+    "sending",
+    "receiving",
+    "uploading",
+    "notifying",
+    "alerting",
+    "dragging",
+    "bouncing",
+    "powering-down",
+  ],
+};
 
 export const MAUS_COLOR_NAMES = [
   "green",
