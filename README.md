@@ -177,13 +177,17 @@ Requirements: **macOS**, **Node 24+**, **pnpm**, and at least one agent CLI — 
 [`codex`](https://github.com/openai/codex), or [`grok`](https://x.ai/cli) — installed and logged in. They appear
 in the model picker automatically.
 
-Optional, pasted once in **App Settings** (gear in the sidebar footer):
+These credentials are optional — local chat works without them. Paste a key once in **App Settings** (gear
+in the sidebar footer) when you want to enable its integration:
 
-| Key | Unlocks |
-|---|---|
-| Composio Connect key (`ck_…`) | The connected-apps marketplace |
-| Composio API key (`ak_…`) | The full 500+ app catalog with official logos |
-| Box token ([box.ascii.dev](https://box.ascii.dev)) | Cloud computers for your bots |
+| Credential | What it enables | Where to get it |
+|---|---|---|
+| Composio Connect key (`ck_…`) | Connect Gmail, GitHub, Slack, Notion, and other apps to your bots | [Composio Connect setup guide](https://docs.composio.dev/docs/composio-connect) |
+| Composio API key (`ak_…`) | Browse the full app catalog with official names and logos | [Composio project API key guide](https://docs.composio.dev/reference/authenticating-to-composio/project-api-key-permissions) |
+| Box API key | Give bots an isolated remote Linux computer with a desktop and terminal | [Box API key guide](https://docs.ascii.dev/box/api-keys) |
+
+Composio and Box are third-party services with their own accounts and terms. Box is a paid service after
+its trial, and using a cloud computer may incur charges.
 
 ```sh
 pnpm typecheck     # app + server

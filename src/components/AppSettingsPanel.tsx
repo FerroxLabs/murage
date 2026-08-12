@@ -79,13 +79,9 @@ export function AppSettingsPanel() {
             shown again.
           </div>
           <div className="mt-4 flex flex-col gap-4">
-            <ApiKeyRow section="composio" label="Composio Connect key" placeholder="ck_…" />
-            <ApiKeyRow
-              section="composioApi"
-              label="Composio API key (optional)"
-              placeholder="ak_…  unlocks the full app catalog"
-            />
-            <ApiKeyRow section="box" label="Box token" placeholder="Token from box.ascii.dev" />
+            <ApiKeyRow section="composio" />
+            <ApiKeyRow section="composioApi" />
+            <ApiKeyRow section="box" />
           </div>
         </div>
       </div>

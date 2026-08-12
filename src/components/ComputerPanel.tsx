@@ -44,7 +44,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const [localFrame, setLocalFrame] = useState<string | null>(null);
   const [pending, setPending] = useState<"join" | "sleep" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // bumped when a Box token is saved inline, to re-run the spin-up flow
+  // bumped when a Box API key is saved inline, to re-run the spin-up flow
   const [retry, setRetry] = useState(0);
 
   // resolve the mode on open; box endpoints are only ever hit on the
@@ -248,12 +248,10 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         {phase === "unconfigured" && (
           <div className="mt-3 rounded-xl bg-card p-4">
             <div className="mb-3 text-[13px] text-ink-secondary">
-              Paste a Box token from box.ascii.dev to give this bot a cloud computer — it spins up right here.
+              Add a Box API key to give this bot a cloud computer — it spins up right here.
             </div>
             <ApiKeyRow
               section="box"
-              label="Box token"
-              placeholder="Token from box.ascii.dev"
               onSaved={(configured) => configured && setRetry((n) => n + 1)}
             />
           </div>
