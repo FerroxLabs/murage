@@ -38,6 +38,7 @@ import type {
   SendTurnInput,
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
+import { augmentedPath } from "../env-path.ts";
 import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "grokAgent";
@@ -114,7 +115,7 @@ export const GrokAgentDriver: ProviderDriver<GrokAgentConfig> = {
       // config.workspace lets an instance be sandboxed to one directory
       const cwd = turn.cwd ?? config.workspace ?? homedir();
 
-      const env: Record<string, string | undefined> = { ...process.env };
+      const env: Record<string, string | undefined> = { ...process.env, PATH: augmentedPath() };
       // the CLI owns its own grok.com login; a leaked API key silently flips
       // billing from the subscription to pay-as-you-go
       delete env.XAI_API_KEY;
@@ -460,7 +461,7 @@ export const GrokAgentDriver: ProviderDriver<GrokAgentConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const version = await new Promise<string | null>((resolve) => {
-        execFile(config.cli, ["--version"], { timeout: 8000 }, (err, stdout) =>
+        execFile(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) =>
           resolve(err ? null : stdout.trim()),
         );
       });
