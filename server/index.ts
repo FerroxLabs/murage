@@ -345,7 +345,15 @@ async function startTurn(botId: string, text: string, opts?: { commsDepth?: numb
       // peer-agent comms: give a user-initiated turn the list_bots/ask_bot
       // tools. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
       // stop, so the user's tokens can't be burned by a bot-to-bot loop.
-      if (commsDepth < MAX_COMMS_DEPTH && store.bots.filter((b) => b.id !== bot.id && !b.hidden).length > 0) {
+      // Only drivers that mount the tools get the integration (and, via the
+      // integrations.agents gate below, the prompt hint) — a bot on a driver
+      // without it must not be told about tools it cannot call. Any bot can
+      // still be the TARGET of ask_bot regardless of its driver.
+      if (
+        commsDepth < MAX_COMMS_DEPTH &&
+        instance.adapter.capabilities.agentsMcp === true &&
+        store.bots.filter((b) => b.id !== bot.id && !b.hidden).length > 0
+      ) {
         integrations.agents = agentsIntegration(bot.id, commsDepth);
       }
       // @mentions in the user's message (the composer's tagging UI) become

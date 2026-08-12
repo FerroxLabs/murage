@@ -431,7 +431,7 @@ export function createAcpDriver(support) {
                 snapshot,
                 adapter: {
                     provider: DRIVER_KIND,
-                    capabilities: { sessionModelSwitch: "unsupported" },
+                    capabilities: { sessionModelSwitch: "unsupported", agentsMcp: true },
                     sendTurn,
                     interruptTurn: async (threadId) => active.get(threadId)?.interrupt(),
                     respondToRequest: async (threadId, requestId, decision) => {

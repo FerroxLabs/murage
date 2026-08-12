@@ -119,7 +119,13 @@ export interface TurnStartResult {
 
 export interface ProviderAdapter {
   readonly provider: DriverKind;
-  readonly capabilities: { sessionModelSwitch: "in-session" | "unsupported" };
+  readonly capabilities: {
+    sessionModelSwitch: "in-session" | "unsupported";
+    /** True when the driver mounts turn.integrations.agents as MCP tools —
+     * the harness only offers agents tooling (and prompts about it) to
+     * drivers that can actually hand it to the agent. */
+    agentsMcp?: boolean;
+  };
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;
   interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void>;
   respondToRequest(
