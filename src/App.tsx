@@ -16,6 +16,7 @@ function Shell() {
   const bot = state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0];
   return (
     <div className="flex h-full flex-col">
+      {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
       <div className="relative flex min-h-0 flex-1">
       <Sidebar />
