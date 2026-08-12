@@ -134,6 +134,7 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
 function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => void }) {
   const { state, dispatch } = useStore();
   const selected = state.selectedId === bot.id;
+  const mascotMotion = selected && state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const last = bot.messages[bot.messages.length - 1];
   return (
     <button
@@ -147,7 +148,13 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
         selected ? "bg-raised" : "hover:bg-raised/50",
       )}
     >
-      <MausAvatar color={bot.color} expression={expressionForBot(bot)} size={44} />
+      <MausAvatar
+        color={bot.color}
+        expression={expressionForBot(bot)}
+        size={44}
+        motion={mascotMotion?.kind ?? "none"}
+        motionKey={mascotMotion?.nonce ?? 0}
+      />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold text-ink">

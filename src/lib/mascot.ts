@@ -41,6 +41,23 @@ export const MAUS_EXPRESSIONS = [
 
 export type MausExpression = (typeof MAUS_EXPRESSIONS)[number];
 
+export const MAUS_MOTIONS = [
+  "arrive",
+  "switch",
+  "customize",
+  "alert",
+  "thinking",
+  "working",
+  "launch",
+  "success",
+  "celebrate",
+  "blink",
+  "surprise",
+  "failure",
+] as const;
+
+export type MausMotion = "none" | (typeof MAUS_MOTIONS)[number];
+
 type MascotMessage = {
   kind: string;
   tool?: { ok?: boolean };

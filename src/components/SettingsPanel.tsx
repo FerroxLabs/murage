@@ -6,6 +6,7 @@ import {
   MAUS_COLORS,
   MAUS_COLOR_NAMES,
   MAUS_EXPRESSIONS,
+  MAUS_MOTIONS,
 } from "@/lib/mascot";
 import { ModelPicker } from "./ModelPicker";
 import { cn } from "@/lib/cn";
@@ -29,13 +30,14 @@ const inputCls =
   "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:outline-none focus:border-hairline";
 
 export function SettingsPanel({ bot }: { bot: Bot }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const patch = (
     p: Partial<
       Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression">
     >,
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const activeExpression = expressionForBot(bot);
+  const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
 
   return (
     <aside className="animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
@@ -58,7 +60,13 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
       <div className="flex-1 overflow-y-auto px-5 pb-5">
         <div className="flex justify-center py-5">
-          <MausAvatar color={bot.color} expression={activeExpression} size={112} />
+          <MausAvatar
+            color={bot.color}
+            expression={activeExpression}
+            size={112}
+            motion={mascotMotion?.kind ?? "none"}
+            motionKey={mascotMotion?.nonce ?? 0}
+          />
         </div>
 
         <div className="flex flex-col gap-4">
@@ -112,6 +120,22 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                     title={color}
                     aria-label={`Use ${color} mascot color`}
                   />
+                ))}
+              </div>
+
+              <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
+                Motion preview
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {MAUS_MOTIONS.map((motion) => (
+                  <button
+                    key={motion}
+                    onClick={() => dispatch({ type: "previewMascotMotion", botId: bot.id, kind: motion })}
+                    className="rounded-lg bg-inset px-2 py-2 text-[12px] capitalize text-ink-secondary transition-colors hover:bg-raised hover:text-ink"
+                    aria-label={`Preview ${motion} animation`}
+                  >
+                    {motion}
+                  </button>
                 ))}
               </div>
             </div>
