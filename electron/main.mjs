@@ -151,6 +151,31 @@ function createWindow() {
     return { action: "deny" };
   });
 
+  // Packaged CI smoke hook. It validates the real renderer/preload bridge and
+  // same-origin embedded server, then follows the normal window-close path.
+  // No debugging port or sandbox override is needed.
+  if (process.env.OMB_SMOKE_TEST === "1") {
+    win.webContents.once("did-finish-load", async () => {
+      try {
+        const result = await win.webContents.executeJavaScript(`
+          (async () => {
+            if (!window.ogb?.getCapabilities) throw new Error("desktop preload bridge is unavailable");
+            const [capabilities, health] = await Promise.all([
+              window.ogb.getCapabilities(),
+              fetch("/api/health").then((response) => response.json()),
+            ]);
+            return { capabilities, health, location: window.location.href, title: document.title };
+          })()
+        `);
+        console.log(`[smoke] renderer-ready ${JSON.stringify(result)}`);
+      } catch (error) {
+        console.error(`[smoke] renderer-failed ${error?.stack ?? error}`);
+      } finally {
+        win.close();
+      }
+    });
+  }
+
   if (app.isPackaged) {
     win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
   } else {

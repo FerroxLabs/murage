@@ -21,6 +21,7 @@ let child: ChildProcess;
 let boxStub: Server;
 let boxStubPort = 0;
 let home: string;
+let staticDir: string;
 let stderr = "";
 
 const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
@@ -34,8 +35,12 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "omb-api-test-"));
+  staticDir = join(home, "static");
   // a fleet of exactly one unknown driver: no CLI probes, no network
   mkdirSync(join(home, ".openmausbot"), { recursive: true });
+  mkdirSync(join(staticDir, "assets"), { recursive: true });
+  writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Packaged OpenMausBot</title>");
+  writeFileSync(join(staticDir, "assets", "smoke.css"), "body { color: white; }");
   writeFileSync(
     join(home, ".openmausbot", "config.json"),
     JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver", displayName: "Ghost" } } }),
@@ -58,6 +63,7 @@ beforeAll(async () => {
       USERPROFILE: home,
       OMB_PORT: String(PORT),
       OMB_BOX_API: `http://127.0.0.1:${boxStubPort}`,
+      OMB_STATIC_DIR: staticDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -94,6 +100,28 @@ describe("harness HTTP API", () => {
     expect(status).toBe(200);
     expect(body.app).toBe("openmausbot");
     expect(typeof body.pid).toBe("number");
+    expect(body.static).toBe(true);
+  });
+
+  it("serves packaged UI assets and preserves API 404s", async () => {
+    const root = await fetch(`${BASE}/`);
+    expect(root.status).toBe(200);
+    expect(root.headers.get("content-type")).toBe("text/html");
+    expect(await root.text()).toContain("Packaged OpenMausBot");
+
+    const asset = await fetch(`${BASE}/assets/smoke.css`);
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("content-type")).toBe("text/css");
+    expect(await asset.text()).toContain("color: white");
+
+    const spa = await fetch(`${BASE}/settings/desktop`);
+    expect(spa.status).toBe(200);
+    expect(spa.headers.get("content-type")).toBe("text/html");
+    expect(await spa.text()).toContain("Packaged OpenMausBot");
+
+    const unknownApi = await api("GET", "/api/not-a-real-route");
+    expect(unknownApi.status).toBe(404);
+    expect(unknownApi.body.error).toContain("/api/not-a-real-route");
   });
 
   it("seeds one starter bot with its greeting", async () => {
