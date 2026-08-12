@@ -129,8 +129,11 @@ function broadcast(payload: unknown) {
 // ── server-side event folding (upstream's ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript
 // and every client view are projections of it.
-const toolMessageByItem = new Map<string, string>(); // itemId -> messageId
-const askMessageByRequest = new Map<string, string>(); // requestId -> messageId
+// keyed by `${threadId}:${itemId}` / `${threadId}:${requestId}` — provider
+// item/request ids are only unique within a thread, so two bots acting at
+// once can collide on a bare id and patch each other's messages.
+const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
+const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
 
 bus.subscribe((event: RuntimeEvent) => {
   broadcast({ kind: "runtime", event });
@@ -153,13 +156,14 @@ bus.subscribe((event: RuntimeEvent) => {
       if (event.itemType === "assistant_text") {
         pushMessage({ role: "bot", kind: "text", text: event.text });
       } else if (event.itemType === "tool" && event.itemId) {
-        const messageId = toolMessageByItem.get(event.itemId);
+        const itemKey = `${event.threadId}:${event.itemId}`;
+        const messageId = toolMessageByItem.get(itemKey);
         if (messageId) {
           const patched = store.patchMessage(event.threadId, messageId, {
             tool: { name: store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool", ok: event.ok },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
-          toolMessageByItem.delete(event.itemId);
+          toolMessageByItem.delete(itemKey);
         }
         // the bot just finished acting — refresh its screen preview now
         pokeScreenPoller(bot.id);
@@ -168,7 +172,7 @@ bus.subscribe((event: RuntimeEvent) => {
     case "item.started":
       if (event.itemType === "tool") {
         const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
-        if (event.itemId) toolMessageByItem.set(event.itemId, message.id);
+        if (event.itemId) toolMessageByItem.set(`${event.threadId}:${event.itemId}`, message.id);
       }
       break;
     case "request.opened": {
@@ -183,11 +187,11 @@ bus.subscribe((event: RuntimeEvent) => {
           requestId: event.requestId,
         },
       });
-      if (event.requestId) askMessageByRequest.set(event.requestId, message.id);
+      if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
       break;
     }
     case "request.resolved": {
-      const messageId = event.requestId ? askMessageByRequest.get(event.requestId) : null;
+      const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
       if (messageId) {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
         if (existing?.card && !existing.card.answered) {
@@ -196,7 +200,7 @@ bus.subscribe((event: RuntimeEvent) => {
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
         }
-        if (event.requestId) askMessageByRequest.delete(event.requestId);
+        if (event.requestId) askMessageByRequest.delete(`${event.threadId}:${event.requestId}`);
       }
       break;
     }
@@ -420,6 +424,15 @@ function configStatus() {
 async function reloadProviders() {
   bus.detachAll();
   await registry.disposeAll();
+  // disposing kills any in-flight turn, but its completion handler is already
+  // detached — so a bot caught mid-turn would stay `busy: true` forever and
+  // refuse new messages. Clear it here, the same way a restart does.
+  for (const b of store.bots) {
+    if (b.busy) {
+      store.patchBot(b.id, { busy: false });
+      broadcast({ kind: "bot", bot: store.bot(b.id) });
+    }
+  }
   await registry.load(instanceConfigs(cfg));
   bus.attach(registry.instances());
 }
@@ -434,18 +447,33 @@ function json(res: ServerResponse, status: number, body: unknown) {
 function readBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = "";
+    let done = false;
+    const fail = (status: number, msg: string) => {
+      if (done) return;
+      done = true;
+      const err = Object.assign(new Error(msg), { status });
+      reject(err);
+    };
     req.on("data", (c) => {
+      if (done) return;
       data += c;
-      if (data.length > 1_000_000) reject(new Error("body too large"));
-    });
-    req.on("end", () => {
-      try {
-        resolve(data ? JSON.parse(data) : {});
-      } catch {
-        reject(new Error("invalid JSON body"));
+      // stop buffering the moment we cross the limit — otherwise a hostile
+      // (or runaway) client keeps growing `data` in memory after the reject
+      if (data.length > 1_000_000) {
+        fail(413, "body too large");
+        req.destroy();
       }
     });
-    req.on("error", reject);
+    req.on("end", () => {
+      if (done) return;
+      try {
+        done = true;
+        resolve(data ? JSON.parse(data) : {});
+      } catch {
+        fail(400, "invalid JSON body");
+      }
+    });
+    req.on("error", (e) => fail(400, e instanceof Error ? e.message : String(e)));
   });
 }
 

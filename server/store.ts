@@ -2,9 +2,10 @@
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { readFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
+import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 
@@ -95,9 +96,10 @@ const COLORS: MausColor[] = [
 ];
 
 /** Resolve @mentions in a message against a bot roster: `@` must start a
- * word, names match case-insensitively, longest name wins (so "@New Bot 2"
- * never half-matches "New Bot"), hidden bots skipped, results deduped.
- * Callers pre-filter the sender out of `peers`. */
+ * word, the name must end on a word boundary (so "@New Bottle" never matches
+ * "New Bot"), names match case-insensitively, longest name wins (so
+ * "@New Bot 2" never half-matches "New Bot"), hidden bots skipped, results
+ * deduped. Callers pre-filter the sender out of `peers`. */
 export function mentionedBots<T extends { name: string; hidden?: boolean }>(text: string, peers: T[]): T[] {
   const candidates = peers
     .filter((p) => !p.hidden && p.name.trim())
@@ -108,7 +110,12 @@ export function mentionedBots<T extends { name: string; hidden?: boolean }>(text
   while ((at = lower.indexOf("@", at + 1)) !== -1) {
     if (at > 0 && !/\s/.test(text[at - 1])) continue; // user@host, not a tag
     const rest = lower.slice(at + 1);
-    const hit = candidates.find((p) => rest.startsWith(p.name.toLowerCase()));
+    const hit = candidates.find((p) => {
+      const name = p.name.toLowerCase();
+      if (!rest.startsWith(name)) return false;
+      const after = rest[name.length]; // must not run into a longer word
+      return after === undefined || !/[a-z0-9]/i.test(after);
+    });
     if (hit && !found.includes(hit)) found.push(hit);
   }
   return found;
@@ -138,7 +145,7 @@ export class Store {
   }
 
   private saveBots() {
-    writeFileSync(BOTS_FILE, JSON.stringify(this.bots, null, 2));
+    writeFileAtomic(BOTS_FILE, JSON.stringify(this.bots, null, 2));
   }
 
   messagesFor(threadId: string): Message[] {
@@ -158,7 +165,7 @@ export class Store {
     const full: Message = { id: newId(), at: Date.now(), ...message };
     const list = this.messagesFor(threadId);
     list.push(full);
-    writeFileSync(messagesFile(threadId), JSON.stringify(list, null, 2));
+    writeFileAtomic(messagesFile(threadId), JSON.stringify(list, null, 2));
     return full;
   }
 
@@ -167,7 +174,7 @@ export class Store {
     const idx = list.findIndex((m) => m.id === messageId);
     if (idx === -1) return null;
     list[idx] = { ...list[idx], ...patch, card: patch.card ?? list[idx].card };
-    writeFileSync(messagesFile(threadId), JSON.stringify(list, null, 2));
+    writeFileAtomic(messagesFile(threadId), JSON.stringify(list, null, 2));
     return list[idx];
   }
 

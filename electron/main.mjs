@@ -151,9 +151,10 @@ ipcMain.handle("perm:open-settings", (_event, pane) => {
     screen: "Privacy_ScreenCapture",
     speech: "Privacy_SpeechRecognition",
   };
-  return shell.openExternal(
-    `x-apple.systempreferences:com.apple.preference.security?${panes[pane] ?? "Privacy"}`,
-  );
+  // own-property lookup only — a renderer-supplied "__proto__"/"constructor"
+  // would otherwise resolve up the prototype chain to a truthy object
+  const anchor = Object.hasOwn(panes, pane) ? panes[pane] : "Privacy";
+  return shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${anchor}`);
 });
 
 ipcMain.handle("speech:start", (event) => {

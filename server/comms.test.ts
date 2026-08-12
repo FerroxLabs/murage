@@ -44,6 +44,10 @@ describe("mentionedBots", () => {
     expect(mentionedBots("mail milind@milind.dev please", peers)).toEqual([]);
     expect(mentionedBots("@Ghost around?", peers)).toEqual([]);
   });
+  it("requires a word boundary at the end of the name", () => {
+    expect(mentionedBots("ask @New Bottle about it", peers)).toEqual([]);
+    expect(mentionedBots("@Milindo is someone else", peers)).toEqual([]);
+  });
 });
 
 posixOnly("comms e2e (fake ACP fleet)", () => {
