@@ -49,18 +49,19 @@ let probed = false;
 
 /** Current best PATH, synchronously. Cheap after the first call. */
 export function augmentedPath(): string {
-  if (process.platform === "win32") return process.env.PATH ?? "";
   if (cached === null) {
     cached = mergePaths([
       ...(process.env.OMB_EXTRA_PATH ? process.env.OMB_EXTRA_PATH.split(delimiter) : []),
       ...(process.env.PATH ? process.env.PATH.split(delimiter) : []),
-      ...knownDirs().filter((d) => existsSync(d)),
+      // GUI apps on Windows inherit the user PATH already; the unix
+      // install-dir scan and shell probe are the darwin/linux cure
+      ...(process.platform === "win32" ? [] : knownDirs().filter((d) => existsSync(d))),
     ]);
   }
   // belt-and-braces: fold in the login shell's PATH once, in the
   // background — catches anything the known-dirs list doesn't (custom
   // rc exports). Never blocks a spawn; the next one benefits.
-  if (!probed && !process.env.VITEST) {
+  if (!probed && !process.env.VITEST && process.platform !== "win32") {
     probed = true;
     probeLoginShellPath();
   }
