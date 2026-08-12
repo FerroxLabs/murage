@@ -4,6 +4,8 @@
 
 **Your own team of AI bots, in a chat app.**
 
+<sub>An open-source version of **Grok Bot** — bring-your-own-agent, local-first, on the models you already have.</sub>
+
 Every bot in the sidebar is a real agent — Claude or Codex running locally under the hood — with its own
 personality, its own model, its own cloud computer, and its own connected apps.
 Talk to them like contacts. Watch them work. Approve what matters.
@@ -33,9 +35,10 @@ Talk to them like contacts. Watch them work. Approve what matters.
 
 ## Why
 
-One assistant in one box is the wrong shape for agents. OpenMausBot treats AI as a *messaging app*: a roster
-of bots you chat with — each with its own personality, memory of its thread, model, computer, and apps — built
-on the agents you already have:
+One assistant in one box is the wrong shape for agents. OpenMausBot is an open-source take on **Grok Bot** —
+it keeps the idea (AI as a *messaging app*: a roster of bots you chat with, each with its own personality,
+memory of its thread, model, computer, and apps) and rebuilds it open, local-first, and on the agents you
+already have:
 
 - **Bring your own agents.** Bots run on the `claude` and `codex` CLIs installed on your Mac — your existing
   logins and subscriptions, no new accounts, no proxy in the middle.
