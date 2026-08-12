@@ -51,6 +51,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm package:linux
       - run: node scripts/verify-linux-package.mjs
+      - name: Configure Chromium sandbox for the unpacked app
+        run: |
+          sudo chown root:root release/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 release/linux-unpacked/chrome-sandbox
+          test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
       - name: Launch packaged app and verify lifecycle
         run: dbus-run-session -- xvfb-run -a node scripts/smoke-linux-package.mjs
       - uses: actions/upload-artifact@v4
