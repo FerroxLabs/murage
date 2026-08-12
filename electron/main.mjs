@@ -1,5 +1,4 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
-import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
@@ -120,11 +119,21 @@ ipcMain.handle("screen:frame", async () => {
 });
 
 // Onboarding permission checks. Status reads are free; the mic request
-// pops the real TCC prompt attributed to the app. Screen Recording has no
-// programmatic request — the first desktopCapturer call prompts.
+// pops the real TCC prompt attributed to the app.
+//
+// Screen Recording deliberately has NO request path here. On macOS 15+
+// every pre-grant mechanism is broken: getMediaAccessStatus("screen")
+// wraps CGPreflightScreenCaptureAccess, which caches per-process (stays
+// "denied" for the whole session after the user grants); a helper child
+// binary gets TCC-attributed to ITSELF on macOS 26, not the app, and
+// plain executables no longer appear in the Settings pane at all; and
+// Sequoia+ re-prompts periodically regardless, so a pre-grant expires.
+// The one reliable path is the first real in-process capture
+// (screen:frame above / getDisplayMedia via the handler below) — macOS
+// prompts then, attributed correctly, at the moment of actual use. The
+// perm:open-settings deep link stays as the repair path for denials.
 ipcMain.handle("perm:status", () => ({
   mic: systemPreferences.getMediaAccessStatus?.("microphone") ?? "unknown",
-  screen: systemPreferences.getMediaAccessStatus?.("screen") ?? "unknown",
 }));
 ipcMain.handle("perm:request-mic", async () => {
   try {
@@ -132,22 +141,6 @@ ipcMain.handle("perm:request-mic", async () => {
   } catch {
     return false;
   }
-});
-// Screen Recording: an app only APPEARS in the Settings pane after TCC
-// registers a capture attempt, and Electron's thumbnail API doesn't always
-// register one on newer macOS. A child `screencapture` probe inherits the
-// app's TCC identity — it registers OpenMausBot in the pane and triggers
-// the system dialog on first use.
-const PERM_HELPER = app.isPackaged
-  ? path.join(process.resourcesPath, "perm-helper")
-  : path.join(__dirname, "resources", "perm-helper");
-ipcMain.handle("perm:request-screen", async () => {
-  // CGRequestScreenCaptureAccess via the helper — registers the app in the
-  // pane and shows the system dialog; child inherits the app's TCC identity
-  await new Promise((resolve) => {
-    execFile(PERM_HELPER, ["request"], { timeout: 15_000 }, () => resolve());
-  });
-  return systemPreferences.getMediaAccessStatus?.("screen") ?? "unknown";
 });
 
 // macOS never re-prompts a denied permission — the only path is System

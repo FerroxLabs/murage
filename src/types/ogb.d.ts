@@ -11,14 +11,14 @@ declare global {
         cb: (line: { partial?: boolean; text?: string; error?: string }) => void,
       ): () => void;
       onSpeechEnd(cb: (info: { code: number | null }) => void): () => void;
-      /** {mic, screen} TCC status: granted|denied|not-determined|unknown */
-      permStatus(): Promise<{ mic: string; screen: string }>;
+      /** {mic} TCC status: granted|denied|not-determined|unknown. Screen
+       * status is deliberately absent — macOS 15+ caches it per-process,
+       * so it lies for the whole session after a grant. */
+      permStatus(): Promise<{ mic: string }>;
       /** Triggers the macOS microphone prompt; resolves true when granted. */
       permRequestMic(): Promise<boolean>;
       /** Opens System Settings on a privacy pane: mic|screen|speech. */
       permOpenSettings(pane: "mic" | "screen" | "speech"): Promise<void>;
-      /** Registers a screen-capture attempt (adds the app to the TCC pane). */
-      permRequestScreen(): Promise<string>;
     };
   }
 }

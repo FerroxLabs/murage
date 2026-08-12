@@ -121,16 +121,22 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     };
   }, [phase, sseFlowing, bot.id]);
 
-  // local preview: frames from the Electron main process
+  // local preview: frames from the Electron main process. The FIRST capture
+  // attempt is what makes macOS show the Screen Recording prompt (there is
+  // no reliable pre-grant flow on macOS 15+), so repeated empty frames mean
+  // the user denied — surface the Settings repair path instead of spinning.
+  const [localMisses, setLocalMisses] = useState(0);
   useEffect(() => {
     if (phase !== "local" || !window.ogb) return;
     let alive = true;
+    setLocalMisses(0);
     const shoot = async () => {
       try {
         const url = await window.ogb!.screenFrame();
         if (alive && url) setLocalFrame(url);
+        else if (alive) setLocalMisses((n) => n + 1);
       } catch {
-        /* capture denied or transient — next tick */
+        if (alive) setLocalMisses((n) => n + 1);
       }
     };
     void shoot();
@@ -217,9 +223,19 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                 {phase === "ready"
                   ? "Waiting for the first frame…"
                   : phase === "local"
-                    ? "Capturing this Mac's screen…"
+                    ? localMisses >= 3
+                      ? "No frames yet — the preview needs Screen Recording permission. After granting, relaunch the app (macOS applies it on next launch)."
+                      : "Capturing this Mac's screen…"
                     : emptyState[phase]}
               </span>
+              {phase === "local" && localMisses >= 3 && (
+                <button
+                  onClick={() => window.ogb?.permOpenSettings?.("screen")}
+                  className="mt-1 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
+                >
+                  Open Settings
+                </button>
+              )}
             </div>
           )}
         </div>
