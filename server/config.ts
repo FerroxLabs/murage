@@ -83,6 +83,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
       ? cfg.instances
       : {
           grok: { driver: "grokAgent" },
+          gemini: { driver: "geminiAgent" },
           claude: { driver: "claudeAgent" },
           codex: { driver: "codex" },
           computer: { driver: "boxAgent" },

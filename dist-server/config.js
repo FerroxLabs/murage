@@ -69,6 +69,7 @@ export function instanceConfigs(cfg) {
         ? cfg.instances
         : {
             grok: { driver: "grokAgent" },
+            gemini: { driver: "geminiAgent" },
             claude: { driver: "claudeAgent" },
             codex: { driver: "codex" },
             computer: { driver: "boxAgent" },
