@@ -18,6 +18,7 @@ import {
 import { useStore, type Bot } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
 import { cn } from "@/lib/cn";
+import { useDesktopCapabilities } from "./DesktopCapabilities";
 
 async function api(path: string, init?: RequestInit): Promise<any> {
   const res = await fetch(path, { headers: { "content-type": "application/json" }, ...init });
@@ -38,9 +39,8 @@ type Phase =
 
 export function ComputerPanel({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
-  // local computer wording follows the host ("This Mac" / "This PC")
-  const localShort = window.ogb?.platform === "win32" ? "this PC" : "this Mac";
-  const localLong = localShort.replace(/^./, (c) => c.toUpperCase());
+  const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
+  const localAvailable = capabilities.localComputer.available;
   const [phase, setPhase] = useState<Phase>("checking");
   const [boxState, setBoxState] = useState<string | null>(null);
   const [polledFrame, setPolledFrame] = useState<{ png: string; mime: string } | null>(null);
@@ -58,20 +58,19 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     setPolledFrame(null);
     setLocalFrame(null);
     setError(null);
-    const isElectron = Boolean(window.ogb);
     if (bot.computer === "off") {
       setPhase("off");
       return;
     }
     if (bot.computer === "local") {
-      setPhase(isElectron ? "local" : "local-unavailable");
+      setPhase(capabilitiesReady && localAvailable ? "local" : "local-unavailable");
       return;
     }
     // cloud, or auto (cloud box wins when one exists, else local in-app)
     api(`/api/bots/${bot.id}/computer`)
       .then((status) => {
         if (!alive) return;
-        const autoLocal = bot.computer !== "cloud" && isElectron;
+        const autoLocal = bot.computer !== "cloud" && capabilitiesReady && localAvailable;
         if (!status.configured) {
           setPhase(autoLocal ? "local" : "unconfigured");
           return;
@@ -95,7 +94,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     return () => {
       alive = false;
     };
-  }, [bot.id, bot.computer, retry]);
+  }, [bot.id, bot.computer, retry, capabilitiesReady, localAvailable]);
 
   // cloud preview: SSE frames win while the bot works; otherwise poll
   const live = state.screens[bot.id];
@@ -179,7 +178,12 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     checking: "Checking…",
     starting: "Starting your bot's computer…",
     unconfigured: "No cloud computer configured",
-    "local-unavailable": "Local preview needs the desktop app — run pnpm dev:desktop",
+    "local-unavailable":
+      capabilities.host.platform === "linux"
+        ? "Local computer control isn't available on Linux yet. Use a cloud box instead."
+        : capabilities.host.label === "Browser"
+          ? "Local computer control requires the desktop app."
+          : "CUA Driver isn't ready for local computer control.",
     off: "This bot's computer is off",
     error: "Couldn't reach the computer",
   };
@@ -205,10 +209,10 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 pb-5">
-        {/* Screen preview */}
-        <div className="mb-1.5 mt-2 flex items-center justify-between text-[13px] text-ink-secondary">
-          <span>{bot.name}'s screen</span>
-          {phase === "local" && <span className="text-[11px]">{localShort}</span>}
+          {/* Screen preview */}
+          <div className="mb-1.5 mt-2 flex items-center justify-between text-[13px] text-ink-secondary">
+            <span>{bot.name}'s screen</span>
+            {phase === "local" && <span className="text-[11px]">this computer</span>}
         </div>
         <div className="flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-xl bg-card">
           {frameSrc ? (
@@ -227,8 +231,8 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                   ? "Waiting for the first frame…"
                   : phase === "local"
                     ? localMisses >= 3
-                      ? "No frames yet — the preview needs Screen Recording permission. After granting, relaunch the app (macOS applies it on next launch)."
-                      : `Capturing ${localShort}'s screen…`
+                      ? "No frames yet — the preview needs Screen Recording permission. After granting, relaunch the app."
+                      : "Capturing this computer's screen…"
                     : emptyState[phase]}
               </span>
               {phase === "local" && localMisses >= 3 && (
@@ -288,26 +292,40 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         )}
 
         {/* Computer source */}
-        <div className="mt-4 rounded-xl bg-card p-4">
-          <div className="text-[15px] font-medium text-ink">Runs on</div>
-          <div className="mt-0.5 text-[13px] text-ink-secondary">
-            {bot.computer ? "" : `Auto: the cloud box when one exists, else ${localShort}. `}Pick where this bot's
-            computer lives.
+          <div className="mt-4 rounded-xl bg-card p-4">
+            <div className="text-[15px] font-medium text-ink">Runs on</div>
+            <div className="mt-0.5 text-[13px] text-ink-secondary">
+              {!bot.computer &&
+                (localAvailable
+                  ? "Auto uses a cloud box when one exists, otherwise this computer. "
+                  : "Auto uses a cloud box when one is configured; otherwise computer use stays off. ")}
+              Pick where this bot's computer lives.
           </div>
           <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
             {(
               [
                 ["cloud", "Cloud box"],
-                ["local", localLong],
+                ["local", "This computer"],
                 ["off", "Off"],
               ] as const
             ).map(([mode, label], i) => (
               <button
                 key={mode}
+                disabled={mode === "local" && !localAvailable}
+                title={
+                  mode === "local" && !localAvailable
+                    ? capabilities.host.platform === "linux"
+                      ? "Local computer control isn't available on Linux yet"
+                      : capabilities.host.label === "Browser"
+                        ? "Local computer control requires the desktop app"
+                        : "CUA Driver isn't ready"
+                    : undefined
+                }
                 onClick={() => dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode } })}
                 className={cn(
                   "flex-1 py-1.5 text-[13px]",
                   i > 0 && "border-l border-hairline/40",
+                  mode === "local" && !localAvailable && "cursor-not-allowed opacity-40",
                   bot.computer === mode
                     ? "bg-raised text-ink"
                     : "text-ink-secondary hover:bg-raised/60 hover:text-ink",

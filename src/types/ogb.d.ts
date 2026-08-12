@@ -30,7 +30,7 @@ declare global {
 
   interface Window {
     ogb?: {
-      platform: string;
+      platform: NodeJS.Platform;
       getCapabilities(): Promise<DesktopCapabilities>;
       screenFrame(): Promise<string | null>;
       speechStart(): Promise<void>;

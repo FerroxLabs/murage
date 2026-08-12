@@ -26,8 +26,7 @@ import { MausAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
-
-const isElectron = navigator.userAgent.includes("Electron");
+import { useDesktopCapabilities } from "./DesktopCapabilities";
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
 function profileInitials(profile?: { name?: string; email?: string }): string {
@@ -465,11 +464,14 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
 
 export function Sidebar() {
   const { state, dispatch } = useStore();
+  const { capabilities } = useDesktopCapabilities();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [roomMenu, setRoomMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
   const [query, setQuery] = useState("");
+  const macInset = capabilities.windowChrome === "mac-inset";
+  const browser = capabilities.host.label === "Browser";
 
   const q = query.trim().toLowerCase();
   const visibleBots = state.bots
@@ -486,24 +488,24 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-full w-[320px] shrink-0 flex-col border-r border-hairline/40 bg-panel">
-      {/* Titlebar: real traffic lights in Electron, faux ones in the browser */}
+      {/* macOS owns inset traffic lights; Linux/Windows use native chrome. */}
       <div
         className="flex items-center justify-between px-4 pt-3.5 pb-1"
-        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+        style={macInset ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined}
       >
-        {isElectron ? (
-          // Reserves room for the macOS traffic lights. Windows has nothing on
-          // the left — its caption buttons overlay the chat header top-right —
-          // so reserving 56px there is just a blank gap.
-          <div className={window.ogb?.platform === "win32" ? "" : "w-14"} />
-        ) : (
+        {macInset ? (
+          <div className="w-14" />
+        ) : browser ? (
           <div className="flex items-center gap-2">
             <span className="size-3 rounded-full bg-[#ff5f57]" />
             <span className="size-3 rounded-full bg-[#febc2e]" />
             <span className="size-3 rounded-full bg-[#28c840]" />
           </div>
-        )}
-        <div className="relative" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+        ) : <div />}
+        <div
+          className="relative"
+          style={macInset ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}
+        >
           <button
             onClick={() => setPlusOpen((o) => !o)}
             className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"

@@ -11,6 +11,7 @@ import { PluginsPanel } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
 import { AppSettingsPanel } from "@/components/AppSettingsPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -84,9 +85,11 @@ export default function App() {
     initAnalytics();
   }, []);
   return (
-    <StoreProvider>
-      <Shell />
-      {gated && <Onboarding onDone={() => setGated(false)} />}
-    </StoreProvider>
+    <DesktopCapabilitiesProvider>
+      <StoreProvider>
+        <Shell />
+        {gated && <Onboarding onDone={() => setGated(false)} />}
+      </StoreProvider>
+    </DesktopCapabilitiesProvider>
   );
 }
