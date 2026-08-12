@@ -74,7 +74,18 @@ try {
     "applications",
     "com.openmausbot.app.desktop",
   );
+  const scalableIcon = path.join(
+    extracted,
+    "usr",
+    "share",
+    "icons",
+    "hicolor",
+    "scalable",
+    "apps",
+    "openmausbot.svg",
+  );
   requireFile(desktopFile);
+  requireFile(scalableIcon);
   const desktop = readFileSync(desktopFile, "utf8");
   for (const expected of [
     "Name=OpenMausBot",

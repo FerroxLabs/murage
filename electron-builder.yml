@@ -98,7 +98,9 @@ linux:
       arch: x64
     - target: deb
       arch: x64
-  icon: build/icon-1024.png
+  # Keep the vector source in the freedesktop scalable icon hierarchy. A
+  # lone 1024px PNG is not indexed by GNOME's hicolor theme on Ubuntu 24.04.
+  icon: build/icon.svg
   category: Utility
   executableName: openmausbot
   synopsis: Your own team of AI bots, in a chat app
