@@ -202,6 +202,9 @@ app.on("before-quit", (e) => {
   try {
     serverProc?.kill();
   } catch {}
+  // a live dictation session runs its own helper child that holds the mic —
+  // stop it here so quitting never orphans a recording process
+  stopSpeech();
   stopCua().finally(() => {
     cuaCleanedUp = true;
     app.quit();
