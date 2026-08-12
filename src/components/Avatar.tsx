@@ -14,7 +14,18 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { MAUS_COLORS, type MausColor, type MausMotion, type MausState } from "@/lib/mascot";
-import { CursorAvatar, type CursorAvatarHandle } from "./CursorAvatar";
+import { CursorAvatar, SHAPE, type CursorAvatarHandle, type CursorShape } from "./CursorAvatar";
+
+/**
+ * The pack's baked-in silhouette was exported with the body fill hardcoded
+ * to black instead of the {{GRADIENT}} placeholder the component
+ * substitutes, which painted every bot the same. Restore the slot so the
+ * per-bot gradient actually lands on the body.
+ */
+const GRADIENT_SHAPE: CursorShape = {
+  ...SHAPE,
+  body: SHAPE.body.replace(/fill="#000000"/g, 'fill="{{GRADIENT}}"'),
+};
 
 /**
  * Legacy face-placement knobs from the Maus body era. The cursor mascot
@@ -182,6 +193,7 @@ function MausAvatarComponent(
         state={motionState ?? state}
         expression={expression}
         size={size}
+        shape={GRADIENT_SHAPE}
         gradient={gradientFor(color)}
         title={label ?? null}
         lookAround={forward ? 0 : 1}
