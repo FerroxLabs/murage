@@ -231,6 +231,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         "--output-format", "stream-json",
         "--input-format", "stream-json",
         "--verbose", // required by stream-json output
+        // token-level streaming: content_block_delta events between the
+        // whole-message frames, so the bubble grows as the model writes
+        "--include-partial-messages",
         "--permission-mode", config.permissionMode === "auto" ? "acceptEdits" : config.permissionMode,
       ];
       if (sessionId) args.push("--resume", sessionId);
@@ -327,6 +330,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost });
       };
 
+      // token streaming: true while --include-partial-messages is delivering
+      // text deltas for the current assistant message, so the whole-message
+      // frame that follows doesn't re-emit the same text as one big delta
+      let sawStreamDelta = false;
+
       const handleLine = (line: string) => {
         let o: any;
         try {
@@ -343,11 +351,30 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: o.estimated_tokens });
             }
             break;
+          case "stream_event": {
+            // subagent narration is dropped — N parallel Tasks would
+            // interleave their prose into one bubble (upstream-verified bug)
+            if (o.parent_tool_use_id) break;
+            const ev = o.event ?? {};
+            if (ev.type !== "content_block_delta") break;
+            const d = ev.delta ?? {};
+            if (d.type === "text_delta" && typeof d.text === "string" && d.text) {
+              sawStreamDelta = true;
+              emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: d.text });
+            } else if (d.type === "thinking_delta" && typeof d.thinking === "string" && d.thinking) {
+              emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta: d.thinking });
+            }
+            break;
+          }
           case "assistant": {
             const msg = o.message ?? {};
             const text = firstText(msg.content);
             if (text.trim()) {
-              emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: text });
+              // fallback delta for CLIs/paths that never streamed the block
+              if (!sawStreamDelta) {
+                emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: text });
+              }
+              sawStreamDelta = false;
               emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
             }
             for (const b of Array.isArray(msg.content) ? msg.content : []) {

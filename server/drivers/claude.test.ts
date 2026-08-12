@@ -95,6 +95,25 @@ posixOnly("ClaudeDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
   });
 
+  it("streams partial-message text deltas without re-emitting the whole message", async () => {
+    await create("stream");
+    await instance.adapter.sendTurn({ threadId: "t-stream", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const deltas = recorder.events.filter((e) => e.type === "content.delta");
+    const text = deltas.filter((d: any) => d.streamKind === "assistant_text");
+    // two streamed chunks, and NO third full-text fallback delta after them
+    expect(text.map((d: any) => d.delta)).toEqual(["hello from ", "fake claude"]);
+    // subagent narration (parent_tool_use_id) never surfaces
+    expect(text.some((d: any) => d.delta.includes("SUBAGENT"))).toBe(false);
+    // reasoning streams on its own kind
+    expect(deltas.some((d: any) => d.streamKind === "reasoning_text" && d.delta === "hmm")).toBe(true);
+    // the settled message still lands exactly once
+    const settled = recorder.events.filter((e: any) => e.type === "item.completed" && e.itemType === "assistant_text");
+    expect(settled).toHaveLength(1);
+    expect((settled[0] as any).text).toBe("hello from fake claude");
+  });
+
   it("sends the prompt over stdin, never argv, and strips identity env vars", async () => {
     await create();
     const dump = join(scratch, "dump.json");

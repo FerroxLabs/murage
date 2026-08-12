@@ -99,7 +99,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         detached: true,
       });
 
-      const state = { settled: false, lastText: "" };
+      const state = { settled: false, lastText: "", sawStreamDelta: false };
       const asks = new Map<string, (behavior: string, message?: string) => void>();
       let nextId = 1;
       const rpcPending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
@@ -203,6 +203,22 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const handleNotification = (msg: any) => {
         const p = msg.params ?? {};
         switch (msg.method) {
+          // token-level chat text; the item/completed frame follows with the
+          // whole message, so its delta is only a fallback when none streamed
+          case "item/agentMessage/delta": {
+            const delta = typeof p.delta === "string" ? p.delta : "";
+            if (delta) {
+              state.sawStreamDelta = true;
+              emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
+            }
+            break;
+          }
+          case "item/reasoning/textDelta":
+          case "item/reasoning/summaryTextDelta": {
+            const delta = typeof p.delta === "string" ? p.delta : "";
+            if (delta) emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta });
+            break;
+          }
           case "item/started": {
             const item = p.item ?? {};
             const title =
@@ -223,7 +239,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             if (item.type === "agentMessage") {
               if (item.text?.trim()) {
                 state.lastText = item.text;
-                emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: item.text });
+                if (!state.sawStreamDelta) {
+                  emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: item.text });
+                }
+                state.sawStreamDelta = false;
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: item.text });
               }
             } else if (["commandExecution", "fileChange", "mcpToolCall"].includes(item.type)) {
