@@ -19,6 +19,22 @@ declare global {
       permRequestMic(): Promise<boolean>;
       /** Opens System Settings on a privacy pane: mic|screen|speech. */
       permOpenSettings(pane: "mic" | "screen" | "speech"): Promise<void>;
+      /** In-app auto-update (packaged app only; dormant in dev). onState
+       * fires immediately with the current state, then on transitions. */
+      updater?: {
+        check(): Promise<void>;
+        download(): Promise<void>;
+        /** quit-and-install the downloaded update */
+        install(): Promise<void>;
+        onState(cb: (s: UpdaterState) => void): () => void;
+      };
     };
   }
+}
+
+export interface UpdaterState {
+  status: "idle" | "checking" | "available" | "downloading" | "downloaded" | "error";
+  version?: string;
+  percent?: number;
+  message?: string;
 }
