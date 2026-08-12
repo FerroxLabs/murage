@@ -16,6 +16,10 @@ const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 
+// GNOME groups the window with its installed desktop entry only when both
+// identities match. This must run before Electron becomes ready.
+if (process.platform === "linux") app.setDesktopName("com.openmausbot.app.desktop");
+
 // Packaged: the harness server ships in Resources (compiled JS, zero deps)
 // and runs on Electron's own Node via utilityProcess. It serves the built
 // UI too, so the window talks to one origin and there is no dev proxy.
