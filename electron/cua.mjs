@@ -30,6 +30,17 @@ const HOST_BUNDLE_ID = "com.openmausbot.app";
 let embeddedHost = null; // EmbeddedCuaDriverHost | null
 let connection = null; // descriptor exposed to harness + renderer
 
+function persistConnection(next) {
+  connection = next;
+  const userData = app.getPath("userData");
+  fs.mkdirSync(userData, { recursive: true });
+  fs.writeFileSync(
+    path.join(userData, "cua-connection.json"),
+    JSON.stringify(connection, null, 2),
+  );
+  return connection;
+}
+
 export function resolveDriverBinary() {
   if (process.env.CUA_DRIVER_PATH) return process.env.CUA_DRIVER_PATH;
   if (app.isPackaged) {
@@ -72,8 +83,7 @@ async function startEmbedded(binary) {
 export async function startCua() {
   const binary = resolveDriverBinary();
   if (!binary) {
-    connection = { mode: "unavailable", reason: "cua-driver binary not found" };
-    return connection;
+    return persistConnection({ mode: "unavailable", reason: "cua-driver binary not found" });
   }
 
   const wantEmbedded =
@@ -105,11 +115,7 @@ export async function startCua() {
     };
   }
 
-  fs.writeFileSync(
-    path.join(app.getPath("userData"), "cua-connection.json"),
-    JSON.stringify(connection, null, 2),
-  );
-  return connection;
+  return persistConnection(connection);
 }
 
 export function cuaPermissionsStatus() {
@@ -136,6 +142,7 @@ export async function stopCua() {
     }
     embeddedHost = null;
   }
+  if (connection) persistConnection({ mode: "unavailable", reason: "desktop-host-stopped" });
 }
 
 export function registerCuaIpc() {

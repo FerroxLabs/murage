@@ -4,7 +4,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +17,7 @@ import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { mentionedBots, Store, type Message } from "./store.ts";
+import { readCuaConnection } from "./local-computer.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -374,38 +374,6 @@ async function finalScreenFrame(botId: string): Promise<Frame | null> {
   screenPollers.delete(botId);
   await entry.capture();
   return entry.last;
-}
-
-// Where Electron's app.getPath("userData") lands, per platform — the
-// hardcoded macOS path found nothing anywhere else, and threw the
-// non-ENOENT errors into the same silent catch.
-// `||`, not `??`: a set-but-empty APPDATA/XDG_CONFIG_HOME would otherwise
-// join into a RELATIVE path resolved against the server's cwd — the same
-// silent ENOENT this function exists to stop. Electron ignores empty values
-// the same way.
-function userDataRoot(): string {
-  if (process.platform === "win32") return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-  if (process.platform === "darwin") return join(homedir(), "Library", "Application Support");
-  return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-}
-
-// Local computer-use contract written by Electron main on startup
-// (Electron's userData dir: ~/Library/Application Support on macOS,
-// %APPDATA% on Windows — <dir>/cua-connection.json). Read fresh each turn —
-// Electron may restart or permissions may change.
-function readCuaConnection(): { command: string; args: string[]; env: Record<string, string> } | null {
-  // new name first; pre-rename desktop builds used the old directory
-  for (const dir of ["OpenMausBot", "openmausbot", "OpenGrokBot", "opengrokbot"]) {
-    try {
-      const p = join(userDataRoot(), dir, "cua-connection.json");
-      const conn = JSON.parse(readFileSync(p, "utf8"));
-      if (!conn || conn.mode === "unavailable" || !conn.mcpCommand) continue;
-      return { command: conn.mcpCommand, args: conn.mcpArgs ?? ["mcp"], env: conn.mcpEnv ?? {} };
-    } catch {
-      /* try the next location */
-    }
-  }
-  return null;
 }
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
