@@ -28,6 +28,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { newEventId, newId } from "../contracts.js";
+import { augmentedPath } from "../env-path.js";
 import { appendNative } from "./native.js";
 const DRIVER_KIND = "grokAgent";
 // The CLI catalog is account-driven (`grok models` reports exactly one today);
@@ -81,7 +82,7 @@ export const GrokAgentDriver = {
             // homedir is the fleet-wide convention (claude and codex do the same);
             // config.workspace lets an instance be sandboxed to one directory
             const cwd = turn.cwd ?? config.workspace ?? homedir();
-            const env = { ...process.env };
+            const env = { ...process.env, PATH: augmentedPath() };
             // the CLI owns its own grok.com login; a leaked API key silently flips
             // billing from the subscription to pay-as-you-go
             delete env.XAI_API_KEY;
@@ -432,7 +433,7 @@ export const GrokAgentDriver = {
         };
         const snapshot = async () => {
             const version = await new Promise((resolve) => {
-                execFile(config.cli, ["--version"], { timeout: 8000 }, (err, stdout) => resolve(err ? null : stdout.trim()));
+                execFile(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => resolve(err ? null : stdout.trim()));
             });
             if (!version)
                 return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
