@@ -1,17 +1,19 @@
 // OpenMausBot server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
-import { readFileSync, unlinkSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
-import { extname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import * as box from "./box.js";
 import * as composio from "./composio.js";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.js";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.js";
 import { EventBus } from "./harness/bus.js";
 import { ProviderRegistry } from "./harness/registry.js";
-import { Store } from "./store.js";
+import { mentionedBots, Store } from "./store.js";
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
 const MIME = {
@@ -30,6 +32,67 @@ const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
 const bus = new EventBus();
 bus.attach(registry.instances());
+// ── peer-agent comms wiring ────────────────────────────────────────────
+// A shared secret guards the localhost-only /api/internal endpoints the
+// agents-proxy calls; regenerated each boot (the proxy gets it via env).
+const COMMS_TOKEN = randomBytes(24).toString("hex");
+// Cap message chains: depth 0 = a user-initiated turn (may ask a peer);
+// a peer invoked via ask_bot runs at depth 1 and gets NO agents tool, so
+// A→B is allowed but B→C (and A→B→A loops) never start.
+const MAX_COMMS_DEPTH = 1;
+// proxy entry: .ts in dev (node type-strips), .js in the packaged dist-server
+const agentsProxyPath = (() => {
+    const ts = join(dirname(fileURLToPath(import.meta.url)), "drivers", "agents-proxy.ts");
+    return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
+})();
+// in the packaged app process.execPath is Electron — run the proxy as node
+const AGENTS_NODE_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
+function agentsIntegration(botId, depth) {
+    return {
+        command: process.execPath,
+        args: [agentsProxyPath],
+        env: {
+            ...AGENTS_NODE_FLAG,
+            OMB_HARNESS_URL: `http://127.0.0.1:${PORT}`,
+            OMB_BOT_ID: botId,
+            OMB_COMMS_TOKEN: COMMS_TOKEN,
+            OMB_TURN_DEPTH: String(depth),
+        },
+    };
+}
+/** Run a turn on `targetBotId` and resolve with its assistant text — the
+ * synchronous half of ask_bot. Subscribes to the bus, folds assistant_text
+ * for that thread, resolves on turn.completed (or a 4-min ceiling). */
+function askBotAndWait(targetBotId, message, depth) {
+    const target = store.bot(targetBotId);
+    if (!target)
+        return Promise.resolve("(no such bot)");
+    const threadId = target.threadId;
+    return new Promise((resolve) => {
+        let text = "";
+        let done = false;
+        const finish = (out) => {
+            if (done)
+                return;
+            done = true;
+            clearTimeout(timer);
+            unsub();
+            resolve(out);
+        };
+        const unsub = bus.subscribe((e) => {
+            if (e.threadId !== threadId)
+                return;
+            if (e.type === "item.completed" && e.itemType === "assistant_text") {
+                text += (text ? "\n" : "") + e.text;
+            }
+            else if (e.type === "turn.completed") {
+                finish(text || "(the bot finished without a text reply)");
+            }
+        });
+        const timer = setTimeout(() => finish(text || "(timed out waiting for the bot to reply)"), 4 * 60_000);
+        startTurn(targetBotId, message, { commsDepth: depth + 1 }).catch((err) => finish(`(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})`));
+    });
+}
 // default selection for new bots: first available instance, claude preferred
 async function defaultSelection() {
     const described = await registry.describe();
@@ -213,12 +276,13 @@ function readCuaConnection() {
     return null;
 }
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
-async function startTurn(botId, text) {
+async function startTurn(botId, text, opts) {
     const bot = store.bot(botId);
     if (!bot)
         throw Object.assign(new Error("no such bot"), { status: 404 });
     if (bot.busy)
         throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
+    const commsDepth = opts?.commsDepth ?? 0;
     const instance = registry.get(bot.modelSelection.instanceId);
     if (!instance) {
         throw Object.assign(new Error(`provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`), { status: 409 });
@@ -268,6 +332,24 @@ async function startTurn(botId, text) {
                 if (cua)
                     integrations.localComputer = cua;
             }
+            // peer-agent comms: give a user-initiated turn the list_bots/ask_bot
+            // tools. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
+            // stop, so the user's tokens can't be burned by a bot-to-bot loop.
+            // Only drivers that mount the tools get the integration (and, via the
+            // integrations.agents gate below, the prompt hint) — a bot on a driver
+            // without it must not be told about tools it cannot call. Any bot can
+            // still be the TARGET of ask_bot regardless of its driver.
+            if (commsDepth < MAX_COMMS_DEPTH &&
+                instance.adapter.capabilities.agentsMcp === true &&
+                store.bots.filter((b) => b.id !== bot.id && !b.hidden).length > 0) {
+                integrations.agents = agentsIntegration(bot.id, commsDepth);
+            }
+            // @mentions in the user's message (the composer's tagging UI) become
+            // an explicit delegation nudge — the agent still does the ask_bot call
+            // itself, so the harness stays the single owner of turns/permissions
+            const tagged = integrations.agents
+                ? mentionedBots(text, store.bots.filter((b) => b.id !== bot.id))
+                : [];
             await instance.adapter.sendTurn({
                 threadId: bot.threadId,
                 text,
@@ -279,7 +361,15 @@ async function startTurn(botId, text) {
                         ? " You have your own cloud computer — use the computer tools (screenshot, computer_exec, open_url) whenever browsing or acting on a desktop helps."
                         : integrations.localComputer
                             ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
-                            : ""),
+                            : "") +
+                    (integrations.agents
+                        ? " You can work with the user's other bots through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
+                        : "") +
+                    (tagged.length
+                        ? ` The user tagged ${tagged
+                            .map((t) => `@${t.name} (ask_bot bot_id ${t.id})`)
+                            .join(" and ")} in their message — bring them in with ask_bot and fold their reply into your answer.`
+                        : ""),
                 integrations,
             });
             if (integrations.computer)
@@ -304,6 +394,8 @@ function configStatus() {
         xai: { configured: Boolean(cfg.xai?.key) },
         composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
         box: { configured: Boolean(cfg.box?.token) },
+        // not a secret — the sidebar shows it
+        profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
     };
 }
 /** Rebuild the provider fleet after a config change so new keys take
@@ -344,6 +436,55 @@ const server = createServer(async (req, res) => {
     const path = url.pathname;
     const method = req.method ?? "GET";
     try {
+        // ── internal peer-agent comms (localhost + shared token only) ──────
+        // The agents-proxy (spawned inside a bot's agent process) calls these to
+        // discover peers and hand a message to one. Not part of the public API.
+        if (path.startsWith("/api/internal/")) {
+            if (req.headers.authorization !== `Bearer ${COMMS_TOKEN}`) {
+                return json(res, 401, { error: "unauthorized" });
+            }
+            if (method === "GET" && path === "/api/internal/agents") {
+                const self = url.searchParams.get("self");
+                const bots = store.bots
+                    .filter((b) => b.id !== self && !b.hidden)
+                    .map((b) => ({ id: b.id, name: b.name, model: b.modelSelection.model, busy: !!b.busy }));
+                return json(res, 200, { bots });
+            }
+            if (method === "POST" && path === "/api/internal/ask-bot") {
+                const body = await readBody(req);
+                const fromBotId = String(body.fromBotId ?? "");
+                const toBotId = String(body.toBotId ?? "");
+                const message = String(body.message ?? "").trim();
+                const depth = Number(body.depth ?? 0) || 0;
+                if (!toBotId || !message)
+                    return json(res, 400, { error: "toBotId and message required" });
+                if (toBotId === fromBotId)
+                    return json(res, 400, { error: "a bot cannot message itself" });
+                if (depth >= MAX_COMMS_DEPTH)
+                    return json(res, 200, { error: "message chains are limited to one hop" });
+                const target = store.bot(toBotId);
+                if (!target)
+                    return json(res, 404, { error: "no such bot" });
+                if (target.busy)
+                    return json(res, 200, { busy: true });
+                // visibility: surface the cross-talk on the caller's own thread so
+                // bot-to-bot turns are never invisible (they cost the user tokens)
+                const from = store.bot(fromBotId);
+                const fromName = from?.name ?? "another bot";
+                if (from) {
+                    const note = store.appendMessage(from.threadId, {
+                        role: "bot",
+                        kind: "activity",
+                        tool: { name: `asked @${target.name}: ${message.slice(0, 80)}` },
+                    });
+                    broadcast({ kind: "message", threadId: from.threadId, message: note });
+                }
+                const prefixed = `[Message from @${fromName}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
+                const reply = await askBotAndWait(toBotId, prefixed, depth);
+                return json(res, 200, { botName: target.name, text: reply });
+            }
+            return json(res, 404, { error: "unknown internal endpoint" });
+        }
         // ── events stream ──
         if (method === "GET" && path === "/api/events") {
             res.writeHead(200, {
@@ -461,6 +602,12 @@ const server = createServer(async (req, res) => {
             await instance?.adapter.interruptTurn(bot.threadId);
             return json(res, 200, { ok: true });
         }
+        // identity handshake for the packaged app's port fallback: the forked
+        // child proves it is OURS by echoing its pid (a stray dev server has
+        // the same API shape but a different pid)
+        if (method === "GET" && path === "/api/health") {
+            return json(res, 200, { app: "openmausbot", pid: process.pid, static: Boolean(STATIC_DIR) });
+        }
         // ── provider instances (model picker) ──
         if (method === "GET" && path === "/api/instances") {
             return json(res, 200, { instances: await registry.describe() });
@@ -472,7 +619,7 @@ const server = createServer(async (req, res) => {
         if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
             const body = await readBody(req);
             const patch = {};
-            for (const key of ["xai", "composio", "box"]) {
+            for (const key of ["xai", "composio", "box", "profile"]) {
                 if (body[key] && typeof body[key] === "object")
                     patch[key] = body[key];
             }
@@ -480,7 +627,10 @@ const server = createServer(async (req, res) => {
                 return json(res, 400, { error: "nothing to save" });
             saveConfig(patch);
             Object.assign(cfg, loadConfig());
-            await reloadProviders();
+            // provider keys change the fleet; a profile edit must not kill
+            // in-flight turns with a pointless reload
+            if (Object.keys(patch).some((k) => k !== "profile"))
+                await reloadProviders();
             const status = configStatus();
             broadcast({ kind: "config", ...status });
             return json(res, 200, status);

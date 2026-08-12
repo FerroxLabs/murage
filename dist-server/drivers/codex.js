@@ -12,6 +12,7 @@
 import { homedir } from "node:os";
 import { execCli, killCliTree, spawnCli } from "../procs.js";
 import { newEventId, newId } from "../contracts.js";
+import { augmentedPath } from "../env-path.js";
 import { appendNative } from "./native.js";
 const DRIVER_KIND = "codex";
 // catalog ported from upstream packages/contracts/src/model.ts
@@ -58,7 +59,7 @@ export const CodexDriver = {
             if (active.has(threadId))
                 throw new Error("a turn is already running on this thread");
             const turnId = newId();
-            const env = { ...process.env, NPM_CONFIG_LOGLEVEL: "error" };
+            const env = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
             // the CLI owns its own ChatGPT login; a leaked API key silently flips
             // billing to pay-as-you-go (agentcal)
             delete env.OPENAI_API_KEY;
@@ -323,7 +324,7 @@ export const CodexDriver = {
         };
         const snapshot = async () => {
             const version = await new Promise((resolve) => {
-                execCli(config.cli, ["--version"], { timeout: 8000 }, (err, stdout) => resolve(err ? null : stdout.trim()));
+                execCli(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => resolve(err ? null : stdout.trim()));
             });
             if (!version)
                 return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };

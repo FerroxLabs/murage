@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, shell, utilityProcess } from "electron";
+import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
@@ -18,6 +18,7 @@ const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 // alternate ports until one binds AND identifies as ours (the probe checks
 // our API shape, not just a 200).
 let serverProc = null;
+let serverReady = true;
 async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
   const proc = utilityProcess.fork(entry, [], {
@@ -32,15 +33,18 @@ async function startServerOn(port) {
   proc.once("exit", () => {
     exited = true;
   });
-  // wait for the port to answer (fresh machine: first boot writes data dirs)
+  // wait for the port to answer (fresh machine: first boot writes data dirs).
+  // Identity check is by PID: a dev harness server has the same API shape,
+  // so only the child we actually forked (matching pid + static serving)
+  // counts as ours.
   for (let i = 0; i < 40; i++) {
     if (exited) return null;
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/bots`);
+      const res = await fetch(`http://127.0.0.1:${port}/api/health`);
       if (res.ok) {
         const body = await res.json().catch(() => null);
-        if (body && Array.isArray(body.bots)) return proc; // it's ours
-        break; // someone else owns this port
+        if (body?.app === "openmausbot" && body.pid === proc.pid && body.static) return proc;
+        break; // someone else owns this port — try the next one
       }
     } catch {
       /* not up yet */
@@ -54,16 +58,27 @@ async function startServerOn(port) {
 }
 
 async function startServerPackaged() {
-  for (const port of [8799, 18799, 28799]) {
-    const proc = await startServerOn(port);
-    if (proc) {
-      serverProc = proc;
-      SERVER_PORT = port;
-      return true;
+  // two passes: a quit-and-reopen relaunch can race the dying instance's
+  // server during teardown — one settle-and-retry covers it
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const port of [8799, 18799, 28799]) {
+      const proc = await startServerOn(port);
+      if (proc) {
+        serverProc = proc;
+        SERVER_PORT = port;
+        return true;
+      }
     }
+    await new Promise((r) => setTimeout(r, 2500));
   }
   return false;
 }
+
+const ERROR_PAGE =
+  "data:text/html;charset=utf-8," +
+  encodeURIComponent(
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen OpenMausBot — if it keeps happening, restart your Mac.</p></div></body>`,
+  );
 
 function createWindow() {
   const isMac = process.platform === "darwin";
@@ -95,7 +110,7 @@ function createWindow() {
   });
 
   if (app.isPackaged) {
-    win.loadURL(`http://127.0.0.1:${SERVER_PORT}`);
+    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
   } else {
     win.loadURL(DEV_URL);
   }
@@ -111,6 +126,44 @@ ipcMain.handle("screen:frame", async () => {
   return sources[0]?.thumbnail.toDataURL() ?? null;
 });
 
+// Onboarding permission checks. Status reads are free; the mic request
+// pops the real TCC prompt attributed to the app.
+//
+// Screen Recording deliberately has NO request path here. On macOS 15+
+// every pre-grant mechanism is broken: getMediaAccessStatus("screen")
+// wraps CGPreflightScreenCaptureAccess, which caches per-process (stays
+// "denied" for the whole session after the user grants); a helper child
+// binary gets TCC-attributed to ITSELF on macOS 26, not the app, and
+// plain executables no longer appear in the Settings pane at all; and
+// Sequoia+ re-prompts periodically regardless, so a pre-grant expires.
+// The one reliable path is the first real in-process capture
+// (screen:frame above / getDisplayMedia via the handler below) — macOS
+// prompts then, attributed correctly, at the moment of actual use. The
+// perm:open-settings deep link stays as the repair path for denials.
+ipcMain.handle("perm:status", () => ({
+  mic: systemPreferences.getMediaAccessStatus?.("microphone") ?? "unknown",
+}));
+ipcMain.handle("perm:request-mic", async () => {
+  try {
+    return await systemPreferences.askForMediaAccess("microphone");
+  } catch {
+    return false;
+  }
+});
+
+// macOS never re-prompts a denied permission — the only path is System
+// Settings; deep-link straight to the right privacy pane.
+ipcMain.handle("perm:open-settings", (_event, pane) => {
+  const panes = {
+    mic: "Privacy_Microphone",
+    screen: "Privacy_ScreenCapture",
+    speech: "Privacy_SpeechRecognition",
+  };
+  return shell.openExternal(
+    `x-apple.systempreferences:com.apple.preference.security?${panes[pane] ?? "Privacy"}`,
+  );
+});
+
 ipcMain.handle("speech:start", (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) startSpeech(win);
@@ -119,12 +172,25 @@ ipcMain.handle("speech:stop", () => stopSpeech());
 
 app.whenReady().then(async () => {
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
+  // getDisplayMedia in the renderer → this handler → ScreenCaptureKit, all
+  // inside the app's own processes — the one capture path macOS reliably
+  // attributes to the app (registers it in the Screen Recording pane and
+  // prompts). Used by the onboarding "Enable screen preview" button.
+  session.defaultSession.setDisplayMediaRequestHandler(
+    (_request, callback) => {
+      desktopCapturer
+        .getSources({ types: ["screen"] })
+        .then((sources) => callback(sources[0] ? { video: sources[0] } : {}))
+        .catch(() => callback({}));
+    },
+    { useSystemPicker: false },
+  );
   registerCuaIpc();
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.
   startCua().catch((e) => console.error("[cua] start failed:", e));
-  if (app.isPackaged) await startServerPackaged();
+  if (app.isPackaged) serverReady = await startServerPackaged();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

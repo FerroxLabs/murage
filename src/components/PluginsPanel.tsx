@@ -109,7 +109,7 @@ export function PluginsPanel() {
       onClick={() => dispatch({ type: "togglePlugins", open: false })}
     >
       <div
-        className="flex max-h-[80%] w-[560px] flex-col rounded-2xl border border-hairline/50 bg-panel p-5 shadow-2xl"
+        className="animate-pop-in flex max-h-[80%] w-[560px] flex-col rounded-2xl border border-hairline/50 bg-panel p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">

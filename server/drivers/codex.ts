@@ -23,6 +23,7 @@ import type {
   SendTurnInput,
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
+import { augmentedPath } from "../env-path.ts";
 import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "codex";
@@ -87,7 +88,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const turnId = newId();
 
-      const env: Record<string, string | undefined> = { ...process.env, NPM_CONFIG_LOGLEVEL: "error" };
+      const env: Record<string, string | undefined> = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
       // the CLI owns its own ChatGPT login; a leaked API key silently flips
       // billing to pay-as-you-go (agentcal)
       delete env.OPENAI_API_KEY;
@@ -355,7 +356,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const version = await new Promise<string | null>((resolve) => {
-        execCli(config.cli, ["--version"], { timeout: 8000 }, (err, stdout) =>
+        execCli(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) =>
           resolve(err ? null : stdout.trim()),
         );
       });

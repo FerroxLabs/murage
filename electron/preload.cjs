@@ -19,4 +19,12 @@ contextBridge.exposeInMainWorld("ogb", {
     ipcRenderer.on("speech:end", handler);
     return () => ipcRenderer.removeListener("speech:end", handler);
   },
+  /** {mic} TCC status strings: granted|denied|not-determined|unknown.
+   * No screen field — macOS 15+ caches that status per-process, so any
+   * value here would lie for the whole session after a grant. */
+  permStatus: () => ipcRenderer.invoke("perm:status"),
+  /** Triggers the macOS microphone prompt; resolves true when granted. */
+  permRequestMic: () => ipcRenderer.invoke("perm:request-mic"),
+  /** Opens System Settings on the given privacy pane: mic|screen|speech. */
+  permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
 });

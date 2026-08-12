@@ -47,7 +47,7 @@ export function saveConfig(patch) {
     catch {
         /* first write */
     }
-    for (const key of ["xai", "composio", "box"]) {
+    for (const key of ["xai", "composio", "box", "profile"]) {
         if (patch[key] && typeof patch[key] === "object") {
             disk[key] = { ...disk[key], ...patch[key] };
         }
@@ -60,12 +60,17 @@ export function saveConfig(patch) {
 // Config-file keys are injected as per-instance environment so drivers
 // see them without needing real process env vars.
 export function instanceConfigs(cfg) {
-    // No grok instance by default: the xAI API key is a credential Milind
-    // doesn't want to manage — the CLI agents + the box are the fleet. The
-    // driver stays registered; an `instances` entry brings it back anytime.
+    // The default `grok` instance rides the `grokAgent` driver, not the API-key
+    // one: like claude and codex it needs no credential from us, just the CLI
+    // installed and logged in (it shows up unavailable otherwise). The API-key
+    // `grok` driver stays registered but out of the default fleet — that key is
+    // a credential Milind doesn't want to manage; an `instances` entry brings
+    // it back anytime.
     const map = cfg.instances && Object.keys(cfg.instances).length
         ? cfg.instances
         : {
+            grok: { driver: "grokAgent" },
+            gemini: { driver: "geminiAgent" },
             claude: { driver: "claudeAgent" },
             codex: { driver: "codex" },
             computer: { driver: "boxAgent" },

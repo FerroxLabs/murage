@@ -11,7 +11,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import type { MausColor, MausExpression } from "@/lib/mascot";
+import type { MausColor, MausExpression, MausMotion } from "@/lib/mascot";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -68,6 +68,8 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
+  /** who's using the app — collected in onboarding, shown in the sidebar */
+  profile?: { name: string; email: string };
 }
 
 /** One row of GET /api/instances — the model picker's data. */
@@ -101,6 +103,11 @@ interface AppState {
   provisioning: Record<string, boolean>;
   connected: boolean;
   error: string | null;
+  mascotMotion: {
+    botId: string;
+    nonce: number;
+    kind: Exclude<MausMotion, "none">;
+  } | null;
 }
 
 type Action =
@@ -131,6 +138,7 @@ type Action =
   | { type: "togglePlugins"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleAppSettings"; open?: boolean }
+  | { type: "previewMascotMotion"; botId: string; kind: Exclude<MausMotion, "none"> }
   | {
       type: "updateBot";
       botId: string;
@@ -144,6 +152,21 @@ type Action =
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
   return { ...state, bots: state.bots.map((b) => (b.id === botId ? fn(b) : b)) };
+}
+
+function withMascotMotion(
+  state: AppState,
+  botId: string,
+  kind: Exclude<MausMotion, "none">,
+): AppState {
+  return {
+    ...state,
+    mascotMotion: {
+      botId,
+      nonce: (state.mascotMotion?.nonce ?? 0) + 1,
+      kind,
+    },
+  };
 }
 
 function patchCard(state: AppState, botId: string, messageId: string, patch: Partial<OptionCardData>): AppState {
@@ -169,14 +192,26 @@ function reducer(state: AppState, action: Action): AppState {
     case "configStatus":
       return { ...state, config: action.config };
     case "select":
-      return updateBot({ ...state, selectedId: action.id }, action.id, (b) => ({ ...b, unread: false }));
+      return updateBot(
+        withMascotMotion({ ...state, selectedId: action.id }, action.id, "switch"),
+        action.id,
+        (b) => ({ ...b, unread: false }),
+      );
     // optimistic card settle; the server's message.patch confirms it later
     case "answerCard":
-      return patchCard(state, action.botId, action.messageId, { answered: action.answer });
+      return withMascotMotion(
+        patchCard(state, action.botId, action.messageId, { answered: action.answer }),
+        action.botId,
+        "working",
+      );
     case "dismissCard":
       return patchCard(state, action.botId, action.messageId, { dismissed: true });
     case "botAdded":
-      return { ...state, bots: [action.bot, ...state.bots], selectedId: action.bot.id };
+      return withMascotMotion({
+        ...state,
+        bots: [action.bot, ...state.bots],
+        selectedId: action.bot.id,
+      }, action.bot.id, "arrive");
     case "deleteBot": {
       const bots = state.bots.filter((b) => b.id !== action.botId);
       const selectedId =
@@ -184,9 +219,20 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, bots, selectedId };
     }
     case "markUnread":
-      return updateBot(state, action.botId, (b) => ({ ...b, unread: true }));
-    case "botPatched":
-      return updateBot(state, action.bot.id, (b) => ({ ...b, ...action.bot, messages: b.messages }));
+      return updateBot(withMascotMotion(state, action.botId, "surprise"), action.botId, (b) => ({ ...b, unread: true }));
+    case "botPatched": {
+      const before = state.bots.find((b) => b.id === action.bot.id);
+      const kind =
+        action.bot.unread && !before?.unread
+          ? "surprise"
+          : action.bot.busy === true && !before?.busy
+            ? "working"
+            : action.bot.busy === false && before?.busy
+              ? "celebrate"
+              : null;
+      const next = kind ? withMascotMotion(state, action.bot.id, kind) : state;
+      return updateBot(next, action.bot.id, (b) => ({ ...b, ...action.bot, messages: b.messages }));
+    }
     case "messageAdded": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
       if (!bot) return state;
@@ -195,17 +241,39 @@ function reducer(state: AppState, action: Action): AppState {
           ? b
           : { ...b, messages: [...b.messages, action.message] },
       );
+      const motion =
+        action.message.kind === "options"
+          ? "thinking"
+          : action.message.kind === "activity"
+            ? action.message.tool?.ok === false
+              ? "failure"
+              : action.message.tool?.ok === true
+                ? "success"
+                : "working"
+            : action.message.role === "bot" && action.message.kind === "text"
+              ? "blink"
+              : null;
+      const animated = motion ? withMascotMotion(next, bot.id, motion) : next;
       // a settled assistant bubble replaces the in-flight stream
       if (action.message.role === "bot" && action.message.kind === "text") {
-        const { [action.threadId]: _, ...rest } = next.streaming;
-        return { ...next, streaming: rest };
+        const { [action.threadId]: _, ...rest } = animated.streaming;
+        return { ...animated, streaming: rest };
       }
-      return next;
+      return animated;
     }
     case "messagePatched": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
       if (!bot) return state;
-      return updateBot(state, bot.id, (b) => ({
+      const motion =
+        action.message.kind === "activity"
+          ? action.message.tool?.ok === false
+            ? "failure"
+            : action.message.tool?.ok === true
+              ? "success"
+              : "working"
+          : null;
+      const next = motion ? withMascotMotion(state, bot.id, motion) : state;
+      return updateBot(next, bot.id, (b) => ({
         ...b,
         messages: b.messages.map((m) => (m.id === action.message.id ? action.message : m)),
       }));
@@ -224,18 +292,26 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case "screenFrame":
       return {
-        ...state,
+        ...withMascotMotion(state, action.botId, "success"),
         screens: { ...state.screens, [action.botId]: { png: action.png, mime: action.mime } },
         provisioning: { ...state.provisioning, [action.botId]: false },
       };
     case "provisioning":
-      return { ...state, provisioning: { ...state.provisioning, [action.botId]: action.on } };
+      return {
+        ...(action.on ? withMascotMotion(state, action.botId, "launch") : state),
+        provisioning: { ...state.provisioning, [action.botId]: action.on },
+      };
     case "setModel":
       return updateBot(state, action.botId, (b) => ({ ...b, modelSelection: action.selection }));
     case "connected":
       return { ...state, connected: action.value };
     case "error":
-      return { ...state, error: action.message };
+      return {
+        ...(action.message && state.selectedId
+          ? withMascotMotion(state, state.selectedId, "alert")
+          : state),
+        error: action.message,
+      };
     // bot settings, the computer panel, and app settings share the right slot
     case "toggleSettings": {
       const open = action.open ?? !state.settingsOpen;
@@ -267,10 +343,20 @@ function reducer(state: AppState, action: Action): AppState {
         pluginsOpen: open ? false : state.pluginsOpen,
       };
     }
-    case "updateBot":
-      return updateBot(state, action.botId, (b) => ({ ...b, ...action.patch }));
+    case "previewMascotMotion":
+      return withMascotMotion(state, action.botId, action.kind);
+    case "updateBot": {
+      const mascotChanged =
+        Object.prototype.hasOwnProperty.call(action.patch, "color") ||
+        Object.prototype.hasOwnProperty.call(action.patch, "mascotExpression");
+      const next = mascotChanged
+        ? withMascotMotion(state, action.botId, "customize")
+        : state;
+      return updateBot(next, action.botId, (b) => ({ ...b, ...action.patch }));
+    }
     // handled entirely by the async wrapper
     case "send":
+      return withMascotMotion(state, action.botId, "working");
     case "newBot":
     case "duplicateBot":
     case "interrupt":
@@ -292,6 +378,7 @@ const initialState: AppState = {
   provisioning: {},
   connected: false,
   error: null,
+  mascotMotion: null,
 };
 
 // ── API client ─────────────────────────────────────────────────────────
@@ -522,7 +609,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "config":
           rawDispatch({
             type: "configStatus",
-            config: { xai: frame.xai, composio: frame.composio, box: frame.box },
+            config: { xai: frame.xai, composio: frame.composio, box: frame.box, profile: frame.profile },
           });
           api("/api/instances")
             .then(({ instances }) => rawDispatch({ type: "instances", instances }))

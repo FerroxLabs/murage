@@ -15,6 +15,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { DATA_DIR } from "../config.ts";
+import { augmentedPath } from "../env-path.ts";
 import { brokerSocketPath, execCli, killCliTree, spawnCli } from "../procs.ts";
 
 import type {
@@ -302,7 +303,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         args.push("--allowedTools", allowed.join(","));
       }
 
-      const env: Record<string, string | undefined> = { ...process.env, NPM_CONFIG_LOGLEVEL: "error" };
+      const env: Record<string, string | undefined> = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
       // subscription users get billed pay-as-you-go if this leaks through;
       // and a nested CLI must not inherit this session's identity (agentcal)
       delete env.ANTHROPIC_API_KEY;
@@ -423,7 +424,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const version = await new Promise<string | null>((resolve) => {
-        execCli(config.cli, ["--version"], { timeout: 8000 }, (err, stdout) =>
+        execCli(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) =>
           resolve(err ? null : stdout.trim()),
         );
       });
@@ -466,7 +467,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           execCli(
             config.cli,
             ["-p", prompt, "--model", "claude-haiku-4-5", "--output-format", "text"],
-            { timeout: 60_000, env: { ...process.env } },
+            { timeout: 60_000, env: { ...process.env, PATH: augmentedPath() } },
             (err, stdout) => (err ? reject(err) : resolve(stdout.trim())),
           );
         }),

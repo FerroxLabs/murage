@@ -14,6 +14,9 @@ export interface AppConfig {
    * catalog with official logos in the plugins marketplace. */
   composio?: { key?: string; apiKey?: string; url?: string };
   box?: { token?: string };
+  /** The person using the app (collected in onboarding, shown in the
+   * sidebar). Not a secret — echoed back by GET /api/config. */
+  profile?: { name?: string; email?: string };
   instances?: InstanceConfigMap;
 }
 
@@ -59,7 +62,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   } catch {
     /* first write */
   }
-  for (const key of ["xai", "composio", "box"] as const) {
+  for (const key of ["xai", "composio", "box", "profile"] as const) {
     if (patch[key] && typeof patch[key] === "object") {
       disk[key] = { ...(disk[key] as object), ...patch[key] };
     }
@@ -73,13 +76,18 @@ export function saveConfig(patch: Partial<AppConfig>): void {
 // Config-file keys are injected as per-instance environment so drivers
 // see them without needing real process env vars.
 export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
-  // No grok instance by default: the xAI API key is a credential Milind
-  // doesn't want to manage — the CLI agents + the box are the fleet. The
-  // driver stays registered; an `instances` entry brings it back anytime.
+  // The default `grok` instance rides the `grokAgent` driver, not the API-key
+  // one: like claude and codex it needs no credential from us, just the CLI
+  // installed and logged in (it shows up unavailable otherwise). The API-key
+  // `grok` driver stays registered but out of the default fleet — that key is
+  // a credential Milind doesn't want to manage; an `instances` entry brings
+  // it back anytime.
   const map: InstanceConfigMap =
     cfg.instances && Object.keys(cfg.instances).length
       ? cfg.instances
       : {
+          grok: { driver: "grokAgent" },
+          gemini: { driver: "geminiAgent" },
           claude: { driver: "claudeAgent" },
           codex: { driver: "codex" },
           computer: { driver: "boxAgent" },

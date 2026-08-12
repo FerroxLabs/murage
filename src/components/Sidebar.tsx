@@ -1,3 +1,4 @@
+import { track } from "@/lib/analytics";
 import { useEffect, useState } from "react";
 import {
   BellDot,
@@ -20,6 +21,20 @@ import { expressionForBot } from "@/lib/mascot";
 import { cn } from "@/lib/cn";
 
 const isElectron = navigator.userAgent.includes("Electron");
+
+/** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
+function profileInitials(profile?: { name?: string; email?: string }): string {
+  const name = profile?.name?.trim();
+  if (name) {
+    const words = name.split(/\s+/);
+    return words
+      .slice(0, 2)
+      .map((w) => w[0]!.toUpperCase())
+      .join("");
+  }
+  const email = profile?.email?.trim();
+  return email ? email[0]!.toUpperCase() : "?";
+}
 
 function preview(bot: Bot): string {
   if (bot.busy) return "Working…";
@@ -133,6 +148,7 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
 function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => void }) {
   const { state, dispatch } = useStore();
   const selected = state.selectedId === bot.id;
+  const mascotMotion = selected && state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const last = bot.messages[bot.messages.length - 1];
   return (
     <button
@@ -146,7 +162,13 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
         selected ? "bg-raised" : "hover:bg-raised/50",
       )}
     >
-      <MausAvatar color={bot.color} expression={expressionForBot(bot)} size={44} />
+      <MausAvatar
+        color={bot.color}
+        expression={expressionForBot(bot)}
+        size={44}
+        motion={mascotMotion?.kind ?? "none"}
+        motionKey={mascotMotion?.nonce ?? 0}
+      />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold text-ink">
@@ -197,7 +219,7 @@ export function Sidebar() {
           </div>
         )}
         <button
-          onClick={() => dispatch({ type: "newBot" })}
+          onClick={() => { track("bot_created"); dispatch({ type: "newBot" }); }}
           className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
           title="New bot"
@@ -236,9 +258,14 @@ export function Sidebar() {
           <span className="text-[14px] text-ink">Plugins</span>
         </button>
         <div className="flex items-center">
-          <button className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-raised/50">
-            <InitialsAvatar initials="MS" size={28} />
-            <span className="truncate text-[14px] text-ink">Milind Soni</span>
+          <button
+            onClick={() => dispatch({ type: "toggleAppSettings" })}
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-raised/50"
+          >
+            <InitialsAvatar initials={profileInitials(state.config?.profile)} size={28} />
+            <span className="truncate text-[14px] text-ink">
+              {state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || "You"}
+            </span>
           </button>
           <button
             onClick={() => dispatch({ type: "toggleAppSettings" })}

@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DATA_DIR } from "../config.js";
+import { augmentedPath } from "../env-path.js";
 import { brokerSocketPath, execCli, killCliTree, spawnCli } from "../procs.js";
 import { newEventId, newId } from "../contracts.js";
 import { appendNative } from "./native.js";
@@ -265,7 +266,7 @@ export const ClaudeDriver = {
                 args.push("--mcp-config", JSON.stringify({ mcpServers }));
                 args.push("--allowedTools", allowed.join(","));
             }
-            const env = { ...process.env, NPM_CONFIG_LOGLEVEL: "error" };
+            const env = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
             // subscription users get billed pay-as-you-go if this leaks through;
             // and a nested CLI must not inherit this session's identity (agentcal)
             delete env.ANTHROPIC_API_KEY;
@@ -380,7 +381,7 @@ export const ClaudeDriver = {
         };
         const snapshot = async () => {
             const version = await new Promise((resolve) => {
-                execCli(config.cli, ["--version"], { timeout: 8000 }, (err, stdout) => resolve(err ? null : stdout.trim()));
+                execCli(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => resolve(err ? null : stdout.trim()));
             });
             if (!version)
                 return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
@@ -419,7 +420,7 @@ export const ClaudeDriver = {
                 },
             },
             generateText: (prompt) => new Promise((resolve, reject) => {
-                execCli(config.cli, ["-p", prompt, "--model", "claude-haiku-4-5", "--output-format", "text"], { timeout: 60_000, env: { ...process.env } }, (err, stdout) => (err ? reject(err) : resolve(stdout.trim())));
+                execCli(config.cli, ["-p", prompt, "--model", "claude-haiku-4-5", "--output-format", "text"], { timeout: 60_000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => (err ? reject(err) : resolve(stdout.trim())));
             }),
             dispose: async () => {
                 for (const { stop } of active.values())

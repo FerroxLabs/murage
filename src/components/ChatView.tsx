@@ -142,6 +142,7 @@ export function ChatView({ bot }: { bot: Bot }) {
 
   const streaming = state.streaming[bot.threadId];
   const provisioning = state.provisioning[bot.id];
+  const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -167,7 +168,13 @@ export function ChatView({ bot }: { bot: Bot }) {
           title="Bot settings"
           style={noDrag}
         >
-          <MausAvatar color={bot.color} expression={expressionForBot(bot)} size={28} />
+          <MausAvatar
+            color={bot.color}
+            expression={expressionForBot(bot)}
+            size={28}
+            motion={mascotMotion?.kind ?? "none"}
+            motionKey={mascotMotion?.nonce ?? 0}
+          />
           <span className="text-[15px] font-semibold text-ink">{bot.name}</span>
           {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
         </button>
