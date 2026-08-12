@@ -198,3 +198,11 @@ built yet, and Windows/Linux shells haven't been attempted (the harness itself i
 
 Contributions welcome — the driver SPI in [`server/contracts.ts`](server/contracts.ts) is deliberately
 small; adding a provider is one file in [`server/drivers/`](server/drivers/) plus a one-line registration.
+
+## License
+
+[MIT](LICENSE) © 2026 Milind Soni and contributors.
+
+OpenMausBot is an independent, open-source project inspired by Grok Bot. It is
+not affiliated with, endorsed by, or associated with xAI; "Grok" is a trademark
+of its respective owner.
