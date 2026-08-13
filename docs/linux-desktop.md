@@ -139,13 +139,28 @@ GNOME/Xorg.
 Install Cua Driver from its [official installation guide](https://cua.ai/docs/how-to-guides/driver/install):
 
 ```sh
-/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+CUA_DRIVER_RS_VERSION=0.19.3 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
 cua-driver --version
 cua-driver manifest --pretty
 cua-driver doctor --json
 ```
 
-Confirm the version is `0.19.3` and sign into a GNOME on Xorg session. Then:
+Confirm the version is `0.19.3`. OpenMausBot also rejects an executable or containing directory that another
+local user could replace. Ubuntu's normal user-private group layout is accepted after OpenMausBot verifies that
+the group belongs only to your account. On a shared or centrally managed group, the app may ask you to remove
+group write access from the exact user-owned install directories:
+
+```sh
+driver_path="$(readlink -f "$(command -v cua-driver)")"
+case "$driver_path" in
+  "$HOME"/.cua-driver/packages/releases/0.19.3-*/cua-driver) ;;
+  *) echo "Unexpected Cua Driver path: $driver_path" >&2; exit 1 ;;
+esac
+chmod go-w "$HOME/.local/bin" "$HOME/.cua-driver" "$HOME/.cua-driver/packages" \
+  "$HOME/.cua-driver/packages/releases" "$(dirname "$driver_path")"
+```
+
+Sign into a GNOME on Xorg session. Then:
 
 1. Open a bot's **Computer** panel.
 2. In **Local control**, choose **Enable local control (Beta)** and review the warning.
@@ -175,14 +190,15 @@ pnpm test
 pnpm check:electron
 pnpm package:linux
 node scripts/verify-linux-package.mjs
-dbus-run-session -- xvfb-run -a node scripts/smoke-linux-package.mjs
+pnpm smoke:linux-package
 ```
 
 The verifier checks `.deb` metadata, desktop identity, resources, artifact permissions, and that no Cua executable
 was bundled. The smoke test launches the unpacked production app without `--no-sandbox`, validates the
 renderer/preload and embedded health endpoint, then uses a fake user-installed driver to prove diagnostics,
-private-daemon readiness, crash invalidation, explicit retry, and clean shutdown. It is not a substitute for real
-GNOME Xorg action evidence or real GNOME Wayland portal evidence.
+private-daemon readiness, crash invalidation, explicit retry, and clean shutdown. Its wrapper isolates the
+temporary D-Bus/AT-SPI runtime so it cannot replace the live desktop session's accessibility socket. It is not a
+substitute for real GNOME Xorg action evidence or real GNOME Wayland portal evidence.
 
 ## Troubleshooting
 
@@ -210,7 +226,9 @@ cua-driver doctor --json
 
 Repair any display, session bus, or AT-SPI diagnostic before choosing **Try again**. If the path shown in the app
 is unexpected, close OpenMausBot and launch it with an absolute `CUA_DRIVER_PATH`. An invalid explicit override
-fails without silently selecting another executable.
+fails without silently selecting another executable. For `unsafe-driver-permissions`, use the bounded
+permission-hardening commands in **Enable local control on Xorg**; do not make the driver executable or its
+directories world-writable.
 
 ### Screen preview does not start
 
