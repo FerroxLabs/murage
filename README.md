@@ -217,7 +217,7 @@ pnpm package:linux    # Ubuntu x64: .deb + AppImage; no Swift required
 |---|---|---|---|
 | Packaged app, embedded harness, local agent CLIs | Supported | Beta | Beta |
 | Composio and Box/cloud computers | Supported | Beta | Beta |
-| Explicit preview-only local screen capture | Supported | Beta | Pending GNOME portal validation |
+| Explicit preview-only local screen capture | Supported | Beta | Beta |
 | Bot control of this computer | Supported | Planned | Planned after compositor validation |
 | Native on-device dictation | Supported | Planned | Planned |
 

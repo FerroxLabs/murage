@@ -11,8 +11,8 @@ of Linux desktop on your own server instead of this machine, see [byo-vps.md](by
 - Chat, streaming turns, approvals, bot-to-bot communication, and local data storage.
 - Composio connected apps and Box cloud computers.
 - External documentation and OAuth links in the default browser.
-- An explicit, view-only local screen preview on GNOME Xorg, with a Wayland portal implementation pending
-  final real-session validation.
+- An explicit, view-only local screen preview on GNOME Xorg and GNOME Wayland. The Wayland path uses the
+  native portal chooser and keeps the selected PipeWire stream open until the user stops sharing.
 
 The local preview does **not** give the bot control of this computer. Linux dictation and local computer
 control remain unavailable and fail closed in the Electron, server, and UI layers. Use a Cloud box when a bot
@@ -108,10 +108,10 @@ Restart OpenMausBot after installing or signing in to a CLI.
 
 ## Xorg and Wayland
 
-The shell, chat, cloud computers, and connected apps work in both GNOME session types. Preview-only capture is
-validated on Xorg; its Wayland portal path is implemented but remains a release candidate until the complete
-chooser/cancel/end matrix passes in a real GNOME Wayland session. OpenMausBot detects Wayland before XWayland
-when both `WAYLAND_DISPLAY` and `DISPLAY` exist, so capture cannot accidentally bypass portal-mediated behavior.
+The shell, chat, cloud computers, connected apps, and preview-only capture work in both GNOME session types.
+The Wayland chooser/select/persistent-stream/cancel/end/retry lifecycle has been validated in a real Ubuntu
+24.04 GNOME Wayland session. OpenMausBot detects Wayland before XWayland when both `WAYLAND_DISPLAY` and
+`DISPLAY` exist, so capture cannot accidentally bypass portal-mediated behavior.
 
 Open the Computer panel and use the separate **Preview this computer** card. Capture never starts when the app
 or panel opens.
