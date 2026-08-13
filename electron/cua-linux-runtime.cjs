@@ -9,6 +9,7 @@ const {
   CERTIFIED_MANIFEST_SCHEMA,
   desktopCommandEnvironment,
   inspectLinuxCuaDriver,
+  sameDriverFileIdentity,
   validateDriverCandidate,
 } = require("./cua-linux.cjs");
 
@@ -170,12 +171,20 @@ function validateDaemonMetadata(response, { childPid } = {}) {
 }
 
 function validateToolSurface(response) {
-  const tools = response?.ok === true && Array.isArray(response.result) ? response.result : null;
-  if (!tools) {
+  const manifest = response?.ok === true ? response.result : null;
+  if (
+    !manifest ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest) ||
+    manifest.schema_version !== CERTIFIED_TOOLS_LIST_SCHEMA_VERSION ||
+    manifest.capability_version !== CERTIFIED_CAPABILITY_VERSION ||
+    !Array.isArray(manifest.tools)
+  ) {
     throw Object.assign(new Error("Cua Driver tool surface could not be verified."), {
       code: "invalid-tool-surface",
     });
   }
+  const tools = manifest.tools;
   const names = new Set(tools.map((tool) => tool?.name).filter((name) => typeof name === "string"));
   const missing = REQUIRED_TOOLS.filter((name) => !names.has(name));
   if (missing.length) {
@@ -376,15 +385,6 @@ function createLinuxCuaRuntime({
       }
       if (!enabled || quitting) return connection;
 
-      const revalidated = validateDriverCandidate(inspected.path);
-      if (revalidated.status !== "found" || revalidated.path !== inspected.path) {
-        return unavailable(
-          "error",
-          "driver-changed",
-          "Cua Driver changed after validation. Check the installation and try again.",
-        );
-      }
-
       const generation = identifier();
       const root = runtimeRoot();
       const runtimeDirectory = path.join(root, `${processId}-${generation.slice(0, 12)}`);
@@ -414,6 +414,22 @@ function createLinuxCuaRuntime({
         "--permission-mode",
         "standard",
       ];
+      // Pin the exact file inspected above, not merely its path. Keep this
+      // directly adjacent to spawn so an update/replacement during doctor or
+      // runtime preparation fails closed instead of launching uninspected code.
+      const revalidated = validateDriverCandidate(inspected.path);
+      if (
+        revalidated.status !== "found" ||
+        revalidated.path !== inspected.path ||
+        !sameDriverFileIdentity(inspected.fileIdentity, revalidated.fileIdentity)
+      ) {
+        cleanupRuntimeFiles({ runtimeDirectory, socketPath, pidFile });
+        return unavailable(
+          "error",
+          "driver-changed",
+          "Cua Driver changed after validation. Check the installation and try again.",
+        );
+      }
       const child = spawnProcess(inspected.path, args, {
         env: childEnv,
         shell: false,
@@ -459,6 +475,9 @@ function createLinuxCuaRuntime({
             path: inspected.path,
             version: inspected.driverVersion,
             manifestSchema: inspected.manifestSchema,
+            // Private descriptor-only pin. The renderer consumes getStatus(),
+            // which deliberately omits this internal file identity.
+            fileIdentity: inspected.fileIdentity,
           },
           daemon: {
             socketPath,

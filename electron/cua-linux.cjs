@@ -1,4 +1,4 @@
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -7,6 +7,19 @@ const CERTIFIED_DRIVER_VERSION = "0.19.3";
 const CERTIFIED_MANIFEST_SCHEMA = "1";
 const DEFAULT_TIMEOUT_MS = 8_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 512 * 1024;
+const GETENT_BINARY = "/usr/bin/getent";
+const GETENT_TIMEOUT_MS = 1_500;
+const GETENT_MAX_OUTPUT_BYTES = 256 * 1024;
+const DRIVER_FILE_IDENTITY_KEYS = Object.freeze([
+  "dev",
+  "ino",
+  "uid",
+  "gid",
+  "mode",
+  "size",
+  "mtimeNs",
+  "ctimeNs",
+]);
 
 const SESSION_ENV_KEYS = new Set([
   "AT_SPI_BUS",
@@ -161,30 +174,216 @@ function pathComponents(target) {
 }
 
 function safeOwner(stat, currentUid) {
-  return stat.uid === currentUid || stat.uid === 0;
+  const uid = Number(stat.uid);
+  return uid === currentUid || uid === 0;
 }
 
-function validatePathComponents(target, currentUid) {
+function driverFileIdentityFromStat(stat) {
+  return Object.freeze({
+    dev: String(stat.dev),
+    ino: String(stat.ino),
+    uid: String(stat.uid),
+    gid: String(stat.gid),
+    mode: String(stat.mode),
+    size: String(stat.size),
+    mtimeNs: String(stat.mtimeNs),
+    ctimeNs: String(stat.ctimeNs),
+  });
+}
+
+function captureDriverFileIdentity(target, fileSystem = fs) {
+  return driverFileIdentityFromStat(fileSystem.statSync(target, { bigint: true }));
+}
+
+function sameDriverFileIdentity(expected, actual) {
+  if (!expected || !actual || typeof expected !== "object" || typeof actual !== "object") {
+    return false;
+  }
+  const expectedKeys = Object.keys(expected).sort();
+  const actualKeys = Object.keys(actual).sort();
+  const requiredKeys = [...DRIVER_FILE_IDENTITY_KEYS].sort();
+  if (
+    expectedKeys.length !== requiredKeys.length ||
+    actualKeys.length !== requiredKeys.length ||
+    !requiredKeys.every((key, index) => expectedKeys[index] === key && actualKeys[index] === key)
+  ) {
+    return false;
+  }
+  return DRIVER_FILE_IDENTITY_KEYS.every(
+    (key) => typeof expected[key] === "string" && expected[key] === actual[key],
+  );
+}
+
+function runGetent(args, {
+  spawnCommand = spawnSync,
+  timeoutMs = GETENT_TIMEOUT_MS,
+  maxOutputBytes = GETENT_MAX_OUTPUT_BYTES,
+} = {}) {
+  const result = spawnCommand(GETENT_BINARY, args, {
+    encoding: "utf8",
+    env: { LANG: "C", LC_ALL: "C" },
+    maxBuffer: maxOutputBytes,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: timeoutMs,
+    windowsHide: true,
+  });
+  if (result?.error || result?.status !== 0 || typeof result?.stdout !== "string") {
+    return {
+      ok: false,
+      reason: result?.error?.code === "ETIMEDOUT" ? "lookup-timeout" : "lookup-failed",
+    };
+  }
+  if (Buffer.byteLength(result.stdout) > maxOutputBytes) {
+    return { ok: false, reason: "lookup-output-too-large" };
+  }
+  return { ok: true, stdout: result.stdout };
+}
+
+function privatePrimaryGroup(identity, { getent = runGetent } = {}) {
+  if (
+    !Number.isSafeInteger(identity?.uid) ||
+    !Number.isSafeInteger(identity?.gid) ||
+    typeof identity?.username !== "string" ||
+    !identity.username
+  ) {
+    return { exclusive: false, reason: "identity-unavailable" };
+  }
+
+  const groupResult = getent(["group", String(identity.gid)]);
+  if (!groupResult?.ok) {
+    return { exclusive: false, reason: groupResult?.reason ?? "lookup-failed" };
+  }
+
+  const groupLines = groupResult.stdout.split(/\r?\n/).filter(Boolean);
+  const groupRecords = groupLines.map((line) => line.split(":"));
+  if (
+    groupRecords.length !== 1 ||
+    groupRecords[0].length !== 4 ||
+    !/^\d+$/.test(groupRecords[0][2]) ||
+    Number(groupRecords[0][2]) !== identity.gid ||
+    groupRecords[0][0] !== identity.username
+  ) {
+    return { exclusive: false, reason: "primary-group-not-private" };
+  }
+  const explicitMembers = groupRecords[0][3].split(",").filter(Boolean);
+  if (explicitMembers.some((member) => member !== identity.username)) {
+    return { exclusive: false, reason: "primary-group-shared" };
+  }
+
+  const passwdResult = getent(["passwd"]);
+  if (!passwdResult?.ok) {
+    return { exclusive: false, reason: passwdResult?.reason ?? "lookup-failed" };
+  }
+  const passwdLines = passwdResult.stdout.split(/\r?\n/).filter(Boolean);
+  const passwdRecords = passwdLines.map((line) => line.split(":"));
+  if (
+    passwdRecords.length === 0 ||
+    passwdRecords.some(
+      (fields) =>
+        fields.length !== 7 || !/^\d+$/.test(fields[2]) || !/^\d+$/.test(fields[3]),
+    )
+  ) {
+    return { exclusive: false, reason: "lookup-malformed" };
+  }
+  const primaryMembers = passwdRecords
+    .filter((fields) => Number(fields[3]) === identity.gid)
+    .map((fields) => ({ username: fields[0], uid: Number(fields[2]) }));
+  if (
+    primaryMembers.length !== 1 ||
+    primaryMembers[0].username !== identity.username ||
+    primaryMembers[0].uid !== identity.uid
+  ) {
+    return { exclusive: false, reason: "primary-group-shared" };
+  }
+  return { exclusive: true, gid: identity.gid, name: identity.username };
+}
+
+function driverIdentity({ currentUid, currentGid, currentUsername } = {}) {
+  let info = {};
+  try {
+    info = os.userInfo();
+  } catch {
+    // Group-writable paths will fail closed when identity cannot be proven.
+  }
+  return {
+    uid: currentUid ?? process.getuid?.() ?? info.uid,
+    gid: currentGid ?? process.getgid?.() ?? info.gid,
+    username: currentUsername ?? info.username,
+  };
+}
+
+function createPermissionCheck(identity, lookupPrivateGroup) {
+  let groupProof;
+  const groupWriteAllowed = (stat) => {
+    if (Number(stat.uid) !== identity.uid || Number(stat.gid) !== identity.gid) return false;
+    if (groupProof === undefined) {
+      try {
+        groupProof = lookupPrivateGroup(identity);
+      } catch {
+        groupProof = { exclusive: false, reason: "lookup-failed" };
+      }
+    }
+    return (
+      groupProof?.exclusive === true &&
+      groupProof.gid === identity.gid &&
+      groupProof.name === identity.username
+    );
+  };
+  const failure = (component, stat) => {
+    const worldWritable = (Number(stat.mode) & 0o002) !== 0;
+    return unavailable(
+      "unsafe-driver-permissions",
+      worldWritable
+        ? `Cua Driver path is world-writable: ${component}`
+        : `Cua Driver path is group-writable and its group could not be proven private: ${component}`,
+      {
+        affectedPaths: [component],
+        ...(groupProof?.reason ? { permissionReason: groupProof.reason } : {}),
+      },
+    );
+  };
+  return { failure, groupWriteAllowed };
+}
+
+function writablePermissionError(component, stat, permissionCheck, { allowRootSticky = false } = {}) {
+  const mode = Number(stat.mode);
+  const rootOwnedStickyDirectory =
+    allowRootSticky && stat.isDirectory() && Number(stat.uid) === 0 && (mode & 0o1000) !== 0;
+  if (rootOwnedStickyDirectory) return null;
+  if ((mode & 0o002) !== 0) return permissionCheck.failure(component, stat);
+  if ((mode & 0o020) !== 0 && !permissionCheck.groupWriteAllowed(stat)) {
+    return permissionCheck.failure(component, stat);
+  }
+  return null;
+}
+
+function validatePathComponents(target, currentUid, permissionCheck) {
   for (const component of pathComponents(path.dirname(target))) {
     const stat = fs.lstatSync(component);
     if (!safeOwner(stat, currentUid)) {
       return unavailable(
         "unsafe-driver-owner",
         `Cua Driver path component is owned by an unexpected user: ${component}`,
+        { affectedPaths: [component] },
       );
     }
-    const rootOwnedStickyDirectory = stat.isDirectory() && stat.uid === 0 && (stat.mode & 0o1000) !== 0;
-    if ((stat.mode & 0o022) !== 0 && !rootOwnedStickyDirectory) {
-      return unavailable(
-        "unsafe-driver-permissions",
-        `Cua Driver path component is group- or world-writable: ${component}`,
-      );
-    }
+    const permissionError = writablePermissionError(component, stat, permissionCheck, {
+      allowRootSticky: true,
+    });
+    if (permissionError) return permissionError;
   }
   return null;
 }
 
-function validateDriverCandidate(candidate, { currentUid = process.getuid?.() ?? os.userInfo().uid } = {}) {
+function validateDriverCandidate(candidate, {
+  currentUid,
+  currentGid,
+  currentUsername,
+  lookupPrivateGroup = privatePrimaryGroup,
+} = {}) {
+  const identity = driverIdentity({ currentUid, currentGid, currentUsername });
+  const permissionCheck = createPermissionCheck(identity, lookupPrivateGroup);
   if (!path.isAbsolute(candidate)) {
     return unavailable("driver-path-not-absolute", "Cua Driver path must be absolute.", {
       candidate,
@@ -194,10 +393,15 @@ function validateDriverCandidate(candidate, { currentUid = process.getuid?.() ??
   let linkStat;
   let canonicalPath;
   let targetStat;
+  let fileIdentity;
   try {
     linkStat = fs.lstatSync(candidate);
     canonicalPath = fs.realpathSync(candidate);
-    targetStat = fs.statSync(canonicalPath);
+    // This single stat is the authority for type, owner, mode, and the
+    // identity later pinned by the runtime. A second stat at the end proves
+    // the file did not change while parent permissions were being checked.
+    targetStat = fs.statSync(canonicalPath, { bigint: true });
+    fileIdentity = driverFileIdentityFromStat(targetStat);
   } catch (error) {
     return unavailable("driver-not-found", `Cua Driver was not found at ${candidate}.`, {
       candidate,
@@ -205,11 +409,11 @@ function validateDriverCandidate(candidate, { currentUid = process.getuid?.() ??
     });
   }
 
-  if (!safeOwner(linkStat, currentUid) || !safeOwner(targetStat, currentUid)) {
+  if (!safeOwner(linkStat, identity.uid) || !safeOwner(targetStat, identity.uid)) {
     return unavailable(
       "unsafe-driver-owner",
       "Cua Driver must be owned by the current user or root.",
-      { candidate, canonicalPath },
+      { candidate, canonicalPath, affectedPaths: [canonicalPath] },
     );
   }
   if (!targetStat.isFile()) {
@@ -218,24 +422,19 @@ function validateDriverCandidate(candidate, { currentUid = process.getuid?.() ??
       canonicalPath,
     });
   }
-  if ((targetStat.mode & 0o111) === 0) {
+  if ((Number(targetStat.mode) & 0o111) === 0) {
     return unavailable("driver-not-executable", "Cua Driver is not executable.", {
       candidate,
       canonicalPath,
     });
   }
-  if ((targetStat.mode & 0o022) !== 0) {
-    return unavailable(
-      "unsafe-driver-permissions",
-      "Cua Driver must not be group- or world-writable.",
-      { candidate, canonicalPath },
-    );
-  }
+  const targetPermissionError = writablePermissionError(canonicalPath, targetStat, permissionCheck);
+  if (targetPermissionError) return { ...targetPermissionError, candidate, canonicalPath };
 
   try {
-    const lexicalError = validatePathComponents(candidate, currentUid);
+    const lexicalError = validatePathComponents(candidate, identity.uid, permissionCheck);
     if (lexicalError) return { ...lexicalError, candidate, canonicalPath };
-    const canonicalError = validatePathComponents(canonicalPath, currentUid);
+    const canonicalError = validatePathComponents(canonicalPath, identity.uid, permissionCheck);
     if (canonicalError) return { ...canonicalError, candidate, canonicalPath };
     fs.accessSync(canonicalPath, fs.constants.X_OK);
   } catch (error) {
@@ -246,19 +445,43 @@ function validateDriverCandidate(candidate, { currentUid = process.getuid?.() ??
     });
   }
 
-  return { status: "found", path: canonicalPath };
+  try {
+    const finalIdentity = captureDriverFileIdentity(canonicalPath);
+    if (!sameDriverFileIdentity(fileIdentity, finalIdentity)) {
+      return unavailable("driver-changed", "Cua Driver changed while it was being validated.", {
+        candidate,
+        canonicalPath,
+      });
+    }
+  } catch (error) {
+    return unavailable("driver-not-found", "Cua Driver changed while it was being validated.", {
+      candidate,
+      canonicalPath,
+      cause: error?.code,
+    });
+  }
+
+  return { status: "found", path: canonicalPath, fileIdentity };
 }
 
-function discoverLinuxCuaDriver({ env = process.env, homeDir = os.homedir(), currentUid } = {}) {
+function discoverLinuxCuaDriver({
+  env = process.env,
+  homeDir = os.homedir(),
+  currentUid,
+  currentGid,
+  currentUsername,
+  lookupPrivateGroup,
+} = {}) {
+  const validationOptions = { currentUid, currentGid, currentUsername, lookupPrivateGroup };
   const explicit = env.CUA_DRIVER_PATH;
   if (explicit) {
-    const result = validateDriverCandidate(explicit, { currentUid });
+    const result = validateDriverCandidate(explicit, validationOptions);
     return result.status === "found" ? { ...result, source: "environment" } : result;
   }
 
   const localCandidate = path.join(homeDir, ".local", "bin", "cua-driver");
   if (fs.existsSync(localCandidate)) {
-    const result = validateDriverCandidate(localCandidate, { currentUid });
+    const result = validateDriverCandidate(localCandidate, validationOptions);
     if (result.status === "found") return { ...result, source: "user-local" };
     return result;
   }
@@ -267,7 +490,7 @@ function discoverLinuxCuaDriver({ env = process.env, homeDir = os.homedir(), cur
   for (const directory of sanitizePath(env.PATH).split(path.delimiter).filter(Boolean)) {
     const candidate = path.join(directory, "cua-driver");
     if (!fs.existsSync(candidate)) continue;
-    const result = validateDriverCandidate(candidate, { currentUid });
+    const result = validateDriverCandidate(candidate, validationOptions);
     if (result.status === "found") return { ...result, source: "path" };
     firstUnsafe ??= result;
   }
@@ -379,6 +602,9 @@ async function inspectLinuxCuaDriver({
   env = process.env,
   homeDir = os.homedir(),
   currentUid,
+  currentGid,
+  currentUsername,
+  lookupPrivateGroup,
   run = runCuaCommand,
 } = {}) {
   const session = String(env.XDG_SESSION_TYPE ?? "").toLowerCase();
@@ -397,7 +623,14 @@ async function inspectLinuxCuaDriver({
     return unavailable("display-unavailable", "Local control requires an active Xorg display.");
   }
 
-  const discovered = discoverLinuxCuaDriver({ env, homeDir, currentUid });
+  const discovered = discoverLinuxCuaDriver({
+    env,
+    homeDir,
+    currentUid,
+    currentGid,
+    currentUsername,
+    lookupPrivateGroup,
+  });
   if (discovered.status !== "found") return discovered;
   const commandEnv = desktopCommandEnvironment(env);
 
@@ -436,6 +669,7 @@ async function inspectLinuxCuaDriver({
       status: "ready",
       path: discovered.path,
       source: discovered.source,
+      fileIdentity: discovered.fileIdentity,
       driverVersion,
       manifestSchema: manifest.schema_version,
       mcp,
@@ -454,11 +688,15 @@ async function inspectLinuxCuaDriver({
 module.exports = {
   CERTIFIED_DRIVER_VERSION,
   CERTIFIED_MANIFEST_SCHEMA,
+  captureDriverFileIdentity,
   desktopCommandEnvironment,
   discoverLinuxCuaDriver,
   inspectLinuxCuaDriver,
   parseVersion,
+  privatePrimaryGroup,
+  runGetent,
   runCuaCommand,
+  sameDriverFileIdentity,
   sanitizePath,
   validateDoctor,
   validateDriverCandidate,

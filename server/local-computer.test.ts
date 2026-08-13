@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -13,6 +13,17 @@ function linuxDescriptor(userData: string) {
   const binary = join(userData, "cua-driver");
   const socket = join(userData, "runtime", "driver.sock");
   writeFileSync(binary, "fake", { mode: 0o700 });
+  const stat = statSync(binary, { bigint: true });
+  const fileIdentity = {
+    dev: String(stat.dev),
+    ino: String(stat.ino),
+    uid: String(stat.uid),
+    gid: String(stat.gid),
+    mode: String(stat.mode),
+    size: String(stat.size),
+    mtimeNs: String(stat.mtimeNs),
+    ctimeNs: String(stat.ctimeNs),
+  };
   return {
     schemaVersion: 1,
     mode: "linux-x11-supervised",
@@ -22,7 +33,7 @@ function linuxDescriptor(userData: string) {
     status: "ready",
     ownerPid: process.pid,
     generation: "01234567-89ab-cdef-0123-456789abcdef",
-    driver: { path: binary, version: "0.19.3", manifestSchema: "1" },
+    driver: { path: binary, version: "0.19.3", manifestSchema: "1", fileIdentity },
     daemon: {
       socketPath: socket,
       pid: process.pid,
@@ -86,6 +97,14 @@ describe("local computer descriptor", () => {
       }),
     ).toBeNull();
     expect(decodeLinuxDescriptor({ ...descriptor, toolNames: ["list_apps"] })).toBeNull();
+    expect(
+      decodeLinuxDescriptor({
+        ...descriptor,
+        driver: { ...descriptor.driver, fileIdentity: { ...descriptor.driver.fileIdentity, extra: "1" } },
+      }),
+    ).toBeNull();
+    const { fileIdentity: _missingIdentity, ...driverWithoutIdentity } = descriptor.driver;
+    expect(decodeLinuxDescriptor({ ...descriptor, driver: driverWithoutIdentity })).toBeNull();
   });
 
   it("fails closed when runtime ownership or liveness validation fails", () => {
@@ -114,6 +133,10 @@ describe("local computer descriptor", () => {
       try {
         chmodSync(descriptor.daemon.socketPath, 0o600);
         expect(validateLinuxDescriptorRuntime(file, descriptor)).toBe(true);
+        expect(readCuaConnection({ platform: "linux", userData })).not.toBeNull();
+        appendFileSync(descriptor.driver.path, "changed after descriptor publication");
+        expect(validateLinuxDescriptorRuntime(file, descriptor)).toBe(false);
+        expect(readCuaConnection({ platform: "linux", userData })).toBeNull();
         chmodSync(file, 0o644);
         expect(validateLinuxDescriptorRuntime(file, descriptor)).toBe(false);
       } finally {

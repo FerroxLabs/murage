@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { createCuaConnectionStore } = require("./cua-connection.cjs");
+const { validateDriverCandidate } = require("./cua-linux.cjs");
 const {
   createLinuxCuaPreferenceStore,
   createLinuxCuaRuntime,
@@ -71,7 +72,7 @@ function handshake(pid = 4321) {
   };
 }
 
-function harness({ preferenceEnabled = false } = {}) {
+function harness({ preferenceEnabled = false, afterIdentityCaptured } = {}) {
   const userData = temporaryDirectory();
   const runtimeRoot = path.join(userData, "session");
   fs.mkdirSync(runtimeRoot, { mode: 0o700 });
@@ -80,15 +81,20 @@ function harness({ preferenceEnabled = false } = {}) {
   const preferenceStore = createLinuxCuaPreferenceStore({ getUserData: () => userData });
   if (preferenceEnabled) preferenceStore.write(true);
   const child = fakeChild();
-  const inspect = vi.fn(async () => ({
-    status: "ready",
-    path: binary,
-    source: "environment",
-    driverVersion: "0.19.3",
-    manifestSchema: "1",
-    mcp: { command: binary, args: ["mcp"] },
-    doctor: { ok: true, probes: [], warnings: [] },
-  }));
+  const fileIdentity = validateDriverCandidate(binary).fileIdentity;
+  const inspect = vi.fn(async () => {
+    afterIdentityCaptured?.(binary);
+    return {
+      status: "ready",
+      path: binary,
+      fileIdentity,
+      source: "environment",
+      driverVersion: "0.19.3",
+      manifestSchema: "1",
+      mcp: { command: binary, args: ["mcp"] },
+      doctor: { ok: true, probes: [], warnings: [] },
+    };
+  });
   const spawnProcess = vi.fn(() => child);
   const probe = vi.fn(async () => handshake(child.pid));
   const changes = [];
@@ -175,7 +181,12 @@ describe("Linux CUA opt-in and lifecycle", () => {
       status: "ready",
       ownerPid: 1234,
       generation: "01234567-89ab-cdef-0123-456789abcdef",
-      driver: { path: context.binary, version: "0.19.3", manifestSchema: "1" },
+      driver: {
+        path: context.binary,
+        version: "0.19.3",
+        manifestSchema: "1",
+        fileIdentity: validateDriverCandidate(context.binary).fileIdentity,
+      },
       daemon: { pid: 4321, contractVersion: "0.6.0" },
       mcp: {
         command: context.binary,
@@ -185,6 +196,30 @@ describe("Linux CUA opt-in and lifecycle", () => {
     const descriptor = path.join(context.userData, "cua-connection.json");
     expect(fs.statSync(descriptor).mode & 0o777).toBe(0o600);
     expect(fs.statSync(context.userData).mode & 0o777).toBe(0o700);
+    expect(JSON.parse(fs.readFileSync(descriptor, "utf8"))).toMatchObject({
+      driver: { fileIdentity: validateDriverCandidate(context.binary).fileIdentity },
+    });
+    expect(context.runtime.getStatus()).not.toHaveProperty("fileIdentity");
+    expect(context.runtime.getStatus()).not.toHaveProperty("driver.fileIdentity");
+  });
+
+  it("refuses to spawn when the inspected executable identity changes", async () => {
+    const context = harness({
+      afterIdentityCaptured(binary) {
+        fs.appendFileSync(binary, "# changed after inspection\n");
+      },
+    });
+    await context.runtime.enable();
+    expect(context.spawnProcess).not.toHaveBeenCalled();
+    expect(context.probe).not.toHaveBeenCalled();
+    expect(context.runtime.getConnection()).toMatchObject({
+      mode: "unavailable",
+      status: "error",
+      reasonCode: "driver-changed",
+    });
+    expect(fs.readFileSync(path.join(context.userData, "cua-connection.json"), "utf8")).not.toContain(
+      "fileIdentity",
+    );
   });
 
   it("invalidates readiness immediately when the owned daemon exits", async () => {
@@ -264,9 +299,19 @@ describe("Linux CUA handshake validation", () => {
 
   it("requires the inspect and mutation tool surface", () => {
     const tools = handshake().tools.map((name) => ({ name }));
-    expect(validateToolSurface({ ok: true, result: tools })).toEqual([...handshake().tools].sort());
+    const manifest = { schema_version: "1", capability_version: "1", tools };
+    expect(validateToolSurface({ ok: true, result: manifest })).toEqual([...handshake().tools].sort());
     expect(() =>
-      validateToolSurface({ ok: true, result: tools.filter((tool) => tool.name !== "type_text") }),
+      validateToolSurface({
+        ok: true,
+        result: {
+          ...manifest,
+          tools: tools.filter((tool) => tool.name !== "type_text"),
+        },
+      }),
     ).toThrow(/type_text/);
+    expect(() =>
+      validateToolSurface({ ok: true, result: { ...manifest, capability_version: "2" } }),
+    ).toThrow(/could not be verified/);
   });
 });

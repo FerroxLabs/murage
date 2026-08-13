@@ -4,6 +4,16 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 
 const REQUIRED_LINUX_TOOLS = ["click", "get_window_state", "list_apps", "type_text"];
+const DRIVER_FILE_IDENTITY_KEYS = [
+  "dev",
+  "ino",
+  "uid",
+  "gid",
+  "mode",
+  "size",
+  "mtimeNs",
+  "ctimeNs",
+] as const;
 
 export type LocalComputerConnection = {
   command: string;
@@ -31,6 +41,39 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
 function legacyPlatform(platform: NodeJS.Platform): "darwin" | "win32" | null {
   if (platform === "darwin" || platform === "win32") return platform;
   return null;
+}
+
+function validDriverFileIdentity(value: unknown): value is Record<string, string> {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    exactKeys(value as Record<string, unknown>, DRIVER_FILE_IDENTITY_KEYS) &&
+    DRIVER_FILE_IDENTITY_KEYS.every(
+      (key) => typeof (value as Record<string, unknown>)[key] === "string" && /^\d+$/.test((value as Record<string, string>)[key]),
+    )
+  );
+}
+
+function currentDriverFileIdentity(file: string): Record<string, string> {
+  const stat = statSync(file, { bigint: true });
+  return {
+    dev: String(stat.dev),
+    ino: String(stat.ino),
+    uid: String(stat.uid),
+    gid: String(stat.gid),
+    mode: String(stat.mode),
+    size: String(stat.size),
+    mtimeNs: String(stat.mtimeNs),
+    ctimeNs: String(stat.ctimeNs),
+  };
+}
+
+function sameDriverFileIdentity(expected: unknown, actual: Record<string, string>): boolean {
+  return (
+    validDriverFileIdentity(expected) &&
+    DRIVER_FILE_IDENTITY_KEYS.every((key) => expected[key] === actual[key])
+  );
 }
 
 function decodeLegacyDescriptor(
@@ -103,7 +146,7 @@ export function decodeLinuxDescriptor(value: LinuxConnectionDescriptor): LocalCo
     Array.isArray(driver) ||
     Array.isArray(daemon) ||
     Array.isArray(mcp) ||
-    !exactKeys(driver, ["path", "version", "manifestSchema"]) ||
+    !exactKeys(driver, ["path", "version", "manifestSchema", "fileIdentity"]) ||
     !exactKeys(daemon, [
       "socketPath",
       "pid",
@@ -121,6 +164,7 @@ export function decodeLinuxDescriptor(value: LinuxConnectionDescriptor): LocalCo
     !isAbsolute(driver.path) ||
     driver.version !== "0.19.3" ||
     driver.manifestSchema !== "1" ||
+    !validDriverFileIdentity(driver.fileIdentity) ||
     typeof daemon.socketPath !== "string" ||
     !isAbsolute(daemon.socketPath) ||
     !Number.isInteger(daemon.pid) ||
@@ -225,10 +269,12 @@ export function validateLinuxDescriptorRuntime(
     const binaryPath = driver.path as string;
     const socketPath = daemon.socketPath as string;
     const binaryStat = statSync(binaryPath);
+    const currentFileIdentity = currentDriverFileIdentity(binaryPath);
     const socketStat = lstatSync(socketPath);
     const socketDirectoryStat = lstatSync(dirname(socketPath));
     if (
       realpathSync(binaryPath) !== binaryPath ||
+      !sameDriverFileIdentity(driver.fileIdentity, currentFileIdentity) ||
       !binaryStat.isFile() ||
       (binaryStat.uid !== uid && binaryStat.uid !== 0) ||
       (binaryStat.mode & 0o111) === 0 ||

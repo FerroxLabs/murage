@@ -96,6 +96,7 @@ const metadata = {
   host_bundle_id: "com.openmausbot.app",
 };
 const tools = ["click", "get_window_state", "list_apps", "type_text"].map((name) => ({ name }));
+const toolManifest = { schema_version: "1", capability_version: "1", tools };
 const server = net.createServer((socket) => {
   let input = "";
   socket.on("data", (chunk) => {
@@ -103,7 +104,7 @@ const server = net.createServer((socket) => {
     const newline = input.indexOf("\\n");
     if (newline === -1) return;
     const request = JSON.parse(input.slice(0, newline));
-    const result = request.method === "metadata" ? metadata : request.method === "list" ? tools : null;
+    const result = request.method === "metadata" ? metadata : request.method === "list" ? toolManifest : null;
     socket.end(JSON.stringify(result ? { ok: true, result } : { ok: false, error: "unknown" }) + "\\n");
     if (count === 1 && request.method === "list") setTimeout(() => server.close(() => process.exit(17)), 5000);
   });
