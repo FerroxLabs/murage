@@ -1,6 +1,7 @@
 import { track } from "@/lib/analytics";
 import { useEffect, useState } from "react";
 import {
+  ArrowDownToLine,
   BellDot,
   Bot as BotIcon,
   Check,
@@ -8,10 +9,12 @@ import {
   Copy,
   EyeOff,
   FolderPlus,
+  Loader2,
   Pencil,
   Pin,
   PinOff,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Puzzle,
@@ -21,6 +24,7 @@ import {
 import { useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
 import { MausAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
+import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
 
 const isElectron = navigator.userAgent.includes("Electron");
@@ -37,6 +41,67 @@ function profileInitials(profile?: { name?: string; email?: string }): string {
   }
   const email = profile?.email?.trim();
   return email ? email[0]!.toUpperCase() : "?";
+}
+
+/** Manual update check, next to the settings gear. Packaged app only (no
+ * bridge in dev/browser). One button, state-dependent: check → download →
+ * restart, with a brief "up to date" tick when a check finds nothing so a
+ * click is never silent. The bottom-left popup handles the loud cases. */
+function UpdateButton() {
+  const s = useUpdaterState();
+  const [checkedAt, setCheckedAt] = useState(0);
+  const updater = window.ogb?.updater;
+  // a check that found nothing lands back on idle — acknowledge it for 3s
+  const upToDate = Boolean(checkedAt) && (!s || s.status === "idle") && Date.now() - checkedAt < 3000;
+  useEffect(() => {
+    if (!upToDate) return;
+    const timer = setTimeout(() => setCheckedAt(0), 3000);
+    return () => clearTimeout(timer);
+  }, [upToDate]);
+  if (!updater) return null;
+
+  const status = s?.status ?? "idle";
+  const working = status === "checking" || status === "downloading";
+  const label =
+    status === "available"
+      ? `Version ${s?.version ?? ""} available — download`
+      : status === "downloading"
+        ? `Downloading… ${Math.round(s?.percent ?? 0)}%`
+        : status === "downloaded"
+          ? `Version ${s?.version ?? ""} ready — restart to update`
+          : status === "checking"
+            ? "Checking for updates…"
+            : upToDate
+              ? "You're up to date"
+              : "Check for updates";
+
+  return (
+    <button
+      onClick={() => {
+        if (status === "downloaded") return void updater.install();
+        if (status === "available") return void updater.download();
+        setCheckedAt(Date.now());
+        void updater.check();
+      }}
+      disabled={working}
+      title={label}
+      aria-label={label}
+      className="relative rounded-md p-2 text-accent hover:bg-raised disabled:opacity-60"
+    >
+      {working ? (
+        <Loader2 size={18} className="animate-spin" />
+      ) : upToDate ? (
+        <Check size={18} />
+      ) : status === "available" ? (
+        <ArrowDownToLine size={18} />
+      ) : (
+        <RefreshCw size={18} />
+      )}
+      {status === "downloaded" && (
+        <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-accent" />
+      )}
+    </button>
+  );
 }
 
 function preview(bot: Bot): string {
@@ -523,6 +588,7 @@ export function Sidebar() {
               {state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || "You"}
             </span>
           </button>
+          <UpdateButton />
           <button
             onClick={() => dispatch({ type: "toggleAppSettings" })}
             className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink"
