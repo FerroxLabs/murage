@@ -1,6 +1,6 @@
 // The bot's computer, in the right-side slot. Where it runs decides the
 // whole flow: cloud → provision the box on open (idempotent) and preview
-// via SSE frames or a ~4s screenshot poll; local ("This Mac") → frames
+// via SSE frames or a ~4s screenshot poll; local ("This computer") → frames
 // come from the Electron main process (desktopCapturer over the preload
 // bridge — box endpoints are never touched); off → parked. Auto (unset)
 // prefers the cloud box when one exists, else local inside the app.
@@ -26,6 +26,7 @@ import { CloudBackendPicker } from "./CloudBackendPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { RoutineEditor } from "./RoutinesPage";
 import { AndroidDevicePanel, useAndroidUsbDevices } from "./AndroidDevicePanel";
+import { LocalScreenPreview } from "./LocalScreenPreview";
 
 async function api(path: string, init?: RequestInit): Promise<any> {
   const res = await fetch(path, { headers: { "content-type": "application/json" }, ...init });
@@ -585,6 +586,8 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             )}
           </div>
         )}
+
+        <LocalScreenPreview />
 
         {/* Computer source */}
           <div className="mt-4 rounded-xl bg-card p-4">
