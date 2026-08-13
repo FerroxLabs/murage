@@ -90,8 +90,13 @@ function askSummary(ask: Ask): string {
   return text === "{}" ? (ask.tool ?? "tool") : text.slice(0, 200);
 }
 
-function permissionSocketPath(threadId: string) {
+export function permissionSocketPath(threadId: string) {
   const tag = threadId.replace(/[^\w-]/g, "").slice(0, 8);
+  // Windows has no unix sockets — net.createServer binds a named pipe
+  // instead, same API on both ends. The pipe namespace is global and flat
+  // (DATA_DIR does not isolate it), so the pid keeps concurrent harnesses
+  // off each other's names.
+  if (process.platform === "win32") return `\\\\.\\pipe\\omb-perm-${process.pid}-${tag}`;
   return join(DATA_DIR, `perm-${tag}.sock`);
 }
 
@@ -146,7 +151,11 @@ function createPermissionBroker(opts: {
       }
     });
   });
-  server.on("error", () => {});
+  // a broker that never came up used to be silent — every approval then
+  // timed out into a deny nobody could explain. Say so.
+  server.on("error", (e) => {
+    console.error(`permission broker unavailable on ${opts.socketPath}: ${(e as Error).message}`);
+  });
   server.listen(opts.socketPath);
   return {
     answer(askId: string, behavior: string, message?: string): boolean {

@@ -3,9 +3,9 @@
 // stream-json protocol into canonical events, keep argv hygiene (prompt
 // over stdin, secrets stripped), and broker permission asks.
 //
-// Spawn-based tests are POSIX-only until Windows CLI spawning lands: the
-// fake CLI is a shebang script, which Windows cannot exec directly (the
-// same reason claude.cmd needs special handling — see the Windows PRs).
+// These used to be POSIX-only: the fake CLI is a shebang script Windows
+// cannot exec, and the broker is a unix socket. Both now go through
+// resolveCliSpawn / permissionSocketPath, so they run everywhere.
 import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -13,13 +13,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DATA_DIR, ensureDirs } from "../config.ts";
+import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { ClaudeDriver } from "./claude.ts";
+import { ClaudeDriver, permissionSocketPath } from "./claude.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
-const posixOnly = describe.skipIf(process.platform === "win32");
 
 describe("ClaudeDriver.decodeConfig", () => {
   it("defaults to the claude binary with acceptEdits", () => {
@@ -38,7 +37,7 @@ describe("ClaudeDriver.decodeConfig", () => {
   });
 });
 
-posixOnly("ClaudeDriver turns (fake CLI)", () => {
+describe("ClaudeDriver turns (fake CLI)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
   let scratch: string;
@@ -233,11 +232,9 @@ posixOnly("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.sendTurn({ threadId: "t-perm-abc", text: "go" });
     await recorder.until((e) => e.type === "session.started");
 
-    // connect as the MCP proxy would and raise an ask (same tag rule as
-    // permissionSocketPath in claude.ts)
-    const tag = "t-perm-abc".replace(/[^\w-]/g, "").slice(0, 8);
-    const socketPath = join(DATA_DIR, `perm-${tag}.sock`);
-    const conn = connect(socketPath);
+    // connect as the MCP proxy would and raise an ask — unix socket on
+    // POSIX, named pipe on Windows, same one the driver handed the proxy
+    const conn = connect(permissionSocketPath("t-perm-abc"));
     const answered = new Promise<{ behavior: string }>((resolve) => {
       let buf = "";
       conn.on("data", (c) => {
