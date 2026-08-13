@@ -12,7 +12,9 @@ import capabilitiesModule from "./capabilities.cjs";
 
 const { desktopCapabilities } = capabilitiesModule;
 const require = createRequire(import.meta.url);
-const { createDisplayMediaGuard, selectCaptureSource } = require("./screen-preview.cjs");
+const { createDisplayMediaGuard, invokeDisplayMediaCallback, selectCaptureSource } = require(
+  "./screen-preview.cjs",
+);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
@@ -260,6 +262,16 @@ let displayMediaRequestCount = 0;
 
 function rendererOrigin() {
   return new URL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).origin;
+}
+
+function respondToDisplayMediaRequest(callback, response) {
+  const error = invokeDisplayMediaCallback(callback, response);
+  // An empty response intentionally rejects the renderer request, and Electron
+  // can surface that rejection by throwing from the callback. A selected
+  // source should never fail delivery, so keep that path visible in logs.
+  if (error && response.video) {
+    console.error("[screen-preview] failed to deliver selected source:", error);
+  }
 }
 
 ipcMain.on("screen:preview-intent", (event) => {
@@ -534,7 +546,7 @@ app.whenReady().then(async () => {
       (request, callback) => {
         displayMediaRequestCount += 1;
         if (!displayMediaGuard.consume(request, rendererOrigin())) {
-          callback({});
+          respondToDisplayMediaRequest(callback, {});
           return;
         }
 
@@ -546,7 +558,7 @@ app.whenReady().then(async () => {
         const captureHost =
           process.platform === "darwin" ? "darwin" : capabilities.host.session;
         if (!capabilities.screenPreview.available) {
-          callback({});
+          respondToDisplayMediaRequest(callback, {});
           return;
         }
 
@@ -561,9 +573,9 @@ app.whenReady().then(async () => {
                   ? screen.getPrimaryDisplay().id
                   : null,
             });
-            callback(source ? { video: source } : {});
+            respondToDisplayMediaRequest(callback, source ? { video: source } : {});
           })
-          .catch(() => callback({}));
+          .catch(() => respondToDisplayMediaRequest(callback, {}));
       },
       { useSystemPicker: false },
     );

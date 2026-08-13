@@ -2,7 +2,9 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { createDisplayMediaGuard, selectCaptureSource } = require("./screen-preview.cjs");
+const { createDisplayMediaGuard, invokeDisplayMediaCallback, selectCaptureSource } = require(
+  "./screen-preview.cjs",
+);
 
 const frame = { processId: 10, routingId: 20 };
 const validRequest = {
@@ -65,5 +67,21 @@ describe("display source selection", () => {
       selectCaptureSource({ sources: [sources[0]], host: "wayland", primaryDisplayId: 42 }),
     ).toEqual(sources[0]);
     expect(selectCaptureSource({ sources, host: "wayland", primaryDisplayId: 42 })).toBeNull();
+  });
+});
+
+describe("display media callback", () => {
+  it("contains Electron's synchronous rejection for an empty portal response", () => {
+    const rejection = new TypeError("Video was requested, but no video stream was provided");
+    const callback = () => {
+      throw rejection;
+    };
+
+    expect(() => invokeDisplayMediaCallback(callback, {})).not.toThrow();
+    expect(invokeDisplayMediaCallback(callback, {})).toBe(rejection);
+  });
+
+  it("returns null after delivering a selected source", () => {
+    expect(invokeDisplayMediaCallback(() => {}, { video: { id: "screen:0" } })).toBeNull();
   });
 });

@@ -58,4 +58,25 @@ function selectCaptureSource({ sources, host, primaryDisplayId }) {
   return null;
 }
 
-module.exports = { createDisplayMediaGuard, frameKey, originOf, selectCaptureSource };
+// Electron may throw synchronously from the display-media callback when an
+// empty response rejects a video request. That rejection is expected after a
+// portal cancellation, but allowing it to escape from a Promise catch creates
+// an unhandled rejection in the main process. Return the error to the caller so
+// successful-response failures can still be logged without destabilizing the
+// cancellation path.
+function invokeDisplayMediaCallback(callback, response) {
+  try {
+    callback(response);
+    return null;
+  } catch (error) {
+    return error;
+  }
+}
+
+module.exports = {
+  createDisplayMediaGuard,
+  frameKey,
+  invokeDisplayMediaCallback,
+  originOf,
+  selectCaptureSource,
+};
