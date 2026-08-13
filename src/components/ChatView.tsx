@@ -22,6 +22,7 @@ import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard } from "./OptionCard";
 import { Composer } from "./Composer";
 import { ModelPicker } from "./ModelPicker";
+import { ReactionBar, ReactionChips } from "./Reactions";
 import { cn } from "@/lib/cn";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
@@ -265,6 +266,7 @@ function Bubble({
             <Pencil size={14} />
           </button>
         )}
+        {user && message.kind === "text" && <ReactionBar threadId={bot.threadId} message={message} />}
         {user && <CopyButton text={text} />}
         <div
           className={cn(
@@ -312,6 +314,7 @@ function Bubble({
             )}
           </div>
         )}
+        {!user && message.kind === "text" && <ReactionBar threadId={bot.threadId} message={message} />}
         <span
           className={cn(
             "self-end pb-1 text-[11px] tabular-nums text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100",
@@ -321,6 +324,7 @@ function Bubble({
           {formatTime(message.at)}
         </span>
       </div>
+      <ReactionChips threadId={bot.threadId} message={message} align={user ? "right" : "left"} />
       {versions.length > 1 && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">
           <button
