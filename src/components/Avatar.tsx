@@ -1,337 +1,215 @@
-import { memo, useId, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+// Bot avatar — the Blob Studio "Cursor" mascot (CursorAvatar.tsx), wrapped
+// in the app's historical MausAvatar API so no call site changes: per-bot
+// color becomes a body gradient, the app's one-shot motion beats borrow the
+// face/state for a moment, and the eyes follow the pointer. The previous
+// hand-built Maus body + face engine (maus-engine/face/driver) is gone;
+// CursorAvatar owns morphing, blinking, drift, body motion and effects.
 import {
-  MAUS_COLORS,
-  type MausColor,
-  type MausExpression,
-  type MausMotion,
-} from "@/lib/mascot";
+  forwardRef,
+  memo,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import { MAUS_COLORS, type MausColor, type MausMotion, type MausState } from "@/lib/mascot";
+import { CursorAvatar, SHAPE, type CursorAvatarHandle, type CursorShape } from "./CursorAvatar";
 
-// Exact SupaMaus mascot silhouette from the website's
-// components/v2/MascotSlot.js. The geometry and tilt remain faithful to that
-// source; app avatars use a larger borderless flat fill.
-const BODY =
-  "M93.4 40.6 L43 151.1 Q38 162 48.4 156 L91.4 131 Q100 126 108.7 131 L151.6 156 Q162 162 157 151.1 L106.6 40.6 Q100 26 93.4 40.6 Z";
+/**
+ * The pack's baked-in silhouette was exported with the body fill hardcoded
+ * to black instead of the {{GRADIENT}} placeholder the component
+ * substitutes, which painted every bot the same. Restore the slot so the
+ * per-bot gradient actually lands on the body.
+ */
+const GRADIENT_SHAPE: CursorShape = {
+  ...SHAPE,
+  body: SHAPE.body.replace(/fill="#000000"/g, 'fill="{{GRADIENT}}"'),
+};
 
-const INK = "#10201b";
+/**
+ * Legacy face-placement knobs from the Maus body era. The cursor mascot
+ * places its own face; these remain only so the preview harness's sliders
+ * keep compiling — the matching props are accepted and ignored.
+ */
+export const FACE_X = 80;
+export const FACE_Y = 102;
+export const FACE_SCALE = 0.47;
+export const EYE_SCALE = 1.12;
+export const MOUTH_WEIGHT = 11;
 
-function shade(hex: string, amount: number) {
-  const value = Number.parseInt(hex.slice(1), 16);
-  const channel = (shift: number) =>
-    Math.max(0, Math.min(255, ((value >> shift) & 0xff) + amount));
+/**
+ * How far the pointer may pull the eyes. Facing forward the full range is
+ * safe; with the expressions' authored gaze they already start off-centre.
+ */
+const POINTER_GAZE = { forward: 1, authored: 0.25 };
+
+/**
+ * What a one-shot motion does while it plays: CursorAvatar animates the body
+ * per state, so borrowing the state for a beat moves body and face together.
+ */
+const MOTION_FACE: Partial<
+  Record<Exclude<MausMotion, "none">, { state?: MausState; blink?: boolean; spin?: number }>
+> = {
+  arrive: { state: "spawning", spin: 900 },
+  switch: { state: "waking", spin: 620 },
+  customize: { state: "proud", blink: true },
+  alert: { state: "alerting" },
+  thinking: { state: "thinking" },
+  working: { state: "working" },
+  launch: { state: "loading" },
+  success: { state: "happy", blink: true },
+  celebrate: { state: "celebrate", spin: 700 },
+  blink: { blink: true },
+  surprise: { state: "surprised", blink: true },
+  failure: { state: "sad" },
+};
+
+/** How long a one-shot motion holds its state before the bot's own returns. */
+const MOTION_FACE_MS = 1400;
+
+/** Channel-wise mix of a hex color toward another, t in 0..1. */
+function mix(hex: string, toward: string, t: number): string {
+  const a = Number.parseInt(hex.slice(1), 16);
+  const b = Number.parseInt(toward.slice(1), 16);
+  const channel = (shift: number) => {
+    const va = (a >> shift) & 0xff;
+    const vb = (b >> shift) & 0xff;
+    return Math.round(va + (vb - va) * t);
+  };
   return `#${[channel(16), channel(8), channel(0)]
     .map((part) => part.toString(16).padStart(2, "0"))
     .join("")}`;
 }
 
-function PillEye({
-  cx,
-  cy = 88,
-  width = 7,
-  height = 18,
-  angle = -12,
-}: {
-  cx: number;
-  cy?: number;
-  width?: number;
-  height?: number;
-  angle?: number;
-}) {
-  return (
-    <rect
-      x={cx - width / 2}
-      y={cy - height / 2}
-      width={width}
-      height={height}
-      rx={width / 2}
-      fill={INK}
-      transform={`rotate(${angle} ${cx} ${cy})`}
-    />
-  );
-}
+/**
+ * Bot color -> the mascot's three-stop body gradient (highlight, base,
+ * shadow), with the same light/dark spread as the pack's default green
+ * ["#9FE6B5", "#3FAE6E", "#1C7A4C"].
+ */
+const gradientFor = (color: MausColor): [string, string, string] => {
+  const fill = MAUS_COLORS[color] ?? MAUS_COLORS.green;
+  return [mix(fill, "#ffffff", 0.55), fill, mix(fill, "#000000", 0.42)];
+};
 
-function Face({ expression }: { expression: MausExpression }) {
-  const line = {
-    fill: "none",
-    stroke: INK,
-    strokeWidth: 6,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-  };
+export type MausAvatarHandle = CursorAvatarHandle;
 
-  switch (expression) {
-    case "friendly":
-      return (
-        <>
-          <g className="maus-eyes">
-            <PillEye cx={90} height={15} angle={-18} />
-            <PillEye cx={112} height={15} angle={-10} />
-          </g>
-          <g className="maus-mouth"><path d="M88 105 Q101 118 114 105" {...line} /></g>
-        </>
-      );
-    case "focused":
-      return (
-        <>
-          <g className="maus-eyes">
-            <path d="M83 80 L94 84 M108 84 L119 80" {...line} strokeWidth="5" />
-            <PillEye cx={90} cy={92} height={16} angle={-7} />
-            <PillEye cx={112} cy={92} height={16} angle={7} />
-          </g>
-          <g className="maus-mouth"><path d="M90 111 Q101 107 112 111" {...line} /></g>
-        </>
-      );
-    case "thinking":
-      return (
-        <>
-          <g className="maus-eyes">
-            <PillEye cx={90} cy={87} height={17} angle={-16} />
-            <PillEye cx={112} cy={82} height={14} angle={-7} />
-            <path d="M84 78 Q90 73 96 77 M108 73 Q115 70 120 75" {...line} strokeWidth="4.5" />
-          </g>
-          <g className="maus-mouth"><path d="M93 111 Q101 105 110 109" {...line} /></g>
-        </>
-      );
-    case "excited":
-      return (
-        <>
-          <g className="maus-eyes">
-            <PillEye cx={90} cy={87} height={19} angle={-24} />
-            <PillEye cx={112} cy={87} height={19} angle={4} />
-          </g>
-          <g className="maus-mouth"><path d="M88 102 Q101 124 114 102 Q101 109 88 102 Z" fill={INK} /></g>
-        </>
-      );
-    case "sleepy":
-      return (
-        <>
-          <g className="maus-eyes">
-            <PillEye cx={90} cy={89} height={8} angle={-24} />
-            <PillEye cx={112} cy={89} height={8} angle={-6} />
-          </g>
-          <g className="maus-mouth"><ellipse cx="101" cy="110" rx="6" ry="8" fill={INK} /></g>
-        </>
-      );
-    case "surprised":
-      return (
-        <>
-          <g className="maus-eyes">
-            <PillEye cx={90} height={22} width={8} angle={-15} />
-            <PillEye cx={112} height={22} width={8} angle={-8} />
-          </g>
-          <g className="maus-mouth"><circle cx="101" cy="111" r="8" fill={INK} /></g>
-        </>
-      );
-    case "skeptical":
-      return (
-        <>
-          <g className="maus-eyes">
-            <path d="M83 82 L96 79 M107 77 L120 83" {...line} strokeWidth="5" />
-            <PillEye cx={90} cy={91} height={17} angle={-18} />
-            <PillEye cx={112} cy={92} height={8} angle={-2} />
-          </g>
-          <g className="maus-mouth"><path d="M91 112 Q101 107 112 113" {...line} /></g>
-        </>
-      );
-    case "worried":
-      return (
-        <>
-          <g className="maus-eyes">
-            <path d="M83 82 Q90 76 97 82 M105 82 Q112 76 119 82" {...line} strokeWidth="4.5" />
-            <PillEye cx={90} cy={91} height={17} angle={-5} />
-            <PillEye cx={112} cy={91} height={17} angle={-20} />
-          </g>
-          <g className="maus-mouth"><path d="M89 115 Q101 103 113 115" {...line} /></g>
-        </>
-      );
-    case "mischievous":
-      return (
-        <>
-          <g className="maus-eyes">
-            <path d="M83 82 L96 86 M106 86 L119 80" {...line} strokeWidth="5" />
-            <PillEye cx={90} cy={93} height={15} angle={-2} />
-            <PillEye cx={112} cy={93} height={15} angle={-22} />
-          </g>
-          <g className="maus-mouth"><path d="M89 106 Q103 118 116 103 Q103 110 89 106 Z" fill={INK} /></g>
-        </>
-      );
-    case "deadpan":
-      return (
-        <>
-          <g className="maus-eyes">
-            <PillEye cx={90} angle={-18} />
-            <PillEye cx={112} angle={-10} />
-          </g>
-          <g className="maus-mouth"><path d="M88 110 L114 110" {...line} /></g>
-        </>
-      );
-  }
-}
-
-function trackEyes(event: ReactPointerEvent<SVGSVGElement>) {
-  const rect = event.currentTarget.getBoundingClientRect();
-  const x = ((event.clientX - rect.left) / rect.width - 0.5) * 2;
-  const y = ((event.clientY - rect.top) / rect.height - 0.5) * 2;
-  event.currentTarget.style.setProperty("--maus-eye-x", `${Math.max(-1, Math.min(1, x)) * 3.4}px`);
-  event.currentTarget.style.setProperty("--maus-eye-y", `${Math.max(-1, Math.min(1, y)) * 2.6}px`);
-}
-
-function resetEyes(event: ReactPointerEvent<SVGSVGElement>) {
-  event.currentTarget.style.setProperty("--maus-eye-x", "0px");
-  event.currentTarget.style.setProperty("--maus-eye-y", "0px");
-}
-
-function MausAvatarComponent({
-  color,
-  expression = "deadpan",
-  size = 44,
-  label,
-  motion = "none",
-  motionKey = 0,
-}: {
+export type MausAvatarProps = {
   color: MausColor;
-  expression?: MausExpression;
+  /** Named behaviour — drives the expression pool, its cadence and blinking. */
+  state?: MausState;
+  /** Pin one of the 25 faces and stop the state's own drift. */
+  expression?: number;
   size?: number;
   label?: string;
   motion?: MausMotion;
   motionKey?: number;
-}) {
-  const fill = MAUS_COLORS[color] ?? MAUS_COLORS.green;
-  const uid = useId().replace(/:/g, "");
-  const surfaceId = `maus-surface-${uid}`;
-  const bevelId = `maus-bevel-${uid}`;
-  const glossId = `maus-gloss-${uid}`;
-  const clipId = `maus-clip-${uid}`;
-  const surfaceShade = shade(fill, -30);
-  const hasAlert = motion === "alert" || motion === "failure";
-  const hasEllipsis = motion === "thinking";
-  const hasRibbons = motion === "launch";
-  const hasBurst = motion === "celebrate";
-  const hasOrbit = motion === "arrive" || motion === "switch" || motion === "customize" || motion === "working";
+  /** Head turn in degrees. */
+  turn?: number;
+  gaze?: { x?: number; y?: number };
+  spring?: number;
+  eyeScale?: number;
+  showMouth?: boolean;
+  mouthStroke?: number;
+  /**
+   * Face the viewer at turn 0, cancelling each expression's authored gaze
+   * direction. Off restores the engine's own drawn-in directions.
+   */
+  forward?: boolean;
+  /** Let the eyes follow the pointer across this avatar. */
+  trackPointer?: boolean;
+  /** Run the animation. Off renders the state's resting face. */
+  animated?: boolean;
+  /** Legacy Maus face-placement knobs — accepted, ignored. */
+  eyeSpacing?: number;
+  faceX?: number;
+  faceY?: number;
+  faceScale?: number;
+};
+
+function MausAvatarComponent(
+  {
+    color,
+    state = "idle",
+    expression,
+    size = 44,
+    label,
+    motion = "none",
+    motionKey = 0,
+    turn,
+    gaze,
+    spring,
+    eyeScale,
+    showMouth,
+    mouthStroke,
+    forward = true,
+    trackPointer = true,
+    animated = true,
+  }: MausAvatarProps,
+  ref: React.Ref<MausAvatarHandle>,
+) {
+  const inner = useRef<CursorAvatarHandle>(null);
+  useImperativeHandle(ref, () => ({
+    blink: () => inner.current?.blink(),
+    spin: (durationMs?: number) => inner.current?.spin(durationMs),
+    setExpression: (index: number) => inner.current?.setExpression(index),
+  }));
+
+  // A one-shot motion borrows the state for a moment, then hands it back.
+  const [motionState, setMotionState] = useState<MausState | null>(null);
+  useEffect(() => {
+    if (motion === "none" || !animated) return;
+    const beat = MOTION_FACE[motion];
+    if (!beat) return;
+    if (beat.blink) inner.current?.blink();
+    if (beat.spin) inner.current?.spin(beat.spin);
+    if (!beat.state) return;
+    setMotionState(beat.state);
+    const timer = setTimeout(() => setMotionState(null), MOTION_FACE_MS);
+    return () => clearTimeout(timer);
+  }, [motion, motionKey, animated]);
+
+  // Pointer-follow gaze, composed with any gaze the caller pins.
+  const [pointer, setPointer] = useState({ x: 0, y: 0 });
+  const range = forward ? POINTER_GAZE.forward : POINTER_GAZE.authored;
+  const onPointerMove = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (!trackPointer || !animated) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setPointer({
+      x: Math.max(-1, Math.min(1, ((event.clientX - rect.left) / rect.width) * 2 - 1)) * range,
+      y: Math.max(-1, Math.min(1, ((event.clientY - rect.top) / rect.height) * 2 - 1)) * range,
+    });
+  };
+  const onPointerLeave = () => setPointer({ x: 0, y: 0 });
 
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="-22 51 164 164"
-      className="shrink-0 overflow-visible"
-      role={label ? "img" : undefined}
-      aria-label={label}
-      aria-hidden={label ? undefined : true}
-      onPointerMove={trackEyes}
-      onPointerLeave={resetEyes}
-      style={{ "--maus-color": fill, "--maus-eye-x": "0px", "--maus-eye-y": "0px" } as CSSProperties}
+    <span
+      className="inline-flex shrink-0"
+      onPointerMove={trackPointer && animated ? onPointerMove : undefined}
+      onPointerLeave={trackPointer && animated ? onPointerLeave : undefined}
     >
-      <defs>
-        <clipPath id={clipId}>
-          <path d={BODY} />
-        </clipPath>
-        <linearGradient id={surfaceId} x1="66" y1="45" x2="132" y2="156" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor={shade(fill, 54)} />
-          <stop offset="0.3" stopColor={shade(fill, 22)} />
-          <stop offset="0.72" stopColor={fill} />
-          <stop offset="1" stopColor={surfaceShade} />
-        </linearGradient>
-        <linearGradient id={bevelId} x1="57" y1="44" x2="146" y2="151" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#ffffff" stopOpacity="0.68" />
-          <stop offset="0.38" stopColor="#ffffff" stopOpacity="0.13" />
-          <stop offset="0.68" stopColor={surfaceShade} stopOpacity="0.1" />
-          <stop offset="1" stopColor={INK} stopOpacity="0.28" />
-        </linearGradient>
-        <radialGradient id={glossId} cx="0.5" cy="0.45" r="0.58">
-          <stop offset="0" stopColor="#ffffff" stopOpacity="0.62" />
-          <stop offset="0.55" stopColor="#ffffff" stopOpacity="0.16" />
-          <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
-        </radialGradient>
-      </defs>
-
-      <g key={motionKey} className={`maus-motion maus-motion--${motion}`}>
-        {hasAlert && (
-          <g className="maus-fx maus-fx--alert" aria-hidden="true">
-            <path d="M97 45 Q100 40 103 45 L106 92 Q106 99 100 99 Q94 99 94 92 Z" fill={fill} />
-            <circle cx="100" cy="116" r="8" fill={fill} />
-          </g>
-        )}
-
-        {hasEllipsis && (
-          <g className="maus-fx maus-fx--ellipsis" aria-hidden="true">
-            <circle className="maus-ellipsis-dot maus-ellipsis-dot--one" cx="72" cy="101" r="8" fill={fill} />
-            <circle className="maus-ellipsis-dot maus-ellipsis-dot--two" cx="100" cy="101" r="10" fill={fill} />
-            <circle className="maus-ellipsis-dot maus-ellipsis-dot--three" cx="130" cy="101" r="8" fill={fill} />
-          </g>
-        )}
-
-        {hasRibbons && (
-          <g className="maus-fx maus-fx--ribbons" aria-hidden="true">
-            <path className="maus-ribbon maus-ribbon--one" pathLength="1" d="M55 119 C79 137 119 140 150 116" stroke={fill} />
-            <path className="maus-ribbon maus-ribbon--two" pathLength="1" d="M54 112 C85 126 119 125 145 103" stroke="#fcfcfc" />
-            <path className="maus-ribbon maus-ribbon--three" pathLength="1" d="M62 126 C87 145 126 145 156 121" stroke={shade(fill, 44)} />
-          </g>
-        )}
-
-        {hasBurst && (
-          <g className="maus-fx maus-fx--burst" aria-hidden="true">
-            <circle className="maus-burst-dot maus-burst-dot--one" cx="100" cy="100" r="5" fill={fill} />
-            <circle className="maus-burst-dot maus-burst-dot--two" cx="100" cy="100" r="4" fill="#fcfcfc" />
-            <circle className="maus-burst-dot maus-burst-dot--three" cx="100" cy="100" r="6" fill={shade(fill, 42)} />
-            <circle className="maus-burst-dot maus-burst-dot--four" cx="100" cy="100" r="3.5" fill={fill} />
-            <path className="maus-burst-ray maus-burst-ray--one" d="M100 100 L100 73" stroke={fill} />
-            <path className="maus-burst-ray maus-burst-ray--two" d="M100 100 L125 88" stroke="#fcfcfc" />
-            <path className="maus-burst-ray maus-burst-ray--three" d="M100 100 L82 121" stroke={shade(fill, 42)} />
-          </g>
-        )}
-
-        {hasOrbit && (
-          <g className="maus-orbit" aria-hidden="true">
-            <path className="maus-speed-line maus-speed-line--one" pathLength="1" d="M38 119 C23 81 45 42 78 29" />
-            <path className="maus-speed-line maus-speed-line--two" pathLength="1" d="M55 151 C32 126 29 94 39 70" />
-            <circle className="maus-orbit-dot maus-orbit-dot--one" cx="47" cy="54" r="4.6" fill={fill} />
-            <circle className="maus-orbit-dot maus-orbit-dot--two" cx="151" cy="65" r="3.4" fill="#fcfcfc" />
-            <circle className="maus-orbit-dot maus-orbit-dot--three" cx="155" cy="132" r="5.2" fill={fill} />
-          </g>
-        )}
-
-        <g className="maus-character">
-          <g className="maus-solid" transform="rotate(-20 100 100)">
-              <path className="maus-body" d={BODY} fill={`url(#${surfaceId})`} />
-              <path
-                className="maus-bevel"
-                d={BODY}
-                fill="none"
-                stroke={`url(#${bevelId})`}
-                strokeWidth="4.5"
-                clipPath={`url(#${clipId})`}
-              />
-              <ellipse
-                className="maus-specular"
-                cx="73"
-                cy="60"
-                rx="42"
-                ry="24"
-                fill={`url(#${glossId})`}
-                clipPath={`url(#${clipId})`}
-                transform="rotate(-26 73 60)"
-              />
-              <path
-                className="maus-rim-light"
-                d="M94 43 L48 144"
-                fill="none"
-                stroke="#ffffff"
-                strokeOpacity="0.35"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                clipPath={`url(#${clipId})`}
-              />
-              <g className="maus-face">
-                <Face expression={expression} />
-              </g>
-          </g>
-        </g>
-      </g>
-    </svg>
+      <CursorAvatar
+        ref={inner}
+        state={motionState ?? state}
+        expression={expression}
+        size={size}
+        shape={GRADIENT_SHAPE}
+        gradient={gradientFor(color)}
+        title={label ?? null}
+        lookAround={forward ? 0 : 1}
+        gaze={{ x: (gaze?.x ?? 0) + pointer.x, y: (gaze?.y ?? 0) + pointer.y }}
+        turn={turn}
+        spring={spring}
+        eyeScale={eyeScale}
+        showMouth={showMouth}
+        mouthStroke={mouthStroke}
+        paused={!animated}
+      />
+    </span>
   );
 }
 
-export const MausAvatar = memo(MausAvatarComponent);
+export const MausAvatar = memo(forwardRef(MausAvatarComponent));
 
 export function InitialsAvatar({
   initials,

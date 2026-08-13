@@ -2,6 +2,15 @@ appId: com.openmausbot.app
 productName: OpenMausBot
 artifactName: OpenMausBot-${version}-${arch}.${ext}
 
+# In-app auto-update reads latest-mac.yml + the .zip from this PUBLIC releases
+# repo (separate from the source repo). Public → no token on users' machines.
+# Baked into app-update.yml; `latest-mac.yml` is emitted here even with
+# --publish never, and uploaded to the GitHub release alongside the artifacts.
+publish:
+  - provider: github
+    owner: milind-soni
+    repo: openmausbot-releases
+
 directories:
   buildResources: build
   output: release

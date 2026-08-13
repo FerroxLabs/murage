@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
 import { startSpeech, stopSpeech } from "./speech.mjs";
+import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
@@ -114,6 +115,7 @@ function createWindow() {
   } else {
     win.loadURL(DEV_URL);
   }
+  return win;
 }
 
 // "This Mac" screen preview — served from the main process so the Screen
@@ -186,12 +188,16 @@ app.whenReady().then(async () => {
     { useSystemPicker: false },
   );
   registerCuaIpc();
+  registerUpdaterIpc();
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.
   startCua().catch((e) => console.error("[cua] start failed:", e));
   if (app.isPackaged) serverReady = await startServerPackaged();
-  createWindow();
+  const win = createWindow();
+  // in-app auto-update (packaged only) — checks GitHub releases, downloads on
+  // the user's click, installs on "Restart to update"
+  startUpdater(win);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

@@ -5,6 +5,8 @@
 // the real thing misbehaves:
 //
 //   FAKE_CLAUDE_MODE   happy (default) | exit-early | hang | malformed
+//                      | stream (partial-message text deltas before the
+//                        whole-message frame, plus subagent noise to drop)
 //   FAKE_CLAUDE_DUMP   path to write {argv, env, prompt} as JSON, so the
 //                      test can assert on argv shape and env hygiene
 //
@@ -54,6 +56,19 @@ process.stdin.on("end", () => {
 
   if (mode === "malformed") {
     process.stdout.write("this is not json\n{broken\n");
+  }
+
+  if (mode === "stream") {
+    const delta = (d: unknown) => out({ type: "stream_event", event: { type: "content_block_delta", delta: d } });
+    delta({ type: "thinking_delta", thinking: "hmm" });
+    delta({ type: "text_delta", text: "hello from " });
+    delta({ type: "text_delta", text: "fake claude" });
+    // subagent narration — the driver must drop this, not render it
+    out({
+      type: "stream_event",
+      parent_tool_use_id: "task-1",
+      event: { type: "content_block_delta", delta: { type: "text_delta", text: "SUBAGENT NOISE" } },
+    });
   }
 
   out({

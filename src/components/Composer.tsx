@@ -4,6 +4,7 @@ import { Plus, Mic, Square } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { MausAvatar } from "./Avatar";
+import { normalizeState } from "@/lib/mascot";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -33,11 +34,12 @@ export function Composer({ bot }: { bot: Bot }) {
   const mention = mentionQueryAt(text, caret);
   const candidates = useMemo(() => {
     if (!mention || mention.start === dismissedAt) return [];
+    const peers = state.bots.filter((b) => b.id !== bot.id && !b.hidden);
     const q = mention.query.trim().toLowerCase();
-    return state.bots
-      .filter((b) => b.id !== bot.id && !b.hidden)
-      .filter((b) => !q || b.name.toLowerCase().includes(q))
-      .slice(0, 6);
+    // "@Scout " — the full name plus a space — is a COMPLETED tag, not a
+    // search: keep the picker closed so Enter sends instead of re-picking
+    if (mention.query.endsWith(" ") && peers.some((b) => b.name.toLowerCase() === q)) return [];
+    return peers.filter((b) => !q || b.name.toLowerCase().includes(q)).slice(0, 6);
   }, [mention, dismissedAt, state.bots, bot.id]);
   const pickerOpen = candidates.length > 0;
 
@@ -50,7 +52,8 @@ export function Composer({ bot }: { bot: Bot }) {
     setText(next);
     const newCaret = mention.start + peer.name.length + 2;
     setCaret(newCaret);
-    setDismissedAt(null);
+    // picking completes this tag — close the popup so the next Enter sends
+    setDismissedAt(mention.start);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.setSelectionRange(newCaret, newCaret);
@@ -127,7 +130,7 @@ export function Composer({ bot }: { bot: Bot }) {
                   i === highlight ? "bg-raised-hover" : "",
                 )}
               >
-                <MausAvatar color={peer.color} expression={peer.mascotExpression ?? "friendly"} size={24} />
+                <MausAvatar color={peer.color} state={normalizeState(peer.mascotExpression) ?? "happy"} size={24} />
                 <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{peer.name}</span>
                 <span className="shrink-0 text-xs text-ink-secondary">Agent</span>
               </button>

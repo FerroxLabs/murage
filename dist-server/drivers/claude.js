@@ -192,6 +192,9 @@ export const ClaudeDriver = {
                 "--output-format", "stream-json",
                 "--input-format", "stream-json",
                 "--verbose", // required by stream-json output
+                // token-level streaming: content_block_delta events between the
+                // whole-message frames, so the bubble grows as the model writes
+                "--include-partial-messages",
                 "--permission-mode", config.permissionMode === "auto" ? "acceptEdits" : config.permissionMode,
             ];
             if (sessionId)
@@ -232,6 +235,14 @@ export const ClaudeDriver = {
                 // the agent just sees a computer)
                 mcpServers.computer = { ...turn.integrations.localComputer };
                 allowed.push("mcp__computer");
+            }
+            // peer-agent comms (list_bots/ask_bot) — the harness builds the whole
+            // spawn contract (command/args/env incl. the boot token) in
+            // agentsIntegration(); pre-allowing matters doubly here, or the CLI's
+            // own ListAgents look-alike shadows it and "@Bot" asks go nowhere
+            if (turn.integrations?.agents) {
+                mcpServers.agents = { ...turn.integrations.agents };
+                allowed.push("mcp__agents");
             }
             // permission broker: anything acceptEdits would silently deny becomes
             // an Allow/Deny card in chat, and the agent gets ask_user. Skipped in
@@ -286,6 +297,10 @@ export const ClaudeDriver = {
                 active.delete(threadId);
                 emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost });
             };
+            // token streaming: true while --include-partial-messages is delivering
+            // text deltas for the current assistant message, so the whole-message
+            // frame that follows doesn't re-emit the same text as one big delta
+            let sawStreamDelta = false;
             const handleLine = (line) => {
                 let o;
                 try {
@@ -304,11 +319,33 @@ export const ClaudeDriver = {
                             emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: o.estimated_tokens });
                         }
                         break;
+                    case "stream_event": {
+                        // subagent narration is dropped — N parallel Tasks would
+                        // interleave their prose into one bubble (upstream-verified bug)
+                        if (o.parent_tool_use_id)
+                            break;
+                        const ev = o.event ?? {};
+                        if (ev.type !== "content_block_delta")
+                            break;
+                        const d = ev.delta ?? {};
+                        if (d.type === "text_delta" && typeof d.text === "string" && d.text) {
+                            sawStreamDelta = true;
+                            emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: d.text });
+                        }
+                        else if (d.type === "thinking_delta" && typeof d.thinking === "string" && d.thinking) {
+                            emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta: d.thinking });
+                        }
+                        break;
+                    }
                     case "assistant": {
                         const msg = o.message ?? {};
                         const text = firstText(msg.content);
                         if (text.trim()) {
-                            emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: text });
+                            // fallback delta for CLIs/paths that never streamed the block
+                            if (!sawStreamDelta) {
+                                emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: text });
+                            }
+                            sawStreamDelta = false;
                             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
                         }
                         for (const b of Array.isArray(msg.content) ? msg.content : []) {
@@ -397,7 +434,7 @@ export const ClaudeDriver = {
             snapshot,
             adapter: {
                 provider: DRIVER_KIND,
-                capabilities: { sessionModelSwitch: "in-session" },
+                capabilities: { sessionModelSwitch: "in-session", agentsMcp: true },
                 sendTurn,
                 interruptTurn: async (threadId) => active.get(threadId)?.stop(),
                 respondToRequest: async (threadId, requestId, decision) => {

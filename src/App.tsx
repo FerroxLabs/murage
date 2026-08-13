@@ -9,12 +9,16 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { PluginsPanel } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
 import { AppSettingsPanel } from "@/components/AppSettingsPanel";
+import { UpdateBanner } from "@/components/UpdateBanner";
 
 function Shell() {
   const { state } = useStore();
   const bot = state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0];
   return (
-    <div className="relative flex h-full">
+    <div className="flex h-full flex-col">
+      {/* fixed-position popup, bottom-left — outside the layout flow */}
+      <UpdateBanner />
+      <div className="relative flex min-h-0 flex-1">
       <Sidebar />
       {bot ? (
         <ChatView bot={bot} />
@@ -35,6 +39,7 @@ function Shell() {
       {state.computerOpen && bot && <ComputerPanel bot={bot} />}
       {state.appSettingsOpen && <AppSettingsPanel />}
       {state.pluginsOpen && <PluginsPanel />}
+      </div>
     </div>
   );
 }

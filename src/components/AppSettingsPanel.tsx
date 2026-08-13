@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useStore } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
+import { useUpdaterState } from "@/lib/updater";
 
 /** Name + email, persisted to /api/config {profile} on blur. Prefilled from
  * the current config (the values are echoed back — they're not secrets). */
@@ -43,6 +44,56 @@ function ProfileFields() {
         placeholder="you@example.com"
         className={inputClass}
       />
+    </div>
+  );
+}
+
+/** Manual update check row — packaged app only (no bridge in dev). */
+function UpdatesRow() {
+  const s = useUpdaterState();
+  if (!window.ogb?.updater) return null;
+  const updater = window.ogb.updater;
+  const label =
+    s?.status === "checking"
+      ? "Checking…"
+      : s?.status === "available"
+        ? `${s.version} available`
+        : s?.status === "downloading"
+          ? `Downloading… ${Math.round(s.percent ?? 0)}%`
+          : s?.status === "downloaded"
+            ? `${s.version} ready — restart to apply`
+            : s?.status === "error"
+              ? `Check failed: ${s.message ?? "unknown error"}`
+              : "You're on the latest version we know of.";
+  return (
+    <div className="mt-4 rounded-xl bg-card p-4">
+      <div className="text-[15px] font-medium text-ink">App updates</div>
+      <div className="mt-0.5 text-[13px] text-ink-secondary">{label}</div>
+      <div className="mt-3 flex gap-2">
+        {s?.status === "available" ? (
+          <button
+            onClick={() => void updater.download()}
+            className="rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-white"
+          >
+            Download
+          </button>
+        ) : s?.status === "downloaded" ? (
+          <button
+            onClick={() => void updater.install()}
+            className="rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-white"
+          >
+            Restart to update
+          </button>
+        ) : (
+          <button
+            onClick={() => void updater.check()}
+            disabled={s?.status === "checking" || s?.status === "downloading"}
+            className="rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-40"
+          >
+            Check for updates
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -88,6 +139,8 @@ export function AppSettingsPanel() {
             <ApiKeyRow section="box" label="Box token" placeholder="Token from box.ascii.dev" />
           </div>
         </div>
+
+        <UpdatesRow />
       </div>
     </aside>
   );

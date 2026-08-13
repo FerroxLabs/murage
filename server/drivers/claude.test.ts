@@ -95,6 +95,25 @@ posixOnly("ClaudeDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
   });
 
+  it("streams partial-message text deltas without re-emitting the whole message", async () => {
+    await create("stream");
+    await instance.adapter.sendTurn({ threadId: "t-stream", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const deltas = recorder.events.filter((e) => e.type === "content.delta");
+    const text = deltas.filter((d: any) => d.streamKind === "assistant_text");
+    // two streamed chunks, and NO third full-text fallback delta after them
+    expect(text.map((d: any) => d.delta)).toEqual(["hello from ", "fake claude"]);
+    // subagent narration (parent_tool_use_id) never surfaces
+    expect(text.some((d: any) => d.delta.includes("SUBAGENT"))).toBe(false);
+    // reasoning streams on its own kind
+    expect(deltas.some((d: any) => d.streamKind === "reasoning_text" && d.delta === "hmm")).toBe(true);
+    // the settled message still lands exactly once
+    const settled = recorder.events.filter((e: any) => e.type === "item.completed" && e.itemType === "assistant_text");
+    expect(settled).toHaveLength(1);
+    expect((settled[0] as any).text).toBe("hello from fake claude");
+  });
+
   it("sends the prompt over stdin, never argv, and strips identity env vars", async () => {
     await create();
     const dump = join(scratch, "dump.json");
@@ -112,6 +131,34 @@ posixOnly("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(seen.env.CLAUDECODE).toBeUndefined();
     expect(seen.env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+  });
+
+  it("mounts the agents comms proxy as an MCP server and pre-allows its tools", async () => {
+    await create();
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-agents",
+      text: "hi",
+      integrations: {
+        agents: {
+          command: process.execPath,
+          args: ["/fake/agents-proxy.js"],
+          env: { OMB_HARNESS_URL: "http://127.0.0.1:1", OMB_BOT_ID: "b1", OMB_COMMS_TOKEN: "tok", OMB_TURN_DEPTH: "0" },
+        },
+      },
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const mcpConfig = JSON.parse(seen.argv[seen.argv.indexOf("--mcp-config") + 1]);
+    expect(mcpConfig.mcpServers.agents).toMatchObject({
+      args: ["/fake/agents-proxy.js"],
+      env: { OMB_BOT_ID: "b1", OMB_COMMS_TOKEN: "tok" },
+    });
+    const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
+    expect(allowed).toContain("mcp__agents");
   });
 
   it("resumes with --resume when a cursor exists and reports that session id", async () => {

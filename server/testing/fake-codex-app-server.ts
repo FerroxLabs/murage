@@ -4,7 +4,7 @@
 // initialize/thread/turn handshake, then plays a scripted turn. Like the
 // real app-server, it never exits on its own — the driver kills it.
 //
-//   FAKE_CODEX_MODE   happy (default) | approval | resume
+//   FAKE_CODEX_MODE   happy (default) | approval | resume | stream
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
@@ -28,6 +28,11 @@ const dump = () => {
 
 const finishTurn = () => {
   notify("item/completed", { item: { id: "i1", type: "commandExecution", status: "completed" } });
+  if (mode === "stream") {
+    // token deltas, then the whole message — the driver must not double-emit
+    notify("item/agentMessage/delta", { itemId: "m1", delta: "done from " });
+    notify("item/agentMessage/delta", { itemId: "m1", delta: "fake codex" });
+  }
   notify("item/completed", { item: { id: "m1", type: "agentMessage", text: "done from fake codex" } });
   notify("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 7, outputTokens: 3 } } });
   dump();

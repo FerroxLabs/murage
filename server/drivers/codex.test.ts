@@ -103,6 +103,24 @@ posixOnly("CodexDriver turns (fake app-server)", () => {
     expect(turnStart.params.input[0].text).toBe("You are Testy.\n\nlist files");
   });
 
+  it("streams agentMessage deltas without re-emitting the settled text", async () => {
+    process.env.FAKE_CODEX_MODE = "stream";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-stream", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const text = recorder.events.filter(
+      (e: any) => e.type === "content.delta" && e.streamKind === "assistant_text",
+    );
+    // the two streamed chunks only — no third whole-message fallback delta
+    expect(text.map((d: any) => d.delta)).toEqual(["done from ", "fake codex"]);
+    const settled = recorder.events.filter(
+      (e: any) => e.type === "item.completed" && e.itemType === "assistant_text",
+    );
+    expect(settled).toHaveLength(1);
+    expect((settled[0] as any).text).toBe("done from fake codex");
+  });
+
   it("tries thread/resume with a cursor and reuses the thread id", async () => {
     await create({ mode: "resume" });
     const dump = join(scratch, "dump.json");
