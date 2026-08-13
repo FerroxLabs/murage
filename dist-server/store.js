@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.js";
 import { newId } from "./contracts.js";
+import { pickBotName } from "./names.js";
 const BOTS_FILE = join(DATA_DIR, "bots.json");
 const messagesFile = (threadId) => join(DATA_DIR, `messages-${threadId}.json`);
 const COLORS = [
@@ -180,10 +181,11 @@ export class Store {
         return this.bots.find((b) => b.threadId === threadId) ?? null;
     }
     createBot() {
+        const name = pickBotName(this.bots.map((b) => b.name));
         const bot = {
             id: newId(),
             threadId: newId(),
-            name: "New Bot",
+            name,
             title: "",
             description: "",
             notifications: true,
@@ -198,7 +200,7 @@ export class Store {
         this.appendMessage(bot.threadId, {
             role: "bot",
             kind: "text",
-            text: "Hey — I'm your new bot. Nice to meet you.",
+            text: `Hey — I'm ${name}. Nice to meet you.`,
         });
         this.appendMessage(bot.threadId, { role: "bot", kind: "options", card: onboardingCard() });
         return bot;
@@ -231,11 +233,11 @@ export class Store {
         bot.resumeCursors[instanceId] = cursor;
         this.saveBots();
     }
-    /** First-run seed: one bot so the app never opens empty. */
+    /** First-run seed: one bot so the app never opens empty — it gets a
+     * random friendly name like every other bot. */
     seedIfEmpty() {
         if (this.bots.length)
             return;
-        const bot = this.createBot();
-        this.patchBot(bot.id, { name: "Milind", color: "blue" });
+        this.createBot();
     }
 }

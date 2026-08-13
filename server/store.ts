@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
+import { pickBotName } from "./names.ts";
 
 export type MausColor =
   | "green"
@@ -269,10 +270,11 @@ export class Store {
   }
 
   createBot(): BotRecord {
+    const name = pickBotName(this.bots.map((b) => b.name));
     const bot: BotRecord = {
       id: newId(),
       threadId: newId(),
-      name: "New Bot",
+      name,
       title: "",
       description: "",
       notifications: true,
@@ -287,7 +289,7 @@ export class Store {
     this.appendMessage(bot.threadId, {
       role: "bot",
       kind: "text",
-      text: "Hey — I'm your new bot. Nice to meet you.",
+      text: `Hey — I'm ${name}. Nice to meet you.`,
     });
     this.appendMessage(bot.threadId, { role: "bot", kind: "options", card: onboardingCard() });
     return bot;
@@ -320,10 +322,10 @@ export class Store {
     this.saveBots();
   }
 
-  /** First-run seed: one bot so the app never opens empty. */
+  /** First-run seed: one bot so the app never opens empty — it gets a
+   * random friendly name like every other bot. */
   seedIfEmpty() {
     if (this.bots.length) return;
-    const bot = this.createBot();
-    this.patchBot(bot.id, { name: "Milind", color: "blue" });
+    this.createBot();
   }
 }
