@@ -1,6 +1,6 @@
 // Renderer bridge. contextIsolation stays on; the renderer only ever sees
 // this narrow surface (window.ogb), never Node or ipcRenderer itself.
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("ogb", {
   /** Host platform ("darwin" | "win32" | "linux") — for platform-aware UI. */
@@ -18,6 +18,15 @@ contextBridge.exposeInMainWorld("ogb", {
     const handler = (_event, info) => cb(info);
     ipcRenderer.on("speech:end", handler);
     return () => ipcRenderer.removeListener("speech:end", handler);
+  },
+  /** Absolute path of a dropped File — Electron 32 removed File.path, and
+   * only the preload can ask. "" when the drag carried no file on disk. */
+  getPathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
   },
   /** {mic} TCC status strings: granted|denied|not-determined|unknown.
    * No screen field — macOS 15+ caches that status per-process, so any

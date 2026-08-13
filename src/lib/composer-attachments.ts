@@ -1,7 +1,10 @@
-// Text pasted into the composer that is too long to live in the input.
-// It rides along as a chip and folds back into the message on send —
-// nothing here reaches the server, so every driver still sees a prompt.
-export type Attachment = { kind: "paste"; id: string; text: string; size: number };
+// What is attached to the next message: a paste too long to live in the
+// input, and files dropped onto the window. Both ride along as chips and
+// fold back into the message on send — nothing here reaches the server,
+// so every driver still sees a plain prompt.
+export type Attachment =
+  | { kind: "paste"; id: string; text: string; size: number }
+  | { kind: "file"; id: string; path: string; name: string; size: number };
 
 /** Past this, a paste stops reading as typing and becomes an attachment.
  * Long-but-narrow (a stack trace, a log) counts by line, not just chars. */
@@ -16,8 +19,16 @@ export function countLines(text: string): number {
   return text.split("\n").length;
 }
 
+function newId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `a${Math.random().toString(36).slice(2)}`;
+}
+
+export function fileAttachment(name: string, path: string, size: number): Attachment {
+  return { kind: "file", id: newId(), path, name, size };
+}
+
 export function pasteAttachment(text: string): Attachment {
-  const id = globalThis.crypto?.randomUUID?.() ?? `a${Math.random().toString(36).slice(2)}`;
+  const id = newId();
   // measured once, here: a chip re-renders on every keystroke in the
   // composer, and encoding half a megabyte each time would be felt
   return { kind: "paste", id, text, size: byteLength(text) };
@@ -40,13 +51,18 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** The prompt the bot receives: what was typed, then one block per paste.
- * Tagged blocks rather than fences — pasted code and markdown carry fences
- * of their own, and nesting them loses the boundary. */
+/** The prompt the bot receives: what was typed, then one block per
+ * attachment. Tagged blocks rather than fences — pasted code and markdown
+ * carry fences of their own, and nesting them loses the boundary. A file
+ * needs only its path: every driver here is an agent that can open it. */
 export function composeMessage(text: string, attachments: Attachment[]): string {
   const parts = [text.trim()];
   attachments.forEach((a, i) => {
-    parts.push(`<pasted-text index="${i + 1}">\n${a.text}\n</pasted-text>`);
+    if (a.kind === "paste") {
+      parts.push(`<pasted-text index="${i + 1}">\n${a.text}\n</pasted-text>`);
+    } else {
+      parts.push(`<attached-file path="${a.path}" />`);
+    }
   });
   return parts.filter(Boolean).join("\n\n");
 }

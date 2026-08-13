@@ -47,6 +47,10 @@ export function Composer({
   // pastes too long for the input ride along as chips and fold back
   // into the message on send
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const addAttachments = useCallback(
+    (next: Attachment[]) => setAttachments((prev) => [...prev, ...next]),
+    [],
+  );
   const removeAttachment = useCallback(
     (id: string) => setAttachments((prev) => prev.filter((a) => a.id !== id)),
     [],
@@ -222,7 +226,11 @@ export function Composer({
             ))}
           </div>
         )}
-        <ComposerAttachments items={attachments} onRemove={removeAttachment} />
+        <ComposerAttachments
+          items={attachments}
+          onAdd={addAttachments}
+          onRemove={removeAttachment}
+        />
         <div className="flex items-end gap-2 rounded-3xl border border-hairline/40 bg-raised/60 py-2 pl-3 pr-2">
         <textarea
           ref={inputRef}

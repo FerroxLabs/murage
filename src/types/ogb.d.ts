@@ -12,6 +12,9 @@ declare global {
         cb: (line: { partial?: boolean; text?: string; error?: string }) => void,
       ): () => void;
       onSpeechEnd(cb: (info: { code: number | null }) => void): () => void;
+      /** Absolute path of a dropped File ("" when the drag carried no
+       * file on disk). Absent in older builds of the shell. */
+      getPathForFile?(file: File): string;
       /** {mic} TCC status: granted|denied|not-determined|unknown. Screen
        * status is deliberately absent — macOS 15+ caches it per-process,
        * so it lies for the whole session after a grant. */
