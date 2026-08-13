@@ -150,14 +150,24 @@ export async function verifyToken(token: string): Promise<{ ok: true } | { ok: f
   }
 }
 
-/** Turn a provider status into something a person can act on. */
-export function boxErrorMessage(status: number, what: string): string {
+/** Turn a provider refusal into something a person can act on. The
+ * provider's own message is better than anything we can invent — it knows
+ * the plan, the limit and the link — so prefer it and only fall back to
+ * our own wording when it says nothing useful. */
+export function boxErrorMessage(status: number, what: string, body?: any): string {
+  const theirs = typeof body?.message === "string" ? body.message.trim() : "";
+  const link = typeof body?.error?.details?.billingUrl === "string" ? body.error.details.billingUrl : "";
+  if (status === 402) {
+    // e.g. "Start the $20/month Box plan to create sandboxes."
+    return [theirs || "ascii.dev needs a paid Box plan before it will create a computer.", link].filter(Boolean).join(" ");
+  }
   if (status === 401 || status === 403) {
     return "your box token was rejected by ascii.dev — open App Settings and paste a current token (it starts with box_)";
   }
-  if (status === 429) return "ascii.dev is rate-limiting this account — wait a minute and try again";
-  if (status === 402) return "ascii.dev refused for billing reasons — check your account there";
-  return `${what} failed (${status})`;
+  if (status === 429) {
+    return theirs || "ascii.dev is rate-limiting this account — wait a minute and try again";
+  }
+  return theirs ? `${what} failed: ${theirs}` : `${what} failed (${status})`;
 }
 
 /** Box state for the Computer panel. */
@@ -190,7 +200,7 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
       body: JSON.stringify({ ttlSeconds: 8 * 60 * 60 }),
     });
     if (!createRes.ok || !createRes.body?.box?.id) {
-      throw new Error(boxErrorMessage(createRes.status, "box create"));
+      throw new Error(boxErrorMessage(createRes.status, "box create", createRes.body));
     }
     box = createRes.body.box;
     created = true;

@@ -120,9 +120,13 @@ export async function verifyToken(token) {
         if (res.ok)
             return { ok: true };
         if (res.status === 401 || res.status === 403) {
+            // the common mistake is pasting some other credential entirely —
+            // box API keys are prefixed, so say which thing is wrong
             return {
                 ok: false,
-                message: "ascii.dev rejected that token. Copy it again from your ascii.dev account (it starts with box_) — an expired or revoked token gives this too.",
+                message: token.startsWith("box_")
+                    ? "ascii.dev rejected that token — it may have been revoked or expired. Copy a fresh one from your ascii.dev account."
+                    : "That doesn't look like a box API key: they start with box_. Copy the API key from your ascii.dev account (an account or session token won't work here).",
             };
         }
         return { ok: false, message: `ascii.dev returned ${res.status} for that token — try again in a moment.` };
