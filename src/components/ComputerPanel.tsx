@@ -66,6 +66,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       setPhase(capabilitiesReady && localAvailable ? "local" : "local-unavailable");
       return;
     }
+    if (bot.computer !== "cloud" && !capabilitiesReady) return;
     // cloud, or auto (cloud box wins when one exists, else local in-app)
     api(`/api/bots/${bot.id}/computer`)
       .then((status) => {

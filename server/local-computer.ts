@@ -18,7 +18,12 @@ type ConnectionDescriptor = {
 function decodeDescriptor(value: ConnectionDescriptor): LocalComputerConnection | null {
   if (!value || value.mode === "unavailable" || typeof value.mcpCommand !== "string") return null;
   if (value.mcpArgs !== undefined && !Array.isArray(value.mcpArgs)) return null;
-  if (value.mcpEnv !== undefined && (!value.mcpEnv || typeof value.mcpEnv !== "object")) return null;
+  if (
+    value.mcpEnv !== undefined &&
+    (!value.mcpEnv || typeof value.mcpEnv !== "object" || Array.isArray(value.mcpEnv))
+  ) {
+    return null;
+  }
 
   const args = value.mcpArgs ?? ["mcp"];
   if (!args.every((arg) => typeof arg === "string")) return null;

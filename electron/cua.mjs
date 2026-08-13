@@ -34,10 +34,19 @@ function persistConnection(next) {
   connection = next;
   const userData = app.getPath("userData");
   fs.mkdirSync(userData, { recursive: true });
-  fs.writeFileSync(
-    path.join(userData, "cua-connection.json"),
-    JSON.stringify(connection, null, 2),
-  );
+  const descriptorPath = path.join(userData, "cua-connection.json");
+  const temporaryPath = `${descriptorPath}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(connection, null, 2));
+    fs.renameSync(temporaryPath, descriptorPath);
+  } catch (error) {
+    try {
+      fs.unlinkSync(temporaryPath);
+    } catch {
+      // The temporary file may not have been created or may already be renamed.
+    }
+    throw error;
+  }
   return connection;
 }
 

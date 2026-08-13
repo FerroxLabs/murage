@@ -161,13 +161,23 @@ function createWindow() {
         const result = await win.webContents.executeJavaScript(`
           (async () => {
             if (!window.ogb?.getCapabilities) throw new Error("desktop preload bridge is unavailable");
-            const [capabilities, health] = await Promise.all([
+            const [capabilities, healthResponse] = await Promise.all([
               window.ogb.getCapabilities(),
-              fetch("/api/health").then((response) => response.json()),
+              fetch("/api/health"),
             ]);
+            if (!healthResponse.ok) {
+              throw new Error(\`health request failed: \${healthResponse.status} \${healthResponse.statusText}\`);
+            }
+            const health = await healthResponse.json();
             return { capabilities, health, location: window.location.href, title: document.title };
           })()
         `);
+        const expectedLocation = `http://127.0.0.1:${SERVER_PORT}/`;
+        if (result.location !== expectedLocation) {
+          throw new Error(
+            `unexpected packaged renderer URL: ${result.location} (expected ${expectedLocation})`,
+          );
+        }
         console.log(`[smoke] renderer-ready ${JSON.stringify(result)}`);
       } catch (error) {
         console.error(`[smoke] renderer-failed ${error?.stack ?? error}`);

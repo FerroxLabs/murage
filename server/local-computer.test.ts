@@ -51,4 +51,19 @@ describe("local computer descriptor", () => {
 
     expect(readCuaConnection({ platform: "win32", userData })).toBeNull();
   });
+
+  it("rejects an array environment descriptor", () => {
+    const userData = join(process.env.HOME!, "array-environment-user-data");
+    mkdirSync(userData, { recursive: true });
+    writeFileSync(
+      join(userData, "cua-connection.json"),
+      JSON.stringify({
+        mode: "embedded",
+        mcpCommand: "cua-driver",
+        mcpEnv: ["CUA_DRIVER_EMBEDDED=1"],
+      }),
+    );
+
+    expect(readCuaConnection({ platform: "win32", userData })).toBeNull();
+  });
 });
