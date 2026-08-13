@@ -1,9 +1,16 @@
 import { track } from "@/lib/analytics";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Clock, Mic, Square, X } from "lucide-react";
 import { useStore, type Bot, type Group } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { MausAvatar } from "./Avatar";
+import { ComposerAttachments } from "./ComposerAttachments";
+import {
+  composeMessage,
+  isLongPaste,
+  pasteAttachment,
+  type Attachment,
+} from "@/lib/composer-attachments";
 import { normalizeState } from "@/lib/mascot";
 
 /** The active @mention query at the caret: the text between an `@` that
@@ -37,6 +44,13 @@ export function Composer({
     ? (members?.find((b) => b.id === group.busyBotId)?.name ?? "A bot")
     : (bot?.name ?? "The bot");
   const [text, setText] = useState("");
+  // pastes too long for the input ride along as chips and fold back
+  // into the message on send
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const removeAttachment = useCallback(
+    (id: string) => setAttachments((prev) => prev.filter((a) => a.id !== id)),
+    [],
+  );
   const [recording, setRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [caret, setCaret] = useState(0);
@@ -88,11 +102,12 @@ export function Composer({
   // the turn settles. Enter during a turn queues instead of silently dying.
   const [queued, setQueued] = useState<string | null>(null);
   const send = () => {
-    const t = text.trim();
+    const t = composeMessage(text, attachments);
     if (!t) return;
     if (busy) {
       setQueued(t);
       setText("");
+      setAttachments([]);
       return;
     }
     if (group) {
@@ -103,6 +118,7 @@ export function Composer({
       track("message_sent", { driver: bot.modelSelection?.instanceId });
     }
     setText("");
+    setAttachments([]);
   };
   useEffect(() => {
     if (!busy && queued) {
@@ -204,6 +220,7 @@ export function Composer({
             ))}
           </div>
         )}
+        <ComposerAttachments items={attachments} onRemove={removeAttachment} />
         <div className="flex items-end gap-2 rounded-3xl border border-hairline/40 bg-raised/60 py-2 pl-3 pr-2">
         <textarea
           ref={inputRef}
@@ -213,6 +230,13 @@ export function Composer({
             setText(e.target.value);
             setCaret(e.target.selectionStart ?? e.target.value.length);
             setDismissedAt(null);
+          }}
+          onPaste={(e) => {
+            // a wall of text becomes a chip instead of burying the input
+            const pasted = e.clipboardData.getData("text/plain");
+            if (!isLongPaste(pasted)) return;
+            e.preventDefault();
+            setAttachments((prev) => [...prev, pasteAttachment(pasted)]);
           }}
           onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
