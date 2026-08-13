@@ -160,15 +160,22 @@ bus.subscribe((event: RuntimeEvent) => {
         pushMessage({ role: "bot", kind: "text", text: event.text });
       } else if (event.itemType === "tool" && event.itemId) {
         const messageId = toolMessageByItem.get(event.itemId);
+        let toolName = "tool";
         if (messageId) {
+          toolName = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool";
           const patched = store.patchMessage(event.threadId, messageId, {
-            tool: { name: store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool", ok: event.ok },
+            tool: { name: toolName, ok: event.ok },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
           toolMessageByItem.delete(event.itemId);
         }
-        // the bot just finished acting — refresh its screen preview now
-        if (bot) pokeScreenPoller(bot.id);
+        // the bot just acted ON ITS SCREEN — refresh the preview now. Only
+        // computer tools can change the screen, and each capture competes
+        // with the agent for the box's command endpoint, so a bot grinding
+        // through file edits must not trigger one per tool.
+        if (bot && /computer|screenshot|click|type_text|press_key|scroll|open_url/i.test(toolName)) {
+          pokeScreenPoller(bot.id);
+        }
       }
       break;
     case "item.started":
@@ -237,25 +244,36 @@ const screenPollers = new Map<
   { timer: ReturnType<typeof setInterval>; capture: () => Promise<void>; last: Frame | null }
 >();
 
-function startScreenPoller(botId: string) {
+/** The preview shares the box's single command endpoint with the agent's
+ * own actions, so every frame we take is latency stolen from the work the
+ * user is waiting on. Hence: a slow interval, a floor between captures,
+ * and never two in flight. */
+const SCREEN_POLL_MS = 6000;
+const SCREEN_MIN_GAP_MS = 3000;
+
+function startScreenPoller(botId: string, boxId?: string) {
   if (screenPollers.has(botId) || !box.boxConfigured(cfg)) return;
   let inFlight = false;
+  let lastAt = 0;
   const capture = async () => {
-    if (inFlight) return;
+    if (inFlight || Date.now() - lastAt < SCREEN_MIN_GAP_MS) return;
     inFlight = true;
     try {
-      const { png, format } = await box.screenshotBox(cfg, botId);
+      // the box id is resolved once per turn — re-resolving per frame cost
+      // a full LIST of the account's boxes
+      const { png, format } = await box.screenshotBox(cfg, botId, boxId);
       const frame = { png, mime: format === "jpeg" ? "image/jpeg" : "image/png" };
       entry.last = frame;
       broadcast({ kind: "screen", botId, ...frame });
     } catch {
       /* box asleep or mid-command — try again next tick */
     } finally {
+      lastAt = Date.now();
       inFlight = false;
     }
   };
   const entry = {
-    timer: setInterval(capture, 4000),
+    timer: setInterval(capture, SCREEN_POLL_MS),
     capture,
     last: null as Frame | null,
   };
@@ -263,7 +281,9 @@ function startScreenPoller(botId: string) {
 }
 
 /** Event-driven refresh: capture NOW (the bot just acted on its screen)
- * instead of waiting for the next interval tick. */
+ * instead of waiting for the next interval tick. Rate-limited inside
+ * capture() — a tool-heavy turn used to fire one full REST chain per
+ * completed tool, competing with the agent for the same endpoint. */
 function pokeScreenPoller(botId: string) {
   void screenPollers.get(botId)?.capture();
 }
@@ -381,6 +401,12 @@ async function startTurn(
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
       if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
       const wants = bot.computer; // 'cloud' | 'local' | 'off' | undefined(auto)
+      // only drivers that can mount the computer MCP server get the tools
+      // (and the prompt about them) — but every bot with a box still gets
+      // the live screen preview, which is a UI feature, not a tool
+      const mountsComputer =
+        instance.adapter.capabilities.computerMcp === true || instance.driverKind === "boxAgent";
+      let previewBoxId: string | null = null;
       if (wants !== "off" && wants !== "local" && box.boxConfigured(cfg)) {
         let b = await box.findBox(cfg, bot.id).catch(() => null);
         // the Computer driver runs ON the box — provision it on first use
@@ -389,7 +415,18 @@ async function startTurn(
           await box.provisionBox(cfg, bot.id, bot.name);
           b = await box.findBox(cfg, bot.id).catch(() => null);
         }
-        if (b) integrations.computer = { boxId: b.id, token: cfg.box!.token! };
+        // an archived box answers every action with an error until it
+        // resumes — wake it here, once, instead of letting the agent
+        // discover it one failed tool call at a time. Only worth the
+        // resume (~8s, and it un-pauses billing) when the bot can act.
+        if (b && mountsComputer && !["idle", "ready", "running"].includes(b.state)) {
+          broadcast({ kind: "computer", botId: bot.id, state: "waking" });
+          b = (await box.readyBox(cfg, bot.id).catch(() => null)) ?? b;
+        }
+        if (b) {
+          previewBoxId = b.id;
+          if (mountsComputer) integrations.computer = { boxId: b.id, token: cfg.box!.token! };
+        }
       }
       // local computer (this Mac) via the Electron-hosted cua-driver: the
       // Electron main process owns the daemon (TCC attribution) and writes
@@ -432,7 +469,7 @@ async function startTurn(
         system:
           persona +
           (integrations.computer && instance.driverKind !== "boxAgent"
-            ? " You have your own cloud computer — use the computer tools (screenshot, computer_exec, open_url) whenever browsing or acting on a desktop helps."
+            ? " You have your own cloud computer — use the computer tools (screenshot, click, type_text, open_url, computer_exec) whenever browsing or acting on a desktop helps. Every action tool already returns the resulting screen, so don't follow one with a screenshot call, and batch predictable sequences with computer_batch."
             : integrations.localComputer
               ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
               : "") +
@@ -448,7 +485,7 @@ async function startTurn(
       });
       // dispatched: the rewind is spent, and the old cursors are dead
       if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
-      if (integrations.computer) startScreenPoller(bot.id);
+      if (previewBoxId) startScreenPoller(bot.id, previewBoxId);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const failure = store.appendMessage(bot.threadId, {
