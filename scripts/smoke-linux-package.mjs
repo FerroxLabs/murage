@@ -84,14 +84,19 @@ async function stopProcess() {
 
 try {
   const result = await until(async () => smokeResult, "the packaged renderer smoke result");
-  const { capabilities, health, location, title } = result;
+  const { capabilities, displayMediaRequests, health, location, title } = result;
   if (health?.app !== "openmausbot" || health.static !== true) {
     throw new Error(`unexpected embedded health response: ${JSON.stringify(health)}`);
   }
   if (!String(title).includes("OpenMausBot")) throw new Error(`unexpected renderer title: ${title}`);
   if (capabilities.host.platform !== "linux") throw new Error("renderer did not report Linux");
+  if (capabilities.host.session !== "x11") throw new Error("Xvfb did not report an X11 session");
+  if (!capabilities.screenPreview.available || capabilities.screenPreview.interaction !== "direct") {
+    throw new Error("X11 screen preview capability was not available");
+  }
   if (capabilities.dictation.available) throw new Error("dictation must be unavailable on Linux");
   if (capabilities.localComputer.available) throw new Error("local control must be unavailable on Linux");
+  if (displayMediaRequests !== 0) throw new Error("launch triggered display capture without user intent");
   if (existsSync(marker)) throw new Error("Linux executed the CUA sentinel");
 
   await waitForExit();

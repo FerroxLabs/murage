@@ -217,11 +217,13 @@ pnpm package:linux    # Ubuntu x64: .deb + AppImage; no Swift required
 |---|---|---|---|
 | Packaged app, embedded harness, local agent CLIs | Supported | Beta | Beta |
 | Composio and Box/cloud computers | Supported | Beta | Beta |
-| Local screen preview and computer control | Supported | Planned | Planned after compositor validation |
+| Explicit preview-only local screen capture | Supported | Beta | Pending GNOME portal validation |
+| Bot control of this computer | Supported | Planned | Planned after compositor validation |
 | Native on-device dictation | Supported | Planned | Planned |
 
-Unavailable native features fail closed on Ubuntu without blocking chat or cloud features. Linux local computer
-control, Wayland capture/automation, dictation, and ARM64 are tracked in
+The Linux preview is user-initiated and never enables local bot control or Auto routing. Unavailable native
+features fail closed without blocking chat or cloud features. Linux local computer control, Wayland automation,
+dictation, and ARM64 are tracked in
 [#29](https://github.com/milind-soni/OpenMausBot/issues/29) and are not claimed by the baseline package.
 
 These credentials are optional — local chat works without them. Paste a key once in **App Settings** (gear

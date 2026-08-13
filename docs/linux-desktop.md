@@ -11,11 +11,13 @@ of Linux desktop on your own server instead of this machine, see [byo-vps.md](by
 - Chat, streaming turns, approvals, bot-to-bot communication, and local data storage.
 - Composio connected apps and Box cloud computers.
 - External documentation and OAuth links in the default browser.
+- An explicit, view-only local screen preview on GNOME Xorg, with a Wayland portal implementation pending
+  final real-session validation.
 
-The first beta intentionally does **not** claim Linux dictation, local screen preview, or control of this
-computer. Those controls are unavailable in the UI and fail closed in the Electron and server layers. Use a
-Cloud box when a bot needs a computer. Xorg computer control, Wayland validation, bundled CUA, dictation, and
-ARM64 are follow-ups in [issue #29](https://github.com/milind-soni/OpenMausBot/issues/29).
+The local preview does **not** give the bot control of this computer. Linux dictation and local computer
+control remain unavailable and fail closed in the Electron, server, and UI layers. Use a Cloud box when a bot
+needs a computer it can act on. Xorg computer control, Wayland automation, bundled CUA, dictation, and ARM64
+are follow-ups in [issue #29](https://github.com/milind-soni/OpenMausBot/issues/29).
 
 ## Build packages
 
@@ -106,9 +108,21 @@ Restart OpenMausBot after installing or signing in to a CLI.
 
 ## Xorg and Wayland
 
-The baseline shell, chat, cloud computers, and connected apps work in both GNOME session types. OpenMausBot
-detects Wayland before XWayland when both `WAYLAND_DISPLAY` and `DISPLAY` exist, so future capture features do
-not accidentally bypass portal-mediated behavior.
+The shell, chat, cloud computers, and connected apps work in both GNOME session types. Preview-only capture is
+validated on Xorg; its Wayland portal path is implemented but remains a release candidate until the complete
+chooser/cancel/end matrix passes in a real GNOME Wayland session. OpenMausBot detects Wayland before XWayland
+when both `WAYLAND_DISPLAY` and `DISPLAY` exist, so capture cannot accidentally bypass portal-mediated behavior.
+
+Open the Computer panel and use the separate **Preview this computer** card. Capture never starts when the app
+or panel opens.
+
+- **Xorg:** **Start preview** captures the primary monitor directly.
+- **Wayland:** **Choose a screen** opens the GNOME portal chooser once. The selected stream stays open until
+  you press **Stop preview**, close the panel, end sharing from GNOME, or quit the app.
+
+Cancelling or ending Wayland sharing returns to a calm **Try again** state and never reopens the chooser
+automatically. OpenMausBot does not capture screen audio, remember the selected monitor after restart, or
+offer an **Open Settings** action on Linux.
 
 Local computer control remains disabled on both session types in this beta. Future Xorg support will require a
 validated `cua-driver`; Wayland support will remain disabled until the exact GNOME/Mutter action surface has
@@ -142,6 +156,12 @@ considered for automatic discovery.
 
 Choose **Cloud box** in the Computer panel and add a Box token in App Settings. **This computer** is disabled on
 Linux until local CUA control is implemented and validated.
+
+### Screen preview does not start
+
+On Xorg, confirm the session has an active display with `echo "$XDG_SESSION_TYPE"`; it should print `x11`.
+On Wayland, confirm `xdg-desktop-portal` and the GNOME portal backend are running, then click **Try again** to
+open a new chooser. Cancelling or stopping sharing never causes an automatic second prompt.
 
 ### The AppImage does not start
 
