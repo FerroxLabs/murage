@@ -216,13 +216,20 @@ bus.subscribe((event) => {
             break;
         case "turn.completed": {
             if (bot) {
-                // the last live frame becomes a settled inline screen message —
-                // the screenshot-in-chat moment
-                const frame = stopScreenPoller(bot.id);
-                if (frame)
-                    pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
                 store.patchBot(bot.id, { busy: false, unread: true });
                 broadcast({ kind: "bot", bot: store.bot(bot.id) });
+                if (screenPollers.has(bot.id)) {
+                    // the last live frame becomes a settled inline screen message —
+                    // the screenshot-in-chat moment. One fresh capture first, so the
+                    // frame shows the turn's END state (the final tool's poke may
+                    // still be in flight).
+                    void finalScreenFrame(bot.id).then((frame) => {
+                        // the bot may have been deleted while the capture ran
+                        if (frame && store.bot(bot.id)) {
+                            pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
+                        }
+                    });
+                }
             }
             // group busy/unread settle in the group turn engine, which knows
             // whether more member turns are queued behind this one
@@ -240,33 +247,40 @@ const SCREEN_MIN_GAP_MS = 3000;
 function startScreenPoller(botId, boxId) {
     if (screenPollers.has(botId) || !box.boxConfigured(cfg))
         return;
-    let inFlight = false;
+    // One capture at a time, shared by the interval, the pokes, and the
+    // turn-end grab: awaiting the in-flight promise (rather than dropping the
+    // call) is what lets the final frame be the settled one. The min-gap keeps
+    // a tool-heavy turn from spending the box's single command endpoint on
+    // previews the user isn't waiting for.
+    let current = null;
     let lastAt = 0;
-    const capture = async () => {
-        if (inFlight || Date.now() - lastAt < SCREEN_MIN_GAP_MS)
-            return;
-        inFlight = true;
-        try {
-            // the box id is resolved once per turn — re-resolving per frame cost
-            // a full LIST of the account's boxes
-            const { png, format } = await box.screenshotBox(cfg, botId, boxId);
-            const frame = { png, mime: format === "jpeg" ? "image/jpeg" : "image/png" };
-            entry.last = frame;
-            broadcast({ kind: "screen", botId, ...frame });
-        }
-        catch {
-            /* box asleep or mid-command — try again next tick */
-        }
-        finally {
-            lastAt = Date.now();
-            inFlight = false;
-        }
-    };
     const entry = {
-        timer: setInterval(capture, SCREEN_POLL_MS),
-        capture,
+        timer: null,
+        capture: () => {
+            if (!current && Date.now() - lastAt < SCREEN_MIN_GAP_MS)
+                return Promise.resolve();
+            current ??= (async () => {
+                try {
+                    // boxId is resolved once per turn — re-resolving per frame cost a
+                    // full LIST of the account's boxes
+                    const { png, format } = await box.screenshotBox(cfg, botId, boxId);
+                    const frame = { png, mime: format === "jpeg" ? "image/jpeg" : "image/png" };
+                    entry.last = frame;
+                    broadcast({ kind: "screen", botId, ...frame });
+                }
+                catch {
+                    /* box asleep or mid-command — try again next tick */
+                }
+                finally {
+                    lastAt = Date.now();
+                    current = null;
+                }
+            })();
+            return current;
+        },
         last: null,
     };
+    entry.timer = setInterval(() => void entry.capture(), SCREEN_POLL_MS);
     screenPollers.set(botId, entry);
 }
 /** Event-driven refresh: capture NOW (the bot just acted on its screen)
@@ -279,9 +293,22 @@ function pokeScreenPoller(botId) {
 function stopScreenPoller(botId) {
     const entry = screenPollers.get(botId);
     if (!entry)
-        return null;
-    clearInterval(entry.timer);
+        return;
+    if (entry.timer)
+        clearInterval(entry.timer);
     screenPollers.delete(botId);
+}
+/** Turn end: stop polling, then take ONE last fresh frame (awaiting any
+ * in-flight poke first) so the settled screenshot shows the screen's actual
+ * end state, not the previous action's. */
+async function finalScreenFrame(botId) {
+    const entry = screenPollers.get(botId);
+    if (!entry)
+        return null;
+    if (entry.timer)
+        clearInterval(entry.timer);
+    screenPollers.delete(botId);
+    await entry.capture();
     return entry.last;
 }
 // Where Electron's app.getPath("userData") lands, per platform — the
@@ -637,6 +664,20 @@ async function reloadProviders() {
     await registry.disposeAll();
     await registry.load(instanceConfigs(cfg));
     bus.attach(registry.instances());
+    // A killed turn's terminal events can die with the old fleet (dispose is
+    // async under the hood), stranding the bot busy — and its screen poller —
+    // forever. Settle anything still marked busy.
+    for (const b of store.bots.filter((b) => b.busy)) {
+        stopScreenPoller(b.id);
+        const note = store.appendMessage(b.threadId, {
+            role: "bot",
+            kind: "activity",
+            tool: { name: "error: turn interrupted — provider settings changed", ok: false },
+        });
+        broadcast({ kind: "message", threadId: b.threadId, message: note });
+        store.patchBot(b.id, { busy: false });
+        broadcast({ kind: "bot", bot: store.bot(b.id) });
+    }
 }
 // ── HTTP plumbing ─────────────────────────────────────────────────────
 function json(res, status, body) {
