@@ -11,6 +11,8 @@
 // CUA itself uses on Linux.
 //
 // stdout is the MCP channel — never console.log here.
+import { normalizeCrop, ObservationCoordinator, parseBrowserTargets, safeBrowserUrl } from "./computer-observation.ts";
+
 const BOX_API = "https://ascii.dev/api/box/v1";
 const boxId = process.env.OGB_BOX_ID ?? "";
 const token = process.env.OGB_BOX_TOKEN ?? "";
@@ -55,6 +57,39 @@ const X = "export DISPLAY=${DISPLAY:-:0}; ";
 // capture to a file on the box, read back via the files API — base64 over
 // command stdout corrupts (probed 2026-08-12), never ship binary that way
 const SHOT_WIDTH = 1280;
+const observations = new ObservationCoordinator();
+
+function metricsText() {
+  return JSON.stringify(observations.metrics);
+}
+
+async function browserTargets() {
+  // Chrome's DevTools target list is structured state: titles/URLs tell an
+  // agent whether navigation happened without burning a screenshot. It is
+  // intentionally best-effort; ordinary desktop use still works without CDP.
+  const out = await runOnBox("curl -sf --max-time 2 http://127.0.0.1:9222/json/list", 5_000);
+  const targets = out.ok ? parseBrowserTargets(out.stdout) : [];
+  if (targets.length) observations.noteStructuredObservation();
+  return targets;
+}
+
+async function waitForNavigation(url: string, attempts = 3) {
+  const expected = safeBrowserUrl(url);
+  let targets: Awaited<ReturnType<typeof browserTargets>> = [];
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt) {
+      observations.noteRetry();
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+    targets = await browserTargets();
+    if (!expected || targets.some((target) => target.url === expected)) {
+      observations.noteVerification(true);
+      return { ok: true, targets };
+    }
+  }
+  observations.noteVerification(false);
+  return { ok: false, targets };
+}
 const SHOT_CMD = [
   "export DISPLAY=${DISPLAY:-:0}",
   "f=/tmp/ogb-shot.png",
@@ -91,7 +126,33 @@ const TOOLS = [
   {
     name: "screenshot",
     description:
-      "See the bot's cloud computer screen (returns an image). Call before and after acting to ground yourself — the desktop runs Chrome and a full Linux GUI.",
+      "See the bot's cloud computer only when visual state is needed. First use browser_state for Chrome navigation/title/URL checks; repeated stable reads reuse a verified frame, and unchanged pixels return text instead of another image.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        force: { type: "boolean", description: "Capture even when no computer action has marked the screen dirty." },
+        region: {
+          type: "object",
+          description: "Optional screenshot-space crop within the 1280px-wide observation.",
+          properties: { x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" } },
+          required: ["x", "y", "width", "height"],
+        },
+      },
+    },
+  },
+  {
+    name: "browser_state",
+    description: "Read safe structured Chrome state (page titles and URLs with query strings removed) through local DevTools. Use before screenshots to verify navigation and identify the current page.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "wait_for_navigation",
+    description: "Boundedly verify Chrome reached an http(s) URL using structured DevTools state. Retries at most three times.",
+    inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+  },
+  {
+    name: "observation_metrics",
+    description: "Return this turn's screenshot, structured-observation, action, retry, and verification metrics.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -140,25 +201,43 @@ const TOOLS = [
   },
   {
     name: "open_url",
-    description: "Open a URL in the computer's own Chrome, then screenshot to see the result.",
+    description: "Open a URL in the computer's own Chrome and boundedly verify navigation through structured browser state before requesting a screenshot.",
     inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
   },
 ];
 
 async function call(id: unknown, name: string, args: any) {
   if (name === "screenshot") {
-    const out = await runOnBox(SHOT_CMD, 60_000);
+    const force = args.force === true;
+    if (!observations.needsCapture(force)) return text(id, `screen unchanged since the last verified observation; no screenshot captured or sent. metrics: ${metricsText()}`);
+    const crop = args.region === undefined ? null : normalizeCrop(args.region, SHOT_WIDTH);
+    if (args.region !== undefined && !crop) return text(id, "region must be a bounded x,y,width,height crop within the 1280px-wide screenshot", true);
+    const cropCommand = crop ? `; convert "$f" -crop ${crop.width}x${crop.height}+${crop.x}+${crop.y} +repage "$f" 2>/dev/null || true` : "";
+    const out = await runOnBox(`${SHOT_CMD}${cropCommand}`, 60_000);
     if (!/captured/.test(out.stdout)) {
       return text(id, `screenshot failed: ${out.stderr.slice(0, 200) || "capture produced no file"}`, true);
     }
     const data = await readBoxFile("/tmp/ogb-shot.png");
     if (!data) return text(id, "screenshot failed: could not read the frame back", true);
+    const observed = observations.observeFrame(data, crop);
+    if (!observed.changed) return text(id, `screen pixels are unchanged after the action; no image sent. metrics: ${metricsText()}`);
     return send({
       jsonrpc: "2.0",
       id,
-      result: { content: [{ type: "image", data, mimeType: "image/png" }] },
+      result: { content: [{ type: "image", data, mimeType: "image/png" }, { type: "text", text: `${crop ? "cropped" : "full-screen"} observation captured. metrics: ${metricsText()}` }] },
     });
   }
+  if (name === "browser_state") {
+    const targets = await browserTargets();
+    return text(id, targets.length ? `Structured browser state:\n${targets.map((target) => `- ${target.title || "Untitled"}: ${target.url}`).join("\n")}\nmetrics: ${metricsText()}` : "Structured browser state unavailable. Use screenshot only if visual state is necessary.");
+  }
+  if (name === "wait_for_navigation") {
+    const url = String(args.url ?? "");
+    if (!safeBrowserUrl(url)) return text(id, "wait_for_navigation needs an http(s) URL", true);
+    const result = await waitForNavigation(url);
+    return text(id, result.ok ? `navigation verified: ${safeBrowserUrl(url)}. metrics: ${metricsText()}` : `navigation not verified after 3 checks. Current structured state: ${result.targets.map((target) => target.url).join(", ") || "unavailable"}. Use screenshot only if needed. metrics: ${metricsText()}`, !result.ok);
+  }
+  if (name === "observation_metrics") return text(id, metricsText());
   if (name === "click") {
     const x = Math.round(Number(args.x));
     const y = Math.round(Number(args.y));
@@ -176,6 +255,7 @@ async function call(id: unknown, name: string, args: any) {
     const rep = args.double ? "--repeat 2 --delay 150 " : "";
     const out = await runOnBox(`${X}xdotool mousemove ${sx} ${sy} click ${rep}${btn}`);
     if (!out.ok) return text(id, `click failed: ${out.stderr.slice(0, 200)}`, true);
+    observations.noteAction();
     return text(
       id,
       `clicked ${x},${y}${scale !== 1 ? ` (scaled to ${sx},${sy} on the ${geometry!.width}x${geometry!.height} display)` : ""}${args.double ? " (double)" : ""}${args.button === "right" ? " (right)" : ""} — screenshot to verify`,
@@ -190,13 +270,16 @@ async function call(id: unknown, name: string, args: any) {
       const out = await runOnBox(`${X}xdotool type --delay 12 '${safe}'`);
       if (!out.ok) return text(id, `type failed: ${out.stderr.slice(0, 200)}`, true);
     }
+    observations.noteAction();
     return text(id, `typed ${t.length} chars`);
   }
   if (name === "press_key") {
     const keys = String(args.keys ?? "").replace(/[^\w+]/g, "");
     if (!keys) return text(id, "press_key needs keys", true);
     const out = await runOnBox(`${X}xdotool key ${keys}`);
-    return out.ok ? text(id, `pressed ${keys}`) : text(id, `key failed: ${out.stderr.slice(0, 200)}`, true);
+    if (!out.ok) return text(id, `key failed: ${out.stderr.slice(0, 200)}`, true);
+    observations.noteAction();
+    return text(id, `pressed ${keys}`);
   }
   if (name === "scroll") {
     const clicks = Math.min(Math.max(Math.round(Number(args.clicks) || 3), 1), 20);
@@ -207,10 +290,12 @@ async function call(id: unknown, name: string, args: any) {
       const out = await runOnBox(`${X}xdotool click --repeat ${clicks} ${btn}`);
       if (!out.ok) return text(id, `scroll failed: ${out.stderr.slice(0, 200)}`, true);
     }
+    observations.noteAction();
     return text(id, `scrolled ${args.direction} ${clicks}`);
   }
   if (name === "computer_exec") {
     const out = await runOnBox(String(args.command ?? "").slice(0, 4000), 120_000);
+    observations.noteAction();
     return text(
       id,
       `exit ${out.exitCode}\n${out.stdout.slice(-6000)}${out.stderr ? `\n[stderr]\n${out.stderr.slice(-2000)}` : ""}`,
@@ -221,10 +306,13 @@ async function call(id: unknown, name: string, args: any) {
     if (!/^https?:\/\//.test(url)) return text(id, "only http(s) URLs", true);
     const q = url.replace(/'/g, "%27");
     await runOnBox(
-      `${X}(google-chrome '${q}' || chromium '${q}' || chromium-browser '${q}' || xdg-open '${q}') >/dev/null 2>&1 & sleep 3; echo opened`,
+      `${X}(google-chrome --user-data-dir=/tmp/omb-chrome --no-first-run --remote-debugging-port=9222 '${q}' || chromium --user-data-dir=/tmp/omb-chrome --no-first-run --remote-debugging-port=9222 '${q}' || chromium-browser --user-data-dir=/tmp/omb-chrome --no-first-run --remote-debugging-port=9222 '${q}' || xdg-open '${q}') >/dev/null 2>&1 & sleep 2; echo opened`,
       30_000,
     );
-    return text(id, `opened ${url} — take a screenshot to see it`);
+    observations.noteAction();
+    const verification = await waitForNavigation(url, 3);
+    if (verification.ok) return text(id, `opened and navigation verified: ${safeBrowserUrl(url)}. Prefer browser_state before a screenshot. metrics: ${metricsText()}`);
+    return text(id, `opened ${safeBrowserUrl(url)}, but structured navigation was not verified. Use browser_state or a screenshot if visual state is necessary. metrics: ${metricsText()}`);
   }
   return text(id, `unknown tool ${name}`, true);
 }
