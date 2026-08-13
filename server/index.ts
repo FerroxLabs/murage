@@ -1189,6 +1189,14 @@ const server = createServer(async (req, res) => {
         if (body[key] && typeof body[key] === "object") patch[key] = body[key];
       }
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
+      // check a box token against the provider before storing it: a
+      // rejected token used to save happily and only surface as a 401 in
+      // another panel later, with nothing the user could act on
+      const newBoxToken = (patch.box as { token?: unknown } | undefined)?.token;
+      if (typeof newBoxToken === "string" && newBoxToken.trim()) {
+        const check = await box.verifyToken(newBoxToken.trim());
+        if (!check.ok) return json(res, 400, { error: check.message });
+      }
       saveConfig(patch);
       Object.assign(cfg, loadConfig());
       // provider keys change the fleet; a profile edit must not kill

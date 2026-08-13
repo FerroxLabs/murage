@@ -123,6 +123,39 @@ export function boxConfigured(cfg: AppConfig) {
   return Boolean(cfg.box?.token);
 }
 
+/** Ask the provider whether a token is real, before we let someone save
+ * it. Without this the paste "succeeds", and the first sign of trouble is
+ * a 401 in a different panel minutes later, with nothing to act on. */
+export async function verifyToken(token: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const res = await fetch(`${BOX_API}/boxes`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (res.ok) return { ok: true };
+    if (res.status === 401 || res.status === 403) {
+      return {
+        ok: false,
+        message:
+          "ascii.dev rejected that token. Copy it again from your ascii.dev account (it starts with box_) — an expired or revoked token gives this too.",
+      };
+    }
+    return { ok: false, message: `ascii.dev returned ${res.status} for that token — try again in a moment.` };
+  } catch {
+    return { ok: false, message: "Couldn't reach ascii.dev to check that token — check your connection and retry." };
+  }
+}
+
+/** Turn a provider status into something a person can act on. */
+export function boxErrorMessage(status: number, what: string): string {
+  if (status === 401 || status === 403) {
+    return "your box token was rejected by ascii.dev — open App Settings and paste a current token (it starts with box_)";
+  }
+  if (status === 429) return "ascii.dev is rate-limiting this account — wait a minute and try again";
+  if (status === 402) return "ascii.dev refused for billing reasons — check your account there";
+  return `${what} failed (${status})`;
+}
+
 /** Box state for the Computer panel. */
 export async function boxStatus(cfg: AppConfig, botId: string) {
   if (!boxConfigured(cfg)) return { configured: false, box: null };
@@ -152,7 +185,9 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
       // survives) if every stop path dies
       body: JSON.stringify({ ttlSeconds: 8 * 60 * 60 }),
     });
-    if (!createRes.ok || !createRes.body?.box?.id) throw new Error(`box create failed (${createRes.status})`);
+    if (!createRes.ok || !createRes.body?.box?.id) {
+      throw new Error(boxErrorMessage(createRes.status, "box create"));
+    }
     box = createRes.body.box;
     created = true;
     await boxJson(cfg, `/boxes/${box.id}`, { method: "PATCH", body: JSON.stringify({ name: vmName }) });
