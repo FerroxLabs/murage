@@ -36,12 +36,22 @@ function desktopCapabilities({
 } = {}) {
   const hostPlatform = normalizedPlatform(platform);
   const isMac = hostPlatform === "darwin";
+  const hostSession = linuxSession(hostPlatform, env);
+  const linuxPreview = hostPlatform === "linux" && hostSession !== "headless";
   const localAvailable = localComputerReady(hostPlatform, localConnection);
   const screenPreview = {
-    available: isMac,
-    interaction: isMac ? "direct" : "none",
+    available: isMac || linuxPreview,
+    interaction:
+      isMac || hostSession === "x11"
+        ? "direct"
+        : hostSession === "wayland"
+          ? "portal-picker"
+          : "none",
   };
-  if (!isMac) screenPreview.reasonCode = "unsupported-platform";
+  if (!(isMac || linuxPreview)) {
+    screenPreview.reasonCode =
+      hostPlatform === "linux" ? "headless-session" : "unsupported-platform";
+  }
   const dictation = {
     available: isMac,
     engine: isMac ? "apple-speech" : "none",
@@ -68,7 +78,7 @@ function desktopCapabilities({
             : hostPlatform === "win32"
               ? "Windows"
               : "Desktop",
-      session: linuxSession(hostPlatform, env),
+      session: hostSession,
       packaged: Boolean(packaged),
       // so the renderer can show paths as ~/… without a Node builtin in
       // the sandboxed preload

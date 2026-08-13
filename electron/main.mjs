@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, safeStorage, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,8 @@ import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import capabilitiesModule from "./capabilities.cjs";
 
 const { desktopCapabilities } = capabilitiesModule;
+const require = createRequire(import.meta.url);
+const { createDisplayMediaGuard, selectCaptureSource } = require("./screen-preview.cjs");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
@@ -252,6 +255,16 @@ const ERROR_PAGE =
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
 const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath });
+const displayMediaGuard = createDisplayMediaGuard();
+let displayMediaRequestCount = 0;
+
+function rendererOrigin() {
+  return new URL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).origin;
+}
+
+ipcMain.on("screen:preview-intent", (event) => {
+  event.returnValue = displayMediaGuard.begin(event.senderFrame);
+});
 
 function createWindow() {
   const isMac = process.platform === "darwin";
@@ -314,6 +327,7 @@ function createWindow() {
             `unexpected packaged renderer URL: ${result.location} (expected ${expectedLocation})`,
           );
         }
+        result.displayMediaRequests = displayMediaRequestCount;
         console.log(`[smoke] renderer-ready ${JSON.stringify(result)}`);
       } catch (error) {
         console.error(`[smoke] renderer-failed ${error?.stack ?? error}`);
@@ -331,7 +345,7 @@ function createWindow() {
   return win;
 }
 
-// "This Mac" screen preview — served from the main process so the Screen
+// Local-control screen preview — served from the main process so the Screen
 // Recording permission prompt attributes to the app, never the server
 ipcMain.handle("screen:frame", async () => {
   if (process.platform !== "darwin") return null;
@@ -511,16 +525,44 @@ app.whenReady().then(async () => {
     await secureComposioConfig();
     await ensureManagedComposioCredentials();
   }
-  // getDisplayMedia in the renderer → this handler → ScreenCaptureKit, all
-  // inside the app's own processes — the one capture path macOS reliably
-  // attributes to the app (registers it in the Screen Recording pane and
-  // prompts). Used by the onboarding "Enable screen preview" button.
-  if (process.platform === "darwin") {
+  // Display capture remains user-initiated. The renderer first sends a
+  // short-lived one-shot intent, then calls getDisplayMedia in the same click.
+  // The handler binds that request to the same frame/origin, rejects audio,
+  // and requires Electron's active user-gesture signal.
+  if (process.platform === "darwin" || process.platform === "linux") {
     session.defaultSession.setDisplayMediaRequestHandler(
-      (_request, callback) => {
+      (request, callback) => {
+        displayMediaRequestCount += 1;
+        if (!displayMediaGuard.consume(request, rendererOrigin())) {
+          callback({});
+          return;
+        }
+
+        const capabilities = desktopCapabilities({
+          platform: process.platform,
+          env: process.env,
+          packaged: app.isPackaged,
+        });
+        const captureHost =
+          process.platform === "darwin" ? "darwin" : capabilities.host.session;
+        if (!capabilities.screenPreview.available) {
+          callback({});
+          return;
+        }
+
         desktopCapturer
-          .getSources({ types: ["screen"] })
-          .then((sources) => callback(sources[0] ? { video: sources[0] } : {}))
+          .getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } })
+          .then((sources) => {
+            const source = selectCaptureSource({
+              sources,
+              host: captureHost,
+              primaryDisplayId:
+                process.platform === "linux" && captureHost === "x11"
+                  ? screen.getPrimaryDisplay().id
+                  : null,
+            });
+            callback(source ? { video: source } : {});
+          })
           .catch(() => callback({}));
       },
       { useSystemPicker: false },

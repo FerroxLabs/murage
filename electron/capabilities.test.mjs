@@ -21,7 +21,7 @@ describe("desktop capabilities", () => {
     });
   });
 
-  it.each(["linux", "win32", "freebsd"])("fails closed on %s", (platform) => {
+  it.each(["win32", "freebsd"])("fails closed on %s", (platform) => {
     const capabilities = desktopCapabilities({
       platform,
       env: { DISPLAY: ":0" },
@@ -35,6 +35,31 @@ describe("desktop capabilities", () => {
       available: false,
       support: "unsupported",
       reasonCode: "unsupported-platform",
+    });
+  });
+
+  it("offers direct Xorg preview without enabling local control", () => {
+    const capabilities = desktopCapabilities({
+      platform: "linux",
+      env: { XDG_SESSION_TYPE: "x11", DISPLAY: ":0" },
+      localConnection: { mode: "embedded" },
+    });
+
+    expect(capabilities.screenPreview).toEqual({ available: true, interaction: "direct" });
+    expect(capabilities.localComputer.available).toBe(false);
+  });
+
+  it("offers portal-mediated Wayland preview and fails closed when headless", () => {
+    expect(
+      desktopCapabilities({
+        platform: "linux",
+        env: { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0" },
+      }).screenPreview,
+    ).toEqual({ available: true, interaction: "portal-picker" });
+    expect(desktopCapabilities({ platform: "linux", env: {} }).screenPreview).toEqual({
+      available: false,
+      interaction: "none",
+      reasonCode: "headless-session",
     });
   });
 
