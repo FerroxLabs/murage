@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { autoDecision } from "./auto-approve.ts";
+import { approvalKey, autoDecision } from "./auto-approve.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
@@ -201,14 +201,34 @@ bus.subscribe((event: RuntimeEvent) => {
         : null;
       if (settled && asker) {
         const instance = registry.get(asker.modelSelection.instanceId);
-        void instance?.adapter
-          .respondToRequest(event.threadId, event.requestId!, { behavior: "allow" })
-          .catch(() => {});
-        pushMessage({
+        const chip = pushMessage({
           role: "bot",
           kind: "activity",
           tool: { name: `${settled}: ${event.summary.slice(0, 120)}`, ok: true },
         });
+        void instance?.adapter
+          .respondToRequest(event.threadId, event.requestId!, { behavior: "allow" })
+          .catch(() => {
+            // the auto-answer didn't land — say so instead of leaving a
+            // chip claiming approval over a request nobody answered
+            const patched = store.patchMessage(event.threadId, chip.id, {
+              tool: { name: `couldn't auto-approve ${event.tool} — answer it below`, ok: false },
+            });
+            if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
+            const card = pushMessage({
+              role: "bot",
+              kind: "options",
+              card: {
+                title: "Approval needed",
+                subtitle: event.summary,
+                options: ["Allow", "Deny"],
+                requestId: event.requestId,
+                tool: event.tool,
+                allowKey: approvalKey(event.tool, event.summary),
+              },
+            });
+            if (event.requestId) askMessageByRequest.set(event.requestId, card.id);
+          });
         break;
       }
       const message = pushMessage({
@@ -220,6 +240,9 @@ bus.subscribe((event: RuntimeEvent) => {
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
           tool: permission ? event.tool : undefined,
+          // the exact grant "always allow" would remember, decided here so
+          // client and server can never derive it differently
+          allowKey: permission ? approvalKey(event.tool, event.summary) : undefined,
           // in auto mode a card can only mean the guard stopped it — say so
           held: permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
         },

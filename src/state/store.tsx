@@ -28,6 +28,8 @@ export interface OptionCardData {
   tool?: string;
   /** why auto mode stopped to ask anyway */
   held?: string;
+  /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
+  allowKey?: string;
 }
 
 export interface Message {
@@ -199,8 +201,8 @@ type Action =
       requestId: string;
       behavior: "allow" | "deny";
       message?: string;
-      /** remember this tool for the bot, so it stops asking */
-      alwaysAllow?: { botId: string; tool: string };
+      /** remember this exact grant (the server's allowKey) for the bot */
+      alwaysAllow?: { botId: string; key: string };
     }
   | { type: "newBot" }
   | { type: "botAdded"; bot: Bot }
@@ -672,7 +674,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "decideRequest": {
           if (action.alwaysAllow) {
             const bot = stateRef.current.bots.find((b) => b.id === action.alwaysAllow!.botId);
-            const next = [...new Set([...(bot?.alwaysAllow ?? []), action.alwaysAllow.tool])];
+            const next = [...new Set([...(bot?.alwaysAllow ?? []), action.alwaysAllow.key])];
             api(`/api/bots/${action.alwaysAllow.botId}`, {
               method: "PATCH",
               body: JSON.stringify({ alwaysAllow: next }),

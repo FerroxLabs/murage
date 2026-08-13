@@ -15,6 +15,8 @@ export interface Pending {
   message: Message;
   requestId: string;
   tool: string;
+  /** the narrow grant "always allow" writes, computed server-side */
+  allowKey?: string;
   detail: string;
   held?: string;
 }
@@ -27,6 +29,7 @@ export function pendingApprovals(messages: Message[]): Pending[] {
       message: m,
       requestId: m.card!.requestId!,
       tool: m.card!.tool!,
+      allowKey: m.card!.allowKey,
       detail: m.card!.subtitle,
       held: m.card!.held,
     }));
@@ -94,7 +97,7 @@ export function PendingApprovalActions({
       requestId: pending.requestId,
       behavior,
       message: behavior === "deny" ? "Denied by the user." : undefined,
-      alwaysAllow: always && bot ? { botId: bot.id, tool: pending.tool } : undefined,
+      alwaysAllow: always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
     });
 
   const base = "rounded-full px-3.5 py-1.5 text-[13.5px] transition-colors";
@@ -109,10 +112,10 @@ export function PendingApprovalActions({
       >
         Deny
       </button>
-      {bot && (
+      {bot && pending.allowKey && (
         <button
           onClick={() => decide("allow", true)}
-          title={`Stop asking ${bot.name} about ${pending.tool}`}
+          title={`Stop asking ${bot.name} about ${pending.allowKey}`}
           className={cn(base, "border border-hairline/50 text-ink hover:bg-raised")}
         >
           Always allow

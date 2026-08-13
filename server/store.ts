@@ -41,6 +41,8 @@ export interface OptionCardData {
   tool?: string;
   /** why this stopped despite auto mode (destructive-looking command) */
   held?: string;
+  /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
+  allowKey?: string;
 }
 
 export interface Message {
