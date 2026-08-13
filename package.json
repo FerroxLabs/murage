@@ -47,6 +47,7 @@
     "package:mac": "pnpm package:prepare && pnpm build:speech && pnpm build:cua && electron-builder --mac --publish never",
     "package:win": "pnpm package:prepare && electron-builder --win --publish never",
     "package:linux": "pnpm package:prepare && electron-builder --linux --x64 --publish never",
+    "smoke:linux-package": "node scripts/run-linux-package-smoke.mjs",
     "package:linux:dir": "pnpm package:prepare && electron-builder --linux dir --x64 --publish never",
     "package": "pnpm package:mac",
     "test:packaged-server": "pnpm build:server && node scripts/smoke-packaged-server.mjs",
