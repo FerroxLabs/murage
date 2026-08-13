@@ -56,9 +56,10 @@ describe("computer proxy (fake box)", () => {
           const command = JSON.parse(body || "{}").command ?? "";
           commands.push(command);
           // a real box echoes what the capture block printed
+          const size = Buffer.from(JPEG, "base64").length;
           const stdout = /GEOM/.test(command)
-            ? `GEOM 1920 1080\nHASH ${hash}\nB64 ${JPEG}\n`
-            : "ok\n";
+            ? `GEOM 1920 1080\nHASH ${hash}\nSIZE ${size}\nB64 ${JPEG}\nACT ok\n`
+            : "ACT ok\n";
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ exitCode: 0, stdout, stderr: "" }));
         });
@@ -132,7 +133,9 @@ describe("computer proxy (fake box)", () => {
     const command = commands.at(-1)!;
     expect(command).toMatch(/xdotool mousemove \$CX \$CY click 1/);
     expect(command).toMatch(/getdisplaygeometry/); // scaling resolved box-side
-    expect(command).toMatch(/CX=\$\(\( 100 \* W \/ 1280 \)\)/);
+    // scaling is conditional: a display narrower than the model's space is
+    // captured at native size, so the coordinates must pass through as-is
+    expect(command).toMatch(/if \[ "\$W" -gt 1280 \].*CX=\$\(\( 100 \* W \/ 1280 \)\).*else CX=100/);
     expect(command).toMatch(/scrot -o -q 75/); // JPEG, no unconditional convert
     // ...and the model got pixels back with it, no second tool call
     const content = res.result.content;
@@ -152,7 +155,9 @@ describe("computer proxy (fake box)", () => {
     });
     const res = await waitFor(4);
     expect(res.result.content).toHaveLength(1);
-    expect(res.result.content[0].text).toMatch(/screen unchanged/i);
+    expect(res.result.content[0].text).toMatch(/identical to the frame you already have/i);
+    // must not tell the model to redo a possibly-successful action
+    expect(res.result.content[0].text).toMatch(/don't repeat the action/i);
   });
 
   it("sends a new frame once the screen actually changes", async () => {
