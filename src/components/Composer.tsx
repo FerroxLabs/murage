@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Clock, Mic, Square, X } from "lucide-react";
 import { useStore, type Bot, type Group } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { useDraft } from "@/lib/drafts";
 import { MausAvatar } from "./Avatar";
 import { normalizeState } from "@/lib/mascot";
 
@@ -36,7 +37,9 @@ export function Composer({
   const busyName = group
     ? (members?.find((b) => b.id === group.busyBotId)?.name ?? "A bot")
     : (bot?.name ?? "The bot");
-  const [text, setText] = useState("");
+  // per-thread draft: switching bots unmounts this component, so the text
+  // has to outlive it (see lib/drafts)
+  const [text, setText] = useDraft(group ? `group:${group.id}` : `bot:${bot?.id ?? ""}`);
   const [recording, setRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [caret, setCaret] = useState(0);
