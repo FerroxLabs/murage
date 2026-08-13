@@ -20,6 +20,8 @@ const browserCapabilities: DesktopCapabilities = {
   localComputer: {
     available: false,
     support: "unsupported",
+    enabled: false,
+    status: "unavailable",
     reasonCode: "desktop-app-required",
   },
 };
@@ -61,4 +63,9 @@ export async function loadDesktopCapabilities(): Promise<DesktopCapabilities> {
     cached = browserCapabilities;
   }
   return cached;
+}
+
+export function cacheDesktopCapabilities(capabilities: DesktopCapabilities): DesktopCapabilities {
+  cached = capabilities;
+  return capabilities;
 }

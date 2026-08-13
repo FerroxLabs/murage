@@ -363,7 +363,7 @@ function validateDoctor(report) {
   if (display?.status !== "ok" || !display.message.startsWith("X11 ")) {
     throw commandFailure("x11-unavailable", "Cua Driver did not confirm an Xorg display.", { probes });
   }
-  if (x11?.status !== "ok") {
+  if (!x11 || x11.status === "err") {
     throw commandFailure("x11-unavailable", "Cua Driver could not verify the Xorg session.", { probes });
   }
   if (atSpi?.status !== "ok") {

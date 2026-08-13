@@ -21,9 +21,17 @@ function linuxSession(platform, env) {
 }
 
 function localComputerReady(platform, connection) {
+  if (platform === "darwin") {
+    return connection?.mode === "embedded" || connection?.mode === "standalone";
+  }
   return (
-    platform === "darwin" &&
-    (connection?.mode === "embedded" || connection?.mode === "standalone")
+    platform === "linux" &&
+    connection?.schemaVersion === 1 &&
+    connection?.mode === "linux-x11-supervised" &&
+    connection?.platform === "linux" &&
+    connection?.session === "x11" &&
+    connection?.enabled === true &&
+    connection?.status === "ready"
   );
 }
 
@@ -60,11 +68,28 @@ function desktopCapabilities({
   if (!isMac) dictation.reasonCode = "unsupported-platform";
   const localComputer = {
     available: localAvailable,
-    support: localAvailable ? "supported" : "unsupported",
+    support:
+      localAvailable && hostPlatform === "linux"
+        ? "limited"
+        : localAvailable
+          ? "supported"
+          : "unsupported",
+    enabled: connectionEnabled(hostPlatform, localConnection),
+    status: localAvailable ? "ready" : localConnection?.status ?? "unavailable",
   };
+  if (typeof localConnection?.message === "string") {
+    localComputer.message = localConnection.message;
+  }
+  if (typeof localConnection?.driver?.path === "string") {
+    localComputer.driverPath = localConnection.driver.path;
+  }
+  if (typeof localConnection?.driver?.version === "string") {
+    localComputer.driverVersion = localConnection.driver.version;
+  }
   if (!localAvailable) {
     localComputer.reasonCode =
-      hostPlatform === "darwin" ? "cua-driver-unavailable" : "unsupported-platform";
+      localConnection?.reasonCode ??
+      (hostPlatform === "darwin" ? "cua-driver-unavailable" : "unsupported-platform");
   }
 
   return {
@@ -91,4 +116,9 @@ function desktopCapabilities({
   };
 }
 
-module.exports = { desktopCapabilities, linuxSession, localComputerReady };
+function connectionEnabled(platform, connection) {
+  if (platform === "darwin") return localComputerReady(platform, connection);
+  return platform === "linux" && connection?.enabled === true;
+}
+
+module.exports = { connectionEnabled, desktopCapabilities, linuxSession, localComputerReady };

@@ -1,0 +1,579 @@
+const { spawn } = require("node:child_process");
+const { randomUUID } = require("node:crypto");
+const fs = require("node:fs");
+const net = require("node:net");
+const os = require("node:os");
+const path = require("node:path");
+const {
+  CERTIFIED_DRIVER_VERSION,
+  CERTIFIED_MANIFEST_SCHEMA,
+  desktopCommandEnvironment,
+  inspectLinuxCuaDriver,
+  validateDriverCandidate,
+} = require("./cua-linux.cjs");
+
+const CONNECTION_SCHEMA_VERSION = 1;
+const SETTINGS_SCHEMA_VERSION = 1;
+const HOST_BUNDLE_ID = "com.openmausbot.app";
+const CERTIFIED_CONTRACT_VERSION = "0.6.0";
+const CERTIFIED_TOOLS_LIST_SCHEMA_VERSION = "1";
+const CERTIFIED_CAPABILITY_VERSION = "1";
+const CERTIFIED_MCP_PROTOCOL_VERSION = "2025-06-18";
+const REQUIRED_TOOLS = ["click", "get_window_state", "list_apps", "type_text"];
+
+function ensurePrivateDirectory(directory, fileSystem = fs, currentUid = process.getuid?.() ?? os.userInfo().uid) {
+  fileSystem.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const stat = fileSystem.lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw Object.assign(new Error(`Private CUA path is not a directory: ${directory}`), {
+      code: "unsafe-runtime-directory",
+    });
+  }
+  if (stat.uid !== currentUid && stat.uid !== 0) {
+    throw Object.assign(new Error(`Private CUA directory has an unexpected owner: ${directory}`), {
+      code: "unsafe-runtime-directory",
+    });
+  }
+  fileSystem.chmodSync(directory, 0o700);
+  return directory;
+}
+
+function writePrivateJson(file, value, {
+  fileSystem = fs,
+  temporaryId = randomUUID,
+  processId = process.pid,
+} = {}) {
+  const directory = ensurePrivateDirectory(path.dirname(file), fileSystem);
+  const temporary = path.join(directory, `.${path.basename(file)}.${processId}.${temporaryId()}.tmp`);
+  let descriptor;
+  try {
+    descriptor = fileSystem.openSync(temporary, "wx", 0o600);
+    fileSystem.writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    fileSystem.fsyncSync(descriptor);
+    fileSystem.closeSync(descriptor);
+    descriptor = undefined;
+    fileSystem.renameSync(temporary, file);
+    fileSystem.chmodSync(file, 0o600);
+    const directoryHandle = fileSystem.openSync(directory, "r");
+    try {
+      fileSystem.fsyncSync(directoryHandle);
+    } finally {
+      fileSystem.closeSync(directoryHandle);
+    }
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try {
+        fileSystem.closeSync(descriptor);
+      } catch {}
+    }
+    try {
+      fileSystem.unlinkSync(temporary);
+    } catch {}
+    throw error;
+  }
+}
+
+function createLinuxCuaPreferenceStore({ getUserData, fileSystem = fs } = {}) {
+  const preferencePath = () => path.join(getUserData(), "cua-local-control.json");
+  return Object.freeze({
+    read() {
+      try {
+        const stat = fileSystem.lstatSync(preferencePath());
+        if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) return false;
+        const value = JSON.parse(fileSystem.readFileSync(preferencePath(), "utf8"));
+        return (
+          value?.schemaVersion === SETTINGS_SCHEMA_VERSION &&
+          value?.linuxLocalControlEnabled === true &&
+          Object.keys(value).every((key) =>
+            ["schemaVersion", "linuxLocalControlEnabled"].includes(key),
+          )
+        );
+      } catch {
+        return false;
+      }
+    },
+    write(enabled) {
+      writePrivateJson(
+        preferencePath(),
+        { schemaVersion: SETTINGS_SCHEMA_VERSION, linuxLocalControlEnabled: Boolean(enabled) },
+        { fileSystem },
+      );
+    },
+  });
+}
+
+function requestSocket(socketPath, request, { timeoutMs = 1_000, maxBytes = 256 * 1024 } = {}) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(socketPath);
+    let settled = false;
+    let data = Buffer.alloc(0);
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      fn(value);
+    };
+    socket.once("connect", () => socket.write(`${JSON.stringify(request)}\n`));
+    socket.on("data", (chunk) => {
+      if (data.length + chunk.length > maxBytes) {
+        finish(reject, Object.assign(new Error("Cua Driver handshake was too large."), { code: "handshake-too-large" }));
+        return;
+      }
+      data = Buffer.concat([data, chunk]);
+      const newline = data.indexOf(0x0a);
+      if (newline === -1) return;
+      try {
+        finish(resolve, JSON.parse(data.subarray(0, newline).toString("utf8")));
+      } catch {
+        finish(reject, Object.assign(new Error("Cua Driver returned an invalid handshake."), { code: "invalid-handshake" }));
+      }
+    });
+    socket.once("error", (error) => finish(reject, error));
+    const timer = setTimeout(
+      () => finish(reject, Object.assign(new Error("Cua Driver handshake timed out."), { code: "handshake-timeout" })),
+      timeoutMs,
+    );
+    timer.unref?.();
+  });
+}
+
+function validateDaemonMetadata(response, { childPid } = {}) {
+  const metadata = response?.ok === true ? response.result : null;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw Object.assign(new Error("Cua Driver daemon identity could not be verified."), {
+      code: "invalid-daemon-metadata",
+    });
+  }
+  const expected = {
+    driver_version: CERTIFIED_DRIVER_VERSION,
+    contract_version: CERTIFIED_CONTRACT_VERSION,
+    tools_list_schema_version: CERTIFIED_TOOLS_LIST_SCHEMA_VERSION,
+    capability_version: CERTIFIED_CAPABILITY_VERSION,
+    mcp_protocol_version: CERTIFIED_MCP_PROTOCOL_VERSION,
+    embedded: true,
+    host_bundle_id: HOST_BUNDLE_ID,
+  };
+  for (const [key, value] of Object.entries(expected)) {
+    if (metadata[key] !== value) {
+      throw Object.assign(new Error(`Cua Driver daemon reported an incompatible ${key}.`), {
+        code: "incompatible-daemon",
+      });
+    }
+  }
+  if (!Number.isInteger(metadata.pid) || metadata.pid <= 0 || (childPid && metadata.pid !== childPid)) {
+    throw Object.assign(new Error("Cua Driver daemon PID does not match the owned process."), {
+      code: "invalid-daemon-metadata",
+    });
+  }
+  return metadata;
+}
+
+function validateToolSurface(response) {
+  const tools = response?.ok === true && Array.isArray(response.result) ? response.result : null;
+  if (!tools) {
+    throw Object.assign(new Error("Cua Driver tool surface could not be verified."), {
+      code: "invalid-tool-surface",
+    });
+  }
+  const names = new Set(tools.map((tool) => tool?.name).filter((name) => typeof name === "string"));
+  const missing = REQUIRED_TOOLS.filter((name) => !names.has(name));
+  if (missing.length) {
+    throw Object.assign(new Error(`Cua Driver is missing required tools: ${missing.join(", ")}.`), {
+      code: "incompatible-tool-surface",
+    });
+  }
+  return [...names].sort();
+}
+
+async function probePrivateDaemon(socketPath, {
+  childPid,
+  timeoutMs = 10_000,
+  request = requestSocket,
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const metadata = validateDaemonMetadata(
+        await request(socketPath, { method: "metadata" }),
+        { childPid },
+      );
+      const tools = validateToolSurface(await request(socketPath, { method: "list" }));
+      return { metadata, tools };
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 75));
+    }
+  }
+  throw Object.assign(new Error(lastError?.message ?? "Cua Driver daemon did not become ready."), {
+    code: lastError?.code ?? "daemon-start-timeout",
+  });
+}
+
+function waitForChildExit(child, timeoutMs) {
+  if (child.exitCode !== null && child.exitCode !== undefined) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    child.once("exit", () => finish(true));
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    timer.unref?.();
+  });
+}
+
+async function stopOwnedChild(child) {
+  if (!child) return;
+  try {
+    child.stdin?.end();
+  } catch {}
+  if (await waitForChildExit(child, 2_000)) return;
+  try {
+    child.kill("SIGTERM");
+  } catch {}
+  if (await waitForChildExit(child, 1_000)) return;
+  try {
+    child.kill("SIGKILL");
+  } catch {}
+  await waitForChildExit(child, 500);
+}
+
+function publicRuntimeStatus(connection) {
+  return {
+    enabled: connection.enabled === true,
+    status: connection.status ?? (connection.mode === "linux-x11-supervised" ? "ready" : "unavailable"),
+    reasonCode: connection.reasonCode,
+    message: connection.message ?? connection.reason,
+    driverPath: connection.driver?.path,
+    driverVersion: connection.driver?.version,
+    warnings: connection.doctorWarnings ?? [],
+  };
+}
+
+function createLinuxCuaRuntime({
+  getUserData,
+  connectionStore,
+  preferenceStore = createLinuxCuaPreferenceStore({ getUserData }),
+  platform = process.platform,
+  env = process.env,
+  inspect = inspectLinuxCuaDriver,
+  spawnProcess = spawn,
+  probe = probePrivateDaemon,
+  identifier = randomUUID,
+  processId = process.pid,
+  onChange = () => {},
+} = {}) {
+  let active = null;
+  let startPromise = null;
+  let enabled = false;
+  let quitting = false;
+  let connection = {
+    schemaVersion: CONNECTION_SCHEMA_VERSION,
+    mode: "unavailable",
+    platform: "linux",
+    session: String(env.XDG_SESSION_TYPE ?? "unknown").toLowerCase(),
+    enabled: false,
+    status: "disabled",
+    reasonCode: "opt-in-required",
+    message: "Local control is off until you enable the beta.",
+    ownerPid: processId,
+  };
+
+  const publish = (next) => {
+    connection = connectionStore.persist(next);
+    onChange(connection);
+    return connection;
+  };
+
+  const unavailable = (status, reasonCode, message, extra = {}) =>
+    publish({
+      schemaVersion: CONNECTION_SCHEMA_VERSION,
+      mode: "unavailable",
+      platform: "linux",
+      session: String(env.XDG_SESSION_TYPE ?? "unknown").toLowerCase(),
+      enabled,
+      status,
+      reasonCode,
+      message,
+      ownerPid: processId,
+      ...extra,
+    });
+
+  const runtimeRoot = () => {
+    const userData = getUserData();
+    const configured = env.XDG_RUNTIME_DIR;
+    let base = userData;
+    if (configured && path.isAbsolute(configured)) {
+      try {
+        const stat = fs.lstatSync(configured);
+        const currentUid = process.getuid?.() ?? os.userInfo().uid;
+        if (
+          stat.isDirectory() &&
+          !stat.isSymbolicLink() &&
+          stat.uid === currentUid &&
+          (stat.mode & 0o077) === 0
+        ) {
+          base = configured;
+        }
+      } catch {}
+    }
+    return ensurePrivateDirectory(path.join(base, "openmausbot-cua"));
+  };
+
+  const cleanupRuntimeFiles = (owned) => {
+    if (!owned?.runtimeDirectory) return;
+    for (const file of [owned.socketPath, owned.pidFile]) {
+      try {
+        fs.unlinkSync(file);
+      } catch (error) {
+        if (error?.code !== "ENOENT") break;
+      }
+    }
+    try {
+      fs.rmdirSync(owned.runtimeDirectory);
+    } catch {}
+  };
+
+  const markUnexpectedExit = (owned, code, signal) => {
+    if (active !== owned || owned.stopping || quitting) return;
+    active = null;
+    cleanupRuntimeFiles(owned);
+    unavailable(
+      "error",
+      "daemon-exited",
+      "Cua Driver stopped unexpectedly. Try again before using this computer.",
+      { generation: owned.generation, exitCode: code, exitSignal: signal },
+    );
+  };
+
+  const start = async () => {
+    if (platform !== "linux") return connection;
+    if (!enabled) {
+      return unavailable(
+        "disabled",
+        "opt-in-required",
+        "Local control is off until you enable the beta.",
+      );
+    }
+    if (active?.ready) return connection;
+    if (startPromise) return startPromise;
+
+    startPromise = (async () => {
+      unavailable("checking", "checking-driver", "Checking Cua Driver and the Xorg session…");
+      const inspected = await inspect({ platform, env });
+      if (inspected.status !== "ready") {
+        return unavailable("error", inspected.reasonCode, inspected.message, {
+          ...(inspected.path
+            ? { driver: { path: inspected.path, version: inspected.driverVersion } }
+            : {}),
+          doctorProbes: inspected.probes ?? [],
+        });
+      }
+      if (!enabled || quitting) return connection;
+
+      const revalidated = validateDriverCandidate(inspected.path);
+      if (revalidated.status !== "found" || revalidated.path !== inspected.path) {
+        return unavailable(
+          "error",
+          "driver-changed",
+          "Cua Driver changed after validation. Check the installation and try again.",
+        );
+      }
+
+      const generation = identifier();
+      const root = runtimeRoot();
+      const runtimeDirectory = path.join(root, `${processId}-${generation.slice(0, 12)}`);
+      ensurePrivateDirectory(runtimeDirectory);
+      const socketPath = path.join(runtimeDirectory, "driver.sock");
+      const pidFile = path.join(runtimeDirectory, "driver.pid");
+      if (Buffer.byteLength(socketPath) > 100) {
+        return unavailable(
+          "error",
+          "socket-path-too-long",
+          "The private Cua Driver socket path is too long for this Linux installation.",
+        );
+      }
+
+      const childEnv = desktopCommandEnvironment(env, {
+        CUA_DRIVER_EMBEDDED: "1",
+        CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID,
+        CUA_DRIVER_PARENT_LIVENESS_STDIN: "1",
+      });
+      const args = [
+        "serve",
+        "--embedded",
+        "--socket",
+        socketPath,
+        "--pid-file",
+        pidFile,
+        "--permission-mode",
+        "standard",
+      ];
+      const child = spawnProcess(inspected.path, args, {
+        env: childEnv,
+        shell: false,
+        stdio: ["pipe", "ignore", "pipe"],
+        windowsHide: true,
+      });
+      const owned = {
+        child,
+        generation,
+        runtimeDirectory,
+        socketPath,
+        pidFile,
+        ready: false,
+        stopping: false,
+      };
+      active = owned;
+      child.stderr?.on("data", () => {});
+      child.once("exit", (code, signal) => markUnexpectedExit(owned, code, signal));
+      child.once("error", (error) => markUnexpectedExit(owned, null, error?.code ?? "spawn-error"));
+      unavailable("starting", "starting-daemon", "Starting the private Cua Driver runtime…", {
+        generation,
+        driver: { path: inspected.path, version: inspected.driverVersion },
+      });
+
+      try {
+        const handshake = await probe(socketPath, { childPid: child.pid });
+        if (active !== owned || owned.stopping || !enabled) {
+          await stopOwnedChild(child);
+          cleanupRuntimeFiles(owned);
+          return connection;
+        }
+        owned.ready = true;
+        return publish({
+          schemaVersion: CONNECTION_SCHEMA_VERSION,
+          mode: "linux-x11-supervised",
+          platform: "linux",
+          session: "x11",
+          enabled: true,
+          status: "ready",
+          ownerPid: processId,
+          generation,
+          driver: {
+            path: inspected.path,
+            version: inspected.driverVersion,
+            manifestSchema: inspected.manifestSchema,
+          },
+          daemon: {
+            socketPath,
+            pid: handshake.metadata.pid,
+            contractVersion: handshake.metadata.contract_version,
+            toolsListSchemaVersion: handshake.metadata.tools_list_schema_version,
+            capabilityVersion: handshake.metadata.capability_version,
+            mcpProtocolVersion: handshake.metadata.mcp_protocol_version,
+          },
+          mcp: {
+            command: inspected.path,
+            args: ["mcp", "--embedded", "--socket", socketPath],
+            env: {
+              CUA_DRIVER_EMBEDDED: "1",
+              CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID,
+              CUA_DRIVER_RS_UPDATE_CHECK: "false",
+            },
+          },
+          toolNames: handshake.tools,
+          doctorWarnings: inspected.doctor.warnings,
+        });
+      } catch (error) {
+        owned.stopping = true;
+        const stillOwned = active === owned;
+        if (stillOwned) active = null;
+        await stopOwnedChild(child);
+        cleanupRuntimeFiles(owned);
+        if (!stillOwned || !enabled || quitting) return connection;
+        return unavailable(
+          "error",
+          error?.code ?? "daemon-start-failed",
+          error?.message ?? "Cua Driver could not start.",
+          { generation, driver: { path: inspected.path, version: inspected.driverVersion } },
+        );
+      }
+    })().finally(() => {
+      startPromise = null;
+    });
+    return startPromise;
+  };
+
+  const stop = async ({ disable = false, quit = false } = {}) => {
+    if (disable) {
+      enabled = false;
+      preferenceStore.write(false);
+    }
+    if (quit) quitting = true;
+    unavailable(
+      disable ? "disabled" : "stopped",
+      disable ? "opt-in-required" : quit ? "app-stopped" : "runtime-stopped",
+      disable ? "Local control is disabled." : "Local control is not running.",
+      active ? { generation: active.generation } : {},
+    );
+    const owned = active;
+    if (owned) {
+      owned.stopping = true;
+      active = null;
+      await stopOwnedChild(owned.child);
+      cleanupRuntimeFiles(owned);
+    }
+    return connection;
+  };
+
+  return Object.freeze({
+    async initialize() {
+      enabled = preferenceStore.read();
+      return enabled
+        ? start()
+        : unavailable(
+            "disabled",
+            "opt-in-required",
+            "Local control is off until you enable the beta.",
+          );
+    },
+    async enable() {
+      enabled = true;
+      preferenceStore.write(true);
+      return start();
+    },
+    async retry() {
+      if (!enabled) return connection;
+      await stop();
+      return start();
+    },
+    async disable() {
+      return stop({ disable: true });
+    },
+    async shutdown() {
+      return stop({ quit: true });
+    },
+    getConnection() {
+      return connection;
+    },
+    getStatus() {
+      return publicRuntimeStatus(connection);
+    },
+  });
+}
+
+module.exports = {
+  CERTIFIED_CAPABILITY_VERSION,
+  CERTIFIED_CONTRACT_VERSION,
+  CERTIFIED_MCP_PROTOCOL_VERSION,
+  CERTIFIED_TOOLS_LIST_SCHEMA_VERSION,
+  CONNECTION_SCHEMA_VERSION,
+  HOST_BUNDLE_ID,
+  REQUIRED_TOOLS,
+  createLinuxCuaPreferenceStore,
+  createLinuxCuaRuntime,
+  ensurePrivateDirectory,
+  probePrivateDaemon,
+  publicRuntimeStatus,
+  requestSocket,
+  stopOwnedChild,
+  validateDaemonMetadata,
+  validateToolSurface,
+  writePrivateJson,
+};

@@ -17,7 +17,7 @@ describe("desktop capabilities", () => {
       windowChrome: "mac-inset",
       screenPreview: { available: true, interaction: "direct" },
       dictation: { available: true, engine: "apple-speech", onDevice: true },
-      localComputer: { available: true, support: "supported" },
+      localComputer: { available: true, support: "supported", enabled: true, status: "ready" },
     });
   });
 
@@ -73,5 +73,33 @@ describe("desktop capabilities", () => {
     expect(localComputerReady("linux", { mode: "embedded" })).toBe(false);
     expect(localComputerReady("darwin", { mode: "unavailable" })).toBe(false);
     expect(localComputerReady("darwin", { mode: "standalone" })).toBe(true);
+  });
+
+  it("enables limited Linux control only for the complete supervised X11 contract", () => {
+    const connection = {
+      schemaVersion: 1,
+      mode: "linux-x11-supervised",
+      platform: "linux",
+      session: "x11",
+      enabled: true,
+      status: "ready",
+      driver: { path: "/home/test/.local/bin/cua-driver", version: "0.19.3" },
+    };
+    expect(
+      desktopCapabilities({
+        platform: "linux",
+        env: { XDG_SESSION_TYPE: "x11", DISPLAY: ":0" },
+        localConnection: connection,
+      }).localComputer,
+    ).toMatchObject({
+      available: true,
+      support: "limited",
+      enabled: true,
+      status: "ready",
+      driverVersion: "0.19.3",
+    });
+    expect(localComputerReady("linux", { ...connection, session: "wayland" })).toBe(false);
+    expect(localComputerReady("linux", { ...connection, status: "starting" })).toBe(false);
+    expect(localComputerReady("linux", { ...connection, schemaVersion: 2 })).toBe(false);
   });
 });
