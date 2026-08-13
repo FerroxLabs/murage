@@ -38,9 +38,19 @@ export function setDraft(store: Store, id: string, text: string): void {
   }
 }
 
+// Reaching for localStorage is itself a failure point: on an origin with
+// storage blocked the getter throws, and `typeof` doesn't shield it.
+function getStore(): Store {
+  try {
+    return typeof localStorage === "undefined" ? undefined : localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
 /** useState for the composer text, persisted under `id` (a bot or room). */
 export function useDraft(id: string): [string, (next: string) => void] {
-  const store = typeof localStorage === "undefined" ? undefined : localStorage;
+  const store = getStore();
   const [text, setText] = useState(() => getDraft(store, id));
   const set = useCallback(
     (next: string) => {
