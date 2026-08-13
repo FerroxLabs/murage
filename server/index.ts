@@ -199,36 +199,42 @@ bus.subscribe((event: RuntimeEvent) => {
       const settled = permission && asker && event.requestId
         ? autoDecision(asker, event.tool, event.summary)
         : null;
-      if (settled && asker) {
+      if (settled && asker && event.requestId) {
         const instance = registry.get(asker.modelSelection.instanceId);
-        const chip = pushMessage({
-          role: "bot",
-          kind: "activity",
-          tool: { name: `${settled}: ${event.summary.slice(0, 120)}`, ok: true },
-        });
-        void instance?.adapter
-          .respondToRequest(event.threadId, event.requestId!, { behavior: "allow" })
-          .catch(() => {
-            // the auto-answer didn't land — say so instead of leaving a
-            // chip claiming approval over a request nobody answered
-            const patched = store.patchMessage(event.threadId, chip.id, {
-              tool: { name: `couldn't auto-approve ${event.tool} — answer it below`, ok: false },
+        const requestId = event.requestId;
+        const { tool, summary } = event;
+        // The chip is written only AFTER the provider takes the answer.
+        // Claiming approval first and correcting later means a moment
+        // where the transcript says "approved" over a request nothing
+        // answered — and if the provider is gone entirely, forever.
+        void (async () => {
+          try {
+            if (!instance) throw new Error("provider unavailable");
+            await instance.adapter.respondToRequest(event.threadId, requestId, { behavior: "allow" });
+            pushMessage({
+              role: "bot",
+              kind: "activity",
+              tool: { name: `${settled}: ${summary.slice(0, 120)}`, ok: true },
             });
-            if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
+          } catch {
+            // couldn't answer it for them — hand it back to the human
+            // rather than leaving the bot waiting on nobody
             const card = pushMessage({
               role: "bot",
               kind: "options",
               card: {
                 title: "Approval needed",
-                subtitle: event.summary,
+                subtitle: summary,
                 options: ["Allow", "Deny"],
-                requestId: event.requestId,
-                tool: event.tool,
-                allowKey: approvalKey(event.tool, event.summary),
+                requestId,
+                tool,
+                allowKey: approvalKey(tool, summary),
+                held: "Auto mode couldn't answer this one.",
               },
             });
-            if (event.requestId) askMessageByRequest.set(event.requestId, card.id);
-          });
+            askMessageByRequest.set(requestId, card.id);
+          }
+        })();
         break;
       }
       const message = pushMessage({
@@ -1007,8 +1013,21 @@ const server = createServer(async (req, res) => {
     if (m && method === "PATCH") {
       const body = await readBody(req);
       const patch: Record<string, unknown> = {};
-      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "autoApprove", "alwaysAllow"] as const) {
+      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
+      }
+      // the two permission fields decide what runs unattended, so they are
+      // type-checked rather than copied through: a string alwaysAllow would
+      // still answer .includes() — with substring matches, not tool names
+      if (body.autoApprove !== undefined) {
+        if (typeof body.autoApprove !== "boolean") return json(res, 400, { error: "autoApprove must be true or false" });
+        patch.autoApprove = body.autoApprove;
+      }
+      if (body.alwaysAllow !== undefined) {
+        if (!Array.isArray(body.alwaysAllow) || body.alwaysAllow.some((t: unknown) => typeof t !== "string")) {
+          return json(res, 400, { error: "alwaysAllow must be a list of tool keys" });
+        }
+        patch.alwaysAllow = [...new Set(body.alwaysAllow as string[])].slice(0, 200);
       }
       const bot = store.patchBot(m[1], patch);
       if (!bot) return json(res, 404, { error: "no such bot" });

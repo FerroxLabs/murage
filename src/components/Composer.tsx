@@ -1,7 +1,7 @@
 import { track } from "@/lib/analytics";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Clock, Mic, Square, X } from "lucide-react";
-import { useStore, type Bot, type Group } from "@/state/store";
+import { useStore, visibleMessages, type Bot, type Group } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { MausAvatar } from "./Avatar";
 import { normalizeState } from "@/lib/mascot";
@@ -36,7 +36,9 @@ export function Composer({
   const busy = group ? Boolean(group.busyBotId) : Boolean(bot?.busy);
   // a pending approval blocks the prompt until it is answered
   const threadId = group?.threadId ?? bot?.threadId ?? "";
-  const approvals = pendingApprovals(group ? group.messages : (bot?.messages ?? []));
+  // the VISIBLE branch only — an approval left on a branch you edited away
+  // from must not keep blocking the composer
+  const approvals = pendingApprovals(group ? group.messages : bot ? visibleMessages(bot) : []);
   const approval = approvals[0];
   const approvalBot = group
     ? members?.find((b) => b.id === approval?.message.from?.botId) ??

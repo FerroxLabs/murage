@@ -672,22 +672,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }).catch(showError);
           break;
         case "decideRequest": {
+          const respond = () =>
+            api(`/api/threads/${action.threadId}/respond`, {
+              method: "POST",
+              body: JSON.stringify({
+                requestId: action.requestId,
+                behavior: action.behavior,
+                message: action.message,
+              }),
+            }).catch(showError);
           if (action.alwaysAllow) {
             const bot = stateRef.current.bots.find((b) => b.id === action.alwaysAllow!.botId);
             const next = [...new Set([...(bot?.alwaysAllow ?? []), action.alwaysAllow.key])];
-            api(`/api/bots/${action.alwaysAllow.botId}`, {
+            // save the grant BEFORE releasing the bot: it may ask again
+            // within milliseconds, and a grant that hasn't landed yet
+            // would make "always allow" ask a second time. A failed save
+            // still lets this one through — losing a preference must not
+            // strand the turn — but it says so.
+            void api(`/api/bots/${action.alwaysAllow.botId}`, {
               method: "PATCH",
               body: JSON.stringify({ alwaysAllow: next }),
-            }).catch(showError);
+            })
+              .catch(showError)
+              .finally(respond);
+            break;
           }
-          api(`/api/threads/${action.threadId}/respond`, {
-            method: "POST",
-            body: JSON.stringify({
-              requestId: action.requestId,
-              behavior: action.behavior,
-              message: action.message,
-            }),
-          }).catch(showError);
+          void respond();
           break;
         }
         case "answerCard": {
