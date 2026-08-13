@@ -322,7 +322,22 @@ function createWindow() {
         const result = await win.webContents.executeJavaScript(`
           (async () => {
             if (!window.ogb?.getCapabilities) throw new Error("desktop preload bridge is unavailable");
-            const [capabilities, healthResponse] = await Promise.all([
+            let crashPromise = null;
+            if (${JSON.stringify(process.env.OMB_SMOKE_CUA === "1")}) {
+              crashPromise = new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                  unsubscribe?.();
+                  reject(new Error("timed out waiting for CUA crash invalidation"));
+                }, 10000);
+                const unsubscribe = window.ogb.onCapabilitiesChanged((next) => {
+                  if (next.localComputer.reasonCode !== "daemon-exited") return;
+                  clearTimeout(timeout);
+                  unsubscribe();
+                  resolve(next.localComputer.reasonCode);
+                });
+              });
+            }
+            const [initialCapabilities, healthResponse] = await Promise.all([
               window.ogb.getCapabilities(),
               fetch("/api/health"),
             ]);
@@ -330,7 +345,26 @@ function createWindow() {
               throw new Error(\`health request failed: \${healthResponse.status} \${healthResponse.statusText}\`);
             }
             const health = await healthResponse.json();
-            return { capabilities, health, location: window.location.href, title: document.title };
+            let capabilities = initialCapabilities;
+            let cuaCrashReason = null;
+            let cuaRetryStatus = null;
+            if (crashPromise) {
+              if (!initialCapabilities.localComputer.available) {
+                throw new Error("CUA was not ready before the simulated crash");
+              }
+              cuaCrashReason = await crashPromise;
+              cuaRetryStatus = await window.ogb.localControl.retry();
+              capabilities = await window.ogb.getCapabilities();
+            }
+            return {
+              initialCapabilities,
+              capabilities,
+              cuaCrashReason,
+              cuaRetryStatus,
+              health,
+              location: window.location.href,
+              title: document.title,
+            };
           })()
         `);
         const expectedLocation = `http://127.0.0.1:${SERVER_PORT}/`;

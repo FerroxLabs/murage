@@ -13,11 +13,13 @@ of Linux desktop on your own server instead of this machine, see [byo-vps.md](by
 - External documentation and OAuth links in the default browser.
 - An explicit, view-only local screen preview on GNOME Xorg and GNOME Wayland. The Wayland path uses the
   native portal chooser and keeps the selected PipeWire stream open until the user stops sharing.
+- An explicit local-computer control beta on GNOME/Xorg with user-installed Cua Driver 0.19.3 and an
+  approval-capable Claude or ACP provider.
 
-The local preview does **not** give the bot control of this computer. Linux dictation and local computer
-control remain unavailable and fail closed in the Electron, server, and UI layers. Use a Cloud box when a bot
-needs a computer it can act on. Xorg computer control, Wayland automation, bundled CUA, dictation, and ARM64
-are follow-ups in [issue #29](https://github.com/milind-soni/OpenMausBot/issues/29).
+The local preview does **not** give the bot control of this computer by itself. Local control is a separate,
+off-by-default Xorg beta. Wayland control, bundled CUA, Linux dictation, and ARM64 remain unavailable and fail
+closed; follow their progress in [issue #29](https://github.com/milind-soni/OpenMausBot/issues/29). The Xorg beta
+is tracked in [issue #79](https://github.com/milind-soni/OpenMausBot/issues/79).
 
 ## Build packages
 
@@ -124,9 +126,46 @@ Cancelling or ending Wayland sharing returns to a calm **Try again** state and n
 automatically. OpenMausBot does not capture screen audio, remember the selected monitor after restart, or
 offer an **Open Settings** action on Linux.
 
-Local computer control remains disabled on both session types in this beta. Future Xorg support will require a
-validated `cua-driver`; Wayland support will remain disabled until the exact GNOME/Mutter action surface has
-real capture, input, scaling, permission, and lifecycle evidence.
+Local computer control is available only on Xorg after the separate opt-in below. Wayland support remains
+disabled until the exact GNOME/Mutter action surface has real capture, input, scaling, permission, and lifecycle
+evidence.
+
+## Enable local control on Xorg
+
+This beta deliberately uses a user-installed driver. OpenMausBot does not bundle, download, update, or stop a
+global Cua daemon. The certified contract is **Cua Driver 0.19.3**, manifest schema `1`, on Ubuntu 24.04 x64
+GNOME/Xorg.
+
+Install Cua Driver from its [official installation guide](https://cua.ai/docs/how-to-guides/driver/install):
+
+```sh
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+cua-driver --version
+cua-driver manifest --pretty
+cua-driver doctor --json
+```
+
+Confirm the version is `0.19.3` and sign into a GNOME on Xorg session. Then:
+
+1. Open a bot's **Computer** panel.
+2. In **Local control**, choose **Enable local control (Beta)** and review the warning.
+3. Wait until the card shows **Ready**, including the verified driver path and version.
+4. Select **This computer** for that bot. Enabling the global capability never assigns a bot automatically.
+
+Linux **Auto** never falls back to the user's desktop. **This computer** is available only when the current
+provider advertises an interactive approval channel. Claude `bypassPermissions`, ACP full-auto, Codex's current
+app-server adapter, Wayland/headless sessions, missing diagnostics, and stale/crashed runtimes fail closed.
+
+OpenMausBot starts one private embedded daemon with a private socket for its own app generation. It never touches
+Cua's default/global daemon. Disabling local control or quitting stops the owned daemon and active proxies.
+
+The driver uses Cua's `standard` permission mode. Cua routine actions are promptless at the driver layer, while
+OpenMausBot requires its own **Allow** or **Deny** decision before every local action. Bot Auto mode, persistent
+**Always allow** grants, and cloud-computer approvals cannot authorize the local desktop in this beta.
+
+Cua Driver has content-free telemetry and an update check enabled by default. OpenMausBot disables the update
+check only for children it starts and does not change the user's persisted telemetry preference. Review or change
+that preference with the [official telemetry documentation](https://cua.ai/docs/reference/cua-driver/telemetry).
 
 ## Validate a package change
 
@@ -139,10 +178,11 @@ node scripts/verify-linux-package.mjs
 dbus-run-session -- xvfb-run -a node scripts/smoke-linux-package.mjs
 ```
 
-The verifier checks `.deb` metadata, desktop identity, resources, artifact permissions, and the absence of
-unsupported native binaries. The smoke test launches the unpacked production app without `--no-sandbox`,
-validates the renderer/preload capabilities and embedded health endpoint, then proves clean shutdown. It is not
-a substitute for manual testing on a real GNOME Xorg and Wayland desktop.
+The verifier checks `.deb` metadata, desktop identity, resources, artifact permissions, and that no Cua executable
+was bundled. The smoke test launches the unpacked production app without `--no-sandbox`, validates the
+renderer/preload and embedded health endpoint, then uses a fake user-installed driver to prove diagnostics,
+private-daemon readiness, crash invalidation, explicit retry, and clean shutdown. It is not a substitute for real
+GNOME Xorg action evidence or real GNOME Wayland portal evidence.
 
 ## Troubleshooting
 
@@ -154,8 +194,23 @@ considered for automatic discovery.
 
 ### A bot needs computer tools
 
-Choose **Cloud box** in the Computer panel and add a Box token in App Settings. **This computer** is disabled on
-Linux until local CUA control is implemented and validated.
+On Wayland, choose **Cloud box** and add a Box token in App Settings. On Xorg, either use a cloud box or complete
+the local-control opt-in above. A missing or unsupported provider keeps **This computer** disabled with an
+explanation.
+
+### Local control is not ready
+
+Run the certified probes in a terminal launched inside the same GNOME/Xorg session:
+
+```sh
+echo "$XDG_SESSION_TYPE"  # must be x11
+cua-driver --version      # must be 0.19.3 for this beta
+cua-driver doctor --json
+```
+
+Repair any display, session bus, or AT-SPI diagnostic before choosing **Try again**. If the path shown in the app
+is unexpected, close OpenMausBot and launch it with an absolute `CUA_DRIVER_PATH`. An invalid explicit override
+fails without silently selecting another executable.
 
 ### Screen preview does not start
 
