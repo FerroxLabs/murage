@@ -1,4 +1,5 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
@@ -20,19 +21,43 @@ const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 // our API shape, not just a 200).
 let serverProc = null;
 let serverReady = true;
+
+// The packaged app has no terminal: everything about the server child's life
+// goes to ~/Library/Logs/OpenMausBot/server.log (Console.app-visible), which
+// is also why stdio is piped, not inherited — under a Finder launch the
+// parent's stdio leads nowhere and a failed boot is otherwise undiagnosable.
+const LOG_DIR = path.join(app.getPath("home"), "Library", "Logs", "OpenMausBot");
+let logStream = null;
+function slog(line) {
+  try {
+    if (!logStream) {
+      fs.mkdirSync(LOG_DIR, { recursive: true });
+      logStream = fs.createWriteStream(path.join(LOG_DIR, "server.log"), { flags: "a" });
+    }
+    logStream.write(`[${new Date().toISOString()}] ${line}\n`);
+  } catch {
+    /* logging must never break startup */
+  }
+}
+
 async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
+  slog(`fork ${entry} port=${port}`);
   const proc = utilityProcess.fork(entry, [], {
     env: {
       ...process.env,
       OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
       OMB_PORT: String(port),
     },
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  proc.stdout?.on("data", (d) => slog(`[out] ${String(d).trimEnd()}`));
+  proc.stderr?.on("data", (d) => slog(`[err] ${String(d).trimEnd()}`));
+  proc.once("spawn", () => slog(`spawned pid=${proc.pid}`));
   let exited = false;
-  proc.once("exit", () => {
+  proc.once("exit", (code) => {
     exited = true;
+    slog(`exited code=${code}`);
   });
   // wait for the port to answer (fresh machine: first boot writes data dirs).
   // Identity check is by PID: a dev harness server has the same API shape,
