@@ -36,6 +36,13 @@ export interface OptionCardData {
   dismissed?: boolean;
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
+  /** permission cards: the tool being requested, so the card can show what
+   * is actually being asked and offer "always allow this tool". */
+  tool?: string;
+  /** why this stopped despite auto mode (destructive-looking command) */
+  held?: string;
+  /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
+  allowKey?: string;
 }
 
 export interface Message {
@@ -96,6 +103,13 @@ export interface BotRecord {
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
   computer?: "cloud" | "local" | "off";
+  /** Auto mode: the bot approves its own tool permissions and keeps
+   * working instead of stopping to ask. Questions it asks YOU still come
+   * through, and a short list of destructive commands still stops it. */
+  autoApprove?: boolean;
+  /** Tools this bot may always use without asking, even outside auto mode
+   * (set by "Always allow" on an approval card). */
+  alwaysAllow?: string[];
   /** true after an edit/branch-switch rewound the visible conversation:
    * provider sessions still hold the abandoned branch, so the next turn
    * must start fresh (drop cursors) and replay the surviving path. */

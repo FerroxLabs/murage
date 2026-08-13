@@ -24,6 +24,12 @@ export interface OptionCardData {
   dismissed?: boolean;
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
+  /** permission asks: the tool being requested (drives the approval box) */
+  tool?: string;
+  /** why auto mode stopped to ask anyway */
+  held?: string;
+  /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
+  allowKey?: string;
 }
 
 export interface Message {
@@ -83,6 +89,10 @@ export interface Bot {
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "local" | "off";
+  /** auto mode: the bot approves its own tool permissions */
+  autoApprove?: boolean;
+  /** tools this bot may always use without asking */
+  alwaysAllow?: string[];
   pinned?: boolean;
   hidden?: boolean;
   messages: Message[];
@@ -183,6 +193,17 @@ type Action =
   | { type: "threadActive"; threadId: string; activeLeafId: string }
   | { type: "answerCard"; botId: string; messageId: string; answer: string }
   | { type: "dismissCard"; botId: string; messageId: string }
+  // permission cards answer by THREAD, so a request raised inside a room
+  // can be answered the same way as one in a 1:1 chat
+  | {
+      type: "decideRequest";
+      threadId: string;
+      requestId: string;
+      behavior: "allow" | "deny";
+      message?: string;
+      /** remember this exact grant (the server's allowKey) for the bot */
+      alwaysAllow?: { botId: string; key: string };
+    }
   | { type: "newBot" }
   | { type: "botAdded"; bot: Bot }
   | { type: "deleteBot"; botId: string }
@@ -287,6 +308,8 @@ function reducer(state: AppState, action: Action): AppState {
       );
     case "dismissCard":
       return patchCard(state, action.botId, action.messageId, { dismissed: true });
+    case "decideRequest":
+      return state; // the server's request.resolved patch settles the card
     case "botAdded":
       return withMascotMotion({
         ...state,
@@ -648,6 +671,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             body: JSON.stringify({ messageId: action.messageId }),
           }).catch(showError);
           break;
+        case "decideRequest": {
+          if (action.alwaysAllow) {
+            const bot = stateRef.current.bots.find((b) => b.id === action.alwaysAllow!.botId);
+            const next = [...new Set([...(bot?.alwaysAllow ?? []), action.alwaysAllow.key])];
+            api(`/api/bots/${action.alwaysAllow.botId}`, {
+              method: "PATCH",
+              body: JSON.stringify({ alwaysAllow: next }),
+            }).catch(showError);
+          }
+          api(`/api/threads/${action.threadId}/respond`, {
+            method: "POST",
+            body: JSON.stringify({
+              requestId: action.requestId,
+              behavior: action.behavior,
+              message: action.message,
+            }),
+          }).catch(showError);
+          break;
+        }
         case "answerCard": {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
           const card = bot?.messages.find((m) => m.id === action.messageId)?.card;

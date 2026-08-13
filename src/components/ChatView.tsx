@@ -20,6 +20,7 @@ import { MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard } from "./OptionCard";
+import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { ModelPicker } from "./ModelPicker";
 import { ReactionBar, ReactionChips } from "./Reactions";
@@ -484,7 +485,13 @@ const MessagesList = memo(function MessagesList({
         const row = (() => {
           switch (m.kind) {
             case "options":
-              return <OptionCard botId={bot.id} message={m} />;
+              // a live permission ask gets the approval box; questions and
+              // the onboarding quiz keep the list card
+              return m.card?.requestId && m.card.tool ? (
+                <ApprovalCard bot={bot} message={m} />
+              ) : (
+                <OptionCard botId={bot.id} message={m} />
+              );
             case "activity":
               // a failed turn is an error, not a tool run — render it as one
               return m.tool?.name.startsWith("error:") ? (

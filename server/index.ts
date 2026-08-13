@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { approvalKey, autoDecision } from "./auto-approve.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
@@ -136,6 +137,7 @@ const askMessageByRequest = new Map<string, string>(); // requestId -> messageId
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
 
+
 bus.subscribe((event: RuntimeEvent) => {
   broadcast({ kind: "runtime", event });
   const bot = store.botByThread(event.threadId);
@@ -189,6 +191,46 @@ bus.subscribe((event: RuntimeEvent) => {
       break;
     case "request.opened": {
       const permission = event.requestType === "permission";
+      // Auto mode / always-allow: answer routine tool permissions for the
+      // bot so it keeps working. A QUESTION always reaches the human — the
+      // whole point of asking is that a person decides — and anything that
+      // looks destructive stops even in auto mode.
+      const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
+      const settled = permission && asker && event.requestId
+        ? autoDecision(asker, event.tool, event.summary)
+        : null;
+      if (settled && asker) {
+        const instance = registry.get(asker.modelSelection.instanceId);
+        const chip = pushMessage({
+          role: "bot",
+          kind: "activity",
+          tool: { name: `${settled}: ${event.summary.slice(0, 120)}`, ok: true },
+        });
+        void instance?.adapter
+          .respondToRequest(event.threadId, event.requestId!, { behavior: "allow" })
+          .catch(() => {
+            // the auto-answer didn't land — say so instead of leaving a
+            // chip claiming approval over a request nobody answered
+            const patched = store.patchMessage(event.threadId, chip.id, {
+              tool: { name: `couldn't auto-approve ${event.tool} — answer it below`, ok: false },
+            });
+            if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
+            const card = pushMessage({
+              role: "bot",
+              kind: "options",
+              card: {
+                title: "Approval needed",
+                subtitle: event.summary,
+                options: ["Allow", "Deny"],
+                requestId: event.requestId,
+                tool: event.tool,
+                allowKey: approvalKey(event.tool, event.summary),
+              },
+            });
+            if (event.requestId) askMessageByRequest.set(event.requestId, card.id);
+          });
+        break;
+      }
       const message = pushMessage({
         role: "bot",
         kind: "options",
@@ -197,6 +239,12 @@ bus.subscribe((event: RuntimeEvent) => {
           subtitle: event.summary,
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
+          tool: permission ? event.tool : undefined,
+          // the exact grant "always allow" would remember, decided here so
+          // client and server can never derive it differently
+          allowKey: permission ? approvalKey(event.tool, event.summary) : undefined,
+          // in auto mode a card can only mean the guard stopped it — say so
+          held: permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
         },
       });
       if (event.requestId) askMessageByRequest.set(event.requestId, message.id);
@@ -959,7 +1007,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "PATCH") {
       const body = await readBody(req);
       const patch: Record<string, unknown> = {};
-      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden"] as const) {
+      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "autoApprove", "alwaysAllow"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       const bot = store.patchBot(m[1], patch);
@@ -1067,6 +1115,24 @@ const server = createServer(async (req, res) => {
       const instance = registry.get(bot.modelSelection.instanceId);
       if (!instance) return json(res, 409, { error: "provider unavailable" });
       await instance.adapter.respondToRequest(bot.threadId, String(body.requestId), {
+        behavior: body.behavior,
+        message: body.message,
+      });
+      return json(res, 200, { ok: true });
+    }
+    // Answer by THREAD, so a request raised inside a room can be answered
+    // too: a member's turn runs on the room's thread, and the bot that
+    // owns the pending request is the one currently speaking there.
+    m = path.match(/^\/api\/threads\/([\w-]+)\/respond$/);
+    if (m && method === "POST") {
+      const threadId = m[1];
+      const body = await readBody(req);
+      const group = store.groupByThread(threadId);
+      const owner = group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
+      if (!owner) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
+      const instance = registry.get(owner.modelSelection.instanceId);
+      if (!instance) return json(res, 409, { error: "provider unavailable" });
+      await instance.adapter.respondToRequest(threadId, String(body.requestId), {
         behavior: body.behavior,
         message: body.message,
       });
