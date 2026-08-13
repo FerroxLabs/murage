@@ -15,7 +15,7 @@ import {
   Puzzle,
   Trash2,
 } from "lucide-react";
-import { useStore, formatTime, type Bot } from "@/state/store";
+import { useStore, formatTime, visibleMessages, type Bot } from "@/state/store";
 import { MausAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { cn } from "@/lib/cn";
@@ -38,7 +38,9 @@ function profileInitials(profile?: { name?: string; email?: string }): string {
 
 function preview(bot: Bot): string {
   if (bot.busy) return "Working…";
-  const last = bot.messages[bot.messages.length - 1];
+  // the visible branch's tail — bot.messages holds every fork, so its last
+  // entry can belong to a version the user switched away from
+  const last = visibleMessages(bot).at(-1);
   if (!last) return "";
   if (last.kind === "options" && last.card) return last.card.title;
   if (last.kind === "activity" && last.tool) return last.tool.name;
@@ -149,7 +151,9 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
   const { state, dispatch } = useStore();
   const selected = state.selectedId === bot.id;
   const mascotMotion = selected && state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
-  const last = bot.messages[bot.messages.length - 1];
+  // the visible branch, so a version switch changes the row with the chat
+  const visible = visibleMessages(bot);
+  const last = visible.at(-1);
   return (
     <button
       onClick={() => dispatch({ type: "select", id: bot.id })}
@@ -164,7 +168,7 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
     >
       <MausAvatar
         color={bot.color}
-        state={stateForBot(bot)}
+        state={stateForBot({ ...bot, messages: visible })}
         size={56}
         motion={mascotMotion?.kind ?? "none"}
         motionKey={mascotMotion?.nonce ?? 0}
