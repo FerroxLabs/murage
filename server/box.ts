@@ -12,7 +12,8 @@
 //   - the dedicated IP rotates across archive/resume — never persist it.
 import type { AppConfig } from "./config.ts";
 
-const BOX_API = "https://ascii.dev/api/box/v1";
+// overridable so tests can point at a stub instead of the live provider
+const BOX_API = process.env.OMB_BOX_API || "https://ascii.dev/api/box/v1";
 const READY = new Set(["idle", "ready", "running"]);
 
 function boxFetch(cfg: AppConfig, path: string, opts: RequestInit = {}) {

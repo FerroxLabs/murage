@@ -4,6 +4,7 @@
 // suite is deterministic with or without agent CLIs installed — and pins
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
+import { createServer, type Server } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -16,6 +17,9 @@ const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
 let child: ChildProcess;
+/** stands in for the box provider so config saving never touches the network */
+let boxStub: Server;
+let boxStubPort = 0;
 let home: string;
 let stderr = "";
 
@@ -37,6 +41,14 @@ beforeAll(async () => {
     JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver", displayName: "Ghost" } } }),
   );
 
+  boxStub = createServer((req, res) => {
+    const ok = req.headers.authorization === "Bearer box_good";
+    res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
+    res.end(JSON.stringify(ok ? { ok: true, boxes: [] } : { ok: false, code: "unauthorized" }));
+  });
+  await new Promise<void>((r) => boxStub.listen(0, "127.0.0.1", r));
+  boxStubPort = (boxStub.address() as { port: number }).port;
+
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
@@ -45,6 +57,7 @@ beforeAll(async () => {
       HOME: home,
       USERPROFILE: home,
       OMB_PORT: String(PORT),
+      OMB_BOX_API: `http://127.0.0.1:${boxStubPort}`,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -65,6 +78,7 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  boxStub?.close();
   child?.kill("SIGTERM");
   await new Promise<void>((resolve) => {
     if (!child || child.exitCode !== null) return resolve();
@@ -180,18 +194,27 @@ describe("harness HTTP API", () => {
     expect(missing.status).toBe(404);
   });
 
+  it("refuses a box token the provider rejects, at the point of pasting", async () => {
+    // the stub answers 401 for anything but the good token
+    const bad = await api("PUT", "/api/config", { box: { token: "box_wrong" } });
+    expect(bad.status).toBe(400);
+    expect(String(bad.body.error)).toMatch(/rejected/i);
+    const after = await api("GET", "/api/config");
+    expect(after.body.box).toEqual({ configured: false });
+  });
+
   it("saves config keys write-only and reports booleans", async () => {
     const before = await api("GET", "/api/config");
     expect(before.body.box).toEqual({ configured: false });
 
-    const put = await api("PUT", "/api/config", { box: { token: "tok_secret_value" } });
+    const put = await api("PUT", "/api/config", { box: { token: "box_good" } });
     expect(put.status).toBe(200);
     expect(put.body.box).toEqual({ configured: true });
-    expect(JSON.stringify(put.body)).not.toContain("tok_secret_value");
+    expect(JSON.stringify(put.body)).not.toContain("box_good");
 
     const after = await api("GET", "/api/config");
     expect(after.body.box).toEqual({ configured: true });
-    expect(JSON.stringify(after.body)).not.toContain("tok_secret_value");
+    expect(JSON.stringify(after.body)).not.toContain("box_good");
 
     const nothing = await api("PUT", "/api/config", {});
     expect(nothing.status).toBe(400);
