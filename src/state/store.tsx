@@ -45,6 +45,8 @@ export interface Message {
   from?: { botId: string; name: string; color: MausColor };
   /** emoji reactions; by = "user" or a member botId. */
   reactions?: Array<{ emoji: string; by: string }>;
+  /** comm chips: "Messaged @X" linking to the bot⇄bot channel. */
+  comm?: { groupId: string; withBotId: string; withName: string; withColor: MausColor };
 }
 
 /** A room: several bots + you in one shared thread. */
@@ -56,6 +58,8 @@ export interface Group {
   bulletin: string;
   unread: boolean;
   createdAt: number;
+  /** auto-created bot⇄bot channel (ask_bot exchanges mirror here) */
+  dm?: boolean;
   busyBotId?: string | null;
   messages: Message[];
 }

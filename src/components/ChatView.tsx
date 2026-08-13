@@ -354,8 +354,26 @@ function Bubble({
 
 /** A tool run: spinner while live, check/cross once settled. */
 function ActivityChip({ message }: { message: Message }) {
+  const { dispatch } = useStore();
   const tool = message.tool;
   if (!tool) return null;
+  // bot⇄bot comm chip: opens the channel where the exchange lives
+  const comm = message.comm;
+  if (comm) {
+    return (
+      <div className="flex justify-start">
+        <button
+          onClick={() => dispatch({ type: "select", id: comm.groupId })}
+          title={`Open the conversation with ${comm.withName}`}
+          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+        >
+          <MausAvatar color={comm.withColor} state="happy" size={16} />
+          <span className="max-w-[480px] truncate">{tool.name}</span>
+          <ChevronRight size={13} />
+        </button>
+      </div>
+    );
+  }
   const failed = tool.ok === false;
   return (
     <div className="flex justify-start">

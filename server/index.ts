@@ -173,6 +173,9 @@ bus.subscribe((event: RuntimeEvent) => {
       break;
     case "item.started":
       if (event.itemType === "tool") {
+        // ask_bot's raw tool chip is redundant — the internal endpoint
+        // appends a richer "Messaged @X" chip linking to the channel
+        if (event.title?.endsWith("__ask_bot")) break;
         const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
         if (event.itemId) toolMessageByItem.set(event.itemId, message.id);
       }
@@ -591,7 +594,15 @@ function startGroupTurn(groupId: string, text: string) {
   const mentioned = mentionedBots(text, members);
   // Buzz rule: nobody replies unless mentioned — except a one-member room,
   // where the single bot obviously IS the addressee
-  const responders = mentioned.length ? mentioned : members.length === 1 ? members : [];
+  let responders = mentioned.length ? mentioned : members.length === 1 ? members : [];
+  // bot⇄bot channels: chipping in without a tag addresses the last speaker
+  if (!responders.length && group.dm) {
+    const lastSpeakerId = [...store.messagesFor(group.threadId)]
+      .reverse()
+      .find((msg) => msg.kind === "text" && msg.from)?.from?.botId;
+    const last = members.find((b) => b.id === lastSpeakerId) ?? members[0];
+    responders = last ? [last] : [];
+  }
   if (!responders.length) return;
 
   const prev = groupQueues.get(groupId) ?? Promise.resolve();
@@ -689,20 +700,61 @@ const server = createServer(async (req, res) => {
         const target = store.bot(toBotId);
         if (!target) return json(res, 404, { error: "no such bot" });
         if (target.busy) return json(res, 200, { busy: true });
-        // visibility: surface the cross-talk on the caller's own thread so
-        // bot-to-bot turns are never invisible (they cost the user tokens)
         const from = store.bot(fromBotId);
         const fromName = from?.name ?? "another bot";
-        if (from) {
-          const note = store.appendMessage(from.threadId, {
+
+        // the exchange is mirrored into a bot⇄bot channel: it shows up in
+        // the sidebar like any room, keeps the pair's full history, and the
+        // user can open it and chip in
+        let channel = from ? store.dmGroup(from.id, target.id) : undefined;
+        if (from && !channel) {
+          channel = store.createGroup(`${from.name} ⇄ ${target.name}`, [from.id, target.id], true);
+        }
+        const mirror = (speaker: { id: string; name: string; color: string }, text: string) => {
+          if (!channel || !text.trim()) return;
+          const msg = store.appendMessage(channel.threadId, {
+            role: "bot",
+            kind: "text",
+            text,
+            from: { botId: speaker.id, name: speaker.name, color: speaker.color },
+          });
+          broadcast({ kind: "message", threadId: channel.threadId, message: msg });
+        };
+        // both 1:1 threads get a clickable chip that opens the channel, so
+        // bot-to-bot turns are never invisible (they cost the user tokens)
+        const chip = (
+          threadId: string,
+          label: string,
+          withBot: { id: string; name: string; color: string },
+        ) => {
+          const note = store.appendMessage(threadId, {
             role: "bot",
             kind: "activity",
-            tool: { name: `asked @${target.name}: ${message.slice(0, 80)}` },
+            tool: { name: label },
+            comm: channel
+              ? { groupId: channel.id, withBotId: withBot.id, withName: withBot.name, withColor: withBot.color }
+              : undefined,
           });
-          broadcast({ kind: "message", threadId: from.threadId, message: note });
+          broadcast({ kind: "message", threadId, message: note });
+        };
+        if (from) {
+          mirror(from, message);
+          chip(from.threadId, `Messaged @${target.name}`, target);
+          chip(target.threadId, `Message from @${from.name}`, from);
+          if (channel) {
+            store.patchGroup(channel.id, { unread: true });
+            broadcastGroup(channel.id);
+          }
         }
         const prefixed = `[Message from @${fromName}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
         const reply = await askBotAndWait(toBotId, prefixed, depth);
+        if (from) {
+          mirror(target, reply);
+          if (channel) {
+            store.patchGroup(channel.id, { unread: true });
+            broadcastGroup(channel.id);
+          }
+        }
         return json(res, 200, { botName: target.name, text: reply });
       }
       return json(res, 404, { error: "unknown internal endpoint" });

@@ -57,6 +57,9 @@ export interface Message {
   from?: { botId: string; name: string; color: string };
   /** emoji reactions; by = "user" or a member botId. */
   reactions?: Array<{ emoji: string; by: string }>;
+  /** comm chips: "Messaged @X" in the caller's chat, linking to the
+   * bot⇄bot channel where the exchange is mirrored. */
+  comm?: { groupId: string; withBotId: string; withName: string; withColor: string };
 }
 
 /** A room: a shared thread where several bots + the user talk. Bots reply
@@ -70,6 +73,9 @@ export interface GroupRecord {
   bulletin: string;
   unread: boolean;
   createdAt: number;
+  /** true for auto-created bot⇄bot channels (ask_bot exchanges live here;
+   * the user can open the channel and chip in) */
+  dm?: boolean;
   /** transient: the member currently running a turn (never persisted) */
   busyBotId?: string | null;
 }
@@ -191,7 +197,7 @@ export class Store {
     return this.groups.find((g) => g.threadId === threadId);
   }
 
-  createGroup(name: string, memberIds: string[]): GroupRecord {
+  createGroup(name: string, memberIds: string[], dm = false): GroupRecord {
     const group: GroupRecord = {
       id: newId(),
       threadId: newId(),
@@ -200,11 +206,19 @@ export class Store {
       bulletin: "",
       unread: false,
       createdAt: Date.now(),
+      dm: dm || undefined,
       busyBotId: null,
     };
     this.groups.unshift(group);
     this.saveGroups();
     return group;
+  }
+
+  /** The bot⇄bot channel for a pair, if it exists (order-insensitive). */
+  dmGroup(a: string, b: string): GroupRecord | undefined {
+    return this.groups.find(
+      (g) => g.dm && g.memberIds.length === 2 && g.memberIds.includes(a) && g.memberIds.includes(b),
+    );
   }
 
   patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "bulletin" | "unread" | "busyBotId">>): GroupRecord | null {
