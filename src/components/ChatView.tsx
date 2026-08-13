@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -15,7 +15,7 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { useStore, formatTime, messageVersions, visibleMessages, type Bot, type Message } from "@/state/store";
+import { useStore, useStreaming, formatTime, messageVersions, visibleMessages, type Bot, type Message } from "@/state/store";
 import { MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { ChatMarkdown } from "./ChatMarkdown";
@@ -387,11 +387,14 @@ function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
 }
 
 function StreamingBubble({ text }: { text: string }) {
+  // markdown re-parses on a deferred value: when tokens arrive faster than
+  // the parser keeps up, React lags the parse instead of janking the frame
+  const deferred = useDeferredValue(text);
   return (
     <div className="flex w-full justify-start">
       <div className="max-w-[70%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
-        <MessageBoundary fallbackText={text}>
-          <ChatMarkdown text={text} streaming />
+        <MessageBoundary fallbackText={deferred}>
+          <ChatMarkdown text={deferred} streaming />
         </MessageBoundary>
         <span className="animate-caret ml-0.5 inline-block h-[14px] w-[2px] bg-ink align-middle" />
       </div>
@@ -414,12 +417,97 @@ function WorkingTimer({ since }: { since: number }) {
   return <span ref={ref} className="text-[12.5px] text-ink-secondary" />;
 }
 
+/** The settled transcript, memoized as one unit: during streaming every
+ * frame re-renders ChatView, but all of these props keep their identity
+ * (bot/messages only change on real message events), so the whole list —
+ * every markdown tree, every code block — bails out of React work and only
+ * the streaming tail below it commits. This is the t3code structural-sharing
+ * idea at component granularity. */
+const MessagesList = memo(function MessagesList({
+  bot,
+  messages,
+  editingId,
+  lastBotTextId,
+  canRetryLast,
+  onStartEdit,
+  onCancelEdit,
+  onSubmitEdit,
+  onRegenerate,
+}: {
+  bot: Bot;
+  messages: Message[];
+  editingId: string | null;
+  lastBotTextId: string | undefined;
+  canRetryLast: boolean;
+  onStartEdit: (id: string) => void;
+  onCancelEdit: () => void;
+  onSubmitEdit: (id: string, text: string) => void;
+  onRegenerate: () => void;
+}) {
+  return (
+    <>
+      {messages.length === 0 && !bot.busy && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
+          <MausAvatar color={bot.color} state="idle" size={64} motion="none" motionKey={0} />
+          <div className="text-[17px] font-semibold text-ink">{bot.name}</div>
+          <div className="max-w-[360px] text-[14px] text-ink-secondary">
+            {bot.description || "Send a message to start the conversation."}
+          </div>
+        </div>
+      )}
+      {messages.map((m, i) => {
+        const prev = messages[i - 1];
+        const newDay = !prev || new Date(prev.at).toDateString() !== new Date(m.at).toDateString();
+        const row = (() => {
+          switch (m.kind) {
+            case "options":
+              return <OptionCard botId={bot.id} message={m} />;
+            case "activity":
+              // a failed turn is an error, not a tool run — render it as one
+              return m.tool?.name.startsWith("error:") ? (
+                <ErrorRow
+                  message={m.tool.name.slice(6).trim()}
+                  onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined}
+                />
+              ) : (
+                <ActivityChip message={m} />
+              );
+            case "screen":
+              return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : null;
+            default:
+              return (
+                <Bubble
+                  bot={bot}
+                  message={m}
+                  editing={editingId === m.id}
+                  isLastBotText={m.id === lastBotTextId}
+                  onStartEdit={() => onStartEdit(m.id)}
+                  onCancelEdit={onCancelEdit}
+                  onSubmitEdit={(text) => onSubmitEdit(m.id, text)}
+                  onRegenerate={onRegenerate}
+                />
+              );
+          }
+        })();
+        if (!row) return null;
+        return (
+          <div key={m.id} className="contents">
+            {newDay && <DaySeparator at={m.at} />}
+            {row}
+          </div>
+        );
+      })}
+    </>
+  );
+});
+
 export function ChatView({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const streaming = state.streaming[bot.threadId];
-  const reasoning = state.reasoning[bot.threadId];
+  const stream = useStreaming();
+  const streaming = stream.streaming[bot.threadId];
+  const reasoning = stream.reasoning[bot.threadId];
   const provisioning = state.provisioning[bot.id];
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
 
@@ -433,18 +521,27 @@ export function ChatView({ bot }: { bot: Bot }) {
   // one message at a time may be in edit mode
   const [editingId, setEditingId] = useState<string | null>(null);
   useEffect(() => setEditingId(null), [bot.id]);
-  const submitEdit = (messageId: string, text: string) => {
-    setEditingId(null); // closes the editor first — a double Enter can't fork twice
-    dispatch({ type: "editMessage", botId: bot.id, messageId, text });
-  };
-  const lastUserMessage = [...messages].reverse().find((m) => m.role === "user" && m.kind === "text");
+  // stable handler identities — MessagesList is memo'd on them
+  const startEdit = useCallback((id: string) => setEditingId(id), []);
+  const cancelEdit = useCallback(() => setEditingId(null), []);
+  const submitEdit = useCallback(
+    (messageId: string, text: string) => {
+      setEditingId(null); // closes the editor first — a double Enter can't fork twice
+      dispatch({ type: "editMessage", botId: bot.id, messageId, text });
+    },
+    [bot.id, dispatch],
+  );
+  const lastUserMessage = useMemo(
+    () => [...messages].reverse().find((m) => m.role === "user" && m.kind === "text"),
+    [messages],
+  );
   // regenerate = fork the last user message with the same text — reuses the
   // existing branch machinery, so the old answer stays reachable via ‹ ›
-  const regenerate = () => {
+  const regenerate = useCallback(() => {
     if (lastUserMessage?.text && !bot.busy) {
       dispatch({ type: "editMessage", botId: bot.id, messageId: lastUserMessage.id, text: lastUserMessage.text });
     }
-  };
+  }, [lastUserMessage, bot.busy, bot.id, dispatch]);
 
   // Scroll pinning: follow the bottom while the user hasn't scrolled away.
   // Follow breaks ONLY on an upward user gesture (wheel/touch), never on
@@ -478,7 +575,6 @@ export function ChatView({ bot }: { bot: Bot }) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   };
 
-  const first = messages[0];
   // on Windows the frameless window's min/max/close overlay sits at the
   // top-right: the header becomes the drag strip and clears room for it
   const isWin = window.ogb?.platform === "win32";
@@ -566,57 +662,17 @@ export function ChatView({ bot }: { bot: Bot }) {
           aria-live="polite"
           aria-label={`Conversation with ${bot.name}`}
         >
-          {!first && !bot.busy && (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
-              <MausAvatar color={bot.color} state="idle" size={64} motion="none" motionKey={0} />
-              <div className="text-[17px] font-semibold text-ink">{bot.name}</div>
-              <div className="max-w-[360px] text-[14px] text-ink-secondary">
-                {bot.description || "Send a message to start the conversation."}
-              </div>
-            </div>
-          )}
-          {messages.map((m, i) => {
-            const prev = messages[i - 1];
-            const newDay = !prev || new Date(prev.at).toDateString() !== new Date(m.at).toDateString();
-            const row = (() => {
-              switch (m.kind) {
-                case "options":
-                  return <OptionCard botId={bot.id} message={m} />;
-                case "activity":
-                  // a failed turn is an error, not a tool run — render it as one
-                  return m.tool?.name.startsWith("error:") ? (
-                    <ErrorRow
-                      message={m.tool.name.slice(6).trim()}
-                      onRetry={m.id === messages.at(-1)?.id && !bot.busy && lastUserMessage ? regenerate : undefined}
-                    />
-                  ) : (
-                    <ActivityChip message={m} />
-                  );
-                case "screen":
-                  return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : null;
-                default:
-                  return (
-                    <Bubble
-                      bot={bot}
-                      message={m}
-                      editing={editingId === m.id}
-                      isLastBotText={m.id === lastBotTextId}
-                      onStartEdit={() => setEditingId(m.id)}
-                      onCancelEdit={() => setEditingId(null)}
-                      onSubmitEdit={(text) => submitEdit(m.id, text)}
-                      onRegenerate={regenerate}
-                    />
-                  );
-              }
-            })();
-            if (!row) return null;
-            return (
-              <div key={m.id} className="contents">
-                {newDay && <DaySeparator at={m.at} />}
-                {row}
-              </div>
-            );
-          })}
+          <MessagesList
+            bot={bot}
+            messages={messages}
+            editingId={editingId}
+            lastBotTextId={lastBotTextId}
+            canRetryLast={!bot.busy && Boolean(lastUserMessage)}
+            onStartEdit={startEdit}
+            onCancelEdit={cancelEdit}
+            onSubmitEdit={submitEdit}
+            onRegenerate={regenerate}
+          />
           {provisioning && (
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary">

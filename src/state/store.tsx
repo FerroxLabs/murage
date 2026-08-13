@@ -9,6 +9,7 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import type { MausColor, MausMotion } from "@/lib/mascot";
@@ -127,11 +128,6 @@ interface AppState {
   pluginsOpen: boolean;
   computerOpen: boolean;
   appSettingsOpen: boolean;
-  /** in-flight assistant text per threadId (content.delta fold) */
-  streaming: Record<string, string>;
-  /** in-flight extended-thinking text per threadId (reasoning_text fold) —
-   * ephemeral: shown while the bot thinks, dropped when the turn settles */
-  reasoning: Record<string, string>;
   /** latest live frame of a bot's computer, per botId */
   screens: Record<string, { png: string; mime: string }>;
   /** bots whose cloud computer is being provisioned */
@@ -164,8 +160,6 @@ type Action =
   | { type: "botPatched"; bot: Partial<Bot> & { id: string } }
   | { type: "messageAdded"; threadId: string; message: Message }
   | { type: "messagePatched"; threadId: string; message: Message }
-  | { type: "streamDelta"; threadId: string; delta: string; reasoning?: string }
-  | { type: "streamClear"; threadId: string }
   | { type: "screenFrame"; botId: string; png: string; mime: string }
   | { type: "provisioning"; botId: string; on: boolean }
   | { type: "setModel"; botId: string; selection: ModelSelection }
@@ -305,12 +299,6 @@ function reducer(state: AppState, action: Action): AppState {
               ? "blink"
               : null;
       const animated = motion ? withMascotMotion(next, bot.id, motion) : next;
-      // a settled assistant bubble replaces the in-flight stream
-      if (action.message.role === "bot" && action.message.kind === "text") {
-        const { [action.threadId]: _, ...rest } = animated.streaming;
-        const { [action.threadId]: __, ...reasoningRest } = animated.reasoning;
-        return { ...animated, streaming: rest, reasoning: reasoningRest };
-      }
       return animated;
     }
     case "messagePatched": {
@@ -329,27 +317,6 @@ function reducer(state: AppState, action: Action): AppState {
         ...b,
         messages: b.messages.map((m) => (m.id === action.message.id ? action.message : m)),
       }));
-    }
-    case "streamDelta": {
-      const next = { ...state };
-      if (action.delta) {
-        next.streaming = {
-          ...state.streaming,
-          [action.threadId]: (state.streaming[action.threadId] ?? "") + action.delta,
-        };
-      }
-      if (action.reasoning) {
-        next.reasoning = {
-          ...state.reasoning,
-          [action.threadId]: (state.reasoning[action.threadId] ?? "") + action.reasoning,
-        };
-      }
-      return next;
-    }
-    case "streamClear": {
-      const { [action.threadId]: _, ...rest } = state.streaming;
-      const { [action.threadId]: __, ...reasoningRest } = state.reasoning;
-      return { ...state, streaming: rest, reasoning: reasoningRest };
     }
     case "screenFrame":
       return {
@@ -416,10 +383,7 @@ function reducer(state: AppState, action: Action): AppState {
     case "threadActive": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
       if (!bot) return state;
-      // a rewind also invalidates any half-streamed text from the old branch
-      const { [action.threadId]: _, ...streaming } = state.streaming;
-      const { [action.threadId]: __, ...reasoning } = state.reasoning;
-      return updateBot({ ...state, streaming, reasoning }, bot.id, (b) => ({
+      return updateBot(state, bot.id, (b) => ({
         ...b,
         activeLeafId: action.activeLeafId,
       }));
@@ -459,8 +423,6 @@ const initialState: AppState = {
   pluginsOpen: false,
   computerOpen: false,
   appSettingsOpen: false,
-  streaming: {},
-  reasoning: {},
   screens: {},
   provisioning: {},
   connected: false,
@@ -479,6 +441,23 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
   return body;
 }
 
+/** Per-frame stream state lives in its OWN context: token frames update only
+ * the components that read this hook (the chat's streaming tail), while every
+ * useStore consumer — sidebar, mascots, pickers, the settled transcript —
+ * keeps its render tree untouched during a stream. */
+interface StreamState {
+  /** in-flight assistant text per threadId */
+  streaming: Record<string, string>;
+  /** in-flight extended thinking per threadId (ephemeral) */
+  reasoning: Record<string, string>;
+}
+const EMPTY_STREAM: StreamState = { streaming: {}, reasoning: {} };
+const StreamContext = createContext<StreamState>(EMPTY_STREAM);
+
+export function useStreaming() {
+  return useContext(StreamContext);
+}
+
 const StoreContext = createContext<{
   state: AppState;
   dispatch: React.Dispatch<Action>;
@@ -488,9 +467,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const stateRef = useRef(state);
   stateRef.current = state;
-  // per-frame stream-delta batching (see the "runtime" SSE case)
+  // per-frame stream-delta batching (see the "runtime" SSE case); stream
+  // state is intentionally OUTSIDE the reducer so token frames re-render
+  // only StreamContext consumers
+  const [stream, setStream] = useState<StreamState>(EMPTY_STREAM);
   const deltaBuffer = useRef(new Map<string, { text: string; reasoning: string }>());
   const deltaFlush = useRef<number | null>(null);
+  const clearStream = (threadId: string) =>
+    setStream((prev) => {
+      if (!(threadId in prev.streaming) && !(threadId in prev.reasoning)) return prev;
+      const { [threadId]: _s, ...streaming } = prev.streaming;
+      const { [threadId]: _r, ...reasoning } = prev.reasoning;
+      return { streaming, reasoning };
+    });
+  const flushDeltas = () => {
+    if (deltaFlush.current !== null) {
+      cancelAnimationFrame(deltaFlush.current);
+      deltaFlush.current = null;
+    }
+    const buf = deltaBuffer.current;
+    if (buf.size === 0) return;
+    const entries = [...buf];
+    buf.clear();
+    setStream((prev) => {
+      const streaming = { ...prev.streaming };
+      const reasoning = { ...prev.reasoning };
+      for (const [threadId, d] of entries) {
+        if (d.text) streaming[threadId] = (streaming[threadId] ?? "") + d.text;
+        if (d.reasoning) reasoning[threadId] = (reasoning[threadId] ?? "") + d.reasoning;
+      }
+      return { streaming, reasoning };
+    });
+  };
 
   // debounced PATCH per bot for text-field edits (name/title/description)
   const patchTimers = useRef(new Map<string, { timer: ReturnType<typeof setTimeout>; patch: Record<string, unknown> }>());
@@ -670,12 +678,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       switch (frame.kind) {
         case "message":
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
+          // a settled assistant bubble replaces the in-flight stream
+          if (frame.message?.role === "bot" && frame.message?.kind === "text") clearStream(frame.threadId);
           break;
         case "message.patch":
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message });
           break;
         case "thread":
           rawDispatch({ type: "threadActive", threadId: frame.threadId, activeLeafId: frame.activeLeafId });
+          // a rewind also invalidates any half-streamed text from the old branch
+          clearStream(frame.threadId);
           break;
         case "bot": {
           const bot = frame.bot as Partial<Bot> & { id: string };
@@ -705,23 +717,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (deltaFlush.current === null) {
               deltaFlush.current = requestAnimationFrame(() => {
                 deltaFlush.current = null;
-                for (const [threadId, { text, reasoning }] of deltaBuffer.current) {
-                  rawDispatch({ type: "streamDelta", threadId, delta: text, reasoning: reasoning || undefined });
-                }
-                deltaBuffer.current.clear();
+                flushDeltas();
               });
             }
           } else if (event.type === "turn.completed") {
             // flush any buffered tail before clearing so no tokens are lost
-            if (deltaFlush.current !== null) {
-              cancelAnimationFrame(deltaFlush.current);
-              deltaFlush.current = null;
-            }
-            for (const [threadId, { text, reasoning }] of deltaBuffer.current) {
-              rawDispatch({ type: "streamDelta", threadId, delta: text, reasoning: reasoning || undefined });
-            }
-            deltaBuffer.current.clear();
-            rawDispatch({ type: "streamClear", threadId: event.threadId });
+            flushDeltas();
+            clearStream(event.threadId);
           }
           break;
         }
@@ -754,7 +756,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(() => ({ state, dispatch }), [state, dispatch]);
-  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+  return (
+    <StoreContext.Provider value={value}>
+      <StreamContext.Provider value={stream}>{children}</StreamContext.Provider>
+    </StoreContext.Provider>
+  );
 }
 
 export function useStore() {
