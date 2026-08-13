@@ -401,9 +401,13 @@ async function startTurn(
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
       if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
       const wants = bot.computer; // 'cloud' | 'local' | 'off' | undefined(auto)
+      // only drivers that can mount the computer MCP server get the tools
+      // (and the prompt about them) — but every bot with a box still gets
+      // the live screen preview, which is a UI feature, not a tool
       const mountsComputer =
         instance.adapter.capabilities.computerMcp === true || instance.driverKind === "boxAgent";
-      if (wants !== "off" && wants !== "local" && mountsComputer && box.boxConfigured(cfg)) {
+      let previewBoxId: string | null = null;
+      if (wants !== "off" && wants !== "local" && box.boxConfigured(cfg)) {
         let b = await box.findBox(cfg, bot.id).catch(() => null);
         // the Computer driver runs ON the box — provision it on first use
         if (!b && instance.driverKind === "boxAgent") {
@@ -413,12 +417,16 @@ async function startTurn(
         }
         // an archived box answers every action with an error until it
         // resumes — wake it here, once, instead of letting the agent
-        // discover it one failed tool call at a time
-        if (b && !["idle", "ready", "running"].includes(b.state)) {
+        // discover it one failed tool call at a time. Only worth the
+        // resume (~8s, and it un-pauses billing) when the bot can act.
+        if (b && mountsComputer && !["idle", "ready", "running"].includes(b.state)) {
           broadcast({ kind: "computer", botId: bot.id, state: "waking" });
           b = (await box.readyBox(cfg, bot.id).catch(() => null)) ?? b;
         }
-        if (b) integrations.computer = { boxId: b.id, token: cfg.box!.token! };
+        if (b) {
+          previewBoxId = b.id;
+          if (mountsComputer) integrations.computer = { boxId: b.id, token: cfg.box!.token! };
+        }
       }
       // local computer (this Mac) via the Electron-hosted cua-driver: the
       // Electron main process owns the daemon (TCC attribution) and writes
@@ -477,7 +485,7 @@ async function startTurn(
       });
       // dispatched: the rewind is spent, and the old cursors are dead
       if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
-      if (integrations.computer) startScreenPoller(bot.id, integrations.computer.boxId);
+      if (previewBoxId) startScreenPoller(bot.id, previewBoxId);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const failure = store.appendMessage(bot.threadId, {
