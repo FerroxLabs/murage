@@ -122,19 +122,24 @@ function broadcast(payload) {
 // and every client view are projections of it.
 const toolMessageByItem = new Map(); // itemId -> messageId
 const askMessageByRequest = new Map(); // requestId -> messageId
+// Group threads: the fold needs to know WHO is talking — the turn engine
+// records the active member here before dispatching its turn.
+const groupSpeakers = new Map();
 bus.subscribe((event) => {
     broadcast({ kind: "runtime", event });
     const bot = store.botByThread(event.threadId);
-    if (!bot)
+    const group = bot ? undefined : store.groupByThread(event.threadId);
+    if (!bot && !group)
         return;
+    const speaker = group ? groupSpeakers.get(event.threadId) : undefined;
     const pushMessage = (m) => {
-        const message = store.appendMessage(event.threadId, m);
+        const message = store.appendMessage(event.threadId, group && m.role === "bot" ? { ...m, from: speaker } : m);
         broadcast({ kind: "message", threadId: event.threadId, message });
         return message;
     };
     switch (event.type) {
         case "session.started":
-            if (event.sessionId && event.providerInstanceId) {
+            if (bot && event.sessionId && event.providerInstanceId) {
                 store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId);
             }
             break;
@@ -153,11 +158,16 @@ bus.subscribe((event) => {
                     toolMessageByItem.delete(event.itemId);
                 }
                 // the bot just finished acting — refresh its screen preview now
-                pokeScreenPoller(bot.id);
+                if (bot)
+                    pokeScreenPoller(bot.id);
             }
             break;
         case "item.started":
             if (event.itemType === "tool") {
+                // ask_bot's raw tool chip is redundant — the internal endpoint
+                // appends a richer "Messaged @X" chip linking to the channel
+                if (event.title?.endsWith("__ask_bot"))
+                    break;
                 const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
                 if (event.itemId)
                     toolMessageByItem.set(event.itemId, message.id);
@@ -199,13 +209,17 @@ bus.subscribe((event) => {
             pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
             break;
         case "turn.completed": {
-            // the last live frame becomes a settled inline screen message —
-            // the screenshot-in-chat moment
-            const frame = stopScreenPoller(bot.id);
-            if (frame)
-                pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
-            store.patchBot(bot.id, { busy: false, unread: true });
-            broadcast({ kind: "bot", bot: store.bot(bot.id) });
+            if (bot) {
+                // the last live frame becomes a settled inline screen message —
+                // the screenshot-in-chat moment
+                const frame = stopScreenPoller(bot.id);
+                if (frame)
+                    pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
+                store.patchBot(bot.id, { busy: false, unread: true });
+                broadcast({ kind: "bot", bot: store.bot(bot.id) });
+            }
+            // group busy/unread settle in the group turn engine, which knows
+            // whether more member turns are queued behind this one
             break;
         }
     }
@@ -427,6 +441,152 @@ async function startTurn(botId, text, opts) {
     })();
 }
 // ── config hot-reload ─────────────────────────────────────────────────
+// ── group turn engine ──────────────────────────────────────────────────
+// The Buzz rule: in a room, a bot replies only when @mentioned. Mentioned
+// members run SEQUENTIALLY (one speaker at a time — the transcript and the
+// streaming bubble stay coherent), each on a fresh session with the recent
+// room conversation serialized into its prompt. A member's reply may
+// @mention teammates; those get one chained turn (hop 1), never deeper.
+const groupQueues = new Map();
+const GROUP_CONTEXT_MESSAGES = 30;
+const MAX_GROUP_HOPS = 1;
+function serializeRoomContext(threadId, userName) {
+    return store
+        .messagesFor(threadId)
+        .filter((m) => m.kind === "text" && m.text)
+        .slice(-GROUP_CONTEXT_MESSAGES)
+        .map((m) => `${m.role === "user" ? userName : (m.from?.name ?? "Bot")}: ${m.text}`)
+        .join("\n");
+}
+function broadcastGroup(groupId) {
+    const group = store.group(groupId);
+    if (group)
+        broadcast({ kind: "group", group });
+}
+async function runGroupMemberTurn(groupId, botId, hop, 
+// bots that already spoke for this user message — "@Scout ask @Pixel"
+// must not run Pixel twice (once chained, once as a direct responder)
+spoken = new Set()) {
+    const group = store.group(groupId);
+    const bot = store.bot(botId);
+    if (!group || !bot)
+        return;
+    spoken.add(botId);
+    const instance = registry.get(bot.modelSelection.instanceId);
+    const userName = cfg.profile?.name?.trim() || "User";
+    if (!instance) {
+        const failure = store.appendMessage(group.threadId, {
+            role: "bot",
+            kind: "activity",
+            from: { botId: bot.id, name: bot.name, color: bot.color },
+            tool: { name: `error: ${bot.name}'s model is unavailable`, ok: false },
+        });
+        broadcast({ kind: "message", threadId: group.threadId, message: failure });
+        return;
+    }
+    store.patchGroup(group.id, { busyBotId: bot.id });
+    broadcastGroup(group.id);
+    groupSpeakers.set(group.threadId, { botId: bot.id, name: bot.name, color: bot.color });
+    const roster = group.memberIds
+        .map((id) => store.bot(id))
+        .filter((b) => Boolean(b))
+        .map((b) => `@${b.name}${b.title ? ` (${b.title})` : ""}`)
+        .join(", ");
+    const system = [
+        `You are ${bot.name}, a bot in the room "${group.name}" in OpenMausBot.`,
+        bot.title && `Role: ${bot.title}.`,
+        bot.description && `About: ${bot.description}`,
+        `Room members: ${roster}, and ${userName} (the human).`,
+        group.bulletin.trim() && `Room bulletin (shared instructions for everyone):\n${group.bulletin.trim()}`,
+        `Reply as yourself, briefly and conversationally. To bring a teammate in, mention them like @Name — they'll see the conversation and respond.`,
+    ]
+        .filter(Boolean)
+        .join("\n");
+    const text = `${serializeRoomContext(group.threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)`;
+    // run the turn and wait for it to settle, folding the reply text so a
+    // chained @mention can be routed afterwards
+    let replyText = "";
+    await new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (done)
+                return;
+            done = true;
+            clearTimeout(timer);
+            unsub();
+            resolve();
+        };
+        const unsub = bus.subscribe((e) => {
+            if (e.threadId !== group.threadId)
+                return;
+            if (e.type === "item.completed" && e.itemType === "assistant_text")
+                replyText += `\n${e.text}`;
+            else if (e.type === "turn.completed")
+                finish();
+        });
+        const timer = setTimeout(finish, 5 * 60_000);
+        instance.adapter
+            .sendTurn({ threadId: group.threadId, text, system })
+            .catch((err) => {
+            const failure = store.appendMessage(group.threadId, {
+                role: "bot",
+                kind: "activity",
+                from: { botId: bot.id, name: bot.name, color: bot.color },
+                tool: { name: `error: ${err instanceof Error ? err.message.slice(0, 140) : "turn failed"}`, ok: false },
+            });
+            broadcast({ kind: "message", threadId: group.threadId, message: failure });
+            finish();
+        });
+    });
+    groupSpeakers.delete(group.threadId);
+    store.patchGroup(group.id, { busyBotId: null, unread: true });
+    broadcastGroup(group.id);
+    // chained mentions: a member's reply can summon teammates — one hop only
+    if (hop < MAX_GROUP_HOPS && replyText.trim()) {
+        const members = group.memberIds
+            .map((id) => store.bot(id))
+            .filter((b) => Boolean(b) && b.id !== bot.id);
+        for (const next of mentionedBots(replyText, members)) {
+            if (spoken.has(next.id))
+                continue;
+            await runGroupMemberTurn(groupId, next.id, hop + 1, spoken);
+        }
+    }
+}
+function startGroupTurn(groupId, text) {
+    const group = store.group(groupId);
+    if (!group)
+        throw Object.assign(new Error("no such group"), { status: 404 });
+    const userMessage = store.appendMessage(group.threadId, { role: "user", kind: "text", text });
+    broadcast({ kind: "message", threadId: group.threadId, message: userMessage });
+    const members = group.memberIds
+        .map((id) => store.bot(id))
+        .filter((b) => Boolean(b));
+    const mentioned = mentionedBots(text, members);
+    // Buzz rule: nobody replies unless mentioned — except a one-member room,
+    // where the single bot obviously IS the addressee
+    let responders = mentioned.length ? mentioned : members.length === 1 ? members : [];
+    // bot⇄bot channels: chipping in without a tag addresses the last speaker
+    if (!responders.length && group.dm) {
+        const lastSpeakerId = [...store.messagesFor(group.threadId)]
+            .reverse()
+            .find((msg) => msg.kind === "text" && msg.from)?.from?.botId;
+        const last = members.find((b) => b.id === lastSpeakerId) ?? members[0];
+        responders = last ? [last] : [];
+    }
+    if (!responders.length)
+        return;
+    const prev = groupQueues.get(groupId) ?? Promise.resolve();
+    const next = prev.then(async () => {
+        const spoken = new Set();
+        for (const responder of responders) {
+            if (spoken.has(responder.id))
+                continue;
+            await runGroupMemberTurn(groupId, responder.id, 0, spoken);
+        }
+    });
+    groupQueues.set(groupId, next.catch(() => { }));
+}
 function configStatus() {
     return {
         xai: { configured: Boolean(cfg.xai?.key) },
@@ -483,9 +643,18 @@ const server = createServer(async (req, res) => {
             }
             if (method === "GET" && path === "/api/internal/agents") {
                 const self = url.searchParams.get("self");
+                // title/description included so a "chief of staff"-style bot can
+                // judge the team (who does what, who has no job description yet)
                 const bots = store.bots
                     .filter((b) => b.id !== self && !b.hidden)
-                    .map((b) => ({ id: b.id, name: b.name, model: b.modelSelection.model, busy: !!b.busy }));
+                    .map((b) => ({
+                    id: b.id,
+                    name: b.name,
+                    model: b.modelSelection.model,
+                    busy: !!b.busy,
+                    title: b.title || undefined,
+                    description: b.description || undefined,
+                }));
                 return json(res, 200, { bots });
             }
             if (method === "POST" && path === "/api/internal/ask-bot") {
@@ -505,20 +674,57 @@ const server = createServer(async (req, res) => {
                     return json(res, 404, { error: "no such bot" });
                 if (target.busy)
                     return json(res, 200, { busy: true });
-                // visibility: surface the cross-talk on the caller's own thread so
-                // bot-to-bot turns are never invisible (they cost the user tokens)
                 const from = store.bot(fromBotId);
                 const fromName = from?.name ?? "another bot";
-                if (from) {
-                    const note = store.appendMessage(from.threadId, {
+                // the exchange is mirrored into a bot⇄bot channel: it shows up in
+                // the sidebar like any room, keeps the pair's full history, and the
+                // user can open it and chip in
+                let channel = from ? store.dmGroup(from.id, target.id) : undefined;
+                if (from && !channel) {
+                    channel = store.createGroup(`${from.name} ⇄ ${target.name}`, [from.id, target.id], true);
+                }
+                const mirror = (speaker, text) => {
+                    if (!channel || !text.trim())
+                        return;
+                    const msg = store.appendMessage(channel.threadId, {
+                        role: "bot",
+                        kind: "text",
+                        text,
+                        from: { botId: speaker.id, name: speaker.name, color: speaker.color },
+                    });
+                    broadcast({ kind: "message", threadId: channel.threadId, message: msg });
+                };
+                // both 1:1 threads get a clickable chip that opens the channel, so
+                // bot-to-bot turns are never invisible (they cost the user tokens)
+                const chip = (threadId, label, withBot) => {
+                    const note = store.appendMessage(threadId, {
                         role: "bot",
                         kind: "activity",
-                        tool: { name: `asked @${target.name}: ${message.slice(0, 80)}` },
+                        tool: { name: label },
+                        comm: channel
+                            ? { groupId: channel.id, withBotId: withBot.id, withName: withBot.name, withColor: withBot.color }
+                            : undefined,
                     });
-                    broadcast({ kind: "message", threadId: from.threadId, message: note });
+                    broadcast({ kind: "message", threadId, message: note });
+                };
+                if (from) {
+                    mirror(from, message);
+                    chip(from.threadId, `Messaged @${target.name}`, target);
+                    chip(target.threadId, `Message from @${from.name}`, from);
+                    if (channel) {
+                        store.patchGroup(channel.id, { unread: true });
+                        broadcastGroup(channel.id);
+                    }
                 }
                 const prefixed = `[Message from @${fromName}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
                 const reply = await askBotAndWait(toBotId, prefixed, depth);
+                if (from) {
+                    mirror(target, reply);
+                    if (channel) {
+                        store.patchGroup(channel.id, { unread: true });
+                        broadcastGroup(channel.id);
+                    }
+                }
                 return json(res, 200, { botName: target.name, text: reply });
             }
             return json(res, 404, { error: "unknown internal endpoint" });
@@ -552,7 +758,88 @@ const server = createServer(async (req, res) => {
                     messages: store.messagesFor(b.threadId),
                     activeLeafId: store.activeLeaf(b.threadId),
                 })),
+                groups: store.groups.map((g) => ({ ...g, messages: store.messagesFor(g.threadId) })),
             });
+        }
+        // ── rooms (group chats) ─────────────────────────────────────────────
+        let m = null;
+        if (method === "POST" && path === "/api/groups") {
+            const body = await readBody(req);
+            const memberIds = (Array.isArray(body.memberIds) ? body.memberIds : []).filter((id) => typeof id === "string" && Boolean(store.bot(id)));
+            if (memberIds.length === 0)
+                return json(res, 400, { error: "a room needs at least one bot" });
+            const name = typeof body.name === "string" && body.name.trim()
+                ? body.name.trim()
+                : `${store.bot(memberIds[0]).name} & co.`;
+            const group = store.createGroup(name, memberIds);
+            broadcast({ kind: "group", group });
+            return json(res, 201, { group: { ...group, messages: [] } });
+        }
+        m = path.match(/^\/api\/groups\/([\w-]+)$/);
+        if (m && method === "PATCH") {
+            const body = await readBody(req);
+            const patch = {};
+            for (const key of ["name", "bulletin", "unread"]) {
+                if (body[key] !== undefined)
+                    patch[key] = body[key];
+            }
+            if (Array.isArray(body.memberIds)) {
+                const ids = body.memberIds.filter((id) => typeof id === "string" && Boolean(store.bot(id)));
+                if (ids.length)
+                    patch.memberIds = ids;
+            }
+            const group = store.patchGroup(m[1], patch);
+            if (!group)
+                return json(res, 404, { error: "no such room" });
+            broadcast({ kind: "group", group });
+            return json(res, 200, { group });
+        }
+        m = path.match(/^\/api\/groups\/([\w-]+)$/);
+        if (m && method === "DELETE") {
+            const group = store.group(m[1]);
+            if (!group)
+                return json(res, 404, { error: "no such room" });
+            store.deleteGroup(group.id);
+            for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
+                try {
+                    unlinkSync(join(dir, `${group.threadId}.ndjson`));
+                }
+                catch { }
+            }
+            broadcast({ kind: "group.deleted", groupId: group.id });
+            return json(res, 200, { ok: true });
+        }
+        m = path.match(/^\/api\/groups\/([\w-]+)\/messages$/);
+        if (m && method === "POST") {
+            const body = await readBody(req);
+            const text = String(body.text ?? "").trim();
+            if (!text)
+                return json(res, 400, { error: "text required" });
+            startGroupTurn(m[1], text);
+            return json(res, 202, { ok: true });
+        }
+        m = path.match(/^\/api\/groups\/([\w-]+)\/interrupt$/);
+        if (m && method === "POST") {
+            const group = store.group(m[1]);
+            if (!group)
+                return json(res, 404, { error: "no such room" });
+            const busy = group.busyBotId ? store.bot(group.busyBotId) : undefined;
+            const instance = busy ? registry.get(busy.modelSelection.instanceId) : undefined;
+            await instance?.adapter.interruptTurn(group.threadId).catch(() => { });
+            return json(res, 200, { ok: true });
+        }
+        // emoji reactions — works on any thread (1:1 or room)
+        m = path.match(/^\/api\/threads\/([\w-]+)\/messages\/([\w-]+)\/reactions$/);
+        if (m && method === "POST") {
+            const body = await readBody(req);
+            const emoji = String(body.emoji ?? "").slice(0, 8);
+            if (!emoji)
+                return json(res, 400, { error: "emoji required" });
+            const patched = store.toggleReaction(m[1], m[2], emoji, typeof body.by === "string" ? body.by : "user");
+            if (!patched)
+                return json(res, 404, { error: "no such message" });
+            broadcast({ kind: "message.patch", threadId: m[1], message: patched });
+            return json(res, 200, { message: patched });
         }
         if (method === "POST" && path === "/api/bots") {
             const bot = store.createBot();
@@ -565,7 +852,7 @@ const server = createServer(async (req, res) => {
                 },
             });
         }
-        let m = path.match(/^\/api\/bots\/([\w-]+)$/);
+        m = path.match(/^\/api\/bots\/([\w-]+)$/);
         if (m && method === "PATCH") {
             const body = await readBody(req);
             const patch = {};
