@@ -37,6 +37,7 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  approvalScope?: "local-computer";
 }
 
 export interface ConnectorCardData {
@@ -251,6 +252,7 @@ export interface InstanceInfo {
     agentsMcp?: boolean;
     composioMcp?: boolean;
     effortLevels?: readonly EffortLevel[];
+    localComputerMcp?: boolean;
   };
   /** `custom` agents sit below the rail divider — no subscription catalog. */
   access?: "subscription" | "custom";

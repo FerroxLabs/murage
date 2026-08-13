@@ -132,6 +132,33 @@ describe("ACP decodeConfig", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
     expect(GrokAgentDriver.decodeConfig({ fullAuto: true }).fullAuto).toBe(true);
   });
+
+  it("does not advertise or accept local CUA in full-auto mode", async () => {
+    const fullAuto = await GrokAgentDriver.create({
+      instanceId: "grok-full-auto",
+      displayName: "Grok Full Auto",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    expect(fullAuto.adapter.capabilities.localComputerMcp).toBe(false);
+    await expect(
+      fullAuto.adapter.sendTurn({
+        threadId: "t-full-auto-local",
+        text: "click",
+        integrations: {
+          localComputer: {
+            command: "/cua-driver",
+            args: ["mcp"],
+            env: {},
+            platform: "linux",
+            scope: "local-computer",
+          },
+        },
+      }),
+    ).rejects.toThrow(/interactive provider approvals/);
+    await fullAuto.dispose();
+  });
 });
 
 describe("ACP turns (fake CLI)", () => {
@@ -330,15 +357,64 @@ describe("ACP turns (fake CLI)", () => {
     expect(recorder.events.some((e) => e.type === "session.started")).toBe(true);
   });
 
+  it("mounts local CUA only on an approval-capable ACP instance", async () => {
+    await create();
+    const dump = join(scratch, "local-dump.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await instance.adapter.sendTurn({
+      threadId: "t-local",
+      text: "inspect",
+      integrations: {
+        localComputer: {
+          command: "/opt/cua driver/cua-driver",
+          args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
+          env: { CUA_DRIVER_EMBEDDED: "1" },
+          platform: "linux",
+          generation: "generation-1",
+          scope: "local-computer",
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpServers).toContainEqual({
+      name: "computer",
+      command: "/opt/cua driver/cua-driver",
+      args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
+      env: [{ name: "CUA_DRIVER_EMBEDDED", value: "1" }],
+    });
+    expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
+  });
+
   it("surfaces a permission ask as request.opened and completes once allowed", async () => {
     await create(GrokAgentDriver, "permission");
-    await instance.adapter.sendTurn({ threadId: "t-perm", text: "go" });
+    await instance.adapter.sendTurn({
+      threadId: "t-perm",
+      text: "go",
+      integrations: {
+        localComputer: {
+          command: "/cua-driver",
+          args: ["mcp"],
+          env: {},
+          platform: "linux",
+          scope: "local-computer",
+        },
+      },
+    });
     const opened = await recorder.until((e) => e.type === "request.opened");
-    expect(opened).toMatchObject({ requestType: "permission", tool: "shell" });
+    expect(opened).toMatchObject({
+      requestType: "permission",
+      tool: "shell",
+      approvalScope: "local-computer",
+    });
 
     await instance.adapter.respondToRequest("t-perm", (opened as any).requestId, { behavior: "allow" });
     const resolved = await recorder.until((e) => e.type === "request.resolved");
-    expect(resolved).toMatchObject({ behavior: "allow", source: "user" });
+    expect(resolved).toMatchObject({
+      behavior: "allow",
+      source: "user",
+      approvalScope: "local-computer",
+    });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
   });

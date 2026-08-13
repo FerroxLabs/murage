@@ -84,6 +84,7 @@ import { memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { loadBundledSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
+import { shouldMountLocalComputer } from "./local-routing.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.OMB_WEBHOOK_PORT || PORT + 1);
@@ -664,6 +665,7 @@ bus.subscribe((event: RuntimeEvent) => {
       const settled = permission && asker && event.requestId
         ? autoDecision(asker, event.tool, event.summary, {
             unattended: isUnattended(asker.id),
+            scope: event.approvalScope,
           })
         : null;
       if (settled && asker && event.requestId) {
@@ -698,8 +700,14 @@ bus.subscribe((event: RuntimeEvent) => {
                 options: ["Allow", "Deny"],
                 requestId,
                 tool,
-                allowKey: approvalKey(tool, summary),
-                held: "Auto mode couldn't answer this one.",
+                allowKey: event.approvalScope
+                  ? undefined
+                  : approvalKey(tool, summary, event.approvalScope),
+                held:
+                  event.approvalScope === "local-computer"
+                    ? "Local computer actions always require your approval in this beta."
+                    : "Auto mode couldn't answer this one.",
+                approvalScope: event.approvalScope,
               },
             });
             askMessageByRequest.set(`${event.threadId}:${requestId}`, card.id);
@@ -711,16 +719,30 @@ bus.subscribe((event: RuntimeEvent) => {
         role: "bot",
         kind: "options",
         card: {
-          title: permission ? "Approval needed" : "Your bot has a question",
+          title:
+            permission && event.approvalScope === "local-computer"
+              ? "Local computer approval"
+              : permission
+                ? "Approval needed"
+                : "Your bot has a question",
           subtitle: event.summary,
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
           tool: permission ? event.tool : undefined,
           // the exact grant "always allow" would remember, decided here so
           // client and server can never derive it differently
-          allowKey: permission ? approvalKey(event.tool, event.summary) : undefined,
+          allowKey:
+            permission && !event.approvalScope
+              ? approvalKey(event.tool, event.summary, event.approvalScope)
+              : undefined,
           // in auto mode a card can only mean the guard stopped it — say so
-          held: permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
+          held:
+            permission && event.approvalScope === "local-computer"
+              ? "Local computer actions always require your approval in this beta."
+              : permission && asker?.autoApprove
+                ? "This looked destructive, so auto mode stopped to ask."
+                : undefined,
+          approvalScope: event.approvalScope,
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
@@ -1252,6 +1274,7 @@ async function startTurn(
       const cloudBackend = opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
       const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
+      const mountsLocalComputer = instance.adapter.capabilities.localComputerMcp === true;
       let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
       let computerKind: "box" | "vps" | "vm" | "local" | null = null;
 
@@ -1279,7 +1302,11 @@ async function startTurn(
         integrations.localComputer = containerComputerMcp(localVm.runtime);
         computerKind = "vm";
       } else if (wants === "local") {
-        if (!mountsComputerMcp) {
+        if (!shouldMountLocalComputer({
+          requested: "local",
+          hostPlatform: process.platform,
+          providerSupportsLocal: mountsLocalComputer,
+        })) {
           throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
         }
         const cua = readCuaConnection();
@@ -1352,7 +1379,16 @@ async function startTurn(
 
       // Auto-only host fallback. Electron owns cua-driver/TCC attribution;
       // the harness only reads its already-running connection descriptor.
-      if (!integrations.computer && !integrations.localComputer && wants === undefined && mountsComputerMcp) {
+      if (
+        !integrations.computer &&
+        !integrations.localComputer &&
+        wants === undefined &&
+        shouldMountLocalComputer({
+          requested: undefined,
+          hostPlatform: process.platform,
+          providerSupportsLocal: mountsLocalComputer,
+        })
+      ) {
         const cua = readCuaConnection();
         if (cua) {
           integrations.localComputer = cua;
