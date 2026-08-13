@@ -201,9 +201,18 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
 export function Sidebar() {
   const { state, dispatch } = useStore();
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [query, setQuery] = useState("");
 
+  const q = query.trim().toLowerCase();
   const visibleBots = state.bots
     .filter((b) => !b.hidden)
+    .filter(
+      (b) =>
+        !q ||
+        b.name.toLowerCase().includes(q) ||
+        (b.title ?? "").toLowerCase().includes(q) ||
+        preview(b).toLowerCase().includes(q),
+    )
     .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
 
   return (
@@ -237,7 +246,11 @@ export function Sidebar() {
         <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-2">
           <Search size={16} className="text-ink-secondary" />
           <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
             placeholder="Search"
+            aria-label="Search bots"
             className="w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
           />
         </div>
@@ -246,6 +259,9 @@ export function Sidebar() {
       {/* Bot list */}
       <div className="flex-1 overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5">
+          {visibleBots.length === 0 && q && (
+            <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">No bots match “{query}”</div>
+          )}
           {visibleBots.map((b) => (
             <BotListItem key={b.id} bot={b} onMenu={setMenu} />
           ))}
