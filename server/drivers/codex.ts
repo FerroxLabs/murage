@@ -22,7 +22,7 @@ import type {
   SendTurnInput,
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
-import { augmentedPath } from "../env-path.ts";
+import { augmentedPath, resolveCliSpawn } from "../env-path.ts";
 import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "codex";
@@ -92,10 +92,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // billing to pay-as-you-go (agentcal)
       delete env.OPENAI_API_KEY;
 
-      const child = spawn(config.cli, ["app-server"], {
+      const cli = resolveCliSpawn(config.cli, ["app-server"]);
+      const child = spawn(cli.command, cli.args, {
         cwd: turn.cwd ?? homedir(),
         env,
         stdio: ["pipe", "pipe", "pipe"],
+        windowsVerbatimArguments: cli.windowsVerbatimArguments,
         detached: true,
       });
 
@@ -378,8 +380,16 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const version = await new Promise<string | null>((resolve) => {
-        execFile(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) =>
-          resolve(err ? null : stdout.trim()),
+        const cli = resolveCliSpawn(config.cli, ["--version"]);
+        execFile(
+          cli.command,
+          cli.args,
+          {
+            timeout: 8000,
+            env: { ...process.env, PATH: augmentedPath() },
+            windowsVerbatimArguments: cli.windowsVerbatimArguments,
+          },
+          (err, stdout) => resolve(err ? null : stdout.trim()),
         );
       });
       if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
