@@ -16,13 +16,14 @@ export function ComposerAttachments({
   return (
     <div className="mb-2 flex flex-wrap gap-2">
       {items.map((a) => (
-        <PasteChip key={a.id} text={a.text} onRemove={() => onRemove(a.id)} />
+        <PasteChip key={a.id} item={a} onRemove={() => onRemove(a.id)} />
       ))}
     </div>
   );
 }
 
-function PasteChip({ text, onRemove }: { text: string; onRemove: () => void }) {
+function PasteChip({ item, onRemove }: { item: Attachment; onRemove: () => void }) {
+  const { text } = item;
   return (
     <div
       title={text.slice(0, 4000)}
@@ -37,17 +38,19 @@ function PasteChip({ text, onRemove }: { text: string; onRemove: () => void }) {
         </pre>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-raised" />
       </div>
-      <div className="mt-1 text-[10.5px] text-ink-secondary/70">{pasteSummary(text)}</div>
+      <div className="mt-1 text-[10.5px] text-ink-secondary/70">{pasteSummary(item)}</div>
       <div className="mt-1 flex items-center gap-1">
         <ClipboardPaste size={11} className="text-ink-secondary/70" />
         <span className="rounded border border-hairline/60 px-1 py-px text-[9.5px] font-medium tracking-wide text-ink-secondary">
           PASTED
         </span>
       </div>
+      {/* hover reveals it, but so must focus: `hidden` would take the only
+          way to drop a chip out of reach of the keyboard */}
       <button
         onClick={onRemove}
         aria-label="Remove pasted text"
-        className="absolute -right-1.5 -top-1.5 hidden size-5 items-center justify-center rounded-full border border-hairline/60 bg-panel text-ink-secondary hover:text-ink group-hover:flex"
+        className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-hairline/60 bg-panel text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
       >
         <X size={11} />
       </button>

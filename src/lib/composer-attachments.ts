@@ -1,7 +1,7 @@
 // Text pasted into the composer that is too long to live in the input.
 // It rides along as a chip and folds back into the message on send —
 // nothing here reaches the server, so every driver still sees a prompt.
-export type Attachment = { kind: "paste"; id: string; text: string };
+export type Attachment = { kind: "paste"; id: string; text: string; size: number };
 
 /** Past this, a paste stops reading as typing and becomes an attachment.
  * Long-but-narrow (a stack trace, a log) counts by line, not just chars. */
@@ -18,12 +18,20 @@ export function countLines(text: string): number {
 
 export function pasteAttachment(text: string): Attachment {
   const id = globalThis.crypto?.randomUUID?.() ?? `a${Math.random().toString(36).slice(2)}`;
-  return { kind: "paste", id, text };
+  // measured once, here: a chip re-renders on every keystroke in the
+  // composer, and encoding half a megabyte each time would be felt
+  return { kind: "paste", id, text, size: byteLength(text) };
+}
+
+/** What the paste actually weighs — String#length counts UTF-16 units, so
+ * it reads a third under on accented text and half under on CJK. */
+export function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
 }
 
 /** "12 lines, 3.4 KB" — what the chip says under the preview. */
-export function pasteSummary(text: string): string {
-  return `${countLines(text)} lines, ${formatSize(text.length)}`;
+export function pasteSummary(a: { text: string; size: number }): string {
+  return `${countLines(a.text)} lines, ${formatSize(a.size)}`;
 }
 
 export function formatSize(bytes: number): string {

@@ -101,6 +101,8 @@ export function Composer({
   // One message may be queued while the bot works; it auto-sends the moment
   // the turn settles. Enter during a turn queues instead of silently dying.
   const [queued, setQueued] = useState<string | null>(null);
+  // a chip on its own is a message: the send control has to appear for it
+  const hasContent = Boolean(text.trim()) || attachments.length > 0;
   const send = () => {
     const t = composeMessage(text, attachments);
     if (!t) return;
@@ -297,7 +299,7 @@ export function Composer({
             <Square size={14} className="fill-current" />
           </button>
         )}
-        {!busy && !text.trim() && (
+        {!busy && !hasContent && (
           <button
             onClick={toggleMic}
             aria-label={recording ? "Stop dictation" : "Start dictation"}
@@ -312,7 +314,7 @@ export function Composer({
             <Mic size={18} />
           </button>
         )}
-        {text.trim() && (
+        {hasContent && (
           <button
             onClick={send}
             aria-label={busy ? "Queue message" : "Send message"}
