@@ -1,9 +1,9 @@
 // The bot's computer, in the right-side slot. Where it runs decides the
 // whole flow: cloud → provision the box on open (idempotent) and preview
-// via SSE frames or a ~4s screenshot poll; local ("This computer") → frames
-// come from the Electron main process (desktopCapturer over the preload
-// bridge — box endpoints are never touched); off → parked. Auto (unset)
-// prefers the cloud box when one exists, else local inside the app.
+// via SSE frames or a ~4s screenshot poll. macOS local mode keeps the legacy
+// in-panel capture. Linux local mode is an automation readiness state and its
+// separate preview remains explicitly user-initiated. Auto never selects a
+// Linux user's desktop.
 import { useEffect, useRef, useState } from "react";
 import {
   CalendarDays,
@@ -27,6 +27,12 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { RoutineEditor } from "./RoutinesPage";
 import { AndroidDevicePanel, useAndroidUsbDevices } from "./AndroidDevicePanel";
 import { LocalScreenPreview } from "./LocalScreenPreview";
+import { LinuxLocalControl } from "./LinuxLocalControl";
+import {
+  instanceSupportsLocalComputer,
+  linuxAutoDescription,
+  localComputerDisabledReason,
+} from "@/lib/local-computer";
 
 async function api(path: string, init?: RequestInit): Promise<any> {
   const res = await fetch(path, { headers: { "content-type": "application/json" }, ...init });
@@ -81,6 +87,10 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
   const localAvailable = capabilities.localComputer.available;
+  const isLinux = capabilities.host.platform === "linux";
+  const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
+  const localSelectable = localAvailable && providerSupportsLocal;
+  const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const [phase, setPhase] = useState<Phase>("checking");
   const [boxState, setBoxState] = useState<string | null>(null);
   const [polledFrame, setPolledFrame] = useState<{ png: string; mime: string } | null>(null);
@@ -149,8 +159,10 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       return;
     }
     if (bot.computer === "local") {
-      if (!computerToolSupported) setError("This model engine cannot control this computer. Choose Claude or an ACP engine.");
-      setPhase(capabilitiesReady && localAvailable && computerToolSupported ? "local" : "local-unavailable");
+      if (!providerSupportsLocal) {
+        setError("This model engine cannot control this computer. Choose Claude or an ACP engine.");
+      }
+      setPhase(capabilitiesReady && localSelectable ? "local" : "local-unavailable");
       return;
     }
     if (bot.computer === "vm") {
@@ -184,7 +196,8 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     }
     if (bot.computer !== "cloud" && !capabilitiesReady) return;
     if (cloudBackend === "vps") {
-      const autoLocal = bot.computer !== "cloud" && capabilitiesReady && localAvailable && computerToolSupported;
+      const autoLocal =
+        !isLinux && bot.computer !== "cloud" && capabilitiesReady && localSelectable;
       if (!vpsSupported) {
         if (autoLocal) setPhase("local");
         else {
@@ -242,7 +255,8 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     api(`/api/bots/${bot.id}/computer`)
       .then((status) => {
         if (!alive) return;
-        const autoLocal = bot.computer !== "cloud" && capabilitiesReady && localAvailable && computerToolSupported;
+        const autoLocal =
+          !isLinux && bot.computer !== "cloud" && capabilitiesReady && localSelectable;
         if (!status.configured) {
           setPhase(autoLocal ? "local" : "unconfigured");
           return;
@@ -266,7 +280,20 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     return () => {
       alive = false;
     };
-  }, [bot.id, bot.computer, retry, capabilitiesReady, localAvailable, vmSupported, computerToolSupported, cloudSupported, cloudBackend, vpsSupported, state.config?.vps?.sshAlias]);
+  }, [
+    bot.id,
+    bot.computer,
+    cloudBackend,
+    retry,
+    capabilitiesReady,
+    localSelectable,
+    isLinux,
+    providerSupportsLocal,
+    vmSupported,
+    cloudSupported,
+    vpsSupported,
+    state.config?.vps?.sshAlias,
+  ]);
 
   // cloud preview: SSE frames win while the bot works; otherwise poll
   const live = state.screens[bot.id];
@@ -327,7 +354,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   // the user denied — surface the Settings repair path instead of spinning.
   const [localMisses, setLocalMisses] = useState(0);
   useEffect(() => {
-    if (phase !== "local" || !window.ogb) return;
+    if (phase !== "local" || !window.ogb || isLinux) return;
     let alive = true;
     setLocalMisses(0);
     const shoot = async () => {
@@ -345,7 +372,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       alive = false;
       clearInterval(timer);
     };
-  }, [phase]);
+  }, [phase, isLinux]);
 
   const lastScreenMessage = [...bot.messages].reverse().find((m) => m.kind === "screen" && m.png);
   const cloudFrame =
@@ -355,7 +382,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const frameSrc =
     phase === "vm"
       ? vmFrame
-      : phase === "local"
+      : phase === "local" && !isLinux
       ? localFrame
       : phase === "ready" || phase === "starting"
         ? cloudFrame && `data:${cloudFrame.mime};base64,${cloudFrame.png}`
@@ -400,12 +427,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     unconfigured: "No cloud computer configured",
     "vps-unconfigured": "No managed VPS computer is configured for this bot",
     "vps-stopped": "The managed VPS computer is stopped",
-    "local-unavailable":
-      capabilities.host.platform === "linux"
-        ? "Local computer control isn't available on Linux yet. Use a cloud box instead."
-        : capabilities.host.label === "Browser"
-          ? "Local computer control requires the desktop app."
-          : "CUA Driver isn't ready for local computer control.",
+    "local-unavailable": localDisabledReason ?? "Local computer control isn't ready.",
     "vm-unavailable": "The Local VM isn't available for this bot",
     off: "This bot's computer is off",
     error: "Couldn't reach the computer",
@@ -474,7 +496,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             <img src={frameSrc} alt={`${bot.name}'s screen`} className="h-full w-full object-contain" />
           ) : (
             <div className="flex flex-col items-center gap-2 px-6 text-center text-ink-secondary">
-              {phase === "checking" || phase === "starting" || phase === "local" || phase === "vm" ? (
+              {phase === "checking" || phase === "starting" || phase === "vm" || (phase === "local" && !isLinux) ? (
                 <Loader2 size={18} className="animate-spin" />
               ) : phase === "off" ? (
                 <Power size={22} />
@@ -487,12 +509,14 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                   : phase === "vm"
                     ? "Capturing the Local VM screen…"
                   : phase === "local"
-                    ? localMisses >= 3
+                    ? isLinux
+                      ? "Ready for approved bot actions. Start the separate preview below when you want to watch the screen."
+                      : localMisses >= 3
                       ? "No frames yet — the preview needs Screen Recording permission. After granting, relaunch the app."
                       : "Capturing this computer's screen…"
                     : emptyState[phase]}
               </span>
-              {phase === "local" && localMisses >= 3 && (
+              {phase === "local" && !isLinux && localMisses >= 3 && (
                 <button
                   onClick={() => window.ogb?.permOpenSettings?.("screen")}
                   className="mt-1 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
@@ -588,19 +612,20 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         )}
 
         <LocalScreenPreview />
+        <LinuxLocalControl />
 
         {/* Computer source */}
           <div className="mt-4 rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">Runs on</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {!bot.computer &&
-                (localAvailable
+                (isLinux || !localSelectable
                   ? cloudBackend === "vps"
-                    ? "Auto reuses a ready VPS when one exists, otherwise this computer. "
-                    : "Auto uses a cloud box when one exists, otherwise this computer. "
-                  : cloudBackend === "vps"
                     ? "Auto reuses a ready VPS when one is configured; otherwise computer use stays off. "
-                    : "Auto uses a cloud box when one is configured; otherwise computer use stays off. ")}
+                    : `${linuxAutoDescription()} `
+                  : cloudBackend === "vps"
+                    ? "Auto reuses a ready VPS when one exists, otherwise this computer. "
+                    : "Auto uses a cloud box when one exists, otherwise this computer. ")}
               Pick where this bot's computer lives. <b className="text-ink">Local VM</b> is a Cua-controlled Linux desktop
               in a container on this machine — free and separate from your own desktop. Set it up in App
               Settings → Local VM.
@@ -618,20 +643,14 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                 const disabled =
                   (mode === "cloud" && !cloudSupported) ||
                   (mode === "vm" && !vmSupported) ||
-                  (mode === "local" && (!localAvailable || !computerToolSupported));
+                  (mode === "local" && !localSelectable);
                 const unavailableTitle =
                   mode === "vm" && !vmSupported
                     ? "This model engine cannot use the Local VM"
                     : mode === "cloud" && !cloudSupported
                       ? "This model engine cannot use cloud computer tools"
-                      : mode === "local" && !computerToolSupported
-                        ? "This model engine cannot control this computer"
-                        : mode === "local" && !localAvailable
-                          ? capabilities.host.platform === "linux"
-                            ? "Local computer control isn't available on Linux yet"
-                            : capabilities.host.label === "Browser"
-                              ? "Local computer control requires the desktop app"
-                              : "CUA Driver isn't ready"
+                      : mode === "local" && !localSelectable
+                        ? localDisabledReason ?? "Local computer control isn't ready"
                           : undefined;
                 return (
               <button

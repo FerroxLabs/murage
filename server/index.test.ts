@@ -496,6 +496,25 @@ describe("harness HTTP API", () => {
     expect(after.modelSelection.effort).toBeUndefined();
   });
 
+  it("turns off bot Auto mode when local computer beta is selected", async () => {
+    const created = await api("POST", "/api/bots");
+    const bot = created.body.bot;
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).body.bot.autoApprove).toBe(
+      true,
+    );
+    const local = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
+    expect(local.body.bot).toMatchObject({ computer: "local", autoApprove: false });
+    const rejected = await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toContain("local computer beta");
+    await api("DELETE", `/api/bots/${bot.id}`);
+  });
+
+  it("offers an idempotent stop boundary for active local turns", async () => {
+    const stopped = await api("POST", "/api/local-computer/interrupt");
+    expect(stopped).toEqual({ status: 200, body: { ok: true } });
+  });
+
   it("persists an answered onboarding card", async () => {
     const { body } = await api("GET", "/api/bots");
     const bot = body.bots[0];

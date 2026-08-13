@@ -2862,7 +2862,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "PATCH") {
       const body = await readBody(req);
-      const existing = store.bot(m[1]);
+      const existingBot = store.bot(m[1]);
       // Neither Codex (free-form string field) nor Grok (lazy, logs-only)
       // rejects an unknown effort level at their own boundary — this is the
       // only real gate, so it stays. But it fires only when the target
@@ -2881,7 +2881,7 @@ const server = createServer(async (req, res) => {
         if (!isEffortLevel(nextSelection.effort)) {
           return json(res, 400, { error: `effort "${String(nextSelection.effort)}" is not recognized` });
         }
-        const target = registry.get(nextSelection.instanceId ?? existing?.modelSelection.instanceId ?? "");
+        const target = registry.get(nextSelection.instanceId ?? existingBot?.modelSelection.instanceId ?? "");
         // typed as strings, not levels: this is the boundary that decides
         // whether the value *is* a level, so it must not assert that it is
         const allowed: readonly string[] = target?.adapter.capabilities.effortLevels ?? [];
@@ -2932,7 +2932,7 @@ const server = createServer(async (req, res) => {
         if (!checked.ok) return json(res, 400, { error: checked.error });
         patch.cwd = checked.cwd ?? undefined;
       }
-      if (body.hidden === true && existing?.chiefOfStaff && body.chiefOfStaff !== false) {
+      if (body.hidden === true && existingBot?.chiefOfStaff && body.chiefOfStaff !== false) {
         return json(res, 400, { error: "choose another Chief of Staff before hiding this bot" });
       }
       // the permission fields decide what runs unattended, so they are
@@ -2940,6 +2940,10 @@ const server = createServer(async (req, res) => {
       // still answer .includes() — with substring matches, not tool names
       if (body.autoApprove !== undefined) {
         if (typeof body.autoApprove !== "boolean") return json(res, 400, { error: "autoApprove must be true or false" });
+        const effectiveComputer = body.computer ?? existingBot?.computer;
+        if (body.autoApprove === true && effectiveComputer === "local") {
+          return json(res, 400, { error: "Auto mode is unavailable while this bot uses the local computer beta" });
+        }
         patch.autoApprove = body.autoApprove;
       }
       if (body.approvePeerComms !== undefined) {
@@ -2954,6 +2958,15 @@ const server = createServer(async (req, res) => {
         }
         patch.alwaysAllow = [...new Set(body.alwaysAllow as string[])].slice(0, 200);
       }
+      if (body.computer === "local") {
+        patch.autoApprove = false;
+      }
+      if (existingBot?.computer === "local" && body.computer !== undefined && body.computer !== "local") {
+        await registry
+          .get(existingBot.modelSelection.instanceId)
+          ?.adapter.interruptTurn(existingBot.threadId)
+          .catch(() => {});
+      }
       const bot = store.patchBot(m[1], patch);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const chiefChanges =
@@ -2966,6 +2979,18 @@ const server = createServer(async (req, res) => {
       const changed = new Map([[bot.id, store.bot(bot.id)!]]);
       for (const changedBot of chiefChanges) changed.set(changedBot.id, changedBot);
       return json(res, 200, { bot: wireBot(bot) });
+    }
+
+    if (method === "POST" && path === "/api/local-computer/interrupt") {
+      await Promise.allSettled(
+        store.bots
+          .filter((bot) => bot.computer === "local")
+          .map((bot) =>
+            registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId),
+          )
+          .filter((turn): turn is Promise<void> => Boolean(turn)),
+      );
+      return json(res, 200, { ok: true });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "DELETE") {
