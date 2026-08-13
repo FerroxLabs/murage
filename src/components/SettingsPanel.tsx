@@ -32,7 +32,17 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const patch = (
     p: Partial<
-      Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression">
+      Pick<
+        Bot,
+        | "name"
+        | "title"
+        | "description"
+        | "notifications"
+        | "computer"
+        | "color"
+        | "mascotExpression"
+        | "autoApprove"
+      >
     >,
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const activeState = stateForBot(bot);
@@ -180,6 +190,34 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+            <div>
+              <div className="text-[15px] font-medium text-ink">Auto mode</div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                {bot.autoApprove
+                  ? "Keeps going on its own — you'll still be asked about anything destructive, and about questions it asks you."
+                  : "Approve each action yourself. Turn on to let this bot keep working without stopping to ask."}
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={Boolean(bot.autoApprove)}
+              aria-label="Auto mode"
+              onClick={() => patch({ autoApprove: !bot.autoApprove })}
+              className={cn(
+                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
+                bot.autoApprove ? "bg-accent" : "bg-raised",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  bot.autoApprove ? "left-[21px]" : "left-[3px]",
+                )}
+              />
+            </button>
           </div>
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">

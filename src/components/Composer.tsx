@@ -5,6 +5,7 @@ import { useStore, type Bot, type Group } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { MausAvatar } from "./Avatar";
 import { normalizeState } from "@/lib/mascot";
+import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -33,6 +34,14 @@ export function Composer({
   // Unified target: a 1:1 bot thread or a room. In a room the @ picker
   // offers the members (Buzz rule: only mentioned bots reply).
   const busy = group ? Boolean(group.busyBotId) : Boolean(bot?.busy);
+  // a pending approval blocks the prompt until it is answered
+  const threadId = group?.threadId ?? bot?.threadId ?? "";
+  const approvals = pendingApprovals(group ? group.messages : (bot?.messages ?? []));
+  const approval = approvals[0];
+  const approvalBot = group
+    ? members?.find((b) => b.id === approval?.message.from?.botId) ??
+      members?.find((b) => b.id === group.busyBotId)
+    : bot;
   const busyName = group
     ? (members?.find((b) => b.id === group.busyBotId)?.name ?? "A bot")
     : (bot?.name ?? "The bot");
@@ -204,6 +213,22 @@ export function Composer({
             ))}
           </div>
         )}
+        {/* An approval takes over the composer: you answer it before you
+            can type again, so a waiting bot is impossible to miss. */}
+        {approval && (
+          <div className="mb-2 overflow-hidden rounded-2xl border border-accent/40 bg-card">
+            <PendingApprovalPanel pending={approval} count={approvals.length} index={0} />
+            <PendingApprovalActions
+              pending={approval}
+              threadId={threadId}
+              bot={approvalBot}
+              onCancelTurn={() => {
+                if (group) dispatch({ type: "interruptGroup", groupId: group.id });
+                else if (bot) dispatch({ type: "interrupt", botId: bot.id });
+              }}
+            />
+          </div>
+        )}
         <div className="flex items-end gap-2 rounded-3xl border border-hairline/40 bg-raised/60 py-2 pl-3 pr-2">
         <textarea
           ref={inputRef}
@@ -248,8 +273,11 @@ export function Composer({
             }
             if (e.key === "Escape" && recording) setRecording(false);
           }}
+          disabled={Boolean(approval)}
           placeholder={
-            recording
+            approval
+              ? "Answer the approval above to continue"
+              : recording
               ? "Listening…"
               : busy
                 ? `${busyName} is working — Enter queues your message`
