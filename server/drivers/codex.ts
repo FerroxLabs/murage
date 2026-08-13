@@ -23,6 +23,7 @@ import type {
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { augmentedPath } from "../env-path.ts";
+import { killTree } from "../kill-tree.ts";
 import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "codex";
@@ -117,15 +118,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           send({ jsonrpc: "2.0", id, method, params });
         });
 
-      const stop = () => {
-        try {
-          process.kill(-child.pid!, "SIGTERM");
-        } catch {
-          try {
-            child.kill("SIGTERM");
-          } catch {}
-        }
-      };
+      const stop = () => killTree(child); // process groups are POSIX-only
 
       const settle = (ok: boolean, stopReason: string | null) => {
         if (state.settled) return;

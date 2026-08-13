@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import { DATA_DIR } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
+import { killTree } from "../kill-tree.ts";
 
 import type {
   DriverCreateInput,
@@ -326,7 +327,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         cwd: turn.cwd ?? homedir(),
         env,
         stdio: ["pipe", "pipe", "pipe"],
-        detached: true, // own process group: killing -pid reaps child MCP servers
+        detached: true, // own process group, so killTree reaps child MCP servers (-pid on POSIX, taskkill /T on win32)
       });
 
       let settled = false;
@@ -446,15 +447,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
       });
 
-      const stop = () => {
-        try {
-          process.kill(-child.pid!, "SIGTERM");
-        } catch {
-          try {
-            child.kill("SIGTERM");
-          } catch {}
-        }
-      };
+      const stop = () => killTree(child); // process groups are POSIX-only
       active.set(threadId, { stop, turnId, broker });
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
