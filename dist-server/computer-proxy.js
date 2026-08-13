@@ -36,10 +36,32 @@ const JPEG_QUALITY = 75;
 const SHOT_PATH = "/tmp/ogb-shot.jpg";
 /** How long the desktop gets to repaint before the fused capture. */
 const SETTLE_MS = 350;
+/** Gap between batched actions so focus changes land before typing. */
+const ACTION_GAP_MS = 120;
 /** Frames larger than this come back over the files API instead of
  * inline stdout (keeps us clear of the command endpoint's stdout cap). */
 const INLINE_MAX_BYTES = 400_000;
-async function runOnBox(command, timeoutMs = 60_000) {
+/** Boxes archive themselves when idle (billing pauses, the disk survives),
+ * which can happen mid-conversation — after that every command comes back
+ * 409 machine_not_running. Wake it and carry on rather than handing the
+ * agent a cryptic failure it can only guess at. */
+async function resumeBox() {
+    const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    await fetch(`${BOX_API}/boxes/${boxId}/resume`, { method: "POST", headers: auth }).catch(() => null);
+    const deadline = Date.now() + 90_000;
+    while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const res = await fetch(`${BOX_API}/boxes/${boxId}`, { headers: auth }).catch(() => null);
+        const body = await res?.json().catch(() => null);
+        const state = body?.box?.state;
+        if (state && ["idle", "ready", "running"].includes(state))
+            return true;
+        if (state === "error")
+            return false;
+    }
+    return false;
+}
+async function runOnBox(command, timeoutMs = 60_000, allowWake = true) {
     const res = await fetch(`${BOX_API}/boxes/${boxId}/commands`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -47,11 +69,20 @@ async function runOnBox(command, timeoutMs = 60_000) {
         signal: AbortSignal.timeout(timeoutMs),
     });
     const body = await res.json().catch(() => null);
+    if (res.status === 409 && allowWake) {
+        const code = body?.code ?? body?.error?.code ?? "";
+        if (/machine_not_running|box_starting|not_running|starting/i.test(String(code))) {
+            const woke = await resumeBox();
+            if (woke)
+                return runOnBox(command, timeoutMs, false);
+            return { ok: false, exitCode: null, stdout: "", stderr: "the computer is asleep and did not wake in time" };
+        }
+    }
     return {
         ok: res.ok && body?.exitCode === 0,
         exitCode: body?.exitCode ?? null,
         stdout: body?.stdout ?? "",
-        stderr: body?.stderr ?? "",
+        stderr: body?.stderr ?? String(body?.message ?? (res.ok ? "" : `HTTP ${res.status}`)),
     };
 }
 const ENV = 'export DISPLAY=${DISPLAY:-:0}';
@@ -62,9 +93,14 @@ const GEOMETRY = [
     'H=${g##* }',
     `case "$W" in ''|*[!0-9]*) W=${SHOT_WIDTH}; H=0;; esac`,
 ].join("; ");
-/** Shell that turns a screenshot-space coordinate into a display one. */
+/** Shell that turns a screenshot-space coordinate into a display one.
+ * The capture only downscales when the display is WIDER than the model's
+ * space, so scaling must be conditional on exactly the same test — on a
+ * 1024-wide desktop the frame is native size and a blind /1280 would put
+ * every click at 80% of where the model aimed. */
 function scaled(varName, value) {
-    return `${varName}=$(( ${Math.round(value)} * W / ${SHOT_WIDTH} ))`;
+    const v = Math.round(value);
+    return `if [ "$W" -gt ${SHOT_WIDTH} ] 2>/dev/null; then ${varName}=$(( ${v} * W / ${SHOT_WIDTH} )); else ${varName}=${v}; fi`;
 }
 /** act → settle → capture → hash → (inline base64 if small). One hop. */
 function captureBlock(settleMs = SETTLE_MS) {
@@ -80,18 +116,47 @@ function captureBlock(settleMs = SETTLE_MS) {
         'echo "GEOM $W $H"',
         'echo "HASH $(md5sum "$f" 2>/dev/null | cut -d\' \' -f1)"',
         's=$(stat -c%s "$f" 2>/dev/null || echo 0)',
-        `if [ "$s" -le ${INLINE_MAX_BYTES} ]; then echo "B64 $(base64 -w0 "$f" 2>/dev/null || base64 "$f" | tr -d '\\n')"; fi`,
+        // SIZE is what makes the inline path safe: the frame is only trusted
+        // when the bytes we decoded match the bytes the box says it wrote
+        'echo "SIZE $s"',
+        `if [ "$s" -gt 0 ] && [ "$s" -le ${INLINE_MAX_BYTES} ]; then echo "B64 $(base64 -w0 "$f" 2>/dev/null || base64 "$f" | tr -d '\\n')"; fi`,
     ].join("; ");
 }
+/** A frame is only trusted when the bytes are a WHOLE image. Checking the
+ * magic number alone is not enough: the box's command stdout has been
+ * observed truncating a payload, and a truncated JPEG still starts with a
+ * valid header — it just renders as a grey half-frame for the model. So
+ * every frame must also end with its terminator, and (when the box told
+ * us how many bytes it wrote) match that length exactly. */
+function wholeImage(bytes, expectedBytes) {
+    if (bytes.length < 512)
+        return false;
+    if (expectedBytes && bytes.length !== expectedBytes)
+        return false;
+    const jpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
+    const png = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+    if (jpeg) {
+        // EOI marker, allowing for trailing padding some encoders append
+        const tail = bytes.subarray(Math.max(0, bytes.length - 32));
+        return tail.includes(Buffer.from([0xff, 0xd9]));
+    }
+    if (png) {
+        const tail = bytes.subarray(Math.max(0, bytes.length - 12));
+        return tail.includes(Buffer.from("IEND", "ascii"));
+    }
+    return false;
+}
 /** Big frames (and any inline read that came back malformed) are fetched
- * as raw bytes; the files API's base64-in-JSON envelope is the fallback. */
-async function fetchFrame() {
+ * over HTTP: raw artifact bytes first, the files API's base64-in-JSON
+ * envelope second. Both are validated — an error page served with a 200
+ * must fall through, not reach the model as an "image". */
+async function fetchFrame(expectedBytes) {
     const auth = { authorization: `Bearer ${token}` };
     try {
         const res = await fetch(`${BOX_API}/boxes/${boxId}/artifacts?path=${encodeURIComponent(SHOT_PATH)}`, { headers: auth, signal: AbortSignal.timeout(30_000) });
         if (res.ok) {
             const bytes = Buffer.from(await res.arrayBuffer());
-            if (bytes.length)
+            if (wholeImage(bytes, expectedBytes))
                 return bytes.toString("base64");
         }
     }
@@ -102,21 +167,13 @@ async function fetchFrame() {
         const res = await fetch(`${BOX_API}/boxes/${boxId}/files?path=${encodeURIComponent(SHOT_PATH)}&encoding=base64`, { headers: auth, signal: AbortSignal.timeout(30_000) });
         const body = await res.json().catch(() => null);
         const content = body?.content;
-        return res.ok && typeof content === "string" && content ? content : null;
+        if (!res.ok || typeof content !== "string" || !content)
+            return null;
+        return wholeImage(Buffer.from(content, "base64"), expectedBytes) ? content : null;
     }
     catch {
         return null;
     }
-}
-/** A decoded frame is only trusted when it really is an image — a
- * truncated stdout would otherwise reach the model as garbage. */
-function validBase64Image(data) {
-    if (!data || data.length < 512)
-        return false;
-    const head = Buffer.from(data.slice(0, 64), "base64");
-    const jpeg = head[0] === 0xff && head[1] === 0xd8;
-    const png = head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
-    return jpeg || png;
 }
 let inlineWorks = true; // flipped off for the proxy's life on first garbage
 let lastFrameHash = null;
@@ -126,9 +183,12 @@ async function frameFrom(out) {
     let hash = null;
     let geometry = null;
     let inline = "";
+    let size = 0;
     for (const line of out.stdout.split("\n")) {
         if (line.startsWith("HASH "))
             hash = line.slice(5).trim() || null;
+        else if (line.startsWith("SIZE "))
+            size = Number(line.slice(5).trim()) || 0;
         else if (line.startsWith("GEOM ")) {
             const [w, h] = line.slice(5).trim().split(/\s+/).map(Number);
             if (Number.isFinite(w) && w > 0)
@@ -138,12 +198,15 @@ async function frameFrom(out) {
             inline = line.slice(4).trim();
     }
     if (inline && inlineWorks) {
-        if (validBase64Image(inline))
+        const bytes = Buffer.from(inline, "base64");
+        if (wholeImage(bytes, size || undefined))
             return { data: inline, mime: "image/jpeg", hash, geometry };
-        inlineWorks = false; // stdout mangled it — use the files API from here on
+        // stdout mangled it (the failure this channel is known for) — never
+        // hand a partial frame to the model; fetch it and stop trusting stdout
+        inlineWorks = false;
     }
-    const fetched = await fetchFrame();
-    if (!fetched || !validBase64Image(fetched))
+    const fetched = await fetchFrame(size || undefined);
+    if (!fetched)
         return null;
     return { data: fetched, mime: "image/jpeg", hash, geometry };
 }
@@ -161,7 +224,10 @@ function observed(id, note, frame) {
     const unchanged = frame.hash != null && frame.hash === lastFrameHash;
     lastFrameHash = frame.hash ?? lastFrameHash;
     if (unchanged) {
-        return text(id, `${note}\n(screen unchanged — the last frame you were sent is still current. If you expected it to change, it may still be loading: retry with settle_ms, or call screenshot again.)`);
+        // deliberately does NOT suggest repeating the action: the action may
+        // well have landed, and re-clicking a button that already submitted
+        // is the expensive kind of wrong
+        return text(id, `${note}\n(the screen is identical to the frame you already have, so no new image is attached. Don't repeat the action — if you expected a change, it may still be rendering: call screenshot again in a moment, or re-check your coordinates against that frame.)`);
     }
     send({
         jsonrpc: "2.0",
@@ -189,7 +255,7 @@ const TOOLS = [
     },
     {
         name: "click",
-        description: "Click on the computer's screen and return the resulting screen. Use pixel coordinates as they appear in the most recent screenshot — scaling to the real display resolution is handled for you.",
+        description: "Click on the computer's screen and return the resulting screen. Use pixel coordinates exactly as they appear in the last frame you were given — any scaling to the real display is handled for you.",
         inputSchema: {
             type: "object",
             properties: {
@@ -266,10 +332,16 @@ const TOOLS = [
     },
     {
         name: "computer_exec",
-        description: "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code.",
+        description: "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code — and, unlike the UI tools, no screenshot unless you ask for one.",
         inputSchema: {
             type: "object",
-            properties: { command: { type: "string" }, observe: OBSERVE_PROPS.observe },
+            properties: {
+                command: { type: "string" },
+                observe: {
+                    type: "boolean",
+                    description: "default false — set true to also return a screenshot (e.g. after launching a GUI app)",
+                },
+            },
             required: ["command"],
         },
     },
@@ -329,17 +401,29 @@ async function actAndObserve(id, actions, note, args, timeoutMs = 60_000) {
         const shell = actionShell(a);
         if (typeof shell !== "string")
             return text(id, shell.error, true);
+        // X11 needs a beat between steps — a click that focuses a field and
+        // an immediate type will drop leading characters
+        if (parts.length)
+            parts.push(`sleep ${(ACTION_GAP_MS / 1000).toFixed(2)}`);
         parts.push(shell);
     }
     const observe = wantsFrame(args);
-    const command = [ENV, GEOMETRY, ...parts, observe ? captureBlock(settleOf(args)) : "true"].join("; ");
+    // The actions run in a guarded group so a failing xdotool is REPORTED
+    // rather than silently swallowed by the capture that follows it — but
+    // the capture still runs, so the model always gets to see the state it
+    // ended up in. Joining with ";" alone made a failed action look
+    // identical to one that did nothing.
+    const guarded = `if { ${parts.join("; ")}; }; then ACT=ok; else ACT=failed; fi`;
+    const command = [ENV, GEOMETRY, guarded, observe ? captureBlock(settleOf(args)) : "true", 'echo "ACT $ACT"'].join("; ");
     const out = await runOnBox(command, timeoutMs);
-    if (!out.ok && !out.stdout.includes("GEOM")) {
+    const acted = /^ACT ok$/m.test(out.stdout);
+    if (!acted && !out.stdout.includes("GEOM")) {
         return text(id, `${note.replace(/^./, (c) => c.toLowerCase())} failed: ${out.stderr.slice(0, 200) || `exit ${out.exitCode}`}`, true);
     }
+    const full = acted ? note : `${note}\n(the action reported an error: ${out.stderr.slice(0, 160) || "no detail"})`;
     if (!observe)
-        return text(id, note);
-    return observed(id, note, await frameFrom(out));
+        return text(id, full, !acted);
+    return observed(id, full, await frameFrom(out));
 }
 async function call(id, name, args) {
     if (name === "screenshot") {
