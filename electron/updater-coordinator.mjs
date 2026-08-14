@@ -10,11 +10,21 @@ export function createUpdaterCoordinator(updater, setState) {
     setState({ status: "error", message: String(error?.message ?? error) });
   }
 
-  updater.on("checking-for-update", () => setState({ status: "checking" }));
-  updater.on("update-available", (info) =>
-    setState({ status: "available", version: info?.version, message: undefined }),
-  );
-  updater.on("update-not-available", () => setState({ status: "idle" }));
+  function checkOwnsState() {
+    return !downloadOperation && !checkOperation?.supersededByDownload;
+  }
+
+  updater.on("checking-for-update", () => {
+    if (checkOwnsState()) setState({ status: "checking" });
+  });
+  updater.on("update-available", (info) => {
+    if (checkOwnsState()) {
+      setState({ status: "available", version: info?.version, message: undefined });
+    }
+  });
+  updater.on("update-not-available", () => {
+    if (checkOwnsState()) setState({ status: "idle" });
+  });
   updater.on("download-progress", (progress) =>
     setState({ status: "downloading", percent: Math.round(progress?.percent ?? 0) }),
   );
@@ -29,16 +39,18 @@ export function createUpdaterCoordinator(updater, setState) {
       return checkOperation.promise;
     }
 
-    const operation = { manual, promise: null };
+    const operation = { manual, supersededByDownload: Boolean(downloadOperation), promise: null };
     checkOperation = operation;
     try {
       operation.promise = Promise.resolve(updater.checkForUpdates())
-        .catch((error) => handleRejectedOperation(operation.manual, error))
+        .catch((error) => {
+          if (!operation.supersededByDownload) handleRejectedOperation(operation.manual, error);
+        })
         .finally(() => {
           if (checkOperation === operation) checkOperation = null;
         });
     } catch (error) {
-      handleRejectedOperation(operation.manual, error);
+      if (!operation.supersededByDownload) handleRejectedOperation(operation.manual, error);
       checkOperation = null;
       operation.promise = Promise.resolve();
     }
@@ -46,6 +58,7 @@ export function createUpdaterCoordinator(updater, setState) {
   }
 
   function download() {
+    if (checkOperation) checkOperation.supersededByDownload = true;
     if (downloadOperation) return downloadOperation.promise;
 
     const operation = { promise: null };

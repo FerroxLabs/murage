@@ -115,31 +115,97 @@ test("a manual request during a background check preserves user-visible errors",
   assert.deepEqual(getState(), { status: "error", message: "background request failed" });
 });
 
-test("a background check error cannot poison an active download", async () => {
-  const { updater, coordinator, getState, states } = harness();
+test("an active download state survives a later background check failure", async () => {
+  const { updater, coordinator, getState } = harness();
   const downloadPending = deferred();
   const checkPending = deferred();
-  updater.downloadUpdate = () => downloadPending.promise;
+  updater.downloadUpdate = () => {
+    updater.emit("download-progress", { percent: 42 });
+    return downloadPending.promise;
+  };
+  updater.checkForUpdates = () => {
+    updater.emit("checking-for-update");
+    updater.emit("update-available", { version: "2.1.0" });
+    updater.emit("update-not-available");
+    return checkPending.promise;
+  };
+
+  const download = coordinator.download();
+  assert.deepEqual(getState(), { status: "downloading", percent: 42 });
+
+  const background = coordinator.check();
+  checkPending.reject(new Error("background check failed"));
+  await background;
+  assert.deepEqual(getState(), { status: "downloading", percent: 42 });
+
+  downloadPending.resolve();
+  await download;
+});
+
+test("a download error remains authoritative after a later background failure", async () => {
+  const { updater, coordinator, getState } = harness();
+  const downloadPending = deferred();
+  const checkPending = deferred();
+  updater.downloadUpdate = () => {
+    updater.emit("download-progress", { percent: 75 });
+    return downloadPending.promise;
+  };
   updater.checkForUpdates = () => checkPending.promise;
 
   const download = coordinator.download();
   const background = coordinator.check();
 
-  const checkError = new Error("background check failed");
-  updater.emit("error", checkError);
-  checkPending.reject(checkError);
+  const downloadError = new Error("download failed first");
+  downloadPending.reject(downloadError);
+  await download;
+  assert.deepEqual(getState(), {
+    status: "error",
+    percent: 75,
+    message: "download failed first",
+  });
+
+  updater.emit("checking-for-update");
+  updater.emit("update-available", { version: "2.1.0" });
+  updater.emit("update-not-available");
+  checkPending.reject(new Error("background check failed later"));
   await background;
-  assert.deepEqual(getState(), { status: "idle" });
+
+  assert.deepEqual(getState(), {
+    status: "error",
+    percent: 75,
+    message: "download failed first",
+  });
+});
+
+test("a background failure stays silent before a later download failure", async () => {
+  const { updater, coordinator, getState, states } = harness();
+  const downloadPending = deferred();
+  const checkPending = deferred();
+  updater.checkForUpdates = () => checkPending.promise;
+  updater.downloadUpdate = () => {
+    updater.emit("download-progress", { percent: 18 });
+    return downloadPending.promise;
+  };
+
+  const background = coordinator.check();
+  const download = coordinator.download();
+
+  updater.emit("checking-for-update");
+  updater.emit("update-available", { version: "2.1.0" });
+  updater.emit("update-not-available");
+  checkPending.reject(new Error("background check failed first"));
+  await background;
+  assert.deepEqual(getState(), { status: "downloading", percent: 18 });
   assert.equal(errorStates(states).length, 0);
 
-  const downloadError = new Error("download failed after check");
-  updater.emit("error", downloadError);
+  const downloadError = new Error("download failed later");
   downloadPending.reject(downloadError);
   await download;
 
   assert.deepEqual(getState(), {
     status: "error",
-    message: "download failed after check",
+    percent: 18,
+    message: "download failed later",
   });
 });
 
