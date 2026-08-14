@@ -316,6 +316,8 @@ app.on("window-all-closed", () => {
 
 // EMBEDDING.md lifecycle rule: defer the first quit until the embedded
 // daemon's async cleanup completes — it can't run after the host exits.
+// Cap the defer so a wedged daemon cannot keep the app alive forever.
+const CUA_STOP_TIMEOUT_MS = 2500;
 let cuaCleanedUp = false;
 app.on("before-quit", (e) => {
   if (cuaCleanedUp) return;
@@ -326,7 +328,11 @@ app.on("before-quit", (e) => {
   // a live dictation session runs its own helper child that holds the mic —
   // stop it here so quitting never orphans a recording process
   stopSpeech();
-  stopCua().finally(() => {
+  const cleanup = Promise.race([
+    stopCua().catch(() => {}),
+    new Promise((resolve) => setTimeout(resolve, CUA_STOP_TIMEOUT_MS).unref()),
+  ]);
+  cleanup.then(() => {
     cuaCleanedUp = true;
     app.quit();
   });
