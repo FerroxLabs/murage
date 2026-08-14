@@ -76,8 +76,8 @@ House rules for tests:
   `recordEvents(...).until(...)`). A test that needs a timeout to pass is wrong.
 - **Never touch the real `~/.openmausbot`.** The setup file points `HOME` at a temp dir; keep it
   that way.
-- Tests that must spawn a shebang script are gated `describe.skipIf(process.platform === "win32")`
-  until Windows CLI spawning lands — don't add new POSIX-only tests without that gate.
+- Fake CLI shebang scripts must be launched through `spawnCli`/`execCli`, which resolve them through
+  Node on Windows. Only gate a test when the behavior itself is genuinely platform-specific.
 
 ## Adding a provider driver
 
