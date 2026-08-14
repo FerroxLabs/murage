@@ -121,6 +121,8 @@ export interface Bot {
   voice?: string;
   pinned?: boolean;
   hidden?: boolean;
+  /** The workspace's one primary coordinator. */
+  chiefOfStaff?: boolean;
   messages: Message[];
   /** leaf of the visible conversation branch (see visibleMessages) */
   activeLeafId?: string | null;
@@ -307,6 +309,7 @@ type Action =
           | "voice"
           | "pinned"
           | "hidden"
+          | "chiefOfStaff"
         >
       >;
     };
@@ -443,7 +446,15 @@ function reducer(state: AppState, action: Action): AppState {
             : action.bot.busy === false && before?.busy
               ? "celebrate"
               : null;
-      const next = kind ? withMascotMotion(state, action.bot.id, kind) : state;
+      const animated = kind ? withMascotMotion(state, action.bot.id, kind) : state;
+      const next = action.bot.chiefOfStaff
+        ? {
+            ...animated,
+            bots: animated.bots.map((b) =>
+              b.id === action.bot.id ? b : { ...b, chiefOfStaff: false },
+            ),
+          }
+        : animated;
       return updateBot(next, action.bot.id, (b) => ({ ...b, ...action.bot, messages: b.messages }));
     }
     case "messageAdded": {
@@ -580,9 +591,17 @@ function reducer(state: AppState, action: Action): AppState {
       const mascotChanged =
         Object.prototype.hasOwnProperty.call(action.patch, "color") ||
         Object.prototype.hasOwnProperty.call(action.patch, "mascotExpression");
-      const next = mascotChanged
+      const animated = mascotChanged
         ? withMascotMotion(state, action.botId, "customize")
         : state;
+      const next = action.patch.chiefOfStaff
+        ? {
+            ...animated,
+            bots: animated.bots.map((b) =>
+              b.id === action.botId ? b : { ...b, chiefOfStaff: false },
+            ),
+          }
+        : animated;
       return updateBot(next, action.botId, (b) => ({ ...b, ...action.patch }));
     }
     case "threadActive": {

@@ -77,6 +77,25 @@ describe("Store", () => {
     expect(messages.at(-1)).toMatchObject({ role: "user", text: "hi there" });
   });
 
+  it("keeps exactly one persisted Chief of Staff and supports handoff", () => {
+    const store = new Store(selection);
+    const first = store.createBot();
+    const second = store.createBot();
+
+    expect(store.setChiefOfStaff(first.id)?.map((bot) => bot.id)).toEqual([first.id]);
+    expect(store.bot(first.id)?.chiefOfStaff).toBe(true);
+
+    const changed = store.setChiefOfStaff(second.id)!;
+    expect(changed.map((bot) => bot.id).sort()).toEqual([first.id, second.id].sort());
+    expect(store.bot(first.id)?.chiefOfStaff).toBe(false);
+    expect(store.bot(second.id)?.chiefOfStaff).toBe(true);
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bots.filter((bot) => bot.chiefOfStaff).map((bot) => bot.id)).toEqual([second.id]);
+    expect(reloaded.setChiefOfStaff(null)?.map((bot) => bot.id)).toEqual([second.id]);
+    expect(reloaded.bots.some((bot) => bot.chiefOfStaff)).toBe(false);
+  });
+
   it("patchMessage merges card patches and returns null for unknown ids", () => {
     const store = new Store(selection);
     const bot = store.createBot();

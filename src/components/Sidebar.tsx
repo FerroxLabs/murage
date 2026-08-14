@@ -8,6 +8,7 @@ import {
   Check,
   ClipboardCopy,
   Copy,
+  Crown,
   EyeOff,
   FolderPlus,
   Loader2,
@@ -339,8 +340,10 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
   }, [onClose]);
 
   if (!bot) return null;
+  const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
+  const canCoordinate = engine?.capabilities?.agentsMcp === true;
   // keep the menu on-screen near the click
-  const top = Math.min(menu.y, window.innerHeight - 340);
+  const top = Math.max(8, Math.min(menu.y, window.innerHeight - 380));
   const left = Math.min(menu.x, window.innerWidth - 240);
 
   const item = (
@@ -381,6 +384,15 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
           bot.pinned ? "Unpin" : "Pin",
           () => dispatch({ type: "updateBot", botId: bot.id, patch: { pinned: !bot.pinned } }),
         ),
+        item(
+          <Crown size={16} className={bot.chiefOfStaff ? "text-accent" : "text-ink-secondary"} />,
+          bot.chiefOfStaff ? "Remove Chief of Staff" : "Make Chief of Staff",
+          () => dispatch({ type: "updateBot", botId: bot.id, patch: { chiefOfStaff: !bot.chiefOfStaff } }),
+          {
+            disabled: !bot.chiefOfStaff && !canCoordinate,
+            hint: !bot.chiefOfStaff && !canCoordinate ? "Choose a Claude or ACP engine first" : undefined,
+          },
+        ),
         item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to new section", undefined, {
           disabled: true,
           hint: "Coming soon",
@@ -401,8 +413,14 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
           void navigator.clipboard?.writeText(bot.threadId);
         }),
         divider("d3"),
-        item(<EyeOff size={16} className="text-ink-secondary" />, "Hide from sidebar", () =>
-          dispatch({ type: "updateBot", botId: bot.id, patch: { hidden: true } }),
+        item(
+          <EyeOff size={16} className="text-ink-secondary" />,
+          "Hide from sidebar",
+          () => dispatch({ type: "updateBot", botId: bot.id, patch: { hidden: true } }),
+          {
+            disabled: Boolean(bot.chiefOfStaff),
+            hint: bot.chiefOfStaff ? "Choose another Chief of Staff first" : undefined,
+          },
         ),
         item(<Trash2 size={16} />, "Delete", () => dispatch({ type: "deleteBot", botId: bot.id }), {
           danger: true,
@@ -427,8 +445,14 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
         onMenu({ botId: bot.id, x: e.clientX, y: e.clientY });
       }}
       className={cn(
-        "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left",
-        selected ? "bg-raised" : "hover:bg-raised/50",
+        "flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left",
+        bot.chiefOfStaff
+          ? selected
+            ? "border-accent/40 bg-accent/15"
+            : "border-accent/25 bg-accent/5 hover:bg-accent/10"
+          : selected
+            ? "border-transparent bg-raised"
+            : "border-transparent hover:bg-raised/50",
       )}
     >
       <MausAvatar
@@ -451,8 +475,14 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
           )}
         </div>
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[13px] text-ink-secondary">
-            {preview(bot)}
+          <span className="flex min-w-0 items-center gap-1.5 truncate text-[13px] text-ink-secondary">
+            {bot.chiefOfStaff && (
+              <span className="flex shrink-0 items-center gap-1 text-[11.5px] font-medium text-accent">
+                <Crown size={11} /> Chief of Staff
+              </span>
+            )}
+            {bot.chiefOfStaff && preview(bot) && <span className="shrink-0 text-ink-secondary/60">·</span>}
+            <span className="truncate">{preview(bot)}</span>
           </span>
           {bot.unread && (
             <span className="size-2 shrink-0 rounded-full bg-accent" />
@@ -475,7 +505,7 @@ export function Sidebar() {
   const browser = capabilities.host.label === "Browser";
 
   const q = query.trim().toLowerCase();
-  const visibleBots = state.bots
+  const matchingBots = state.bots
     .filter((b) => !b.hidden)
     .filter(
       (b) =>
@@ -483,7 +513,10 @@ export function Sidebar() {
         b.name.toLowerCase().includes(q) ||
         (b.title ?? "").toLowerCase().includes(q) ||
         preview(b).toLowerCase().includes(q),
-    )
+    );
+  const chiefBot = matchingBots.find((bot) => bot.chiefOfStaff);
+  const visibleBots = matchingBots
+    .filter((bot) => !bot.chiefOfStaff)
     .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
   const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
 
@@ -563,8 +596,13 @@ export function Sidebar() {
       {/* Bot list */}
       <div className="flex-1 overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5">
-          {visibleBots.length === 0 && visibleGroups.length === 0 && q && (
+          {!chiefBot && visibleBots.length === 0 && visibleGroups.length === 0 && q && (
             <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">Nothing matches “{query}”</div>
+          )}
+          {chiefBot && (
+            <div className="mb-1.5">
+              <BotListItem bot={chiefBot} onMenu={setMenu} />
+            </div>
           )}
           {visibleGroups.map((g) => (
             <GroupListItem key={g.id} group={g} onMenu={setRoomMenu} />
