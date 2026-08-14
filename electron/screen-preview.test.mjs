@@ -29,6 +29,7 @@ describe("display media request guard", () => {
     ["audio capture", { audioRequested: true }],
     ["missing video", { videoRequested: false }],
     ["untrusted origin", { securityOrigin: "https://example.com" }],
+    ["unparseable origin", { securityOrigin: "not a URL" }],
     ["different frame", { frame: { processId: 10, routingId: 21 } }],
   ])("rejects %s", (_name, change) => {
     const guard = createDisplayMediaGuard({ now: () => 1_000 });
@@ -46,6 +47,12 @@ describe("display media request guard", () => {
     current = 1_501;
 
     expect(guard.consume(validRequest, "http://127.0.0.1:8799")).toBe(false);
+  });
+
+  it("rejects a request when both origins are missing or invalid", () => {
+    const guard = createDisplayMediaGuard({ now: () => 1_000 });
+    guard.begin(frame);
+    expect(guard.consume({ ...validRequest, securityOrigin: undefined }, undefined)).toBe(false);
   });
 });
 
@@ -68,6 +75,13 @@ describe("display source selection", () => {
       selectCaptureSource({ sources: [onlySource], host: "x11", primaryDisplayId: 42 }),
     ).toEqual(onlySource);
     expect(selectCaptureSource({ sources: [], host: "x11", primaryDisplayId: 42 })).toBeNull();
+    expect(
+      selectCaptureSource({
+        sources: [{ id: "first" }, { id: "second" }],
+        host: "x11",
+        primaryDisplayId: undefined,
+      }),
+    ).toBeNull();
   });
 
   it("accepts only the single portal-selected Wayland source", () => {

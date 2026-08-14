@@ -9,15 +9,24 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  DRIVER_FILE_IDENTITY_KEYS,
+  REQUIRED_LINUX_TOOLS,
   decodeLinuxDescriptor,
   readCuaConnection,
   validateLinuxDescriptorRuntime,
 } from "./local-computer.ts";
+
+const require = createRequire(import.meta.url);
+const { DRIVER_FILE_IDENTITY_KEYS: ELECTRON_DRIVER_FILE_IDENTITY_KEYS } = require(
+  "../electron/cua-linux.cjs",
+);
+const { REQUIRED_TOOLS: ELECTRON_REQUIRED_TOOLS } = require("../electron/cua-linux-runtime.cjs");
 
 function linuxDescriptor(userData: string, { session = "x11" }: { session?: "x11" | "wayland" } = {}) {
   const binary = join(userData, "cua-driver");
@@ -68,6 +77,13 @@ function linuxDescriptor(userData: string, { session = "x11" }: { session?: "x11
     doctorWarnings: [],
   };
 }
+
+describe("local computer descriptor contract", () => {
+  it("stays synchronized with the Electron producer", () => {
+    expect(DRIVER_FILE_IDENTITY_KEYS).toEqual([...ELECTRON_DRIVER_FILE_IDENTITY_KEYS]);
+    expect(REQUIRED_LINUX_TOOLS).toEqual([...ELECTRON_REQUIRED_TOOLS]);
+  });
+});
 
 const temporaryDirectories: string[] = [];
 

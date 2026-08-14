@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Bot, InstanceInfo } from "@/state/store";
 import {
   autoSelectsLocalComputer,
   instanceSupportsLocalComputer,
@@ -7,17 +8,22 @@ import {
 
 describe("local computer UI eligibility", () => {
   it("requires the selected instance to advertise approval-capable local MCP", () => {
-    const bot = { modelSelection: { instanceId: "claude", model: "test" } };
+    const bot = {
+      modelSelection: { instanceId: "claude", model: "test" },
+    } satisfies Pick<Bot, "modelSelection">;
     const instances = [
       {
         instanceId: "claude",
         capabilities: { localComputerMcp: true },
       },
-    ] as any;
-    expect(instanceSupportsLocalComputer(instances, bot as any)).toBe(true);
-    expect(instanceSupportsLocalComputer([{ ...instances[0], capabilities: {} }] as any, bot as any)).toBe(
-      false,
-    );
+    ] satisfies Array<Pick<InstanceInfo, "instanceId" | "capabilities">>;
+    expect(instanceSupportsLocalComputer(instances as InstanceInfo[], bot)).toBe(true);
+    expect(
+      instanceSupportsLocalComputer(
+        [{ ...instances[0], capabilities: {} }] as InstanceInfo[],
+        bot,
+      ),
+    ).toBe(false);
   });
 
   it("states that Linux Auto never selects this computer", () => {

@@ -723,6 +723,7 @@ async function inspectLinuxCuaDriver({
 module.exports = {
   CERTIFIED_DRIVER_VERSION,
   CERTIFIED_MANIFEST_SCHEMA,
+  DRIVER_FILE_IDENTITY_KEYS,
   captureDriverFileIdentity,
   desktopCommandEnvironment,
   discoverLinuxCuaDriver,

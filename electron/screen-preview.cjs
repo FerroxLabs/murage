@@ -35,6 +35,8 @@ function createDisplayMediaGuard({ now = Date.now, ttlMs = 5_000 } = {}) {
       if (!key) return false;
       const expiresAt = intents.get(key);
       intents.delete(key);
+      const requestOrigin = originOf(request.securityOrigin);
+      const allowedOrigin = originOf(expectedOrigin);
 
       return Boolean(
         expiresAt !== undefined &&
@@ -42,7 +44,9 @@ function createDisplayMediaGuard({ now = Date.now, ttlMs = 5_000 } = {}) {
           request.userGesture === true &&
           request.videoRequested === true &&
           request.audioRequested === false &&
-          originOf(request.securityOrigin) === originOf(expectedOrigin),
+          requestOrigin !== null &&
+          allowedOrigin !== null &&
+          requestOrigin === allowedOrigin,
       );
     },
   });
@@ -53,7 +57,10 @@ function selectCaptureSource({ sources, host, primaryDisplayId }) {
   if (host === "wayland") return sources.length === 1 ? sources[0] : null;
   if (host === "x11") {
     const exact = sources.find(
-      (source) => String(source.display_id) === String(primaryDisplayId),
+      (source) =>
+        source.display_id !== undefined &&
+        primaryDisplayId !== undefined &&
+        String(source.display_id) === String(primaryDisplayId),
     );
     // Some X11 backends omit or misreport display_id. A single enumerated
     // source is still unambiguous; never guess when multiple sources remain.

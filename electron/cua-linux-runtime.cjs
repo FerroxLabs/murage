@@ -525,9 +525,8 @@ function createLinuxCuaRuntime({
     for (const file of [owned.socketPath, owned.pidFile]) {
       try {
         fs.unlinkSync(file);
-      } catch (error) {
+      } catch {
         // A failure for one owned path must not prevent cleanup of the other.
-        if (error?.code !== "ENOENT") continue;
       }
     }
     try {
