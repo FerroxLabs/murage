@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const wayland = process.env.OMB_SMOKE_WAYLAND === "1";
 const executable = path.resolve(
   process.env.OMB_SMOKE_EXECUTABLE ?? path.join(root, "release", "linux-unpacked", "openmausbot"),
 );
@@ -50,8 +51,13 @@ const { appendFileSync, chmodSync, existsSync, readFileSync, realpathSync, unlin
 const net = require("node:net");
 const marker = ${JSON.stringify(marker)};
 const state = ${JSON.stringify(fakeState)};
+const wayland = ${JSON.stringify(wayland)};
 const args = process.argv.slice(2);
-appendFileSync(marker, JSON.stringify({ pid: process.pid, args }) + "\\n");
+appendFileSync(marker, JSON.stringify({
+  pid: process.pid,
+  args,
+  waylandEnabled: process.env.CUA_DRIVER_RS_ENABLE_WAYLAND === "1",
+}) + "\\n");
 const after = (flag) => { const index = args.indexOf(flag); return index === -1 ? null : args[index + 1]; };
 if (args.includes("--version")) {
   process.stdout.write("cua-driver 0.19.3\\n");
@@ -70,7 +76,9 @@ if (args[0] === "manifest") {
 if (args[0] === "doctor" && args.includes("--json")) {
   process.stdout.write(JSON.stringify({ ok: true, probes: [
     { label: "binary", status: "ok", message: "cua-driver 0.19.3" },
-    { label: "display server", status: "ok", message: "X11 (DISPLAY=:99)" },
+    { label: "display server", status: "ok", message: wayland
+      ? "Wayland+XWayland (WAYLAND_DISPLAY=wayland-smoke, DISPLAY=:99)"
+      : "X11 (DISPLAY=:99)" },
     { label: "X11 connection", status: "warn", message: "no top-level windows in Xvfb" },
     { label: "AT-SPI", status: "ok", message: "fixture bus available" },
   ] }) + "\\n");
@@ -82,6 +90,7 @@ const pidFile = after("--pid-file");
 if (!socketPath || !pidFile || !args.includes("--embedded") || after("--permission-mode") !== "standard") {
   process.exit(64);
 }
+if ((process.env.CUA_DRIVER_RS_ENABLE_WAYLAND === "1") !== wayland) process.exit(64);
 const count = existsSync(state) ? Number(readFileSync(state, "utf8")) + 1 : 1;
 writeFileSync(state, String(count));
 writeFileSync(pidFile, String(process.pid), { mode: 0o600 });
@@ -97,6 +106,20 @@ const metadata = {
 };
 const tools = ["click", "get_window_state", "list_apps", "type_text"].map((name) => ({ name }));
 const toolManifest = { schema_version: "1", capability_version: "1", tools };
+const healthReport = {
+  schema_version: "1",
+  platform: "linux",
+  driver_version: "0.19.3",
+  overall: "ok",
+  checks: [
+    { name: "binary_version", status: "pass", message: "cua-driver 0.19.3" },
+    { name: "platform_supported", status: "pass", message: "Ubuntu 24.04" },
+    { name: "session_active", status: "pass", message: "MCP session is active." },
+    { name: "ax_capability", status: "pass", message: "AT-SPI fixture is reachable." },
+    { name: "screen_capture_capability", status: "pass", message: "Portal fixture is reachable." },
+    { name: "wayland_backend", status: "pass", message: "WinRects and portal/libei fixtures are reachable." },
+  ],
+};
 const server = net.createServer((socket) => {
   let input = "";
   socket.on("data", (chunk) => {
@@ -104,7 +127,13 @@ const server = net.createServer((socket) => {
     const newline = input.indexOf("\\n");
     if (newline === -1) return;
     const request = JSON.parse(input.slice(0, newline));
-    const result = request.method === "metadata" ? metadata : request.method === "list" ? toolManifest : null;
+    const result = request.method === "metadata"
+      ? metadata
+      : request.method === "list"
+        ? toolManifest
+        : request.method === "call" && request.name === "health_report" && wayland
+          ? { structuredContent: healthReport }
+          : null;
     socket.end(JSON.stringify(result ? { ok: true, result } : { ok: false, error: "unknown" }) + "\\n");
     if (count === 1 && request.method === "list") setTimeout(() => server.close(() => process.exit(17)), 5000);
   });
@@ -120,20 +149,26 @@ process.on("SIGTERM", shutdown);
 );
 chmodSync(sentinel, 0o755);
 
+const desktopEnv = {
+  ...process.env,
+  HOME: home,
+  XDG_CONFIG_HOME: xdgConfig,
+  XDG_RUNTIME_DIR: xdgRuntime,
+  XDG_SESSION_TYPE: wayland ? "wayland" : "x11",
+  XDG_CURRENT_DESKTOP: "GNOME",
+  CUA_DRIVER_PATH: sentinel,
+  OMB_SMOKE_TEST: "1",
+  OMB_SMOKE_CUA: "1",
+};
+if (wayland) desktopEnv.WAYLAND_DISPLAY = "wayland-smoke";
+else delete desktopEnv.WAYLAND_DISPLAY;
+
 let output = "";
 let smokeResult = null;
-const child = spawn(executable, [], {
+const child = spawn(executable, wayland ? ["--ozone-platform=x11"] : [], {
   cwd: root,
   detached: true,
-  env: {
-    ...process.env,
-    HOME: home,
-    XDG_CONFIG_HOME: xdgConfig,
-    XDG_RUNTIME_DIR: xdgRuntime,
-    CUA_DRIVER_PATH: sentinel,
-    OMB_SMOKE_TEST: "1",
-    OMB_SMOKE_CUA: "1",
-  },
+  env: desktopEnv,
   stdio: ["ignore", "pipe", "pipe"],
 });
 
@@ -197,13 +232,22 @@ try {
   }
   if (!String(title).includes("OpenMausBot")) throw new Error(`unexpected renderer title: ${title}`);
   if (capabilities.host.platform !== "linux") throw new Error("renderer did not report Linux");
-  if (capabilities.host.session !== "x11") throw new Error("Xvfb did not report an X11 session");
-  if (!capabilities.screenPreview.available || capabilities.screenPreview.interaction !== "direct") {
-    throw new Error("X11 screen preview capability was not available");
+  if (capabilities.host.session !== (wayland ? "wayland" : "x11")) {
+    throw new Error(`renderer did not report the ${wayland ? "Wayland" : "X11"} contract`);
+  }
+  const expectedPreview = wayland ? "portal-picker" : "direct";
+  if (!capabilities.screenPreview.available || capabilities.screenPreview.interaction !== expectedPreview) {
+    throw new Error(`${wayland ? "Wayland" : "X11"} screen preview capability was not available`);
   }
   if (capabilities.dictation.available) throw new Error("dictation must be unavailable on Linux");
   if (!initialCapabilities.localComputer.available) throw new Error("initial Linux CUA runtime was not ready");
   if (initialCapabilities.localComputer.support !== "limited") throw new Error("Linux CUA was not marked beta/limited");
+  if (wayland && (
+    initialCapabilities.localComputer.session !== "wayland" ||
+    initialCapabilities.localComputer.compositor !== "gnome-mutter"
+  )) {
+    throw new Error("initial Linux CUA runtime did not publish the guarded GNOME Wayland contract");
+  }
   if (cuaCrashReason !== "daemon-exited") throw new Error("daemon crash did not invalidate local control");
   if (cuaRetryStatus?.status !== "ready" || !capabilities.localComputer.available) {
     throw new Error("explicit CUA retry did not create a ready generation");
@@ -221,6 +265,9 @@ try {
   for (const expected of ["--version", "manifest", "doctor --json"]) {
     if (!commands.some((command) => command === expected)) throw new Error(`missing CUA probe: ${expected}`);
   }
+  if (invocations.some((entry) => entry.waylandEnabled !== wayland)) {
+    throw new Error("CUA Wayland opt-in escaped its certified smoke lane");
+  }
   const daemons = invocations.filter((entry) => entry.args[0] === "serve");
   if (daemons.length !== 2) throw new Error(`expected crash + retry daemon generations, found ${daemons.length}`);
   for (const daemon of daemons) {
@@ -232,7 +279,7 @@ try {
     }
   }
 
-  console.log("[smoke-linux-package] OK: renderer, private CUA crash/retry, harness, and shutdown");
+  console.log(`[smoke-linux-package] OK (${wayland ? "GNOME/Wayland" : "GNOME/X11"}): renderer, private CUA crash/retry, harness, and shutdown`);
 } finally {
   await stopProcess();
   if (process.env.OMB_KEEP_SMOKE_DIR !== "1") rmSync(sandbox, { recursive: true, force: true });
