@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useStore } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
+import { VoiceSettings } from "./VoiceSettings";
 import { useUpdaterState } from "@/lib/updater";
 
 /** Name + email, persisted to /api/config {profile} on blur. Prefilled from
@@ -135,6 +136,8 @@ export function AppSettingsPanel() {
             <ApiKeyRow section="box" />
           </div>
         </div>
+
+        <VoiceSettings />
 
         <UpdatesRow />
       </div>

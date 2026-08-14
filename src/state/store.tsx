@@ -13,6 +13,8 @@ import {
   type ReactNode,
 } from "react";
 import type { MausColor, MausMotion } from "@/lib/mascot";
+import { currentCall } from "@/lib/call";
+import { speaker } from "@/lib/tts";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -38,8 +40,9 @@ export interface Message {
   kind: "text" | "options" | "activity" | "screen";
   text?: string;
   card?: OptionCardData;
-  /** activity messages: tool name + outcome */
-  tool?: { name: string; ok?: boolean };
+  /** activity messages: tool name + outcome. `spoken` is the server's
+   * narration of the same chip ("reading a file"), used by call mode. */
+  tool?: { name: string; ok?: boolean; spoken?: string };
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
@@ -103,6 +106,10 @@ export interface Bot {
   autoApprove?: boolean;
   /** tools this bot may always use without asking */
   alwaysAllow?: string[];
+  /** speak this bot's replies aloud as they settle */
+  speakReplies?: boolean;
+  /** this bot's own voice id (falls back to the app-wide one) */
+  voice?: string;
   pinned?: boolean;
   hidden?: boolean;
   messages: Message[];
@@ -142,6 +149,23 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
+  /** Voice: the chosen provider and voice are settings, not secrets — only
+   * `configured` says anything about the key. `effectiveProvider` is what
+   * will actually speak, which differs from `provider` when a hosted voice
+   * is selected but has no key yet (it falls back to the local one). */
+  tts?: {
+    provider: string;
+    effectiveProvider: string;
+    voice: string;
+    configured: boolean;
+    providers: Array<{
+      id: string;
+      displayName: string;
+      runsOn: "server" | "client";
+      needsKey: boolean;
+      blurb: string;
+    }>;
+  };
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
 }
@@ -918,11 +942,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return;
       }
       switch (frame.kind) {
-        case "message":
+        case "message": {
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
           // a settled assistant bubble replaces the in-flight stream
-          if (frame.message?.role === "bot" && frame.message?.kind === "text") clearStream(frame.threadId);
+          if (frame.message?.role === "bot" && frame.message?.kind === "text") {
+            clearStream(frame.threadId);
+            // Auto-speak lives HERE rather than in the chat view so a bot
+            // you switched away from still reads its answer out — which is
+            // the whole point of listening while you do something else. A
+            // bot on a call is excluded: call mode speaks in its own order,
+            // around its own microphone, and the two would fight.
+            const owner = stateRef.current.bots.find((b) => b.threadId === frame.threadId);
+            if (owner?.speakReplies && currentCall() !== owner.id && frame.message.text?.trim()) {
+              void speaker.speak(frame.message.text, {
+                botId: owner.id,
+                messageId: frame.message.id,
+                voiceId: owner.voice,
+              });
+            }
+          }
           break;
+        }
         case "message.patch":
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message });
           break;

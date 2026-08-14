@@ -42,6 +42,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "color"
         | "mascotExpression"
         | "autoApprove"
+        | "speakReplies"
+        | "voice"
       >
     >,
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
@@ -215,6 +217,32 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 className={cn(
                   "absolute top-[3px] size-5 rounded-full bg-white transition-all",
                   bot.autoApprove ? "left-[21px]" : "left-[3px]",
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+            <div>
+              <div className="text-[15px] font-medium text-ink">Read replies aloud</div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                Speak this bot's answers as they arrive, even when you're in another chat
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={Boolean(bot.speakReplies)}
+              aria-label="Read this bot's replies aloud"
+              onClick={() => patch({ speakReplies: !bot.speakReplies })}
+              className={cn(
+                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
+                bot.speakReplies ? "bg-accent" : "bg-raised",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  bot.speakReplies ? "left-[21px]" : "left-[3px]",
                 )}
               />
             </button>
