@@ -9,8 +9,9 @@ import { fileURLToPath } from "node:url";
 import { approvalKey, autoDecision } from "./auto-approve.js";
 import * as box from "./box.js";
 import * as composio from "./composio.js";
-import { containerComputerStatus, setupCommands } from "./container-computer.js";
+import { containerComputerAction, containerComputerMcp, containerComputerScreenshot, containerComputerStatus, setupCommands, } from "./container-computer.js";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.js";
+import { resetPathCache } from "./env-path.js";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.js";
 import { EventBus } from "./harness/bus.js";
 import { ProviderRegistry } from "./harness/registry.js";
@@ -102,10 +103,15 @@ function askBotAndWait(targetBotId, message, depth) {
 async function defaultSelection() {
     const described = await registry.describe();
     const available = described.filter((d) => d.snapshot.state === "available");
-    const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0] ?? described[0];
-    return { instanceId: pick?.instanceId ?? "claude", model: pick?.models.default || "claude-sonnet-5" };
+    // Deliberately NO fallback to described[0]. Handing a bot an engine whose
+    // CLI isn't installed makes it look ready and then fail on send with a raw
+    // spawn ENOENT — the single worst first-run experience, and the one every
+    // user with no CLIs used to get. An empty selection is honest: the UI shows
+    // the setup path instead of a bot that cannot answer.
+    const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0];
+    return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
-let bootSelection = { instanceId: "claude", model: "claude-sonnet-5" };
+let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
@@ -140,6 +146,11 @@ const askMessageByRequest = new Map(); // threadId:requestId -> messageId
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map();
 let routines = null;
+// The Local VM is intentionally one shared, visible desktop. Two agents
+// driving it simultaneously would mix clicks, keystrokes and screenshots,
+// so only one thread may lease it at a time.
+let activeVmThreadId = null;
+let localVmLifecycleBusy = false;
 bus.subscribe((event) => {
     broadcast({ kind: "runtime", event });
     routines?.handleRuntimeEvent(event);
@@ -296,9 +307,15 @@ bus.subscribe((event) => {
             break;
         }
         case "runtime.error":
-            pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
+            pushMessage({
+                role: "bot",
+                kind: "activity",
+                tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup },
+            });
             break;
         case "turn.completed": {
+            if (activeVmThreadId === event.threadId)
+                activeVmThreadId = null;
             if (bot) {
                 store.patchBot(bot.id, { busy: false, unread: true });
                 broadcast({ kind: "bot", bot: store.bot(bot.id) });
@@ -469,15 +486,47 @@ async function startTurn(botId, text, opts) {
             if (cfg.composio?.key)
                 integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
             const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the MAUS default
-            // only drivers that can mount the computer MCP server get the tools
-            // (and the prompt about them) — but every bot with a box still gets
-            // the live screen preview, which is a UI feature, not a tool
-            const mountsComputer = instance.adapter.capabilities.computerMcp === true || instance.driverKind === "boxAgent";
+            const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
+            const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
             let previewBoxId = null;
-            if (wants !== "off" && wants !== "local" && box.boxConfigured(cfg)) {
+            let computerKind = null;
+            // Explicit destinations are strict. In particular, Local VM must never
+            // fall through to host CUA and accidentally click on the user's Mac.
+            if (wants === "vm") {
+                if (!mountsComputerMcp || instance.driverKind === "boxAgent") {
+                    throw new Error("this model engine cannot use the Local VM — choose Claude or an ACP engine, or select another computer destination");
+                }
+                const localVm = await containerComputerStatus();
+                if (!localVm.ready || !localVm.runtime) {
+                    throw new Error(`${localVm.problem ?? "the Local VM is not ready"} (App Settings → Local VM)`);
+                }
+                if (activeVmThreadId && activeVmThreadId !== threadId) {
+                    throw new Error("the shared Local VM is already being used by another bot — wait for that turn to finish");
+                }
+                activeVmThreadId = threadId;
+                integrations.localComputer = containerComputerMcp(localVm.runtime);
+                computerKind = "vm";
+            }
+            else if (wants === "local") {
+                if (!mountsComputerMcp) {
+                    throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
+                }
+                const cua = readCuaConnection();
+                if (!cua)
+                    throw new Error("CUA Driver is not ready for this computer — check permissions and restart OpenMausBot");
+                integrations.localComputer = cua;
+                computerKind = "local";
+            }
+            // Cloud is also strict when explicitly selected. Auto (unset) reuses an
+            // existing cloud box, then falls back to host CUA without provisioning.
+            if ((wants === "cloud" || wants === undefined) && box.boxConfigured(cfg)) {
+                if (!mountsCloudComputer && wants === "cloud") {
+                    throw new Error("this model engine cannot use computer tools — choose Claude, an ACP engine, or the Computer engine");
+                }
                 let b = await box.findBox(cfg, bot.id).catch(() => null);
-                // the Computer driver runs ON the box — provision it on first use
-                if (!b && instance.driverKind === "boxAgent") {
+                // Explicit Cloud and the box-native Computer engine provision on first
+                // use. Auto remains non-surprising and only reuses an existing box.
+                if (!b && mountsCloudComputer && (wants === "cloud" || instance.driverKind === "boxAgent")) {
                     broadcast({ kind: "computer", botId: bot.id, state: "provisioning" });
                     await box.provisionBox(cfg, bot.id, bot.name);
                     b = await box.findBox(cfg, bot.id).catch(() => null);
@@ -486,23 +535,32 @@ async function startTurn(botId, text, opts) {
                 // resumes — wake it here, once, instead of letting the agent
                 // discover it one failed tool call at a time. Only worth the
                 // resume (~8s, and it un-pauses billing) when the bot can act.
-                if (b && mountsComputer && !["idle", "ready", "running"].includes(b.state)) {
+                if (b && mountsCloudComputer && !["idle", "ready", "running"].includes(b.state)) {
                     broadcast({ kind: "computer", botId: bot.id, state: "waking" });
                     b = (await box.readyBox(cfg, bot.id).catch(() => null)) ?? b;
                 }
                 if (b) {
                     previewBoxId = b.id;
-                    if (mountsComputer)
-                        integrations.computer = { boxId: b.id, token: cfg.box.token };
+                    if (mountsCloudComputer) {
+                        integrations.computer = { kind: "box", boxId: b.id, token: cfg.box.token };
+                        computerKind = "box";
+                    }
                 }
             }
-            // local computer (this Mac) via the Electron-hosted cua-driver: the
-            // Electron main process owns the daemon (TCC attribution) and writes
-            // its spawn contract to cua-connection.json; the harness only reads it
-            if (!integrations.computer && wants !== "off" && wants !== "cloud") {
+            if (wants === "cloud" && !box.boxConfigured(cfg)) {
+                throw new Error("Cloud box is not configured — add a Box API key or choose Local VM");
+            }
+            if (wants === "cloud" && !integrations.computer) {
+                throw new Error("the cloud computer could not be created or reached");
+            }
+            // Auto-only host fallback. Electron owns cua-driver/TCC attribution;
+            // the harness only reads its already-running connection descriptor.
+            if (!integrations.computer && !integrations.localComputer && wants === undefined && mountsComputerMcp) {
                 const cua = readCuaConnection();
-                if (cua)
+                if (cua) {
                     integrations.localComputer = cua;
+                    computerKind = "local";
+                }
             }
             // peer-agent comms: give a user-initiated turn the list_bots/ask_bot
             // tools. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
@@ -532,11 +590,13 @@ async function startTurn(botId, text, opts) {
                 resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
                 transcript,
                 system: persona +
-                    (integrations.computer && instance.driverKind !== "boxAgent"
-                        ? " You have your own cloud computer — use the computer tools (screenshot, click, type_text, open_url, computer_exec) whenever browsing or acting on a desktop helps. Every action tool already returns the resulting screen, so don't follow one with a screenshot call, and batch predictable sequences with computer_batch."
-                        : integrations.localComputer
-                            ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
-                            : "") +
+                    (computerKind === "vm"
+                        ? " You have a shared, isolated Cua sandbox: a Linux desktop in a container on this machine with no host folders mounted. Use the computer tools for desktop, accessibility, window, and shell work. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully."
+                        : computerKind === "box" && instance.driverKind !== "boxAgent"
+                            ? " You have your own cloud computer — use screenshot, click, type_text, open_url and computer_exec whenever a desktop helps. Every action already returns the resulting screen, so don't follow it with screenshot; batch predictable sequences with computer_batch."
+                            : computerKind === "local"
+                                ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
+                                : "") +
                     (integrations.agents
                         ? " You can work with the user's other bots through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
                         : "") +
@@ -554,6 +614,8 @@ async function startTurn(botId, text, opts) {
                 startScreenPoller(bot.id, previewBoxId);
         }
         catch (e) {
+            if (activeVmThreadId === threadId)
+                activeVmThreadId = null;
             const message = e instanceof Error ? e.message : String(e);
             const failure = store.appendMessage(threadId, {
                 role: "bot",
@@ -1085,6 +1147,10 @@ const server = createServer(async (req, res) => {
                 if (body[key] !== undefined)
                     patch[key] = body[key];
             }
+            if (body.computer !== undefined &&
+                !["cloud", "vm", "local", "off"].includes(String(body.computer))) {
+                return json(res, 400, { error: "computer must be cloud, vm, local, or off" });
+            }
             // the two permission fields decide what runs unattended, so they are
             // type-checked rather than copied through: a string alwaysAllow would
             // still answer .includes() — with substring matches, not tool names
@@ -1317,6 +1383,34 @@ const server = createServer(async (req, res) => {
             const status = await containerComputerStatus();
             return json(res, 200, { ...status, commands: setupCommands(status.runtime) });
         }
+        m = path.match(/^\/api\/local-computer\/(pull|run|start|stop|remove)$/);
+        if (m && method === "POST") {
+            // Requiring JSON makes these localhost lifecycle mutations non-simple
+            // browser requests. A hostile web page cannot submit them with a form,
+            // and its cross-origin JSON request is stopped by the browser preflight
+            // because this server deliberately emits no CORS permission.
+            if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+                return json(res, 415, { error: "content-type must be application/json" });
+            }
+            const action = m[1];
+            if (localVmLifecycleBusy) {
+                return json(res, 409, { error: "another Local VM setup action is still running" });
+            }
+            if (activeVmThreadId && (action === "stop" || action === "remove" || action === "run")) {
+                return json(res, 409, { error: "the Local VM is being used by a bot — stop that turn first" });
+            }
+            localVmLifecycleBusy = true;
+            try {
+                const status = await containerComputerAction(action);
+                return json(res, 200, { ...status, commands: setupCommands(status.runtime) });
+            }
+            finally {
+                localVmLifecycleBusy = false;
+            }
+        }
+        if (method === "POST" && path === "/api/local-computer/screenshot") {
+            return json(res, 200, { image: await containerComputerScreenshot() });
+        }
         // identity handshake for the packaged app's port fallback: the forked
         // child proves it is OURS by echoing its pid (a stray dev server has
         // the same API shape but a different pid)
@@ -1325,6 +1419,11 @@ const server = createServer(async (req, res) => {
         }
         // ── provider instances (model picker) ──
         if (method === "GET" && path === "/api/instances") {
+            // Rescan PATH first: this endpoint is how the app answers "what can I
+            // run?", and the interesting case is a CLI installed since launch.
+            // Windows never pushes PATH changes into a live process, so without
+            // this the answer is frozen at boot and "check again" is a no-op.
+            resetPathCache();
             return json(res, 200, { instances: await registry.describe() });
         }
         // ── app config (API keys — never echoed back, booleans only) ──

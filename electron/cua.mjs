@@ -20,6 +20,7 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createCuaConnectionStore } = require("./cua-connection.cjs");
@@ -60,11 +61,39 @@ function socketAlive(sockPath) {
   });
 }
 
+async function loadEmbeddedSdk() {
+  if (!app.isPackaged) {
+    const [embedded, permissions] = await Promise.all([
+      import("@trycua/cua-driver/embedded"),
+      import("@trycua/cua-driver/electron"),
+    ]);
+    return { ...embedded, ...permissions };
+  }
+  process.env.OPENMAUSBOT_CUA_SDK_LIBRARY = path.join(
+    process.resourcesPath,
+    "cua-sdk",
+    "native",
+    "libcua_driver_sdk.dylib",
+  );
+  return import(pathToFileURL(path.join(process.resourcesPath, "cua-sdk", "cua-sdk.mjs")).href);
+}
+
 async function startEmbedded(binary) {
-  // Dynamic import: the SDK ships a native FFI lib; keep dev startup
-  // resilient if it fails to load on this machine.
-  const { EmbeddedCuaDriverHost } = await import("@trycua/cua-driver/embedded");
-  embeddedHost = new EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
+  // Import from the staged Resources tree in production. The app intentionally
+  // excludes general node_modules, so a bare package import only works in dev.
+  const sdk = await loadEmbeddedSdk();
+  // CUA's embedding contract requires grants before the child daemon starts;
+  // these SDK calls execute in Electron main so macOS attributes them to
+  // OpenMausBot rather than to a terminal or helper process.
+  const permissionStatus = sdk.requestMacOSPermissions();
+  if (!sdk.hasRequiredMacOSPermissions(permissionStatus)) {
+    const missing = [
+      !permissionStatus.accessibility && "Accessibility",
+      !permissionStatus.screenRecording && "Screen Recording",
+    ].filter(Boolean).join(" and ");
+    throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart OpenMausBot`);
+  }
+  embeddedHost = new sdk.EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
   const conn = await embeddedHost.start();
   return {
     mode: "embedded",

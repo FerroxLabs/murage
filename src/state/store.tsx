@@ -104,7 +104,7 @@ export interface Bot {
   busy?: boolean;
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
-  computer?: "cloud" | "local" | "off";
+  computer?: "cloud" | "vm" | "local" | "off";
   /** auto mode: the bot approves its own tool permissions */
   autoApprove?: boolean;
   /** tools this bot may always use without asking */
@@ -182,6 +182,7 @@ export interface InstanceInfo {
     version?: string | null;
   };
   models: { default: string; options: Array<{ id: string; label: string }> };
+  capabilities?: { computerMcp?: boolean; agentsMcp?: boolean };
   install?: EngineInstall;
 }
 

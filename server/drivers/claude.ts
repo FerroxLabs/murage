@@ -27,6 +27,7 @@ import type {
   RuntimeEventListener,
   SendTurnInput,
 } from "../contracts.ts";
+import { computerProxyEnv } from "../container-computer.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 
@@ -273,17 +274,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers.computer = {
           command: process.execPath,
           args: [PROXY_PATH],
-          env: {
-            ...NODE_ENV_FLAG,
-            OGB_BOX_ID: turn.integrations.computer.boxId,
-            OGB_BOX_TOKEN: turn.integrations.computer.token,
-          },
+          env: { ...NODE_ENV_FLAG, ...computerProxyEnv(turn.integrations.computer) },
         };
         allowed.push("mcp__computer");
       } else if (turn.integrations?.localComputer) {
-        // this Mac, via the Electron-owned cua-driver daemon (spawn config
-        // read from cua-connection.json — same "computer" name either way,
-        // the agent just sees a computer)
+        // A direct Cua Driver MCP connection. This can be the Electron-owned
+        // host daemon or the isolated Local VM; the agent sees the same
+        // "computer" server either way.
         mcpServers.computer = { ...turn.integrations.localComputer };
         allowed.push("mcp__computer");
       }

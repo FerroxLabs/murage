@@ -15,8 +15,9 @@ import { cn } from "@/lib/cn";
 const SECTIONS: Array<{ id: AppSettingsSection; label: string; icon: typeof User }> = [
   { id: "general", label: "General", icon: User },
   { id: "connections", label: "Connections", icon: KeyRound },
+  { id: "computer", label: "Local VM", icon: Monitor },
   { id: "voice", label: "Voice", icon: Volume2 },
-  { id: "computer", label: "Local computer", icon: Monitor },
+  { id: "computer", label: "Local VM", icon: Monitor },
 ];
 
 /** Name + email, persisted to /api/config {profile} on blur. */
