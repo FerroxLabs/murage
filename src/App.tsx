@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Menu } from "lucide-react";
 import { StoreProvider, useStore } from "@/state/store";
 import { Onboarding } from "@/components/Onboarding";
 import { emailGateDone, initAnalytics } from "@/lib/analytics";
@@ -17,6 +17,9 @@ import { NoEngines } from "@/components/NoEngines";
 
 function Shell() {
   const { state, dispatch } = useStore();
+  // Mobile-only drawer state. Above md the sidebar is always in flow and this
+  // value has no effect — the md: variants cancel every mobile class.
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
 
@@ -64,7 +67,23 @@ function Shell() {
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
       <div className="relative flex min-h-0 flex-1">
-      <Sidebar />
+      <button
+        type="button"
+        aria-label="Open bot list"
+        aria-expanded={drawerOpen}
+        onClick={() => setDrawerOpen(true)}
+        className="absolute left-3 top-3 z-30 rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink md:hidden"
+      >
+        <Menu size={18} />
+      </button>
+      {drawerOpen && (
+        <div
+          aria-hidden
+          onMouseDown={(e) => e.target === e.currentTarget && setDrawerOpen(false)}
+          className="absolute inset-0 z-30 bg-black/50 md:hidden"
+        />
+      )}
+      <Sidebar open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       {state.activeView === "routines" ? (
         <RoutinesPage />
       ) : noEngines ? (

@@ -493,7 +493,7 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -501,6 +501,18 @@ export function Sidebar() {
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
   const [query, setQuery] = useState("");
+
+  // Esc closes the drawer, mirroring ApiKeys.tsx:75-85. Only bound while the
+  // drawer is open, so it never competes with the panels' own Esc handling.
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [open, onClose]);
+
   const macInset = capabilities.windowChrome === "mac-inset";
   const browser = capabilities.host.label === "Browser";
 
@@ -521,7 +533,21 @@ export function Sidebar() {
   const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
 
   return (
-    <aside className="flex h-full w-[320px] shrink-0 flex-col border-r border-hairline/40 bg-panel">
+    <aside
+      className={cn(
+        "flex h-full w-[320px] shrink-0 flex-col border-r border-hairline/40 bg-panel",
+        // Below md only: the sidebar leaves the flow and slides in over the chat.
+        // Scoped with max-md: rather than cancelled with md: on purpose — Tailwind
+        // v4 emits the native `translate` property, and any value other than
+        // `none` turns this element into a containing block for its `fixed`
+        // descendants. Cancelling with md:translate-x-0 still emits a value, which
+        // silently reparents NewRoomPanel's overlay and the "+" menu backdrop on
+        // desktop.
+        "max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-40",
+        "max-md:transition-transform max-md:duration-200",
+        open ? "max-md:translate-x-0" : "max-md:-translate-x-full",
+      )}
+    >
       {/* macOS owns inset traffic lights; Linux/Windows use native chrome. */}
       <div
         className="flex items-center justify-between px-4 pt-3.5 pb-1"
