@@ -73,7 +73,7 @@ function CommandRow({ command }: { command: string }) {
             onClick={openTerminal}
             className="flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1.5 text-[12.5px] font-medium text-white"
           >
-            <TerminalSquare size={13} /> Open in Terminal
+            <TerminalSquare size={13} /> Copy &amp; Open Terminal
           </button>
         )}
         <button
@@ -84,7 +84,7 @@ function CommandRow({ command }: { command: string }) {
           )}
         >
           {done ? <Check size={13} /> : <Copy size={13} />}
-          {done === "copied" ? "Copied" : done === "opened" ? "Opened" : "Copy"}
+          {done === "copied" ? "Copied" : done === "opened" ? "Copied — paste" : "Copy"}
         </button>
       </div>
     </div>
@@ -158,15 +158,6 @@ export function EngineSetup({
         >
           <ExternalLink size={12} /> Setup guide
         </a>
-      )}
-
-      {/* A newly installed CLI lands on a PATH the running app never saw.
-          macOS re-probes the login shell, but Windows only reads the user
-          PATH at process start — so a restart is the reliable cure there. */}
-      {!signInOnly && command && (
-        <p className="mt-2 text-[11.5px] text-ink-secondary/70">
-          Already installed it? Restart OpenMausBot so it picks up the new PATH.
-        </p>
       )}
     </div>
   );

@@ -17,6 +17,16 @@ import { AntigravityDriver } from "./antigravity.ts";
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-agy-cli.ts");
 
 describe("Antigravity decodeConfig", () => {
+  it("publishes the official installer for every supported platform", () => {
+    expect(AntigravityDriver.install).toMatchObject({
+      command: {
+        darwin: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+        linux: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+        win32: "irm https://antigravity.google/cli/install.ps1 | iex",
+      },
+    });
+  });
+
   it("defaults to the agy binary and fullAuto on", () => {
     expect(AntigravityDriver.decodeConfig({})).toEqual({ cli: "agy", fullAuto: true });
     expect(AntigravityDriver.decodeConfig(undefined)).toEqual({ cli: "agy", fullAuto: true });

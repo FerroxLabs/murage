@@ -92,12 +92,26 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   useEffect(() => {
     track("onboarding_step", { step });
-    if (step === 1 && !instances) {
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== 1) return;
+    let active = true;
+    const refresh = () => {
       fetch("/api/instances")
         .then((r) => r.json())
-        .then((d) => setInstances(d.instances ?? []))
-        .catch(() => setInstances([]));
-    }
+        .then((d) => active && setInstances(d.instances ?? []))
+        .catch(() => active && setInstances([]));
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [step]);
+
+  useEffect(() => {
     if (step === 2 && capabilities.dictation.available) {
       const poll = () => window.ogb?.permStatus?.().then(setPerms).catch(() => {});
       poll();
@@ -105,7 +119,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       const t = setInterval(poll, 2000);
       return () => clearInterval(t);
     }
-  }, [step, instances, capabilities.dictation.available]);
+  }, [step, capabilities.dictation.available]);
 
   const finish = () => {
     track("onboarding_completed", {

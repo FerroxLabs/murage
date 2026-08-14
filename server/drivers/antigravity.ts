@@ -74,9 +74,14 @@ function decodeConfig(raw: unknown): AntigravityConfig {
 export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Antigravity", supportsMultipleInstances: true },
-  // A GUI download rather than a package install — no command on any
-  // platform, so the setup UI can only send people to the download page.
-  install: { docsUrl: "https://antigravity.google/download" },
+  install: {
+    command: {
+      darwin: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+      linux: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+      win32: "irm https://antigravity.google/cli/install.ps1 | iex",
+    },
+    docsUrl: "https://github.com/google-antigravity/antigravity-cli#installation",
+  },
   models: MODELS,
   decodeConfig,
   defaultConfig: () => decodeConfig({}),

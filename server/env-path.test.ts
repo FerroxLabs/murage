@@ -76,6 +76,22 @@ describe("augmentedPath", () => {
     // temp home: .volta was never created, so it must not appear
     expect(parts).not.toContain(join(homedir(), ".volta", "bin"));
   });
+
+  it.skipIf(process.platform !== "win32")("finds Antigravity installed after launch", () => {
+    const previous = process.env.LOCALAPPDATA;
+    const localAppData = join(homedir(), "AppData", "Local");
+    try {
+      process.env.LOCALAPPDATA = localAppData;
+      const agyBin = join(localAppData, "agy", "bin");
+      mkdirSync(agyBin, { recursive: true });
+      resetPathCacheForTests();
+      expect(augmentedPath().split(delimiter)).toContain(agyBin);
+    } finally {
+      if (previous === undefined) delete process.env.LOCALAPPDATA;
+      else process.env.LOCALAPPDATA = previous;
+      resetPathCacheForTests();
+    }
+  });
 });
 
 // Windows CLI resolution — spawn(cli) alone finds nothing on Windows (no

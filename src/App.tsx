@@ -26,7 +26,9 @@ function Shell() {
   const noEngines =
     state.connected &&
     state.instances.length > 0 &&
-    !state.instances.some((i) => i.snapshot.state === "available");
+    !state.instances.some(
+      (i) => i.snapshot.state === "available" && i.snapshot.authenticated !== false,
+    );
 
   // App-wide shortcuts: ⌘N new bot · ⌘1–9 jump to bot · ⌘⇧[ / ⌘⇧] prev/next.
   // Kept deliberately small; every panel already closes on Esc.
