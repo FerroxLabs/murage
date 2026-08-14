@@ -186,7 +186,9 @@ for (const stream of [child.stdout, child.stderr]) {
 }
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const childRunning = () => child.exitCode === null && child.signalCode === null;
+const processRunning = (processHandle) =>
+  processHandle.exitCode === null && processHandle.signalCode === null;
+const childRunning = () => processRunning(child);
 async function until(probe, description) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -208,18 +210,22 @@ async function waitForExit() {
   if (childRunning()) throw new Error(`Electron did not exit after its window closed.\n${output}`);
 }
 
-async function stopProcess() {
-  if (!childRunning()) return;
+async function stopDetached(processHandle) {
+  if (!processRunning(processHandle)) return;
   try {
-    process.kill(-child.pid, "SIGTERM");
+    process.kill(-processHandle.pid, "SIGTERM");
   } catch {}
   const stopDeadline = Date.now() + 5_000;
-  while (childRunning() && Date.now() < stopDeadline) await delay(50);
-  if (childRunning()) {
+  while (processRunning(processHandle) && Date.now() < stopDeadline) await delay(50);
+  if (processRunning(processHandle)) {
     try {
-      process.kill(-child.pid, "SIGKILL");
+      process.kill(-processHandle.pid, "SIGKILL");
     } catch {}
   }
+}
+
+async function stopProcess() {
+  await stopDetached(child);
 }
 
 try {
@@ -345,67 +351,68 @@ try {
       env: { ...desktopEnv, OMB_SMOKE_KEEP_OPEN: "0" },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    for (const stream of [restart.stdout, restart.stderr]) {
-      stream.setEncoding("utf8");
-      stream.on("data", (chunk) => {
-        restartOutput += chunk;
-        const match = restartOutput.match(/\[smoke\] renderer-ready (\{.*\})\r?\n/);
-        if (match && !restartResult) restartResult = JSON.parse(match[1]);
-      });
-    }
-    const restartDeadline = Date.now() + 30_000;
-    while (!restartResult && Date.now() < restartDeadline) {
-      if (restart.exitCode !== null || restart.signalCode !== null) {
-        throw new Error(`Electron restart exited before renderer readiness.\n${restartOutput}`);
+    try {
+      for (const stream of [restart.stdout, restart.stderr]) {
+        stream.setEncoding("utf8");
+        stream.on("data", (chunk) => {
+          restartOutput += chunk;
+          const match = restartOutput.match(/\[smoke\] renderer-ready (\{.*\})\r?\n/);
+          if (match && !restartResult) restartResult = JSON.parse(match[1]);
+        });
       }
-      await delay(100);
-    }
-    if (!restartResult?.initialCapabilities?.localComputer?.available) {
-      throw new Error(`Electron restart did not create a ready CUA generation.\n${restartOutput}`);
-    }
-    const restartExitDeadline = Date.now() + 10_000;
-    while (
-      restart.exitCode === null &&
-      restart.signalCode === null &&
-      Date.now() < restartExitDeadline
-    ) {
-      await delay(50);
-    }
-    if (restart.exitCode === null && restart.signalCode === null) {
-      try {
-        process.kill(-restart.pid, "SIGTERM");
-      } catch {}
-      throw new Error(`Electron restart did not close normally.\n${restartOutput}`);
-    }
+      const restartDeadline = Date.now() + 30_000;
+      while (!restartResult && Date.now() < restartDeadline) {
+        if (restart.exitCode !== null || restart.signalCode !== null) {
+          throw new Error(`Electron restart exited before renderer readiness.\n${restartOutput}`);
+        }
+        await delay(100);
+      }
+      if (!restartResult?.initialCapabilities?.localComputer?.available) {
+        throw new Error(`Electron restart did not create a ready CUA generation.\n${restartOutput}`);
+      }
+      const restartExitDeadline = Date.now() + 10_000;
+      while (
+        restart.exitCode === null &&
+        restart.signalCode === null &&
+        Date.now() < restartExitDeadline
+      ) {
+        await delay(50);
+      }
+      if (restart.exitCode === null && restart.signalCode === null) {
+        throw new Error(`Electron restart did not close normally.\n${restartOutput}`);
+      }
 
-    const restartedInvocations = readFileSync(marker, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    const restartedDaemons = restartedInvocations.filter((entry) => entry.args[0] === "serve");
-    if (restartedDaemons.length !== 2) {
-      throw new Error(`hard-death restart expected two generations, found ${restartedDaemons.length}`);
-    }
-    const socketPaths = new Set(
-      restartedDaemons.map((daemon) => daemon.args[daemon.args.indexOf("--socket") + 1]),
-    );
-    if (socketPaths.size !== 2) throw new Error("hard-death restart reused a stale CUA generation");
-    for (const daemon of restartedDaemons) {
-      try {
-        process.kill(daemon.pid, 0);
-        throw new Error(`CUA daemon survived restart shutdown: ${daemon.pid}`);
-      } catch (error) {
-        if (error?.code !== "ESRCH") throw error;
+      const restartedInvocations = readFileSync(marker, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const restartedDaemons = restartedInvocations.filter((entry) => entry.args[0] === "serve");
+      if (restartedDaemons.length !== 2) {
+        throw new Error(`hard-death restart expected two generations, found ${restartedDaemons.length}`);
       }
-      for (const flag of ["--socket", "--pid-file"]) {
-        const index = daemon.args.indexOf(flag);
-        if (index !== -1 && existsSync(daemon.args[index + 1])) {
-          throw new Error(`stale CUA runtime file survived restart: ${daemon.args[index + 1]}`);
+      const socketPaths = new Set(
+        restartedDaemons.map((daemon) => daemon.args[daemon.args.indexOf("--socket") + 1]),
+      );
+      if (socketPaths.size !== 2) throw new Error("hard-death restart reused a stale CUA generation");
+      for (const daemon of restartedDaemons) {
+        try {
+          process.kill(daemon.pid, 0);
+          throw new Error(`CUA daemon survived restart shutdown: ${daemon.pid}`);
+        } catch (error) {
+          if (error?.code !== "ESRCH") throw error;
+        }
+        for (const flag of ["--socket", "--pid-file"]) {
+          const index = daemon.args.indexOf(flag);
+          if (index !== -1 && existsSync(daemon.args[index + 1])) {
+            throw new Error(`stale CUA runtime file survived restart: ${daemon.args[index + 1]}`);
+          }
         }
       }
-    }
-    if (readCuaConnection({ platform: "linux", userData }) !== null) {
-      throw new Error("CUA descriptor remained usable after restart shutdown");
+      if (readCuaConnection({ platform: "linux", userData }) !== null) {
+        throw new Error("CUA descriptor remained usable after restart shutdown");
+      }
+    } finally {
+      await stopDetached(restart);
     }
     console.log(`[smoke-linux-package] OK (${wayland ? "GNOME/Wayland" : "GNOME/X11"} hard death): restart replaced the generation and left no daemon, runtime file, server, or usable descriptor`);
   } else {

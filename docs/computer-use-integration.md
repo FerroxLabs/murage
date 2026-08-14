@@ -9,9 +9,9 @@ machine.
 
 ## TL;DR architecture
 
-```
+```text
 Electron main process
-├── CUA host  ──spawns──▶  cua-driver (bundled on macOS; verified user install on Ubuntu)
+├── CUA host  ──spawns──▶  cua-driver (bundled on macOS; verified user install on Ubuntu 24.04 GNOME Xorg/Wayland betas)
 │     platform permission boundary               │ unix socket (private)
 ├── WebContentsView pool (embedded browser, persist: partitions per bot)
 │     driven via webContents.debugger (CDP) — zero-install browser use
@@ -23,9 +23,11 @@ Electron main process
 - **Plugins = MCP servers over stdio.** The Plugins panel toggles which MCP
   servers get injected into each bot's `--mcp-config`. Same pattern as Claude
   Desktop / Cherry Studio / LibreChat.
-- **Computer use = `cua-driver`**. macOS packages the Rust Mach-O in app
-  Resources; the Ubuntu beta accepts only the certified user-installed 0.19.3
-  Linux binary while bundling is tracked separately.
+- **Local desktop use = `cua-driver`**. macOS packages the Rust Mach-O in app
+  Resources; the Ubuntu 24.04 GNOME/Xorg beta and guarded GNOME/Wayland beta
+  accept only the certified user-installed 0.19.3 Linux binary while bundling
+  is tracked separately. Remote/cloud boxes and the isolated Local VM remain
+  separate providers.
   NOT Swift — the Swift file everyone remembers
   (`examples/embedded-host-macos/ExampleAgentHarness.swift`) is a 165-line
   reference host showing the embedding pattern, not the driver.
@@ -34,12 +36,13 @@ Electron main process
   `webContents.debugger` CDP transport. No Chrome dependency, no 281MB
   Playwright download, and the user watches the bot browse inside the chat.
 
-## Computer use: CUA only — Electron owns the driver lifecycle
+## Local desktop use: CUA only — Electron owns the driver lifecycle
 
-**Decision (Milind, 2026-08-12): CUA is the ONLY computer-use provider.
+**Decision (Milind, 2026-08-12): CUA is the ONLY local desktop-control provider.
 No cliclick, no robotjs/nut.js, no Python computer-server, no fallbacks.**
-Everything that touches the user's screen/mouse/keyboard goes through the
-validated `cua-driver` binary. Alternatives evaluated and rejected:
+Everything that touches the host's local screen/mouse/keyboard goes through the
+validated `cua-driver` binary. This rule does not replace remote/cloud boxes or
+the isolated Local VM provider. Local alternatives evaluated and rejected:
 
 The Ubuntu GNOME beta is an intentional staged exception to the
 zero-install packaging statement: it uses the same official CUA provider but
