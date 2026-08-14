@@ -6,7 +6,9 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  Cloud,
   ExternalLink,
+  Laptop,
   Loader2,
   Pause,
   Play,
@@ -18,7 +20,7 @@ import {
 import { MausAvatar } from "@/components/Avatar";
 import { cn } from "@/lib/cn";
 import { MAUS_COLORS, type MausState } from "@/lib/mascot";
-import type { Routine, RoutineInput, RoutineRun, RoutineRunStatus } from "@/lib/routines";
+import type { Routine, RoutineInput, RoutineRun, RoutineRunOn, RoutineRunStatus } from "@/lib/routines";
 import { api, useStore, type Bot } from "@/state/store";
 
 const HOUR_HEIGHT = 68;
@@ -202,7 +204,10 @@ function RoutineCard({ item, bot, compact, onOpen }: { item: CalendarItem; bot: 
             {animated && <Loader2 size={10} className="animate-spin" />}
             <span>{niceTime(item.at)}</span>
             <span>·</span>
-            <span className="truncate">{status ? status.replace("waiting", "needs you") : bot.name}</span>
+            <span className="truncate">
+              {status ? status.replace("waiting", "needs you") : bot.name}
+              {(item.routine?.runOn ?? item.run?.runOn) === "cloud" ? " · VM" : ""}
+            </span>
           </div>
         </div>
         {status === "failed" && !item.run?.seenAt && <span className="size-2 shrink-0 rounded-full bg-danger" />}
@@ -288,17 +293,20 @@ export function RoutineEditor({
   routine,
   bots,
   lockedBotId,
+  defaultRunOn,
   onClose,
 }: {
   routine?: Routine;
   bots: Bot[];
   lockedBotId?: string;
+  defaultRunOn?: RoutineRunOn;
   onClose: () => void;
 }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const [name, setName] = useState(routine?.name ?? "");
   const [prompt, setPrompt] = useState(routine?.prompt ?? "");
   const [botId, setBotId] = useState(lockedBotId ?? routine?.botId ?? bots[0]?.id ?? "");
+  const [runOn, setRunOn] = useState<RoutineRunOn>(routine?.runOn ?? defaultRunOn ?? "maus");
   const [kind, setKind] = useState<"once" | "daily">(routine?.schedule.type ?? "daily");
   const [at, setAt] = useState(
     toInputDateTime(routine?.schedule.type === "once" ? routine.schedule.at : nextHour()),
@@ -310,12 +318,15 @@ export function RoutineEditor({
   const [durationMinutes, setDurationMinutes] = useState(routine?.durationMinutes ?? 30);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const cloudInstance = state.instances.find((instance) => instance.driverKind === "boxAgent");
+  const cloudReady = Boolean(state.config?.box.configured && cloudInstance?.snapshot.state === "available");
 
   const save = async () => {
     const input: RoutineInput = {
       name,
       prompt,
       botId,
+      runOn,
       enabled: routine ? undefined : true,
       durationMinutes,
       schedule:
@@ -354,6 +365,41 @@ export function RoutineEditor({
             <span className="mb-1.5 block text-[12px] font-medium text-ink-secondary">Routine name</span>
             <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Morning research brief" className="w-full rounded-xl border border-hairline/60 bg-inset px-3.5 py-2.5 text-[14px] text-ink outline-none placeholder:text-ink-secondary/60 focus:border-accent/70" />
           </label>
+          <div>
+            <div className="mb-2 text-[12px] font-medium text-ink-secondary">Where does it run?</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setRunOn("maus")}
+                className={cn(
+                  "rounded-xl border p-3 text-left transition",
+                  runOn === "maus" ? "border-accent/70 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised/60",
+                )}
+              >
+                <div className="flex items-center gap-2 text-[13px] font-medium text-ink"><Laptop size={15} />MAUS setup</div>
+                <div className="mt-1 text-[11px] leading-relaxed text-ink-secondary">Uses this MAUS's selected model and computer setting.</div>
+              </button>
+              <button
+                type="button"
+                disabled={!cloudReady && runOn !== "cloud"}
+                onClick={() => setRunOn("cloud")}
+                className={cn(
+                  "rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-45",
+                  runOn === "cloud" ? "border-accent/70 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised/60",
+                )}
+              >
+                <div className="flex items-center gap-2 text-[13px] font-medium text-ink"><Cloud size={15} />Cloud VM</div>
+                <div className="mt-1 text-[11px] leading-relaxed text-ink-secondary">Runs the MAUS and its tools inside its Box virtual machine.</div>
+              </button>
+            </div>
+            {runOn === "cloud" && (
+              <div className={cn("mt-2 rounded-lg px-3 py-2 text-[11.5px] leading-relaxed", cloudReady ? "bg-accent/10 text-ink-secondary" : "border border-warning/25 bg-warning/10 text-warning")}>
+                {cloudReady
+                  ? "The VM wakes automatically for each run. Keep OpenMausBot running so its scheduler can launch the job."
+                  : "Cloud VM needs a working Box API key in App Settings before this routine can run."}
+              </div>
+            )}
+          </div>
           <div>
             <div className="mb-2 text-[12px] font-medium text-ink-secondary">Who does it?</div>
             <div className={cn("grid gap-2", lockedBotId ? "grid-cols-1" : "grid-cols-2 sm:grid-cols-3")}>
@@ -453,6 +499,7 @@ function RoutineDetails({ item, bot, onClose, onEdit }: { item: CalendarItem; bo
           {routine && (
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-xl bg-inset p-3"><div className="text-[10px] uppercase tracking-wider text-ink-secondary">Schedule</div><div className="mt-1 text-[13px] text-ink">{scheduleLabel(routine)}</div></div>
+              <div className="rounded-xl bg-inset p-3"><div className="text-[10px] uppercase tracking-wider text-ink-secondary">Runs on</div><div className="mt-1 flex items-center gap-1.5 text-[13px] text-ink">{routine.runOn === "cloud" ? <Cloud size={13} /> : <Laptop size={13} />}{routine.runOn === "cloud" ? "Cloud VM" : "MAUS setup"}</div></div>
               <div className="rounded-xl bg-inset p-3"><div className="text-[10px] uppercase tracking-wider text-ink-secondary">Duration</div><div className="mt-1 text-[13px] text-ink">{routine.durationMinutes} minutes</div></div>
             </div>
           )}

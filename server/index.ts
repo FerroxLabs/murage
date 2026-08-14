@@ -19,7 +19,7 @@ import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { mentionedBots, Store, type Message } from "./store.ts";
 import { readCuaConnection } from "./local-computer.ts";
-import { RoutineManager } from "./routines.ts";
+import { RoutineManager, type RoutineRunOn } from "./routines.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -214,7 +214,9 @@ bus.subscribe((event: RuntimeEvent) => {
         ? autoDecision(asker, event.tool, event.summary)
         : null;
       if (settled && asker && event.requestId) {
-        const instance = registry.get(asker.modelSelection.instanceId);
+        const instance = event.providerInstanceId
+          ? registry.get(event.providerInstanceId)
+          : registry.get(asker.modelSelection.instanceId);
         const requestId = event.requestId;
         const { tool, summary } = event;
         // The chip is written only AFTER the provider takes the answer.
@@ -399,6 +401,9 @@ async function startTurn(
     userMessage?: Message;
     /** Routines run in detached tasks; pin the destination for the whole turn. */
     threadId?: string;
+    /** Cloud routines run the whole agent inside the bot's Box VM instead
+     * of merely mounting that VM's computer tools on the MAUS's provider. */
+    runOn?: RoutineRunOn;
     onDispatchError?: (message: string) => void;
   },
 ) {
@@ -412,13 +417,21 @@ async function startTurn(
   // a task takes its name from the first thing you asked it to do
   if (text.trim()) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
-  const instance = registry.get(bot.modelSelection.instanceId);
+  const instance = opts?.runOn === "cloud"
+    ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
+    : registry.get(bot.modelSelection.instanceId);
   if (!instance) {
     throw Object.assign(
-      new Error(`provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`),
+      new Error(
+        opts?.runOn === "cloud"
+          ? "the Cloud VM runner is unavailable — configure Box in App Settings"
+          : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
+      ),
       { status: 409 },
     );
   }
+  const instanceId = instance.instanceId;
+  const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
 
   // an edit hands us its already-branched user message; a plain send appends
   let userMessage = opts?.userMessage;
@@ -473,7 +486,7 @@ async function startTurn(
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
       if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
-      const wants = bot.computer; // 'cloud' | 'local' | 'off' | undefined(auto)
+      const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the MAUS default
       // only drivers that can mount the computer MCP server get the tools
       // (and the prompt about them) — but every bot with a box still gets
       // the live screen preview, which is a UI feature, not a tool
@@ -535,11 +548,11 @@ async function startTurn(
       await instance.adapter.sendTurn({
         threadId,
         text: turnText,
-        model: bot.modelSelection.model,
+        model,
         // a rewound thread never resumes the abandoned branch's session
         // the active task's own session — another task's cursor would
         // resume the wrong conversation and defeat the context bubble
-        resumeCursor: rewound ? undefined : task.resumeCursors[bot.modelSelection.instanceId],
+        resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
         transcript,
         system:
           persona +
@@ -591,11 +604,15 @@ routines = new RoutineManager({
     if (task && bot) broadcast({ kind: "bot", bot: publicBot(bot) });
     return task;
   },
-  startTurn: (botId, threadId, prompt, onDispatchError) =>
-    startTurn(botId, prompt, { threadId, onDispatchError }),
-  interruptTurn: async (botId, threadId) => {
+  startTurn: (botId, threadId, prompt, runOn, onDispatchError) =>
+    startTurn(botId, prompt, { threadId, runOn, onDispatchError }),
+  interruptTurn: async (botId, threadId, runOn) => {
     const bot = store.bot(botId);
-    const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
+    const instance = runOn === "cloud"
+      ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
+      : bot
+        ? registry.get(bot.modelSelection.instanceId)
+        : null;
     await instance?.adapter.interruptTurn(threadId);
   },
 });

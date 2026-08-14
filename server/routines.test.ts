@@ -18,6 +18,7 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
   let bot: "ready" | "busy" | "missing" = "ready";
   let task = 0;
   const started: Array<{ botId: string; threadId: string; prompt: string }> = [];
+  const runOns: string[] = [];
   const emitted: any[] = [];
   const options: RoutineManagerOptions = {
     file: tempFile(),
@@ -25,8 +26,9 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
     emit: (payload) => emitted.push(payload),
     botState: () => bot,
     createTask: () => ({ threadId: `thread-${++task}` }),
-    startTurn: async (botId, threadId, prompt) => {
+    startTurn: async (botId, threadId, prompt, runOn) => {
       started.push({ botId, threadId, prompt });
+      runOns.push(runOn);
     },
   };
   const manager = new RoutineManager(options);
@@ -35,6 +37,7 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
     options,
     emitted,
     started,
+    runOns,
     setNow: (value: number) => (now = value),
     setBot: (value: typeof bot) => (bot = value),
   };
@@ -145,6 +148,28 @@ describe("RoutineManager", () => {
       routineName: "Original brief",
       prompt: "Use the original instructions",
     });
+  });
+
+  it("snapshots and dispatches the selected execution machine", async () => {
+    const h = harness();
+    h.setBot("busy");
+    const routine = h.manager.create({
+      name: "VM review",
+      prompt: "Review the project on the virtual machine",
+      botId: "maus-cloud",
+      runOn: "cloud",
+      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() },
+    });
+    h.setNow(routine.nextRunAt!);
+    await h.manager.tick();
+    h.manager.update(routine.id, { runOn: "maus" });
+
+    h.setBot("ready");
+    await h.manager.tick();
+
+    expect(h.runOns).toEqual(["cloud"]);
+    expect(h.manager.listRuns()[0]).toMatchObject({ runOn: "cloud" });
+    expect(h.manager.listRoutines()[0]).toMatchObject({ runOn: "maus" });
   });
 
   it("folds provider lifecycle events into the calendar receipt", async () => {

@@ -85,6 +85,10 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const botRoutines = state.routines
     .filter((routine) => routine.botId === bot.id)
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || (a.nextRunAt ?? Infinity) - (b.nextRunAt ?? Infinity));
+  const cloudRoutineReady = Boolean(
+    state.config?.box.configured &&
+      state.instances.some((instance) => instance.driverKind === "boxAgent" && instance.snapshot.state === "available"),
+  );
   const activeRoutineRun = state.routineRuns.find(
     (run) => run.botId === bot.id && ["queued", "running", "waiting"].includes(run.status),
   );
@@ -399,13 +403,12 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             )}
           </div>
           <div className="mt-0.5 text-[13px] text-ink-secondary">
-            Schedule work for {bot.name}. Each run becomes its own task
-            {computerDestination ? ` and can use ${computerDestination}.` : "."}
+            Schedule work for {bot.name}. Use its current setup, or run the whole job inside its cloud VM.
           </div>
           {!computerDestination && (
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-[11.5px] leading-relaxed text-warning">
               <Power size={13} className="mt-0.5 shrink-0" />
-              Computer access is off. The routine can still run, but it cannot act on a desktop until you change “Runs on”.
+              MAUS-setup routines will not have desktop access while this is Off. Choose Cloud VM in the routine editor to run the whole job there.
             </div>
           )}
           {activeRoutineRun && (
@@ -430,7 +433,9 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                   <span className={cn("size-1.5 shrink-0 rounded-full", routine.enabled ? "bg-success" : "bg-ink-secondary/40")} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12.5px] font-medium text-ink">{routine.name}</span>
-                    <span className="block truncate text-[10.5px] text-ink-secondary">{routineScheduleLabel(routine)}</span>
+                    <span className="block truncate text-[10.5px] text-ink-secondary">
+                      {routineScheduleLabel(routine)}{routine.runOn === "cloud" ? " · runs on VM" : ""}
+                    </span>
                   </span>
                   <span className="shrink-0 text-[10px] text-ink-secondary">{nextRunLabel(routine.nextRunAt)}</span>
                 </button>
@@ -460,6 +465,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         <RoutineEditor
           bots={[bot]}
           lockedBotId={bot.id}
+          defaultRunOn={cloudRoutineReady ? "cloud" : "maus"}
           onClose={() => setCreatingRoutine(false)}
         />
       )}
