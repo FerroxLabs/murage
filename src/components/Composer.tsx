@@ -1,10 +1,16 @@
 import { track } from "@/lib/analytics";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Clock, Mic, Square, X } from "lucide-react";
 import { useStore, visibleMessages, type Bot, type Group } from "@/state/store";
 import { cn } from "@/lib/cn";
-import { useDraft } from "@/lib/drafts";
+import { useComposerDraft } from "@/lib/drafts";
 import { MausAvatar } from "./Avatar";
+import { ComposerAttachments } from "./ComposerAttachments";
+import {
+  composeMessage,
+  isLongPaste,
+  pasteAttachment,
+} from "@/lib/composer-attachments";
 import { normalizeState } from "@/lib/mascot";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -50,9 +56,15 @@ export function Composer({
   const busyName = group
     ? (members?.find((b) => b.id === group.busyBotId)?.name ?? "A bot")
     : (bot?.name ?? "The bot");
-  // per-thread draft: switching bots unmounts this component, so the text
-  // has to outlive it (see lib/drafts)
-  const [text, setText] = useDraft(group ? `group:${group.id}` : `bot:${bot?.id ?? ""}`);
+  // Per-thread draft: switching bots unmounts this component, so both the
+  // text and its attachment chips have to outlive it (see lib/drafts).
+  const [text, setText, attachments, setAttachments] = useComposerDraft(
+    group ? `group:${group.id}` : `bot:${bot?.id ?? ""}`,
+  );
+  const removeAttachment = useCallback(
+    (id: string) => setAttachments((prev) => prev.filter((a) => a.id !== id)),
+    [setAttachments],
+  );
   const [recording, setRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [caret, setCaret] = useState(0);
@@ -103,12 +115,15 @@ export function Composer({
   // One message may be queued while the bot works; it auto-sends the moment
   // the turn settles. Enter during a turn queues instead of silently dying.
   const [queued, setQueued] = useState<string | null>(null);
+  // a chip on its own is a message: the send control has to appear for it
+  const hasContent = Boolean(text.trim()) || attachments.length > 0;
   const send = () => {
-    const t = text.trim();
+    const t = composeMessage(text, attachments);
     if (!t) return;
     if (busy) {
       setQueued(t);
       setText("");
+      setAttachments([]);
       return;
     }
     if (group) {
@@ -119,6 +134,7 @@ export function Composer({
       track("message_sent", { driver: bot.modelSelection?.instanceId });
     }
     setText("");
+    setAttachments([]);
   };
   useEffect(() => {
     if (!busy && queued) {
@@ -236,6 +252,7 @@ export function Composer({
             />
           </div>
         )}
+        <ComposerAttachments items={attachments} onRemove={removeAttachment} />
         <div className="flex items-end gap-2 rounded-3xl border border-hairline/40 bg-raised/60 py-2 pl-3 pr-2">
         <textarea
           ref={inputRef}
@@ -245,6 +262,21 @@ export function Composer({
             setText(e.target.value);
             setCaret(e.target.selectionStart ?? e.target.value.length);
             setDismissedAt(null);
+          }}
+          onPaste={(e) => {
+            // a wall of text becomes a chip instead of burying the input
+            const pasted = e.clipboardData.getData("text/plain");
+            if (!isLongPaste(pasted)) return;
+            e.preventDefault();
+            // Preserve native paste replacement semantics: if text was
+            // selected, the attachment replaces that selection.
+            const start = e.currentTarget.selectionStart;
+            const end = e.currentTarget.selectionEnd;
+            if (start !== end) {
+              setText(`${text.slice(0, start)}${text.slice(end)}`);
+              setCaret(start);
+            }
+            setAttachments((prev) => [...prev, pasteAttachment(pasted)]);
           }}
           onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
@@ -268,7 +300,7 @@ export function Composer({
               }
             }
             // an empty composer + ArrowUp = edit your last message (like a chat app)
-            if (e.key === "ArrowUp" && !text && onEditLast) {
+            if (e.key === "ArrowUp" && !hasContent && onEditLast) {
               e.preventDefault();
               onEditLast();
               return;
@@ -308,7 +340,7 @@ export function Composer({
             <Square size={14} className="fill-current" />
           </button>
         )}
-        {!busy && !text.trim() && capabilities.dictation.available && (
+        {!busy && !hasContent && capabilities.dictation.available && (
           <button
             onClick={toggleMic}
             aria-label={recording ? "Stop dictation" : "Start dictation"}
@@ -323,7 +355,7 @@ export function Composer({
             <Mic size={18} />
           </button>
         )}
-        {text.trim() && (
+        {hasContent && (
           <button
             onClick={send}
             aria-label={busy ? "Queue message" : "Send message"}
