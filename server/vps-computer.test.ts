@@ -56,7 +56,7 @@ function fixture({
   screenshotCaptureFails = false,
   securityOpt = [],
   memory = 4 * 1024 * 1024 * 1024,
-  restartPolicyName = "",
+  restartPolicyName = "no",
   cgroupnsMode = "private",
 }: {
   image?: boolean;

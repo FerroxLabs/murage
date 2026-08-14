@@ -191,6 +191,7 @@ function dockerSecurityIsHardened(config: {
     .map((cap) => cap.toLowerCase().replace(/^cap_/, ""))
     .sort();
   const unsafeSecurityOption = (config.SecurityOpt ?? []).some((option) => /(?:^|=)(?:unconfined|disable)$/i.test(option));
+  const restartPolicy = config.RestartPolicy?.Name;
   return (
     config.Memory === MEMORY_BYTES &&
     (config.MemorySwap ?? 0) === MEMORY_BYTES &&
@@ -210,7 +211,7 @@ function dockerSecurityIsHardened(config: {
     config.CgroupnsMode === "private" &&
     config.OomKillDisable !== true &&
     config.AutoRemove !== true &&
-    !config.RestartPolicy?.Name
+    (restartPolicy === undefined || restartPolicy === "" || restartPolicy === "no")
   );
 }
 
