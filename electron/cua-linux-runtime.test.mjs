@@ -364,7 +364,9 @@ describe.skipIf(process.platform !== "linux")("Linux CUA opt-in and lifecycle", 
   });
 });
 
-describe("Linux CUA private data", () => {
+// Directory fsync and POSIX mode/symlink guarantees are part of the Linux
+// runtime contract; Windows intentionally rejects directory fsync.
+describe.skipIf(process.platform !== "linux")("Linux CUA private data", () => {
   it("uses strict preference schema and private atomic files", () => {
     const userData = temporaryDirectory();
     const store = createLinuxCuaPreferenceStore({ getUserData: () => userData });
