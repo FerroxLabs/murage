@@ -235,6 +235,8 @@ describe("computer proxy (fake box)", () => {
 
   it("does not verify a different query or an invalid expected URL", async () => {
     browserUrl = "https://example.com/path?step=2#done";
+    rpc({ jsonrpc: "2.0", id: 90, method: "tools/call", params: { name: "observation_metrics", arguments: {} } });
+    const metricsBefore = JSON.parse((await waitFor(90)).result.content[0].text);
     const beforeInvalid = commands.length;
     rpc({
       jsonrpc: "2.0",
@@ -272,9 +274,20 @@ describe("computer proxy (fake box)", () => {
     expect(exact.result.isError).not.toBe(true);
     expect(exact.result.content[0].text).toMatch(/verified/i);
     expect(exact.result.content[0].text).not.toContain("step=2");
+
+    rpc({ jsonrpc: "2.0", id: 91, method: "tools/call", params: { name: "observation_metrics", arguments: {} } });
+    const metricsAfter = JSON.parse((await waitFor(91)).result.content[0].text);
+    expect(metricsAfter.structuredBrowserObservations).toBe(metricsBefore.structuredBrowserObservations);
   });
 
   it("rejects out-of-height crops and fails closed when conversion fails", async () => {
+    rpc({
+      jsonrpc: "2.0",
+      id: 120,
+      method: "tools/call",
+      params: { name: "screenshot", arguments: {} },
+    });
+    await waitFor(120);
     const beforeBounds = commands.length;
     rpc({
       jsonrpc: "2.0",
@@ -306,6 +319,33 @@ describe("computer proxy (fake box)", () => {
     expect(failed.result.content[0].text).toMatch(/crop failed/i);
 
     cropFails = false;
+  });
+
+  it("uses a private Chrome profile, strips URL credentials, and reports redirects", async () => {
+    browserUrl = "https://example.com/landed?private=value#done";
+    const before = commands.length;
+    rpc({
+      jsonrpc: "2.0",
+      id: 130,
+      method: "tools/call",
+      params: {
+        name: "open_url",
+        arguments: {
+          url: "https://user:password@example.com/requested?token=secret#fragment",
+          observe: false,
+        },
+      },
+    });
+    const result = await waitFor(130);
+    const issued = commands.slice(before);
+    expect(issued).toHaveLength(2);
+    expect(issued[0]).toContain('mkdir -p "$HOME/.openmausbot/chrome-profile"');
+    expect(issued[0]).toContain('chmod 700 "$HOME/.openmausbot/chrome-profile"');
+    expect(issued[0]).toContain('--user-data-dir="$HOME/.openmausbot/chrome-profile"');
+    expect(issued[0]).not.toContain("user:password@");
+    expect(issued[0]).toContain("'https://example.com/requested?token=secret#fragment'");
+    expect(result.result.content[0].text).toContain("https://example.com/landed");
+    expect(result.result.content[0].text).not.toMatch(/private|value|token|secret|fragment/);
   });
 
   it("hashes the full frame while treating distinct crops as distinct observations", async () => {

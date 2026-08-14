@@ -86,7 +86,8 @@ export function safeBrowserUrl(value: unknown): string | null {
   const url = new URL(normalized);
   url.search = "";
   url.hash = "";
-  return url.toString().slice(0, 2_048);
+  const safe = url.toString();
+  return safe.length <= 2_048 ? safe : null;
 }
 
 /** Parses Chrome's /json/list response into a small, safe structured observation. */

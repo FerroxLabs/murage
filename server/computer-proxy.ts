@@ -49,8 +49,11 @@ const SHOT_PATH = "/tmp/ogb-shot.jpg";
 const SETTLE_MS = 350;
 /** Gap between batched actions so focus changes land before typing. */
 const ACTION_GAP_MS = 120;
+const CHROME_PROFILE = "$HOME/.openmausbot/chrome-profile";
 const CHROME_DEBUG_FLAGS =
-  "--user-data-dir=/tmp/omb-chrome --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222";
+  `--user-data-dir="${CHROME_PROFILE}" --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222`;
+const CHROME_PROFILE_SETUP =
+  `mkdir -p "${CHROME_PROFILE}" && chmod 700 "${CHROME_PROFILE}"`;
 /** Frames larger than this come back over the files API instead of
  * inline stdout (keeps us clear of the command endpoint's stdout cap). */
 const INLINE_MAX_BYTES = 400_000;
@@ -111,12 +114,12 @@ function metricsText(): string {
   return JSON.stringify(observations.metrics);
 }
 
-async function browserTargets(): Promise<BrowserTarget[]> {
+async function browserTargets(countObservation = true): Promise<BrowserTarget[]> {
   // DevTools stays loopback-only inside the box. Only redacted fields are
   // ever formatted into tool output; comparisonUrl remains internal.
   const out = await runOnBox("curl -sf --max-time 2 http://127.0.0.1:9222/json/list", 5_000);
   const targets = out.ok ? parseBrowserTargets(out.stdout) : [];
-  if (targets.length) observations.noteStructuredObservation();
+  if (countObservation && targets.length) observations.noteStructuredObservation();
   return targets;
 }
 
@@ -135,7 +138,7 @@ async function waitForNavigation(
       observations.noteRetry();
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
-    targets = await browserTargets();
+    targets = await browserTargets(false);
     if (targets.some((target) => target.comparisonUrl === expected)) {
       observations.noteVerification(true);
       return { ok: true, targets };
@@ -698,23 +701,25 @@ async function call(id: unknown, name: string, args: any) {
     const normalized = normalizeBrowserUrl(url);
     const publicUrl = safeBrowserUrl(url);
     if (!normalized || !publicUrl) return text(id, "only valid http(s) URLs", true);
-    const q = shellQuote(url);
+    const q = shellQuote(normalized);
     const observe = wantsFrame(args);
     // launch, then poll for a browser window instead of a blind sleep —
     // a fast page returns in a fraction of the old fixed 3s
     const command = [
       ENV,
       GEOMETRY,
+      CHROME_PROFILE_SETUP,
       `(google-chrome ${CHROME_DEBUG_FLAGS} ${q} || chromium ${CHROME_DEBUG_FLAGS} ${q} || chromium-browser ${CHROME_DEBUG_FLAGS} ${q} || xdg-open ${q}) >/dev/null 2>&1 &`,
       'for i in 1 2 3 4 5 6 7 8 9 10 11 12; do xdotool search --onlyvisible --class "chrom" >/dev/null 2>&1 && break; sleep 0.25; done',
       observe ? captureBlock(600) : "true",
     ].join("; ");
     observations.noteAction();
     const out = await runOnBox(command, 60_000);
-    const verification = await waitForNavigation(url);
+    const verification = await waitForNavigation(normalized, 1);
+    const current = verification.targets.map((target) => target.url).join(", ") || "unavailable";
     const note = verification.ok
       ? `opened and navigation verified: ${publicUrl}`
-      : `opened ${publicUrl}, but structured navigation was not verified`;
+      : `opened ${publicUrl}, but the exact destination was not verified. Current structured state: ${current}`;
     if (!observe) return text(id, note);
     return observed(id, note, await frameFrom(out));
   }

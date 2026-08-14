@@ -40,6 +40,9 @@ describe("computer observation coordinator", () => {
       height: 100,
     });
     expect(normalizeCrop({ x: -1, y: 0, width: 200, height: 100 }, 1280, 720)).toBeNull();
+    expect(normalizeCrop({ x: 0, y: 0, width: 31, height: 100 }, 1280, 720)).toBeNull();
+    expect(normalizeCrop({ x: 0, y: 0, width: 100, height: 31 }, 1280, 720)).toBeNull();
+    expect(normalizeCrop({ x: 0, y: 0, width: "wide", height: 100 }, 1280, 720)).toBeNull();
     expect(normalizeCrop({ x: 1200, y: 0, width: 200, height: 100 }, 1280, 720)).toBeNull();
     expect(normalizeCrop({ x: 0, y: 700, width: 100, height: 50 }, 1280, 720)).toBeNull();
   });
@@ -48,6 +51,7 @@ describe("computer observation coordinator", () => {
     const raw = "https://user:password@example.com/a?token=secret#fragment";
     expect(safeBrowserUrl(raw)).toBe("https://example.com/a");
     expect(normalizeBrowserUrl(raw)).toBe("https://example.com/a?token=secret#fragment");
+    expect(safeBrowserUrl(`https://example.com/${"a".repeat(2_048)}`)).toBeNull();
     expect(parseBrowserTargets(JSON.stringify([
       { id: "one", type: "page", title: " Example page ", url: raw },
       { id: "two", type: "service_worker", url: "https://example.com/worker" },
