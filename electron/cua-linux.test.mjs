@@ -135,77 +135,86 @@ describe.skipIf(process.platform === "win32")("Linux CUA discovery", () => {
     });
   });
 
-  it("accepts the official 0775 layout only for a proven user-private primary group", () => {
-    const root = temporaryDirectory();
-    const releaseDirectory = path.join(root, ".cua-driver", "packages", "releases", "0.19.3");
-    const release = executable(releaseDirectory);
-    const localBin = path.join(root, ".local", "bin");
-    fs.mkdirSync(localBin, { recursive: true, mode: 0o775 });
-    fs.symlinkSync(release, path.join(localBin, "cua-driver"));
-    for (const component of [
-      path.join(root, ".local"),
-      localBin,
-      path.join(root, ".cua-driver"),
-      path.join(root, ".cua-driver", "packages"),
-      path.join(root, ".cua-driver", "packages", "releases"),
-      releaseDirectory,
-      release,
-    ]) {
-      fs.chmodSync(component, 0o775);
-    }
-    const identity = os.userInfo();
-    const lookupPrivateGroup = vi.fn(() => ({
-      exclusive: true,
-      gid: identity.gid,
-      name: identity.username,
-    }));
+  it.skipIf(process.platform !== "linux")(
+    "accepts the official 0775 layout only for a proven user-private primary group",
+    () => {
+      const root = temporaryDirectory();
+      const releaseDirectory = path.join(root, ".cua-driver", "packages", "releases", "0.19.3");
+      const release = executable(releaseDirectory);
+      const localBin = path.join(root, ".local", "bin");
+      fs.mkdirSync(localBin, { recursive: true, mode: 0o775 });
+      fs.symlinkSync(release, path.join(localBin, "cua-driver"));
+      for (const component of [
+        path.join(root, ".local"),
+        localBin,
+        path.join(root, ".cua-driver"),
+        path.join(root, ".cua-driver", "packages"),
+        path.join(root, ".cua-driver", "packages", "releases"),
+        releaseDirectory,
+        release,
+      ]) {
+        fs.chmodSync(component, 0o775);
+      }
+      const identity = os.userInfo();
+      const lookupPrivateGroup = vi.fn(() => ({
+        exclusive: true,
+        gid: identity.gid,
+        name: identity.username,
+      }));
 
-    expect(
-      discoverLinuxCuaDriver({
-        env: { PATH: "" },
-        homeDir: root,
-        currentUid: identity.uid,
-        currentGid: identity.gid,
-        currentUsername: identity.username,
-        lookupPrivateGroup,
-      }),
-    ).toMatchObject({ status: "found", path: release, source: "user-local" });
-    expect(lookupPrivateGroup).toHaveBeenCalledTimes(1);
-  });
+      expect(
+        discoverLinuxCuaDriver({
+          env: { PATH: "" },
+          homeDir: root,
+          currentUid: identity.uid,
+          currentGid: identity.gid,
+          currentUsername: identity.username,
+          lookupPrivateGroup,
+        }),
+      ).toMatchObject({ status: "found", path: release, source: "user-local" });
+      expect(lookupPrivateGroup).toHaveBeenCalledTimes(1);
+    },
+  );
 
-  it("rejects a group-writable executable when the group is shared or unverifiable", () => {
-    const root = temporaryDirectory();
-    const binary = executable(path.join(root, "bin"));
-    fs.chmodSync(binary, 0o720);
-    expect(
-      validateDriverCandidate(binary, {
-        lookupPrivateGroup: () => ({ exclusive: false, reason: "primary-group-shared" }),
-      }),
-    ).toMatchObject({
-      status: "unavailable",
-      reasonCode: "unsafe-driver-permissions",
-      affectedPaths: [binary],
-      permissionReason: "primary-group-shared",
-    });
-  });
+  it.skipIf(process.platform !== "linux")(
+    "rejects a group-writable executable when the group is shared or unverifiable",
+    () => {
+      const root = temporaryDirectory();
+      const binary = executable(path.join(root, "bin"));
+      fs.chmodSync(binary, 0o720);
+      expect(
+        validateDriverCandidate(binary, {
+          lookupPrivateGroup: () => ({ exclusive: false, reason: "primary-group-shared" }),
+        }),
+      ).toMatchObject({
+        status: "unavailable",
+        reasonCode: "unsafe-driver-permissions",
+        affectedPaths: [binary],
+        permissionReason: "primary-group-shared",
+      });
+    },
+  );
 
-  it("contains a failed group lookup and keeps the exact affected path", () => {
-    const root = temporaryDirectory();
-    const binary = executable(path.join(root, "bin"));
-    fs.chmodSync(binary, 0o720);
-    expect(
-      validateDriverCandidate(binary, {
-        lookupPrivateGroup: () => {
-          throw new Error("NSS unavailable");
-        },
-      }),
-    ).toMatchObject({
-      status: "unavailable",
-      reasonCode: "unsafe-driver-permissions",
-      affectedPaths: [binary],
-      permissionReason: "lookup-failed",
-    });
-  });
+  it.skipIf(process.platform !== "linux")(
+    "contains a failed group lookup and keeps the exact affected path",
+    () => {
+      const root = temporaryDirectory();
+      const binary = executable(path.join(root, "bin"));
+      fs.chmodSync(binary, 0o720);
+      expect(
+        validateDriverCandidate(binary, {
+          lookupPrivateGroup: () => {
+            throw new Error("NSS unavailable");
+          },
+        }),
+      ).toMatchObject({
+        status: "unavailable",
+        reasonCode: "unsafe-driver-permissions",
+        affectedPaths: [binary],
+        permissionReason: "lookup-failed",
+      });
+    },
+  );
 
   it("always rejects world-writable paths and reports the exact component", () => {
     const root = temporaryDirectory();
