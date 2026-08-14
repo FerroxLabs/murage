@@ -13,7 +13,7 @@ function modelLabel(instance: InstanceInfo | undefined, model: string): string {
 }
 
 export function ModelPicker({ bot, className }: { bot: Bot; className?: string }) {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, refreshInstances } = useStore();
   const [open, setOpen] = useState(false);
   const [railId, setRailId] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -23,6 +23,13 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
   const railInstance =
     state.instances.find((i) => i.instanceId === (railId ?? selection.instanceId)) ??
     state.instances[0];
+
+  // Opening the picker is the user asking "what can I run?" — re-probe rather
+  // than answer from a snapshot taken at launch, which is stale the moment
+  // they install or sign in to anything.
+  useEffect(() => {
+    if (open) void refreshInstances();
+  }, [open, refreshInstances]);
 
   useEffect(() => {
     if (!open) return;

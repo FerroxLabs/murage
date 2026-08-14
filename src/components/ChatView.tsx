@@ -128,9 +128,11 @@ function ThinkingStrip({ text, active }: { text: string; active: boolean }) {
 
 /** A failed turn: a real error block with a retry, not a truncated pill.
  *
- * A `setup` error — the engine's CLI isn't installed — gets the install
- * instructions instead of a Retry, because retrying spawns the same missing
- * binary and fails identically every time. */
+ * A `setup` error — CLI missing, or installed but not signed in — shows what
+ * to do instead of a Retry, because retrying hits the same wall every time.
+ * Once the engine reports itself fixed the card flips back to Retry, which
+ * (with the on-focus re-probe) happens by itself when the user returns from
+ * the terminal. */
 function ErrorRow({
   message,
   onRetry,
@@ -147,7 +149,8 @@ function ErrorRow({
           <AlertTriangle size={15} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{message}</span>
         </div>
-        {setupInstance ? (
+        {setupInstance &&
+        !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false) ? (
           <EngineSetup instance={setupInstance} className="mt-2 text-ink-secondary" />
         ) : (
           onRetry && (

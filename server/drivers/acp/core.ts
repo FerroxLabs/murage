@@ -487,8 +487,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           } catch (e) {
             if (!state.settled) {
               const message = (e as Error).message;
-              emit({ ...base(threadId, turnId), type: "runtime.error", message });
-              settle(false, message === support.loginNote ? "auth_required" : "rpc_error");
+              // "not signed in" is a setup problem like a missing binary: the
+              // fix is a command in a terminal, not another attempt. Flagging
+              // it lets the error card show the sign-in step.
+              const needsAuth = message === support.loginNote;
+              emit({
+                ...base(threadId, turnId),
+                type: "runtime.error",
+                message,
+                ...(needsAuth ? { setup: true } : {}),
+              });
+              settle(false, needsAuth ? "auth_required" : "rpc_error");
             }
           }
         })();

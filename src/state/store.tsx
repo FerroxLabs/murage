@@ -1173,6 +1173,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Installing a CLI or signing one in happens in a terminal, outside this
+  // window — so the moment the user comes back is exactly when our engine
+  // snapshot is most likely stale. Re-probe on focus, throttled so that
+  // ordinary alt-tabbing doesn't spawn a `--version` call per switch.
+  const lastFocusProbe = useRef(0);
+  useEffect(() => {
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - lastFocusProbe.current < 3000) return;
+      lastFocusProbe.current = now;
+      void refreshInstances();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshInstances]);
+
   const value = useMemo(() => ({ state, dispatch, refreshInstances }), [state, dispatch, refreshInstances]);
   return (
     <StoreContext.Provider value={value}>

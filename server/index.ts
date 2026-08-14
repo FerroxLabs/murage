@@ -12,6 +12,7 @@ import * as box from "./box.ts";
 import * as composio from "./composio.ts";
 import { containerComputerStatus, setupCommands } from "./container-computer.ts";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
+import { resetPathCache } from "./env-path.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -1354,6 +1355,11 @@ const server = createServer(async (req, res) => {
 
     // ── provider instances (model picker) ──
     if (method === "GET" && path === "/api/instances") {
+      // Rescan PATH first: this endpoint is how the app answers "what can I
+      // run?", and the interesting case is a CLI installed since launch.
+      // Windows never pushes PATH changes into a live process, so without
+      // this the answer is frozen at boot and "check again" is a no-op.
+      resetPathCache();
       return json(res, 200, { instances: await registry.describe() });
     }
 
