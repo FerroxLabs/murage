@@ -404,6 +404,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA diagnostics", () => {
     const run = successfulRunner(binary);
     const result = await inspectLinuxCuaDriver({
       platform: "linux",
+      arch: "x64",
       homeDir: path.join(root, "home"),
       env: {
         CUA_DRIVER_PATH: binary,
@@ -433,6 +434,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA diagnostics", () => {
     const run = vi.fn();
     const result = await inspectLinuxCuaDriver({
       platform: "linux",
+      arch: "x64",
       env: { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0" },
       run,
     });
@@ -447,6 +449,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA diagnostics", () => {
     const run = vi.fn();
     const result = await inspectLinuxCuaDriver({
       platform: "linux",
+      arch: "x64",
       env: { DISPLAY: ":0" },
       run,
     });
@@ -463,6 +466,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA diagnostics", () => {
     const run = successfulRunner(binary, { doctor: healthyWaylandDoctor() });
     const result = await inspectLinuxCuaDriver({
       platform: "linux",
+      arch: "x64",
       homeDir: root,
       env: {
         CUA_DRIVER_PATH: binary,
@@ -495,6 +499,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA diagnostics", () => {
     });
     const result = await inspectLinuxCuaDriver({
       platform: "linux",
+      arch: "x64",
       homeDir: root,
       env: { CUA_DRIVER_PATH: binary, XDG_SESSION_TYPE: "x11", DISPLAY: ":0" },
       run,
@@ -529,6 +534,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA diagnostics", () => {
     }));
     const result = await inspectLinuxCuaDriver({
       platform: "linux",
+      arch: "x64",
       homeDir: root,
       env: { CUA_DRIVER_PATH: binary, XDG_SESSION_TYPE: "x11", DISPLAY: ":0" },
       run,

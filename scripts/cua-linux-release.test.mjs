@@ -243,32 +243,35 @@ describe("Linux CUA release staging", () => {
     ).rejects.toThrow("download timed out");
   });
 
-  it("accepts only the exact staged tree and safe directory modes", async () => {
-    const root = temporaryProject();
-    const stage = path.join(root, "stage");
-    const licenses = path.join(stage, "licenses");
-    fs.mkdirSync(licenses, { recursive: true, mode: 0o755 });
-    fs.chmodSync(stage, 0o755);
-    fs.chmodSync(licenses, 0o755);
-    for (const name of ["cua-driver", "cua-cursor-theme", "release.json"]) {
-      fs.writeFileSync(path.join(stage, name), "fixture");
-    }
-    for (const name of [
-      "LICENSE.md",
-      "Inter-OFL-1.1.txt",
-      "THIRD_PARTY_LICENSES.html",
-      "THIRD_PARTY_NOTICES.md",
-      "SBOM.cdx.json",
-    ]) {
-      fs.writeFileSync(path.join(licenses, name), "fixture");
-    }
+  it.skipIf(process.platform === "win32")(
+    "accepts only the exact staged tree and safe directory modes",
+    async () => {
+      const root = temporaryProject();
+      const stage = path.join(root, "stage");
+      const licenses = path.join(stage, "licenses");
+      fs.mkdirSync(licenses, { recursive: true, mode: 0o755 });
+      fs.chmodSync(stage, 0o755);
+      fs.chmodSync(licenses, 0o755);
+      for (const name of ["cua-driver", "cua-cursor-theme", "release.json"]) {
+        fs.writeFileSync(path.join(stage, name), "fixture");
+      }
+      for (const name of [
+        "LICENSE.md",
+        "Inter-OFL-1.1.txt",
+        "THIRD_PARTY_LICENSES.html",
+        "THIRD_PARTY_NOTICES.md",
+        "SBOM.cdx.json",
+      ]) {
+        fs.writeFileSync(path.join(licenses, name), "fixture");
+      }
 
-    await expect(validateStagedLayout(stage)).resolves.toEqual({ licensesDirectory: licenses });
+      await expect(validateStagedLayout(stage)).resolves.toEqual({ licensesDirectory: licenses });
 
-    fs.writeFileSync(path.join(stage, "unexpected.so"), "payload");
-    await expect(validateStagedLayout(stage)).rejects.toThrow("unexpected or missing entries");
-    fs.rmSync(path.join(stage, "unexpected.so"));
-    fs.chmodSync(licenses, 0o775);
-    await expect(validateStagedLayout(stage)).rejects.toThrow("real 0755 directory");
-  });
+      fs.writeFileSync(path.join(stage, "unexpected.so"), "payload");
+      await expect(validateStagedLayout(stage)).rejects.toThrow("unexpected or missing entries");
+      fs.rmSync(path.join(stage, "unexpected.so"));
+      fs.chmodSync(licenses, 0o775);
+      await expect(validateStagedLayout(stage)).rejects.toThrow("real 0755 directory");
+    },
+  );
 });

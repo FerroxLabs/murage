@@ -113,7 +113,7 @@ The SPI in [`server/contracts.ts`](server/contracts.ts) is deliberately small. A
 - Native release changes must update the checked-in Cua license report/SBOM, preserve MIT/OFL/MPL notices, pass the
   malicious-archive tests, and prove identical hashes in `linux-unpacked`, `.deb`, and AppImage artifacts. AppImage
   must additionally prove post-copy hashing in its private `0700` execution stage; never weaken the general path
-  validator to accept its root-owned `0775` SquashFS path.
+  validator to accept a root-owned group-writable SquashFS path when its toolchain emits `0775` rather than `0755`.
 - **Never build command strings for a shell.** No `shell: true`, no spawning through `cmd.exe` with
   quoted strings — model names, personas, and MCP config JSON travel through argv, and cmd.exe
   metacharacter expansion is a real injection class. On Windows, resolve `.cmd` shims to their JS

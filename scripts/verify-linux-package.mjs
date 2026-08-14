@@ -394,14 +394,21 @@ try {
     ["-no-progress", "-offset", offset, "-d", squashRoot, appImage],
     { stdio: ["ignore", "ignore", "inherit"], timeout: 60_000 },
   );
-  requireDirectoryMode(squashRoot, 0o775);
+  const appImageDirectoryMode = lstatSync(squashRoot).mode & 0o777;
+  if (![0o755, 0o775].includes(appImageDirectoryMode)) {
+    fail(
+      `expected AppImage directory mode 755 or 775 for ${squashRoot}, found ${appImageDirectoryMode.toString(8)}`,
+    );
+  }
   const appImageResources = path.join(squashRoot, "resources");
-  // appimagetool normalizes SquashFS directories to root:root 0775. The app
-  // never executes through that path: Electron stages and re-hashes the two
-  // pinned binaries into a fresh 0700 directory first. The AppImage smoke
-  // below proves that packaged path, while this extraction verifies inputs.
+  // Depending on the pinned appimagetool runtime, SquashFS directories are
+  // emitted as root:root 0755 or 0775. Require one mode consistently across
+  // the reviewed resource tree. The app never executes through that path:
+  // Electron stages and re-hashes the two pinned binaries into a fresh 0700
+  // directory first. The AppImage smoke below proves that packaged path,
+  // while this extraction verifies inputs.
   const appImageHashes = verifyCuaResources(appImageResources, "AppImage", {
-    directoryMode: 0o775,
+    directoryMode: appImageDirectoryMode,
     validateRuntimePath: false,
   });
   for (const [unpackedFile, expected] of unpackedCuaHashes) {

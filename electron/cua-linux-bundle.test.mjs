@@ -29,7 +29,7 @@ function fixture() {
   return { root, resourcesPath, source };
 }
 
-describe("AppImage CUA private staging", () => {
+describe.skipIf(process.platform === "win32")("AppImage CUA private staging", () => {
   it("copies exact bytes to a private executable stage and removes only that stage", () => {
     const { root, resourcesPath, source } = fixture();
     const files = {};

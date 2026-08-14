@@ -155,8 +155,9 @@ The reviewed native runtime adds roughly 11–13 MiB to a compressed Ubuntu arti
 requires glibc 2.30 or newer plus the standard Ubuntu X11/XInput/xkbcommon libraries already present on the supported
 Ubuntu 24.04 desktop; the package verifier executes the exact binary from every artifact layout.
 
-AppImage's SquashFS builder normalizes directories to root-owned `0775`, which the normal executable-path policy
-correctly rejects. On AppImage launch, OpenMausBot therefore copies only the two pinned files into a fresh private
+AppImage's pinned SquashFS toolchain can emit root-owned directories as `0755` or `0775`; the package verifier
+requires one of those modes consistently across the reviewed resource tree. Because `0775` is correctly rejected by
+the normal executable-path policy, AppImage launch always copies only the two pinned files into a fresh private
 `0700` temporary directory, verifies both hashes after the copy, executes from there, and removes that directory on
 quit. DEB and unpacked builds keep their package path at `0755` and execute directly. This exception does not relax
 validation for an explicit override, `PATH`, or any other group-writable location.

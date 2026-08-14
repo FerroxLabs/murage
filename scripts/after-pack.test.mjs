@@ -12,7 +12,7 @@ afterEach(() => {
   }
 });
 
-describe("Linux afterPack permissions", () => {
+describe.skipIf(process.platform === "win32")("Linux afterPack permissions", () => {
   it("repairs every packaged CUA ancestor and resource mode", async () => {
     const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "omb-after-pack-"));
     temporaryDirectories.push(appOutDir);
