@@ -79,7 +79,7 @@ describe("augmentedPath", () => {
 
   it.skipIf(process.platform !== "win32")("finds Antigravity installed after launch", () => {
     const previous = process.env.LOCALAPPDATA;
-    const localAppData = join(homedir(), "AppData", "Local");
+    const localAppData = mkdtempSync(join(tmpdir(), "omb-localappdata-"));
     try {
       process.env.LOCALAPPDATA = localAppData;
       const agyBin = join(localAppData, "agy", "bin");
@@ -90,6 +90,7 @@ describe("augmentedPath", () => {
       if (previous === undefined) delete process.env.LOCALAPPDATA;
       else process.env.LOCALAPPDATA = previous;
       resetPathCacheForTests();
+      rmSync(localAppData, { recursive: true, force: true });
     }
   });
 });

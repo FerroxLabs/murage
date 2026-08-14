@@ -97,11 +97,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     if (step !== 1) return;
     let active = true;
+    let latestRequest = 0;
     const refresh = () => {
+      const request = ++latestRequest;
       fetch("/api/instances")
         .then((r) => r.json())
-        .then((d) => active && setInstances(d.instances ?? []))
-        .catch(() => active && setInstances([]));
+        .then((d) => active && request === latestRequest && setInstances(d.instances ?? []))
+        .catch(() => active && request === latestRequest && setInstances([]));
     };
     refresh();
     window.addEventListener("focus", refresh);
