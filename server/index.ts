@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { approvalKey, autoDecision } from "./auto-approve.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
+import { containerComputerStatus, setupCommands } from "./container-computer.ts";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 
@@ -1293,6 +1294,13 @@ const server = createServer(async (req, res) => {
       const fresh = botWithThread(updated);
       broadcast({ kind: "bot", bot: fresh });
       return json(res, 200, { bot: fresh });
+    }
+
+    // what the user's machine can host: which runtime is installed, whether
+    // its daemon is up, and whether the desktop image and container exist
+    if (method === "GET" && path === "/api/local-computer") {
+      const status = await containerComputerStatus();
+      return json(res, 200, { ...status, commands: setupCommands(status.runtime) });
     }
 
     // identity handshake for the packaged app's port fallback: the forked
