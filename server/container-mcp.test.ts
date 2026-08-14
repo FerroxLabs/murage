@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { CONTAINER, CUA_EXECUTABLE, CUA_SOCKET } from "./container-computer.ts";
@@ -12,7 +13,11 @@ afterEach(async () => {
   await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe("Local VM Cua MCP bridge", () => {
+// The fake Docker executable below is a POSIX shell script. The production
+// bridge remains portable; only this byte-for-byte process fixture is gated.
+const posixOnly = describe.skipIf(process.platform === "win32");
+
+posixOnly("Local VM Cua MCP bridge", () => {
   it("passes MCP bytes unchanged to cua-driver mcp over the container runtime", async () => {
     const bin = await mkdtemp(join(tmpdir(), "openmausbot-container-mcp-"));
     temporary.push(bin);
@@ -28,7 +33,7 @@ describe("Local VM Cua MCP bridge", () => {
     const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(
         process.execPath,
-        [new URL("./container-mcp.ts", import.meta.url).pathname, "docker", CONTAINER, CUA_SOCKET],
+        [fileURLToPath(new URL("./container-mcp.ts", import.meta.url)), "docker", CONTAINER, CUA_SOCKET],
         {
           env: { ...process.env, OMB_EXTRA_PATH: bin, NODE_NO_WARNINGS: "1" },
           stdio: ["pipe", "pipe", "pipe"],
