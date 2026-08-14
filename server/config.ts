@@ -15,6 +15,17 @@ export interface AppConfig {
    * catalog with official logos in the plugins marketplace. */
   composio?: { key?: string; apiKey?: string; url?: string };
   box?: { token?: string };
+  /** Voice. `provider` is a slug from server/tts (unknown slugs fall back
+   * to the local voice rather than going silent); `key` is the hosted
+   * provider's credential and is never echoed back; `options` carries
+   * per-provider overrides (model id, API version) so a provider renaming
+   * a model doesn't brick speech until the next release. */
+  tts?: {
+    provider?: string;
+    key?: string;
+    voice?: string;
+    options?: Record<string, string>;
+  };
   /** The person using the app (collected in onboarding, shown in the
    * sidebar). Not a secret — echoed back by GET /api/config. */
   profile?: { name?: string; email?: string };
@@ -50,6 +61,7 @@ export function loadConfig(): AppConfig {
   cfg.xai = { key: process.env.XAI_API_KEY, ...cfg.xai };
   cfg.composio = { key: process.env.COMPOSIO_KEY, ...cfg.composio };
   cfg.box = { token: process.env.BOX_TOKEN, ...cfg.box };
+  cfg.tts = { key: process.env.OMB_TTS_KEY, ...cfg.tts };
   return cfg;
 }
 
@@ -63,7 +75,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   } catch {
     /* first write */
   }
-  for (const key of ["xai", "composio", "box", "profile"] as const) {
+  for (const key of ["xai", "composio", "box", "tts", "profile"] as const) {
     if (patch[key] && typeof patch[key] === "object") {
       disk[key] = { ...(disk[key] as object), ...patch[key] };
     }
