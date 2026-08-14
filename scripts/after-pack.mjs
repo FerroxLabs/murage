@@ -1,13 +1,6 @@
 import { chmod, lstat } from "node:fs/promises";
 import path from "node:path";
-
-const LICENSE_FILES = [
-  "LICENSE.md",
-  "Inter-OFL-1.1.txt",
-  "THIRD_PARTY_LICENSES.html",
-  "THIRD_PARTY_NOTICES.md",
-  "SBOM.cdx.json",
-];
+import { LICENSE_FILES } from "./cua-linux-release.mjs";
 
 async function requireRealDirectory(directory) {
   const details = await lstat(directory);

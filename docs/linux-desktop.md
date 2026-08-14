@@ -239,12 +239,13 @@ The verifier checks `.deb` metadata, desktop identity, the exact Cua resource tr
 directory modes, runtime path policy, and matching binary hashes across all artifacts. The smoke test launches the
 unpacked production app and AppImage without `--no-sandbox` and validates the renderer/preload, embedded health
 endpoint, packaged bundled-driver resolution, strict MCP environment, and process cleanup. It starts the real
-bundled driver under Xvfb/D-Bus to prove
-inspection, private-daemon readiness, and cleanup, then uses a fake explicit override to prove diagnostics,
+bundled driver under Xvfb/D-Bus to prove packaged launch, private-daemon readiness, and cleanup, then uses a fake
+explicit override to prove diagnostics,
 private-daemon readiness, crash invalidation, explicit retry, and clean shutdown in separate Xorg and simulated
 GNOME/Wayland contract lanes. The Wayland lane also requires the opt-in environment and certified health report.
 Its wrapper isolates the temporary D-Bus/AT-SPI runtime so it cannot replace the live desktop session's
-accessibility socket. It is not a substitute for real GNOME Xorg or GNOME Wayland action evidence.
+accessibility socket. Real inspection, input actions, and portal behavior still require evidence from real GNOME
+Xorg and GNOME Wayland sessions; the CI lanes are not a substitute for that evidence.
 
 ## Troubleshooting
 
@@ -268,6 +269,8 @@ installation, run the bundled executable directly in a terminal launched inside 
 ```sh
 echo "$XDG_SESSION_TYPE"  # x11 or wayland
 driver=/opt/OpenMausBot/resources/cua-linux-x64/cua-driver
+export CUA_DRIVER_RS_UPDATE_CHECK=false
+export CUA_DRIVER_RS_TELEMETRY_ENABLED=false
 "$driver" --version      # must be 0.19.3 for this beta
 "$driver" doctor --json
 ```
@@ -281,6 +284,8 @@ On Wayland, also run:
 ```sh
 echo "$XDG_CURRENT_DESKTOP"  # must include GNOME
 gnome-extensions info winrects@cua
+CUA_DRIVER_RS_UPDATE_CHECK=false \
+CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
 CUA_DRIVER_RS_ENABLE_WAYLAND=1 \
   /opt/OpenMausBot/resources/cua-linux-x64/cua-driver doctor --json
 ```

@@ -12,6 +12,7 @@ const {
   cleanupStaleRuntimeDirectories,
   createLinuxCuaPreferenceStore,
   createLinuxCuaRuntime,
+  createUnavailableLinuxRuntime,
   probePrivateDaemon,
   validateDaemonMetadata,
   validateToolSurface,
@@ -187,6 +188,55 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+describe("unavailable Linux CUA runtime", () => {
+  it("fails closed without rejecting any IPC-facing operation", async () => {
+    const persisted = [];
+    const changed = [];
+    const runtime = createUnavailableLinuxRuntime({
+      connectionStore: { persist: (connection) => persisted.push(connection) },
+      onChange: (connection) => changed.push(connection),
+      processId: 1234,
+    });
+
+    for (const operation of ["initialize", "enable", "retry", "disable", "shutdown"]) {
+      await expect(runtime[operation]()).resolves.toMatchObject({
+        mode: "unavailable",
+        status: "unavailable",
+        reasonCode: "bundled-driver-invalid",
+      });
+    }
+    expect(runtime.getStatus()).toEqual({
+      enabled: false,
+      status: "unavailable",
+      reasonCode: "bundled-driver-invalid",
+      message: "The bundled Cua Driver failed integrity validation.",
+      driverPath: undefined,
+      driverVersion: undefined,
+      driverSource: undefined,
+      session: undefined,
+      compositor: undefined,
+      warnings: [],
+    });
+    expect(persisted).toHaveLength(1);
+    expect(changed).toHaveLength(1);
+  });
+
+  it("still returns a typed status if persisting the failure is unavailable", () => {
+    const runtime = createUnavailableLinuxRuntime({
+      connectionStore: {
+        persist() {
+          throw new Error("read-only user data");
+        },
+      },
+    });
+    expect(runtime.getStatus()).toMatchObject({
+      enabled: false,
+      status: "unavailable",
+      reasonCode: "bundled-driver-invalid",
+    });
+  });
 });
 
 // Windows does not provide the POSIX executable and Unix-socket semantics this

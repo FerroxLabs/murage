@@ -437,6 +437,55 @@ function publicRuntimeStatus(connection) {
   };
 }
 
+function createUnavailableLinuxRuntime({
+  connectionStore,
+  onChange = () => {},
+  processId = process.pid,
+  reasonCode = "bundled-driver-invalid",
+  message = "The bundled Cua Driver failed integrity validation.",
+} = {}) {
+  const connection = {
+    schemaVersion: CONNECTION_SCHEMA_VERSION,
+    mode: "unavailable",
+    platform: "linux",
+    enabled: false,
+    status: "unavailable",
+    reasonCode,
+    message,
+    ownerPid: processId,
+  };
+  try {
+    connectionStore?.persist(connection);
+  } catch (error) {
+    console.error("[cua] Failed to persist unavailable Linux runtime state:", error);
+  }
+  onChange(connection);
+
+  return Object.freeze({
+    async initialize() {
+      return connection;
+    },
+    async enable() {
+      return connection;
+    },
+    async retry() {
+      return connection;
+    },
+    async disable() {
+      return connection;
+    },
+    async shutdown() {
+      return connection;
+    },
+    getConnection() {
+      return connection;
+    },
+    getStatus() {
+      return publicRuntimeStatus(connection);
+    },
+  });
+}
+
 function createLinuxCuaRuntime({
   getUserData,
   connectionStore,
@@ -847,6 +896,7 @@ module.exports = {
   cleanupStaleRuntimeDirectories,
   createLinuxCuaPreferenceStore,
   createLinuxCuaRuntime,
+  createUnavailableLinuxRuntime,
   ensurePrivateDirectory,
   probePrivateDaemon,
   probeWaylandHealth,

@@ -16,6 +16,7 @@ const require = createRequire(import.meta.url);
 const { createDisplayMediaGuard, invokeDisplayMediaCallback, selectCaptureSource } = require(
   "./screen-preview.cjs",
 );
+const { STAGE_PREFIX: APPIMAGE_CUA_STAGE_PREFIX } = require("./cua-linux-bundle.cjs");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
@@ -384,7 +385,7 @@ function createWindow() {
           let exactBundledPath = false;
           try {
             exactBundledPath =
-              connection?.driver?.path &&
+              Boolean(connection?.driver?.path) &&
               fs.realpathSync(connection.driver.path) === fs.realpathSync(expectedDriver);
           } catch {}
           result.cuaRuntime = {
@@ -394,7 +395,7 @@ function createWindow() {
               Boolean(process.env.APPIMAGE) &&
               connection?.driver?.path !== expectedDriver &&
               path.basename(path.dirname(connection?.driver?.path ?? "")).startsWith(
-                "openmausbot-cua-linux-x64-",
+                APPIMAGE_CUA_STAGE_PREFIX,
               ),
             driverPath: connection?.driver?.path,
             driverVersion: connection?.driver?.version,

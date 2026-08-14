@@ -179,12 +179,13 @@ describe("local computer descriptor", () => {
       }),
     ).toBeNull();
     expect(decodeLinuxDescriptor({ ...descriptor, toolNames: ["list_apps"] })).toBeNull();
-    const { CUA_DRIVER_RS_TELEMETRY_ENABLED: _missingTelemetry, ...telemetryEnabledEnv } =
-      descriptor.mcp.env;
     expect(
       decodeLinuxDescriptor({
         ...descriptor,
-        mcp: { ...descriptor.mcp, env: telemetryEnabledEnv },
+        mcp: {
+          ...descriptor.mcp,
+          env: { ...descriptor.mcp.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: "true" },
+        },
       }),
     ).toBeNull();
     expect(

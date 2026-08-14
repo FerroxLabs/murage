@@ -22,8 +22,11 @@ async function cleanupRuntime(directory) {
   }
   throw new Error(`[run-linux-package-smoke] could not clean released runtime ${directory}`);
 }
-const appImage = readdirSync(path.join(root, "release")).find((name) => name.endsWith(".AppImage"));
-if (!appImage) throw new Error("[run-linux-package-smoke] missing AppImage artifact");
+const appImages = readdirSync(path.join(root, "release")).filter((name) => name.endsWith(".AppImage"));
+if (appImages.length !== 1) {
+  throw new Error(`[run-linux-package-smoke] expected exactly one AppImage, found ${appImages.length}`);
+}
+const [appImage] = appImages;
 
 for (const executable of [
   path.join(root, "release", "linux-unpacked", "openmausbot"),
@@ -48,12 +51,13 @@ for (const executable of [
   if (bundled.error) throw bundled.error;
   if (bundled.status !== 0) {
     console.error(`[run-linux-package-smoke] bundled runtime kept at ${runtimeDirectory}`);
-    process.exit(bundled.status ?? 1);
+    process.exitCode = bundled.status ?? 1;
+    break;
   }
   await cleanupRuntime(runtimeDirectory);
 }
 
-for (const lane of [
+if (process.exitCode === undefined) for (const lane of [
   { name: "x11", wayland: false, hardDeath: false },
   { name: "wayland", wayland: true, hardDeath: false },
   { name: "x11-hard-death", wayland: false, hardDeath: true },

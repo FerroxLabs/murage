@@ -310,6 +310,9 @@ try {
     if (appImage && existsSync(path.dirname(cuaRuntime.driverPath))) {
       throw new Error("AppImage private CUA stage remained after Electron quit");
     }
+    if (existsSync(marker)) {
+      throw new Error(`packaged app invoked the ambient driver:\n${readFileSync(marker, "utf8")}`);
+    }
     try {
       process.kill(cuaRuntime.daemonPid, 0);
       throw new Error(`packaged CUA daemon remained alive after quit: ${cuaRuntime.daemonPid}`);
@@ -433,14 +436,22 @@ try {
       if (restart.exitCode === null && restart.signalCode === null) {
         throw new Error(`Electron restart did not close normally.\n${restartOutput}`);
       }
+      if (restart.exitCode !== 0) {
+        throw new Error(
+          `Electron restart exited with ${restart.exitCode ?? restart.signalCode}.\n${restartOutput}`,
+        );
+      }
 
-      const restartedInvocations = readFileSync(marker, "utf8")
+      const allDaemons = readFileSync(marker, "utf8")
         .trim()
         .split("\n")
-        .map((line) => JSON.parse(line));
-      const restartedDaemons = restartedInvocations.filter((entry) => entry.args[0] === "serve");
+        .map((line) => JSON.parse(line))
+        .filter((entry) => entry.args[0] === "serve");
+      const restartedDaemons = allDaemons;
       if (restartedDaemons.length !== 2) {
-        throw new Error(`hard-death restart expected two generations, found ${restartedDaemons.length}`);
+        throw new Error(
+          `hard-death restart expected two cumulative generations (pre-kill and restart), found ${restartedDaemons.length}`,
+        );
       }
       const socketPaths = new Set(
         restartedDaemons.map((daemon) => daemon.args[daemon.args.indexOf("--socket") + 1]),

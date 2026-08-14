@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { LICENSE_FILES } from "./cua-linux-release.mjs";
 
 const require = createRequire(import.meta.url);
 const { validateDriverCandidate } = require("../electron/cua-linux.cjs");
@@ -95,6 +96,15 @@ function verifyCompliance(licenses, label) {
   if (components.length !== 339) {
     fail(`${label} SBOM must contain 330 registry packages, 8 Cua packages, and Inter`);
   }
+  const componentRefs = new Set();
+  for (const component of components) {
+    const reference = component["bom-ref"];
+    if (typeof reference !== "string" || reference.length === 0) {
+      fail(`${label} SBOM component has no bom-ref: ${component.name ?? "unknown"}`);
+    }
+    if (componentRefs.has(reference)) fail(`${label} SBOM repeats bom-ref ${reference}`);
+    componentRefs.add(reference);
+  }
   const registry = components.filter((component) => component.group === "crates.io");
   const trycua = components.filter((component) => component.group === "trycua");
   const fonts = components.filter((component) => component.group === "rsms");
@@ -169,7 +179,14 @@ function verifyCompliance(licenses, label) {
   const rootDependency = sbom.dependencies?.find(
     (dependency) => dependency.ref === "pkg:generic/cua-driver-linux-x64@0.19.3",
   );
-  if (new Set(rootDependency?.dependsOn ?? []).size !== 339) {
+  const rootReferences = rootDependency?.dependsOn;
+  const uniqueRootReferences = new Set(rootReferences ?? []);
+  if (
+    !Array.isArray(rootReferences) ||
+    rootReferences.length !== componentRefs.size ||
+    uniqueRootReferences.size !== rootReferences.length ||
+    [...uniqueRootReferences].some((reference) => !componentRefs.has(reference))
+  ) {
     fail(`${label} SBOM root must reference every reviewed component`);
   }
   for (const expected of [
@@ -241,22 +258,23 @@ function verifyCuaResources(resources, label, {
       maxBuffer: 256 * 1024,
     }),
   );
+  const invocationCommand = manifest.mcp_invocation?.command;
+  let invocationPath = null;
+  if (typeof invocationCommand === "string" && invocationCommand.length > 0) {
+    try {
+      invocationPath = realpathSync(invocationCommand);
+    } catch {}
+  }
   if (
     manifest.schema_version !== "1" ||
     manifest.binary_version !== "0.19.3" ||
-    realpathSync(manifest.mcp_invocation?.command ?? "") !== realpathSync(driver) ||
+    invocationPath !== realpathSync(driver) ||
     JSON.stringify(manifest.mcp_invocation?.args) !== JSON.stringify(["mcp"])
   ) {
     fail(`${label} CUA manifest does not match the packaged executable`);
   }
 
-  for (const name of [
-    "LICENSE.md",
-    "Inter-OFL-1.1.txt",
-    "THIRD_PARTY_LICENSES.html",
-    "THIRD_PARTY_NOTICES.md",
-    "SBOM.cdx.json",
-  ]) {
+  for (const name of LICENSE_FILES) {
     requireRegularMode(path.join(licenses, name), 0o644);
     requireContained(licenses, path.join(licenses, name));
   }

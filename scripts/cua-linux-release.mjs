@@ -21,7 +21,7 @@ const run = promisify(execFile);
 const KIB = 1024;
 const MIB = KIB * KIB;
 const TAR_BLOCK_SIZE = 512;
-const LICENSE_FILES = Object.freeze([
+export const LICENSE_FILES = Object.freeze([
   "LICENSE.md",
   "Inter-OFL-1.1.txt",
   "THIRD_PARTY_LICENSES.html",
@@ -281,10 +281,15 @@ async function validateBinaryManifest(binary) {
     },
   });
   const manifest = JSON.parse(stdout);
+  const invocationCommand = manifest.mcp_invocation?.command;
+  const invocationPath =
+    typeof invocationCommand === "string" && invocationCommand.length > 0
+      ? await realpath(invocationCommand).catch(() => null)
+      : null;
   if (
     manifest.schema_version !== "1" ||
     manifest.binary_version !== LINUX_CUA_RELEASE.version ||
-    (await realpath(manifest.mcp_invocation?.command ?? "")) !== (await realpath(binary)) ||
+    invocationPath !== (await realpath(binary)) ||
     JSON.stringify(manifest.mcp_invocation?.args) !== JSON.stringify(["mcp"])
   ) {
     throw new Error("staged CUA Driver returned an incompatible manifest");
@@ -516,6 +521,7 @@ export async function stageLinuxCua({
       await chmod(path.join(temporary, name), expected.mode);
     }
     await mkdir(path.join(temporary, "licenses"), { mode: 0o755 });
+    await chmod(path.join(temporary, "licenses"), 0o755);
     for (const name of LICENSE_FILES) {
       await copyFile(path.join(licenseDirectory, name), path.join(temporary, "licenses", name));
       await chmod(path.join(temporary, "licenses", name), 0o644);

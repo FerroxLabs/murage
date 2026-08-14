@@ -24,7 +24,10 @@ import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createCuaConnectionStore } = require("./cua-connection.cjs");
-const { createLinuxCuaRuntime } = require("./cua-linux-runtime.cjs");
+const {
+  createLinuxCuaRuntime,
+  createUnavailableLinuxRuntime,
+} = require("./cua-linux-runtime.cjs");
 const { cleanupAppImageCuaBundle, stageAppImageCuaBundle } = require("./cua-linux-bundle.cjs");
 
 const INSTALLED_DRIVER = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
@@ -46,24 +49,32 @@ const connectionStore = createCuaConnectionStore({
 
 function ensureLinuxRuntime() {
   if (!linuxRuntime) {
-    let bundledDriverPath;
-    if (app.isPackaged && !process.env.CUA_DRIVER_PATH) {
-      bundledDriverPath = path.join(process.resourcesPath, "cua-linux-x64", "cua-driver");
-      // AppImage's SquashFS builder normalizes directories to root:root 0775.
-      // Never execute through that group-writable path. Copy only the pinned
-      // binaries into a fresh 0700 process-owned directory, then verify their
-      // hashes after the copy. DEB/unpacked paths remain directly executable.
-      if (process.env.APPIMAGE) {
-        linuxBundleStage ??= stageAppImageCuaBundle({ resourcesPath: process.resourcesPath });
-        bundledDriverPath = linuxBundleStage.driverPath;
+    try {
+      let bundledDriverPath;
+      if (app.isPackaged && !process.env.CUA_DRIVER_PATH) {
+        bundledDriverPath = path.join(process.resourcesPath, "cua-linux-x64", "cua-driver");
+        // AppImage builders may normalize the read-only resource tree to 0755
+        // or 0775. Always copy only the pinned binaries to a fresh 0700
+        // process-owned directory and verify their hashes after the copy, so
+        // every AppImage follows the same execution invariant.
+        if (process.env.APPIMAGE) {
+          linuxBundleStage ??= stageAppImageCuaBundle({ resourcesPath: process.resourcesPath });
+          bundledDriverPath = linuxBundleStage.driverPath;
+        }
       }
+      linuxRuntime = createLinuxCuaRuntime({
+        getUserData: () => app.getPath("userData"),
+        connectionStore,
+        bundledDriverPath,
+        onChange: (connection) => stateListener(connection),
+      });
+    } catch (error) {
+      console.error("[cua] Bundled Linux driver failed integrity validation:", error);
+      linuxRuntime = createUnavailableLinuxRuntime({
+        connectionStore,
+        onChange: (connection) => stateListener(connection),
+      });
     }
-    linuxRuntime = createLinuxCuaRuntime({
-      getUserData: () => app.getPath("userData"),
-      connectionStore,
-      bundledDriverPath,
-      onChange: (connection) => stateListener(connection),
-    });
   }
   return linuxRuntime;
 }

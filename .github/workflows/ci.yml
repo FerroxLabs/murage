@@ -68,7 +68,20 @@ jobs:
           sudo chmod 4755 release/linux-unpacked/chrome-sandbox
           test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
       - name: Launch packaged app and verify lifecycle
+        env:
+          OMB_KEEP_SMOKE_DIR: "1"
         run: pnpm smoke:linux-package
+      - name: Upload smoke diagnostics on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: openmausbot-ubuntu-smoke-diagnostics
+          path: |
+            ${{ runner.temp }}/omb-linux-smoke-*
+            ${{ runner.temp }}/omb-linux-smoke-runtime-*
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: always()
         with:
