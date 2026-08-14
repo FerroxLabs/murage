@@ -9,6 +9,11 @@ export type RoutineSchedule =
   | { type: "once"; at: number }
   | { type: "daily"; time: string; weekdays: number[] };
 
+/** `cloud` runs the agent itself inside the bot's Box VM. `maus` keeps
+ * using the provider selected on the MAUS and only borrows its configured
+ * computer tools, if any. */
+export type RoutineRunOn = "maus" | "cloud";
+
 export type RoutineRunStatus =
   | "queued"
   | "running"
@@ -23,6 +28,7 @@ export interface Routine {
   name: string;
   prompt: string;
   botId: string;
+  runOn: RoutineRunOn;
   enabled: boolean;
   schedule: RoutineSchedule;
   durationMinutes: number;
@@ -39,6 +45,7 @@ export interface RoutineRun {
   prompt?: string;
   durationMinutes?: number;
   botId: string;
+  runOn: RoutineRunOn;
   scheduledFor: number;
   status: RoutineRunStatus;
   manual: boolean;
@@ -57,6 +64,7 @@ export interface RoutineInput {
   name: string;
   prompt: string;
   botId: string;
+  runOn?: RoutineRunOn;
   enabled?: boolean;
   schedule: RoutineSchedule;
   durationMinutes?: number;
@@ -78,9 +86,10 @@ export interface RoutineManagerOptions {
     botId: string,
     threadId: string,
     prompt: string,
+    runOn: RoutineRunOn,
     onDispatchError: (message: string) => void,
   ) => Promise<void>;
-  interruptTurn?: (botId: string, threadId: string) => Promise<void>;
+  interruptTurn?: (botId: string, threadId: string, runOn: RoutineRunOn) => Promise<void>;
 }
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
@@ -128,10 +137,13 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
   if (!name) throw new Error("Give the routine a name");
   if (!prompt) throw new Error("Tell the bot what to do");
   if (!botId) throw new Error("Choose a bot");
+  const runOn = input.runOn ?? "maus";
+  if (runOn !== "maus" && runOn !== "cloud") throw new Error("Choose where this routine runs");
   return {
     name,
     prompt,
     botId,
+    runOn,
     enabled: input.enabled !== false,
     schedule: cleanSchedule(input.schedule),
     durationMinutes: Math.min(240, Math.max(15, Math.round(Number(input.durationMinutes) || 30))),
@@ -153,8 +165,12 @@ export class RoutineManager {
     this.now = options.now ?? Date.now;
     try {
       const disk = JSON.parse(readFileSync(this.file, "utf8")) as Partial<RoutineFile>;
-      this.routines = Array.isArray(disk.routines) ? disk.routines : [];
-      this.runs = Array.isArray(disk.runs) ? disk.runs : [];
+      this.routines = Array.isArray(disk.routines)
+        ? disk.routines.map((routine) => ({ ...routine, runOn: routine.runOn ?? "maus" }))
+        : [];
+      this.runs = Array.isArray(disk.runs)
+        ? disk.runs.map((run) => ({ ...run, runOn: run.runOn ?? "maus" }))
+        : [];
     } catch {
       this.routines = [];
       this.runs = [];
@@ -220,6 +236,7 @@ export class RoutineManager {
       name: patch.name ?? routine.name,
       prompt: patch.prompt ?? routine.prompt,
       botId: patch.botId ?? routine.botId,
+      runOn: patch.runOn ?? routine.runOn,
       enabled: patch.enabled ?? routine.enabled,
       schedule: patch.schedule ?? routine.schedule,
       durationMinutes: patch.durationMinutes ?? routine.durationMinutes,
@@ -275,7 +292,7 @@ export class RoutineManager {
       run.finishedAt = this.now();
       run.error = "The assigned bot was deleted";
       this.emitRun(run);
-      if (run.threadId) void this.options.interruptTurn?.(run.botId, run.threadId).catch(() => {});
+      if (run.threadId) void this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "maus").catch(() => {});
       changed = true;
     }
     if (changed) this.save();
@@ -298,7 +315,7 @@ export class RoutineManager {
     run.finishedAt = this.now();
     this.save();
     this.emitRun(run);
-    if (run.threadId) await this.options.interruptTurn?.(run.botId, run.threadId).catch(() => {});
+    if (run.threadId) await this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "maus").catch(() => {});
     queueMicrotask(() => void this.tick());
     return { ...run };
   }
@@ -387,7 +404,7 @@ export class RoutineManager {
             this.failThread(task.threadId, "The routine was deleted before it could start");
             continue;
           }
-          await this.options.startTurn(run.botId, task.threadId, prompt, (message) =>
+          await this.options.startTurn(run.botId, task.threadId, prompt, run.runOn ?? "maus", (message) =>
             this.failThread(task.threadId, message),
           );
         } catch (error) {
@@ -448,6 +465,7 @@ export class RoutineManager {
       prompt: routine.prompt,
       durationMinutes: routine.durationMinutes,
       botId: routine.botId,
+      runOn: routine.runOn ?? "maus",
       scheduledFor,
       status: "queued",
       manual,
