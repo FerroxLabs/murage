@@ -502,8 +502,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [newRoom, setNewRoom] = useState(false);
   const [query, setQuery] = useState("");
 
-  // Esc closes the drawer, mirroring ApiKeys.tsx:75-85. Only bound while the
-  // drawer is open, so it never competes with the panels' own Esc handling.
+  // Esc closes the drawer, mirroring ApiKeys.tsx:75-85. Bound only while the
+  // drawer is open — on mobile, exactly when a bot/room context menu or the
+  // New Room panel can be open on top of it, so the same Escape press closes
+  // them together. Fine, since both directions are "get me out of here."
   useEffect(() => {
     if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -540,7 +542,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         // Scoped with max-md: rather than cancelled with md: on purpose — Tailwind
         // v4 emits the native `translate` property, and any value other than
         // `none` turns this element into a containing block for its `fixed`
-        // descendants. Cancelling with md:translate-x-0 still emits a value, which
+        // descendants. Cancelling it with an `md:` prefix still emits a value, which
         // silently reparents NewRoomPanel's overlay and the "+" menu backdrop on
         // desktop.
         "max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-40",
