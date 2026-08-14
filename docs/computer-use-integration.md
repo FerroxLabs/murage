@@ -40,9 +40,11 @@ Electron main process
 
 **Decision (Milind, 2026-08-12): CUA is the ONLY local desktop-control provider.
 No cliclick, no robotjs/nut.js, no Python computer-server, no fallbacks.**
-Everything that touches the host's local screen/mouse/keyboard goes through the
-validated `cua-driver` binary. This rule does not replace remote/cloud boxes or
-the isolated Local VM provider. Local alternatives evaluated and rejected:
+All local desktop-control and input actions go through the validated
+`cua-driver` binary. Linux screen preview uses the supported Xorg or
+user-initiated XDG portal capture path and is not a control provider. This rule
+does not replace remote/cloud boxes or the isolated Local VM provider. Local
+alternatives evaluated and rejected:
 
 The Ubuntu GNOME beta is an intentional staged exception to the
 zero-install packaging statement: it uses the same official CUA provider but
