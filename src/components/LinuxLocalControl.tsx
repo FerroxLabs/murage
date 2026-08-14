@@ -23,6 +23,7 @@ export function LinuxLocalControl() {
   if (capabilities.host.platform !== "linux") return null;
   const busy = pending !== null || local.status === "checking" || local.status === "starting";
   const ready = local.available;
+  const wayland = capabilities.host.session === "wayland";
 
   const run = async (action: "enable" | "disable" | "retry") => {
     if (!window.ogb?.localControl) return;
@@ -50,7 +51,7 @@ export function LinuxLocalControl() {
             Local control
           </div>
           <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
-            Beta · Ubuntu 24.04 GNOME/Xorg · Cua Driver 0.19.3
+            Beta · Ubuntu 24.04 GNOME/{wayland ? "Wayland" : "Xorg"} · Cua Driver 0.19.3
           </div>
         </div>
         <span
@@ -70,6 +71,7 @@ export function LinuxLocalControl() {
             <span>
               Enabling lets bots you explicitly assign to <strong className="font-medium text-ink">This computer</strong>{" "}
               inspect the active desktop and request mouse or keyboard actions. Every local action asks you first.
+              {wayland && " GNOME may also ask you to allow foreground input for this desktop session."}
             </span>
           </div>
         </div>

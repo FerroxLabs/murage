@@ -22,8 +22,8 @@ export function localComputerDisabledReason({
   }
   if (capabilities.localComputer.available) return null;
   if (capabilities.host.platform === "linux") {
-    if (capabilities.localComputer.reasonCode === "wayland-unsupported") {
-      return "Local control requires a GNOME on Xorg session. Wayland preview remains available.";
+    if (capabilities.localComputer.reasonCode === "wayland-compositor-unsupported") {
+      return "Wayland local control is currently limited to GNOME. Xorg remains available on supported desktops.";
     }
     if (!capabilities.localComputer.enabled) {
       return "Enable the local control beta and complete the Cua Driver checks first.";
