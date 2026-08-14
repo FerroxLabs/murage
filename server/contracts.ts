@@ -9,6 +9,7 @@ export type DriverKind = string;
 export type InstanceId = string;
 export type ThreadId = string;
 export type TurnId = string;
+export type CloudBackend = "box" | "vps";
 
 // ── model selection ────────────────────────────────────────────────────
 // "Which model" is a data value carried on the request, never a service
@@ -102,7 +103,7 @@ export interface SendTurnInput {
     composio?: { url?: string; key: string };
     /** Cloud computer, reached through OpenMausBot's REST-to-MCP adapter. */
     computer?: { kind?: "box"; boxId: string; token: string };
-    /** Direct stdio connection to a Cua Driver MCP server (host or sandbox). */
+    /** Direct stdio connection to a Cua Driver MCP server (host, sandbox, or VPS). */
     localComputer?: { command: string; args: string[]; env: Record<string, string> };
     /** Peer-agent comms: an MCP proxy (list_bots / ask_bot) that routes back
      * through the harness so this bot can message other bots. The harness

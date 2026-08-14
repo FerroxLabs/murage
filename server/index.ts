@@ -19,7 +19,16 @@ import {
   setupCommands,
   type LifecycleAction,
 } from "./container-computer.ts";
-import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
+import {
+  ensureDirs,
+  instanceConfigs,
+  loadConfig,
+  normalizeVpsConfig,
+  saveConfig,
+  vpsSshAlias,
+  EVENTS_DIR,
+  NATIVE_DIR,
+} from "./config.ts";
 import { resetPathCache } from "./env-path.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 
@@ -31,6 +40,7 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { readCuaConnection } from "./local-computer.ts";
 import { RoutineManager, type RoutineRunOn } from "./routines.ts";
+import * as vps from "./vps-computer.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -170,6 +180,7 @@ let routines: RoutineManager | null = null;
 // so only one thread may lease it at a time.
 let activeVmThreadId: string | null = null;
 let localVmLifecycleBusy = false;
+const activeVpsThreads = new Map<string, string>();
 
 bus.subscribe((event: RuntimeEvent) => {
   broadcast({ kind: "runtime", event });
@@ -328,9 +339,14 @@ bus.subscribe((event: RuntimeEvent) => {
     case "turn.completed": {
       if (activeVmThreadId === event.threadId) activeVmThreadId = null;
       if (bot) {
-        store.patchBot(bot.id, { busy: false, unread: true });
-        broadcast({ kind: "bot", bot: store.bot(bot.id) });
-        if (screenPollers.has(bot.id)) {
+        const vpsTurn = activeVpsThreads.get(bot.id) === event.threadId;
+        const settle = () => {
+          if (activeVpsThreads.get(bot.id) === event.threadId) activeVpsThreads.delete(bot.id);
+          if (!store.bot(bot.id)) return;
+          store.patchBot(bot.id, { busy: false, unread: true });
+          broadcast({ kind: "bot", bot: store.bot(bot.id) });
+        };
+        if (vpsTurn && screenPollers.has(bot.id)) {
           // the last live frame becomes a settled inline screen message —
           // the screenshot-in-chat moment. One fresh capture first, so the
           // frame shows the turn's END state (the final tool's poke may
@@ -340,7 +356,18 @@ bus.subscribe((event: RuntimeEvent) => {
             if (frame && store.bot(bot.id)) {
               pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
             }
-          });
+          }).finally(settle);
+        } else {
+          settle();
+          if (screenPollers.has(bot.id)) {
+            // Box behavior remains unchanged: its final preview is best effort
+            // after the turn has settled because the Box lease is independent.
+            void finalScreenFrame(bot.id).then((frame) => {
+              if (frame && store.bot(bot.id)) {
+                pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
+              }
+            });
+          }
         }
       }
       // group busy/unread settle in the group turn engine, which knows
@@ -350,13 +377,13 @@ bus.subscribe((event: RuntimeEvent) => {
   }
 });
 
-// ── live screen: poll the bot's box while it works ────────────────────
+// ── live screen: poll the bot's computer while it works ───────────────
 // Frames stream to clients as SSE {kind:'screen'} (the "Bot's screen"
 // panel); the final frame is folded into the transcript on turn end.
 type Frame = { png: string; mime: string };
 const screenPollers = new Map<
   string,
-  { timer: ReturnType<typeof setInterval> | null; capture: () => Promise<void>; last: Frame | null }
+  { timer: ReturnType<typeof setInterval> | null; capture: (force?: boolean) => Promise<void>; last: Frame | null }
 >();
 
 /** The preview shares the box's single command endpoint with the agent's
@@ -366,8 +393,8 @@ const screenPollers = new Map<
 const SCREEN_POLL_MS = 6000;
 const SCREEN_MIN_GAP_MS = 3000;
 
-function startScreenPoller(botId: string, boxId?: string) {
-  if (screenPollers.has(botId) || !box.boxConfigured(cfg)) return;
+function startScreenPoller(botId: string, capture: () => Promise<{ png: string; format: string }>) {
+  if (screenPollers.has(botId)) return;
   // One capture at a time, shared by the interval, the pokes, and the
   // turn-end grab: awaiting the in-flight promise (rather than dropping the
   // call) is what lets the final frame be the settled one. The min-gap keeps
@@ -377,13 +404,11 @@ function startScreenPoller(botId: string, boxId?: string) {
   let lastAt = 0;
   const entry = {
     timer: null as ReturnType<typeof setInterval> | null,
-    capture: (): Promise<void> => {
-      if (!current && Date.now() - lastAt < SCREEN_MIN_GAP_MS) return Promise.resolve();
+    capture: (force = false): Promise<void> => {
+      if (!current && !force && Date.now() - lastAt < SCREEN_MIN_GAP_MS) return Promise.resolve();
       current ??= (async () => {
         try {
-          // boxId is resolved once per turn — re-resolving per frame cost a
-          // full LIST of the account's boxes
-          const { png, format } = await box.screenshotBox(cfg, botId, boxId);
+          const { png, format } = await capture();
           const frame = { png, mime: format === "jpeg" ? "image/jpeg" : "image/png" };
           entry.last = frame;
           broadcast({ kind: "screen", botId, ...frame });
@@ -425,7 +450,7 @@ async function finalScreenFrame(botId: string): Promise<Frame | null> {
   if (!entry) return null;
   if (entry.timer) clearInterval(entry.timer);
   screenPollers.delete(botId);
-  await entry.capture();
+  await entry.capture(true);
   return entry.last;
 }
 
@@ -526,8 +551,14 @@ async function startTurn(
       const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the MAUS default
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
       const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
-      let previewBoxId: string | null = null;
-      let computerKind: "box" | "vm" | "local" | null = null;
+      // Cloud routines intentionally retain their existing BoxAgent meaning;
+      // the per-bot backend applies to ordinary local-agent turns.
+      const cloudBackend = opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
+      const computerConfig = cloudBackend === "vps"
+        ? { ...cfg, vps: cfg.vps ? { ...cfg.vps } : undefined }
+        : cfg;
+      let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
+      let computerKind: "box" | "vps" | "vm" | "local" | null = null;
 
       // Explicit destinations are strict. In particular, Local VM must never
       // fall through to host CUA and accidentally click on the user's Mac.
@@ -555,9 +586,32 @@ async function startTurn(
         computerKind = "local";
       }
 
+      // A VPS is a local-agent computer mount, never a remote agent runner.
+      // Explicit Cloud may prepare/start it; Auto is read-only and can only
+      // attach to an already-running, verified container.
+      if ((wants === "cloud" || wants === undefined) && cloudBackend === "vps") {
+        const unsupported = vps.vpsDriverError(instance.driverKind, mountsComputerMcp);
+        if (unsupported) throw new Error(unsupported);
+        const remote = wants === "cloud"
+          ? await vps.vpsComputerAction("provision", computerConfig, bot.id)
+          : await vps.reuseVps(computerConfig, bot.id);
+        if (remote) {
+          if (!remote.ready) {
+            if (wants === "cloud") throw new Error(remote.problem ?? "the VPS computer is not ready");
+          } else {
+            integrations.localComputer = vps.vpsComputerMcp(computerConfig, bot.id, remote.container_id ?? undefined);
+            computerKind = "vps";
+            previewCapture = () => vps.vpsComputerScreenshot(computerConfig, bot.id);
+          }
+        }
+        if (wants === "cloud" && !integrations.localComputer) {
+          throw new Error("the VPS computer could not be created or reached");
+        }
+      }
+
       // Cloud is also strict when explicitly selected. Auto (unset) reuses an
       // existing cloud box, then falls back to host CUA without provisioning.
-      if ((wants === "cloud" || wants === undefined) && box.boxConfigured(cfg)) {
+      if ((wants === "cloud" || wants === undefined) && cloudBackend === "box" && box.boxConfigured(cfg)) {
         if (!mountsCloudComputer && wants === "cloud") {
           throw new Error("this model engine cannot use computer tools — choose Claude, an ACP engine, or the Computer engine");
         }
@@ -578,23 +632,28 @@ async function startTurn(
           b = (await box.readyBox(cfg, bot.id).catch(() => null)) ?? b;
         }
         if (b) {
-          previewBoxId = b.id;
+          previewCapture = () => box.screenshotBox(cfg, bot.id, b!.id);
           if (mountsCloudComputer) {
             integrations.computer = { kind: "box", boxId: b.id, token: cfg.box!.token! };
             computerKind = "box";
           }
         }
       }
-      if (wants === "cloud" && !box.boxConfigured(cfg)) {
+      if (wants === "cloud" && cloudBackend === "box" && !box.boxConfigured(cfg)) {
         throw new Error("Cloud box is not configured — add a Box API key or choose Local VM");
       }
-      if (wants === "cloud" && !integrations.computer) {
+      if (wants === "cloud" && cloudBackend === "box" && !integrations.computer) {
         throw new Error("the cloud computer could not be created or reached");
       }
 
       // Auto-only host fallback. Electron owns cua-driver/TCC attribution;
       // the harness only reads its already-running connection descriptor.
-      if (!integrations.computer && !integrations.localComputer && wants === undefined && mountsComputerMcp) {
+      if (
+        !integrations.computer &&
+        !integrations.localComputer &&
+        wants === undefined &&
+        mountsComputerMcp
+      ) {
         const cua = readCuaConnection();
         if (cua) {
           integrations.localComputer = cua;
@@ -630,6 +689,7 @@ async function startTurn(
           ? "You can work with the user's other bots through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
           : "";
 
+      if (computerKind === "vps") activeVpsThreads.set(bot.id, threadId);
       await instance.adapter.sendTurn({
         threadId,
         text: turnText,
@@ -645,6 +705,8 @@ async function startTurn(
             ? " You have a shared, isolated Cua sandbox: a Linux desktop in a container on this machine with no host folders mounted. Use the computer tools for desktop, accessibility, window, and shell work. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully."
             : computerKind === "box" && instance.driverKind !== "boxAgent"
               ? " You have your own cloud computer — use screenshot, click, type_text, open_url and computer_exec whenever a desktop helps. Every action already returns the resulting screen, so don't follow it with screenshot; batch predictable sequences with computer_batch."
+              : computerKind === "vps"
+                ? " You have your own self-hosted remote Linux computer through the official Cua tools. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and act carefully."
               : computerKind === "local"
               ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
               : "") +
@@ -658,9 +720,10 @@ async function startTurn(
       });
       // dispatched: the rewind is spent, and the old cursors are dead
       if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
-      if (previewBoxId) startScreenPoller(bot.id, previewBoxId);
+      if (previewCapture) startScreenPoller(bot.id, previewCapture);
     } catch (e) {
       if (activeVmThreadId === threadId) activeVmThreadId = null;
+      if (activeVpsThreads.get(bot.id) === threadId) activeVpsThreads.delete(bot.id);
       const message = e instanceof Error ? e.message : String(e);
       const failure = store.appendMessage(threadId, {
         role: "bot",
@@ -859,6 +922,7 @@ function configStatus() {
     xai: { configured: Boolean(cfg.xai?.key) },
     composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
     box: { configured: Boolean(cfg.box?.token) },
+    vps: { configured: Boolean(vpsSshAlias(cfg)), sshAlias: vpsSshAlias(cfg) ?? "" },
     // the chosen voice is a setting, not a secret; the key is reported the
     // same configured-or-not way as every other credential
     tts: tts.describeVoice(cfg),
@@ -879,6 +943,7 @@ async function reloadProviders() {
   // forever. Settle anything still marked busy.
   for (const b of store.bots.filter((b) => b.busy)) {
     stopScreenPoller(b.id);
+    activeVpsThreads.delete(b.id);
     const note = store.appendMessage(b.threadId, {
       role: "bot",
       kind: "activity",
@@ -1203,7 +1268,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "PATCH") {
       const body = await readBody(req);
       const patch: Record<string, unknown> = {};
-      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "speakReplies", "voice"] as const) {
+      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "cloudBackend", "color", "mascotExpression", "pinned", "hidden", "speakReplies", "voice"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       if (
@@ -1211,6 +1276,9 @@ const server = createServer(async (req, res) => {
         !["cloud", "vm", "local", "off"].includes(String(body.computer))
       ) {
         return json(res, 400, { error: "computer must be cloud, vm, local, or off" });
+      }
+      if (body.cloudBackend !== undefined && !["box", "vps"].includes(String(body.cloudBackend))) {
+        return json(res, 400, { error: "cloudBackend must be box or vps" });
       }
       if (body.chiefOfStaff !== undefined && typeof body.chiefOfStaff !== "boolean") {
         return json(res, 400, { error: "chiefOfStaff must be true or false" });
@@ -1253,6 +1321,7 @@ const server = createServer(async (req, res) => {
       // a running turn dies with its bot
       await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => {});
       stopScreenPoller(bot.id);
+      activeVpsThreads.delete(bot.id);
       routines!.disableForBot(bot.id);
       store.deleteBot(bot.id);
       for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
@@ -1496,6 +1565,13 @@ const server = createServer(async (req, res) => {
       for (const key of ["xai", "composio", "box", "tts", "profile"] as const) {
         if (body[key] && typeof body[key] === "object") patch[key] = body[key];
       }
+      if (body.vps !== undefined) {
+        try {
+          patch.vps = normalizeVpsConfig(body.vps);
+        } catch (e) {
+          return json(res, 400, { error: e instanceof Error ? e.message : String(e) });
+        }
+      }
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
       // check a box token against the provider before storing it: a
       // rejected token used to save happily and only surface as a 401 in
@@ -1518,7 +1594,7 @@ const server = createServer(async (req, res) => {
       // provider keys change the fleet; a profile or voice edit must not
       // kill in-flight turns with a pointless reload — no driver reads
       // either, and picking a voice mid-turn should be free
-      if (Object.keys(patch).some((k) => k !== "profile" && k !== "tts")) await reloadProviders();
+      if (Object.keys(patch).some((k) => k !== "profile" && k !== "tts" && k !== "vps")) await reloadProviders();
       const status = configStatus();
       broadcast({ kind: "config", ...status });
       return json(res, 200, status);
@@ -1583,14 +1659,42 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/connectors\/([\w-]+)$/);
     if (m && method === "DELETE") return json(res, 200, await composio.removeService(cfg, m[1]));
 
-    // ── the bot's cloud computer (Box) ──
+    // ── the bot's cloud computer (Box or VPS) ──
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer$/);
-    if (m && method === "GET") return json(res, 200, await box.boxStatus(cfg, m[1]));
+    if (m && method === "GET") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      return json(
+        res,
+        200,
+        bot.cloudBackend === "vps" ? { backend: "vps", ...(await vps.vpsComputerStatus(cfg, bot.id)) } : { backend: "box", ...(await box.boxStatus(cfg, bot.id)) },
+      );
+    }
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer\/(provision|join|sleep|exec|screenshot)$/);
     if (m && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
       const botId = m[1];
       const bot = store.bot(botId);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      if (bot.cloudBackend === "vps") {
+        if (m[2] === "join" || m[2] === "exec") {
+          return json(res, 409, { error: "interactive VPS desktop access is not supported yet" });
+        }
+        if (m[2] === "provision" && bot.computer !== "cloud") {
+          return json(res, 409, { error: "Auto mode will not provision a VPS; choose Cloud for this bot first" });
+        }
+        if (m[2] === "sleep" && (bot.busy || activeVpsThreads.has(botId))) {
+          return json(res, 409, { error: "the VPS computer is being used by this bot — interrupt the turn first" });
+        }
+        if (m[2] === "screenshot") return json(res, 200, await vps.vpsComputerScreenshot(cfg, botId));
+        return json(
+          res,
+          200,
+          await vps.vpsComputerAction(m[2] === "provision" ? "provision" : "stop", cfg, botId),
+        );
+      }
       switch (m[2]) {
         case "provision":
           return json(res, 200, await box.provisionBox(cfg, botId, bot.name));

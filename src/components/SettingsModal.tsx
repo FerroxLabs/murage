@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { KeyRound, Monitor, User, Volume2, X } from "lucide-react";
 import { useStore, type AppSettingsSection } from "@/state/store";
-import { ApiKeyRow } from "./ApiKeys";
+import { ApiKeyRow, VpsConnection } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
 import { LocalComputerSection } from "./LocalComputerSection";
 import { Card } from "./SettingsPrimitives";
@@ -203,12 +203,13 @@ export function SettingsModal() {
             {section === "connections" && (
               <Card
                 title="Keys"
-                subtitle="Shared by all bots. Saving a key reloads providers instantly; keys are stored locally and never shown again."
+                subtitle="Shared by all bots. Keys are stored locally and never shown again; the VPS entry is only an SSH config alias."
               >
                 <div className="flex flex-col gap-4">
                   <ApiKeyRow section="composio" />
                   <ApiKeyRow section="composioApi" />
                   <ApiKeyRow section="box" />
+                  <VpsConnection />
                 </div>
               </Card>
             )}

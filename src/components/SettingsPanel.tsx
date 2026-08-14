@@ -42,6 +42,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "description"
         | "notifications"
         | "computer"
+        | "cloudBackend"
         | "color"
         | "mascotExpression"
         | "autoApprove"
@@ -55,6 +56,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
+  const canUseVps = engine?.capabilities?.computerMcp === true && engine.driverKind !== "boxAgent";
   const currentChief = state.bots.find((candidate) => candidate.chiefOfStaff);
 
   useEffect(() => {
@@ -263,6 +265,34 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 </button>
               ))}
             </div>
+            {(!bot.computer || bot.computer === "cloud" || bot.cloudBackend === "vps") && (
+              <div className="mt-3 rounded-lg bg-inset p-3">
+                <div className="text-[12px] font-medium text-ink">Cloud backend</div>
+                <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+                  Choose hosted Box or your SSH-configured Linux VPS. VPS has no interactive desktop tunnel yet.
+                </div>
+                <div className="mt-2 flex overflow-hidden rounded-lg border border-hairline/40">
+                  {(["box", "vps"] as const).map((backend, i) => (
+                    <button
+                      key={backend}
+                      disabled={backend === "vps" && !canUseVps}
+                      title={backend === "vps" && !canUseVps ? "Self-hosted VPS requires Claude or an ACP engine" : undefined}
+                      onClick={() => patch({ cloudBackend: backend })}
+                      className={cn(
+                        "flex-1 py-1.5 text-[12px] capitalize",
+                        i > 0 && "border-l border-hairline/40",
+                        backend === "vps" && !canUseVps && "cursor-not-allowed opacity-40",
+                        (bot.cloudBackend ?? "box") === backend
+                          ? "bg-raised text-ink"
+                          : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
+                      )}
+                    >
+                      {backend === "vps" ? "Self-hosted VPS" : "Box"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">

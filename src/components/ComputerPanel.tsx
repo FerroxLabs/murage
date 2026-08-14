@@ -1,9 +1,10 @@
 // The bot's computer, in the right-side slot. Where it runs decides the
-// whole flow: cloud → provision the box on open (idempotent) and preview
+// whole flow: Box → provision on open (idempotent), VPS → use an existing
+// container in Auto or provision only for explicit Cloud, and preview
 // via SSE frames or a ~4s screenshot poll; local ("This Mac") → frames
 // come from the Electron main process (desktopCapturer over the preload
 // bridge — box endpoints are never touched); off → parked. Auto (unset)
-// prefers the cloud box when one exists, else local inside the app.
+// prefers the selected cloud backend when one exists, else local inside the app.
 import { useEffect, useRef, useState } from "react";
 import {
   CalendarDays,
@@ -38,6 +39,8 @@ type Phase =
   | "ready"
   | "vm"
   | "vm-unavailable"
+  | "vps-unconfigured"
+  | "vps-stopped"
   | "local"
   | "local-unavailable"
   | "off"
@@ -80,7 +83,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const [polledFrame, setPolledFrame] = useState<{ png: string; mime: string } | null>(null);
   const [vmFrame, setVmFrame] = useState<string | null>(null);
   const [localFrame, setLocalFrame] = useState<string | null>(null);
-  const [pending, setPending] = useState<"join" | "sleep" | null>(null);
+  const [pending, setPending] = useState<"join" | "sleep" | "provision" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creatingRoutine, setCreatingRoutine] = useState(false);
   // bumped when a Box API key is saved inline, to re-run the spin-up flow
@@ -94,7 +97,11 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       selectedInstance.driverKind !== "boxAgent",
   );
   const computerToolSupported = selectedInstance?.capabilities?.computerMcp === true;
-  const cloudSupported = computerToolSupported || selectedInstance?.driverKind === "boxAgent";
+  const vpsSupported = Boolean(computerToolSupported && selectedInstance?.driverKind !== "boxAgent");
+  const cloudBackend = bot.cloudBackend ?? "box";
+  const cloudSupported = cloudBackend === "vps"
+    ? vpsSupported
+    : computerToolSupported || selectedInstance?.driverKind === "boxAgent";
   const botRoutines = state.routines
     .filter((routine) => routine.botId === bot.id)
     .sort((a, b) => Number(b.enabled) - Number(a.enabled) || (a.nextRunAt ?? Infinity) - (b.nextRunAt ?? Infinity));
@@ -107,7 +114,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   );
   const computerDestination =
     bot.computer === "cloud"
-      ? "this cloud box"
+      ? cloudBackend === "vps" ? "this self-hosted VPS" : "this cloud box"
       : bot.computer === "vm"
         ? "the Local VM"
       : bot.computer === "local"
@@ -115,11 +122,11 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         : bot.computer === "off"
           ? null
           : phase === "ready"
-            ? "the cloud box selected by Auto"
+            ? cloudBackend === "vps" ? "the self-hosted VPS selected by Auto" : "the cloud box selected by Auto"
             : "this computer selected by Auto";
 
-  // resolve the mode on open; box endpoints are only ever hit on the
-  // cloud path, so local/off can never render a JSON error as an image
+  // Resolve the mode on open. Local and Local VM remain separate from the
+  // cloud backends; a VPS Auto check is read-only.
   useEffect(() => {
     let alive = true;
     setPhase("checking");
@@ -165,7 +172,59 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       setPhase("error");
       return;
     }
+    if (cloudBackend === "vps" && !vpsSupported) {
+      setError("This model engine cannot use a self-hosted VPS. Choose Claude or an ACP engine, or switch the cloud backend to Box.");
+      setPhase("error");
+      return;
+    }
     if (bot.computer !== "cloud" && !capabilitiesReady) return;
+    if (cloudBackend === "vps") {
+      api(`/api/bots/${bot.id}/computer`)
+        .then((status) => {
+          if (!alive) return;
+          const autoLocal = bot.computer !== "cloud" && capabilitiesReady && localAvailable && computerToolSupported;
+          if (!status.configured) {
+            if (autoLocal) setPhase("local");
+            else {
+              setError("Add the VPS SSH config alias in App Settings → Connections.");
+              setPhase("vps-unconfigured");
+            }
+            return;
+          }
+          if (status.ready) {
+            setBoxState(status.container);
+            setPhase("ready");
+            return;
+          }
+          if (bot.computer === "cloud") {
+            setPhase("starting");
+            return api(`/api/bots/${bot.id}/computer/provision`, { method: "POST" }).then((result) => {
+              if (!alive) return;
+              setBoxState(result.container ?? null);
+              if (result.ready) setPhase("ready");
+              else {
+                setError(result.problem ?? "The VPS Cua desktop is not ready yet");
+                setPhase("error");
+              }
+            });
+          }
+          if (autoLocal) {
+            setPhase("local");
+            return;
+          }
+          setBoxState(status.container ?? null);
+          setError(`${status.problem ?? "No ready VPS container"}. Auto will not create or start it; choose Cloud to provision it.`);
+          setPhase(status.container === "stopped" ? "vps-stopped" : "vps-unconfigured");
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setError(e.message);
+          setPhase("error");
+        });
+      return () => {
+        alive = false;
+      };
+    }
     // cloud, or auto (cloud box wins when one exists, else local in-app)
     api(`/api/bots/${bot.id}/computer`)
       .then((status) => {
@@ -194,7 +253,19 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     return () => {
       alive = false;
     };
-  }, [bot.id, bot.computer, retry, capabilitiesReady, localAvailable, vmSupported, computerToolSupported, cloudSupported]);
+  }, [
+    bot.id,
+    bot.computer,
+    retry,
+    capabilitiesReady,
+    localAvailable,
+    vmSupported,
+    computerToolSupported,
+    cloudSupported,
+    cloudBackend,
+    vpsSupported,
+    state.config?.vps?.sshAlias,
+  ]);
 
   // cloud preview: SSE frames win while the bot works; otherwise poll
   const live = state.screens[bot.id];
@@ -289,14 +360,25 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         ? cloudFrame && `data:${cloudFrame.mime};base64,${cloudFrame.png}`
         : null;
 
-  const run = (kind: "join" | "sleep") => {
+  const run = (kind: "join" | "sleep" | "provision") => {
     setPending(kind);
     setError(null);
     api(`/api/bots/${bot.id}/computer/${kind}`, { method: "POST" })
       .then((result) => {
         // the join URL's stream token rotates — always freshly minted, never cached
         if (kind === "join" && result.joinUrl) window.open(result.joinUrl);
-        if (kind === "sleep") setBoxState("archived");
+        if (kind === "provision") {
+          setBoxState(result.container ?? null);
+          if (result.ready) setPhase("ready");
+          else {
+            setError(result.problem ?? "The VPS Cua desktop is not ready yet");
+            setPhase("error");
+          }
+        }
+        if (kind === "sleep") {
+          setBoxState(cloudBackend === "vps" ? "stopped" : "archived");
+          if (cloudBackend === "vps") setPhase("vps-stopped");
+        }
       })
       .catch((e) => setError(e.message))
       .finally(() => setPending(null));
@@ -307,10 +389,16 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     dispatch({ type: "toggleAppSettings", open: true });
   };
 
+  const openConnectionSettings = () => {
+    dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
+  };
+
   const emptyState: Record<Exclude<Phase, "ready" | "local" | "vm">, string> = {
     checking: "Checking…",
     starting: "Starting your bot's computer…",
     unconfigured: "No cloud computer configured",
+    "vps-unconfigured": "No managed VPS computer is configured for this bot",
+    "vps-stopped": "The managed VPS computer is stopped",
     "local-unavailable":
       capabilities.host.platform === "linux"
         ? "Local computer control isn't available on Linux yet. Use a cloud box instead."
@@ -348,6 +436,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             <span>{bot.name}'s screen</span>
             {phase === "local" && <span className="text-[11px]">this computer</span>}
             {phase === "vm" && <span className="text-[11px]">Local VM</span>}
+            {cloudBackend === "vps" && (phase === "ready" || phase === "starting") && <span className="text-[11px]">self-hosted VPS</span>}
         </div>
         <div className="flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-xl bg-card">
           {frameSrc ? (
@@ -388,6 +477,24 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                   Open Local VM setup
                 </button>
               )}
+              {(phase === "vps-unconfigured" || phase === "vps-stopped") && (
+                <button
+                  onClick={openConnectionSettings}
+                  className="mt-1 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
+                >
+                  Open VPS settings
+                </button>
+              )}
+              {phase === "vps-stopped" && bot.computer === "cloud" && (
+                <button
+                  onClick={() => run("provision")}
+                  disabled={pending === "provision"}
+                  className="mt-1 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover disabled:opacity-50"
+                >
+                  {pending === "provision" && <Loader2 size={13} className="mr-1.5 inline animate-spin" />}
+                  Start VPS computer
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -408,23 +515,38 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             />
           </div>
         )}
+        {phase === "vps-unconfigured" && (
+          <div className="mt-3 rounded-xl bg-card p-4">
+            <div className="mb-3 text-[13px] text-ink-secondary">
+              Configure the VPS SSH alias in App Settings → Connections. Auto will reuse an existing managed container but will not create one.
+            </div>
+            <button
+              onClick={openConnectionSettings}
+              className="rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover"
+            >
+              Open VPS settings
+            </button>
+          </div>
+        )}
 
         {/* Cloud-only actions */}
         {phase === "ready" && (
           <div className="mt-3 flex gap-2">
-            <button
-              onClick={() => run("join")}
-              disabled={pending === "join"}
-              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-            >
-              {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <ExternalLink size={14} />}
-              Open desktop
-            </button>
-            {boxState !== "archived" && (
+            {cloudBackend === "box" && (
+              <button
+                onClick={() => run("join")}
+                disabled={pending === "join"}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
+              >
+                {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <ExternalLink size={14} />}
+                Open desktop
+              </button>
+            )}
+            {(cloudBackend === "vps" || boxState !== "archived") && (
               <button
                 onClick={() => run("sleep")}
                 disabled={pending === "sleep"}
-                className="flex items-center justify-center gap-2 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
                 title="Put the computer to sleep"
               >
                 {pending === "sleep" ? <Loader2 size={14} className="animate-spin" /> : <Moon size={14} />}
@@ -440,8 +562,8 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {!bot.computer &&
                 (localAvailable
-                  ? "Auto uses a cloud box when one exists, otherwise this computer. "
-                  : "Auto uses a cloud box when one is configured; otherwise computer use stays off. ")}
+                  ? "Auto uses the selected cloud backend when available, otherwise this computer. "
+                  : "Auto uses the selected cloud backend when configured; otherwise computer use stays off. ")}
               Pick where this bot's computer lives. <b className="text-ink">Local VM</b> is a Cua-controlled Linux desktop
               in a container on this machine — free and separate from your own desktop. Set it up in App
               Settings → Local VM.
@@ -449,7 +571,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
             {(
               [
-                ["cloud", "Cloud box"],
+                ["cloud", cloudBackend === "vps" ? "Cloud VPS" : "Cloud box"],
                 ["vm", "Local VM"],
                 ["local", "This computer"],
                 ["off", "Off"],
@@ -495,6 +617,35 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
               })()
             ))}
           </div>
+          {(!bot.computer || bot.computer === "cloud" || cloudBackend === "vps") && (
+            <div className="mt-3 rounded-lg bg-inset p-3">
+              <div className="text-[12px] font-medium text-ink">Cloud backend</div>
+              <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+                Box keeps the existing hosted flow. VPS uses your SSH-configured Linux Docker host; it has no Open desktop tunnel yet.
+              </div>
+              <div className="mt-2 flex overflow-hidden rounded-lg border border-hairline/40">
+                {(["box", "vps"] as const).map((backend, i) => {
+                  const disabled = backend === "vps" && !vpsSupported;
+                  return (
+                    <button
+                      key={backend}
+                      disabled={disabled}
+                      title={disabled ? "Self-hosted VPS requires Claude or an ACP engine" : undefined}
+                      onClick={() => dispatch({ type: "updateBot", botId: bot.id, patch: { cloudBackend: backend } })}
+                      className={cn(
+                        "flex-1 py-1.5 text-[12px] capitalize",
+                        i > 0 && "border-l border-hairline/40",
+                        disabled && "cursor-not-allowed opacity-40",
+                        cloudBackend === backend ? "bg-raised text-ink" : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
+                      )}
+                    >
+                      {backend === "vps" ? "Self-hosted VPS" : "Box"}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Routines */}

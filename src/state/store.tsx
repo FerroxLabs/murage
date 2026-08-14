@@ -111,6 +111,8 @@ export interface Bot {
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "off";
+  /** Which cloud computer backs `computer: "cloud"`; absent = Box. */
+  cloudBackend?: "box" | "vps";
   /** auto mode: the bot approves its own tool permissions */
   autoApprove?: boolean;
   /** tools this bot may always use without asking */
@@ -160,6 +162,7 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
+  vps?: { configured: boolean; sshAlias: string };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
    * never echoed back. */
@@ -302,6 +305,7 @@ type Action =
           | "description"
           | "notifications"
           | "computer"
+          | "cloudBackend"
           | "color"
           | "mascotExpression"
           | "autoApprove"
@@ -922,6 +926,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   notifications: source.notifications,
                   modelSelection: source.modelSelection,
                   ...(source.computer ? { computer: source.computer } : {}),
+                  ...(source.cloudBackend ? { cloudBackend: source.cloudBackend } : {}),
                 }),
               }).then(({ bot: patched }) =>
                 rawDispatch({ type: "botAdded", bot: { ...bot, ...patched, messages: bot.messages } }),
@@ -1180,6 +1185,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               xai: frame.xai,
               composio: frame.composio,
               box: frame.box,
+              vps: frame.vps,
               tts: frame.tts,
               profile: frame.profile,
             },

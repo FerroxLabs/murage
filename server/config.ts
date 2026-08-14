@@ -15,6 +15,8 @@ export interface AppConfig {
    * catalog with official logos in the plugins marketplace. */
   composio?: { key?: string; apiKey?: string; url?: string };
   box?: { token?: string };
+  /** A named host from the user's SSH config. Authentication stays with SSH. */
+  vps?: { sshAlias?: string };
   /** Voice (ElevenLabs). `key` is the credential and is never echoed back;
    * `voice` is the chosen voice id, which is a setting, not a secret. */
   tts?: { key?: string; voice?: string };
@@ -22,6 +24,30 @@ export interface AppConfig {
    * sidebar). Not a secret — echoed back by GET /api/config. */
   profile?: { name?: string; email?: string };
   instances?: InstanceConfigMap;
+}
+
+const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+
+export function isValidSshAlias(value: unknown): value is string {
+  return typeof value === "string" && SSH_ALIAS.test(value);
+}
+
+/** Keep the persisted VPS shape deliberately smaller than an SSH connection. */
+export function normalizeVpsConfig(raw: unknown): { sshAlias?: string } {
+  if (raw === undefined || raw === null) return {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("vps must be an object containing an SSH config alias");
+  }
+  const alias = (raw as Record<string, unknown>).sshAlias;
+  if (alias === undefined || alias === "") return {};
+  if (!isValidSshAlias(alias)) {
+    throw new Error("vps.sshAlias must be a simple SSH config alias (letters, numbers, dot, dash, or underscore)");
+  }
+  return { sshAlias: alias };
+}
+
+export function vpsSshAlias(cfg: AppConfig): string | null {
+  return isValidSshAlias(cfg.vps?.sshAlias) ? cfg.vps.sshAlias : null;
 }
 
 // OMB_DATA_DIR isolates test/soak rigs from the user's real fleet.
@@ -72,6 +98,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
       disk[key] = { ...(disk[key] as object), ...patch[key] };
     }
   }
+  if (patch.vps !== undefined) disk.vps = normalizeVpsConfig(patch.vps);
   mkdirSync(DATA_DIR, { recursive: true });
   writeFileAtomic(p, JSON.stringify(disk, null, 2));
 }
