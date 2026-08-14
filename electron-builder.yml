@@ -18,6 +18,10 @@ directories:
   buildResources: build
   output: release
 
+# electron-builder makes copied directories group-writable by default. The
+# Linux CUA trust boundary requires root-owned package ancestors to be 0755.
+afterPack: ./scripts/after-pack.mjs
+
 # The app is three self-contained pieces, none needing node_modules at
 # runtime: the Electron main/preload (plain .mjs/.cjs), the built UI
 # (Vite → ui/), and the compiled harness server (tsc → server/), both
@@ -126,6 +130,11 @@ linux:
   maintainer: Milind Soni <46266943+milind-soni@users.noreply.github.com>
   vendor: OpenMausBot
   syncDesktopName: true
+  # The reviewed x64 CLI runtime is staged before packaging and remains
+  # outside ASAR so executable modes and adjacent sidecars are preserved.
+  extraResources:
+    - from: dist-native/cua-linux-x64
+      to: cua-linux-x64
   desktop:
     entry:
       Name: OpenMausBot
