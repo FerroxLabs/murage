@@ -290,6 +290,9 @@ export function createAcpDriver(support) {
                     }
                 };
                 let buf = "";
+                // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
+                // multibyte characters that straddle two reads and corrupts the text
+                child.stdout.setEncoding("utf8");
                 child.stdout.on("data", (chunk) => {
                     buf += chunk;
                     let nl;

@@ -54,7 +54,7 @@ function askSummary(ask) {
     const text = JSON.stringify(input);
     return text === "{}" ? (ask.tool ?? "tool") : text.slice(0, 200);
 }
-function permissionSocketPath(threadId) {
+export function permissionSocketPath(threadId) {
     const tag = threadId.replace(/[^\w-]/g, "").slice(0, 8);
     return brokerSocketPath(DATA_DIR, tag);
 }
@@ -105,7 +105,12 @@ function createPermissionBroker(opts) {
             }
         });
     });
-    server.on("error", () => { });
+    // A broker that never came up used to be silent — every approval then
+    // timed out into a deny nobody could explain. Keep the turn fail-closed,
+    // but leave an actionable diagnostic.
+    server.on("error", (error) => {
+        console.error(`permission broker unavailable on ${opts.socketPath}: ${error.message}`);
+    });
     server.listen(opts.socketPath);
     return {
         answer(askId, behavior, message) {
@@ -376,6 +381,9 @@ export const ClaudeDriver = {
                 }
             };
             let buf = "";
+            // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
+            // multibyte characters that straddle two reads and corrupts the text
+            child.stdout.setEncoding("utf8");
             child.stdout.on("data", (chunk) => {
                 buf += chunk;
                 let nl;

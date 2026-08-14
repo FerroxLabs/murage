@@ -4,17 +4,21 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { approvalKey, autoDecision } from "./auto-approve.js";
 import * as box from "./box.js";
 import * as composio from "./composio.js";
+import { containerComputerStatus, setupCommands } from "./container-computer.js";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.js";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.js";
 import { EventBus } from "./harness/bus.js";
 import { ProviderRegistry } from "./harness/registry.js";
 import { mentionedBots, Store } from "./store.js";
+import * as tts from "./tts/index.js";
+import { narrateTool, toUtterances } from "./tts/speech-text.js";
+import { readCuaConnection } from "./local-computer.js";
+import { RoutineManager } from "./routines.js";
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
 const MIME = {
@@ -105,6 +109,12 @@ let bootSelection = { instanceId: "claude", model: "claude-sonnet-5" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
+const publicBot = (bot) => ({
+    ...bot,
+    messages: store.messagesFor(bot.threadId),
+    activeLeafId: store.activeLeaf(bot.threadId),
+    tasks: store.tasks(bot.id).map(({ resumeCursors, ...task }) => task),
+});
 // ── SSE fan-out to clients ─────────────────────────────────────────────
 const sseClients = new Set();
 function broadcast(payload) {
@@ -121,13 +131,18 @@ function broadcast(payload) {
 // ── server-side event folding (upstream's ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript
 // and every client view are projections of it.
-const toolMessageByItem = new Map(); // itemId -> messageId
-const askMessageByRequest = new Map(); // requestId -> messageId
+// keyed by `${threadId}:${itemId}` / `${threadId}:${requestId}` — provider
+// item/request ids are only unique within a thread, so two bots acting at
+// once can collide on a bare id and patch each other's messages.
+const toolMessageByItem = new Map(); // threadId:itemId -> messageId
+const askMessageByRequest = new Map(); // threadId:requestId -> messageId
 // Group threads: the fold needs to know WHO is talking — the turn engine
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map();
+let routines = null;
 bus.subscribe((event) => {
     broadcast({ kind: "runtime", event });
+    routines?.handleRuntimeEvent(event);
     const bot = store.botByThread(event.threadId);
     const group = bot ? undefined : store.groupByThread(event.threadId);
     if (!bot && !group)
@@ -141,7 +156,7 @@ bus.subscribe((event) => {
     switch (event.type) {
         case "session.started":
             if (bot && event.sessionId && event.providerInstanceId) {
-                store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId);
+                store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId, event.threadId);
             }
             break;
         case "item.completed":
@@ -149,16 +164,20 @@ bus.subscribe((event) => {
                 pushMessage({ role: "bot", kind: "text", text: event.text });
             }
             else if (event.itemType === "tool" && event.itemId) {
-                const messageId = toolMessageByItem.get(event.itemId);
+                const itemKey = `${event.threadId}:${event.itemId}`;
+                const messageId = toolMessageByItem.get(itemKey);
                 let toolName = "tool";
                 if (messageId) {
-                    toolName = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool";
+                    // the whole tool object is replaced, so carry `spoken` across —
+                    // dropping it here would silently un-narrate every completed tool
+                    const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool;
+                    toolName = existing?.name ?? "tool";
                     const patched = store.patchMessage(event.threadId, messageId, {
-                        tool: { name: toolName, ok: event.ok },
+                        tool: { name: toolName, ok: event.ok, spoken: existing?.spoken },
                     });
                     if (patched)
                         broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
-                    toolMessageByItem.delete(event.itemId);
+                    toolMessageByItem.delete(itemKey);
                 }
                 // the bot just acted ON ITS SCREEN — refresh the preview now. Only
                 // computer tools can change the screen, and each capture competes
@@ -175,9 +194,17 @@ bus.subscribe((event) => {
                 // appends a richer "Messaged @X" chip linking to the channel
                 if (event.title?.endsWith("__ask_bot"))
                     break;
-                const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
+                const name = event.title ?? "tool";
+                // narration is folded in here, once, so call mode can read the
+                // chip aloud without re-deriving it — and so the phrase a user
+                // hears and the chip they see can never drift apart
+                const message = pushMessage({
+                    role: "bot",
+                    kind: "activity",
+                    tool: { name, spoken: narrateTool(name) ?? undefined },
+                });
                 if (event.itemId)
-                    toolMessageByItem.set(event.itemId, message.id);
+                    toolMessageByItem.set(`${event.threadId}:${event.itemId}`, message.id);
             }
             break;
         case "request.opened": {
@@ -191,7 +218,9 @@ bus.subscribe((event) => {
                 ? autoDecision(asker, event.tool, event.summary)
                 : null;
             if (settled && asker && event.requestId) {
-                const instance = registry.get(asker.modelSelection.instanceId);
+                const instance = event.providerInstanceId
+                    ? registry.get(event.providerInstanceId)
+                    : registry.get(asker.modelSelection.instanceId);
                 const requestId = event.requestId;
                 const { tool, summary } = event;
                 // The chip is written only AFTER the provider takes the answer.
@@ -225,7 +254,7 @@ bus.subscribe((event) => {
                                 held: "Auto mode couldn't answer this one.",
                             },
                         });
-                        askMessageByRequest.set(requestId, card.id);
+                        askMessageByRequest.set(`${event.threadId}:${requestId}`, card.id);
                     }
                 })();
                 break;
@@ -247,11 +276,11 @@ bus.subscribe((event) => {
                 },
             });
             if (event.requestId)
-                askMessageByRequest.set(event.requestId, message.id);
+                askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
             break;
         }
         case "request.resolved": {
-            const messageId = event.requestId ? askMessageByRequest.get(event.requestId) : null;
+            const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
             if (messageId) {
                 const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
                 if (existing?.card && !existing.card.answered) {
@@ -262,7 +291,7 @@ bus.subscribe((event) => {
                         broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
                 }
                 if (event.requestId)
-                    askMessageByRequest.delete(event.requestId);
+                    askMessageByRequest.delete(`${event.threadId}:${event.requestId}`);
             }
             break;
         }
@@ -366,40 +395,6 @@ async function finalScreenFrame(botId) {
     await entry.capture();
     return entry.last;
 }
-// Where Electron's app.getPath("userData") lands, per platform — the
-// hardcoded macOS path found nothing anywhere else, and threw the
-// non-ENOENT errors into the same silent catch.
-// `||`, not `??`: a set-but-empty APPDATA/XDG_CONFIG_HOME would otherwise
-// join into a RELATIVE path resolved against the server's cwd — the same
-// silent ENOENT this function exists to stop. Electron ignores empty values
-// the same way.
-function userDataRoot() {
-    if (process.platform === "win32")
-        return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-    if (process.platform === "darwin")
-        return join(homedir(), "Library", "Application Support");
-    return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-}
-// Local computer-use contract written by Electron main on startup
-// (Electron's userData dir: ~/Library/Application Support on macOS,
-// %APPDATA% on Windows — <dir>/cua-connection.json). Read fresh each turn —
-// Electron may restart or permissions may change.
-function readCuaConnection() {
-    // new name first; pre-rename desktop builds used the old directory
-    for (const dir of ["OpenMausBot", "openmausbot", "OpenGrokBot", "opengrokbot"]) {
-        try {
-            const p = join(userDataRoot(), dir, "cua-connection.json");
-            const conn = JSON.parse(readFileSync(p, "utf8"));
-            if (!conn || conn.mode === "unavailable" || !conn.mcpCommand)
-                continue;
-            return { command: conn.mcpCommand, args: conn.mcpArgs ?? ["mcp"], env: conn.mcpEnv ?? {} };
-        }
-        catch {
-            /* try the next location */
-        }
-    }
-    return null;
-}
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
 async function startTurn(botId, text, opts) {
     const bot = store.bot(botId);
@@ -407,21 +402,34 @@ async function startTurn(botId, text, opts) {
         throw Object.assign(new Error("no such bot"), { status: 404 });
     if (bot.busy)
         throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
+    const threadId = opts?.threadId ?? bot.threadId;
+    const task = store.taskByThread(bot.id, threadId);
+    if (!task)
+        throw Object.assign(new Error("no such task"), { status: 404 });
     const commsDepth = opts?.commsDepth ?? 0;
-    const instance = registry.get(bot.modelSelection.instanceId);
+    // a task takes its name from the first thing you asked it to do
+    if (text.trim())
+        store.titleTaskFromFirstMessage(bot.id, text, threadId);
+    const instance = opts?.runOn === "cloud"
+        ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
+        : registry.get(bot.modelSelection.instanceId);
     if (!instance) {
-        throw Object.assign(new Error(`provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`), { status: 409 });
+        throw Object.assign(new Error(opts?.runOn === "cloud"
+            ? "the Cloud VM runner is unavailable — configure Box in App Settings"
+            : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`), { status: 409 });
     }
+    const instanceId = instance.instanceId;
+    const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
     // an edit hands us its already-branched user message; a plain send appends
     let userMessage = opts?.userMessage;
     if (!userMessage) {
-        userMessage = store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
-        broadcast({ kind: "message", threadId: bot.threadId, message: userMessage });
+        userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+        broadcast({ kind: "message", threadId, message: userMessage });
     }
     // transcript for API-backed drivers: settled text turns on the ACTIVE
     // branch only — abandoned forks never reach the model
     const transcript = store
-        .activePath(bot.threadId)
+        .activePath(threadId)
         .filter((m) => m.kind === "text" && m.text && m.id !== userMessage.id)
         .slice(-40)
         .map((m) => ({ role: m.role === "user" ? "user" : "assistant", text: m.text }));
@@ -431,7 +439,7 @@ async function startTurn(botId, text, opts) {
     // inline (transcript-replay drivers get it via transcript). The flag is
     // cleared only once the turn is actually dispatched — clearing it here
     // would cost the next attempt its history if this dispatch fails.
-    const rewound = Boolean(bot.rewound);
+    const rewound = threadId === bot.threadId && Boolean(bot.rewound);
     const turnText = rewound && instance.driverKind !== "grok" && transcript.length
         ? [
             "[The user rewound this conversation (edited a message or switched to another version). Everything before this point was replaced by the following history:]",
@@ -460,7 +468,7 @@ async function startTurn(botId, text, opts) {
             const integrations = {};
             if (cfg.composio?.key)
                 integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
-            const wants = bot.computer; // 'cloud' | 'local' | 'off' | undefined(auto)
+            const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the MAUS default
             // only drivers that can mount the computer MCP server get the tools
             // (and the prompt about them) — but every bot with a box still gets
             // the live screen preview, which is a UI feature, not a tool
@@ -515,11 +523,13 @@ async function startTurn(botId, text, opts) {
                 ? mentionedBots(text, store.bots.filter((b) => b.id !== bot.id))
                 : [];
             await instance.adapter.sendTurn({
-                threadId: bot.threadId,
+                threadId,
                 text: turnText,
-                model: bot.modelSelection.model,
+                model,
                 // a rewound thread never resumes the abandoned branch's session
-                resumeCursor: rewound ? undefined : bot.resumeCursors[bot.modelSelection.instanceId],
+                // the active task's own session — another task's cursor would
+                // resume the wrong conversation and defeat the context bubble
+                resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
                 transcript,
                 system: persona +
                     (integrations.computer && instance.driverKind !== "boxAgent"
@@ -545,17 +555,46 @@ async function startTurn(botId, text, opts) {
         }
         catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            const failure = store.appendMessage(bot.threadId, {
+            const failure = store.appendMessage(threadId, {
                 role: "bot",
                 kind: "activity",
                 tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
             });
-            broadcast({ kind: "message", threadId: bot.threadId, message: failure });
+            broadcast({ kind: "message", threadId, message: failure });
             store.patchBot(bot.id, { busy: false });
             broadcast({ kind: "bot", bot: store.bot(bot.id) });
+            opts?.onDispatchError?.(message);
         }
     })();
 }
+// ── routines: persisted definitions → detached bot tasks ───────────────
+// The scheduler owns timing and receipts; the existing harness remains the
+// only owner of provider sessions, approvals, tools, computers and messages.
+routines = new RoutineManager({
+    emit: broadcast,
+    botState: (botId) => {
+        const bot = store.bot(botId);
+        return !bot ? "missing" : bot.busy ? "busy" : "ready";
+    },
+    createTask: (botId, title) => {
+        const task = store.createTask(botId, title, false);
+        const bot = store.bot(botId);
+        if (task && bot)
+            broadcast({ kind: "bot", bot: publicBot(bot) });
+        return task;
+    },
+    startTurn: (botId, threadId, prompt, runOn, onDispatchError) => startTurn(botId, prompt, { threadId, runOn, onDispatchError }),
+    interruptTurn: async (botId, threadId, runOn) => {
+        const bot = store.bot(botId);
+        const instance = runOn === "cloud"
+            ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
+            : bot
+                ? registry.get(bot.modelSelection.instanceId)
+                : null;
+        await instance?.adapter.interruptTurn(threadId);
+    },
+});
+routines.start();
 // ── config hot-reload ─────────────────────────────────────────────────
 // ── group turn engine ──────────────────────────────────────────────────
 // The Buzz rule: in a room, a bot replies only when @mentioned. Mentioned
@@ -708,6 +747,9 @@ function configStatus() {
         xai: { configured: Boolean(cfg.xai?.key) },
         composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
         box: { configured: Boolean(cfg.box?.token) },
+        // the chosen voice is a setting, not a secret; the key is reported the
+        // same configured-or-not way as every other credential
+        tts: tts.describeVoice(cfg),
         // not a secret — the sidebar shows it
         profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
     };
@@ -743,20 +785,41 @@ function json(res, status, body) {
 function readBody(req) {
     return new Promise((resolve, reject) => {
         let data = "";
+        let bytes = 0;
+        let done = false;
+        const fail = (status, msg) => {
+            if (done)
+                return;
+            done = true;
+            const err = Object.assign(new Error(msg), { status });
+            reject(err);
+        };
         req.on("data", (c) => {
+            if (done)
+                return;
+            bytes += typeof c === "string" ? Buffer.byteLength(c) : c.length;
+            if (bytes > 1_000_000) {
+                // Keep draining the socket, but stop retaining attacker-controlled
+                // bytes. Destroying the request here prevents the caller from
+                // receiving the useful 413 response.
+                return fail(413, "body too large");
+            }
             data += c;
-            if (data.length > 1_000_000)
-                reject(new Error("body too large"));
         });
         req.on("end", () => {
+            if (done)
+                return;
+            let body;
             try {
-                resolve(data ? JSON.parse(data) : {});
+                body = data ? JSON.parse(data) : {};
             }
             catch {
-                reject(new Error("invalid JSON body"));
+                return fail(400, "invalid JSON body");
             }
+            done = true;
+            resolve(body);
         });
-        req.on("error", reject);
+        req.on("error", (e) => fail(400, e instanceof Error ? e.message : String(e)));
     });
 }
 const server = createServer(async (req, res) => {
@@ -859,6 +922,42 @@ const server = createServer(async (req, res) => {
             }
             return json(res, 404, { error: "unknown internal endpoint" });
         }
+        // ── routines calendar ────────────────────────────────────────────────
+        if (path === "/api/routines" && method === "GET") {
+            const fromParam = url.searchParams.get("from");
+            const toParam = url.searchParams.get("to");
+            const from = fromParam == null ? undefined : Number(fromParam);
+            const to = toParam == null ? undefined : Number(toParam);
+            return json(res, 200, {
+                routines: routines.listRoutines(),
+                runs: routines.listRuns(from != null && Number.isFinite(from) ? from : undefined, to != null && Number.isFinite(to) ? to : undefined),
+            });
+        }
+        if (path === "/api/routines" && method === "POST") {
+            return json(res, 201, { routine: routines.create(await readBody(req)) });
+        }
+        let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
+        if (routineMatch && method === "POST") {
+            const run = routines.runNow(routineMatch[1]);
+            return run ? json(res, 201, { run }) : json(res, 404, { error: "no such routine" });
+        }
+        routineMatch = path.match(/^\/api\/routines\/([\w-]+)$/);
+        if (routineMatch && method === "PATCH") {
+            const routine = routines.update(routineMatch[1], await readBody(req));
+            return routine ? json(res, 200, { routine }) : json(res, 404, { error: "no such routine" });
+        }
+        if (routineMatch && method === "DELETE") {
+            return routines.remove(routineMatch[1])
+                ? json(res, 200, { ok: true })
+                : json(res, 404, { error: "no such routine" });
+        }
+        const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
+        if (runMatch && method === "POST") {
+            const run = runMatch[2] === "cancel"
+                ? await routines.cancelRun(runMatch[1])
+                : routines.markSeen(runMatch[1]);
+            return run ? json(res, 200, { run }) : json(res, 404, { error: "no such active run" });
+        }
         // ── events stream ──
         if (method === "GET" && path === "/api/events") {
             res.writeHead(200, {
@@ -883,11 +982,7 @@ const server = createServer(async (req, res) => {
         // ── bots ──
         if (method === "GET" && path === "/api/bots") {
             return json(res, 200, {
-                bots: store.bots.map((b) => ({
-                    ...b,
-                    messages: store.messagesFor(b.threadId),
-                    activeLeafId: store.activeLeaf(b.threadId),
-                })),
+                bots: store.bots.map(publicBot),
                 groups: store.groups.map((g) => ({ ...g, messages: store.messagesFor(g.threadId) })),
             });
         }
@@ -986,7 +1081,7 @@ const server = createServer(async (req, res) => {
         if (m && method === "PATCH") {
             const body = await readBody(req);
             const patch = {};
-            for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden"]) {
+            for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "speakReplies", "voice"]) {
                 if (body[key] !== undefined)
                     patch[key] = body[key];
             }
@@ -1018,6 +1113,7 @@ const server = createServer(async (req, res) => {
             // a running turn dies with its bot
             await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => { });
             stopScreenPoller(bot.id);
+            routines.disableForBot(bot.id);
             store.deleteBot(bot.id);
             for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
                 try {
@@ -1151,9 +1247,75 @@ const server = createServer(async (req, res) => {
             const bot = store.bot(m[1]);
             if (!bot)
                 return json(res, 404, { error: "no such bot" });
+            const routineRun = routines.activeRunForBot(bot.id);
+            if (routineRun) {
+                await routines.cancelRun(routineRun.id);
+                return json(res, 200, { ok: true });
+            }
             const instance = registry.get(bot.modelSelection.instanceId);
             await instance?.adapter.interruptTurn(bot.threadId);
             return json(res, 200, { ok: true });
+        }
+        // ── tasks: a bot's separate contexts ────────────────────────────────
+        // The bot record answers with its messages because switching tasks
+        // changes which transcript is live, and a partial patch would leave
+        // the client showing the previous task's conversation.
+        const botWithThread = (bot) => ({
+            ...bot,
+            messages: store.messagesFor(bot.threadId),
+            activeLeafId: store.activeLeaf(bot.threadId),
+            tasks: store.tasks(bot.id).map(({ resumeCursors, ...t }) => t),
+        });
+        m = path.match(/^\/api\/bots\/([\w-]+)\/tasks$/);
+        if (m && method === "POST") {
+            const bot = store.bot(m[1]);
+            if (!bot)
+                return json(res, 404, { error: "no such bot" });
+            if (bot.busy)
+                return json(res, 409, { error: "this bot is working — let it finish before starting a task" });
+            const body = await readBody(req);
+            const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined);
+            if (!task)
+                return json(res, 500, { error: "couldn't create that task" });
+            const fresh = botWithThread(store.bot(bot.id));
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 201, { bot: fresh, task });
+        }
+        m = path.match(/^\/api\/bots\/([\w-]+)\/tasks\/([\w-]+)$/);
+        if (m && method === "POST") {
+            const switched = store.switchTask(m[1], m[2]);
+            if (!switched)
+                return json(res, 404, { error: "no such task" });
+            const fresh = botWithThread(switched);
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 200, { bot: fresh });
+        }
+        if (m && method === "PATCH") {
+            const body = await readBody(req);
+            const task = store.renameTask(m[1], m[2], String(body.title ?? ""));
+            if (!task)
+                return json(res, 404, { error: "no such task" });
+            const fresh = botWithThread(store.bot(m[1]));
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 200, { task });
+        }
+        if (m && method === "DELETE") {
+            const bot = store.bot(m[1]);
+            if (bot?.busy && (bot.threadId === m[2] || routines.isActiveThread(m[2]))) {
+                return json(res, 409, { error: "this task is running — stop it first" });
+            }
+            const updated = store.deleteTask(m[1], m[2]);
+            if (!updated)
+                return json(res, 400, { error: "a bot keeps at least one task" });
+            const fresh = botWithThread(updated);
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 200, { bot: fresh });
+        }
+        // what the user's machine can host: which runtime is installed, whether
+        // its daemon is up, and whether the desktop image and container exist
+        if (method === "GET" && path === "/api/local-computer") {
+            const status = await containerComputerStatus();
+            return json(res, 200, { ...status, commands: setupCommands(status.runtime) });
         }
         // identity handshake for the packaged app's port fallback: the forked
         // child proves it is OURS by echoing its pid (a stray dev server has
@@ -1172,7 +1334,7 @@ const server = createServer(async (req, res) => {
         if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
             const body = await readBody(req);
             const patch = {};
-            for (const key of ["xai", "composio", "box", "profile"]) {
+            for (const key of ["xai", "composio", "box", "tts", "profile"]) {
                 if (body[key] && typeof body[key] === "object")
                     patch[key] = body[key];
             }
@@ -1187,15 +1349,72 @@ const server = createServer(async (req, res) => {
                 if (!check.ok)
                     return json(res, 400, { error: check.message });
             }
+            // same rule for a voice key — and check it against the provider the
+            // patch SELECTS, not the one already saved, or pasting a Cartesia key
+            // while switching from ElevenLabs validates against the wrong service
+            const newTts = patch.tts;
+            if (typeof newTts?.key === "string" && newTts.key.trim()) {
+                const check = await tts.verifyKey(newTts.key.trim());
+                if (!check.ok)
+                    return json(res, 400, { error: check.message });
+            }
             saveConfig(patch);
             Object.assign(cfg, loadConfig());
-            // provider keys change the fleet; a profile edit must not kill
-            // in-flight turns with a pointless reload
-            if (Object.keys(patch).some((k) => k !== "profile"))
+            // provider keys change the fleet; a profile or voice edit must not
+            // kill in-flight turns with a pointless reload — no driver reads
+            // either, and picking a voice mid-turn should be free
+            if (Object.keys(patch).some((k) => k !== "profile" && k !== "tts"))
                 await reloadProviders();
             const status = configStatus();
             broadcast({ kind: "config", ...status });
             return json(res, 200, status);
+        }
+        // ── voice ─────────────────────────────────────────────────────────
+        // Splitting text into utterances lives HERE, not in the renderer, for
+        // the same reason approvalKey does — it is the piece most likely to be
+        // tuned against real transcripts, and it belongs next to the transform
+        // that produced it.
+        if (method === "POST" && path === "/api/tts/prepare") {
+            const body = await readBody(req);
+            return json(res, 200, {
+                ready: tts.voiceReady(cfg, typeof body.voiceId === "string" ? body.voiceId : undefined),
+                utterances: toUtterances(String(body.text ?? "")),
+            });
+        }
+        if (method === "GET" && path === "/api/tts/voices") {
+            try {
+                return json(res, 200, { voices: await tts.listVoices(cfg) });
+            }
+            catch (e) {
+                return json(res, 200, { voices: [], error: e instanceof Error ? e.message : String(e) });
+            }
+        }
+        if (method === "POST" && path === "/api/tts/speak") {
+            const body = await readBody(req);
+            const text = String(body.text ?? "").trim();
+            if (!text)
+                return json(res, 400, { error: "text required" });
+            // The normal client sends <=320-character utterances. A hard ceiling
+            // prevents an arbitrary local request from turning the user's hosted
+            // voice account into an unbounded, billable synthesis job.
+            if (text.length > 500)
+                return json(res, 413, { error: "voice utterances are limited to 500 characters" });
+            try {
+                const audio = await tts.speak(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined);
+                res.writeHead(200, {
+                    "content-type": audio.mime,
+                    "content-length": String(audio.bytes.byteLength),
+                    "cache-control": "no-store",
+                });
+                return res.end(Buffer.from(audio.bytes));
+            }
+            catch (e) {
+                // "you haven't set this up yet" is not a provider failure — 409 so
+                // the client can point at App Settings instead of showing a 502
+                if (e instanceof tts.NoVoiceConfigured)
+                    return json(res, 409, { error: e.message });
+                return json(res, 502, { error: e instanceof Error ? e.message : String(e) });
+            }
         }
         // ── connectors (Composio) ──
         if (method === "GET" && path === "/api/connectors/catalog") {
@@ -1274,6 +1493,7 @@ server.listen(PORT, "127.0.0.1", () => {
 });
 for (const signal of ["SIGINT", "SIGTERM"]) {
     process.on(signal, () => {
+        routines?.stop();
         void registry.disposeAll().finally(() => process.exit(0));
     });
 }

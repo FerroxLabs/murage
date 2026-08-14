@@ -79,9 +79,26 @@ export const CodexDriver = {
                 catch { }
                 appendNative(threadId, { dir: "out", source: "codex.app-server", msg: obj });
             };
-            const request = (method, params) => new Promise((resolve, reject) => {
+            const request = (method, params, timeoutMs = 60_000) => new Promise((resolve, reject) => {
                 const id = nextId++;
-                rpcPending.set(id, { resolve, reject });
+                // a wedged app-server can accept stdin and never reply; without this
+                // the handshake await hangs forever and the bot stays busy for good
+                const timer = setTimeout(() => {
+                    if (rpcPending.delete(id))
+                        reject(new Error(`codex ${method} timed out after ${timeoutMs}ms`));
+                }, timeoutMs);
+                if (typeof timer.unref === "function")
+                    timer.unref();
+                rpcPending.set(id, {
+                    resolve: (v) => {
+                        clearTimeout(timer);
+                        resolve(v);
+                    },
+                    reject: (e) => {
+                        clearTimeout(timer);
+                        reject(e);
+                    },
+                });
                 send({ jsonrpc: "2.0", id, method, params });
             });
             const stop = () => killCliTree(child);
@@ -246,6 +263,9 @@ export const CodexDriver = {
                 }
             };
             let buf = "";
+            // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
+            // multibyte characters that straddle two reads and corrupts the text
+            child.stdout.setEncoding("utf8");
             child.stdout.on("data", (chunk) => {
                 buf += chunk;
                 let nl;
