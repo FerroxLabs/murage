@@ -87,9 +87,37 @@ export interface GroupRecord {
   busyBotId?: string | null;
 }
 
+/** One task = one conversation with its own context.
+ *
+ * A bot used to be a single endless thread, which meant every job
+ * contaminated the next and the only way to get a clean slate was to
+ * clone the bot. A task is that clean slate: its own thread, its own
+ * transcript, and — the part that actually matters — its own provider
+ * session. Sharing resume cursors between tasks would resume the other
+ * task's session and quietly undo the whole thing. */
+export interface TaskRecord {
+  threadId: ThreadId;
+  title: string;
+  createdAt: number;
+  /** provider-native continuation per instance, for THIS task only */
+  resumeCursors: Record<string, unknown>;
+}
+
+/** What a task is called before its first message names it. */
+export const UNTITLED_TASK = "New task";
+
+/** A task's name, taken from the first thing you asked it to do. */
+export function titleFromMessage(text: string): string {
+  const line = text.trim().split("\n")[0]!.trim();
+  return line.length > 48 ? `${line.slice(0, 47)}…` : line || UNTITLED_TASK;
+}
+
 export interface BotRecord {
   id: string;
+  /** the ACTIVE task's thread — everything that runs a turn reads this */
   threadId: ThreadId;
+  /** every task this bot has, newest first */
+  tasks?: TaskRecord[];
   name: string;
   title: string;
   description: string;
@@ -192,6 +220,19 @@ export class Store {
     // busy never survives a restart — no turn does either
     for (const b of this.bots) b.busy = false;
     for (const g of this.groups) g.busyBotId = null;
+    // bots saved before tasks existed have one endless thread; adopt it as
+    // their first task so nothing is lost and nothing special-cases it
+    for (const b of this.bots) {
+      if (b.tasks?.length) continue;
+      b.tasks = [
+        {
+          threadId: b.threadId,
+          title: this.firstUserLine(b.threadId) ?? UNTITLED_TASK,
+          createdAt: b.createdAt,
+          resumeCursors: b.resumeCursors ?? {},
+        },
+      ];
+    }
   }
 
   private saveBots() {
@@ -414,6 +455,7 @@ export class Store {
       resumeCursors: {},
       createdAt: Date.now(),
     };
+    bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {} }];
     this.bots.unshift(bot);
     this.saveBots();
     this.appendMessage(bot.threadId, {
@@ -429,11 +471,14 @@ export class Store {
     const bot = this.bot(id);
     if (!bot) return false;
     this.bots = this.bots.filter((b) => b.id !== id);
-    this.threads.delete(bot.threadId);
+    // every task's transcript goes with the bot, not just the open one
+    for (const threadId of new Set([bot.threadId, ...(bot.tasks ?? []).map((t) => t.threadId)])) {
+      this.threads.delete(threadId);
+      try {
+        unlinkSync(messagesFile(threadId));
+      } catch {}
+    }
     this.saveBots();
-    try {
-      unlinkSync(messagesFile(bot.threadId));
-    } catch {}
     return true;
   }
 
@@ -448,8 +493,89 @@ export class Store {
   setResumeCursor(botId: string, instanceId: string, cursor: unknown) {
     const bot = this.bot(botId);
     if (!bot) return;
-    bot.resumeCursors[instanceId] = cursor;
+    // the cursor belongs to the task that produced it, not to the bot
+    const task = this.activeTask(botId);
+    if (task) task.resumeCursors[instanceId] = cursor;
+    bot.resumeCursors[instanceId] = cursor; // legacy mirror
     this.saveBots();
+  }
+
+  // ── tasks ─────────────────────────────────────────────────────────────
+  /** The first thing the human asked in a thread — a task's natural name. */
+  private firstUserLine(threadId: string): string | null {
+    const first = this.messagesFor(threadId).find((m) => m.role === "user" && m.kind === "text" && m.text?.trim());
+    return first?.text ? titleFromMessage(first.text) : null;
+  }
+
+  tasks(botId: string): TaskRecord[] {
+    return this.bot(botId)?.tasks ?? [];
+  }
+
+  activeTask(botId: string): TaskRecord | undefined {
+    const bot = this.bot(botId);
+    return bot?.tasks?.find((t) => t.threadId === bot.threadId);
+  }
+
+  /** A fresh context on the same bot: new thread, new session, same
+   * persona/tools/computer. Becomes the active task. */
+  createTask(botId: string, title?: string): TaskRecord | null {
+    const bot = this.bot(botId);
+    if (!bot) return null;
+    const task: TaskRecord = {
+      threadId: newId(),
+      title: title?.trim() || UNTITLED_TASK,
+      createdAt: Date.now(),
+      resumeCursors: {},
+    };
+    bot.tasks = [task, ...(bot.tasks ?? [])];
+    bot.threadId = task.threadId;
+    bot.resumeCursors = {}; // legacy mirror follows the active task
+    this.saveBots();
+    return task;
+  }
+
+  switchTask(botId: string, threadId: string): BotRecord | null {
+    const bot = this.bot(botId);
+    const task = bot?.tasks?.find((t) => t.threadId === threadId);
+    if (!bot || !task) return null;
+    bot.threadId = task.threadId;
+    bot.resumeCursors = { ...task.resumeCursors };
+    this.saveBots();
+    return bot;
+  }
+
+  renameTask(botId: string, threadId: string, title: string): TaskRecord | null {
+    const task = this.bot(botId)?.tasks?.find((t) => t.threadId === threadId);
+    if (!task) return null;
+    task.title = title.trim().slice(0, 80) || UNTITLED_TASK;
+    this.saveBots();
+    return task;
+  }
+
+  /** Name a task after its first message, once. */
+  titleTaskFromFirstMessage(botId: string, text: string) {
+    const task = this.activeTask(botId);
+    if (!task || task.title !== UNTITLED_TASK) return;
+    task.title = titleFromMessage(text);
+    this.saveBots();
+  }
+
+  /** Delete a task and its transcript. A bot always keeps one. */
+  deleteTask(botId: string, threadId: string): BotRecord | null {
+    const bot = this.bot(botId);
+    if (!bot || !bot.tasks || bot.tasks.length < 2) return null;
+    if (!bot.tasks.some((t) => t.threadId === threadId)) return null;
+    bot.tasks = bot.tasks.filter((t) => t.threadId !== threadId);
+    this.threads.delete(threadId);
+    try {
+      unlinkSync(messagesFile(threadId));
+    } catch {}
+    if (bot.threadId === threadId) {
+      bot.threadId = bot.tasks[0]!.threadId;
+      bot.resumeCursors = { ...bot.tasks[0]!.resumeCursors };
+    }
+    this.saveBots();
+    return bot;
   }
 
   /** First-run seed: one bot so the app never opens empty — it gets a
