@@ -6,19 +6,23 @@
 // prefers the cloud box when one exists, else local inside the app.
 import { useEffect, useRef, useState } from "react";
 import {
+  CalendarDays,
   CalendarClock,
   ExternalLink,
   Loader2,
   Monitor,
   Moon,
+  Plus,
   Power,
   Settings,
   X,
 } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
+import type { Routine } from "@/lib/routines";
 import { ApiKeyRow } from "./ApiKeys";
 import { cn } from "@/lib/cn";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
+import { RoutineEditor } from "./RoutinesPage";
 
 async function api(path: string, init?: RequestInit): Promise<any> {
   const res = await fetch(path, { headers: { "content-type": "application/json" }, ...init });
@@ -37,6 +41,34 @@ type Phase =
   | "off"
   | "error";
 
+function routineScheduleLabel(routine: Routine) {
+  if (routine.schedule.type === "once") {
+    return new Date(routine.schedule.at).toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+  const days = routine.schedule.weekdays;
+  const cadence =
+    days.length === 7
+      ? "Every day"
+      : days.join(",") === "1,2,3,4,5"
+        ? "Weekdays"
+        : days.map((day) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day]).join(", ");
+  const [hour, minute] = routine.schedule.time.split(":").map(Number);
+  return `${cadence} · ${new Date(2000, 0, 1, hour, minute).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+}
+
+function nextRunLabel(at: number | null) {
+  if (at == null) return "Paused";
+  const date = new Date(at);
+  const today = new Date();
+  const sameDay = date.toDateString() === today.toDateString();
+  return `${sameDay ? "Today" : date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+}
+
 export function ComputerPanel({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
@@ -47,8 +79,25 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const [localFrame, setLocalFrame] = useState<string | null>(null);
   const [pending, setPending] = useState<"join" | "sleep" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [creatingRoutine, setCreatingRoutine] = useState(false);
   // bumped when a Box API key is saved inline, to re-run the spin-up flow
   const [retry, setRetry] = useState(0);
+  const botRoutines = state.routines
+    .filter((routine) => routine.botId === bot.id)
+    .sort((a, b) => Number(b.enabled) - Number(a.enabled) || (a.nextRunAt ?? Infinity) - (b.nextRunAt ?? Infinity));
+  const activeRoutineRun = state.routineRuns.find(
+    (run) => run.botId === bot.id && ["queued", "running", "waiting"].includes(run.status),
+  );
+  const computerDestination =
+    bot.computer === "cloud"
+      ? "this cloud box"
+      : bot.computer === "local"
+        ? "this computer"
+        : bot.computer === "off"
+          ? null
+          : phase === "ready"
+            ? "the cloud box selected by Auto"
+            : "this computer selected by Auto";
 
   // resolve the mode on open; box endpoints are only ever hit on the
   // cloud path, so local/off can never render a JSON error as an image
@@ -338,22 +387,82 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
 
         {/* Routines */}
         <div className="mt-4 rounded-xl bg-card p-4">
-          <div className="flex items-center gap-2 text-[15px] font-medium text-ink">
-            <CalendarClock size={16} className="text-ink-secondary" />
-            Routines
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-[15px] font-medium text-ink">
+              <CalendarClock size={16} className="text-accent" />
+              Routines
+            </div>
+            {botRoutines.length > 0 && (
+              <span className="rounded-full bg-raised px-2 py-0.5 text-[10px] font-medium text-ink-secondary">
+                {botRoutines.length}
+              </span>
+            )}
           </div>
           <div className="mt-0.5 text-[13px] text-ink-secondary">
-            Routines are recurring tasks this agent runs on a schedule.
+            Schedule work for {bot.name}. Each run becomes its own task
+            {computerDestination ? ` and can use ${computerDestination}.` : "."}
           </div>
-          <button
-            disabled
-            className="mt-3 w-full cursor-not-allowed rounded-lg bg-raised py-2 text-[13px] text-ink-secondary opacity-60"
-            title="Coming soon"
-          >
-            Create Routine
-          </button>
+          {!computerDestination && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-[11.5px] leading-relaxed text-warning">
+              <Power size={13} className="mt-0.5 shrink-0" />
+              Computer access is off. The routine can still run, but it cannot act on a desktop until you change “Runs on”.
+            </div>
+          )}
+          {activeRoutineRun && (
+            <button
+              onClick={() => dispatch({ type: "showRoutines" })}
+              className="mt-3 flex w-full items-center gap-2 rounded-lg border border-accent/25 bg-accent/10 px-3 py-2 text-left text-[12px] text-accent hover:bg-accent/15"
+            >
+              <Loader2 size={13} className={activeRoutineRun.status === "queued" ? "" : "animate-spin"} />
+              <span className="min-w-0 flex-1 truncate">
+                {activeRoutineRun.routineName} · {activeRoutineRun.status === "waiting" ? "needs you" : activeRoutineRun.status}
+              </span>
+            </button>
+          )}
+          {botRoutines.length > 0 && (
+            <div className="mt-3 space-y-1.5">
+              {botRoutines.slice(0, 3).map((routine) => (
+                <button
+                  key={routine.id}
+                  onClick={() => dispatch({ type: "showRoutines" })}
+                  className="flex w-full items-center gap-2 rounded-lg bg-inset px-3 py-2 text-left hover:bg-raised/60"
+                >
+                  <span className={cn("size-1.5 shrink-0 rounded-full", routine.enabled ? "bg-success" : "bg-ink-secondary/40")} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[12.5px] font-medium text-ink">{routine.name}</span>
+                    <span className="block truncate text-[10.5px] text-ink-secondary">{routineScheduleLabel(routine)}</span>
+                  </span>
+                  <span className="shrink-0 text-[10px] text-ink-secondary">{nextRunLabel(routine.nextRunAt)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => setCreatingRoutine(true)}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent py-2 text-[13px] font-medium text-white hover:brightness-110"
+            >
+              <Plus size={14} />
+              Create routine
+            </button>
+            <button
+              onClick={() => dispatch({ type: "showRoutines" })}
+              className="flex items-center justify-center gap-1.5 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover"
+              title="Open routines calendar"
+            >
+              <CalendarDays size={14} />
+              Calendar
+            </button>
+          </div>
         </div>
       </div>
+      {creatingRoutine && (
+        <RoutineEditor
+          bots={[bot]}
+          lockedBotId={bot.id}
+          onClose={() => setCreatingRoutine(false)}
+        />
+      )}
     </aside>
   );
 }

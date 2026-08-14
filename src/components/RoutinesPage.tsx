@@ -284,11 +284,21 @@ function CalendarGrid({
   );
 }
 
-function RoutineEditor({ routine, bots, onClose }: { routine?: Routine; bots: Bot[]; onClose: () => void }) {
+export function RoutineEditor({
+  routine,
+  bots,
+  lockedBotId,
+  onClose,
+}: {
+  routine?: Routine;
+  bots: Bot[];
+  lockedBotId?: string;
+  onClose: () => void;
+}) {
   const { dispatch } = useStore();
   const [name, setName] = useState(routine?.name ?? "");
   const [prompt, setPrompt] = useState(routine?.prompt ?? "");
-  const [botId, setBotId] = useState(routine?.botId ?? bots[0]?.id ?? "");
+  const [botId, setBotId] = useState(lockedBotId ?? routine?.botId ?? bots[0]?.id ?? "");
   const [kind, setKind] = useState<"once" | "daily">(routine?.schedule.type ?? "daily");
   const [at, setAt] = useState(
     toInputDateTime(routine?.schedule.type === "once" ? routine.schedule.at : nextHour()),
@@ -335,7 +345,7 @@ function RoutineEditor({ routine, bots, onClose }: { routine?: Routine; bots: Bo
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-hairline/40 bg-panel/95 px-5 py-4 backdrop-blur">
           <div>
             <div className="text-[17px] font-semibold text-ink">{routine ? "Edit routine" : "New routine"}</div>
-            <div className="mt-0.5 text-[12px] text-ink-secondary">Give a MAUS recurring work with a calendar you can trust.</div>
+            <div className="mt-0.5 text-[12px] text-ink-secondary">Give a MAUS scheduled work with a calendar you can trust.</div>
           </div>
           <button onClick={onClose} className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"><X size={18} /></button>
         </div>
@@ -346,11 +356,12 @@ function RoutineEditor({ routine, bots, onClose }: { routine?: Routine; bots: Bo
           </label>
           <div>
             <div className="mb-2 text-[12px] font-medium text-ink-secondary">Who does it?</div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className={cn("grid gap-2", lockedBotId ? "grid-cols-1" : "grid-cols-2 sm:grid-cols-3")}>
               {bots.map((bot) => (
-                <button key={bot.id} type="button" onClick={() => setBotId(bot.id)} className={cn("flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-left", botId === bot.id ? "border-accent/70 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised/60")}>
+                <button key={bot.id} type="button" disabled={Boolean(lockedBotId)} onClick={() => setBotId(bot.id)} className={cn("flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-left", botId === bot.id ? "border-accent/70 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised/60")}>
                   <MausAvatar color={bot.color} state={botId === bot.id ? "happy" : "idle"} size={38} animated={false} />
-                  <span className="truncate text-[13px] font-medium text-ink">{bot.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{bot.name}</span>
+                  {lockedBotId && <span className="text-[11px] text-ink-secondary">Assigned from Computer</span>}
                 </button>
               ))}
             </div>
