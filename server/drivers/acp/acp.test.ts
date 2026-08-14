@@ -117,6 +117,14 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.env.XAI_API_KEY).toBeUndefined();
   });
 
+  // this driver has no Composio mount, so it must not claim the
+  // capability: claiming it is what would tell an ACP bot to call
+  // composio tools it was never given
+  it("does not claim the Composio capability it cannot honour", async () => {
+    await create();
+    expect(instance.adapter.capabilities.composioMcp).not.toBe(true);
+  });
+
   it("surfaces a permission ask as request.opened and completes once allowed", async () => {
     await create(GrokAgentDriver, "permission");
     await instance.adapter.sendTurn({ threadId: "t-perm", text: "go" });

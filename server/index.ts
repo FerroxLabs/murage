@@ -522,7 +522,12 @@ async function startTurn(
   void (async () => {
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
-      if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
+      // the user's connected apps, but only to a driver that can mount
+      // them — a key in the config says the connections exist, not that
+      // this engine can reach them
+      if (cfg.composio?.key && instance.adapter.capabilities.composioMcp === true) {
+        integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
+      }
       const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the MAUS default
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
       const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
@@ -648,6 +653,11 @@ async function startTurn(
               : computerKind === "local"
               ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
               : "") +
+          // gated on the integration, not the key: the hint only goes to a
+          // bot whose driver actually mounted the tools
+          (integrations.composio
+            ? " The user's connected apps (Gmail, Calendar, Slack, Notion, and the rest) are reachable through the composio tools — find the right one with COMPOSIO_SEARCH_TOOLS and run it with COMPOSIO_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service."
+            : "") +
           (coordinationPrompt ? ` ${coordinationPrompt}` : "") +
           (tagged.length
             ? ` The user tagged ${tagged
