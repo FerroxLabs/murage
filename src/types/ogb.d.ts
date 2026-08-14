@@ -52,6 +52,10 @@ declare global {
       permRequestMic(): Promise<boolean>;
       /** Opens System Settings on a privacy pane: mic|screen|speech. */
       permOpenSettings(pane: "mic" | "screen" | "speech"): Promise<void>;
+      /** Opens a terminal with an engine install command ready, copying it to
+       * the clipboard either way. False when no terminal could be launched —
+       * show the command to paste instead. */
+      openInstallTerminal?(command: string): Promise<boolean>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
        * fires immediately with the current state, then on transitions. */
       updater?: {

@@ -110,10 +110,15 @@ function askBotAndWait(targetBotId: string, message: string, depth: number): Pro
 async function defaultSelection() {
   const described = await registry.describe();
   const available = described.filter((d) => d.snapshot.state === "available");
-  const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0] ?? described[0];
-  return { instanceId: pick?.instanceId ?? "claude", model: pick?.models.default || "claude-sonnet-5" };
+  // Deliberately NO fallback to described[0]. Handing a bot an engine whose
+  // CLI isn't installed makes it look ready and then fail on send with a raw
+  // spawn ENOENT — the single worst first-run experience, and the one every
+  // user with no CLIs used to get. An empty selection is honest: the UI shows
+  // the setup path instead of a bot that cannot answer.
+  const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0];
+  return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
-let bootSelection = { instanceId: "claude", model: "claude-sonnet-5" };
+let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
@@ -300,7 +305,11 @@ bus.subscribe((event: RuntimeEvent) => {
       break;
     }
     case "runtime.error":
-      pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
+      pushMessage({
+        role: "bot",
+        kind: "activity",
+        tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup },
+      });
       break;
     case "turn.completed": {
       if (bot) {

@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Opens System Settings on the given privacy pane: mic|screen|speech. */
   permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
 
+  /** Opens a terminal with an engine's install command ready, and copies it
+   * to the clipboard either way. Resolves false if no terminal could be
+   * launched — the caller should then show the command to paste. */
+  openInstallTerminal: (command) => ipcRenderer.invoke("engine:open-terminal", command),
+
   /** In-app auto-update. State object:
    *  { status: "idle"|"checking"|"available"|"downloading"|"downloaded"|"error",
    *    version?, percent?, message? }. onState fires immediately with the

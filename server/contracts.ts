@@ -76,7 +76,9 @@ export type RuntimeEvent = RuntimeEventBase &
       }
     | { type: "request.resolved"; behavior: string; source: string }
     | { type: "thread.token-usage.updated"; input: number; output: number }
-    | { type: "runtime.error"; message: string }
+    // `setup: true` marks a failure the user fixes by installing or
+    // configuring something, not by retrying — the UI offers setup instead.
+    | { type: "runtime.error"; message: string; setup?: boolean }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -151,6 +153,28 @@ export interface ProviderSnapshot {
   version?: string | null;
 }
 
+// ── engine install descriptor ───────────────────────────────────────────
+// How a user gets this engine onto their machine. Declared by the driver so
+// that adding a provider stays "one file in drivers/ plus a registration":
+// onboarding, the model picker, and settings all render from this instead of
+// hardcoding per-engine copy in the UI.
+//
+// Installing is rarely the whole job — most CLIs then need an interactive
+// sign-in, which is why signInCommand exists and why the UI sends people to a
+// terminal rather than trying to shell out silently.
+export interface EngineInstall {
+  /** One-liner per platform. Omit a platform that has no such command —
+   * the UI falls back to docsUrl rather than offering something that
+   * cannot work there (a curl|bash line is not a Windows command). */
+  command?: Partial<Record<"darwin" | "win32" | "linux", string>>;
+  /** Docs or download page. The only route for GUI-installed engines. */
+  docsUrl?: string;
+  /** Interactive sign-in run after installing, when install isn't enough. */
+  signInCommand?: string;
+  /** `command` needs npm on PATH, so the UI can say so when Node is absent. */
+  needsNode?: boolean;
+}
+
 // ── driver SPI (upstream ProviderDriver — a plain record, not a service) ─
 // `create` owns ALL per-instance state; two create calls share nothing.
 // Failures must reject, never throw synchronously — the registry downgrades
@@ -184,6 +208,9 @@ export interface ProviderInstance {
 export interface ProviderDriver<Config = unknown> {
   readonly driverKind: DriverKind;
   readonly metadata: { displayName: string; supportsMultipleInstances?: boolean };
+  /** How to get this engine installed. Omit for engines that need no local
+   * binary (API-key drivers), which is what makes it optional. */
+  readonly install?: EngineInstall;
   /** Decode the opaque config envelope; throw on invalid (→ shadow). */
   decodeConfig(raw: unknown): Config;
   defaultConfig(): Config;

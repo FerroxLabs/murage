@@ -15,7 +15,17 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { useStore, useStreaming, formatTime, messageVersions, visibleMessages, type Bot, type Message } from "@/state/store";
+import {
+  useStore,
+  useStreaming,
+  formatTime,
+  messageVersions,
+  visibleMessages,
+  type Bot,
+  type InstanceInfo,
+  type Message,
+} from "@/state/store";
+import { EngineSetup } from "./EngineSetup";
 import { MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { ChatMarkdown } from "./ChatMarkdown";
@@ -116,8 +126,20 @@ function ThinkingStrip({ text, active }: { text: string; active: boolean }) {
   );
 }
 
-/** A failed turn: a real error block with a retry, not a truncated pill. */
-function ErrorRow({ message, onRetry }: { message: string; onRetry?: () => void }) {
+/** A failed turn: a real error block with a retry, not a truncated pill.
+ *
+ * A `setup` error — the engine's CLI isn't installed — gets the install
+ * instructions instead of a Retry, because retrying spawns the same missing
+ * binary and fails identically every time. */
+function ErrorRow({
+  message,
+  onRetry,
+  setupInstance,
+}: {
+  message: string;
+  onRetry?: () => void;
+  setupInstance?: InstanceInfo;
+}) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[70%] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
@@ -125,13 +147,17 @@ function ErrorRow({ message, onRetry }: { message: string; onRetry?: () => void 
           <AlertTriangle size={15} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{message}</span>
         </div>
-        {onRetry && (
-          <button
-            onClick={onRetry}
-            className="mt-1.5 flex items-center gap-1.5 rounded-full border border-danger/30 px-2.5 py-1 text-[12.5px] hover:bg-danger/15"
-          >
-            <RefreshCw size={12} /> Retry
-          </button>
+        {setupInstance ? (
+          <EngineSetup instance={setupInstance} className="mt-2 text-ink-secondary" />
+        ) : (
+          onRetry && (
+            <button
+              onClick={onRetry}
+              className="mt-1.5 flex items-center gap-1.5 rounded-full border border-danger/30 px-2.5 py-1 text-[12.5px] hover:bg-danger/15"
+            >
+              <RefreshCw size={12} /> Retry
+            </button>
+          )
         )}
       </div>
     </div>
@@ -459,6 +485,7 @@ const MessagesList = memo(function MessagesList({
   editingId,
   lastBotTextId,
   canRetryLast,
+  engine,
   onStartEdit,
   onCancelEdit,
   onSubmitEdit,
@@ -469,6 +496,8 @@ const MessagesList = memo(function MessagesList({
   editingId: string | null;
   lastBotTextId: string | undefined;
   canRetryLast: boolean;
+  /** This bot's engine, for rendering setup help on a `setup` error. */
+  engine: InstanceInfo | undefined;
   onStartEdit: (id: string) => void;
   onCancelEdit: () => void;
   onSubmitEdit: (id: string, text: string) => void;
@@ -504,6 +533,7 @@ const MessagesList = memo(function MessagesList({
                 <ErrorRow
                   message={m.tool.name.slice(6).trim()}
                   onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined}
+                  setupInstance={m.tool.setup ? engine : undefined}
                 />
               ) : (
                 <ActivityChip message={m} />
@@ -708,6 +738,7 @@ export function ChatView({ bot }: { bot: Bot }) {
             editingId={editingId}
             lastBotTextId={lastBotTextId}
             canRetryLast={!bot.busy && Boolean(lastUserMessage)}
+            engine={state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)}
             onStartEdit={startEdit}
             onCancelEdit={cancelEdit}
             onSubmitEdit={submitEdit}

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { useStore, type Bot, type InstanceInfo } from "@/state/store";
 import { ProviderMark } from "./ProviderIcons";
+import { EngineSetup, needsSignIn } from "./EngineSetup";
 import { cn } from "@/lib/cn";
 
 function modelLabel(instance: InstanceInfo | undefined, model: string): string {
@@ -100,6 +101,14 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
                       : (railInstance.snapshot.reason ?? "unavailable")}
                   </div>
                 </div>
+                {/* An unavailable engine used to be a dead end here: dimmed
+                    rows and the reason hidden in a tooltip, at exactly the
+                    moment the user is trying to fix it. Show the way out. */}
+                {(railInstance.snapshot.state !== "available" || needsSignIn(railInstance)) && (
+                  <div className="border-b border-hairline/40 px-2 pb-2.5">
+                    <EngineSetup instance={railInstance} />
+                  </div>
+                )}
                 {railInstance.models.options.map((option) => {
                   const current =
                     selection.instanceId === railInstance.instanceId && selection.model === option.id;

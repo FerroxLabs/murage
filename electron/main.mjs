@@ -1,4 +1,5 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -220,6 +221,57 @@ ipcMain.handle("screen:frame", async () => {
 // (screen:frame above / getDisplayMedia via the handler below) — macOS
 // prompts then, attributed correctly, at the moment of actual use. The
 // perm:open-settings deep link stays as the repair path for denials.
+// Open a terminal with an engine's install command typed in, NOT executed.
+//
+// Two reasons it stops short of running: the user should read a command
+// before it touches their machine (these fetch and run remote installers),
+// and installing is only half the job — every CLI then needs an interactive
+// sign-in, which has to happen in a terminal anyway. Landing them there with
+// the command ready covers both steps in one place.
+//
+// The command is put on the clipboard first, so if a terminal can't be
+// launched the user can still paste it. Returns false when the renderer
+// should fall back to showing the command itself.
+ipcMain.handle("engine:open-terminal", (_event, command) => {
+  if (typeof command !== "string" || !command.trim()) return false;
+  clipboard.writeText(command);
+  try {
+    if (process.platform === "darwin") {
+      // `do script` runs it; keystroke would need Accessibility permission,
+      // so macOS is the one platform where the command does execute. It is
+      // still visible in the scrollback before output appears.
+      execFile("osascript", [
+        "-e",
+        `tell application "Terminal" to do script ${JSON.stringify(command)}`,
+        "-e",
+        'tell application "Terminal" to activate',
+      ]);
+      return true;
+    }
+    if (process.platform === "win32") {
+      // -NoExit keeps the window open after the install so the sign-in step
+      // can run in the same shell. Windows Terminal isn't guaranteed to be
+      // present, so go through PowerShell directly.
+      execFile("cmd", ["/c", "start", "powershell", "-NoExit", "-Command", command], {
+        windowsHide: true,
+      });
+      return true;
+    }
+    // Linux has no single terminal; try the common ones and give up quietly.
+    for (const term of ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"]) {
+      try {
+        execFile(term, ["-e", `bash -lc ${JSON.stringify(`${command}; exec bash`)}`]);
+        return true;
+      } catch {
+        /* try the next one */
+      }
+    }
+    return false;
+  } catch {
+    return false; // clipboard still has it
+  }
+});
+
 ipcMain.handle("perm:status", () => ({
   mic:
     process.platform === "darwin"

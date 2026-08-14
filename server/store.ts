@@ -56,7 +56,9 @@ export interface Message {
    * a phrase a voice can read ("reading a file") — computed once here so
    * call mode never has to re-derive it from the raw tool name, and absent
    * for chips not worth interrupting the ear for. */
-  tool?: { name: string; ok?: boolean; spoken?: string };
+  /** `setup` marks an error the user fixes by installing or configuring
+   * something — the UI offers setup instead of a retry that cannot work. */
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
   /** screen messages: a frame of the bot's computer (base64 image) */
   png?: string;
   mime?: string;
