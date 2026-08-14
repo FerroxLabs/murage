@@ -367,8 +367,11 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
     vi.useFakeTimers();
     try {
       const shutdown = context.runtime.shutdown();
-      await vi.runAllTimersAsync();
-      await shutdown;
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(shutdown).resolves.toMatchObject({
+        status: "stopped",
+        reasonCode: "app-stopped",
+      });
       expect(context.child.kill).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -380,7 +383,8 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
     const firstProbeGate = new Promise((resolve) => {
       releaseFirstProbe = resolve;
     });
-    const children = [fakeChild(4321), fakeChild(4322)];
+    const firstChild = fakeChild(4321);
+    const children = [firstChild, fakeChild(4322)];
     const spawnProcess = vi.fn(() => children.shift());
     const probe = vi
       .fn()
@@ -399,6 +403,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
     await expect(firstStart).resolves.toMatchObject({ status: "ready" });
     await expect(retry).resolves.toMatchObject({ status: "ready", daemon: { pid: 4322 } });
     expect(spawnProcess).toHaveBeenCalledTimes(2);
+    expect(firstChild.exitCode !== null || firstChild.signalCode !== null).toBe(true);
   });
 
   it("starts on launch only after a durable prior opt-in and supports explicit disable", async () => {

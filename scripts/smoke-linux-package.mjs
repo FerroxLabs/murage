@@ -169,7 +169,12 @@ else delete desktopEnv.WAYLAND_DISPLAY;
 
 let output = "";
 let smokeResult = null;
-const child = spawn(executable, wayland ? ["--ozone-platform=x11"] : [], {
+// The smoke runs with a disposable HOME and no interactive keyring. Keep
+// Electron's credential backend inside that sandbox so a GNOME Keyring unlock
+// prompt cannot block the headless renderer before did-finish-load.
+const electronArgs = ["--password-store=basic"];
+if (wayland) electronArgs.push("--ozone-platform=x11");
+const child = spawn(executable, electronArgs, {
   cwd: root,
   detached: true,
   env: desktopEnv,
