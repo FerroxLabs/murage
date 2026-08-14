@@ -2982,6 +2982,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === "POST" && path === "/api/local-computer/interrupt") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
       await Promise.allSettled(
         store.bots
           .filter((bot) => bot.computer === "local")

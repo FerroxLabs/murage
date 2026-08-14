@@ -520,7 +520,12 @@ describe("harness HTTP API", () => {
   });
 
   it("offers an idempotent stop boundary for active local turns", async () => {
-    const stopped = await api("POST", "/api/local-computer/interrupt");
+    const unsupported = await api("POST", "/api/local-computer/interrupt");
+    expect(unsupported).toEqual({
+      status: 415,
+      body: { error: "content-type must be application/json" },
+    });
+    const stopped = await api("POST", "/api/local-computer/interrupt", {});
     expect(stopped).toEqual({ status: 200, body: { ok: true } });
   });
 

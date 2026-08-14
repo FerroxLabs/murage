@@ -39,6 +39,7 @@ function fakeChild(pid = 4321) {
   const child = new EventEmitter();
   child.pid = pid;
   child.exitCode = null;
+  child.signalCode = null;
   child.stderr = new EventEmitter();
   child.stdin = {
     end: vi.fn(() => {
@@ -356,6 +357,48 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
       status: "stopped",
       reasonCode: "app-stopped",
     });
+  });
+
+  it("does not wait again for a child that was already reaped by a signal", async () => {
+    const context = harness();
+    await context.runtime.enable();
+    context.child.signalCode = "SIGTERM";
+    context.child.stdin.end = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const shutdown = context.runtime.shutdown();
+      await vi.runAllTimersAsync();
+      await shutdown;
+      expect(context.child.kill).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("serializes an in-flight start before retrying with a fresh runtime", async () => {
+    let releaseFirstProbe;
+    const firstProbeGate = new Promise((resolve) => {
+      releaseFirstProbe = resolve;
+    });
+    const children = [fakeChild(4321), fakeChild(4322)];
+    const spawnProcess = vi.fn(() => children.shift());
+    const probe = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        await firstProbeGate;
+        return handshake(4321);
+      })
+      .mockResolvedValueOnce(handshake(4322));
+    const context = harness({ runtimeOptions: { spawnProcess, probe } });
+
+    const firstStart = context.runtime.enable();
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
+    const retry = context.runtime.retry();
+    releaseFirstProbe();
+
+    await expect(firstStart).resolves.toMatchObject({ status: "ready" });
+    await expect(retry).resolves.toMatchObject({ status: "ready", daemon: { pid: 4322 } });
+    expect(spawnProcess).toHaveBeenCalledTimes(2);
   });
 
   it("starts on launch only after a durable prior opt-in and supports explicit disable", async () => {

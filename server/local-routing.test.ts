@@ -38,4 +38,23 @@ describe("local computer routing", () => {
       }),
     ).toBe(true);
   });
+
+  it("never mounts the local desktop for explicit cloud/off or on an unsupported host", () => {
+    for (const requested of ["cloud", "off"] as const) {
+      expect(
+        shouldMountLocalComputer({
+          requested,
+          hostPlatform: "darwin",
+          providerSupportsLocal: true,
+        }),
+      ).toBe(false);
+    }
+    expect(
+      shouldMountLocalComputer({
+        requested: "local",
+        hostPlatform: "win32",
+        providerSupportsLocal: true,
+      }),
+    ).toBe(false);
+  });
 });

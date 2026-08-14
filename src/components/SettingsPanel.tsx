@@ -663,7 +663,9 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                   key={mode}
                   disabled={mode === "local" && !localSelectable}
                   title={mode === "local" && !localSelectable ? localDisabledReason ?? undefined : undefined}
-                  onClick={() => patch({ computer: mode })}
+                  onClick={() =>
+                    patch(mode === "local" ? { computer: mode, autoApprove: false } : { computer: mode })
+                  }
                   className={cn(
                     "flex-1 py-1.5 text-[13px] capitalize",
                     i > 0 && "border-l border-hairline/40",

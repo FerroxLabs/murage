@@ -384,7 +384,10 @@ async function probePrivateDaemon(socketPath, {
 }
 
 function waitForChildExit(child, timeoutMs) {
-  if (child.exitCode !== null && child.exitCode !== undefined) return Promise.resolve(true);
+  const exited =
+    (child.exitCode !== null && child.exitCode !== undefined) ||
+    (child.signalCode !== null && child.signalCode !== undefined);
+  if (exited) return Promise.resolve(true);
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value) => {
@@ -810,6 +813,7 @@ function createLinuxCuaRuntime({
     },
     async retry() {
       if (!enabled) return connection;
+      if (startPromise) await startPromise;
       await stop();
       return start();
     },

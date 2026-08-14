@@ -197,11 +197,13 @@ describe("local computer descriptor", () => {
         chmodSync(descriptor.daemon.socketPath, 0o600);
         expect(validateLinuxDescriptorRuntime(file, descriptor)).toBe(true);
         expect(readCuaConnection({ platform: "linux", userData })).not.toBeNull();
+        chmodSync(file, 0o644);
+        expect(validateLinuxDescriptorRuntime(file, descriptor)).toBe(false);
+        chmodSync(file, 0o600);
+        expect(validateLinuxDescriptorRuntime(file, descriptor)).toBe(true);
         appendFileSync(descriptor.driver.path, "changed after descriptor publication");
         expect(validateLinuxDescriptorRuntime(file, descriptor)).toBe(false);
         expect(readCuaConnection({ platform: "linux", userData })).toBeNull();
-        chmodSync(file, 0o644);
-        expect(validateLinuxDescriptorRuntime(file, descriptor)).toBe(false);
       } finally {
         await new Promise<void>((resolve) => server.close(() => resolve()));
       }
