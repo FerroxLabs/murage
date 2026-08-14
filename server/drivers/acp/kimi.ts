@@ -12,6 +12,11 @@ import { join } from "node:path";
 
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
+function credentialsPath(env: Record<string, string | undefined>) {
+  const dataRoot = env.KIMI_CODE_HOME || join(env.HOME || homedir(), ".kimi-code");
+  return join(dataRoot, "credentials", "kimi-code.json");
+}
+
 const support: AcpSupport = {
   driverKind: "kimiAgent",
   displayName: "Kimi",
@@ -30,6 +35,19 @@ const support: AcpSupport = {
   nativeSource: "kimi.acp",
   loginNote: "Kimi Code CLI is not signed in — run `kimi login` in a terminal",
 
+  // Official installers put the binary on PATH without requiring an existing
+  // Node install. Keep the commands platform-specific so Windows never gets a
+  // POSIX-only curl|bash instruction.
+  install: {
+    command: {
+      darwin: "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+      linux: "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+      win32: "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
+    },
+    docsUrl: "https://moonshotai.github.io/kimi-code/en/guides/getting-started.html",
+    signInCommand: "kimi login",
+  },
+
   // -m is a global commander option and must precede the `acp` subcommand
   // (verified against 0.29.1).
   spawnArgs: (_config, turn) => [...(turn.model ? ["-m", turn.model] : []), "acp"],
@@ -46,7 +64,9 @@ const support: AcpSupport = {
   // the ambient login from a prior `kimi login` instead.
   pickAuthMethod: () => null,
   authFailure: "continue",
-  isAuthenticated: () => existsSync(join(homedir(), ".kimi-code", "credentials", "kimi-code.json")),
+  // Match the child CLI's own data-root precedence. A custom instance HOME or
+  // KIMI_CODE_HOME must not be checked against the server user's home instead.
+  isAuthenticated: (env) => existsSync(credentialsPath(env)),
 
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),
 };
