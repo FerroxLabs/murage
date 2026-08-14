@@ -200,6 +200,31 @@ function firstText(content: unknown): string {
   return "";
 }
 
+/** Ask the CLI whether it is signed in, rather than probing its credential store.
+ *
+ * `claude auth status` prints `{"loggedIn":true,…}` on stdout. The old check —
+ * does `~/.claude/.credentials.json` exist — is macOS-blind: Claude Code keeps
+ * OAuth in the login Keychain there, so the file never exists and every
+ * signed-in Mac user was reported as signed out (#108). That also disabled the
+ * model picker, which is gated on the same flag. Asking the CLI is
+ * storage-agnostic, and covers API-key and Bedrock/Vertex users too.
+ *
+ * The file check stays as a fallback for CLIs predating the subcommand. */
+const probeAuth = async (cli: string): Promise<boolean> => {
+  const status = await new Promise<{ loggedIn?: boolean } | null>((resolve) => {
+    execCli(cli, ["auth", "status"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => {
+      if (err) return resolve(null);
+      try {
+        resolve(JSON.parse(stdout) as { loggedIn?: boolean });
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+  if (status) return status.loggedIn === true;
+  return existsSync(join(homedir(), ".claude", ".credentials.json"));
+};
+
 export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Claude", supportsMultipleInstances: true },
@@ -481,8 +506,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         );
       });
       if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
-      const authenticated = existsSync(join(homedir(), ".claude", ".credentials.json"));
-      return { state: "available", version, authenticated };
+      return { state: "available", version, authenticated: await probeAuth(config.cli) };
     };
 
     return {

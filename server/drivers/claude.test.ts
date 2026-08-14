@@ -6,9 +6,9 @@
 // These used to be POSIX-only: the fake CLI is a shebang script Windows
 // cannot exec, and the broker is a unix socket. Both now go through
 // resolveCliSpawn / permissionSocketPath, so they run everywhere.
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -279,5 +279,60 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     ).rejects.toThrow(/pending request/);
     await instance.adapter.interruptTurn("t-perm-2");
     await recorder.until((e) => e.type === "turn.completed");
+  });
+});
+
+// Auth state must come from the CLI, not from probing its credential store:
+// on macOS the OAuth tokens live in the login Keychain, so the old
+// ~/.claude/.credentials.json check reported signed-in users as signed out
+// and disabled the model picker with them (#108).
+describe("ClaudeDriver snapshot auth (fake CLI)", () => {
+  let instance: ProviderInstance;
+
+  const create = async () => {
+    instance = await ClaudeDriver.create({
+      instanceId: "claude-auth-test",
+      displayName: "Claude Auth Test",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, permissionMode: "acceptEdits" },
+    });
+  };
+
+  beforeEach(() => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+  });
+
+  afterEach(async () => {
+    delete process.env.FAKE_CLAUDE_AUTH;
+    await instance?.dispose();
+  });
+
+  it("reports authenticated when `auth status` says loggedIn", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "in";
+    await create();
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true });
+  });
+
+  it("reports signed out when `auth status` says loggedIn:false", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "out";
+    await create();
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+  });
+
+  it("falls back to the credential file when the CLI predates `auth status`", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "unsupported";
+    await create();
+
+    // HOME is a throwaway dir (server/testing/setup.ts), so the legacy file is
+    // ours to create — the fallback has to read it, both ways
+    const legacy = join(homedir(), ".claude", ".credentials.json");
+    mkdirSync(dirname(legacy), { recursive: true });
+    writeFileSync(legacy, "{}");
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true });
+
+    rmSync(legacy);
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
   });
 });
