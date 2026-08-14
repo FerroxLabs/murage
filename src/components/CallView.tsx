@@ -21,7 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Phone, PhoneOff, X } from "lucide-react";
 
 import { useStore, visibleMessages, type Bot } from "@/state/store";
-import { currentCall, endCall, startCall, useOnCall } from "@/lib/call";
+import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { MausAvatar } from "./Avatar";
@@ -175,7 +175,10 @@ function Call({ bot }: { bot: Bot }) {
     return () => {
       alive.current = false;
       sayGeneration.current += 1;
-      endCall(bot.id);
+      // StrictMode immediately remounts effects once in development. A
+      // microtask distinguishes that probe from real navigation: the probe
+      // has set alive=true again before this runs; a genuine unmount has not.
+      deferCallCleanup(bot.id, () => alive.current);
     };
   }, [bot.id]);
 

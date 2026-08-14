@@ -2,8 +2,9 @@
 //   {"partial":true,"text":"…"}   while recognizing
 //   {"partial":false,"text":"…"}  final result, then exit 0
 //   {"error":"…"}                 then exit 1
-// Runs until the final result or SIGTERM. Spawned by electron/speech.mjs
-// from the MAIN process so mic + speech TCC prompts attribute to the app.
+// Runs until the final result or a per-session stop marker. Launched by
+// electron/speech.mjs as this background app bundle so macOS can resolve the
+// microphone and speech purpose strings in its Info.plist.
 //
 // `--endpoint-ms N` ends the audio stream after N milliseconds without a
 // transcript change. SFSpeechRecognizer does not finalize a buffer-backed
@@ -37,6 +38,26 @@ let endpointMs: Int = {
   else { return 0 }
   return min(5_000, max(250, value))
 }()
+
+let stopFile: String? = {
+  let args = CommandLine.arguments
+  guard let index = args.firstIndex(of: "--stop-file"), index + 1 < args.count else { return nil }
+  return args[index + 1]
+}()
+
+// LaunchServices gives the helper the bundle identity TCC needs, but it also
+// means the parent cannot terminate it by killing the `open -W` process. A
+// per-session stop marker keeps intentional mute/hang-up deterministic.
+var stopTimer: DispatchSourceTimer?
+if let stopFile {
+  let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+  timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
+  timer.setEventHandler {
+    if FileManager.default.fileExists(atPath: stopFile) { exit(0) }
+  }
+  stopTimer = timer
+  timer.resume()
+}
 
 /// SFSpeechRecognizer can keep revising/re-emitting a partial transcript
 /// after the user stops talking. Only a changed transcript resets the timer.

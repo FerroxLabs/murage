@@ -44,6 +44,15 @@ export function endCall(botId?: string): boolean {
   return true;
 }
 
+/** React StrictMode probes effects with setup -> cleanup -> setup in
+ * development. Defer ownership cleanup so that probe can remount first;
+ * a genuine unmount remains inactive and releases the call. */
+export function deferCallCleanup(botId: string, isMounted: () => boolean): void {
+  queueMicrotask(() => {
+    if (!isMounted()) endCall(botId);
+  });
+}
+
 export function useOnCall(): string | null {
   return useSyncExternalStore(
     (fn) => {
