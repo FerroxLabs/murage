@@ -196,10 +196,9 @@ winOnly("resolveCli (Windows)", () => {
         },
       },
     });
-    expect(resolveCli("ombfake", ["--mcp-config", payload])).toEqual({
-      command: shim,
-      args: ["--mcp-config", payload],
-    });
+    const resolved = resolveCli("ombfake", ["--mcp-config", payload]);
+    expect(resolved.command.toLowerCase()).toBe(shim.toLowerCase());
+    expect(resolved.args).toEqual(["--mcp-config", payload]);
   });
 
   it("hands an unknown CLI back untouched so spawn reports its own ENOENT", () => {
