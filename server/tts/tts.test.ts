@@ -31,7 +31,10 @@ beforeAll(async () => {
       };
       if (refuse) return send(refuse.status, refuse.body);
       const path = (req.url ?? "").split("?")[0];
-      if (path === "/v1/user") return send(200, { subscription: {} });
+      // A RESTRICTED key — the common real-world case. It can read voices
+      // and speak, but has no user_read. Verifying against /user would
+      // reject it, which is exactly the bug this stub exists to catch.
+      if (path === "/v1/user") return send(401, { detail: { status: "missing_permissions" } });
       if (path === "/v1/voices") {
         return send(200, {
           voices: [{ voice_id: "v-1", name: "Rachel", labels: { accent: "american", description: "calm" } }],
@@ -92,19 +95,26 @@ describe("configuration", () => {
 describe("ElevenLabs", () => {
   const ready = { key: "el-key", voice: "v-1" };
 
-  it("accepts a key the service accepts", async () => {
+  it("accepts a restricted key that can read voices and speak", async () => {
+    // ElevenLabs keys carry per-endpoint scopes. A key limited to speech
+    // has no user_read, so verifying against /user rejects a key that
+    // works perfectly — the stub 401s /user to hold that line.
     refuse = null;
+    seen.length = 0;
     const { verifyKey } = await voice();
     expect(await verifyKey("el-key")).toEqual({ ok: true });
+    expect(seen.map((r) => r.url.split("?")[0])).not.toContain("/v1/user");
   });
 
-  it("says what to do when the key is refused", async () => {
+  it("says what to do when the key is genuinely refused", async () => {
     refuse = { status: 401, body: { detail: "invalid api key" } };
     const { verifyKey } = await voice();
     const result = await verifyKey("nope");
     refuse = null;
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.message).toMatch(/ElevenLabs rejected that key/i);
+    // names scopes, because "get a fresh key" is the wrong advice when the
+    // key is real but restricted
+    if (!result.ok) expect(result.message).toMatch(/permission|restricted/i);
   });
 
   it("lists voices with their labels", async () => {

@@ -45,7 +45,10 @@ function message(status: number, what: string, body: any): string {
     (typeof body?.message === "string" && body.message.trim()) ||
     "";
   if (status === 401 || status === 403) {
-    return "ElevenLabs rejected that key — copy a fresh one from your ElevenLabs profile.";
+    // Restricted keys are the common case, not a corner: a key with the
+    // wrong scopes is REAL and still fails, so saying "copy a fresh one"
+    // sends people to regenerate a key that was never the problem.
+    return "ElevenLabs rejected that key. If it's a restricted key, give it the Voices and Text to Speech permissions — or paste an unrestricted one.";
   }
   if (status === 429) return theirs || "ElevenLabs is rate-limiting this account — wait a moment and try again.";
   if (status === 402) return theirs || "ElevenLabs says this account is out of credit.";
@@ -53,10 +56,16 @@ function message(status: number, what: string, body: any): string {
 }
 
 /** Check a key before we store it: a rejected credential must fail at the
- * paste, not hours later in another panel with nothing to act on. */
+ * paste, not hours later in another panel with nothing to act on.
+ *
+ * Checked against /voices, NOT /user. ElevenLabs keys carry per-endpoint
+ * scopes, and a key restricted to speech has no `user_read` — verifying
+ * there rejects perfectly good keys for a permission this feature never
+ * uses (found the hard way, with a real key). /voices is what the settings
+ * picker needs next, so it tests exactly the capability that matters. */
 export async function verifyKey(key: string): Promise<VerifyResult> {
   try {
-    const res = await fetch(`${API}/user`, {
+    const res = await fetch(`${API}/voices`, {
       headers: { "xi-api-key": key },
       signal: AbortSignal.timeout(20_000),
     });
