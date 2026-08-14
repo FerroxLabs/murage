@@ -148,9 +148,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (agents) {
           servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(agents.env) });
         }
-        // the bot's computer, mounted exactly like the claude driver does:
-        // an ACP agent gets the same screenshot/click/batch tools instead of
-        // being told it has a machine it cannot touch
+        // The bot's computer, mounted exactly like the Claude driver does.
+        // Cloud boxes use the REST adapter; host and sandbox Cua connections
+        // expose Cua Driver's official MCP server directly.
         const computer = turn.integrations?.computer;
         if (computer) {
           servers.push({

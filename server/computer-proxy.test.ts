@@ -57,9 +57,10 @@ describe("computer proxy (fake box)", () => {
           commands.push(command);
           // a real box echoes what the capture block printed
           const size = Buffer.from(JPEG, "base64").length;
+          const browser = /BROWSER_MISSING/.test(command) ? "BROWSER_STARTED firefox-esr\n" : "";
           const stdout = /GEOM/.test(command)
-            ? `GEOM 1920 1080\nHASH ${hash}\nSIZE ${size}\nB64 ${JPEG}\nACT ok\n`
-            : "ACT ok\n";
+            ? `${browser}GEOM 1920 1080\nHASH ${hash}\nSIZE ${size}\nB64 ${JPEG}\nACT ok\n`
+            : `${browser}ACT ok\n`;
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ exitCode: 0, stdout, stderr: "" }));
         });
@@ -211,5 +212,18 @@ describe("computer proxy (fake box)", () => {
     const res = await waitFor(7);
     expect(commands.at(-1)).not.toMatch(/scrot/);
     expect(res.result.content).toHaveLength(1);
+  });
+
+  it("discovers Firefox instead of claiming every desktop has Chrome", async () => {
+    rpc({
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: { name: "open_url", arguments: { url: "https://example.com", observe: false } },
+    });
+    const res = await waitFor(8);
+    expect(res.result.content[0].text).toBe("opened https://example.com");
+    expect(commands.at(-1)).toContain("firefox-esr");
+    expect(commands.at(-1)).toContain("BROWSER_MISSING");
   });
 });

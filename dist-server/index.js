@@ -4,17 +4,19 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { approvalKey, autoDecision } from "./auto-approve.js";
 import * as box from "./box.js";
 import * as composio from "./composio.js";
+import { containerComputerAction, containerComputerMcp, containerComputerScreenshot, containerComputerStatus, setupCommands, } from "./container-computer.js";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.js";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.js";
 import { EventBus } from "./harness/bus.js";
 import { ProviderRegistry } from "./harness/registry.js";
 import { mentionedBots, Store } from "./store.js";
+import { readCuaConnection } from "./local-computer.js";
+import { RoutineManager } from "./routines.js";
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
 const MIME = {
@@ -105,6 +107,12 @@ let bootSelection = { instanceId: "claude", model: "claude-sonnet-5" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
+const publicBot = (bot) => ({
+    ...bot,
+    messages: store.messagesFor(bot.threadId),
+    activeLeafId: store.activeLeaf(bot.threadId),
+    tasks: store.tasks(bot.id).map(({ resumeCursors, ...task }) => task),
+});
 // ── SSE fan-out to clients ─────────────────────────────────────────────
 const sseClients = new Set();
 function broadcast(payload) {
@@ -121,13 +129,23 @@ function broadcast(payload) {
 // ── server-side event folding (upstream's ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript
 // and every client view are projections of it.
-const toolMessageByItem = new Map(); // itemId -> messageId
-const askMessageByRequest = new Map(); // requestId -> messageId
+// keyed by `${threadId}:${itemId}` / `${threadId}:${requestId}` — provider
+// item/request ids are only unique within a thread, so two bots acting at
+// once can collide on a bare id and patch each other's messages.
+const toolMessageByItem = new Map(); // threadId:itemId -> messageId
+const askMessageByRequest = new Map(); // threadId:requestId -> messageId
 // Group threads: the fold needs to know WHO is talking — the turn engine
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map();
+let routines = null;
+// The Local VM is intentionally one shared, visible desktop. Two agents
+// driving it simultaneously would mix clicks, keystrokes and screenshots,
+// so only one thread may lease it at a time.
+let activeVmThreadId = null;
+let localVmLifecycleBusy = false;
 bus.subscribe((event) => {
     broadcast({ kind: "runtime", event });
+    routines?.handleRuntimeEvent(event);
     const bot = store.botByThread(event.threadId);
     const group = bot ? undefined : store.groupByThread(event.threadId);
     if (!bot && !group)
@@ -141,7 +159,7 @@ bus.subscribe((event) => {
     switch (event.type) {
         case "session.started":
             if (bot && event.sessionId && event.providerInstanceId) {
-                store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId);
+                store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId, event.threadId);
             }
             break;
         case "item.completed":
@@ -149,7 +167,8 @@ bus.subscribe((event) => {
                 pushMessage({ role: "bot", kind: "text", text: event.text });
             }
             else if (event.itemType === "tool" && event.itemId) {
-                const messageId = toolMessageByItem.get(event.itemId);
+                const itemKey = `${event.threadId}:${event.itemId}`;
+                const messageId = toolMessageByItem.get(itemKey);
                 let toolName = "tool";
                 if (messageId) {
                     toolName = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool";
@@ -158,7 +177,7 @@ bus.subscribe((event) => {
                     });
                     if (patched)
                         broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
-                    toolMessageByItem.delete(event.itemId);
+                    toolMessageByItem.delete(itemKey);
                 }
                 // the bot just acted ON ITS SCREEN — refresh the preview now. Only
                 // computer tools can change the screen, and each capture competes
@@ -177,7 +196,7 @@ bus.subscribe((event) => {
                     break;
                 const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
                 if (event.itemId)
-                    toolMessageByItem.set(event.itemId, message.id);
+                    toolMessageByItem.set(`${event.threadId}:${event.itemId}`, message.id);
             }
             break;
         case "request.opened": {
@@ -191,7 +210,9 @@ bus.subscribe((event) => {
                 ? autoDecision(asker, event.tool, event.summary)
                 : null;
             if (settled && asker && event.requestId) {
-                const instance = registry.get(asker.modelSelection.instanceId);
+                const instance = event.providerInstanceId
+                    ? registry.get(event.providerInstanceId)
+                    : registry.get(asker.modelSelection.instanceId);
                 const requestId = event.requestId;
                 const { tool, summary } = event;
                 // The chip is written only AFTER the provider takes the answer.
@@ -247,11 +268,11 @@ bus.subscribe((event) => {
                 },
             });
             if (event.requestId)
-                askMessageByRequest.set(event.requestId, message.id);
+                askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
             break;
         }
         case "request.resolved": {
-            const messageId = event.requestId ? askMessageByRequest.get(event.requestId) : null;
+            const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
             if (messageId) {
                 const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
                 if (existing?.card && !existing.card.answered) {
@@ -262,7 +283,7 @@ bus.subscribe((event) => {
                         broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
                 }
                 if (event.requestId)
-                    askMessageByRequest.delete(event.requestId);
+                    askMessageByRequest.delete(`${event.threadId}:${event.requestId}`);
             }
             break;
         }
@@ -270,6 +291,8 @@ bus.subscribe((event) => {
             pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
             break;
         case "turn.completed": {
+            if (activeVmThreadId === event.threadId)
+                activeVmThreadId = null;
             if (bot) {
                 store.patchBot(bot.id, { busy: false, unread: true });
                 broadcast({ kind: "bot", bot: store.bot(bot.id) });
@@ -366,40 +389,6 @@ async function finalScreenFrame(botId) {
     await entry.capture();
     return entry.last;
 }
-// Where Electron's app.getPath("userData") lands, per platform — the
-// hardcoded macOS path found nothing anywhere else, and threw the
-// non-ENOENT errors into the same silent catch.
-// `||`, not `??`: a set-but-empty APPDATA/XDG_CONFIG_HOME would otherwise
-// join into a RELATIVE path resolved against the server's cwd — the same
-// silent ENOENT this function exists to stop. Electron ignores empty values
-// the same way.
-function userDataRoot() {
-    if (process.platform === "win32")
-        return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-    if (process.platform === "darwin")
-        return join(homedir(), "Library", "Application Support");
-    return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-}
-// Local computer-use contract written by Electron main on startup
-// (Electron's userData dir: ~/Library/Application Support on macOS,
-// %APPDATA% on Windows — <dir>/cua-connection.json). Read fresh each turn —
-// Electron may restart or permissions may change.
-function readCuaConnection() {
-    // new name first; pre-rename desktop builds used the old directory
-    for (const dir of ["OpenMausBot", "openmausbot", "OpenGrokBot", "opengrokbot"]) {
-        try {
-            const p = join(userDataRoot(), dir, "cua-connection.json");
-            const conn = JSON.parse(readFileSync(p, "utf8"));
-            if (!conn || conn.mode === "unavailable" || !conn.mcpCommand)
-                continue;
-            return { command: conn.mcpCommand, args: conn.mcpArgs ?? ["mcp"], env: conn.mcpEnv ?? {} };
-        }
-        catch {
-            /* try the next location */
-        }
-    }
-    return null;
-}
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
 async function startTurn(botId, text, opts) {
     const bot = store.bot(botId);
@@ -407,21 +396,34 @@ async function startTurn(botId, text, opts) {
         throw Object.assign(new Error("no such bot"), { status: 404 });
     if (bot.busy)
         throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
+    const threadId = opts?.threadId ?? bot.threadId;
+    const task = store.taskByThread(bot.id, threadId);
+    if (!task)
+        throw Object.assign(new Error("no such task"), { status: 404 });
     const commsDepth = opts?.commsDepth ?? 0;
-    const instance = registry.get(bot.modelSelection.instanceId);
+    // a task takes its name from the first thing you asked it to do
+    if (text.trim())
+        store.titleTaskFromFirstMessage(bot.id, text, threadId);
+    const instance = opts?.runOn === "cloud"
+        ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
+        : registry.get(bot.modelSelection.instanceId);
     if (!instance) {
-        throw Object.assign(new Error(`provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`), { status: 409 });
+        throw Object.assign(new Error(opts?.runOn === "cloud"
+            ? "the Cloud VM runner is unavailable — configure Box in App Settings"
+            : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`), { status: 409 });
     }
+    const instanceId = instance.instanceId;
+    const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
     // an edit hands us its already-branched user message; a plain send appends
     let userMessage = opts?.userMessage;
     if (!userMessage) {
-        userMessage = store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
-        broadcast({ kind: "message", threadId: bot.threadId, message: userMessage });
+        userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+        broadcast({ kind: "message", threadId, message: userMessage });
     }
     // transcript for API-backed drivers: settled text turns on the ACTIVE
     // branch only — abandoned forks never reach the model
     const transcript = store
-        .activePath(bot.threadId)
+        .activePath(threadId)
         .filter((m) => m.kind === "text" && m.text && m.id !== userMessage.id)
         .slice(-40)
         .map((m) => ({ role: m.role === "user" ? "user" : "assistant", text: m.text }));
@@ -431,7 +433,7 @@ async function startTurn(botId, text, opts) {
     // inline (transcript-replay drivers get it via transcript). The flag is
     // cleared only once the turn is actually dispatched — clearing it here
     // would cost the next attempt its history if this dispatch fails.
-    const rewound = Boolean(bot.rewound);
+    const rewound = threadId === bot.threadId && Boolean(bot.rewound);
     const turnText = rewound && instance.driverKind !== "grok" && transcript.length
         ? [
             "[The user rewound this conversation (edited a message or switched to another version). Everything before this point was replaced by the following history:]",
@@ -460,16 +462,48 @@ async function startTurn(botId, text, opts) {
             const integrations = {};
             if (cfg.composio?.key)
                 integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
-            const wants = bot.computer; // 'cloud' | 'local' | 'off' | undefined(auto)
-            // only drivers that can mount the computer MCP server get the tools
-            // (and the prompt about them) — but every bot with a box still gets
-            // the live screen preview, which is a UI feature, not a tool
-            const mountsComputer = instance.adapter.capabilities.computerMcp === true || instance.driverKind === "boxAgent";
+            const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the MAUS default
+            const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
+            const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
             let previewBoxId = null;
-            if (wants !== "off" && wants !== "local" && box.boxConfigured(cfg)) {
+            let computerKind = null;
+            // Explicit destinations are strict. In particular, Local VM must never
+            // fall through to host CUA and accidentally click on the user's Mac.
+            if (wants === "vm") {
+                if (!mountsComputerMcp || instance.driverKind === "boxAgent") {
+                    throw new Error("this model engine cannot use the Local VM — choose Claude or an ACP engine, or select another computer destination");
+                }
+                const localVm = await containerComputerStatus();
+                if (!localVm.ready || !localVm.runtime) {
+                    throw new Error(`${localVm.problem ?? "the Local VM is not ready"} (App Settings → Local VM)`);
+                }
+                if (activeVmThreadId && activeVmThreadId !== threadId) {
+                    throw new Error("the shared Local VM is already being used by another bot — wait for that turn to finish");
+                }
+                activeVmThreadId = threadId;
+                integrations.localComputer = containerComputerMcp(localVm.runtime);
+                computerKind = "vm";
+            }
+            else if (wants === "local") {
+                if (!mountsComputerMcp) {
+                    throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
+                }
+                const cua = readCuaConnection();
+                if (!cua)
+                    throw new Error("CUA Driver is not ready for this computer — check permissions and restart OpenMausBot");
+                integrations.localComputer = cua;
+                computerKind = "local";
+            }
+            // Cloud is also strict when explicitly selected. Auto (unset) reuses an
+            // existing cloud box, then falls back to host CUA without provisioning.
+            if ((wants === "cloud" || wants === undefined) && box.boxConfigured(cfg)) {
+                if (!mountsCloudComputer && wants === "cloud") {
+                    throw new Error("this model engine cannot use computer tools — choose Claude, an ACP engine, or the Computer engine");
+                }
                 let b = await box.findBox(cfg, bot.id).catch(() => null);
-                // the Computer driver runs ON the box — provision it on first use
-                if (!b && instance.driverKind === "boxAgent") {
+                // Explicit Cloud and the box-native Computer engine provision on first
+                // use. Auto remains non-surprising and only reuses an existing box.
+                if (!b && mountsCloudComputer && (wants === "cloud" || instance.driverKind === "boxAgent")) {
                     broadcast({ kind: "computer", botId: bot.id, state: "provisioning" });
                     await box.provisionBox(cfg, bot.id, bot.name);
                     b = await box.findBox(cfg, bot.id).catch(() => null);
@@ -478,23 +512,32 @@ async function startTurn(botId, text, opts) {
                 // resumes — wake it here, once, instead of letting the agent
                 // discover it one failed tool call at a time. Only worth the
                 // resume (~8s, and it un-pauses billing) when the bot can act.
-                if (b && mountsComputer && !["idle", "ready", "running"].includes(b.state)) {
+                if (b && mountsCloudComputer && !["idle", "ready", "running"].includes(b.state)) {
                     broadcast({ kind: "computer", botId: bot.id, state: "waking" });
                     b = (await box.readyBox(cfg, bot.id).catch(() => null)) ?? b;
                 }
                 if (b) {
                     previewBoxId = b.id;
-                    if (mountsComputer)
-                        integrations.computer = { boxId: b.id, token: cfg.box.token };
+                    if (mountsCloudComputer) {
+                        integrations.computer = { kind: "box", boxId: b.id, token: cfg.box.token };
+                        computerKind = "box";
+                    }
                 }
             }
-            // local computer (this Mac) via the Electron-hosted cua-driver: the
-            // Electron main process owns the daemon (TCC attribution) and writes
-            // its spawn contract to cua-connection.json; the harness only reads it
-            if (!integrations.computer && wants !== "off" && wants !== "cloud") {
+            if (wants === "cloud" && !box.boxConfigured(cfg)) {
+                throw new Error("Cloud box is not configured — add a Box API key or choose Local VM");
+            }
+            if (wants === "cloud" && !integrations.computer) {
+                throw new Error("the cloud computer could not be created or reached");
+            }
+            // Auto-only host fallback. Electron owns cua-driver/TCC attribution;
+            // the harness only reads its already-running connection descriptor.
+            if (!integrations.computer && !integrations.localComputer && wants === undefined && mountsComputerMcp) {
                 const cua = readCuaConnection();
-                if (cua)
+                if (cua) {
                     integrations.localComputer = cua;
+                    computerKind = "local";
+                }
             }
             // peer-agent comms: give a user-initiated turn the list_bots/ask_bot
             // tools. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
@@ -515,18 +558,22 @@ async function startTurn(botId, text, opts) {
                 ? mentionedBots(text, store.bots.filter((b) => b.id !== bot.id))
                 : [];
             await instance.adapter.sendTurn({
-                threadId: bot.threadId,
+                threadId,
                 text: turnText,
-                model: bot.modelSelection.model,
+                model,
                 // a rewound thread never resumes the abandoned branch's session
-                resumeCursor: rewound ? undefined : bot.resumeCursors[bot.modelSelection.instanceId],
+                // the active task's own session — another task's cursor would
+                // resume the wrong conversation and defeat the context bubble
+                resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
                 transcript,
                 system: persona +
-                    (integrations.computer && instance.driverKind !== "boxAgent"
-                        ? " You have your own cloud computer — use the computer tools (screenshot, click, type_text, open_url, computer_exec) whenever browsing or acting on a desktop helps. Every action tool already returns the resulting screen, so don't follow one with a screenshot call, and batch predictable sequences with computer_batch."
-                        : integrations.localComputer
-                            ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
-                            : "") +
+                    (computerKind === "vm"
+                        ? " You have a shared, isolated Cua sandbox: a Linux desktop in a container on this machine with no host folders mounted. Use the computer tools for desktop, accessibility, window, and shell work. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully."
+                        : computerKind === "box" && instance.driverKind !== "boxAgent"
+                            ? " You have your own cloud computer — use screenshot, click, type_text, open_url and computer_exec whenever a desktop helps. Every action already returns the resulting screen, so don't follow it with screenshot; batch predictable sequences with computer_batch."
+                            : computerKind === "local"
+                                ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
+                                : "") +
                     (integrations.agents
                         ? " You can work with the user's other bots through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
                         : "") +
@@ -544,18 +591,49 @@ async function startTurn(botId, text, opts) {
                 startScreenPoller(bot.id, previewBoxId);
         }
         catch (e) {
+            if (activeVmThreadId === threadId)
+                activeVmThreadId = null;
             const message = e instanceof Error ? e.message : String(e);
-            const failure = store.appendMessage(bot.threadId, {
+            const failure = store.appendMessage(threadId, {
                 role: "bot",
                 kind: "activity",
                 tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
             });
-            broadcast({ kind: "message", threadId: bot.threadId, message: failure });
+            broadcast({ kind: "message", threadId, message: failure });
             store.patchBot(bot.id, { busy: false });
             broadcast({ kind: "bot", bot: store.bot(bot.id) });
+            opts?.onDispatchError?.(message);
         }
     })();
 }
+// ── routines: persisted definitions → detached bot tasks ───────────────
+// The scheduler owns timing and receipts; the existing harness remains the
+// only owner of provider sessions, approvals, tools, computers and messages.
+routines = new RoutineManager({
+    emit: broadcast,
+    botState: (botId) => {
+        const bot = store.bot(botId);
+        return !bot ? "missing" : bot.busy ? "busy" : "ready";
+    },
+    createTask: (botId, title) => {
+        const task = store.createTask(botId, title, false);
+        const bot = store.bot(botId);
+        if (task && bot)
+            broadcast({ kind: "bot", bot: publicBot(bot) });
+        return task;
+    },
+    startTurn: (botId, threadId, prompt, runOn, onDispatchError) => startTurn(botId, prompt, { threadId, runOn, onDispatchError }),
+    interruptTurn: async (botId, threadId, runOn) => {
+        const bot = store.bot(botId);
+        const instance = runOn === "cloud"
+            ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
+            : bot
+                ? registry.get(bot.modelSelection.instanceId)
+                : null;
+        await instance?.adapter.interruptTurn(threadId);
+    },
+});
+routines.start();
 // ── config hot-reload ─────────────────────────────────────────────────
 // ── group turn engine ──────────────────────────────────────────────────
 // The Buzz rule: in a room, a bot replies only when @mentioned. Mentioned
@@ -743,20 +821,41 @@ function json(res, status, body) {
 function readBody(req) {
     return new Promise((resolve, reject) => {
         let data = "";
+        let bytes = 0;
+        let done = false;
+        const fail = (status, msg) => {
+            if (done)
+                return;
+            done = true;
+            const err = Object.assign(new Error(msg), { status });
+            reject(err);
+        };
         req.on("data", (c) => {
+            if (done)
+                return;
+            bytes += typeof c === "string" ? Buffer.byteLength(c) : c.length;
+            if (bytes > 1_000_000) {
+                // Keep draining the socket, but stop retaining attacker-controlled
+                // bytes. Destroying the request here prevents the caller from
+                // receiving the useful 413 response.
+                return fail(413, "body too large");
+            }
             data += c;
-            if (data.length > 1_000_000)
-                reject(new Error("body too large"));
         });
         req.on("end", () => {
+            if (done)
+                return;
+            let body;
             try {
-                resolve(data ? JSON.parse(data) : {});
+                body = data ? JSON.parse(data) : {};
             }
             catch {
-                reject(new Error("invalid JSON body"));
+                return fail(400, "invalid JSON body");
             }
+            done = true;
+            resolve(body);
         });
-        req.on("error", reject);
+        req.on("error", (e) => fail(400, e instanceof Error ? e.message : String(e)));
     });
 }
 const server = createServer(async (req, res) => {
@@ -859,6 +958,42 @@ const server = createServer(async (req, res) => {
             }
             return json(res, 404, { error: "unknown internal endpoint" });
         }
+        // ── routines calendar ────────────────────────────────────────────────
+        if (path === "/api/routines" && method === "GET") {
+            const fromParam = url.searchParams.get("from");
+            const toParam = url.searchParams.get("to");
+            const from = fromParam == null ? undefined : Number(fromParam);
+            const to = toParam == null ? undefined : Number(toParam);
+            return json(res, 200, {
+                routines: routines.listRoutines(),
+                runs: routines.listRuns(from != null && Number.isFinite(from) ? from : undefined, to != null && Number.isFinite(to) ? to : undefined),
+            });
+        }
+        if (path === "/api/routines" && method === "POST") {
+            return json(res, 201, { routine: routines.create(await readBody(req)) });
+        }
+        let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
+        if (routineMatch && method === "POST") {
+            const run = routines.runNow(routineMatch[1]);
+            return run ? json(res, 201, { run }) : json(res, 404, { error: "no such routine" });
+        }
+        routineMatch = path.match(/^\/api\/routines\/([\w-]+)$/);
+        if (routineMatch && method === "PATCH") {
+            const routine = routines.update(routineMatch[1], await readBody(req));
+            return routine ? json(res, 200, { routine }) : json(res, 404, { error: "no such routine" });
+        }
+        if (routineMatch && method === "DELETE") {
+            return routines.remove(routineMatch[1])
+                ? json(res, 200, { ok: true })
+                : json(res, 404, { error: "no such routine" });
+        }
+        const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
+        if (runMatch && method === "POST") {
+            const run = runMatch[2] === "cancel"
+                ? await routines.cancelRun(runMatch[1])
+                : routines.markSeen(runMatch[1]);
+            return run ? json(res, 200, { run }) : json(res, 404, { error: "no such active run" });
+        }
         // ── events stream ──
         if (method === "GET" && path === "/api/events") {
             res.writeHead(200, {
@@ -883,11 +1018,7 @@ const server = createServer(async (req, res) => {
         // ── bots ──
         if (method === "GET" && path === "/api/bots") {
             return json(res, 200, {
-                bots: store.bots.map((b) => ({
-                    ...b,
-                    messages: store.messagesFor(b.threadId),
-                    activeLeafId: store.activeLeaf(b.threadId),
-                })),
+                bots: store.bots.map(publicBot),
                 groups: store.groups.map((g) => ({ ...g, messages: store.messagesFor(g.threadId) })),
             });
         }
@@ -990,6 +1121,10 @@ const server = createServer(async (req, res) => {
                 if (body[key] !== undefined)
                     patch[key] = body[key];
             }
+            if (body.computer !== undefined &&
+                !["cloud", "vm", "local", "off"].includes(String(body.computer))) {
+                return json(res, 400, { error: "computer must be cloud, vm, local, or off" });
+            }
             // the two permission fields decide what runs unattended, so they are
             // type-checked rather than copied through: a string alwaysAllow would
             // still answer .includes() — with substring matches, not tool names
@@ -1018,6 +1153,7 @@ const server = createServer(async (req, res) => {
             // a running turn dies with its bot
             await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => { });
             stopScreenPoller(bot.id);
+            routines.disableForBot(bot.id);
             store.deleteBot(bot.id);
             for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
                 try {
@@ -1151,9 +1287,103 @@ const server = createServer(async (req, res) => {
             const bot = store.bot(m[1]);
             if (!bot)
                 return json(res, 404, { error: "no such bot" });
+            const routineRun = routines.activeRunForBot(bot.id);
+            if (routineRun) {
+                await routines.cancelRun(routineRun.id);
+                return json(res, 200, { ok: true });
+            }
             const instance = registry.get(bot.modelSelection.instanceId);
             await instance?.adapter.interruptTurn(bot.threadId);
             return json(res, 200, { ok: true });
+        }
+        // ── tasks: a bot's separate contexts ────────────────────────────────
+        // The bot record answers with its messages because switching tasks
+        // changes which transcript is live, and a partial patch would leave
+        // the client showing the previous task's conversation.
+        const botWithThread = (bot) => ({
+            ...bot,
+            messages: store.messagesFor(bot.threadId),
+            activeLeafId: store.activeLeaf(bot.threadId),
+            tasks: store.tasks(bot.id).map(({ resumeCursors, ...t }) => t),
+        });
+        m = path.match(/^\/api\/bots\/([\w-]+)\/tasks$/);
+        if (m && method === "POST") {
+            const bot = store.bot(m[1]);
+            if (!bot)
+                return json(res, 404, { error: "no such bot" });
+            if (bot.busy)
+                return json(res, 409, { error: "this bot is working — let it finish before starting a task" });
+            const body = await readBody(req);
+            const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined);
+            if (!task)
+                return json(res, 500, { error: "couldn't create that task" });
+            const fresh = botWithThread(store.bot(bot.id));
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 201, { bot: fresh, task });
+        }
+        m = path.match(/^\/api\/bots\/([\w-]+)\/tasks\/([\w-]+)$/);
+        if (m && method === "POST") {
+            const switched = store.switchTask(m[1], m[2]);
+            if (!switched)
+                return json(res, 404, { error: "no such task" });
+            const fresh = botWithThread(switched);
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 200, { bot: fresh });
+        }
+        if (m && method === "PATCH") {
+            const body = await readBody(req);
+            const task = store.renameTask(m[1], m[2], String(body.title ?? ""));
+            if (!task)
+                return json(res, 404, { error: "no such task" });
+            const fresh = botWithThread(store.bot(m[1]));
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 200, { task });
+        }
+        if (m && method === "DELETE") {
+            const bot = store.bot(m[1]);
+            if (bot?.busy && (bot.threadId === m[2] || routines.isActiveThread(m[2]))) {
+                return json(res, 409, { error: "this task is running — stop it first" });
+            }
+            const updated = store.deleteTask(m[1], m[2]);
+            if (!updated)
+                return json(res, 400, { error: "a bot keeps at least one task" });
+            const fresh = botWithThread(updated);
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 200, { bot: fresh });
+        }
+        // what the user's machine can host: which runtime is installed, whether
+        // its daemon is up, and whether the desktop image and container exist
+        if (method === "GET" && path === "/api/local-computer") {
+            const status = await containerComputerStatus();
+            return json(res, 200, { ...status, commands: setupCommands(status.runtime) });
+        }
+        m = path.match(/^\/api\/local-computer\/(pull|run|start|stop|remove)$/);
+        if (m && method === "POST") {
+            // Requiring JSON makes these localhost lifecycle mutations non-simple
+            // browser requests. A hostile web page cannot submit them with a form,
+            // and its cross-origin JSON request is stopped by the browser preflight
+            // because this server deliberately emits no CORS permission.
+            if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+                return json(res, 415, { error: "content-type must be application/json" });
+            }
+            const action = m[1];
+            if (localVmLifecycleBusy) {
+                return json(res, 409, { error: "another Local VM setup action is still running" });
+            }
+            if (activeVmThreadId && (action === "stop" || action === "remove" || action === "run")) {
+                return json(res, 409, { error: "the Local VM is being used by a bot — stop that turn first" });
+            }
+            localVmLifecycleBusy = true;
+            try {
+                const status = await containerComputerAction(action);
+                return json(res, 200, { ...status, commands: setupCommands(status.runtime) });
+            }
+            finally {
+                localVmLifecycleBusy = false;
+            }
+        }
+        if (method === "POST" && path === "/api/local-computer/screenshot") {
+            return json(res, 200, { image: await containerComputerScreenshot() });
         }
         // identity handshake for the packaged app's port fallback: the forked
         // child proves it is OURS by echoing its pid (a stray dev server has
@@ -1274,6 +1504,7 @@ server.listen(PORT, "127.0.0.1", () => {
 });
 for (const signal of ["SIGINT", "SIGTERM"]) {
     process.on(signal, () => {
+        routines?.stop();
         void registry.disposeAll().finally(() => process.exit(0));
     });
 }

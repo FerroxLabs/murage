@@ -16,7 +16,7 @@ type SectionId = "general" | "connections" | "computer";
 const SECTIONS: Array<{ id: SectionId; label: string; icon: typeof User }> = [
   { id: "general", label: "General", icon: User },
   { id: "connections", label: "Connections", icon: KeyRound },
-  { id: "computer", label: "Local computer", icon: Monitor },
+  { id: "computer", label: "Local VM", icon: Monitor },
 ];
 
 /** Name + email, persisted to /api/config {profile} on blur. */
@@ -96,7 +96,11 @@ function UpdatesRow() {
 
 export function SettingsModal() {
   const { dispatch } = useStore();
-  const [section, setSection] = useState<SectionId>("general");
+  const [section, setSection] = useState<SectionId>(() => {
+    const requested = window.sessionStorage.getItem("openmausbot.settings.section");
+    window.sessionStorage.removeItem("openmausbot.settings.section");
+    return requested === "computer" || requested === "connections" ? requested : "general";
+  });
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

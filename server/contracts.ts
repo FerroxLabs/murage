@@ -98,16 +98,9 @@ export interface SendTurnInput {
   /** Per-bot integrations the driver may hand to the agent as tools. */
   integrations?: {
     composio?: { url?: string; key: string };
-    /** The bot's cloud computer (box.ascii.dev) for desktop/browser use. */
-    /** the bot's computer: a cloud box, or a container on this machine.
-     * Both end up as the same MCP toolset — only the transport differs. */
-    computer?:
-      | { kind?: "box"; boxId: string; token: string }
-      | { kind: "container"; container: string; runtime: string };
-    /** Local computer use via the Electron-hosted cua-driver daemon —
-     * spawn config comes verbatim from cua-connection.json (the daemon
-     * MUST be spawned by Electron main; the harness only points the agent
-     * CLI at the already-running socket via this MCP proxy command). */
+    /** Cloud computer, reached through OpenMausBot's REST-to-MCP adapter. */
+    computer?: { kind?: "box"; boxId: string; token: string };
+    /** Direct stdio connection to a Cua Driver MCP server (host or sandbox). */
     localComputer?: { command: string; args: string[]; env: Record<string, string> };
     /** Peer-agent comms: an MCP proxy (list_bots / ask_bot) that routes back
      * through the harness so this bot can message other bots. The harness

@@ -55,9 +55,17 @@ mac:
   extraResources:
     - from: electron/resources/speech-helper
       to: speech-helper
+    # CUA must live outside ASAR. prepare-cua stages the signed executable and
+    # a self-contained JS/native SDK bundle selected for macOS arm64.
+    - from: dist-native/cua-driver
+      to: cua-driver
+    - from: dist-native/cua-sdk
+      to: cua-sdk
   extendInfo:
     NSMicrophoneUsageDescription: OpenMausBot uses the microphone for voice dictation into the composer.
     NSSpeechRecognitionUsageDescription: OpenMausBot transcribes your voice on-device to type messages for you.
+    NSAccessibilityUsageDescription: OpenMausBot uses Accessibility when you let a bot control this Mac.
+    NSScreenCaptureUsageDescription: OpenMausBot uses Screen Recording so bots can see this Mac before acting.
   # Notarization runs manually after the build (notarytool + staple),
   # mirroring the BlueyLite ship_release.sh flow.
   notarize: false

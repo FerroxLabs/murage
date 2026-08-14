@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { DATA_DIR } from "../config.js";
 import { augmentedPath } from "../env-path.js";
 import { brokerSocketPath, execCli, killCliTree, spawnCli } from "../procs.js";
+import { computerProxyEnv } from "../container-computer.js";
 import { newEventId, newId } from "../contracts.js";
 import { appendNative } from "./native.js";
 const DRIVER_KIND = "claudeAgent";
@@ -54,7 +55,7 @@ function askSummary(ask) {
     const text = JSON.stringify(input);
     return text === "{}" ? (ask.tool ?? "tool") : text.slice(0, 200);
 }
-function permissionSocketPath(threadId) {
+export function permissionSocketPath(threadId) {
     const tag = threadId.replace(/[^\w-]/g, "").slice(0, 8);
     return brokerSocketPath(DATA_DIR, tag);
 }
@@ -105,7 +106,12 @@ function createPermissionBroker(opts) {
             }
         });
     });
-    server.on("error", () => { });
+    // A broker that never came up used to be silent — every approval then
+    // timed out into a deny nobody could explain. Keep the turn fail-closed,
+    // but leave an actionable diagnostic.
+    server.on("error", (error) => {
+        console.error(`permission broker unavailable on ${opts.socketPath}: ${error.message}`);
+    });
     server.listen(opts.socketPath);
     return {
         answer(askId, behavior, message) {
@@ -221,18 +227,14 @@ export const ClaudeDriver = {
                 mcpServers.computer = {
                     command: process.execPath,
                     args: [PROXY_PATH],
-                    env: {
-                        ...NODE_ENV_FLAG,
-                        OGB_BOX_ID: turn.integrations.computer.boxId,
-                        OGB_BOX_TOKEN: turn.integrations.computer.token,
-                    },
+                    env: { ...NODE_ENV_FLAG, ...computerProxyEnv(turn.integrations.computer) },
                 };
                 allowed.push("mcp__computer");
             }
             else if (turn.integrations?.localComputer) {
-                // this Mac, via the Electron-owned cua-driver daemon (spawn config
-                // read from cua-connection.json — same "computer" name either way,
-                // the agent just sees a computer)
+                // A direct Cua Driver MCP connection. This can be the Electron-owned
+                // host daemon or the isolated Local VM; the agent sees the same
+                // "computer" server either way.
                 mcpServers.computer = { ...turn.integrations.localComputer };
                 allowed.push("mcp__computer");
             }
@@ -376,6 +378,9 @@ export const ClaudeDriver = {
                 }
             };
             let buf = "";
+            // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
+            // multibyte characters that straddle two reads and corrupts the text
+            child.stdout.setEncoding("utf8");
             child.stdout.on("data", (chunk) => {
                 buf += chunk;
                 let nl;

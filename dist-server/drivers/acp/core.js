@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execCli, killCliTree, spawnCli } from "../../procs.js";
 import { newEventId, newId } from "../../contracts.js";
+import { computerProxyEnv } from "../../container-computer.js";
 import { augmentedPath } from "../../env-path.js";
 // the computer proxy entry: .ts in dev (node type stripping), .js in the
 // compiled dist-server the packaged app ships
@@ -86,20 +87,16 @@ export function createAcpDriver(support) {
                 if (agents) {
                     servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(agents.env) });
                 }
-                // the bot's computer, mounted exactly like the claude driver does:
-                // an ACP agent gets the same screenshot/click/batch tools instead of
-                // being told it has a machine it cannot touch
+                // The bot's computer, mounted exactly like the Claude driver does.
+                // Cloud boxes use the REST adapter; host and sandbox Cua connections
+                // expose Cua Driver's official MCP server directly.
                 const computer = turn.integrations?.computer;
                 if (computer) {
                     servers.push({
                         name: "computer",
                         command: process.execPath,
                         args: [COMPUTER_PROXY_PATH],
-                        env: acpEnv({
-                            ELECTRON_RUN_AS_NODE: "1",
-                            OGB_BOX_ID: computer.boxId,
-                            OGB_BOX_TOKEN: computer.token,
-                        }),
+                        env: acpEnv({ ELECTRON_RUN_AS_NODE: "1", ...computerProxyEnv(computer) }),
                     });
                 }
                 else if (turn.integrations?.localComputer) {
@@ -290,6 +287,9 @@ export function createAcpDriver(support) {
                     }
                 };
                 let buf = "";
+                // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
+                // multibyte characters that straddle two reads and corrupts the text
+                child.stdout.setEncoding("utf8");
                 child.stdout.on("data", (chunk) => {
                     buf += chunk;
                     let nl;

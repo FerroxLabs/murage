@@ -1,7 +1,8 @@
 // computer-proxy — a minimal MCP stdio server the claude CLI spawns
 // (agentcal's permission-proxy pattern, dedicated entry file so there is
 // no argv-dispatch fork-bomb hazard). It gives the agent its bot's cloud
-// computer (box.ascii.dev) as CUA-grade tools.
+// selected cloud Linux computer as CUA-style tools. Local VM and host
+// desktops connect to Cua Driver's official MCP server directly.
 //
 // Transport: every action goes through the box's REST run-command
 // endpoint (no inbound port on the box, no tunnel), so a round trip is
@@ -26,18 +27,9 @@
 //     type, Enter) in one round trip with one frame at the end.
 //
 // stdout is the MCP channel — never console.log here.
-import { spawn } from "node:child_process";
 const BOX_API = process.env.OGB_BOX_API ?? "https://ascii.dev/api/box/v1";
 const boxId = process.env.OGB_BOX_ID ?? "";
 const token = process.env.OGB_BOX_TOKEN ?? "";
-// The same desktop can live in a cloud box or in a container on this
-// machine. Only the two functions below know the difference — every tool
-// above them just runs shell and reads a file back.
-const container = process.env.OGB_CONTAINER ?? "";
-const runtime = process.env.OGB_RUNTIME || "docker";
-const local = Boolean(container);
-// the desktop images run X on :1; a cloud box uses :0
-const CONTAINER_DISPLAY = process.env.OGB_DISPLAY || ":1";
 
 /** The coordinate space the model sees: frames are downscaled to this
  * width, and clicks are scaled back up to the real display box-side. */
@@ -78,38 +70,7 @@ async function resumeBox(): Promise<boolean> {
   return false;
 }
 
-/** Run a command inside the local container. No network and no waking: a
- * stopped container is reported plainly instead of hanging. */
-function runInContainer(command: string, timeoutMs: number): Promise<RunOut> {
-  return new Promise((resolve) => {
-    const child = spawn(
-      runtime,
-      ["exec", "-e", `DISPLAY=${CONTAINER_DISPLAY}`, container, "bash", "-lc", command],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-    child.stdout.on("data", (c) => (stdout += c));
-    child.stderr.on("data", (c) => (stderr += c));
-    child.on("error", (e) =>
-      resolve({ ok: false, exitCode: null, stdout: "", stderr: `${runtime} not available: ${e.message}` }),
-    );
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({
-        ok: code === 0,
-        exitCode: code,
-        stdout,
-        stderr:
-          code === 0 ? stderr : stderr || `the local computer isn't running — start it: ${runtime} start ${container}`,
-      });
-    });
-  });
-}
-
 async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true): Promise<RunOut> {
-  if (local) return runInContainer(command, timeoutMs);
   const res = await fetch(`${BOX_API}/boxes/${boxId}/commands`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -133,7 +94,7 @@ async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true): 
   };
 }
 
-const ENV = local ? `export DISPLAY=${CONTAINER_DISPLAY}` : 'export DISPLAY=${DISPLAY:-:0}';
+const ENV = 'export DISPLAY=${DISPLAY:-:0}';
 /** Resolve the real display size into $W/$H for box-side click scaling. */
 const GEOMETRY = [
   "g=$(xdotool getdisplaygeometry 2>/dev/null)",
@@ -201,13 +162,6 @@ function wholeImage(bytes: Buffer, expectedBytes?: number): boolean {
  * envelope second. Both are validated — an error page served with a 200
  * must fall through, not reach the model as an "image". */
 async function fetchFrame(expectedBytes?: number): Promise<string | null> {
-  if (local) {
-    // no HTTP hop at all — read the bytes straight out of the container
-    const out = await runInContainer(`base64 -w0 ${SHOT_PATH}`, 30_000);
-    const data = out.stdout.trim();
-    if (!data) return null;
-    return wholeImage(Buffer.from(data, "base64"), expectedBytes) ? data : null;
-  }
   const auth = { authorization: `Bearer ${token}` };
   try {
     const res = await fetch(
@@ -320,7 +274,7 @@ const TOOLS = [
   {
     name: "screenshot",
     description:
-      "See the bot's cloud computer screen (returns an image). The desktop runs Chrome and a full Linux GUI. You usually do NOT need this after acting — click, type_text, press_key, scroll and open_url already return the resulting screen.",
+      "See the selected Linux computer screen (returns an image). It has a full desktop and browser. You usually do NOT need this after acting — click, type_text, press_key, scroll and open_url already return the resulting screen.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -406,7 +360,7 @@ const TOOLS = [
   {
     name: "computer_exec",
     description:
-      "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code — and, unlike the UI tools, no screenshot unless you ask for one.",
+      "Run a shell command on the selected Linux computer (passwordless sudo, X11 desktop). Returns stdout/stderr/exit code — and, unlike the UI tools, no screenshot unless you ask for one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -415,13 +369,17 @@ const TOOLS = [
           type: "boolean",
           description: "default false — set true to also return a screenshot (e.g. after launching a GUI app)",
         },
+        timeout_ms: {
+          type: "number",
+          description: "command deadline in milliseconds, default and maximum 120000",
+        },
       },
       required: ["command"],
     },
   },
   {
     name: "open_url",
-    description: "Open a URL in the computer's own Chrome and return the resulting screen.",
+    description: "Open a URL in the computer's browser and return the resulting screen.",
     inputSchema: {
       type: "object",
       properties: { url: { type: "string" }, ...OBSERVE_PROPS },
@@ -566,27 +524,35 @@ async function call(id: unknown, name: string, args: any) {
   }
   if (name === "computer_exec") {
     const command = String(args.command ?? "").slice(0, 4000);
-    const out = await runOnBox(command, 120_000);
+    const timeoutMs = Math.min(Math.max(Math.round(Number(args.timeout_ms) || 120_000), 1000), 120_000);
+    const out = await runOnBox(command, timeoutMs);
     const note = `exit ${out.exitCode}\n${out.stdout.slice(-6000)}${out.stderr ? `\n[stderr]\n${out.stderr.slice(-2000)}` : ""}`;
     if (args.observe !== true) return text(id, note);
     const shot = await runOnBox([ENV, GEOMETRY, captureBlock()].join("; "), 60_000);
     return observed(id, note, await frameFrom(shot));
   }
   if (name === "open_url") {
-    const url = String(args.url ?? "");
+    const url = String(args.url ?? "").slice(0, 4000);
     if (!/^https?:\/\//.test(url)) return text(id, "only http(s) URLs", true);
-    const q = shellQuote(url.replace(/'/g, "%27"));
+    const q = shellQuote(url);
     const observe = wantsFrame(args);
-    // launch, then poll for a browser window instead of a blind sleep —
-    // a fast page returns in a fraction of the old fixed 3s
+    // Discover the browser installed in the cloud image; claiming success
+    // after a missing `xdg-open` was the original integration's most visible
+    // false positive.
     const command = [
       ENV,
       GEOMETRY,
-      `(google-chrome ${q} || chromium ${q} || chromium-browser ${q} || xdg-open ${q}) >/dev/null 2>&1 &`,
-      'for i in 1 2 3 4 5 6 7 8 9 10 11 12; do xdotool search --onlyvisible --class "chrom" >/dev/null 2>&1 && break; sleep 0.25; done',
+      `url=${q}`,
+      'browser=""',
+      'for candidate in google-chrome chromium chromium-browser firefox-esr firefox x-www-browser sensible-browser; do command -v "$candidate" >/dev/null 2>&1 && { browser="$candidate"; break; }; done',
+      'if [ -z "$browser" ]; then echo BROWSER_MISSING; else "$browser" "$url" >/tmp/openmausbot-browser.log 2>&1 & echo "BROWSER_STARTED $browser"; fi',
+      'if [ -n "$browser" ]; then for i in 1 2 3 4 5 6 7 8 9 10 11 12; do xdotool search --onlyvisible --class "chrom|firefox|Navigator" >/dev/null 2>&1 && break; sleep 0.25; done; fi',
       observe ? captureBlock(600) : "true",
     ].join("; ");
     const out = await runOnBox(command, 60_000);
+    if (!/^BROWSER_STARTED /m.test(out.stdout)) {
+      return text(id, `couldn't open ${url}: ${out.stderr.slice(0, 160) || "no supported browser is installed"}`, true);
+    }
     if (!observe) return text(id, `opened ${url}`);
     return observed(id, `opened ${url}`, await frameFrom(out));
   }
@@ -601,7 +567,7 @@ async function handle(msg: any) {
       result: {
         protocolVersion: msg.params?.protocolVersion ?? "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "openmausbot-computer", version: "3" },
+        serverInfo: { name: "openmausbot-computer", version: "4" },
       },
     });
   }

@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BASE_IMAGE,
+  BASE_IMAGE_DIGEST,
+  BASE_IMAGE_LABEL,
   CONTAINER,
+  CUA_DRIVER_VERSION,
+  CUA_EXECUTABLE,
+  CUA_SOCKET,
+  DRIVER_LABEL,
   IMAGE,
+  MANAGED_LABEL,
   computerProxyEnv,
+  containerComputerAction,
+  containerComputerMcp,
+  containerComputerScreenshot,
   containerComputerStatus,
+  managedImageDockerfile,
   setupCommands,
   type CommandRunner,
 } from "./container-computer.ts";
@@ -23,6 +35,54 @@ function runner(responses: Record<string, string | Error>) {
   return { calls, run };
 }
 
+const versionProbe =
+  `docker exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ${CONTAINER} ` +
+  `${CUA_EXECUTABLE} --version`;
+const statusProbe =
+  `docker exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ${CONTAINER} ` +
+  `${CUA_EXECUTABLE} status --socket ${CUA_SOCKET}`;
+
+function preparedImageInspect() {
+  return JSON.stringify([
+    {
+      Config: {
+        Labels: {
+          [MANAGED_LABEL]: "1",
+          [DRIVER_LABEL]: CUA_DRIVER_VERSION,
+          [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
+        },
+      },
+    },
+  ]);
+}
+
+function readyInspect(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify([
+    {
+      Config: {
+        Image: IMAGE,
+        Labels: {
+          [MANAGED_LABEL]: "1",
+          [DRIVER_LABEL]: CUA_DRIVER_VERSION,
+          [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
+        },
+        Env: ["VNC_PW=secret123"],
+      },
+      State: { Running: true },
+      HostConfig: {
+        Memory: 4 * 1024 * 1024 * 1024,
+        MemorySwap: 4 * 1024 * 1024 * 1024,
+        NanoCpus: 2_000_000_000,
+        PidsLimit: 512,
+        CapDrop: ["ALL"],
+        CapAdd: ["CAP_SETUID", "CAP_SETGID"],
+        PortBindings: { "6901/tcp": [{ HostIp: "127.0.0.1" }] },
+      },
+      ...overrides,
+    },
+  ]);
+}
+
 describe("containerComputerStatus", () => {
   it("prefers a running runtime over an earlier installed but stopped one", async () => {
     const fake = runner({
@@ -30,16 +90,11 @@ describe("containerComputerStatus", () => {
       "/usr/bin/which podman": "podman\n",
       "docker info --format {{.ServerVersion}}": new Error("daemon stopped"),
       "podman info --format {{.ServerVersion}}": "5.0\n",
-      [`podman image inspect ${IMAGE}`]: "[]",
+      [`podman image inspect ${IMAGE}`]: preparedImageInspect(),
       [`podman inspect ${CONTAINER}`]: JSON.stringify([
         {
           State: { Running: false },
-          HostConfig: {
-            PortBindings: {
-              "5900/tcp": [{ HostIp: "127.0.0.1" }],
-              "6080/tcp": [{ HostIp: "127.0.0.1" }],
-            },
-          },
+          HostConfig: { PortBindings: { "6901/tcp": [{ HostIp: "127.0.0.1" }] } },
         },
       ]),
     });
@@ -60,14 +115,13 @@ describe("containerComputerStatus", () => {
       "/usr/bin/which podman": new Error("missing"),
       "/usr/bin/which container": "container\n",
       "container system status": "running\n",
-      [`container image inspect ${IMAGE}`]: "[]",
+      [`container image inspect ${IMAGE}`]: preparedImageInspect(),
       [`container inspect ${CONTAINER}`]: JSON.stringify([
         {
           configuration: {
-            publishedPorts: [
-              { hostAddress: "127.0.0.1", containerPort: 5900 },
-              { hostAddress: "127.0.0.1", containerPort: 6080 },
-            ],
+            image: IMAGE,
+            resources: { cpus: 2, memoryInBytes: 4 * 1024 * 1024 * 1024 },
+            publishedPorts: [{ hostAddress: "127.0.0.1", containerPort: 6901 }],
           },
           status: { state: "running" },
         },
@@ -82,29 +136,30 @@ describe("containerComputerStatus", () => {
     expect(fake.calls).not.toContain("container info --format {{.ServerVersion}}");
   });
 
-  it("does not report a running container as ready when a desktop port is public", async () => {
+  it("does not report a running container as ready when its viewer is public", async () => {
     const fake = runner({
       "/usr/bin/which docker": "docker\n",
       "/usr/bin/which podman": new Error("missing"),
       "docker info --format {{.ServerVersion}}": "27\n",
-      [`docker image inspect ${IMAGE}`]: "[]",
-      [`docker inspect ${CONTAINER}`]: JSON.stringify([
-        {
-          State: { Running: true },
-          HostConfig: {
-            PortBindings: {
-              "5900/tcp": [{ HostIp: "0.0.0.0" }],
-              "6080/tcp": [{ HostIp: "127.0.0.1" }],
-            },
-          },
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: readyInspect({
+        HostConfig: {
+          Memory: 4 * 1024 * 1024 * 1024,
+          MemorySwap: 4 * 1024 * 1024 * 1024,
+          NanoCpus: 2_000_000_000,
+          PidsLimit: 512,
+          CapDrop: ["ALL"],
+          CapAdd: ["CAP_SETUID", "CAP_SETGID"],
+          PortBindings: { "6901/tcp": [{ HostIp: "0.0.0.0" }] },
         },
-      ]),
+      }),
     });
 
     const status = await containerComputerStatus(fake.run, "linux");
 
     expect(status.container).toBe("running");
     expect(status.network).toBe("unsafe");
+    expect(status.ready).toBe(false);
   });
 
   it("does not mistake an unrelated container executable for Apple container off macOS", async () => {
@@ -118,37 +173,164 @@ describe("containerComputerStatus", () => {
     expect(status.runtime).toBeNull();
     expect(fake.calls).not.toContain("where.exe container");
   });
+
+  it("reports ready only after the exact image, limits, network, version and daemon pass", async () => {
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: readyInspect(),
+      [versionProbe]: `cua-driver ${CUA_DRIVER_VERSION}\n`,
+      [statusProbe]: "running\n",
+    });
+
+    const status = await containerComputerStatus(fake.run, "linux");
+
+    expect(status).toMatchObject({
+      imageMatches: true,
+      managed: true,
+      network: "loopback",
+      security: "hardened",
+      desktopReady: true,
+      ready: true,
+      problem: null,
+      driver_version: "0.19.3",
+    });
+    expect(status.viewer_url).toContain("#autoconnect=true&resize=scale&password=secret123");
+  });
+
+  it("rejects a lookalike container with a different driver or base-image label", async () => {
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: readyInspect({
+        Config: {
+          Image: IMAGE,
+          Labels: { [MANAGED_LABEL]: "1", [DRIVER_LABEL]: "0.12.4", [BASE_IMAGE_LABEL]: "wrong" },
+        },
+      }),
+    });
+
+    const status = await containerComputerStatus(fake.run, "linux");
+
+    expect(status.imageMatches).toBe(false);
+    expect(status.ready).toBe(false);
+    expect(status.problem).toContain("older desktop or Cua Driver");
+    expect(fake.calls).not.toContain(versionProbe);
+  });
+
+  it("does not treat an unlabelled image under the local tag as prepared", async () => {
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: JSON.stringify([{ Config: { Labels: {} } }]),
+      [`docker inspect ${CONTAINER}`]: new Error("missing container"),
+    });
+
+    const status = await containerComputerStatus(fake.run, "linux");
+
+    expect(status.image).toBe(false);
+    expect(status.problem).toContain("Prepare the Cua desktop image");
+  });
 });
 
-describe("computerProxyEnv", () => {
-  it("hands the proxy a container when the bot runs on a local VM", () => {
-    expect(
-      computerProxyEnv({
-        kind: "container",
-        container: "openmausbot-computer",
-        runtime: "podman",
-      }),
-    ).toEqual({
-      OGB_CONTAINER: "openmausbot-computer",
-      OGB_RUNTIME: "podman",
-    });
-  });
-
-  it("defaults the runtime rather than shipping an empty command", () => {
-    expect(computerProxyEnv({ kind: "container", container: "c" }).OGB_RUNTIME).toBe("docker");
-  });
-
-  it("hands the proxy a box otherwise — the cloud path is unchanged", () => {
+describe("Cua integration", () => {
+  it("hands cloud credentials only to the legacy cloud adapter", () => {
     expect(computerProxyEnv({ boxId: "bx_1", token: "t" })).toEqual({
       OGB_BOX_ID: "bx_1",
       OGB_BOX_TOKEN: "t",
     });
   });
 
-  it("never leaks box credentials into a container turn", () => {
-    const env = computerProxyEnv({ kind: "container", container: "c", runtime: "docker" });
-    expect(env.OGB_BOX_TOKEN).toBeUndefined();
-    expect(env.OGB_BOX_ID).toBeUndefined();
+  it("mounts the official Cua MCP server for Local VM turns", () => {
+    const connection = containerComputerMcp("podman");
+    expect(connection.command).toBe(process.execPath);
+    expect(connection.args.at(-3)).toBe("podman");
+    expect(connection.args.at(-2)).toBe(CONTAINER);
+    expect(connection.args.at(-1)).toBe(CUA_SOCKET);
+    expect(connection.env).toEqual({ ELECTRON_RUN_AS_NODE: "1" });
+  });
+
+  it("builds an exact, checksum-verified Cua Driver 0.19.3 image", () => {
+    const dockerfile = managedImageDockerfile();
+    expect(BASE_IMAGE).toMatch(/@sha256:[a-f0-9]{64}$/);
+    expect(dockerfile).toContain(`FROM ${BASE_IMAGE}`);
+    expect(dockerfile).toContain("cua_driver-0.19.3-py3-none-manylinux_2_31_x86_64.whl");
+    expect(dockerfile).toContain("cua_driver-0.19.3-py3-none-manylinux_2_31_aarch64.whl");
+    expect(dockerfile).not.toContain("/tmp/cua-driver.whl");
+    expect(dockerfile).toContain("sha256sum -c -");
+    expect(dockerfile).toContain(`install -D -m 0755 \"$driver_bin\" ${CUA_EXECUTABLE}`);
+    expect(dockerfile).toContain(`cua-driver ${CUA_DRIVER_VERSION}`);
+    expect(dockerfile).toContain(`serve --socket ${CUA_SOCKET} --permission-mode standard`);
+  });
+
+  it("captures the preview through Cua Driver rather than xdotool or VNC", async () => {
+    const screenshotCall =
+      `docker exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ${CONTAINER} ` +
+      `${CUA_EXECUTABLE} call get_desktop_state {} --socket ${CUA_SOCKET} ` +
+      "--screenshot-out-file /tmp/openmausbot-preview.png";
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.alloc(600),
+      Buffer.from("IEND", "ascii"),
+    ]);
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: readyInspect(),
+      [versionProbe]: `cua-driver ${CUA_DRIVER_VERSION}\n`,
+      [statusProbe]: "running\n",
+      [screenshotCall]: "{}\n",
+      [`docker exec ${CONTAINER} base64 -w0 /tmp/openmausbot-preview.png`]: png.toString("base64"),
+    });
+
+    const image = await containerComputerScreenshot(fake.run, "linux");
+
+    expect(image).toBe(`data:image/png;base64,${png.toString("base64")}`);
+    expect(fake.calls).toContain(screenshotCall);
+    expect(fake.calls.some((call) => /xdotool|scrot|vnc/i.test(call))).toBe(false);
+  });
+});
+
+describe("containerComputerAction", () => {
+  it("does not create a VM before its managed image is prepared", async () => {
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: new Error("missing image"),
+      [`docker inspect ${CONTAINER}`]: new Error("missing container"),
+    });
+
+    await expect(containerComputerAction("run", fake.run, "linux")).rejects.toThrow(
+      "Prepare the Cua desktop image",
+    );
+    expect(fake.calls.some((call) => call.startsWith("docker run "))).toBe(false);
+  });
+
+  it("never starts an older stopped VM that must be recreated", async () => {
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: JSON.stringify([
+        {
+          Config: { Image: "old-desktop:latest", Labels: {} },
+          State: { Running: false },
+          HostConfig: { PortBindings: { "6080/tcp": [{ HostIp: "127.0.0.1" }] } },
+        },
+      ]),
+    });
+
+    await expect(containerComputerAction("start", fake.run, "linux")).rejects.toThrow("remove and recreate");
+    expect(fake.calls).not.toContain(`docker start ${CONTAINER}`);
   });
 });
 
@@ -162,22 +344,37 @@ describe("setupCommands", () => {
     expect(commands.install).not.toContain("Docker");
   });
 
-  it("publishes VNC ports only on the loopback interface", () => {
-    const commands = setupCommands("podman", "linux");
-    expect(commands.run).toContain("-p 127.0.0.1:6080:6080");
-    expect(commands.run).toContain("-p 127.0.0.1:5900:5900");
-    expect(commands.run).not.toContain(" -p 6080:6080");
+  it("publishes only the password-protected viewer and only on loopback", () => {
+    const command = setupCommands("podman", "linux").run!;
+    expect(command).toContain("-p 127.0.0.1:6080:6901");
+    expect(command).not.toContain(" -p 6080:6901");
+    expect(command).not.toContain("5900");
+    expect(command).toContain("VNC_PW=CHANGE_ME");
+  });
+
+  it("limits resources and retains only the sandbox supervisor's identity-switch caps", () => {
+    const command = setupCommands("docker", "linux").run!;
+    expect(command).toContain("--memory 4g --memory-swap 4g");
+    expect(command).toContain("--cpus 2 --pids-limit 512");
+    expect(command).toContain("--cap-drop ALL --cap-add SETUID --cap-add SETGID");
+    expect(command).toContain(`--label ${MANAGED_LABEL}=1`);
+    expect(command).toContain(`--label ${DRIVER_LABEL}=${CUA_DRIVER_VERSION}`);
+  });
+
+  it("shows the pinned base pull while creating the managed derivative through the API", () => {
+    expect(setupCommands("docker", "linux").pull).toBe(`docker pull ${BASE_IMAGE}`);
+    expect(setupCommands("docker", "linux").run).toContain(IMAGE);
   });
 
   it("generates Apple container lifecycle commands without Docker-only flags", () => {
     const commands = setupCommands("container", "darwin");
     expect(commands.runtimeStart).toBe("container system start");
     expect(commands.remove).toBe(`container rm --force ${CONTAINER}`);
+    expect(commands.run).toContain("--memory 4g --cpus 2 --cap-drop ALL");
+    expect(commands.run).not.toContain("--memory-swap");
   });
 
   it("offers the supported Podman Desktop installer on Windows", () => {
-    expect(setupCommands(null, "win32").install).toBe(
-      "winget install -e --id RedHat.Podman-Desktop",
-    );
+    expect(setupCommands(null, "win32").install).toBe("winget install -e --id RedHat.Podman-Desktop");
   });
 });

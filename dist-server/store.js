@@ -2,11 +2,19 @@
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { readFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { writeFileAtomic } from "./atomic.js";
 import { DATA_DIR } from "./config.js";
 import { newId } from "./contracts.js";
 import { pickBotName } from "./names.js";
+/** What a task is called before its first message names it. */
+export const UNTITLED_TASK = "New task";
+/** A task's name, taken from the first thing you asked it to do. */
+export function titleFromMessage(text) {
+    const line = text.trim().split("\n")[0].trim();
+    return line.length > 48 ? `${line.slice(0, 47)}…` : line || UNTITLED_TASK;
+}
 const BOTS_FILE = join(DATA_DIR, "bots.json");
 const GROUPS_FILE = join(DATA_DIR, "groups.json");
 const messagesFile = (threadId) => join(DATA_DIR, `messages-${threadId}.json`);
@@ -23,9 +31,10 @@ const COLORS = [
     "coral",
 ];
 /** Resolve @mentions in a message against a bot roster: `@` must start a
- * word, names match case-insensitively, longest name wins (so "@New Bot 2"
- * never half-matches "New Bot"), hidden bots skipped, results deduped.
- * Callers pre-filter the sender out of `peers`. */
+ * word, the name must end on a word boundary (so "@New Bottle" never matches
+ * "New Bot"), names match case-insensitively, longest name wins (so
+ * "@New Bot 2" never half-matches "New Bot"), hidden bots skipped, results
+ * deduped. Callers pre-filter the sender out of `peers`. */
 export function mentionedBots(text, peers) {
     const candidates = peers
         .filter((p) => !p.hidden && p.name.trim())
@@ -37,7 +46,13 @@ export function mentionedBots(text, peers) {
         if (at > 0 && !/\s/.test(text[at - 1]))
             continue; // user@host, not a tag
         const rest = lower.slice(at + 1);
-        const hit = candidates.find((p) => rest.startsWith(p.name.toLowerCase()));
+        const hit = candidates.find((p) => {
+            const name = p.name.toLowerCase();
+            if (!rest.startsWith(name))
+                return false;
+            const after = rest[name.length]; // must not run into a longer word
+            return after === undefined || !/[a-z0-9]/i.test(after);
+        });
         if (hit && !found.includes(hit))
             found.push(hit);
     }
@@ -73,12 +88,26 @@ export class Store {
             b.busy = false;
         for (const g of this.groups)
             g.busyBotId = null;
+        // bots saved before tasks existed have one endless thread; adopt it as
+        // their first task so nothing is lost and nothing special-cases it
+        for (const b of this.bots) {
+            if (b.tasks?.length)
+                continue;
+            b.tasks = [
+                {
+                    threadId: b.threadId,
+                    title: this.firstUserLine(b.threadId) ?? UNTITLED_TASK,
+                    createdAt: b.createdAt,
+                    resumeCursors: b.resumeCursors ?? {},
+                },
+            ];
+        }
     }
     saveBots() {
-        writeFileSync(BOTS_FILE, JSON.stringify(this.bots, null, 2));
+        writeFileAtomic(BOTS_FILE, JSON.stringify(this.bots, null, 2));
     }
     saveGroups() {
-        writeFileSync(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId, ...g }) => g), null, 2));
+        writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId, ...g }) => g), null, 2));
     }
     // ── groups ────────────────────────────────────────────────────────────
     group(id) {
@@ -171,7 +200,7 @@ export class Store {
     }
     saveThread(threadId) {
         const t = this.thread(threadId);
-        writeFileSync(messagesFile(threadId), JSON.stringify({ activeLeafId: t.activeLeafId, messages: t.messages }, null, 2));
+        writeFileAtomic(messagesFile(threadId), JSON.stringify({ activeLeafId: t.activeLeafId, messages: t.messages }, null, 2));
     }
     messagesFor(threadId) {
         return this.thread(threadId).messages;
@@ -267,7 +296,7 @@ export class Store {
         return this.bots.find((b) => b.id === id) ?? null;
     }
     botByThread(threadId) {
-        return this.bots.find((b) => b.threadId === threadId) ?? null;
+        return this.bots.find((b) => b.threadId === threadId || b.tasks?.some((t) => t.threadId === threadId)) ?? null;
     }
     createBot() {
         const name = pickBotName(this.bots.map((b) => b.name));
@@ -284,6 +313,7 @@ export class Store {
             resumeCursors: {},
             createdAt: Date.now(),
         };
+        bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {} }];
         this.bots.unshift(bot);
         this.saveBots();
         this.appendMessage(bot.threadId, {
@@ -299,12 +329,15 @@ export class Store {
         if (!bot)
             return false;
         this.bots = this.bots.filter((b) => b.id !== id);
-        this.threads.delete(bot.threadId);
-        this.saveBots();
-        try {
-            unlinkSync(messagesFile(bot.threadId));
+        // every task's transcript goes with the bot, not just the open one
+        for (const threadId of new Set([bot.threadId, ...(bot.tasks ?? []).map((t) => t.threadId)])) {
+            this.threads.delete(threadId);
+            try {
+                unlinkSync(messagesFile(threadId));
+            }
+            catch { }
         }
-        catch { }
+        this.saveBots();
         return true;
     }
     patchBot(id, patch) {
@@ -315,12 +348,101 @@ export class Store {
         this.saveBots();
         return bot;
     }
-    setResumeCursor(botId, instanceId, cursor) {
+    setResumeCursor(botId, instanceId, cursor, threadId) {
         const bot = this.bot(botId);
         if (!bot)
             return;
-        bot.resumeCursors[instanceId] = cursor;
+        // the cursor belongs to the task that produced it, not to the bot
+        const task = threadId ? this.taskByThread(botId, threadId) : this.activeTask(botId);
+        if (task)
+            task.resumeCursors[instanceId] = cursor;
+        // The legacy mirror follows the task visible in chat, never a detached
+        // routine task working in the background.
+        if (!threadId || bot.threadId === threadId)
+            bot.resumeCursors[instanceId] = cursor;
         this.saveBots();
+    }
+    // ── tasks ─────────────────────────────────────────────────────────────
+    /** The first thing the human asked in a thread — a task's natural name. */
+    firstUserLine(threadId) {
+        const first = this.messagesFor(threadId).find((m) => m.role === "user" && m.kind === "text" && m.text?.trim());
+        return first?.text ? titleFromMessage(first.text) : null;
+    }
+    tasks(botId) {
+        return this.bot(botId)?.tasks ?? [];
+    }
+    activeTask(botId) {
+        const bot = this.bot(botId);
+        return bot?.tasks?.find((t) => t.threadId === bot.threadId);
+    }
+    taskByThread(botId, threadId) {
+        return this.bot(botId)?.tasks?.find((t) => t.threadId === threadId);
+    }
+    /** A fresh context on the same bot: new thread, new session, same
+     * persona/tools/computer. Becomes the active task. */
+    createTask(botId, title, activate = true) {
+        const bot = this.bot(botId);
+        if (!bot)
+            return null;
+        const task = {
+            threadId: newId(),
+            title: title?.trim() || UNTITLED_TASK,
+            createdAt: Date.now(),
+            resumeCursors: {},
+        };
+        bot.tasks = [task, ...(bot.tasks ?? [])];
+        if (activate) {
+            bot.threadId = task.threadId;
+            bot.resumeCursors = {}; // legacy mirror follows the active task
+        }
+        this.saveBots();
+        return task;
+    }
+    switchTask(botId, threadId) {
+        const bot = this.bot(botId);
+        const task = bot?.tasks?.find((t) => t.threadId === threadId);
+        if (!bot || !task)
+            return null;
+        bot.threadId = task.threadId;
+        bot.resumeCursors = { ...task.resumeCursors };
+        this.saveBots();
+        return bot;
+    }
+    renameTask(botId, threadId, title) {
+        const task = this.bot(botId)?.tasks?.find((t) => t.threadId === threadId);
+        if (!task)
+            return null;
+        task.title = title.trim().slice(0, 80) || UNTITLED_TASK;
+        this.saveBots();
+        return task;
+    }
+    /** Name a task after its first message, once. */
+    titleTaskFromFirstMessage(botId, text, threadId) {
+        const task = threadId ? this.taskByThread(botId, threadId) : this.activeTask(botId);
+        if (!task || task.title !== UNTITLED_TASK)
+            return;
+        task.title = titleFromMessage(text);
+        this.saveBots();
+    }
+    /** Delete a task and its transcript. A bot always keeps one. */
+    deleteTask(botId, threadId) {
+        const bot = this.bot(botId);
+        if (!bot || !bot.tasks || bot.tasks.length < 2)
+            return null;
+        if (!bot.tasks.some((t) => t.threadId === threadId))
+            return null;
+        bot.tasks = bot.tasks.filter((t) => t.threadId !== threadId);
+        this.threads.delete(threadId);
+        try {
+            unlinkSync(messagesFile(threadId));
+        }
+        catch { }
+        if (bot.threadId === threadId) {
+            bot.threadId = bot.tasks[0].threadId;
+            bot.resumeCursors = { ...bot.tasks[0].resumeCursors };
+        }
+        this.saveBots();
+        return bot;
     }
     /** First-run seed: one bot so the app never opens empty — it gets a
      * random friendly name like every other bot. */
