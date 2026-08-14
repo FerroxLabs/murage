@@ -89,7 +89,7 @@ function askSummary(ask: Ask): string {
   return text === "{}" ? (ask.tool ?? "tool") : text.slice(0, 200);
 }
 
-function permissionSocketPath(threadId: string) {
+export function permissionSocketPath(threadId: string) {
   const tag = threadId.replace(/[^\w-]/g, "").slice(0, 8);
   return brokerSocketPath(DATA_DIR, tag);
 }
@@ -145,7 +145,12 @@ function createPermissionBroker(opts: {
       }
     });
   });
-  server.on("error", () => {});
+  // A broker that never came up used to be silent — every approval then
+  // timed out into a deny nobody could explain. Keep the turn fail-closed,
+  // but leave an actionable diagnostic.
+  server.on("error", (error) => {
+    console.error(`permission broker unavailable on ${opts.socketPath}: ${error.message}`);
+  });
   server.listen(opts.socketPath);
   return {
     answer(askId: string, behavior: string, message?: string): boolean {

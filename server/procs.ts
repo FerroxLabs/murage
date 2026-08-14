@@ -76,6 +76,8 @@ export function killCliTree(child: ChildProcess): void {
  * (Node can't listen on a filesystem socket path there — EACCES). */
 export function brokerSocketPath(dataDir: string, tag: string): string {
   return process.platform === "win32"
-    ? `\\\\.\\pipe\\openmausbot-perm-${tag}`
+    // Named pipes share a global namespace; DATA_DIR cannot isolate two
+    // concurrent app instances the way a POSIX socket directory does.
+    ? `\\\\.\\pipe\\openmausbot-perm-${process.pid}-${tag}`
     : join(dataDir, `perm-${tag}.sock`);
 }
