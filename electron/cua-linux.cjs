@@ -66,7 +66,8 @@ function desktopCommandEnvironment(source = process.env, additions = {}) {
   }
   env.PATH = sanitizePath(source.PATH);
   // Keep every Cua child owned by OpenMausBot deterministic and local-only.
-  // This does not change the user's persisted Cua preferences.
+  // Bundled native code must not independently update itself or opt users into
+  // upstream telemetry. This does not change the user's persisted preferences.
   env.CUA_DRIVER_RS_UPDATE_CHECK = "false";
   env.CUA_DRIVER_RS_TELEMETRY_ENABLED = "false";
   for (const [key, value] of Object.entries(additions)) {
@@ -467,6 +468,7 @@ function validateDriverCandidate(candidate, {
 function discoverLinuxCuaDriver({
   env = process.env,
   homeDir = os.homedir(),
+  bundledDriverPath,
   currentUid,
   currentGid,
   currentUsername,
@@ -477,6 +479,15 @@ function discoverLinuxCuaDriver({
   if (explicit) {
     const result = validateDriverCandidate(explicit, validationOptions);
     return result.status === "found" ? { ...result, source: "environment" } : result;
+  }
+
+  // A packaged build has one reviewed driver paired with the app release.
+  // Never fall through to ambient user/PATH code when that bundle is missing
+  // or unsafe: a damaged package must fail closed. CUA_DRIVER_PATH above is
+  // the sole intentional override for development and incident response.
+  if (bundledDriverPath) {
+    const result = validateDriverCandidate(bundledDriverPath, validationOptions);
+    return result.status === "found" ? { ...result, source: "bundled" } : result;
   }
 
   const localCandidate = path.join(homeDir, ".local", "bin", "cua-driver");
@@ -609,8 +620,10 @@ function validateDoctor(report, { session = "x11" } = {}) {
 
 async function inspectLinuxCuaDriver({
   platform = process.platform,
+  arch = process.arch,
   env = process.env,
   homeDir = os.homedir(),
+  bundledDriverPath,
   currentUid,
   currentGid,
   currentUsername,
@@ -626,6 +639,12 @@ async function inspectLinuxCuaDriver({
         : "unknown";
   if (platform !== "linux") {
     return unavailable("unsupported-platform", "Linux local control is only available on Ubuntu.");
+  }
+  if (arch !== "x64") {
+    return unavailable(
+      "unsupported-architecture",
+      "Bundled Linux local control is currently available only on x64 Ubuntu.",
+    );
   }
   if (session === "wayland") {
     const desktops = [env.XDG_CURRENT_DESKTOP, env.XDG_SESSION_DESKTOP]
@@ -656,6 +675,7 @@ async function inspectLinuxCuaDriver({
   const discovered = discoverLinuxCuaDriver({
     env,
     homeDir,
+    bundledDriverPath,
     currentUid,
     currentGid,
     currentUsername,

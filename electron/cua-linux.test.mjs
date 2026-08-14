@@ -102,6 +102,51 @@ describe.skipIf(process.platform === "win32")("Linux CUA discovery", () => {
     expect(result).toMatchObject({ status: "unavailable", reasonCode: "driver-not-found" });
   });
 
+  it("keeps an explicit valid override ahead of the packaged driver", () => {
+    const root = temporaryDirectory();
+    const explicit = executable(path.join(root, "explicit"));
+    const bundled = executable(path.join(root, "resources"));
+    expect(
+      discoverLinuxCuaDriver({
+        env: { CUA_DRIVER_PATH: explicit, PATH: "" },
+        homeDir: root,
+        bundledDriverPath: bundled,
+      }),
+    ).toMatchObject({ status: "found", path: explicit, source: "environment" });
+  });
+
+  it("uses the packaged driver ahead of user-local and PATH candidates", () => {
+    const root = temporaryDirectory();
+    const bundled = executable(path.join(root, "resources"));
+    executable(path.join(root, ".local", "bin"));
+    const pathCandidate = executable(path.join(root, "path"));
+    expect(
+      discoverLinuxCuaDriver({
+        env: { PATH: path.dirname(pathCandidate) },
+        homeDir: root,
+        bundledDriverPath: bundled,
+      }),
+    ).toMatchObject({ status: "found", path: bundled, source: "bundled" });
+  });
+
+  it("fails closed when a packaged driver is missing instead of using ambient code", () => {
+    const root = temporaryDirectory();
+    executable(path.join(root, ".local", "bin"));
+    const pathCandidate = executable(path.join(root, "path"));
+    const missingBundle = path.join(root, "resources", "cua-driver");
+    expect(
+      discoverLinuxCuaDriver({
+        env: { PATH: path.dirname(pathCandidate) },
+        homeDir: root,
+        bundledDriverPath: missingBundle,
+      }),
+    ).toMatchObject({
+      status: "unavailable",
+      reasonCode: "driver-not-found",
+      candidate: missingBundle,
+    });
+  });
+
   it("resolves the official user-local symlink to its canonical executable", () => {
     const root = temporaryDirectory();
     const release = executable(path.join(root, ".cua-driver", "packages", "releases", "0.19.3"));
@@ -245,6 +290,22 @@ describe.skipIf(process.platform === "win32")("Linux CUA discovery", () => {
       path: binary,
     });
     expect(lookupPrivateGroup).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-x64 Linux runtime before executing diagnostics", async () => {
+    const run = vi.fn();
+    await expect(
+      inspectLinuxCuaDriver({
+        platform: "linux",
+        arch: "arm64",
+        env: { DISPLAY: ":0", XDG_SESSION_TYPE: "x11" },
+        run,
+      }),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reasonCode: "unsupported-architecture",
+    });
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("captures a strict file identity and detects metadata or content changes", () => {

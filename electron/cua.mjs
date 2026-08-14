@@ -25,6 +25,7 @@ import { pathToFileURL } from "node:url";
 const require = createRequire(import.meta.url);
 const { createCuaConnectionStore } = require("./cua-connection.cjs");
 const { createLinuxCuaRuntime } = require("./cua-linux-runtime.cjs");
+const { cleanupAppImageCuaBundle, stageAppImageCuaBundle } = require("./cua-linux-bundle.cjs");
 
 const INSTALLED_DRIVER = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
 const STANDALONE_SOCKET = path.join(
@@ -37,6 +38,7 @@ process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED ??= "0";
 
 let embeddedHost = null; // EmbeddedCuaDriverHost | null
 let linuxRuntime = null;
+let linuxBundleStage = null;
 let stateListener = () => {};
 const connectionStore = createCuaConnectionStore({
   getUserData: () => app.getPath("userData"),
@@ -44,9 +46,22 @@ const connectionStore = createCuaConnectionStore({
 
 function ensureLinuxRuntime() {
   if (!linuxRuntime) {
+    let bundledDriverPath;
+    if (app.isPackaged && !process.env.CUA_DRIVER_PATH) {
+      bundledDriverPath = path.join(process.resourcesPath, "cua-linux-x64", "cua-driver");
+      // AppImage's SquashFS builder normalizes directories to root:root 0775.
+      // Never execute through that group-writable path. Copy only the pinned
+      // binaries into a fresh 0700 process-owned directory, then verify their
+      // hashes after the copy. DEB/unpacked paths remain directly executable.
+      if (process.env.APPIMAGE) {
+        linuxBundleStage ??= stageAppImageCuaBundle({ resourcesPath: process.resourcesPath });
+        bundledDriverPath = linuxBundleStage.driverPath;
+      }
+    }
     linuxRuntime = createLinuxCuaRuntime({
       getUserData: () => app.getPath("userData"),
       connectionStore,
+      bundledDriverPath,
       onChange: (connection) => stateListener(connection),
     });
   }
@@ -185,6 +200,10 @@ export function cuaPermissionsStatus() {
 export async function stopCua() {
   if (linuxRuntime) {
     await linuxRuntime.shutdown();
+    if (linuxBundleStage) {
+      cleanupAppImageCuaBundle(linuxBundleStage);
+      linuxBundleStage = null;
+    }
     return;
   }
   if (embeddedHost) {

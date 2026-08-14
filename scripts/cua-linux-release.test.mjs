@@ -19,7 +19,7 @@ function temporaryProject() {
   temporaryDirectories.push(root);
   fs.writeFileSync(
     path.join(root, "package.json"),
-    JSON.stringify({ dependencies: { "@trycua/cua-driver": "0.19.3" } }),
+    JSON.stringify({ dependencies: { "@trycua/cua-driver": "0.20.0" } }),
   );
   return root;
 }

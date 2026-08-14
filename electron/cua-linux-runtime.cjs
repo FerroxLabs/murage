@@ -430,6 +430,7 @@ function publicRuntimeStatus(connection) {
     message: connection.message ?? connection.reason,
     driverPath: connection.driver?.path,
     driverVersion: connection.driver?.version,
+    driverSource: connection.driver?.source,
     session: connection.session,
     compositor: connection.compositor,
     warnings: connection.doctorWarnings ?? [],
@@ -441,7 +442,9 @@ function createLinuxCuaRuntime({
   connectionStore,
   preferenceStore = createLinuxCuaPreferenceStore({ getUserData }),
   platform = process.platform,
+  arch = process.arch,
   env = process.env,
+  bundledDriverPath,
   inspect = inspectLinuxCuaDriver,
   spawnProcess = spawn,
   probe = probePrivateDaemon,
@@ -593,7 +596,7 @@ function createLinuxCuaRuntime({
       unavailable("checking", "checking-driver", "Checking Cua Driver and the desktop session…");
       let inspected;
       try {
-        inspected = await inspect({ platform, env });
+        inspected = await inspect({ platform, arch, env, bundledDriverPath });
       } catch (error) {
         return unavailable(
           "error",
@@ -712,6 +715,7 @@ function createLinuxCuaRuntime({
           driver: {
             path: inspected.path,
             version: inspected.driverVersion,
+            source: inspected.source,
             manifestSchema: inspected.manifestSchema,
             // Private descriptor-only pin. The renderer consumes getStatus(),
             // which deliberately omits this internal file identity.

@@ -53,7 +53,13 @@ function linuxDescriptor(userData: string, { session = "x11" }: { session?: "x11
     status: "ready",
     ownerPid: process.pid,
     generation: "01234567-89ab-cdef-0123-456789abcdef",
-    driver: { path: binary, version: "0.19.3", manifestSchema: "1", fileIdentity },
+    driver: {
+      path: binary,
+      version: "0.19.3",
+      source: "environment",
+      manifestSchema: "1",
+      fileIdentity,
+    },
     daemon: {
       socketPath: socket,
       pid: process.pid,
@@ -158,6 +164,14 @@ describe("local computer descriptor", () => {
     const descriptor = linuxDescriptor(userData);
     expect(decodeLinuxDescriptor({ ...descriptor, unexpected: true })).toBeNull();
     expect(decodeLinuxDescriptor({ ...descriptor, status: "starting" })).toBeNull();
+    const { CUA_DRIVER_RS_TELEMETRY_ENABLED: _telemetry, ...telemetryMissing } =
+      descriptor.mcp.env;
+    expect(
+      decodeLinuxDescriptor({
+        ...descriptor,
+        mcp: { ...descriptor.mcp, env: telemetryMissing },
+      }),
+    ).toBeNull();
     expect(
       decodeLinuxDescriptor({
         ...descriptor,

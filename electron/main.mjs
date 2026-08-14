@@ -374,6 +374,38 @@ function createWindow() {
             `unexpected packaged renderer URL: ${result.location} (expected ${expectedLocation})`,
           );
         }
+        if (process.env.OMB_SMOKE_BUNDLED_CUA === "1") {
+          const connection = await cuaReady;
+          const expectedDriver = path.join(
+            process.resourcesPath,
+            "cua-linux-x64",
+            "cua-driver",
+          );
+          let exactBundledPath = false;
+          try {
+            exactBundledPath =
+              connection?.driver?.path &&
+              fs.realpathSync(connection.driver.path) === fs.realpathSync(expectedDriver);
+          } catch {}
+          result.cuaRuntime = {
+            driverSource: connection?.driver?.source,
+            exactBundledPath,
+            appImagePrivateStage:
+              Boolean(process.env.APPIMAGE) &&
+              connection?.driver?.path !== expectedDriver &&
+              path.basename(path.dirname(connection?.driver?.path ?? "")).startsWith(
+                "openmausbot-cua-linux-x64-",
+              ),
+            driverPath: connection?.driver?.path,
+            driverVersion: connection?.driver?.version,
+            daemonPid: connection?.daemon?.pid,
+            socketPath: connection?.daemon?.socketPath,
+            pidFile: connection?.daemon?.socketPath
+              ? path.join(path.dirname(connection.daemon.socketPath), "driver.pid")
+              : undefined,
+            mcpEnv: connection?.mcp?.env,
+          };
+        }
         result.displayMediaRequests = displayMediaRequestCount;
         console.log(`[smoke] renderer-ready ${JSON.stringify(result)}`);
       } catch (error) {

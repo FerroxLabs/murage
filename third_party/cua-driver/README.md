@@ -43,3 +43,4 @@ node /path/to/OpenMausBot/scripts/generate-cua-sbom.mjs \
 The generator fails unless the reports contain the reviewed root-scoped sets: 325 registry packages for the driver, 113 for the cursor-theme sidecar, and a 330-package union. The final CycloneDX inventory contains those 330 packages, eight Cua workspace packages, and the embedded Inter font. The MPL-2.0 set is exactly seven packages. Regeneration is expected to produce a reviewed diff; no release process accepts new native inputs automatically.
 
 OpenMausBot ships only the CLI and cursor-theme sidecar. The Linux SDK `.so`, Node `.node`, ABI header, and GNOME helper are not included in Phase 5 because the current runtime does not load them and must not silently install a Shell extension.
+The app's npm Cua SDK is used by the separate macOS integration and may have a different version; it is not loaded by this Linux CLI-spawn runtime.

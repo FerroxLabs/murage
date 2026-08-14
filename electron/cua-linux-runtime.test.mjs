@@ -231,6 +231,21 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
     });
   });
 
+  it("passes the exact packaged candidate and architecture into inspection", async () => {
+    const bundledDriverPath = "/opt/OpenMausBot/resources/cua-linux-x64/cua-driver";
+    const context = harness({
+      runtimeOptions: { bundledDriverPath, arch: "x64" },
+    });
+    await context.runtime.enable();
+    expect(context.inspect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        platform: "linux",
+        arch: "x64",
+        bundledDriverPath,
+      }),
+    );
+  });
+
   it("publishes a retryable error when driver inspection throws", async () => {
     const inspectError = Object.assign(new Error("probe failed"), {
       code: "driver-inspection-failed",
@@ -286,6 +301,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
       driver: {
         path: context.binary,
         version: "0.19.3",
+        source: "environment",
         manifestSchema: "1",
         fileIdentity: validateDriverCandidate(context.binary).fileIdentity,
       },

@@ -470,12 +470,10 @@ export async function stageLinuxCua({
   if (!rootDirectory || !path.isAbsolute(rootDirectory)) {
     throw new Error("rootDirectory must be an absolute path");
   }
-  const packageJson = JSON.parse(await readFile(path.join(rootDirectory, "package.json"), "utf8"));
-  if (packageJson.dependencies?.["@trycua/cua-driver"] !== LINUX_CUA_RELEASE.version) {
-    throw new Error(
-      `@trycua/cua-driver must remain pinned to ${LINUX_CUA_RELEASE.version} before staging the matching CLI`,
-    );
-  }
+  // Linux local control spawns this reviewed CLI directly and deliberately
+  // excludes the npm SDK's native .node/.so files. Do not couple the Linux
+  // release pin to @trycua/cua-driver, which serves the separate macOS SDK
+  // path and may advance independently.
 
   const stageDirectory = path.join(rootDirectory, "dist-native", "cua-linux-x64");
   const licenseDirectory = path.join(rootDirectory, "third_party", "cua-driver");
