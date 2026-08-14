@@ -11,8 +11,10 @@ const { validateDriverCandidate } = require("./cua-linux.cjs");
 const {
   createLinuxCuaPreferenceStore,
   createLinuxCuaRuntime,
+  probePrivateDaemon,
   validateDaemonMetadata,
   validateToolSurface,
+  validateWaylandHealthReport,
   writePrivateJson,
 } = require("./cua-linux-runtime.cjs");
 
@@ -72,7 +74,42 @@ function handshake(pid = 4321) {
   };
 }
 
-function harness({ preferenceEnabled = false, afterIdentityCaptured } = {}) {
+function healthyWaylandHealth() {
+  return {
+    ok: true,
+    result: {
+      structuredContent: {
+        schema_version: "1",
+        platform: "linux",
+        driver_version: "0.19.3",
+        overall: "ok",
+        checks: [
+          { name: "binary_version", status: "pass", message: "cua-driver 0.19.3" },
+          { name: "platform_supported", status: "pass", message: "Ubuntu 24.04" },
+          { name: "session_active", status: "pass", message: "MCP session is active." },
+          { name: "ax_capability", status: "pass", message: "AT-SPI is reachable." },
+          {
+            name: "screen_capture_capability",
+            status: "pass",
+            message: "Screenshot portal is reachable.",
+          },
+          {
+            name: "wayland_backend",
+            status: "pass",
+            message: "Portal/libei and verified target activation are reachable.",
+          },
+        ],
+      },
+    },
+  };
+}
+
+function harness({
+  preferenceEnabled = false,
+  afterIdentityCaptured,
+  session = "x11",
+  runtimeOptions = {},
+} = {}) {
   const userData = temporaryDirectory();
   const runtimeRoot = path.join(userData, "session");
   fs.mkdirSync(runtimeRoot, { mode: 0o700 });
@@ -93,6 +130,8 @@ function harness({ preferenceEnabled = false, afterIdentityCaptured } = {}) {
       manifestSchema: "1",
       mcp: { command: binary, args: ["mcp"] },
       doctor: { ok: true, probes: [], warnings: [] },
+      session,
+      ...(session === "wayland" ? { compositor: "gnome-mutter" } : {}),
     };
   });
   const spawnProcess = vi.fn(() => child);
@@ -107,16 +146,25 @@ function harness({ preferenceEnabled = false, afterIdentityCaptured } = {}) {
       HOME: userData,
       PATH: "/usr/bin",
       DISPLAY: ":0",
-      XDG_SESSION_TYPE: "x11",
+      XDG_SESSION_TYPE: session,
+      ...(session === "wayland"
+        ? {
+            WAYLAND_DISPLAY: "wayland-0",
+            XDG_CURRENT_DESKTOP: "ubuntu:GNOME",
+            DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+          }
+        : {}),
       XDG_RUNTIME_DIR: runtimeRoot,
       OPENAI_API_KEY: "must-not-leak",
     },
     inspect,
     spawnProcess,
     probe,
+    healthCheckIntervalMs: 0,
     identifier: () => "01234567-89ab-cdef-0123-456789abcdef",
     processId: 1234,
     onChange: (connection) => changes.push(connection),
+    ...runtimeOptions,
   });
   return {
     binary,
@@ -171,6 +219,7 @@ describe("Linux CUA opt-in and lifecycle", () => {
     expect(spawnOptions.env.OPENAI_API_KEY).toBeUndefined();
     expect(context.probe).toHaveBeenCalledWith(expect.stringMatching(/driver\.sock$/), {
       childPid: context.child.pid,
+      session: "x11",
     });
     expect(context.runtime.getConnection()).toMatchObject({
       schemaVersion: 1,
@@ -259,6 +308,56 @@ describe("Linux CUA opt-in and lifecycle", () => {
     expect(context.preferenceStore.read()).toBe(false);
     expect(context.runtime.getStatus()).toMatchObject({ enabled: false, status: "disabled" });
   });
+
+  it("publishes the distinct GNOME Wayland contract and propagates the opt-in environment", async () => {
+    const context = harness({ session: "wayland" });
+    await context.runtime.enable();
+    expect(context.probe).toHaveBeenCalledWith(expect.stringMatching(/driver\.sock$/), {
+      childPid: context.child.pid,
+      session: "wayland",
+    });
+    expect(context.spawnProcess.mock.calls[0][2].env.CUA_DRIVER_RS_ENABLE_WAYLAND).toBe("1");
+    expect(context.runtime.getConnection()).toMatchObject({
+      mode: "linux-wayland-gnome-supervised",
+      session: "wayland",
+      compositor: "gnome-mutter",
+      mcp: { env: { CUA_DRIVER_RS_ENABLE_WAYLAND: "1" } },
+    });
+  });
+
+  it("revokes Wayland readiness when a prompt-free health recheck fails", async () => {
+    let healthTick = null;
+    const timer = { unref: vi.fn() };
+    const clearRecurring = vi.fn();
+    const context = harness({
+      session: "wayland",
+      runtimeOptions: {
+        healthCheckIntervalMs: 30_000,
+        healthProbe: vi.fn(async () => {
+          throw Object.assign(new Error("The Cua WinRects helper is no longer active."), {
+            code: "wayland-helper-required",
+          });
+        }),
+        setRecurring: vi.fn((callback) => {
+          healthTick = callback;
+          return timer;
+        }),
+        clearRecurring,
+      },
+    });
+    await context.runtime.enable();
+    expect(context.runtime.getConnection().status).toBe("ready");
+    healthTick();
+    await vi.waitFor(() => {
+      expect(context.runtime.getConnection()).toMatchObject({
+        mode: "unavailable",
+        status: "error",
+        reasonCode: "wayland-helper-required",
+      });
+    });
+    expect(clearRecurring).toHaveBeenCalledWith(timer);
+    expect(context.child.stdin.end).toHaveBeenCalledOnce();
+  });
 });
 
 describe("Linux CUA private data", () => {
@@ -313,5 +412,64 @@ describe("Linux CUA handshake validation", () => {
     expect(() =>
       validateToolSurface({ ok: true, result: { ...manifest, capability_version: "2" } }),
     ).toThrow(/could not be verified/);
+  });
+
+  it("accepts only a healthy certified Wayland report", () => {
+    expect(validateWaylandHealthReport(healthyWaylandHealth())).toEqual({
+      schemaVersion: "1",
+      overall: "ok",
+      requiredChecks: ["ax_capability", "screen_capture_capability", "wayland_backend"],
+    });
+    const unhealthy = healthyWaylandHealth();
+    const check = unhealthy.result.structuredContent.checks.find(
+      (entry) => entry.name === "wayland_backend",
+    );
+    check.status = "fail";
+    check.message = "The compositor has no verified target-activation adapter.";
+    check.hint = "Install and enable the bundled WinRects Shell helper.";
+    unhealthy.result.structuredContent.overall = "degraded";
+    expect(() => validateWaylandHealthReport(unhealthy)).toThrowError(
+      expect.objectContaining({ code: "wayland-helper-required" }),
+    );
+    expect(() =>
+      validateWaylandHealthReport({
+        ...healthyWaylandHealth(),
+        result: {
+          structuredContent: {
+            ...healthyWaylandHealth().result.structuredContent,
+            schema_version: "2",
+          },
+        },
+      }),
+    ).toThrowError(expect.objectContaining({ code: "invalid-health-report" }));
+  });
+
+  it("calls health_report during the private daemon handshake only on Wayland", async () => {
+    const calls = [];
+    const request = vi.fn(async (_socket, payload) => {
+      calls.push(payload);
+      if (payload.method === "metadata") return { ok: true, result: handshake(99).metadata };
+      if (payload.method === "list") {
+        return {
+          ok: true,
+          result: {
+            schema_version: "1",
+            capability_version: "1",
+            tools: handshake().tools.map((name) => ({ name })),
+          },
+        };
+      }
+      return healthyWaylandHealth();
+    });
+
+    await expect(
+      probePrivateDaemon("/tmp/cua.sock", {
+        childPid: 99,
+        session: "wayland",
+        request,
+        timeoutMs: 100,
+      }),
+    ).resolves.toMatchObject({ health: { overall: "ok" } });
+    expect(calls.at(-1)).toEqual({ method: "call", name: "health_report", args: {} });
   });
 });

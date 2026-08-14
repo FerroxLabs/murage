@@ -556,7 +556,7 @@ function validateManifest(manifest, binaryPath) {
   return { command: binaryPath, args: ["mcp"] };
 }
 
-function validateDoctor(report) {
+function validateDoctor(report, { session = "x11" } = {}) {
   if (typeof report.ok !== "boolean" || !Array.isArray(report.probes)) {
     throw commandFailure("invalid-doctor-report", "Cua Driver returned an invalid doctor report.");
   }
@@ -583,11 +583,21 @@ function validateDoctor(report) {
   if (!report.ok || probes.some((probe) => probe.status === "err")) {
     throw commandFailure("doctor-failed", "Cua Driver diagnostics reported an error.", { probes });
   }
-  if (display?.status !== "ok" || !display.message.startsWith("X11 ")) {
-    throw commandFailure("x11-unavailable", "Cua Driver did not confirm an Xorg display.", { probes });
-  }
-  if (!x11 || x11.status === "err") {
-    throw commandFailure("x11-unavailable", "Cua Driver could not verify the Xorg session.", { probes });
+  if (session === "wayland") {
+    if (display?.status !== "ok" || !display.message.startsWith("Wayland")) {
+      throw commandFailure(
+        "wayland-session-unavailable",
+        "Cua Driver did not confirm an active Wayland display.",
+        { probes },
+      );
+    }
+  } else {
+    if (display?.status !== "ok" || !display.message.startsWith("X11 ")) {
+      throw commandFailure("x11-unavailable", "Cua Driver did not confirm an Xorg display.", { probes });
+    }
+    if (!x11 || x11.status === "err") {
+      throw commandFailure("x11-unavailable", "Cua Driver could not verify the Xorg session.", { probes });
+    }
   }
   if (atSpi?.status !== "ok") {
     throw commandFailure("at-spi-unavailable", "Cua Driver could not reach the AT-SPI accessibility bus.", {
@@ -607,19 +617,39 @@ async function inspectLinuxCuaDriver({
   lookupPrivateGroup,
   run = runCuaCommand,
 } = {}) {
-  const session = String(env.XDG_SESSION_TYPE ?? "").toLowerCase();
+  const declaredSession = String(env.XDG_SESSION_TYPE ?? "").toLowerCase();
+  const session =
+    declaredSession === "wayland" || env.WAYLAND_DISPLAY
+      ? "wayland"
+      : declaredSession === "x11" || declaredSession === "xorg"
+        ? "x11"
+        : "unknown";
   if (platform !== "linux") {
     return unavailable("unsupported-platform", "Linux local control is only available on Ubuntu.");
   }
-  if (session !== "x11" && session !== "xorg") {
+  if (session === "wayland") {
+    const desktops = [env.XDG_CURRENT_DESKTOP, env.XDG_SESSION_DESKTOP]
+      .flatMap((value) => String(value ?? "").toLowerCase().split(":"))
+      .filter(Boolean);
+    if (!desktops.includes("gnome")) {
+      return unavailable(
+        "wayland-compositor-unsupported",
+        "Wayland local control is currently limited to GNOME.",
+      );
+    }
+    if (!env.WAYLAND_DISPLAY || !env.DBUS_SESSION_BUS_ADDRESS) {
+      return unavailable(
+        "wayland-session-unavailable",
+        "Local control requires an active GNOME Wayland desktop session.",
+      );
+    }
+  } else if (session !== "x11") {
     return unavailable(
-      session === "wayland" ? "wayland-unsupported" : "x11-required",
-      session === "wayland"
-        ? "Local control is not available in a Wayland session. Sign in with GNOME on Xorg."
-        : "Local control requires an interactive GNOME on Xorg session.",
+      "desktop-session-required",
+      "Local control requires an interactive GNOME desktop session.",
     );
   }
-  if (!env.DISPLAY) {
+  if (session === "x11" && !env.DISPLAY) {
     return unavailable("display-unavailable", "Local control requires an active Xorg display.");
   }
 
@@ -632,7 +662,10 @@ async function inspectLinuxCuaDriver({
     lookupPrivateGroup,
   });
   if (discovered.status !== "found") return discovered;
-  const commandEnv = desktopCommandEnvironment(env);
+  const commandEnv = desktopCommandEnvironment(
+    env,
+    session === "wayland" ? { CUA_DRIVER_RS_ENABLE_WAYLAND: "1" } : {},
+  );
 
   try {
     const versionResult = await run(discovered.path, ["--version"], { env: commandEnv });
@@ -663,7 +696,7 @@ async function inspectLinuxCuaDriver({
         source: discovered.source,
       });
     }
-    const doctor = validateDoctor(doctorReport);
+    const doctor = validateDoctor(doctorReport, { session });
 
     return {
       status: "ready",
@@ -675,6 +708,8 @@ async function inspectLinuxCuaDriver({
       mcp,
       doctor,
       commandEnv,
+      session,
+      ...(session === "wayland" ? { compositor: "gnome-mutter" } : {}),
     };
   } catch (error) {
     return unavailable(error?.code ?? "diagnostics-failed", error?.message ?? String(error), {

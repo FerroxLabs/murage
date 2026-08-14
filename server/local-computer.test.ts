@@ -9,7 +9,7 @@ import {
   validateLinuxDescriptorRuntime,
 } from "./local-computer.ts";
 
-function linuxDescriptor(userData: string) {
+function linuxDescriptor(userData: string, { session = "x11" }: { session?: "x11" | "wayland" } = {}) {
   const binary = join(userData, "cua-driver");
   const socket = join(userData, "runtime", "driver.sock");
   writeFileSync(binary, "fake", { mode: 0o700 });
@@ -26,9 +26,10 @@ function linuxDescriptor(userData: string) {
   };
   return {
     schemaVersion: 1,
-    mode: "linux-x11-supervised",
+    mode: session === "wayland" ? "linux-wayland-gnome-supervised" : "linux-x11-supervised",
     platform: "linux",
-    session: "x11",
+    session,
+    ...(session === "wayland" ? { compositor: "gnome-mutter" } : {}),
     enabled: true,
     status: "ready",
     ownerPid: process.pid,
@@ -49,6 +50,7 @@ function linuxDescriptor(userData: string) {
         CUA_DRIVER_EMBEDDED: "1",
         CUA_DRIVER_HOST_BUNDLE_ID: "com.openmausbot.app",
         CUA_DRIVER_RS_UPDATE_CHECK: "false",
+        ...(session === "wayland" ? { CUA_DRIVER_RS_ENABLE_WAYLAND: "1" } : {}),
       },
     },
     toolNames: ["click", "get_window_state", "list_apps", "type_text"],
@@ -83,6 +85,34 @@ describe("local computer descriptor", () => {
       generation: descriptor.generation,
       scope: "local-computer",
     });
+  });
+
+  it("accepts the exact GNOME Wayland descriptor without weakening the X11 contract", () => {
+    const userData = privateUserData("linux-wayland-user-data");
+    const descriptor = linuxDescriptor(userData, { session: "wayland" });
+    expect(decodeLinuxDescriptor(descriptor)).toEqual({
+      command: descriptor.driver.path,
+      args: descriptor.mcp.args,
+      env: descriptor.mcp.env,
+      platform: "linux",
+      generation: descriptor.generation,
+      scope: "local-computer",
+    });
+    expect(decodeLinuxDescriptor({ ...descriptor, compositor: "kde-kwin" })).toBeNull();
+    const { CUA_DRIVER_RS_ENABLE_WAYLAND: _missing, ...x11OnlyEnv } = descriptor.mcp.env;
+    expect(
+      decodeLinuxDescriptor({ ...descriptor, mcp: { ...descriptor.mcp, env: x11OnlyEnv } }),
+    ).toBeNull();
+    const x11Descriptor = linuxDescriptor(userData);
+    expect(
+      decodeLinuxDescriptor({
+        ...x11Descriptor,
+        mcp: {
+          ...x11Descriptor.mcp,
+          env: { ...x11Descriptor.mcp.env, CUA_DRIVER_RS_ENABLE_WAYLAND: "1" },
+        },
+      }),
+    ).toBeNull();
   });
 
   it("rejects unknown fields, stale modes, arbitrary argv, and incomplete tool surfaces", () => {

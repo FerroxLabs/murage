@@ -65,6 +65,13 @@ describe("desktop capabilities", () => {
 
   it("detects Wayland before XWayland and distinguishes X11 and headless Linux", () => {
     expect(linuxSession("linux", { WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0" })).toBe("wayland");
+    expect(
+      linuxSession("linux", {
+        XDG_SESSION_TYPE: "x11",
+        WAYLAND_DISPLAY: "wayland-0",
+        DISPLAY: ":0",
+      }),
+    ).toBe("wayland");
     expect(linuxSession("linux", { XDG_SESSION_TYPE: "x11", DISPLAY: ":0" })).toBe("x11");
     expect(linuxSession("linux", {})).toBe("headless");
   });
@@ -101,5 +108,32 @@ describe("desktop capabilities", () => {
     expect(localComputerReady("linux", { ...connection, session: "wayland" })).toBe(false);
     expect(localComputerReady("linux", { ...connection, status: "starting" })).toBe(false);
     expect(localComputerReady("linux", { ...connection, schemaVersion: 2 })).toBe(false);
+  });
+
+  it("enables GNOME Wayland control only for the exact supervised contract", () => {
+    const connection = {
+      schemaVersion: 1,
+      mode: "linux-wayland-gnome-supervised",
+      platform: "linux",
+      session: "wayland",
+      compositor: "gnome-mutter",
+      enabled: true,
+      status: "ready",
+    };
+    expect(localComputerReady("linux", connection)).toBe(true);
+    expect(localComputerReady("linux", { ...connection, compositor: undefined })).toBe(false);
+    expect(localComputerReady("linux", { ...connection, session: "x11" })).toBe(false);
+    expect(
+      desktopCapabilities({
+        platform: "linux",
+        env: { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" },
+        localConnection: connection,
+      }).localComputer,
+    ).toMatchObject({
+      available: true,
+      support: "limited",
+      session: "wayland",
+      compositor: "gnome-mutter",
+    });
   });
 });

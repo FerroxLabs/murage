@@ -21,6 +21,11 @@ const CERTIFIED_TOOLS_LIST_SCHEMA_VERSION = "1";
 const CERTIFIED_CAPABILITY_VERSION = "1";
 const CERTIFIED_MCP_PROTOCOL_VERSION = "2025-06-18";
 const REQUIRED_TOOLS = ["click", "get_window_state", "list_apps", "type_text"];
+const REQUIRED_WAYLAND_HEALTH_CHECKS = [
+  "ax_capability",
+  "screen_capture_capability",
+  "wayland_backend",
+];
 
 function ensurePrivateDirectory(directory, fileSystem = fs, currentUid = process.getuid?.() ?? os.userInfo().uid) {
   fileSystem.mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -195,8 +200,97 @@ function validateToolSurface(response) {
   return [...names].sort();
 }
 
+function healthFailure(check) {
+  const detail = `${check?.message ?? ""} ${check?.hint ?? ""}`.toLowerCase();
+  if (check?.name === "ax_capability") {
+    return Object.assign(
+      new Error("Cua Driver could not reach the AT-SPI accessibility bus in this Wayland session."),
+      { code: "at-spi-unavailable" },
+    );
+  }
+  if (check?.name === "screen_capture_capability") {
+    return Object.assign(
+      new Error("Cua Driver could not reach a supported screen capture backend in this Wayland session."),
+      { code: "wayland-capture-unavailable" },
+    );
+  }
+  if (detail.includes("winrects") || detail.includes("target-activation")) {
+    return Object.assign(
+      new Error("The Cua WinRects helper is not active. Install it, then sign out and back in once."),
+      { code: "wayland-helper-required" },
+    );
+  }
+  if (detail.includes("portal")) {
+    return Object.assign(
+      new Error("The GNOME Remote Desktop portal is not available for local control."),
+      { code: "wayland-portal-unavailable" },
+    );
+  }
+  return Object.assign(
+    new Error("Cua Driver could not verify the GNOME Wayland control backend."),
+    { code: "wayland-health-failed" },
+  );
+}
+
+function validateWaylandHealthReport(response) {
+  const result = response?.ok === true ? response.result : null;
+  const report = result?.structuredContent ?? result?.structured_content;
+  if (
+    !report ||
+    typeof report !== "object" ||
+    Array.isArray(report) ||
+    report.schema_version !== "1" ||
+    report.platform !== "linux" ||
+    report.driver_version !== CERTIFIED_DRIVER_VERSION ||
+    !["ok", "degraded", "failed"].includes(report.overall) ||
+    !Array.isArray(report.checks)
+  ) {
+    throw Object.assign(new Error("Cua Driver returned an invalid Wayland health report."), {
+      code: "invalid-health-report",
+    });
+  }
+  const checks = new Map();
+  for (const check of report.checks) {
+    if (
+      !check ||
+      typeof check !== "object" ||
+      Array.isArray(check) ||
+      typeof check.name !== "string" ||
+      !["pass", "fail", "skip"].includes(check.status) ||
+      typeof check.message !== "string" ||
+      (check.status === "fail" && typeof check.hint !== "string") ||
+      checks.has(check.name)
+    ) {
+      throw Object.assign(new Error("Cua Driver returned an invalid Wayland health check."), {
+        code: "invalid-health-report",
+      });
+    }
+    checks.set(check.name, check);
+  }
+  for (const name of REQUIRED_WAYLAND_HEALTH_CHECKS) {
+    const check = checks.get(name);
+    if (check?.status !== "pass") throw healthFailure(check ?? { name });
+  }
+  if (report.overall !== "ok") {
+    const failed = [...checks.values()].find((check) => check.status === "fail");
+    throw healthFailure(failed);
+  }
+  return Object.freeze({
+    schemaVersion: report.schema_version,
+    overall: report.overall,
+    requiredChecks: Object.freeze([...REQUIRED_WAYLAND_HEALTH_CHECKS]),
+  });
+}
+
+async function probeWaylandHealth(socketPath, { request = requestSocket } = {}) {
+  return validateWaylandHealthReport(
+    await request(socketPath, { method: "call", name: "health_report", args: {} }),
+  );
+}
+
 async function probePrivateDaemon(socketPath, {
   childPid,
+  session = "x11",
   timeoutMs = 10_000,
   request = requestSocket,
 } = {}) {
@@ -209,7 +303,9 @@ async function probePrivateDaemon(socketPath, {
         { childPid },
       );
       const tools = validateToolSurface(await request(socketPath, { method: "list" }));
-      return { metadata, tools };
+      const health =
+        session === "wayland" ? await probeWaylandHealth(socketPath, { request }) : undefined;
+      return { metadata, tools, ...(health ? { health } : {}) };
     } catch (error) {
       lastError = error;
       await new Promise((resolve) => setTimeout(resolve, 75));
@@ -255,11 +351,17 @@ async function stopOwnedChild(child) {
 function publicRuntimeStatus(connection) {
   return {
     enabled: connection.enabled === true,
-    status: connection.status ?? (connection.mode === "linux-x11-supervised" ? "ready" : "unavailable"),
+    status:
+      connection.status ??
+      (["linux-x11-supervised", "linux-wayland-gnome-supervised"].includes(connection.mode)
+        ? "ready"
+        : "unavailable"),
     reasonCode: connection.reasonCode,
     message: connection.message ?? connection.reason,
     driverPath: connection.driver?.path,
     driverVersion: connection.driver?.version,
+    session: connection.session,
+    compositor: connection.compositor,
     warnings: connection.doctorWarnings ?? [],
   };
 }
@@ -273,6 +375,10 @@ function createLinuxCuaRuntime({
   inspect = inspectLinuxCuaDriver,
   spawnProcess = spawn,
   probe = probePrivateDaemon,
+  healthProbe = probeWaylandHealth,
+  healthCheckIntervalMs = 30_000,
+  setRecurring = setInterval,
+  clearRecurring = clearInterval,
   identifier = randomUUID,
   processId = process.pid,
   onChange = () => {},
@@ -335,6 +441,10 @@ function createLinuxCuaRuntime({
   };
 
   const cleanupRuntimeFiles = (owned) => {
+    if (owned?.healthTimer) {
+      clearRecurring(owned.healthTimer);
+      owned.healthTimer = null;
+    }
     if (!owned?.runtimeDirectory) return;
     for (const file of [owned.socketPath, owned.pidFile]) {
       try {
@@ -360,6 +470,37 @@ function createLinuxCuaRuntime({
     );
   };
 
+  const markWaylandHealthLost = (owned, error) => {
+    if (active !== owned || owned.stopping || quitting) return;
+    owned.stopping = true;
+    active = null;
+    if (owned.healthTimer) {
+      clearRecurring(owned.healthTimer);
+      owned.healthTimer = null;
+    }
+    unavailable(
+      "error",
+      error?.code ?? "wayland-health-lost",
+      error?.message ?? "The GNOME Wayland control backend is no longer available.",
+      { generation: owned.generation },
+    );
+    void stopOwnedChild(owned.child).finally(() => cleanupRuntimeFiles(owned));
+  };
+
+  const startWaylandHealthMonitor = (owned) => {
+    if (!Number.isFinite(healthCheckIntervalMs) || healthCheckIntervalMs <= 0) return;
+    owned.healthTimer = setRecurring(() => {
+      if (active !== owned || owned.stopping || owned.healthChecking) return;
+      owned.healthChecking = true;
+      void healthProbe(owned.socketPath)
+        .catch((error) => markWaylandHealthLost(owned, error))
+        .finally(() => {
+          owned.healthChecking = false;
+        });
+    }, healthCheckIntervalMs);
+    owned.healthTimer.unref?.();
+  };
+
   const start = async () => {
     if (platform !== "linux") return connection;
     if (!enabled) {
@@ -373,7 +514,7 @@ function createLinuxCuaRuntime({
     if (startPromise) return startPromise;
 
     startPromise = (async () => {
-      unavailable("checking", "checking-driver", "Checking Cua Driver and the Xorg session…");
+      unavailable("checking", "checking-driver", "Checking Cua Driver and the desktop session…");
       const inspected = await inspect({ platform, env });
       if (inspected.status !== "ready") {
         return unavailable("error", inspected.reasonCode, inspected.message, {
@@ -384,6 +525,7 @@ function createLinuxCuaRuntime({
         });
       }
       if (!enabled || quitting) return connection;
+      const runtimeSession = inspected.session === "wayland" ? "wayland" : "x11";
 
       const generation = identifier();
       const root = runtimeRoot();
@@ -403,6 +545,7 @@ function createLinuxCuaRuntime({
         CUA_DRIVER_EMBEDDED: "1",
         CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID,
         CUA_DRIVER_PARENT_LIVENESS_STDIN: "1",
+        ...(runtimeSession === "wayland" ? { CUA_DRIVER_RS_ENABLE_WAYLAND: "1" } : {}),
       });
       const args = [
         "serve",
@@ -444,6 +587,8 @@ function createLinuxCuaRuntime({
         pidFile,
         ready: false,
         stopping: false,
+        healthTimer: null,
+        healthChecking: false,
       };
       active = owned;
       child.stderr?.on("data", () => {});
@@ -455,18 +600,25 @@ function createLinuxCuaRuntime({
       });
 
       try {
-        const handshake = await probe(socketPath, { childPid: child.pid });
+        const handshake = await probe(socketPath, {
+          childPid: child.pid,
+          session: runtimeSession,
+        });
         if (active !== owned || owned.stopping || !enabled) {
           await stopOwnedChild(child);
           cleanupRuntimeFiles(owned);
           return connection;
         }
         owned.ready = true;
-        return publish({
+        const readyConnection = publish({
           schemaVersion: CONNECTION_SCHEMA_VERSION,
-          mode: "linux-x11-supervised",
+          mode:
+            runtimeSession === "wayland"
+              ? "linux-wayland-gnome-supervised"
+              : "linux-x11-supervised",
           platform: "linux",
-          session: "x11",
+          session: runtimeSession,
+          ...(inspected.compositor ? { compositor: inspected.compositor } : {}),
           enabled: true,
           status: "ready",
           ownerPid: processId,
@@ -494,11 +646,16 @@ function createLinuxCuaRuntime({
               CUA_DRIVER_EMBEDDED: "1",
               CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID,
               CUA_DRIVER_RS_UPDATE_CHECK: "false",
+              ...(runtimeSession === "wayland"
+                ? { CUA_DRIVER_RS_ENABLE_WAYLAND: "1" }
+                : {}),
             },
           },
           toolNames: handshake.tools,
           doctorWarnings: inspected.doctor.warnings,
         });
+        if (runtimeSession === "wayland") startWaylandHealthMonitor(owned);
+        return readyConnection;
       } catch (error) {
         owned.stopping = true;
         const stillOwned = active === owned;
@@ -585,14 +742,17 @@ module.exports = {
   CONNECTION_SCHEMA_VERSION,
   HOST_BUNDLE_ID,
   REQUIRED_TOOLS,
+  REQUIRED_WAYLAND_HEALTH_CHECKS,
   createLinuxCuaPreferenceStore,
   createLinuxCuaRuntime,
   ensurePrivateDirectory,
   probePrivateDaemon,
+  probeWaylandHealth,
   publicRuntimeStatus,
   requestSocket,
   stopOwnedChild,
   validateDaemonMetadata,
   validateToolSurface,
+  validateWaylandHealthReport,
   writePrivateJson,
 };

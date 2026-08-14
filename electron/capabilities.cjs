@@ -11,11 +11,10 @@ function normalizedPlatform(platform) {
 function linuxSession(platform, env) {
   if (platform !== "linux") return "unknown";
   const declared = String(env.XDG_SESSION_TYPE ?? "").toLowerCase();
-  if (declared === "wayland") return "wayland";
-  if (declared === "x11" || declared === "xorg") return "x11";
   // A Wayland user session may also expose DISPLAY for XWayland. Prefer the
   // Wayland signal so the UI never bypasses portal-mediated behavior.
-  if (env.WAYLAND_DISPLAY) return "wayland";
+  if (declared === "wayland" || env.WAYLAND_DISPLAY) return "wayland";
+  if (declared === "x11" || declared === "xorg") return "x11";
   if (env.DISPLAY) return "x11";
   return "headless";
 }
@@ -24,14 +23,22 @@ function localComputerReady(platform, connection) {
   if (platform === "darwin") {
     return connection?.mode === "embedded" || connection?.mode === "standalone";
   }
+  if (
+    platform !== "linux" ||
+    connection?.schemaVersion !== 1 ||
+    connection?.platform !== "linux" ||
+    connection?.enabled !== true ||
+    connection?.status !== "ready"
+  ) {
+    return false;
+  }
+  if (connection.mode === "linux-x11-supervised") {
+    return connection.session === "x11";
+  }
   return (
-    platform === "linux" &&
-    connection?.schemaVersion === 1 &&
-    connection?.mode === "linux-x11-supervised" &&
-    connection?.platform === "linux" &&
-    connection?.session === "x11" &&
-    connection?.enabled === true &&
-    connection?.status === "ready"
+    connection.mode === "linux-wayland-gnome-supervised" &&
+    connection.session === "wayland" &&
+    connection.compositor === "gnome-mutter"
   );
 }
 
@@ -85,6 +92,12 @@ function desktopCapabilities({
   }
   if (typeof localConnection?.driver?.version === "string") {
     localComputer.driverVersion = localConnection.driver.version;
+  }
+  if (typeof localConnection?.session === "string") {
+    localComputer.session = localConnection.session;
+  }
+  if (typeof localConnection?.compositor === "string") {
+    localComputer.compositor = localConnection.compositor;
   }
   if (!localAvailable) {
     localComputer.reasonCode =

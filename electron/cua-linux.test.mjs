@@ -45,7 +45,23 @@ function healthyDoctor() {
   };
 }
 
-function successfulRunner(binary) {
+function healthyWaylandDoctor() {
+  return {
+    ok: true,
+    probes: [
+      { label: "binary", status: "ok", message: "cua-driver 0.19.3" },
+      {
+        label: "display server",
+        status: "ok",
+        message: "Wayland+XWayland (WAYLAND_DISPLAY=wayland-0, DISPLAY=:0)",
+      },
+      { label: "X11 connection", status: "warn", message: "no top-level windows returned" },
+      { label: "AT-SPI", status: "ok", message: "org.a11y.Bus reachable via session bus" },
+    ],
+  };
+}
+
+function successfulRunner(binary, { doctor = healthyDoctor() } = {}) {
   return vi.fn(async (_command, args, options) => {
     expect(_command).toBe(binary);
     expect(options.env.OPENAI_API_KEY).toBeUndefined();
@@ -62,7 +78,7 @@ function successfulRunner(binary) {
         stderr: "",
       };
     }
-    return { exitCode: 0, stdout: JSON.stringify(healthyDoctor()), stderr: "" };
+    return { exitCode: 0, stdout: JSON.stringify(doctor), stderr: "" };
   });
 }
 
@@ -340,15 +356,61 @@ describe("Linux CUA diagnostics", () => {
     expect(run).toHaveBeenCalledTimes(3);
   });
 
-  it("fails before discovery or execution outside Xorg", async () => {
+  it("fails before discovery or execution on a non-GNOME Wayland compositor", async () => {
     const run = vi.fn();
     const result = await inspectLinuxCuaDriver({
       platform: "linux",
       env: { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0" },
       run,
     });
-    expect(result).toMatchObject({ status: "unavailable", reasonCode: "wayland-unsupported" });
+    expect(result).toMatchObject({
+      status: "unavailable",
+      reasonCode: "wayland-compositor-unsupported",
+    });
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("does not infer a supported local-control session from DISPLAY alone", async () => {
+    const run = vi.fn();
+    const result = await inspectLinuxCuaDriver({
+      platform: "linux",
+      env: { DISPLAY: ":0" },
+      run,
+    });
+    expect(result).toMatchObject({
+      status: "unavailable",
+      reasonCode: "desktop-session-required",
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("certifies GNOME Wayland diagnostics with the native backend explicitly enabled", async () => {
+    const root = temporaryDirectory();
+    const binary = executable(path.join(root, "bin"));
+    const run = successfulRunner(binary, { doctor: healthyWaylandDoctor() });
+    const result = await inspectLinuxCuaDriver({
+      platform: "linux",
+      homeDir: root,
+      env: {
+        CUA_DRIVER_PATH: binary,
+        XDG_SESSION_TYPE: "wayland",
+        XDG_CURRENT_DESKTOP: "ubuntu:GNOME",
+        WAYLAND_DISPLAY: "wayland-0",
+        DISPLAY: ":0",
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+      },
+      run,
+    });
+
+    expect(result).toMatchObject({
+      status: "ready",
+      session: "wayland",
+      compositor: "gnome-mutter",
+      commandEnv: { CUA_DRIVER_RS_ENABLE_WAYLAND: "1" },
+    });
+    for (const call of run.mock.calls) {
+      expect(call[2].env.CUA_DRIVER_RS_ENABLE_WAYLAND).toBe("1");
+    }
   });
 
   it("rejects version and manifest drift", async () => {

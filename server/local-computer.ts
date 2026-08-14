@@ -106,26 +106,32 @@ function decodeLegacyDescriptor(
 
 export function decodeLinuxDescriptor(value: LinuxConnectionDescriptor): LocalComputerConnection | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const x11 = value.mode === "linux-x11-supervised" && value.session === "x11";
+  const wayland =
+    value.mode === "linux-wayland-gnome-supervised" &&
+    value.session === "wayland" &&
+    value.compositor === "gnome-mutter";
+  const descriptorKeys = [
+    "schemaVersion",
+    "mode",
+    "platform",
+    "session",
+    "enabled",
+    "status",
+    "ownerPid",
+    "generation",
+    "driver",
+    "daemon",
+    "mcp",
+    "toolNames",
+    "doctorWarnings",
+    ...(wayland ? ["compositor"] : []),
+  ];
   if (
-    !exactKeys(value, [
-      "schemaVersion",
-      "mode",
-      "platform",
-      "session",
-      "enabled",
-      "status",
-      "ownerPid",
-      "generation",
-      "driver",
-      "daemon",
-      "mcp",
-      "toolNames",
-      "doctorWarnings",
-    ]) ||
+    (!x11 && !wayland) ||
+    !exactKeys(value, descriptorKeys) ||
     value.schemaVersion !== 1 ||
-    value.mode !== "linux-x11-supervised" ||
     value.platform !== "linux" ||
-    value.session !== "x11" ||
     value.enabled !== true ||
     value.status !== "ready" ||
     !Number.isInteger(value.ownerPid) ||
@@ -187,10 +193,12 @@ export function decodeLinuxDescriptor(value: LinuxConnectionDescriptor): LocalCo
       "CUA_DRIVER_EMBEDDED",
       "CUA_DRIVER_HOST_BUNDLE_ID",
       "CUA_DRIVER_RS_UPDATE_CHECK",
+      ...(wayland ? ["CUA_DRIVER_RS_ENABLE_WAYLAND"] : []),
     ]) ||
     (mcp.env as Record<string, unknown>).CUA_DRIVER_EMBEDDED !== "1" ||
     (mcp.env as Record<string, unknown>).CUA_DRIVER_HOST_BUNDLE_ID !== "com.openmausbot.app" ||
-    (mcp.env as Record<string, unknown>).CUA_DRIVER_RS_UPDATE_CHECK !== "false"
+    (mcp.env as Record<string, unknown>).CUA_DRIVER_RS_UPDATE_CHECK !== "false" ||
+    (wayland && (mcp.env as Record<string, unknown>).CUA_DRIVER_RS_ENABLE_WAYLAND !== "1")
   ) {
     return null;
   }
