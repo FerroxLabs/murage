@@ -146,7 +146,10 @@ describe("local computer descriptor", () => {
     ).toBeNull();
   });
 
-  it.skipIf(process.platform === "win32")(
+  // Runtime ownership includes a real Linux Unix-domain socket and POSIX
+  // permission checks. Keep the schema/decoder cases above cross-platform,
+  // but run this host-filesystem proof only on the authoritative Linux lane.
+  it.skipIf(process.platform !== "linux")(
     "validates private descriptor, executable, socket, and live owned processes",
     async () => {
       const userData = privateUserData("linux-runtime-security");
