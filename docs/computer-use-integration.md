@@ -1,16 +1,18 @@
 # Computer use & browser use in OpenMausBot
 
 Decision doc, 2026-08-12. How bots in OpenMausBot get local computer use and
-browser use, out of the box, with no separate installs. Based on a survey of
-OSS chat-app MCP hosts, macOS control servers, browser-automation stacks, and
-the local `cua` / `axstream` code on this machine.
+browser use. macOS targets an out-of-the-box bundled provider; the staged
+Ubuntu beta currently verifies a separately installed, pinned provider. Based
+on a survey of OSS chat-app MCP hosts, macOS control servers,
+browser-automation stacks, and the local `cua` / `axstream` code on this
+machine.
 
 ## TL;DR architecture
 
 ```
 Electron main process
-├── EmbeddedCuaDriverHost  ──spawns──▶  cua-driver (bundled Rust binary, Resources/)
-│     one TCC prompt, named OpenMausBot          │ unix socket (private)
+├── CUA host  ──spawns──▶  cua-driver (bundled on macOS; verified user install on Ubuntu)
+│     platform permission boundary               │ unix socket (private)
 ├── WebContentsView pool (embedded browser, persist: partitions per bot)
 │     driven via webContents.debugger (CDP) — zero-install browser use
 └── server/ harness (drivers spawn agent CLIs with --mcp-config)
@@ -21,8 +23,9 @@ Electron main process
 - **Plugins = MCP servers over stdio.** The Plugins panel toggles which MCP
   servers get injected into each bot's `--mcp-config`. Same pattern as Claude
   Desktop / Cherry Studio / LibreChat.
-- **Computer use = bundled `cua-driver`** (Rust, single static Mach-O,
-  23MB arm64 / 48MB universal — from `mywork/cua/libs/cua-driver/rust`).
+- **Computer use = `cua-driver`**. macOS packages the Rust Mach-O in app
+  Resources; the Ubuntu beta accepts only the certified user-installed 0.19.3
+  Linux binary while bundling is tracked separately.
   NOT Swift — the Swift file everyone remembers
   (`examples/embedded-host-macos/ExampleAgentHarness.swift`) is a 165-line
   reference host showing the embedding pattern, not the driver.
@@ -31,12 +34,12 @@ Electron main process
   `webContents.debugger` CDP transport. No Chrome dependency, no 281MB
   Playwright download, and the user watches the bot browse inside the chat.
 
-## Computer use: CUA only — bundle cua-driver, spawn from Electron main
+## Computer use: CUA only — Electron owns the driver lifecycle
 
 **Decision (Milind, 2026-08-12): CUA is the ONLY computer-use provider.
 No cliclick, no robotjs/nut.js, no Python computer-server, no fallbacks.**
 Everything that touches the user's screen/mouse/keyboard goes through the
-bundled `cua-driver` binary. Alternatives evaluated and rejected:
+validated `cua-driver` binary. Alternatives evaluated and rejected:
 
 The Ubuntu GNOME beta is an intentional staged exception to the
 zero-install packaging statement: it uses the same official CUA provider but
@@ -51,7 +54,7 @@ GNOME/Wayland additionally requires WinRects v8 plus the exact Cua health-report
 | --- | --- |
 | cua `computer-server` (Python/FastAPI) | ✗ 200MB+ frozen Python, second TCC prompt under wrong identity |
 | axstream / cliclick / robotjs-class | ✗ rejected — CUA-only policy |
-| **cua-driver binary, embedded mode** | ✓ THE provider: zero deps, 20+ tools, its own stdio MCP proxy + socket daemon + TS SDK (`@trycua/cua-driver`), agent-cursor overlay, permission tooling |
+| **cua-driver binary, embedded mode** | ✓ THE provider: one contract, 20+ tools, its own stdio MCP proxy + socket daemon + TS SDK (`@trycua/cua-driver`), agent-cursor overlay, permission tooling |
 
 ### The rules (from `cua/libs/cua-driver/rust/Skills/cua-driver/EMBEDDING.md` — read it end to end)
 
@@ -73,7 +76,7 @@ GNOME/Wayland additionally requires WinRects v8 plus the exact Cua health-report
    grant change, destroy clients → `restart()` → reconnect (macOS caches TCC
    per process).
 
-### Packaging
+### macOS packaging target
 
 - Ship the binary at `OpenMausBot.app/Contents/Resources/cua-driver`,
   **outside the ASAR**, executable bit preserved (electron-builder

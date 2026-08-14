@@ -62,6 +62,14 @@ describe("display source selection", () => {
     expect(selectCaptureSource({ sources, host: "x11", primaryDisplayId: 99 })).toBeNull();
   });
 
+  it("uses an unambiguous Xorg source when display_id is absent or mismatched", () => {
+    const onlySource = { id: "only", display_id: "" };
+    expect(
+      selectCaptureSource({ sources: [onlySource], host: "x11", primaryDisplayId: 42 }),
+    ).toEqual(onlySource);
+    expect(selectCaptureSource({ sources: [], host: "x11", primaryDisplayId: 42 })).toBeNull();
+  });
+
   it("accepts only the single portal-selected Wayland source", () => {
     expect(
       selectCaptureSource({ sources: [sources[0]], host: "wayland", primaryDisplayId: 42 }),

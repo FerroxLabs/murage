@@ -24,7 +24,7 @@ for (const lane of ["x11", "wayland"]) {
       env: {
         ...process.env,
         XDG_RUNTIME_DIR: runtimeDirectory,
-        ...(lane === "wayland" ? { OMB_SMOKE_WAYLAND: "1" } : {}),
+        OMB_SMOKE_WAYLAND: lane === "wayland" ? "1" : "0",
       },
       stdio: "inherit",
     },

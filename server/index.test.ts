@@ -507,6 +507,15 @@ describe("harness HTTP API", () => {
     const rejected = await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
     expect(rejected.status).toBe(400);
     expect(rejected.body.error).toContain("local computer beta");
+
+    const cloud = await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" });
+    expect(cloud.body.bot.computer).toBe("cloud");
+    const simultaneous = await api("PATCH", `/api/bots/${bot.id}`, {
+      computer: "local",
+      autoApprove: true,
+    });
+    expect(simultaneous.status).toBe(400);
+    expect(simultaneous.body.error).toContain("local computer beta");
     await api("DELETE", `/api/bots/${bot.id}`);
   });
 

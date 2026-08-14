@@ -92,12 +92,25 @@ export function LocalScreenPreview() {
       },
       { once: true },
     );
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
-      void videoRef.current.play().catch(() => {});
+    const video = videoRef.current;
+    if (!video) {
+      releaseStream("error", "Couldn't display screen preview.");
+      return;
     }
+    video.srcObject = stream;
+    try {
+      await video.play();
+    } catch {
+      if (currentRequest === requestId.current && streamRef.current === stream) {
+        releaseStream("error", "Couldn't display screen preview.");
+      }
+      return;
+    }
+    if (currentRequest !== requestId.current || streamRef.current !== stream) return;
     setPhase("streaming");
-    setMessage("Preview active. The bot still cannot control this computer.");
+    setMessage(
+      "Preview active. Previewing does not grant local control; local actions still require approval.",
+    );
   };
 
   if (!isLinux) return null;
@@ -112,7 +125,7 @@ export function LocalScreenPreview() {
             Preview this computer
           </div>
           <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            Preview only — the bot cannot control this computer.
+            Preview only — starting a preview does not grant local control.
           </div>
         </div>
         <span className="shrink-0 rounded-full bg-raised px-2 py-1 text-[10px] font-medium text-ink-secondary">

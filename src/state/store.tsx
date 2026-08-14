@@ -778,11 +778,10 @@ export function reducer(state: AppState, action: Action): AppState {
             ),
           }
         : animated;
-      return updateBot(next, action.botId, (b) => ({
-        ...b,
-        ...action.patch,
-        ...(action.patch.computer === "local" ? { autoApprove: false } : {}),
-      }));
+      return updateBot(next, action.botId, (b) => {
+        const merged = { ...b, ...action.patch };
+        return merged.computer === "local" ? { ...merged, autoApprove: false } : merged;
+      });
     }
     case "threadActive": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);

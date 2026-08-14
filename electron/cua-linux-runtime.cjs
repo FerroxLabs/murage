@@ -62,7 +62,12 @@ function writePrivateJson(file, value, {
     fileSystem.chmodSync(file, 0o600);
     const directoryHandle = fileSystem.openSync(directory, "r");
     try {
-      fileSystem.fsyncSync(directoryHandle);
+      try {
+        fileSystem.fsyncSync(directoryHandle);
+      } catch {
+        // The file itself is already flushed and atomically renamed. Some
+        // otherwise-supported filesystems reject fsync on a directory.
+      }
     } finally {
       fileSystem.closeSync(directoryHandle);
     }
@@ -420,9 +425,7 @@ function createLinuxCuaRuntime({
     });
 
   const runtimeRoot = () => {
-    const userData = getUserData();
     const configured = env.XDG_RUNTIME_DIR;
-    let base = userData;
     if (configured && path.isAbsolute(configured)) {
       try {
         const stat = fs.lstatSync(configured);
@@ -433,11 +436,15 @@ function createLinuxCuaRuntime({
           stat.uid === currentUid &&
           (stat.mode & 0o077) === 0
         ) {
-          base = configured;
+          return ensurePrivateDirectory(path.join(configured, "openmausbot-cua"));
         }
       } catch {}
     }
-    return ensurePrivateDirectory(path.join(base, "openmausbot-cua"));
+    // Unix sockets have a short path limit. A private, uid-scoped directory
+    // directly under the system temp root keeps the fallback deterministic
+    // and short when XDG_RUNTIME_DIR is missing or unsafe.
+    const currentUid = process.getuid?.() ?? os.userInfo().uid;
+    return ensurePrivateDirectory(path.join(os.tmpdir(), `openmausbot-cua-${currentUid}`));
   };
 
   const cleanupRuntimeFiles = (owned) => {
@@ -450,7 +457,8 @@ function createLinuxCuaRuntime({
       try {
         fs.unlinkSync(file);
       } catch (error) {
-        if (error?.code !== "ENOENT") break;
+        // A failure for one owned path must not prevent cleanup of the other.
+        if (error?.code !== "ENOENT") continue;
       }
     }
     try {
@@ -515,7 +523,16 @@ function createLinuxCuaRuntime({
 
     startPromise = (async () => {
       unavailable("checking", "checking-driver", "Checking Cua Driver and the desktop session…");
-      const inspected = await inspect({ platform, env });
+      let inspected;
+      try {
+        inspected = await inspect({ platform, env });
+      } catch (error) {
+        return unavailable(
+          "error",
+          error?.code ?? "driver-inspection-failed",
+          "Cua Driver could not be inspected. Check the installation and try again.",
+        );
+      }
       if (inspected.status !== "ready") {
         return unavailable("error", inspected.reasonCode, inspected.message, {
           ...(inspected.path
@@ -534,6 +551,7 @@ function createLinuxCuaRuntime({
       const socketPath = path.join(runtimeDirectory, "driver.sock");
       const pidFile = path.join(runtimeDirectory, "driver.pid");
       if (Buffer.byteLength(socketPath) > 100) {
+        cleanupRuntimeFiles({ runtimeDirectory, socketPath, pidFile });
         return unavailable(
           "error",
           "socket-path-too-long",
@@ -670,9 +688,18 @@ function createLinuxCuaRuntime({
           { generation, driver: { path: inspected.path, version: inspected.driverVersion } },
         );
       }
-    })().finally(() => {
-      startPromise = null;
-    });
+    })()
+      .catch((error) => {
+        if (!enabled || quitting) return connection;
+        return unavailable(
+          "error",
+          error?.code ?? "runtime-start-failed",
+          "The private Cua Driver runtime could not start. Check the installation and try again.",
+        );
+      })
+      .finally(() => {
+        startPromise = null;
+      });
     return startPromise;
   };
 

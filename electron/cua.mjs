@@ -213,21 +213,33 @@ export function registerCuaIpc() {
     if (process.platform !== "linux") {
       return { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" };
     }
-    await ensureLinuxRuntime().enable();
+    try {
+      await ensureLinuxRuntime().enable();
+    } catch (error) {
+      console.error("[cua] Linux enable failed:", error);
+    }
     return ensureLinuxRuntime().getStatus();
   });
   ipcMain.handle("cua:linux-disable", async () => {
     if (process.platform !== "linux") {
       return { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" };
     }
-    await ensureLinuxRuntime().disable();
+    try {
+      await ensureLinuxRuntime().disable();
+    } catch (error) {
+      console.error("[cua] Linux disable failed:", error);
+    }
     return ensureLinuxRuntime().getStatus();
   });
   ipcMain.handle("cua:linux-retry", async () => {
     if (process.platform !== "linux") {
       return { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" };
     }
-    await ensureLinuxRuntime().retry();
+    try {
+      await ensureLinuxRuntime().retry();
+    } catch (error) {
+      console.error("[cua] Linux retry failed:", error);
+    }
     return ensureLinuxRuntime().getStatus();
   });
 }

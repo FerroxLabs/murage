@@ -21,7 +21,8 @@ const {
 const temporaryDirectories = [];
 
 function temporaryDirectory() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "openmausbot-cua-runtime-"));
+  const base = process.platform === "win32" ? os.tmpdir() : fs.realpathSync(os.tmpdir());
+  const directory = fs.mkdtempSync(path.join(base, "omb-cua-runtime-"));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -186,11 +187,10 @@ afterEach(() => {
   }
 });
 
-// Lifecycle readiness deliberately includes Linux executable identity,
-// private-directory permissions, and the Linux runtime's Unix socket layout.
-// Keep the pure state/handshake suites below cross-platform, but exercise the
-// real host-filesystem contract only on the authoritative Ubuntu CI lane.
-describe.skipIf(process.platform !== "linux")("Linux CUA opt-in and lifecycle", () => {
+// Windows does not provide the POSIX executable and Unix-socket semantics this
+// lifecycle contract exercises. Canonical short temp paths keep it portable
+// across Linux and macOS.
+describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", () => {
   it("does not inspect or execute a driver before explicit opt-in", async () => {
     const context = harness();
     await context.runtime.initialize();
@@ -201,6 +201,25 @@ describe.skipIf(process.platform !== "linux")("Linux CUA opt-in and lifecycle", 
       status: "disabled",
       reasonCode: "opt-in-required",
     });
+  });
+
+  it("publishes a retryable error when driver inspection throws", async () => {
+    const inspectError = Object.assign(new Error("probe failed"), {
+      code: "driver-inspection-failed",
+    });
+    const context = harness({
+      runtimeOptions: { inspect: vi.fn(async () => Promise.reject(inspectError)) },
+    });
+
+    await expect(context.runtime.enable()).resolves.toMatchObject({
+      status: "error",
+      reasonCode: "driver-inspection-failed",
+    });
+    expect(context.runtime.getStatus()).toMatchObject({
+      status: "error",
+      reasonCode: "driver-inspection-failed",
+    });
+    expect(context.spawnProcess).not.toHaveBeenCalled();
   });
 
   it("coalesces starts, verifies a private daemon, and publishes a strict ready descriptor", async () => {
@@ -364,9 +383,8 @@ describe.skipIf(process.platform !== "linux")("Linux CUA opt-in and lifecycle", 
   });
 });
 
-// Directory fsync and POSIX mode/symlink guarantees are part of the Linux
-// runtime contract; Windows intentionally rejects directory fsync.
-describe.skipIf(process.platform !== "linux")("Linux CUA private data", () => {
+// POSIX modes and symlink guarantees are available on Linux and macOS.
+describe.skipIf(process.platform === "win32")("Linux CUA private data", () => {
   it("uses strict preference schema and private atomic files", () => {
     const userData = temporaryDirectory();
     const store = createLinuxCuaPreferenceStore({ getUserData: () => userData });

@@ -10,6 +10,8 @@ const DEFAULT_MAX_OUTPUT_BYTES = 512 * 1024;
 const GETENT_BINARY = "/usr/bin/getent";
 const GETENT_TIMEOUT_MS = 1_500;
 const GETENT_MAX_OUTPUT_BYTES = 256 * 1024;
+// Keep this exact field set synchronized with DRIVER_FILE_IDENTITY_KEYS in
+// server/local-computer.ts; Electron publishes it and the server revalidates it.
 const DRIVER_FILE_IDENTITY_KEYS = Object.freeze([
   "dev",
   "ino",
@@ -142,14 +144,12 @@ function runCuaCommand(binary, args, {
         );
         return;
       }
-      resolve({
+      finish(resolve, {
         exitCode,
         signal,
         stdout: stdout.toString("utf8"),
         stderr: stderr.toString("utf8"),
       });
-      settled = true;
-      clearTimeout(timer);
     });
 
     const timer = setTimeout(() => {

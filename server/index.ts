@@ -2920,11 +2920,12 @@ const server = createServer(async (req, res) => {
       if (body.cloudBackend !== undefined && !["box", "vps"].includes(String(body.cloudBackend))) {
         return json(res, 400, { error: "cloudBackend must be box or vps" });
       }
+      const effectiveComputer = body.computer ?? existingBot?.computer;
       if (body.chiefOfStaff !== undefined && typeof body.chiefOfStaff !== "boolean") {
         return json(res, 400, { error: "chiefOfStaff must be true or false" });
       }
       if (body.cloudBackend !== undefined) {
-        const backendError = cloudBackendChangeError(Boolean(existing?.busy), activeVpsThreads.has(m[1]));
+        const backendError = cloudBackendChangeError(Boolean(existingBot?.busy), activeVpsThreads.has(m[1]));
         if (backendError) return json(res, 409, { error: backendError });
       }
       if (body.cwd !== undefined) {
@@ -2940,7 +2941,6 @@ const server = createServer(async (req, res) => {
       // still answer .includes() — with substring matches, not tool names
       if (body.autoApprove !== undefined) {
         if (typeof body.autoApprove !== "boolean") return json(res, 400, { error: "autoApprove must be true or false" });
-        const effectiveComputer = body.computer ?? existingBot?.computer;
         if (body.autoApprove === true && effectiveComputer === "local") {
           return json(res, 400, { error: "Auto mode is unavailable while this bot uses the local computer beta" });
         }
@@ -2958,7 +2958,7 @@ const server = createServer(async (req, res) => {
         }
         patch.alwaysAllow = [...new Set(body.alwaysAllow as string[])].slice(0, 200);
       }
-      if (body.computer === "local") {
+      if (effectiveComputer === "local" && body.autoApprove === undefined && existingBot?.autoApprove) {
         patch.autoApprove = false;
       }
       if (existingBot?.computer === "local" && body.computer !== undefined && body.computer !== "local") {

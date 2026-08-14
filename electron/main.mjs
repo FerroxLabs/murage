@@ -578,7 +578,9 @@ async function broadcastDesktopCapabilities() {
 
 setCuaStateListener((connection) => {
   cuaReady = Promise.resolve(connection);
-  void broadcastDesktopCapabilities();
+  void broadcastDesktopCapabilities().catch((error) => {
+    console.error("[desktop] capability broadcast failed:", error);
+  });
 });
 
 app.whenReady().then(async () => {
@@ -624,9 +626,17 @@ app.whenReady().then(async () => {
                   ? screen.getPrimaryDisplay().id
                   : null,
             });
+            if (!source) {
+              console.warn(
+                `[screen-preview] rejected ${captureHost} source set (${sources.length} candidates)`,
+              );
+            }
             respondToDisplayMediaRequest(callback, source ? { video: source } : {});
           })
-          .catch(() => respondToDisplayMediaRequest(callback, {}));
+          .catch((error) => {
+            console.warn("[screen-preview] source discovery failed:", error);
+            respondToDisplayMediaRequest(callback, {});
+          });
       },
       { useSystemPicker: false },
     );

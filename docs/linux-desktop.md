@@ -138,14 +138,41 @@ This beta deliberately uses a user-installed driver. OpenMausBot does not bundle
 global Cua daemon. The certified contract is **Cua Driver 0.19.3**, manifest schema `1`, on Ubuntu 24.04 x64
 GNOME/Xorg or GNOME/Wayland. OpenMausBot owns a separate private daemon only after the user enables the beta.
 
-Install Cua Driver from its [official installation guide](https://cua.ai/docs/how-to-guides/driver/install):
+Install the exact x86_64 asset from the
+[official 0.19.3 release](https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.19.3).
+The upstream release does not currently provide a signature or GitHub artifact attestation for this asset, so
+OpenMausBot pins its published SHA-256 here and verifies it before extraction. Do not pipe a remote installer
+directly into a shell:
 
 ```sh
-CUA_DRIVER_RS_VERSION=0.19.3 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+version="0.19.3"
+target="x86_64-unknown-linux-gnu"
+asset="cua-driver-rs-${version}-linux-x86_64-binary.tar.gz"
+release_url="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${version}"
+download_dir="$(mktemp -d)"
+
+curl --fail --location --proto '=https' --tlsv1.2 \
+  --output "$download_dir/$asset" "$release_url/$asset"
+printf '%s  %s\n' \
+  '3db9d4257d84bacaf7eb104d225f85613ce67edbb20d6eeb83c1384b6d8a5b10' \
+  "$download_dir/$asset" | sha256sum --check --strict
+
+release_dir="$HOME/.cua-driver/packages/releases/${version}-${target}"
+test ! -e "$release_dir" || { echo "Already exists: $release_dir" >&2; exit 1; }
+install -d -m 700 "$HOME/.local/bin" "$HOME/.cua-driver/packages/releases" "$release_dir"
+tar --extract --gzip --no-same-owner --no-same-permissions \
+  --file "$download_dir/$asset" --directory "$release_dir"
+chmod 700 "$release_dir/cua-driver" "$release_dir/wayland-helper/install.sh"
+ln -sfn "$release_dir" "$HOME/.cua-driver/packages/current"
+ln -sfn "$release_dir/cua-driver" "$HOME/.local/bin/cua-driver"
+printf 'Verified download directory: %s\n' "$download_dir"
+
 cua-driver --version
 cua-driver manifest --pretty
 cua-driver doctor --json
 ```
+
+The verified archive remains in the printed temporary directory and may be removed after the checks complete.
 
 Confirm the version is `0.19.3`. OpenMausBot also rejects an executable or containing directory that another
 local user could replace. Ubuntu's normal user-private group layout is accepted after OpenMausBot verifies that
@@ -165,7 +192,7 @@ chmod go-w "$HOME/.local/bin" "$HOME/.cua-driver" "$HOME/.cua-driver/packages" \
 For GNOME/Wayland, install the versioned helper shipped with that same verified Cua release:
 
 ```sh
-~/.cua-driver/packages/current/wayland-helper/install.sh
+~/.cua-driver/packages/releases/0.19.3-x86_64-unknown-linux-gnu/wayland-helper/install.sh
 ```
 
 Sign out and back in once, then verify that GNOME loaded exactly the expected helper:

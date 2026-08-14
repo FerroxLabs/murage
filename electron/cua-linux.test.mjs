@@ -20,7 +20,8 @@ const {
 const temporaryDirectories = [];
 
 function temporaryDirectory() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "openmausbot-cua-linux-"));
+  const base = process.platform === "win32" ? os.tmpdir() : fs.realpathSync(os.tmpdir());
+  const directory = fs.mkdtempSync(path.join(base, "omb-cua-linux-"));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -88,11 +89,9 @@ afterEach(() => {
   }
 });
 
-// These cases intentionally exercise real Linux ownership, mode bits,
-// executable detection, canonical paths, and PATH semantics. macOS rewrites
-// /var through /private/var, while Windows does not expose POSIX executable
-// bits; Ubuntu CI is the authoritative host for this filesystem contract.
-describe.skipIf(process.platform !== "linux")("Linux CUA discovery", () => {
+// Windows does not expose the POSIX executable and ownership semantics used by
+// discovery. Canonical temp paths make the same contract useful on macOS.
+describe.skipIf(process.platform === "win32")("Linux CUA discovery", () => {
   it("rejects an invalid explicit override without falling through", () => {
     const root = temporaryDirectory();
     const fallback = executable(path.join(root, "bin"));
@@ -328,7 +327,7 @@ describe("Linux private primary group proof", () => {
   });
 });
 
-describe.skipIf(process.platform !== "linux")("Linux CUA diagnostics", () => {
+describe.skipIf(process.platform === "win32")("Linux CUA diagnostics", () => {
   it("passes only the minimal desktop environment and returns a certified contract", async () => {
     const root = temporaryDirectory();
     const binary = executable(path.join(root, "bin"));
@@ -482,7 +481,7 @@ describe("bounded command execution", () => {
   });
 });
 
-describe.skipIf(process.platform !== "linux")("minimal child environment", () => {
+describe.skipIf(process.platform === "win32")("minimal child environment", () => {
   it("keeps desktop session values but drops application secrets", () => {
     expect(
       desktopCommandEnvironment({

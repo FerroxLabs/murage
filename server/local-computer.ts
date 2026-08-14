@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 
 const REQUIRED_LINUX_TOOLS = ["click", "get_window_state", "list_apps", "type_text"];
+// Keep this exact field set synchronized with DRIVER_FILE_IDENTITY_KEYS in
+// electron/cua-linux.cjs; Electron publishes it and the server revalidates it.
 const DRIVER_FILE_IDENTITY_KEYS = [
   "dev",
   "ino",

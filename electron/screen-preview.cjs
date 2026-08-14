@@ -52,7 +52,12 @@ function selectCaptureSource({ sources, host, primaryDisplayId }) {
   if (!Array.isArray(sources) || sources.length === 0) return null;
   if (host === "wayland") return sources.length === 1 ? sources[0] : null;
   if (host === "x11") {
-    return sources.find((source) => String(source.display_id) === String(primaryDisplayId)) ?? null;
+    const exact = sources.find(
+      (source) => String(source.display_id) === String(primaryDisplayId),
+    );
+    // Some X11 backends omit or misreport display_id. A single enumerated
+    // source is still unambiguous; never guess when multiple sources remain.
+    return exact ?? (sources.length === 1 ? sources[0] : null);
   }
   if (host === "darwin") return sources[0];
   return null;

@@ -1,7 +1,17 @@
-import { appendFileSync, chmodSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   decodeLinuxDescriptor,
@@ -58,12 +68,23 @@ function linuxDescriptor(userData: string, { session = "x11" }: { session?: "x11
   };
 }
 
+const temporaryDirectories: string[] = [];
+
 function privateUserData(name: string) {
-  const userData = join(process.env.HOME!, name);
+  const base = process.platform === "win32" ? tmpdir() : realpathSync(tmpdir());
+  const root = mkdtempSync(join(base, "omb-local-computer-"));
+  temporaryDirectories.push(root);
+  const userData = join(root, name);
   mkdirSync(userData, { recursive: true, mode: 0o700 });
   chmodSync(userData, 0o700);
   return userData;
 }
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe("local computer descriptor", () => {
   it("accepts only the exact certified Linux X11 descriptor", () => {
