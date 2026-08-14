@@ -27,6 +27,7 @@
     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
     "test": "vitest run",
+    "bench:observation": "node --experimental-strip-types scripts/bench-observation.ts",
     "test:watch": "vitest",
     "check:electron": "node --check electron/main.mjs && node --check electron/preload.cjs && node --check electron/capabilities.cjs && node --check electron/cua-connection.cjs && node --check electron/cua.mjs && node --check electron/speech.mjs",
     "preview": "vite preview",
