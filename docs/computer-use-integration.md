@@ -38,12 +38,14 @@ No cliclick, no robotjs/nut.js, no Python computer-server, no fallbacks.**
 Everything that touches the user's screen/mouse/keyboard goes through the
 bundled `cua-driver` binary. Alternatives evaluated and rejected:
 
-The Ubuntu GNOME/Xorg beta is an intentional staged exception to the
+The Ubuntu GNOME beta is an intentional staged exception to the
 zero-install packaging statement: it uses the same official CUA provider but
 requires user-installed Cua Driver 0.19.3 while supply-chain bundling remains
 Phase 5 of [#29](https://github.com/milind-soni/OpenMausBot/issues/29). Electron
 still owns a private embedded daemon/socket, and the harness only receives the
-validated MCP proxy contract. See [#79](https://github.com/milind-soni/OpenMausBot/issues/79).
+validated MCP proxy contract. Xorg is tracked in [#79](https://github.com/milind-soni/OpenMausBot/issues/79);
+GNOME/Wayland additionally requires WinRects v8 plus the exact Cua health-report contract tracked in
+[#109](https://github.com/milind-soni/OpenMausBot/issues/109).
 
 | Option | Verdict |
 | --- | --- |

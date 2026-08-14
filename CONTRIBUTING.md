@@ -106,7 +106,8 @@ The SPI in [`server/contracts.ts`](server/contracts.ts) is deliberately small. A
 - Linux local control must remain explicit: global opt-in plus per-bot **This computer**. Linux Auto, provider
   full-auto/bypass modes, remembered grants, and cloud approvals must never authorize the user's desktop.
 - Keep user-installed CUA discovery shell-free and pin accepted manifest/driver contracts. Do not add a bundled
-  binary, automatic installer/update, Wayland mutation, or default-daemon ownership to the Xorg beta.
+  binary, automatic installer/update, or default-daemon ownership to the Linux beta. GNOME/Wayland readiness must
+  require its exact compositor/helper/portal health contract; never infer it from `WAYLAND_DISPLAY` or XWayland.
 - **Never build command strings for a shell.** No `shell: true`, no spawning through `cmd.exe` with
   quoted strings — model names, personas, and MCP config JSON travel through argv, and cmd.exe
   metacharacter expansion is a real injection class. On Windows, resolve `.cmd` shims to their JS
