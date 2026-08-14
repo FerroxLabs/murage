@@ -75,9 +75,19 @@ export interface ModelSelection {
   model: string;
 }
 
+/** One of a bot's separate contexts: its own thread, transcript and
+ * provider session. The bot's threadId points at the active one. */
+export interface Task {
+  threadId: string;
+  title: string;
+  createdAt: number;
+}
+
 export interface Bot {
   id: string;
   threadId: string;
+  /** every context this bot has, newest first */
+  tasks?: Task[];
   name: string;
   title: string;
   description: string;
@@ -204,6 +214,10 @@ type Action =
       /** remember this exact grant (the server's allowKey) for the bot */
       alwaysAllow?: { botId: string; key: string };
     }
+  | { type: "newTask"; botId: string }
+  | { type: "switchTask"; botId: string; threadId: string }
+  | { type: "renameTask"; botId: string; threadId: string; title: string }
+  | { type: "deleteTask"; botId: string; threadId: string }
   | { type: "newBot" }
   | { type: "botAdded"; bot: Bot }
   | { type: "deleteBot"; botId: string }
@@ -523,6 +537,11 @@ function reducer(state: AppState, action: Action): AppState {
     case "send":
     case "editMessage":
       return withMascotMotion(state, action.botId, "working");
+    case "newTask":
+    case "switchTask":
+    case "renameTask":
+    case "deleteTask":
+      return state;
     case "newBot":
     case "duplicateBot":
     case "interrupt":
@@ -821,6 +840,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "interrupt":
           api(`/api/bots/${action.botId}/interrupt`, { method: "POST" }).catch(showError);
+          break;
+        // tasks: the server answers with the bot AND the live transcript,
+        // because switching changes which conversation is on screen
+        case "newTask":
+          api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: "{}" })
+            .then((r: any) => r?.bot && dispatch({ type: "botPatched", bot: r.bot }))
+            .catch(showError);
+          break;
+        case "switchTask":
+          api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "POST" })
+            .then((r: any) => r?.bot && dispatch({ type: "botPatched", bot: r.bot }))
+            .catch(showError);
+          break;
+        case "renameTask":
+          api(`/api/bots/${action.botId}/tasks/${action.threadId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ title: action.title }),
+          }).catch(showError);
+          break;
+        case "deleteTask":
+          api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "DELETE" })
+            .then((r: any) => r?.bot && dispatch({ type: "botPatched", bot: r.bot }))
+            .catch(showError);
           break;
         case "interruptGroup":
           api(`/api/groups/${action.groupId}/interrupt`, { method: "POST" }).catch(showError);

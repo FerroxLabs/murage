@@ -418,6 +418,8 @@ async function startTurn(
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
   const commsDepth = opts?.commsDepth ?? 0;
+  // a task takes its name from the first thing you asked it to do
+  if (text.trim()) store.titleTaskFromFirstMessage(bot.id, text);
 
   const instance = registry.get(bot.modelSelection.instanceId);
   if (!instance) {
@@ -544,7 +546,9 @@ async function startTurn(
         text: turnText,
         model: bot.modelSelection.model,
         // a rewound thread never resumes the abandoned branch's session
-        resumeCursor: rewound ? undefined : bot.resumeCursors[bot.modelSelection.instanceId],
+        // the active task's own session — another task's cursor would
+        // resume the wrong conversation and defeat the context bubble
+        resumeCursor: rewound ? undefined : store.activeTask(bot.id)?.resumeCursors[bot.modelSelection.instanceId],
         transcript,
         system:
           persona +
@@ -919,6 +923,7 @@ const server = createServer(async (req, res) => {
           ...b,
           messages: store.messagesFor(b.threadId),
           activeLeafId: store.activeLeaf(b.threadId),
+          tasks: (b.tasks ?? []).map(({ resumeCursors, ...t }) => t),
         })),
         groups: store.groups.map((g) => ({ ...g, messages: store.messagesFor(g.threadId) })),
       });
@@ -1164,6 +1169,57 @@ const server = createServer(async (req, res) => {
       const instance = registry.get(bot.modelSelection.instanceId);
       await instance?.adapter.interruptTurn(bot.threadId);
       return json(res, 200, { ok: true });
+    }
+
+    // ── tasks: a bot's separate contexts ────────────────────────────────
+    // The bot record answers with its messages because switching tasks
+    // changes which transcript is live, and a partial patch would leave
+    // the client showing the previous task's conversation.
+    const botWithThread = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
+      ...bot,
+      messages: store.messagesFor(bot.threadId),
+      activeLeafId: store.activeLeaf(bot.threadId),
+      tasks: store.tasks(bot.id).map(({ resumeCursors, ...t }) => t),
+    });
+
+    m = path.match(/^\/api\/bots\/([\w-]+)\/tasks$/);
+    if (m && method === "POST") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (bot.busy) return json(res, 409, { error: "this bot is working — let it finish before starting a task" });
+      const body = await readBody(req);
+      const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined);
+      if (!task) return json(res, 500, { error: "couldn't create that task" });
+      const fresh = botWithThread(store.bot(bot.id)!);
+      broadcast({ kind: "bot", bot: fresh });
+      return json(res, 201, { bot: fresh, task });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/tasks\/([\w-]+)$/);
+    if (m && method === "POST") {
+      const switched = store.switchTask(m[1], m[2]);
+      if (!switched) return json(res, 404, { error: "no such task" });
+      const fresh = botWithThread(switched);
+      broadcast({ kind: "bot", bot: fresh });
+      return json(res, 200, { bot: fresh });
+    }
+    if (m && method === "PATCH") {
+      const body = await readBody(req);
+      const task = store.renameTask(m[1], m[2], String(body.title ?? ""));
+      if (!task) return json(res, 404, { error: "no such task" });
+      const fresh = botWithThread(store.bot(m[1])!);
+      broadcast({ kind: "bot", bot: fresh });
+      return json(res, 200, { task });
+    }
+    if (m && method === "DELETE") {
+      const bot = store.bot(m[1]);
+      if (bot?.busy && bot.threadId === m[2]) {
+        return json(res, 409, { error: "this task is running — stop it first" });
+      }
+      const updated = store.deleteTask(m[1], m[2]);
+      if (!updated) return json(res, 400, { error: "a bot keeps at least one task" });
+      const fresh = botWithThread(updated);
+      broadcast({ kind: "bot", bot: fresh });
+      return json(res, 200, { bot: fresh });
     }
 
     // identity handshake for the packaged app's port fallback: the forked

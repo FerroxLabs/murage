@@ -23,6 +23,7 @@ import { OptionCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { ModelPicker } from "./ModelPicker";
+import { TaskPicker } from "./TaskPicker";
 import { ReactionBar, ReactionChips } from "./Reactions";
 import { cn } from "@/lib/cn";
 
@@ -645,6 +646,7 @@ export function ChatView({ bot }: { bot: Bot }) {
               Stop
             </button>
           )}
+          <TaskPicker bot={bot} />
           <ModelPicker bot={bot} />
           <button
             onClick={() => dispatch({ type: "toggleComputer" })}
