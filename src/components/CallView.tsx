@@ -17,7 +17,7 @@
 // every activity chip the harness narrates (`tool.spoken`) is read aloud as
 // it happens, which is why waiting feels like listening to someone work
 // rather than listening to nothing.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Loader2, Phone, PhoneOff, X } from "lucide-react";
 
 import { useStore, visibleMessages, type Bot } from "@/state/store";
@@ -40,12 +40,18 @@ type Phase = "listening" | "sending" | "working" | "speaking";
 const CALL_ENDPOINT_MS = 850;
 
 export function CallButton({ bot }: { bot: Bot }) {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
   const active = useOnCall() === bot.id;
   const supported = capabilities.dictation.available && Boolean(window.ogb?.speechStart);
   const configured = Boolean(state.config?.tts?.configured);
   const voiceReady = configured && Boolean(state.config?.tts?.ready || bot.voice);
+  const unavailable = !active && (!capabilitiesReady || !supported || !voiceReady);
+  const voiceSetupRequired = capabilitiesReady && supported && !voiceReady;
+  const [helpOpen, setHelpOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const helpId = useId();
   const label = active
     ? `Hang up on ${bot.name}`
     : !capabilitiesReady
@@ -57,23 +63,93 @@ export function CallButton({ bot }: { bot: Bot }) {
           : !voiceReady
             ? "Pick a voice in App Settings to make calls"
             : `Call ${bot.name}`;
+
+  const reason = !capabilitiesReady
+    ? "Checking whether this device can make calls."
+    : !capabilities.dictation.available
+      ? "Calls require OpenMausBot for macOS because speech recognition runs on-device."
+      : !window.ogb?.speechStart
+        ? "The speech service is unavailable in this app build. Restart or update OpenMausBot."
+        : !configured
+          ? "Add an ElevenLabs API key so the bot can speak during calls."
+          : !voiceReady
+            ? "Choose an ElevenLabs voice before starting a call."
+            : "";
+
+  useEffect(() => {
+    if (!helpOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setHelpOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setHelpOpen(false);
+      buttonRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [helpOpen]);
+
   return (
-    <button
-      onClick={() => {
-        if (active) return endCall(bot.id);
-        track("call_started", { driver: bot.modelSelection?.instanceId });
-        startCall(bot.id);
-      }}
-      disabled={!active && (!capabilitiesReady || !supported || !voiceReady)}
-      aria-label={label}
-      title={label}
-      className={cn(
-        "flex size-9 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
-        active ? "bg-danger text-white hover:brightness-110" : "text-ink-secondary hover:bg-raised hover:text-ink",
+    <div ref={rootRef} className="relative">
+      <button
+        ref={buttonRef}
+        onClick={() => {
+          if (active) return endCall(bot.id);
+          if (unavailable) {
+            setHelpOpen((open) => !open);
+            return;
+          }
+          track("call_started", { driver: bot.modelSelection?.instanceId });
+          startCall(bot.id);
+        }}
+        aria-expanded={unavailable ? helpOpen : undefined}
+        aria-controls={unavailable ? helpId : undefined}
+        aria-label={label}
+        title={label}
+        className={cn(
+          "relative flex size-9 items-center justify-center rounded-full transition-colors",
+          active
+            ? "bg-danger text-white hover:brightness-110"
+            : unavailable
+              ? "text-ink-secondary/50 hover:bg-raised hover:text-ink-secondary"
+              : "text-ink-secondary hover:bg-raised hover:text-ink",
+        )}
+      >
+        {active ? <PhoneOff size={17} /> : <Phone size={17} />}
+        {unavailable && (
+          <span className="absolute right-1 top-1 size-1.5 rounded-full bg-warning ring-2 ring-app" aria-hidden="true" />
+        )}
+      </button>
+
+      {unavailable && helpOpen && (
+        <div
+          id={helpId}
+          role="group"
+          aria-label="Call unavailable"
+          className="animate-pop-in absolute right-0 z-30 mt-1.5 w-[280px] rounded-xl border border-hairline bg-panel p-3 text-left shadow-2xl"
+        >
+          <div className="text-[13px] font-medium text-ink">Call unavailable</div>
+          <div className="mt-1 text-[12px] leading-[1.45] text-ink-secondary">{reason}</div>
+          {voiceSetupRequired && (
+            <button
+              type="button"
+              onClick={() => {
+                setHelpOpen(false);
+                dispatch({ type: "toggleAppSettings", open: true, section: "voice" });
+              }}
+              className="mt-2.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:brightness-110"
+            >
+              Open Voice settings
+            </button>
+          )}
+        </div>
       )}
-    >
-      {active ? <PhoneOff size={17} /> : <Phone size={17} />}
-    </button>
+    </div>
   );
 }
 

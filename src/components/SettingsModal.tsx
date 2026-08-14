@@ -4,7 +4,7 @@
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
 import { KeyRound, Monitor, User, Volume2, X } from "lucide-react";
-import { useStore } from "@/state/store";
+import { useStore, type AppSettingsSection } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
 import { LocalComputerSection } from "./LocalComputerSection";
@@ -12,9 +12,7 @@ import { Card } from "./SettingsPrimitives";
 import { VoiceSettings } from "./VoiceSettings";
 import { cn } from "@/lib/cn";
 
-type SectionId = "general" | "connections" | "voice" | "computer";
-
-const SECTIONS: Array<{ id: SectionId; label: string; icon: typeof User }> = [
+const SECTIONS: Array<{ id: AppSettingsSection; label: string; icon: typeof User }> = [
   { id: "general", label: "General", icon: User },
   { id: "connections", label: "Connections", icon: KeyRound },
   { id: "voice", label: "Voice", icon: Volume2 },
@@ -97,8 +95,8 @@ function UpdatesRow() {
 }
 
 export function SettingsModal() {
-  const { dispatch } = useStore();
-  const [section, setSection] = useState<SectionId>("general");
+  const { state, dispatch } = useStore();
+  const section = state.appSettingsSection;
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -165,7 +163,7 @@ export function SettingsModal() {
           {SECTIONS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
-              onClick={() => setSection(id)}
+              onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: id })}
               aria-current={section === id ? "page" : undefined}
               className={cn(
                 "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[14px]",
