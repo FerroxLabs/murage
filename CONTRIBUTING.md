@@ -105,9 +105,15 @@ The SPI in [`server/contracts.ts`](server/contracts.ts) is deliberately small. A
   Wayland portal behavior or real CUA inspection/input delivery.
 - Linux local control must remain explicit: global opt-in plus per-bot **This computer**. Linux Auto, provider
   full-auto/bypass modes, remembered grants, and cloud approvals must never authorize the user's desktop.
-- Keep user-installed CUA discovery shell-free and pin accepted manifest/driver contracts. Do not add a bundled
-  binary, automatic installer/update, or default-daemon ownership to the Linux beta. GNOME/Wayland readiness must
-  require its exact compositor/helper/portal health contract; never infer it from `WAYLAND_DISPLAY` or XWayland.
+- Keep CUA discovery shell-free and pin accepted archive, inner-file, manifest, and driver contracts. Packaged Linux
+  builds must prefer their reviewed outside-ASAR runtime and fail closed instead of executing ambient PATH code;
+  source/dev builds may use the validated explicit/user-local paths. Never add a runtime downloader/self-updater or
+  silently install GNOME extensions. GNOME/Wayland readiness must require its exact compositor/helper/portal health
+  contract; never infer it from `WAYLAND_DISPLAY` or XWayland.
+- Native release changes must update the checked-in Cua license report/SBOM, preserve MIT/OFL/MPL notices, pass the
+  malicious-archive tests, and prove identical hashes in `linux-unpacked`, `.deb`, and AppImage artifacts. AppImage
+  must additionally prove post-copy hashing in its private `0700` execution stage; never weaken the general path
+  validator to accept its root-owned `0775` SquashFS path.
 - **Never build command strings for a shell.** No `shell: true`, no spawning through `cmd.exe` with
   quoted strings — model names, personas, and MCP config JSON travel through argv, and cmd.exe
   metacharacter expansion is a real injection class. On Windows, resolve `.cmd` shims to their JS

@@ -13,12 +13,13 @@ of Linux desktop on your own server instead of this machine, see [byo-vps.md](by
 - External documentation and OAuth links in the default browser.
 - An explicit, view-only local screen preview on GNOME Xorg and GNOME Wayland. The Wayland path uses the
   native portal chooser and keeps the selected PipeWire stream open until the user stops sharing.
-- An explicit local-computer control beta on GNOME/Xorg and guarded GNOME/Wayland with user-installed Cua
-  Driver 0.19.3 and an approval-capable Claude or ACP provider.
+- An explicit local-computer control beta on GNOME/Xorg and guarded GNOME/Wayland with bundled Cua Driver
+  0.19.3 and an approval-capable Claude or ACP provider.
 
 The local preview does **not** give the bot control of this computer by itself. Local control is a separate,
-off-by-default beta. Bundled CUA, Linux dictation, and ARM64 remain unavailable and fail closed; follow their
-progress in [issue #29](https://github.com/milind-soni/OpenMausBot/issues/29). Xorg is tracked in
+off-by-default beta. Automatic Wayland helper installation, Linux dictation, and ARM64 remain unavailable and
+fail closed; follow their progress in [issue #29](https://github.com/milind-soni/OpenMausBot/issues/29). Bundled
+CUA supply-chain work is tracked in [issue #113](https://github.com/milind-soni/OpenMausBot/issues/113). Xorg is tracked in
 [issue #79](https://github.com/milind-soni/OpenMausBot/issues/79), and guarded GNOME/Wayland support in
 [issue #109](https://github.com/milind-soni/OpenMausBot/issues/109).
 
@@ -134,65 +135,55 @@ these checks.
 
 ## Enable local control
 
-This beta deliberately uses a user-installed driver. OpenMausBot does not bundle, download, update, or stop a
-global Cua daemon. The certified contract is **Cua Driver 0.19.3**, manifest schema `1`, on Ubuntu 24.04 x64
-GNOME/Xorg or GNOME/Wayland. OpenMausBot owns a separate private daemon only after the user enables the beta.
+Installed `.deb` and AppImage builds include the certified **Cua Driver 0.19.3** CLI and cursor-theme sidecar.
+You do not need to install Cua separately for GNOME/Xorg. OpenMausBot starts its own private daemon only after
+you enable the beta; it never starts, updates, or stops a global Cua daemon.
 
-Install the exact x86_64 asset from the
-[official 0.19.3 release](https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.19.3).
-The upstream release does not currently provide a signature or GitHub artifact attestation for this asset, so
-OpenMausBot pins its published SHA-256 here and verifies it before extraction. Do not pipe a remote installer
-directly into a shell:
+The upstream release has no signature or GitHub artifact attestation and is not immutable, so the build uses an
+explicit reviewed digest as its trust anchor:
+
+- source commit: `a1672e7b11951275ecfba3384264d4530185d0db`;
+- archive SHA-256: `3db9d4257d84bacaf7eb104d225f85613ce67edbb20d6eeb83c1384b6d8a5b10`;
+- packaged driver SHA-256: `ed5844fadf07b9b72c4a3b3802e1c47233c166d66d6198608d5991f807aab4ac`;
+- packaged cursor-theme SHA-256: `e589b2b7521bbfeaf9e2bfce668a38e80ed1b9790b1327b13d374fc331d8312a`.
+
+Packaging verifies the exact archive size, checksum, member names/types/sizes, and inner hashes before extracting
+only those two executables. The app performs no runtime driver download or self-update. Cua's MIT license, the
+embedded Inter font's SIL OFL 1.1 notice, full dependency license texts, MPL source locations, and a CycloneDX
+inventory ship beside the binary; the reviewed source records live in [`third_party/cua-driver`](../third_party/cua-driver/).
+The reviewed native runtime adds roughly 11–13 MiB to a compressed Ubuntu artifact. The ELF
+requires glibc 2.30 or newer plus the standard Ubuntu X11/XInput/xkbcommon libraries already present on the supported
+Ubuntu 24.04 desktop; the package verifier executes the exact binary from every artifact layout.
+
+AppImage's SquashFS builder normalizes directories to root-owned `0775`, which the normal executable-path policy
+correctly rejects. On AppImage launch, OpenMausBot therefore copies only the two pinned files into a fresh private
+`0700` temporary directory, verifies both hashes after the copy, executes from there, and removes that directory on
+quit. DEB and unpacked builds keep their package path at `0755` and execute directly. This exception does not relax
+validation for an explicit override, `PATH`, or any other group-writable location.
+
+An explicit absolute `CUA_DRIVER_PATH` remains an advanced override for development and incident response. A
+packaged app otherwise uses only its bundled driver and fails closed if it is missing, unsafe, changed, or
+incompatible—it never silently executes `~/.local/bin/cua-driver` or a PATH candidate. Source/dev runs retain the
+validated user-local discovery described by the [official Cua installation guide](https://cua.ai/docs/how-to-guides/driver/install).
+
+GNOME/Wayland still needs the privileged WinRects v8 Shell helper. OpenMausBot does not install or enable a Shell
+extension silently. If it is not already active, download the same pinned archive, verify it, extract only the helper,
+review its installer, and run it explicitly:
 
 ```sh
 version="0.19.3"
-target="x86_64-unknown-linux-gnu"
 asset="cua-driver-rs-${version}-linux-x86_64-binary.tar.gz"
-release_url="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${version}"
 download_dir="$(mktemp -d)"
-
 curl --fail --location --proto '=https' --tlsv1.2 \
-  --output "$download_dir/$asset" "$release_url/$asset"
+  --output "$download_dir/$asset" \
+  "https://github.com/trycua/cua/releases/download/cua-driver-rs-v${version}/$asset"
 printf '%s  %s\n' \
   '3db9d4257d84bacaf7eb104d225f85613ce67edbb20d6eeb83c1384b6d8a5b10' \
   "$download_dir/$asset" | sha256sum --check --strict
-
-release_dir="$HOME/.cua-driver/packages/releases/${version}-${target}"
-test ! -e "$release_dir" || { echo "Already exists: $release_dir" >&2; exit 1; }
-install -d -m 700 "$HOME/.local/bin" "$HOME/.cua-driver/packages/releases" "$release_dir"
 tar --extract --gzip --no-same-owner --no-same-permissions \
-  --file "$download_dir/$asset" --directory "$release_dir"
-chmod 700 "$release_dir/cua-driver" "$release_dir/wayland-helper/install.sh"
-ln -sfn "$release_dir" "$HOME/.cua-driver/packages/current"
-ln -sfn "$release_dir/cua-driver" "$HOME/.local/bin/cua-driver"
-printf 'Verified download directory: %s\n' "$download_dir"
-
-cua-driver --version
-cua-driver manifest --pretty
-cua-driver doctor --json
-```
-
-The verified archive remains in the printed temporary directory and may be removed after the checks complete.
-
-Confirm the version is `0.19.3`. OpenMausBot also rejects an executable or containing directory that another
-local user could replace. Ubuntu's normal user-private group layout is accepted after OpenMausBot verifies that
-the group belongs only to your account. On a shared or centrally managed group, the app may ask you to remove
-group write access from the exact user-owned install directories:
-
-```sh
-driver_path="$(readlink -f "$(command -v cua-driver)")"
-case "$driver_path" in
-  "$HOME"/.cua-driver/packages/releases/0.19.3-*/cua-driver) ;;
-  *) echo "Unexpected Cua Driver path: $driver_path" >&2; exit 1 ;;
-esac
-chmod go-w "$HOME/.local/bin" "$HOME/.cua-driver" "$HOME/.cua-driver/packages" \
-  "$HOME/.cua-driver/packages/releases" "$(dirname "$driver_path")"
-```
-
-For GNOME/Wayland, install the versioned helper shipped with that same verified Cua release:
-
-```sh
-~/.cua-driver/packages/releases/0.19.3-x86_64-unknown-linux-gnu/wayland-helper/install.sh
+  --file "$download_dir/$asset" --directory "$download_dir" wayland-helper
+sed -n '1,240p' "$download_dir/wayland-helper/install.sh"
+"$download_dir/wayland-helper/install.sh"
 ```
 
 Sign out and back in once, then verify that GNOME loaded exactly the expected helper:
@@ -227,8 +218,9 @@ OpenMausBot requires its own **Allow** or **Deny** decision before every local a
 **Always allow** grants, and cloud-computer approvals cannot authorize the local desktop in this beta.
 
 Cua Driver has content-free telemetry and an update check enabled by default. OpenMausBot disables both for every
-Cua process it starts and does not change the user's persisted Cua preferences. Review or change those preferences
-with the [official telemetry documentation](https://cua.ai/docs/reference/cua-driver/telemetry).
+Cua process it owns and does not change any separately installed Cua preferences. Driver updates arrive only with an
+OpenMausBot application release; rolling back the app rolls back the paired driver. Review the upstream behavior in
+the [official telemetry documentation](https://cua.ai/docs/reference/cua-driver/telemetry).
 
 ## Validate a package change
 
@@ -236,14 +228,18 @@ with the [official telemetry documentation](https://cua.ai/docs/reference/cua-dr
 pnpm typecheck
 pnpm test
 pnpm check:electron
-pnpm package:linux
+pnpm build:cua:linux          # networked, checksum-pinned staging
+pnpm package:linux:offline    # CUA staging is offline; builder caches must already be available
 node scripts/verify-linux-package.mjs
 pnpm smoke:linux-package
 ```
 
-The verifier checks `.deb` metadata, desktop identity, resources, artifact permissions, and that no Cua executable
-was bundled. The smoke test launches the unpacked production app without `--no-sandbox`, validates the
-renderer/preload and embedded health endpoint, then uses a fake user-installed driver to prove diagnostics,
+The verifier checks `.deb` metadata, desktop identity, the exact Cua resource tree and provenance, SquashFS/DEB
+directory modes, runtime path policy, and matching binary hashes across all artifacts. The smoke test launches the
+unpacked production app and AppImage without `--no-sandbox` and validates the renderer/preload, embedded health
+endpoint, packaged bundled-driver resolution, strict MCP environment, and process cleanup. It starts the real
+bundled driver under Xvfb/D-Bus to prove
+inspection, private-daemon readiness, and cleanup, then uses a fake explicit override to prove diagnostics,
 private-daemon readiness, crash invalidation, explicit retry, and clean shutdown in separate Xorg and simulated
 GNOME/Wayland contract lanes. The Wayland lane also requires the opt-in environment and certified health report.
 Its wrapper isolates the temporary D-Bus/AT-SPI runtime so it cannot replace the live desktop session's
@@ -265,20 +261,27 @@ an explanation.
 
 ### Local control is not ready
 
-Run the certified probes in a terminal launched inside the same GNOME session:
+The in-app card is the primary diagnostic because packaged builds do not add Cua Driver to `PATH`. For a DEB
+installation, run the bundled executable directly in a terminal launched inside the same GNOME session:
 
 ```sh
 echo "$XDG_SESSION_TYPE"  # x11 or wayland
-cua-driver --version      # must be 0.19.3 for this beta
-cua-driver doctor --json
+driver=/opt/OpenMausBot/resources/cua-linux-x64/cua-driver
+"$driver" --version      # must be 0.19.3 for this beta
+"$driver" doctor --json
 ```
+
+For an AppImage, prefer the in-app diagnostic; its verified read-only mount path exists only while the app is
+running. Maintainers testing an unpacked build can use
+`release/linux-unpacked/resources/cua-linux-x64/cua-driver`.
 
 On Wayland, also run:
 
 ```sh
 echo "$XDG_CURRENT_DESKTOP"  # must include GNOME
 gnome-extensions info winrects@cua
-CUA_DRIVER_RS_ENABLE_WAYLAND=1 cua-driver doctor --json
+CUA_DRIVER_RS_ENABLE_WAYLAND=1 \
+  /opt/OpenMausBot/resources/cua-linux-x64/cua-driver doctor --json
 ```
 
 If the helper is installed but not `ACTIVE`, sign out and back in once. If the app reports a portal error, confirm

@@ -173,7 +173,7 @@ flowchart LR
 | API | `server/index.ts` | Bots, turns, approvals, model catalog, computer lifecycle, connectors, config — HTTP + SSE. |
 | Voice | `server/tts/` | ElevenLabs, bring your own key. Runs on the harness so the key never reaches the UI; markdown is rewritten into something worth hearing before it is spoken. |
 | App | `src/` | The chat shell. Server-backed store, one reducer, zero client-side transports. |
-| Desktop | `electron/` | macOS, Windows, and Ubuntu shells with an embedded harness and platform capabilities; Apple speech stays macOS-only, while user-installed CUA can enable guarded Ubuntu GNOME local control. |
+| Desktop | `electron/` | macOS, Windows, and Ubuntu shells with an embedded harness and platform capabilities; Apple speech stays macOS-only, while a release-pinned bundled CUA runtime enables guarded Ubuntu GNOME local control. |
 
 ## Quick start
 
@@ -208,7 +208,7 @@ Package the desktop application:
 ```sh
 pnpm package:mac      # macOS: DMG + ZIP; requires Swift/Xcode tools
 pnpm package:win      # Windows: installer + ZIP
-pnpm package:linux    # Ubuntu x64: .deb + AppImage; no Swift required
+pnpm package:linux    # Ubuntu x64: .deb + AppImage + verified CUA runtime
 ```
 
 ### Desktop capability status
@@ -218,16 +218,23 @@ pnpm package:linux    # Ubuntu x64: .deb + AppImage; no Swift required
 | Packaged app, embedded harness, local agent CLIs | Supported | Beta | Beta |
 | Composio and Box/cloud computers | Supported | Beta | Beta |
 | Explicit preview-only local screen capture | Supported | Beta | Beta |
-| Bot control of this computer | Supported | Beta: opt-in, Cua 0.19.3 | Beta: GNOME only, opt-in, Cua 0.19.3 + WinRects v8 |
+| Bot control of this computer | Supported | Beta: opt-in, bundled Cua 0.19.3 | Beta: GNOME only, opt-in, bundled Cua 0.19.3 + WinRects v8 |
 | Native on-device dictation | Supported | Planned | Planned |
 
-The Linux preview is user-initiated and never enables local bot control or Auto routing. Linux control requires a
-separately installed Cua Driver 0.19.3, explicit app opt-in, and an explicit per-bot **This computer** selection;
-every local action asks for approval. GNOME/Wayland additionally requires the versioned WinRects v8 helper and a
+The Linux preview is user-initiated and never enables local bot control or Auto routing. Packaged Linux builds ship
+the exact Cua Driver 0.19.3 runtime outside ASAR; control still requires explicit app opt-in and an explicit per-bot
+**This computer** selection, and every local action asks for approval. GNOME/Wayland additionally requires the
+versioned WinRects v8 helper and a
 passing prompt-free AT-SPI/capture/portal health report. Other Wayland compositors fail closed without blocking
 chat or cloud features. See the [Ubuntu Desktop guide](docs/linux-desktop.md) and
 tracking issues [#29](https://github.com/milind-soni/OpenMausBot/issues/29) and
-[#79](https://github.com/milind-soni/OpenMausBot/issues/79) / [#109](https://github.com/milind-soni/OpenMausBot/issues/109).
+[#79](https://github.com/milind-soni/OpenMausBot/issues/79) / [#109](https://github.com/milind-soni/OpenMausBot/issues/109) / [#113](https://github.com/milind-soni/OpenMausBot/issues/113).
+
+The Linux packager downloads only the tag-pinned upstream archive during the build, verifies its size, SHA-256,
+complete member allowlist, and inner executable hashes, then packages only the CLI and cursor-theme sidecar. The
+installed app never downloads or self-updates native automation code. Cua's MIT notice, Inter's SIL OFL, a generated
+third-party license report, and a CycloneDX inventory ship with the runtime. See
+[`third_party/cua-driver/`](third_party/cua-driver/) for the reviewed provenance record.
 
 These credentials are optional — local chat works without them. Paste a key once in **App Settings** (gear
 in the sidebar footer) when you want to enable its integration:
@@ -279,6 +286,10 @@ small; adding a provider is one file in [`server/drivers/`](server/drivers/) plu
 ## License
 
 [MIT](LICENSE) © 2026 Milind Soni and contributors.
+
+Packaged Cua Driver components retain their upstream MIT, SIL OFL 1.1, MPL-2.0, and other dependency terms;
+the corresponding notices, license texts, source locations, and SBOM are in
+[`third_party/cua-driver/`](third_party/cua-driver/) and ship beside the native runtime.
 
 OpenMausBot is an independent, open-source project inspired by Grok Bot. It is
 not affiliated with, endorsed by, or associated with xAI; "Grok" is a trademark

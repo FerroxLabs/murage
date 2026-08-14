@@ -1,8 +1,8 @@
 # Computer use & browser use in OpenMausBot
 
 Decision doc, 2026-08-12. How bots in OpenMausBot get local computer use and
-browser use. macOS targets an out-of-the-box bundled provider; the staged
-Ubuntu beta currently verifies a separately installed, pinned provider. Based
+browser use. macOS and packaged Ubuntu x64 builds use an out-of-the-box,
+release-pinned provider; source/dev Ubuntu may use a separately installed provider. Based
 on a survey of OSS chat-app MCP hosts, macOS control servers,
 browser-automation stacks, and the local `cua` / `axstream` code on this
 machine.
@@ -11,7 +11,7 @@ machine.
 
 ```text
 Electron main process
-├── CUA host  ──spawns──▶  cua-driver (bundled on macOS; verified user install on Ubuntu 24.04 GNOME Xorg/Wayland betas)
+├── CUA host  ──spawns──▶  cua-driver (bundled on macOS and packaged Ubuntu x64)
 │     platform permission boundary               │ unix socket (private)
 ├── WebContentsView pool (embedded browser, persist: partitions per bot)
 │     driven via webContents.debugger (CDP) — zero-install browser use
@@ -24,10 +24,10 @@ Electron main process
   servers get injected into each bot's `--mcp-config`. Same pattern as Claude
   Desktop / Cherry Studio / LibreChat.
 - **Local desktop use = `cua-driver`**. macOS packages the Rust Mach-O in app
-  Resources; the Ubuntu 24.04 GNOME/Xorg beta and guarded GNOME/Wayland beta
-  accept only the certified user-installed 0.19.3 Linux binary while bundling
-  is tracked separately. Remote/cloud boxes and the isolated Local VM remain
-  separate providers.
+  Resources; Ubuntu x64 packages the certified 0.19.3 ELF plus its cursor-theme
+  sidecar outside ASAR. Both remain paired with the application release. This
+  applies to the Ubuntu 24.04 GNOME/Xorg beta and guarded GNOME/Wayland beta;
+  remote/cloud boxes and the isolated Local VM remain separate providers.
   NOT Swift — the Swift file everyone remembers
   (`examples/embedded-host-macos/ExampleAgentHarness.swift`) is a 165-line
   reference host showing the embedding pattern, not the driver.
@@ -46,12 +46,11 @@ user-initiated XDG portal capture path and is not a control provider. This rule
 does not replace remote/cloud boxes or the isolated Local VM provider. Local
 alternatives evaluated and rejected:
 
-The Ubuntu GNOME beta is an intentional staged exception to the
-zero-install packaging statement: it uses the same official CUA provider but
-requires user-installed Cua Driver 0.19.3 while supply-chain bundling remains
-Phase 5 of [#29](https://github.com/milind-soni/OpenMausBot/issues/29). Electron
-still owns a private embedded daemon/socket, and the harness only receives the
-validated MCP proxy contract. Xorg is tracked in [#79](https://github.com/milind-soni/OpenMausBot/issues/79);
+The Ubuntu GNOME beta uses the same official CUA provider with the Phase 5
+supply-chain contract tracked in [#113](https://github.com/milind-soni/OpenMausBot/issues/113): pinned archive
+and inner hashes, exact archive allowlist, outside-ASAR resources, full notices/SBOM, no runtime download/update,
+and fail-closed packaged discovery. Electron still owns a private embedded daemon/socket, and the harness only
+receives the validated MCP proxy contract. Xorg is tracked in [#79](https://github.com/milind-soni/OpenMausBot/issues/79);
 GNOME/Wayland additionally requires WinRects v8 plus the exact Cua health-report contract tracked in
 [#109](https://github.com/milind-soni/OpenMausBot/issues/109).
 
