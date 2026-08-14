@@ -26,7 +26,14 @@ function ensureBuilt() {
   execFileSync("swiftc", ["-O", SRC, "-o", BIN], { stdio: "pipe", timeout: 120_000 });
 }
 
-export function startSpeech(win) {
+/**
+ * @param win     the window to stream transcripts to
+ * @param options endpointMs > 0 finishes the utterance after that long
+ *                without new words (call mode's turn-taking). Omit it and
+ *                the helper listens until stopped, which is what the
+ *                composer's press-to-dictate wants.
+ */
+export function startSpeech(win, options = {}) {
   stopSpeech();
   if (process.platform !== "darwin") {
     // the helper is a Swift SFSpeechRecognizer binary — macOS only; tell
@@ -35,7 +42,9 @@ export function startSpeech(win) {
     return;
   }
   ensureBuilt();
-  const proc = spawn(BIN, [], { stdio: ["ignore", "pipe", "pipe"] });
+  const endpointMs = Number(options?.endpointMs) || 0;
+  const args = endpointMs > 0 ? ["--endpoint-ms", String(Math.round(endpointMs))] : [];
+  const proc = spawn(BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
   child = proc;
 
   let buf = "";

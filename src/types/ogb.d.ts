@@ -33,7 +33,11 @@ declare global {
       platform: NodeJS.Platform;
       getCapabilities(): Promise<DesktopCapabilities>;
       screenFrame(): Promise<string | null>;
-      speechStart(): Promise<void>;
+      /** endpointMs finishes the utterance after that long without new
+       * words (call mode). Omit it to listen until speechStop — the
+       * recognizer does NOT end a buffer-fed utterance on silence by
+       * itself, so this flag is the whole of turn detection. */
+      speechStart(options?: { endpointMs?: number }): Promise<void>;
       speechStop(): Promise<void>;
       onSpeechTranscript(
         cb: (line: { partial?: boolean; text?: string; error?: string }) => void,

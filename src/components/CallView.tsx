@@ -8,9 +8,15 @@
 // or Escape instead, which is honest and cannot feed back. (Full-duplex
 // barge-in needs AEC on the capture path — a follow-up, not a footnote.)
 //
-// Turn-taking costs nothing: `result.isFinal` from the on-device recognizer
-// IS endpointing, already streaming to the renderer, so there is no VAD
-// model to bundle, no worklet asset to serve and nothing to break offline.
+// Turn-taking is NOT free, which was the first thing this got wrong.
+// SFSpeechRecognizer does not finalize on silence when it is fed from an
+// audio buffer: `isFinal` arrives when the audio stream ends, and the
+// stream only ends when something calls endAudio(). Left alone the call
+// sits in "Listening" forever. So the Swift helper detects the pause
+// itself (`--endpoint-ms`) and closes the audio, which is what makes a
+// final result — and therefore a turn — happen. Still no VAD model to
+// bundle and nothing to break offline, but it is ten lines of Swift, not
+// nothing.
 //
 // The other half of making a call bearable is narration. An agent turn is
 // 5-60 seconds of tool calls; silence that long reads as a dropped call. So
@@ -36,6 +42,11 @@ const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|allow|approve|approv
 const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
 
 type Phase = "listening" | "sending" | "working" | "speaking";
+
+/** How long a pause ends your turn. Long enough to think mid-sentence,
+ * short enough that the reply doesn't feel late — the single number that
+ * decides whether a call feels like a conversation. */
+const ENDPOINT_MS = 1100;
 
 export function CallButton({ bot }: { bot: Bot }) {
   const { state } = useStore();
@@ -100,25 +111,36 @@ function Call({ bot }: { bot: Bot }) {
   const phaseRef = useRef<Phase>("listening");
   phaseRef.current = phase;
 
+  // phase is mirrored into the ref as well as state, because the helper's
+  // exit event can arrive before React re-renders — reading stale state
+  // there restarts the microphone in the middle of sending a turn
+  const goto = useCallback((next: Phase) => {
+    phaseRef.current = next;
+    setPhase(next);
+  }, []);
+
   const hush = useCallback(() => {
     void window.ogb?.speechStop();
   }, []);
 
   const listen = useCallback(() => {
-    setPhase("listening");
+    goto("listening");
     setHeard("");
-    void window.ogb?.speechStart();
-  }, []);
+    // endpointMs is the whole of turn detection: the recognizer will not
+    // end a buffer-fed utterance on silence, so the helper watches for the
+    // pause and closes the audio itself
+    void window.ogb?.speechStart({ endpointMs: ENDPOINT_MS });
+  }, [goto]);
 
   /** Speak, with the microphone closed for the duration (see the header
    * comment — an open mic during playback is a feedback loop). */
   const say = useCallback(
     async (text: string) => {
       hush();
-      setPhase("speaking");
+      goto("speaking");
       await speaker.speak(text, { botId: bot.id, voiceId: bot.voice });
     },
-    [bot.id, bot.voice, hush],
+    [bot.id, bot.voice, hush, goto],
   );
 
   // ── the microphone ───────────────────────────────────────────────────
@@ -145,7 +167,7 @@ function Call({ bot }: { bot: Bot }) {
             behavior: allow ? "allow" : "deny",
             message: allow ? undefined : "Denied by the user, on a call.",
           });
-          setPhase("working");
+          goto("working");
           return;
         }
         // not a decision — leave the card up and say so rather than
@@ -154,7 +176,7 @@ function Call({ bot }: { bot: Bot }) {
         return;
       }
 
-      setPhase("sending");
+      goto("sending");
       dispatch({ type: "send", botId: bot.id, text: said });
     });
     const offEnd = bridge.onSpeechEnd(({ code }) => {
@@ -166,9 +188,12 @@ function Call({ bot }: { bot: Bot }) {
         setNote("Dictation needs Microphone + Speech Recognition access in System Settings.");
         return;
       }
-      // the helper exits after every final result; if we are still meant
-      // to be listening, that means the user's turn ended — start the next
-      if (phaseRef.current === "listening") void window.ogb?.speechStart();
+      // the helper exits after every final result; if we are still meant to
+      // be listening, open the next one — through listen(), so it carries
+      // the endpoint flag. A bare speechStart() here would start a session
+      // that never ends its own turn, and the call would stall on the
+      // second thing you said.
+      if (phaseRef.current === "listening") listen();
     });
     listen();
     return () => {
@@ -197,7 +222,7 @@ function Call({ bot }: { bot: Bot }) {
     if (reply?.text) {
       void say(reply.text).then(listen);
     } else if (chip?.tool?.spoken && phase === "working") {
-      void say(chip.tool.spoken).then(() => setPhase("working"));
+      void say(chip.tool.spoken).then(() => goto("working"));
     }
   }, [messages, approval, phase, bot.name, say, listen]);
 
