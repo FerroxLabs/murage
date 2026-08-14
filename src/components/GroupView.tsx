@@ -1,8 +1,7 @@
-// A room: several bots + you in one shared thread. Minimal by design — the
-// mauses are the only expressive element. Members sit in the header (their
-// idle/working motion IS the status), the bulletin is one pinned line, and
-// bot messages carry a small maus + name cluster label. Plain messages go
-// to the room's default responder; @mentions override that routing.
+// A room: several bots + you in one shared thread. The sidebar and call view
+// carry the personality; avatars inside the room stay still so a busy group
+// does not become a wall of competing motion. Plain messages go to the room's
+// default responder; @mentions override that routing.
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ChevronDown, Pin } from "lucide-react";
 import {
@@ -43,6 +42,7 @@ function ClusterLabel({ bot, name, color }: { bot?: Bot; name: string; color: st
         size={16}
         motion="none"
         motionKey={0}
+        animated={false}
       />
       <span className="text-[11px] font-medium text-ink-secondary">{name}</span>
     </div>
@@ -228,21 +228,30 @@ export function GroupView({ group }: { group: Group }) {
   return (
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
       <GroupCallOverlay group={group} members={members} />
-      {/* Header: name left, member mauses right — their motion IS the status */}
+      {/* Header: static member mauses; a ring + dot marks the working bot. */}
       <div className={cn("flex items-center justify-between px-5 py-3", isWin && "pr-[148px]")} style={drag}>
         <span className="text-[15px] font-semibold text-ink">{group.name}</span>
         <div className="flex items-center gap-1.5" style={noDrag}>
           <GroupCallButton group={group} members={members} />
           {!group.dm && <DefaultResponderSelect group={group} members={members} />}
           {members.map((b) => (
-            <span key={b.id} title={`${b.name}${group.busyBotId === b.id ? " — working…" : ""}`}>
+            <span
+              key={b.id}
+              title={`${b.name}${group.busyBotId === b.id ? " — working…" : ""}`}
+              className={cn(
+                "relative inline-flex rounded-full",
+                group.busyBotId === b.id && "ring-2 ring-accent/50 ring-offset-1 ring-offset-app",
+              )}
+            >
               <MausAvatar
                 color={b.color}
                 state={normalizeState(b.mascotExpression) ?? "happy"}
                 size={24}
-                motion={group.busyBotId === b.id ? "working" : "none"}
-                motionKey={group.busyBotId === b.id ? 1 : 0}
+                animated={false}
               />
+              {group.busyBotId === b.id && (
+                <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full border border-app bg-accent" />
+              )}
             </span>
           ))}
         </div>
@@ -311,7 +320,15 @@ export function GroupView({ group }: { group: Group }) {
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
               <div className="flex -space-x-2">
                 {members.slice(0, 3).map((b) => (
-                  <MausAvatar key={b.id} color={b.color} state="happy" size={44} motion="none" motionKey={0} />
+                  <MausAvatar
+                    key={b.id}
+                    color={b.color}
+                    state="happy"
+                    size={44}
+                    motion="none"
+                    motionKey={0}
+                    animated={false}
+                  />
                 ))}
               </div>
               <div className="text-[17px] font-semibold text-ink">{group.name}</div>
