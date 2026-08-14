@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { mentionedBots } from "./store.ts";
+import { mentionedBots, normalizeGroupDefaultResponder, roomResponders } from "./store.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -47,6 +47,33 @@ describe("mentionedBots", () => {
   it("requires a word boundary at the end of the name", () => {
     expect(mentionedBots("ask @New Bottle about it", peers)).toEqual([]);
     expect(mentionedBots("@Milindo is someone else", peers)).toEqual([]);
+  });
+});
+
+describe("roomResponders", () => {
+  const members = [
+    { id: "atlas", name: "Atlas" },
+    { id: "milind", name: "Milind" },
+  ];
+
+  it("routes an unmentioned message to the configured lead", () => {
+    expect(roomResponders("hello there", members, { kind: "member", botId: "atlas" })).toEqual([members[0]]);
+  });
+
+  it("lets explicit mentions override the configured lead", () => {
+    expect(roomResponders("@Milind take this", members, { kind: "member", botId: "atlas" })).toEqual([members[1]]);
+  });
+
+  it("supports everyone and mentions-only room policies", () => {
+    expect(roomResponders("hello", members, { kind: "everyone" })).toEqual(members);
+    expect(roomResponders("hello", members, { kind: "mentions" })).toEqual([]);
+    expect(roomResponders("@everyone hello", members, { kind: "mentions" })).toEqual(members);
+  });
+
+  it("keeps bot-to-bot channels on their last-speaker routing", () => {
+    expect(normalizeGroupDefaultResponder({ kind: "everyone" }, members.map((member) => member.id), true)).toEqual({
+      kind: "mentions",
+    });
   });
 });
 

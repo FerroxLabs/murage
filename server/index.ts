@@ -25,7 +25,7 @@ import type { RuntimeEvent } from "./contracts.ts";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
-import { mentionedBots, Store, type Message } from "./store.ts";
+import { mentionedBots, roomResponders, Store, type GroupDefaultResponder, type Message } from "./store.ts";
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { readCuaConnection } from "./local-computer.ts";
@@ -702,11 +702,11 @@ routines.start();
 
 // ── config hot-reload ─────────────────────────────────────────────────
 // ── group turn engine ──────────────────────────────────────────────────
-// The Buzz rule: in a room, a bot replies only when @mentioned. Mentioned
-// members run SEQUENTIALLY (one speaker at a time — the transcript and the
-// streaming bubble stay coherent), each on a fresh session with the recent
-// room conversation serialized into its prompt. A member's reply may
-// @mention teammates; those get one chained turn (hop 1), never deeper.
+// Room messages go to the configured default responder unless the user
+// explicitly @mentions members. Responders run SEQUENTIALLY (one speaker at
+// a time — the transcript and streaming bubble stay coherent), each on a
+// fresh session with recent room context. A member's reply may @mention
+// teammates; those get one chained turn (hop 1), never deeper.
 const groupQueues = new Map<string, Promise<void>>();
 const GROUP_CONTEXT_MESSAGES = 30;
 const MAX_GROUP_HOPS = 1;
@@ -812,7 +812,7 @@ async function runGroupMemberTurn(
     const members = group.memberIds
       .map((id) => store.bot(id))
       .filter((b): b is NonNullable<typeof b> => Boolean(b) && b!.id !== bot.id);
-    for (const next of mentionedBots(replyText, members)) {
+    for (const next of roomResponders(replyText, members, { kind: "mentions" })) {
       if (spoken.has(next.id)) continue;
       await runGroupMemberTurn(groupId, next.id, hop + 1, spoken);
     }
@@ -828,10 +828,7 @@ function startGroupTurn(groupId: string, text: string) {
   const members = group.memberIds
     .map((id) => store.bot(id))
     .filter((b): b is NonNullable<typeof b> => Boolean(b));
-  const mentioned = mentionedBots(text, members);
-  // Buzz rule: nobody replies unless mentioned — except a one-member room,
-  // where the single bot obviously IS the addressee
-  let responders = mentioned.length ? mentioned : members.length === 1 ? members : [];
+  let responders = roomResponders(text, members, group.defaultResponder);
   // bot⇄bot channels: chipping in without a tag addresses the last speaker
   if (!responders.length && group.dm) {
     const lastSpeakerId = [...store.messagesFor(group.threadId)]
@@ -1118,6 +1115,8 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
     if (m && method === "PATCH") {
       const body = await readBody(req);
+      const existing = store.group(m[1]);
+      if (!existing) return json(res, 404, { error: "no such room" });
       const patch: Record<string, unknown> = {};
       for (const key of ["name", "bulletin", "unread"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
@@ -1125,6 +1124,18 @@ const server = createServer(async (req, res) => {
       if (Array.isArray(body.memberIds)) {
         const ids = body.memberIds.filter((id: unknown): id is string => typeof id === "string" && Boolean(store.bot(id)));
         if (ids.length) patch.memberIds = ids;
+      }
+      if (body.defaultResponder !== undefined) {
+        const value = body.defaultResponder as { kind?: unknown; botId?: unknown } | null;
+        const memberIds = (patch.memberIds as string[] | undefined) ?? existing.memberIds;
+        let responder: GroupDefaultResponder | null = null;
+        if (value?.kind === "everyone") responder = { kind: "everyone" };
+        else if (value?.kind === "mentions") responder = { kind: "mentions" };
+        else if (value?.kind === "member" && typeof value.botId === "string" && memberIds.includes(value.botId)) {
+          responder = { kind: "member", botId: value.botId };
+        }
+        if (!responder) return json(res, 400, { error: "invalid default responder" });
+        patch.defaultResponder = responder;
       }
       const group = store.patchGroup(m[1], patch);
       if (!group) return json(res, 404, { error: "no such room" });

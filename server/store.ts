@@ -75,14 +75,21 @@ export interface Message {
   comm?: { groupId: string; withBotId: string; withName: string; withColor: string };
 }
 
-/** A room: a shared thread where several bots + the user talk. Bots reply
- * only when @mentioned (the Buzz rule). The bulletin is the room's shared
- * instructions — every member's turn gets it as part of its system prompt. */
+export type GroupDefaultResponder =
+  | { kind: "member"; botId: string }
+  | { kind: "everyone" }
+  | { kind: "mentions" };
+
+/** A room: a shared thread where several bots + the user talk. Plain
+ * messages follow `defaultResponder`; explicit @mentions always override it.
+ * The bulletin is the room's shared instructions — every member's turn gets
+ * it as part of its system prompt. */
 export interface GroupRecord {
   id: string;
   threadId: ThreadId;
   name: string;
   memberIds: string[];
+  defaultResponder: GroupDefaultResponder;
   bulletin: string;
   unread: boolean;
   createdAt: number;
@@ -204,6 +211,50 @@ export function mentionedBots<T extends { name: string; hidden?: boolean }>(text
   return found;
 }
 
+/** Normalize persisted or API-provided routing. Old rooms did not have this
+ * field; giving them their first member as lead fixes the old silent-send
+ * behavior without making every prompt fan out to every model. */
+export function normalizeGroupDefaultResponder(
+  value: unknown,
+  memberIds: string[],
+  dm = false,
+): GroupDefaultResponder {
+  if (dm) return { kind: "mentions" };
+  if (value && typeof value === "object") {
+    const candidate = value as { kind?: unknown; botId?: unknown };
+    if (candidate.kind === "everyone") return { kind: "everyone" };
+    if (candidate.kind === "mentions") return { kind: "mentions" };
+    if (
+      candidate.kind === "member" &&
+      typeof candidate.botId === "string" &&
+      memberIds.includes(candidate.botId)
+    ) {
+      return { kind: "member", botId: candidate.botId };
+    }
+  }
+  if (memberIds.length === 0) return { kind: "mentions" };
+  return { kind: "member", botId: memberIds[0] };
+}
+
+/** Resolve the bots invoked by a human room message. Explicit targets win;
+ * otherwise the room policy chooses one member, everyone, or nobody. */
+export function roomResponders<T extends { id: string; name: string; hidden?: boolean }>(
+  text: string,
+  members: T[],
+  defaultResponder: GroupDefaultResponder,
+): T[] {
+  const available = members.filter((member) => !member.hidden);
+  if (/(?:^|\s)@everyone\b/i.test(text)) return available;
+  const mentioned = mentionedBots(text, available);
+  if (mentioned.length) return mentioned;
+  if (defaultResponder.kind === "everyone") return available;
+  if (defaultResponder.kind === "member") {
+    const lead = available.find((member) => member.id === defaultResponder.botId);
+    return lead ? [lead] : [];
+  }
+  return [];
+}
+
 const onboardingCard = (): OptionCardData => ({
   title: "What do you mostly want help with?",
   subtitle: "Pick whatever's closest; we can always expand from there.",
@@ -236,9 +287,17 @@ export class Store {
     } catch {
       this.groups = [];
     }
-    // busy never survives a restart — no turn does either
+    // busy never survives a restart — no turn does either. Rooms saved
+    // before default responders existed adopt their first member as lead.
+    let groupsMigrated = false;
     for (const b of this.bots) b.busy = false;
-    for (const g of this.groups) g.busyBotId = null;
+    for (const g of this.groups) {
+      g.busyBotId = null;
+      const normalized = normalizeGroupDefaultResponder(g.defaultResponder, g.memberIds, Boolean(g.dm));
+      if (JSON.stringify(normalized) !== JSON.stringify(g.defaultResponder)) groupsMigrated = true;
+      g.defaultResponder = normalized;
+    }
+    if (groupsMigrated) this.saveGroups();
     // bots saved before tasks existed have one endless thread; adopt it as
     // their first task so nothing is lost and nothing special-cases it
     for (const b of this.bots) {
@@ -277,6 +336,7 @@ export class Store {
       threadId: newId(),
       name,
       memberIds,
+      defaultResponder: dm ? { kind: "mentions" } : { kind: "member", botId: memberIds[0] },
       bulletin: "",
       unread: false,
       createdAt: Date.now(),
@@ -295,10 +355,15 @@ export class Store {
     );
   }
 
-  patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "bulletin" | "unread" | "busyBotId">>): GroupRecord | null {
+  patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "defaultResponder" | "bulletin" | "unread" | "busyBotId">>): GroupRecord | null {
     const group = this.group(id);
     if (!group) return null;
     Object.assign(group, patch);
+    group.defaultResponder = normalizeGroupDefaultResponder(
+      group.defaultResponder,
+      group.memberIds,
+      Boolean(group.dm),
+    );
     this.saveGroups();
     return group;
   }

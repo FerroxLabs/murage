@@ -1,13 +1,21 @@
 // A room: several bots + you in one shared thread. Minimal by design — the
 // mauses are the only expressive element. Members sit in the header (their
 // idle/working motion IS the status), the bulletin is one pinned line, and
-// bot messages carry a small maus + name cluster label. Bots reply only
-// when @mentioned (the composer's @ picker knows the members).
+// bot messages carry a small maus + name cluster label. Plain messages go
+// to the room's default responder; @mentions override that routing.
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Pin } from "lucide-react";
-import { useStore, useStreaming, formatTime, type Bot, type Group } from "@/state/store";
+import { ArrowDown, ChevronDown, Pin } from "lucide-react";
+import {
+  useStore,
+  useStreaming,
+  formatTime,
+  type Bot,
+  type Group,
+  type GroupDefaultResponder,
+} from "@/state/store";
 import { MausAvatar } from "./Avatar";
 import { normalizeState } from "@/lib/mascot";
+import { effectiveDefaultResponder, groupResponseHint } from "@/lib/group-routing";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Composer } from "./Composer";
 import { ReactionBar, ReactionChips } from "./Reactions";
@@ -129,6 +137,55 @@ function StreamingBubble({ text }: { text: string }) {
   );
 }
 
+function DefaultResponderSelect({ group, members }: { group: Group; members: Bot[] }) {
+  const { dispatch } = useStore();
+  const responder = effectiveDefaultResponder(group, members);
+  const value = responder.kind === "member" ? `member:${responder.botId}` : responder.kind;
+  const lead = responder.kind === "member" ? members.find((member) => member.id === responder.botId) : undefined;
+  const title =
+    responder.kind === "everyone"
+      ? "Plain messages go to every room member; @mentions override this"
+      : responder.kind === "mentions"
+        ? "Only explicitly @mentioned bots respond"
+        : `Plain messages go to ${lead?.name ?? "the lead bot"}; @mentions override this`;
+
+  const change = (nextValue: string) => {
+    let next: GroupDefaultResponder;
+    if (nextValue === "everyone") next = { kind: "everyone" };
+    else if (nextValue === "mentions") next = { kind: "mentions" };
+    else next = { kind: "member", botId: nextValue.slice("member:".length) };
+    dispatch({ type: "patchGroup", groupId: group.id, patch: { defaultResponder: next } });
+  };
+
+  return (
+    <div className="relative shrink-0" title={title}>
+      <select
+        aria-label="Default responder"
+        value={value}
+        onChange={(event) => change(event.target.value)}
+        className="h-8 max-w-[190px] appearance-none truncate rounded-full border border-hairline/40 bg-raised/60 py-1 pl-3 pr-7 text-[12.5px] font-medium text-ink outline-none hover:bg-raised focus:border-accent"
+      >
+        <optgroup label="Room lead">
+          {members.map((member) => (
+            <option key={member.id} value={`member:${member.id}`}>
+              Lead: {member.name}
+            </option>
+          ))}
+        </optgroup>
+        <optgroup label="Room behavior">
+          <option value="everyone">Everyone responds</option>
+          <option value="mentions">Mentions only</option>
+        </optgroup>
+      </select>
+      <ChevronDown
+        size={13}
+        aria-hidden="true"
+        className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-secondary"
+      />
+    </div>
+  );
+}
+
 export function GroupView({ group }: { group: Group }) {
   const { state, dispatch } = useStore();
   const stream = useStreaming();
@@ -173,6 +230,7 @@ export function GroupView({ group }: { group: Group }) {
       <div className={cn("flex items-center justify-between px-5 py-3", isWin && "pr-[148px]")} style={drag}>
         <span className="text-[15px] font-semibold text-ink">{group.name}</span>
         <div className="flex items-center gap-1.5" style={noDrag}>
+          {!group.dm && <DefaultResponderSelect group={group} members={members} />}
           {members.map((b) => (
             <span key={b.id} title={`${b.name}${group.busyBotId === b.id ? " — working…" : ""}`}>
               <MausAvatar
@@ -255,7 +313,7 @@ export function GroupView({ group }: { group: Group }) {
               </div>
               <div className="text-[17px] font-semibold text-ink">{group.name}</div>
               <div className="max-w-[380px] text-[14px] text-ink-secondary">
-                Mention a bot with @ to bring them in — they see the whole conversation.
+                {groupResponseHint(group, members)}
               </div>
             </div>
           )}

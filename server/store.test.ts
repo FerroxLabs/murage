@@ -35,6 +35,34 @@ describe("Store", () => {
     expect(first.color).not.toBe(second.color);
   });
 
+  it("defaults a room to its first member and repairs the lead when membership changes", () => {
+    const store = new Store(selection);
+    const first = store.createBot();
+    const second = store.createBot();
+    const group = store.createGroup("Team", [first.id, second.id]);
+
+    expect(group.defaultResponder).toEqual({ kind: "member", botId: first.id });
+    store.patchGroup(group.id, { memberIds: [second.id] });
+    expect(group.defaultResponder).toEqual({ kind: "member", botId: second.id });
+
+    const reloaded = new Store(selection);
+    expect(reloaded.group(group.id)?.defaultResponder).toEqual({ kind: "member", botId: second.id });
+  });
+
+  it("migrates old rooms without routing to their first member", () => {
+    const store = new Store(selection);
+    const first = store.createBot();
+    const second = store.createBot();
+    const group = store.createGroup("Legacy team", [first.id, second.id]);
+    const groupsFile = join(DATA_DIR, "groups.json");
+    const saved = JSON.parse(readFileSync(groupsFile, "utf8"));
+    delete saved[0].defaultResponder;
+    writeFileSync(groupsFile, JSON.stringify(saved));
+
+    const reloaded = new Store(selection);
+    expect(reloaded.group(group.id)?.defaultResponder).toEqual({ kind: "member", botId: first.id });
+  });
+
   it("persists bots and messages across a restart, resetting busy", () => {
     const store = new Store(selection);
     const bot = store.createBot();
