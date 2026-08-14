@@ -7,6 +7,7 @@ import { useDraft } from "@/lib/drafts";
 import { MausAvatar } from "./Avatar";
 import { normalizeState } from "@/lib/mascot";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
+import { useDesktopCapabilities } from "./DesktopCapabilities";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -32,6 +33,7 @@ export function Composer({
   onEditLast?: () => void;
 }) {
   const { state, dispatch } = useStore();
+  const { capabilities } = useDesktopCapabilities();
   // Unified target: a 1:1 bot thread or a room. In a room the @ picker
   // offers the members (Buzz rule: only mentioned bots reply).
   const busy = group ? Boolean(group.busyBotId) : Boolean(bot?.busy);
@@ -162,8 +164,8 @@ export function Composer({
   }, [recording]);
 
   const toggleMic = () => {
-    if (!window.ogb) {
-      setSpeechError("Voice input is available in the desktop app.");
+    if (!capabilities.dictation.available || !window.ogb) {
+      setSpeechError("Dictation isn't available in this build.");
       return;
     }
     baseText.current = text.trim();
@@ -306,7 +308,7 @@ export function Composer({
             <Square size={14} className="fill-current" />
           </button>
         )}
-        {!busy && !text.trim() && (
+        {!busy && !text.trim() && capabilities.dictation.available && (
           <button
             onClick={toggleMic}
             aria-label={recording ? "Stop dictation" : "Start dictation"}

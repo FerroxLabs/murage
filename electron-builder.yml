@@ -25,7 +25,9 @@ directories:
 # ELECTRON_RUN_AS_NODE (the agentcal-hq pattern).
 files:
   - electron/**
+  - "!electron/**/*.test.*"
   - "!electron/resources/speech-helper"
+  - "!electron/resources/speech-helper.swift"
   - "!**/node_modules/**"
   - package.json
 
@@ -49,7 +51,7 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # the dictation helper is a signed macOS binary — Windows never sees it
+  # the dictation helper is a signed macOS binary — Windows and Linux never see it
   extraResources:
     - from: electron/resources/speech-helper
       to: speech-helper
@@ -89,3 +91,33 @@ nsis:
   # STABLE filename, so ship a second copy named OpenMausBot-setup.exe on the
   # release — the same trick as OpenMausBot.dmg beside OpenMausBot-${version}.dmg.
   artifactName: OpenMausBot-${version}-setup.${ext}
+
+linux:
+  target:
+    - target: AppImage
+      arch: x64
+    - target: deb
+      arch: x64
+  # Keep the vector source in the freedesktop scalable icon hierarchy. A
+  # lone 1024px PNG is not indexed by GNOME's hicolor theme on Ubuntu 24.04.
+  icon: build/icon.svg
+  category: Utility
+  executableName: openmausbot
+  synopsis: Your own team of AI bots, in a chat app
+  description: A local-first chat app for running a team of AI agents.
+  maintainer: Milind Soni <46266943+milind-soni@users.noreply.github.com>
+  vendor: OpenMausBot
+  syncDesktopName: true
+  desktop:
+    entry:
+      Name: OpenMausBot
+      Comment: Your own team of AI bots, in a chat app
+      Keywords: AI;Agents;Chat;Productivity;
+
+deb:
+  packageCategory: utils
+  priority: optional
+
+# Static AppImage runtime: Ubuntu 24.04 can launch it without legacy FUSE 2.
+toolsets:
+  appimage: "1.0.3"
