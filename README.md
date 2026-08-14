@@ -124,6 +124,15 @@ Secrets are write-only: the UI only ever sees "configured" flags.
 </tr>
 </table>
 
+### 🎧 Bots that talk back
+
+Press the speaker on any reply, or switch a bot to read its answers out as they land — so you can listen
+to what ran overnight while you make breakfast. Hit **call** and it's a conversation: it hears you, tells
+you what it's doing while it works, and asks for approvals out loud.
+
+The default voice runs **on your machine** — a small neural model, no key, no cost, offline after a
+one-time download. Paste an ElevenLabs or Cartesia key when you want each bot to sound like someone.
+
 **Also in the box:** streaming replies with tool-run activity chips · native macOS dictation from the
 composer mic (on-device Apple speech recognition — desktop app) · SupaMaus cursor mascots with role-aware
 expressions · screenshots of the bot's work folded into the transcript.
@@ -161,6 +170,7 @@ flowchart LR
 | Drivers | `server/drivers/` | One per provider: Claude, Codex, and Grok Build over their local CLIs (stream-JSON / JSON-RPC / ACP), plus a cloud-computer agent. Unknown drivers degrade to "unavailable", never crash the fleet. |
 | Harness | `server/harness/` | Registry (configs → live instances) and the fan-in event bus every client folds. |
 | API | `server/index.ts` | Bots, turns, approvals, model catalog, computer lifecycle, connectors, config — HTTP + SSE. |
+| Voice | `server/tts/` | One provider per voice — a local neural model in the renderer, hosted ones on the harness so their keys never reach the UI. Same SPI shape as the drivers. |
 | App | `src/` | The chat shell. Server-backed store, one reducer, zero client-side transports. |
 | Desktop | `electron/` | macOS, Windows, and Ubuntu shells with an embedded harness and explicit platform capabilities; Apple speech, local screen capture, and the current CUA bridge remain macOS-only. |
 
@@ -221,6 +231,7 @@ in the sidebar footer) when you want to enable its integration:
 | Composio Connect key (`ck_…`) | Connect Gmail, GitHub, Slack, Notion, and other apps to your bots | [Composio Connect setup guide](https://docs.composio.dev/docs/composio-connect) |
 | Composio API key (`ak_…`) | Browse the full app catalog with official names and logos | [Composio project API key guide](https://docs.composio.dev/reference/authenticating-to-composio/project-api-key-permissions) |
 | Box API key | Give bots an isolated remote Linux computer with a desktop and terminal | [Box API key guide](https://docs.ascii.dev/box/api-keys) |
+| ElevenLabs or Cartesia key | Swap the built-in local voice for a hosted one, and give each bot its own | [ElevenLabs](https://elevenlabs.io/app/settings/api-keys) · [Cartesia](https://play.cartesia.ai/keys) |
 
 Composio and Box are third-party services with their own accounts and terms. Box is a paid service after
 its trial, and using a cloud computer may incur charges.
@@ -239,6 +250,9 @@ pnpm package:linux # Ubuntu x64 .deb + AppImage → release/
 Early but real — the loop works end to end: message → agent → streamed reply → tools → approvals →
 computer use. macOS and Windows have released builds; Ubuntu 24.04 x64 packages are in beta with the
 capability limits above. Rough edges to expect: routines are a placeholder and sidebar sections aren't built yet.
+Calls are macOS-only for now (they ride the same on-device dictation as the composer mic), and the local
+voice fetches its model on first use — see [`docs/voice-mode.md`](docs/voice-mode.md) for the design and
+the known gaps.
 
 Contributions welcome — the driver SPI in [`server/contracts.ts`](server/contracts.ts) is deliberately
 small; adding a provider is one file in [`server/drivers/`](server/drivers/) plus a one-line registration.
