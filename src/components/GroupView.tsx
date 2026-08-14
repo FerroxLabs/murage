@@ -18,6 +18,7 @@ import { normalizeState } from "@/lib/mascot";
 import { effectiveDefaultResponder, groupResponseHint } from "@/lib/group-routing";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Composer } from "./Composer";
+import { GroupCallButton, GroupCallOverlay } from "./GroupCallView";
 import { ReactionBar, ReactionChips } from "./Reactions";
 import { ApprovalCard } from "./ApprovalCard";
 import { cn } from "@/lib/cn";
@@ -226,10 +227,12 @@ export function GroupView({ group }: { group: Group }) {
 
   return (
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
+      <GroupCallOverlay group={group} members={members} />
       {/* Header: name left, member mauses right — their motion IS the status */}
       <div className={cn("flex items-center justify-between px-5 py-3", isWin && "pr-[148px]")} style={drag}>
         <span className="text-[15px] font-semibold text-ink">{group.name}</span>
         <div className="flex items-center gap-1.5" style={noDrag}>
+          <GroupCallButton group={group} members={members} />
           {!group.dm && <DefaultResponderSelect group={group} members={members} />}
           {members.map((b) => (
             <span key={b.id} title={`${b.name}${group.busyBotId === b.id ? " — working…" : ""}`}>

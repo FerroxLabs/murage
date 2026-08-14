@@ -1,4 +1,4 @@
-// Who is on a call, window-wide.
+// Which conversation is on a call, window-wide.
 //
 // It lives in lib rather than inside the call UI because two very
 // different places need it: the overlay that renders the call, and the SSE
@@ -17,25 +17,25 @@ function notify() {
   for (const fn of [...watchers]) fn();
 }
 
-/** The bot on a call, or null. Safe to read outside React. */
+/** The bot or room on a call, or null. Safe to read outside React. */
 export function currentCall(): string | null {
   return current;
 }
 
-export function startCall(botId: string) {
-  if (current === botId) return;
+export function startCall(targetId: string) {
+  if (current === targetId) return;
   // Switching calls must silence both halves before ownership changes; the
   // old overlay may not unmount until React's next render.
   speaker.stop();
   void window.ogb?.speechStop();
-  current = botId;
+  current = targetId;
   notify();
 }
 
-/** End the current call. A botId makes cleanup ownership-safe: an async
+/** End the current call. A targetId makes cleanup ownership-safe: an async
  * teardown from call A cannot hang up a newer call B. */
-export function endCall(botId?: string): boolean {
-  if (botId && current !== botId) return false;
+export function endCall(targetId?: string): boolean {
+  if (targetId && current !== targetId) return false;
   if (current === null) return false;
   current = null;
   speaker.stop();
@@ -47,9 +47,9 @@ export function endCall(botId?: string): boolean {
 /** React StrictMode probes effects with setup -> cleanup -> setup in
  * development. Defer ownership cleanup so that probe can remount first;
  * a genuine unmount remains inactive and releases the call. */
-export function deferCallCleanup(botId: string, isMounted: () => boolean): void {
+export function deferCallCleanup(targetId: string, isMounted: () => boolean): void {
   queueMicrotask(() => {
-    if (!isMounted()) endCall(botId);
+    if (!isMounted()) endCall(targetId);
   });
 }
 

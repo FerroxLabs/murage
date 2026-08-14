@@ -24,6 +24,7 @@ import { useStore, visibleMessages, type Bot } from "@/state/store";
 import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
+import { usePushToTalk } from "@/lib/push-to-talk";
 import { MausAvatar } from "./Avatar";
 import { pendingApprovals } from "./PendingApproval";
 import { cn } from "@/lib/cn";
@@ -40,12 +41,34 @@ type Phase = "listening" | "sending" | "working" | "speaking";
 const CALL_ENDPOINT_MS = 850;
 
 export function CallButton({ bot }: { bot: Bot }) {
+  return (
+    <CallTargetButton
+      targetId={bot.id}
+      targetName={bot.name}
+      voices={[bot.voice]}
+      onStart={() => track("call_started", { driver: bot.modelSelection?.instanceId })}
+    />
+  );
+}
+
+export function CallTargetButton({
+  targetId,
+  targetName,
+  voices,
+  onStart,
+}: {
+  targetId: string;
+  targetName: string;
+  voices: Array<string | undefined>;
+  onStart: () => void;
+}) {
   const { state, dispatch } = useStore();
   const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
-  const active = useOnCall() === bot.id;
+  const active = useOnCall() === targetId;
   const supported = capabilities.dictation.available && Boolean(window.ogb?.speechStart);
   const configured = Boolean(state.config?.tts?.configured);
-  const voiceReady = configured && Boolean(state.config?.tts?.ready || bot.voice);
+  const voiceReady =
+    configured && Boolean(state.config?.tts?.ready || (voices.length > 0 && voices.every((voice) => Boolean(voice))));
   const unavailable = !active && (!capabilitiesReady || !supported || !voiceReady);
   const voiceSetupRequired = capabilitiesReady && supported && !voiceReady;
   const [helpOpen, setHelpOpen] = useState(false);
@@ -53,7 +76,7 @@ export function CallButton({ bot }: { bot: Bot }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const helpId = useId();
   const label = active
-    ? `Hang up on ${bot.name}`
+    ? `Hang up on ${targetName}`
     : !capabilitiesReady
       ? "Checking call availability"
       : !supported
@@ -62,7 +85,7 @@ export function CallButton({ bot }: { bot: Bot }) {
           ? "Add an ElevenLabs key in App Settings to make calls"
           : !voiceReady
             ? "Pick a voice in App Settings to make calls"
-            : `Call ${bot.name}`;
+            : `Call ${targetName}`;
 
   const reason = !capabilitiesReady
     ? "Checking whether this device can make calls."
@@ -73,7 +96,9 @@ export function CallButton({ bot }: { bot: Bot }) {
         : !configured
           ? "Add an ElevenLabs API key so the bot can speak during calls."
           : !voiceReady
-            ? "Choose an ElevenLabs voice before starting a call."
+            ? voices.length > 1
+              ? "Choose an app voice, or give every room member their own ElevenLabs voice."
+              : "Choose an ElevenLabs voice before starting a call."
             : "";
 
   useEffect(() => {
@@ -99,13 +124,13 @@ export function CallButton({ bot }: { bot: Bot }) {
       <button
         ref={buttonRef}
         onClick={() => {
-          if (active) return endCall(bot.id);
+          if (active) return endCall(targetId);
           if (unavailable) {
             setHelpOpen((open) => !open);
             return;
           }
-          track("call_started", { driver: bot.modelSelection?.instanceId });
-          startCall(bot.id);
+          onStart();
+          startCall(targetId);
         }}
         aria-expanded={unavailable ? helpOpen : undefined}
         aria-controls={unavailable ? helpId : undefined}
@@ -166,6 +191,9 @@ function Call({ bot }: { bot: Bot }) {
   const [phase, setPhase] = useState<Phase>(initialPhase);
   const [heard, setHeard] = useState("");
   const [note, setNote] = useState<string | null>(null);
+  const pushToTalk = usePushToTalk(bot.id, phase === "listening", () => {
+    setNote("Push to talk couldn't start. Check Microphone and Speech Recognition access.");
+  });
 
   const messages = visibleMessages(bot);
   const approval = pendingApprovals(messages)[0];
@@ -431,7 +459,9 @@ function Call({ bot }: { bot: Bot }) {
     phase === "listening" ? "listening" : phase === "speaking" ? "sending" : phase === "sending" ? "thinking" : "working";
   const status =
     phase === "listening"
-      ? "Listening"
+      ? pushToTalk
+        ? "Push to talk"
+        : "Listening"
       : phase === "sending"
         ? "One moment"
         : phase === "speaking"
@@ -461,7 +491,11 @@ function Call({ bot }: { bot: Bot }) {
       {/* one line, whichever is current: what you're saying, or what it is */}
       <div className="min-h-[3.5rem] max-w-[560px] px-6 text-center text-[15px] leading-relaxed text-ink">
         {phase === "listening" ? (
-          heard || <span className="text-ink-secondary">Say something…</span>
+          heard || (
+            <span className="text-ink-secondary">
+              {pushToTalk ? "Release Control + Option to send…" : "Say something…"}
+            </span>
+          )
         ) : (
           speech.caption
         )}
@@ -501,7 +535,9 @@ function Call({ bot }: { bot: Bot }) {
         </button>
       </div>
 
-      <div className="text-[11.5px] text-ink-secondary/70">Space interrupts · Esc hangs up</div>
+      <div className="text-[11.5px] text-ink-secondary/70">
+        Hold Control + Option to talk · Space interrupts · Esc hangs up
+      </div>
     </div>
   );
 }

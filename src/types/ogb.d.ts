@@ -37,6 +37,8 @@ declare global {
        * finalizes a turn; composer dictation omits it and remains manual. */
       speechStart(options?: { endpointMs?: number }): Promise<void>;
       speechStop(): Promise<void>;
+      /** Finish capture and emit the recognizer's final transcript. */
+      speechFinish?(): Promise<void>;
       onSpeechTranscript(
         cb: (line: { partial?: boolean; text?: string; error?: string }) => void,
       ): () => void;

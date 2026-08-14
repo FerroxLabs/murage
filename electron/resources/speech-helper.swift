@@ -45,6 +45,12 @@ let stopFile: String? = {
   return args[index + 1]
 }()
 
+let finishFile: String? = {
+  let args = CommandLine.arguments
+  guard let index = args.firstIndex(of: "--finish-file"), index + 1 < args.count else { return nil }
+  return args[index + 1]
+}()
+
 // LaunchServices gives the helper the bundle identity TCC needs, but it also
 // means the parent cannot terminate it by killing the `open -W` process. A
 // per-session stop marker keeps intentional mute/hang-up deterministic.
@@ -56,6 +62,23 @@ if let stopFile {
     if FileManager.default.fileExists(atPath: stopFile) { exit(0) }
   }
   stopTimer = timer
+  timer.resume()
+}
+
+// Push-to-talk release must finalize recognition rather than cancel it. The
+// handler is installed once the audio engine exists; the timer keeps polling
+// if an unusually fast key release beats authorization/setup.
+var finishHandler: (() -> Void)?
+var finishTimer: DispatchSourceTimer?
+if let finishFile {
+  let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+  timer.schedule(deadline: .now() + .milliseconds(50), repeating: .milliseconds(50))
+  timer.setEventHandler {
+    guard FileManager.default.fileExists(atPath: finishFile), let finish = finishHandler else { return }
+    timer.cancel()
+    finish()
+  }
+  finishTimer = timer
   timer.resume()
 }
 
@@ -125,17 +148,24 @@ SFSpeechRecognizer.requestAuthorization { status in
 
   let engine = AVAudioEngine()
   let node = engine.inputNode
+  var audioFinished = false
+  let finishAudio = {
+    DispatchQueue.main.async {
+      guard !audioFinished else { return }
+      audioFinished = true
+      engine.stop()
+      node.removeTap(onBus: 0)
+      request.endAudio()
+    }
+  }
+  finishHandler = finishAudio
   var endpointer: SilenceEndpointer?
   if endpointMs > 0 {
     endpointer = SilenceEndpointer(gapMs: endpointMs) {
       // Stop capture before ending the request: appending another audio
       // buffer after endAudio() can make the recognition task fail instead
       // of delivering its final transcript.
-      DispatchQueue.main.async {
-        engine.stop()
-        node.removeTap(onBus: 0)
-        request.endAudio()
-      }
+      finishAudio()
     }
     endpointer?.start()
   }

@@ -262,7 +262,7 @@ type Action =
       type: "decideRequest";
       threadId: string;
       requestId: string;
-      behavior: "allow" | "deny";
+      behavior: "allow" | "deny" | "answer";
       message?: string;
       /** remember this exact grant (the server's allowKey) for the bot */
       alwaysAllow?: { botId: string; key: string };
@@ -1058,10 +1058,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // Auto-speak lives HERE rather than in the chat view so a bot
             // you switched away from still reads its answer out — which is
             // the whole point of listening while you do something else. A
-            // bot on a call is excluded: call mode speaks in its own order,
-            // around its own microphone, and the two would fight.
+            // Auto-speak is disabled during any call. Call mode owns both the
+            // singleton speaker and microphone ordering for its whole lifetime.
             const owner = stateRef.current.bots.find((b) => b.threadId === frame.threadId);
-            if (owner?.speakReplies && currentCall() !== owner.id && frame.message.text?.trim()) {
+            if (owner?.speakReplies && currentCall() === null && frame.message.text?.trim()) {
               void speaker.speak(frame.message.text, {
                 botId: owner.id,
                 messageId: frame.message.id,
