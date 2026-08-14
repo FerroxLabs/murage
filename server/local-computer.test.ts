@@ -71,7 +71,7 @@ function linuxDescriptor(userData: string, { session = "x11" }: { session?: "x11
 const temporaryDirectories: string[] = [];
 
 function privateUserData(name: string) {
-  const base = process.platform === "win32" ? tmpdir() : realpathSync(tmpdir());
+  const base = process.platform === "win32" ? tmpdir() : realpathSync("/tmp");
   const root = mkdtempSync(join(base, "omb-local-computer-"));
   temporaryDirectories.push(root);
   const userData = join(root, name);
