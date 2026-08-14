@@ -146,11 +146,12 @@ flowchart LR
     subgraph agents ["Agents on your Mac"]
         CL[claude CLI]
         CX[codex CLI]
+        GR[grok CLI]
     end
     UI -- "HTTP commands" --> server
     BUS -- "one SSE stream" --> UI
-    REG --> CL & CX
-    CL & CX -- "MCP" --> BROKER
+    REG --> CL & CX & GR
+    CL & CX & GR -- "permission requests" --> BROKER
     server -- "Box API" --> BOX[("Cloud computer<br/>box.ascii.dev")]
     server -- "Composio Connect" --> APPS[("Gmail · Slack · GitHub · …")]
 ```
