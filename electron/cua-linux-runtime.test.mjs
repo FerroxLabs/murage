@@ -186,7 +186,11 @@ afterEach(() => {
   }
 });
 
-describe("Linux CUA opt-in and lifecycle", () => {
+// Lifecycle readiness deliberately includes Linux executable identity,
+// private-directory permissions, and the Linux runtime's Unix socket layout.
+// Keep the pure state/handshake suites below cross-platform, but exercise the
+// real host-filesystem contract only on the authoritative Ubuntu CI lane.
+describe.skipIf(process.platform !== "linux")("Linux CUA opt-in and lifecycle", () => {
   it("does not inspect or execute a driver before explicit opt-in", async () => {
     const context = harness();
     await context.runtime.initialize();
