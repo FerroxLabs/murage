@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { instanceSupportsLocalComputer, linuxAutoDescription } from "./local-computer";
+import {
+  autoSelectsLocalComputer,
+  instanceSupportsLocalComputer,
+  linuxAutoDescription,
+} from "./local-computer";
 
 describe("local computer UI eligibility", () => {
   it("requires the selected instance to advertise approval-capable local MCP", () => {
@@ -18,5 +22,32 @@ describe("local computer UI eligibility", () => {
 
   it("states that Linux Auto never selects this computer", () => {
     expect(linuxAutoDescription()).toContain("otherwise computer use stays off");
+    expect(
+      autoSelectsLocalComputer({
+        platform: "linux",
+        computer: undefined,
+        capabilitiesReady: true,
+        localSelectable: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("preserves the ready local fallback on supported non-Linux hosts", () => {
+    expect(
+      autoSelectsLocalComputer({
+        platform: "darwin",
+        computer: undefined,
+        capabilitiesReady: true,
+        localSelectable: true,
+      }),
+    ).toBe(true);
+    expect(
+      autoSelectsLocalComputer({
+        platform: "darwin",
+        computer: "cloud",
+        capabilitiesReady: true,
+        localSelectable: true,
+      }),
+    ).toBe(false);
   });
 });

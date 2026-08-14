@@ -10,7 +10,8 @@ import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import capabilitiesModule from "./capabilities.cjs";
 
-const { desktopCapabilities } = capabilitiesModule;
+const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
+const nativeActions = nativeDesktopActions(process.platform);
 const require = createRequire(import.meta.url);
 const { createDisplayMediaGuard, invokeDisplayMediaCallback, selectCaptureSource } = require(
   "./screen-preview.cjs",
@@ -458,12 +459,12 @@ ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {
 
 ipcMain.handle("perm:status", () => ({
   mic:
-    process.platform === "darwin"
+    nativeActions.appleMediaPermissions
       ? systemPreferences.getMediaAccessStatus?.("microphone") ?? "unknown"
       : "unsupported",
 }));
 ipcMain.handle("perm:request-mic", async () => {
-  if (process.platform !== "darwin") return false;
+  if (!nativeActions.appleMediaPermissions) return false;
   try {
     return await systemPreferences.askForMediaAccess("microphone");
   } catch {
@@ -474,7 +475,7 @@ ipcMain.handle("perm:request-mic", async () => {
 // macOS never re-prompts a denied permission — the only path is System
 // Settings; deep-link straight to the right privacy pane.
 ipcMain.handle("perm:open-settings", (_event, pane) => {
-  if (process.platform !== "darwin") return false;
+  if (!nativeActions.applePrivacySettings) return false;
   const panes = {
     mic: "Privacy_Microphone",
     screen: "Privacy_ScreenCapture",
@@ -489,17 +490,17 @@ ipcMain.handle("perm:open-settings", (_event, pane) => {
 ipcMain.handle("speech:start", (event, options) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return;
-  if (process.platform !== "darwin") {
+  if (!nativeActions.appleSpeech) {
     win.webContents.send("speech:end", { code: 2, reason: "unsupported-platform" });
     return;
   }
   startSpeech(win, options);
 });
 ipcMain.handle("speech:stop", () => {
-  if (process.platform === "darwin") stopSpeech();
+  if (nativeActions.appleSpeech) stopSpeech();
 });
 ipcMain.handle("speech:finish", () => {
-  if (process.platform === "darwin") finishSpeech();
+  if (nativeActions.appleSpeech) finishSpeech();
 });
 
 // ── companion sidecar ──────────────────────────────────────────────────
@@ -692,7 +693,7 @@ app.on("before-quit", (e) => {
   void stopCompanion();
   // a live dictation session runs its own helper child that holds the mic —
   // stop it here so quitting never orphans a recording process
-  stopSpeech();
+  if (nativeActions.appleSpeech) stopSpeech();
   const cleanup = Promise.race([
     stopCua().catch(() => {}),
     new Promise((resolve) => setTimeout(resolve, CUA_STOP_TIMEOUT_MS).unref()),

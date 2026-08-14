@@ -2,9 +2,28 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { desktopCapabilities, linuxSession, localComputerReady } = require("./capabilities.cjs");
+const {
+  desktopCapabilities,
+  linuxSession,
+  localComputerReady,
+  nativeDesktopActions,
+} = require("./capabilities.cjs");
 
 describe("desktop capabilities", () => {
+  it("keeps Apple permissions, Settings, and speech actions unreachable on Linux", () => {
+    expect(nativeDesktopActions("linux")).toEqual({
+      appleMediaPermissions: false,
+      applePrivacySettings: false,
+      appleSpeech: false,
+    });
+    expect(nativeDesktopActions("win32")).toEqual(nativeDesktopActions("linux"));
+    expect(nativeDesktopActions("darwin")).toEqual({
+      appleMediaPermissions: true,
+      applePrivacySettings: true,
+      appleSpeech: true,
+    });
+  });
+
   it("keeps macOS native features behind a ready CUA connection", () => {
     const capabilities = desktopCapabilities({
       platform: "darwin",

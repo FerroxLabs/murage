@@ -39,3 +39,17 @@ export function localComputerDisabledReason({
 export function linuxAutoDescription(): string {
   return "Auto uses a cloud box when one is configured; otherwise computer use stays off.";
 }
+
+export function autoSelectsLocalComputer({
+  platform,
+  computer,
+  capabilitiesReady,
+  localSelectable,
+}: {
+  platform: DesktopCapabilities["host"]["platform"];
+  computer: Bot["computer"];
+  capabilitiesReady: boolean;
+  localSelectable: boolean;
+}): boolean {
+  return platform !== "linux" && computer !== "cloud" && capabilitiesReady && localSelectable;
+}

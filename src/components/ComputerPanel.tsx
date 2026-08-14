@@ -29,6 +29,7 @@ import { AndroidDevicePanel, useAndroidUsbDevices } from "./AndroidDevicePanel";
 import { LocalScreenPreview } from "./LocalScreenPreview";
 import { LinuxLocalControl } from "./LinuxLocalControl";
 import {
+  autoSelectsLocalComputer,
   instanceSupportsLocalComputer,
   linuxAutoDescription,
   localComputerDisabledReason,
@@ -255,8 +256,12 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     api(`/api/bots/${bot.id}/computer`)
       .then((status) => {
         if (!alive) return;
-        const autoLocal =
-          !isLinux && bot.computer !== "cloud" && capabilitiesReady && localSelectable;
+        const autoLocal = autoSelectsLocalComputer({
+          platform: capabilities.host.platform,
+          computer: bot.computer,
+          capabilitiesReady,
+          localSelectable,
+        });
         if (!status.configured) {
           setPhase(autoLocal ? "local" : "unconfigured");
           return;

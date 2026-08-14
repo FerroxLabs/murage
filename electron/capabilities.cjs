@@ -8,6 +8,15 @@ function normalizedPlatform(platform) {
   return DESKTOP_PLATFORMS.has(platform) ? platform : "other";
 }
 
+function nativeDesktopActions(platform) {
+  const appleNative = normalizedPlatform(platform) === "darwin";
+  return Object.freeze({
+    appleMediaPermissions: appleNative,
+    applePrivacySettings: appleNative,
+    appleSpeech: appleNative,
+  });
+}
+
 function linuxSession(platform, env) {
   if (platform !== "linux") return "unknown";
   const declared = String(env.XDG_SESSION_TYPE ?? "").toLowerCase();
@@ -134,4 +143,10 @@ function connectionEnabled(platform, connection) {
   return platform === "linux" && connection?.enabled === true;
 }
 
-module.exports = { connectionEnabled, desktopCapabilities, linuxSession, localComputerReady };
+module.exports = {
+  connectionEnabled,
+  desktopCapabilities,
+  linuxSession,
+  localComputerReady,
+  nativeDesktopActions,
+};
