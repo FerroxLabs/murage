@@ -11,10 +11,13 @@ import * as box from "./box.js";
 import * as composio from "./composio.js";
 import { containerComputerAction, containerComputerMcp, containerComputerScreenshot, containerComputerStatus, setupCommands, } from "./container-computer.js";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.js";
+import { resetPathCache } from "./env-path.js";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.js";
 import { EventBus } from "./harness/bus.js";
 import { ProviderRegistry } from "./harness/registry.js";
 import { mentionedBots, Store } from "./store.js";
+import * as tts from "./tts/index.js";
+import { narrateTool, toUtterances } from "./tts/speech-text.js";
 import { readCuaConnection } from "./local-computer.js";
 import { RoutineManager } from "./routines.js";
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
@@ -100,10 +103,15 @@ function askBotAndWait(targetBotId, message, depth) {
 async function defaultSelection() {
     const described = await registry.describe();
     const available = described.filter((d) => d.snapshot.state === "available");
-    const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0] ?? described[0];
-    return { instanceId: pick?.instanceId ?? "claude", model: pick?.models.default || "claude-sonnet-5" };
+    // Deliberately NO fallback to described[0]. Handing a bot an engine whose
+    // CLI isn't installed makes it look ready and then fail on send with a raw
+    // spawn ENOENT — the single worst first-run experience, and the one every
+    // user with no CLIs used to get. An empty selection is honest: the UI shows
+    // the setup path instead of a bot that cannot answer.
+    const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0];
+    return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
-let bootSelection = { instanceId: "claude", model: "claude-sonnet-5" };
+let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
@@ -171,9 +179,12 @@ bus.subscribe((event) => {
                 const messageId = toolMessageByItem.get(itemKey);
                 let toolName = "tool";
                 if (messageId) {
-                    toolName = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool";
+                    // the whole tool object is replaced, so carry `spoken` across —
+                    // dropping it here would silently un-narrate every completed tool
+                    const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool;
+                    toolName = existing?.name ?? "tool";
                     const patched = store.patchMessage(event.threadId, messageId, {
-                        tool: { name: toolName, ok: event.ok },
+                        tool: { name: toolName, ok: event.ok, spoken: existing?.spoken },
                     });
                     if (patched)
                         broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
@@ -194,7 +205,15 @@ bus.subscribe((event) => {
                 // appends a richer "Messaged @X" chip linking to the channel
                 if (event.title?.endsWith("__ask_bot"))
                     break;
-                const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
+                const name = event.title ?? "tool";
+                // narration is folded in here, once, so call mode can read the
+                // chip aloud without re-deriving it — and so the phrase a user
+                // hears and the chip they see can never drift apart
+                const message = pushMessage({
+                    role: "bot",
+                    kind: "activity",
+                    tool: { name, spoken: narrateTool(name) ?? undefined },
+                });
                 if (event.itemId)
                     toolMessageByItem.set(`${event.threadId}:${event.itemId}`, message.id);
             }
@@ -246,7 +265,7 @@ bus.subscribe((event) => {
                                 held: "Auto mode couldn't answer this one.",
                             },
                         });
-                        askMessageByRequest.set(requestId, card.id);
+                        askMessageByRequest.set(`${event.threadId}:${requestId}`, card.id);
                     }
                 })();
                 break;
@@ -288,7 +307,11 @@ bus.subscribe((event) => {
             break;
         }
         case "runtime.error":
-            pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
+            pushMessage({
+                role: "bot",
+                kind: "activity",
+                tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup },
+            });
             break;
         case "turn.completed": {
             if (activeVmThreadId === event.threadId)
@@ -786,6 +809,9 @@ function configStatus() {
         xai: { configured: Boolean(cfg.xai?.key) },
         composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
         box: { configured: Boolean(cfg.box?.token) },
+        // the chosen voice is a setting, not a secret; the key is reported the
+        // same configured-or-not way as every other credential
+        tts: tts.describeVoice(cfg),
         // not a secret — the sidebar shows it
         profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
     };
@@ -1117,7 +1143,7 @@ const server = createServer(async (req, res) => {
         if (m && method === "PATCH") {
             const body = await readBody(req);
             const patch = {};
-            for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden"]) {
+            for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "speakReplies", "voice"]) {
                 if (body[key] !== undefined)
                     patch[key] = body[key];
             }
@@ -1393,6 +1419,11 @@ const server = createServer(async (req, res) => {
         }
         // ── provider instances (model picker) ──
         if (method === "GET" && path === "/api/instances") {
+            // Rescan PATH first: this endpoint is how the app answers "what can I
+            // run?", and the interesting case is a CLI installed since launch.
+            // Windows never pushes PATH changes into a live process, so without
+            // this the answer is frozen at boot and "check again" is a no-op.
+            resetPathCache();
             return json(res, 200, { instances: await registry.describe() });
         }
         // ── app config (API keys — never echoed back, booleans only) ──
@@ -1402,7 +1433,7 @@ const server = createServer(async (req, res) => {
         if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
             const body = await readBody(req);
             const patch = {};
-            for (const key of ["xai", "composio", "box", "profile"]) {
+            for (const key of ["xai", "composio", "box", "tts", "profile"]) {
                 if (body[key] && typeof body[key] === "object")
                     patch[key] = body[key];
             }
@@ -1417,15 +1448,72 @@ const server = createServer(async (req, res) => {
                 if (!check.ok)
                     return json(res, 400, { error: check.message });
             }
+            // same rule for a voice key — and check it against the provider the
+            // patch SELECTS, not the one already saved, or pasting a Cartesia key
+            // while switching from ElevenLabs validates against the wrong service
+            const newTts = patch.tts;
+            if (typeof newTts?.key === "string" && newTts.key.trim()) {
+                const check = await tts.verifyKey(newTts.key.trim());
+                if (!check.ok)
+                    return json(res, 400, { error: check.message });
+            }
             saveConfig(patch);
             Object.assign(cfg, loadConfig());
-            // provider keys change the fleet; a profile edit must not kill
-            // in-flight turns with a pointless reload
-            if (Object.keys(patch).some((k) => k !== "profile"))
+            // provider keys change the fleet; a profile or voice edit must not
+            // kill in-flight turns with a pointless reload — no driver reads
+            // either, and picking a voice mid-turn should be free
+            if (Object.keys(patch).some((k) => k !== "profile" && k !== "tts"))
                 await reloadProviders();
             const status = configStatus();
             broadcast({ kind: "config", ...status });
             return json(res, 200, status);
+        }
+        // ── voice ─────────────────────────────────────────────────────────
+        // Splitting text into utterances lives HERE, not in the renderer, for
+        // the same reason approvalKey does — it is the piece most likely to be
+        // tuned against real transcripts, and it belongs next to the transform
+        // that produced it.
+        if (method === "POST" && path === "/api/tts/prepare") {
+            const body = await readBody(req);
+            return json(res, 200, {
+                ready: tts.voiceReady(cfg, typeof body.voiceId === "string" ? body.voiceId : undefined),
+                utterances: toUtterances(String(body.text ?? "")),
+            });
+        }
+        if (method === "GET" && path === "/api/tts/voices") {
+            try {
+                return json(res, 200, { voices: await tts.listVoices(cfg) });
+            }
+            catch (e) {
+                return json(res, 200, { voices: [], error: e instanceof Error ? e.message : String(e) });
+            }
+        }
+        if (method === "POST" && path === "/api/tts/speak") {
+            const body = await readBody(req);
+            const text = String(body.text ?? "").trim();
+            if (!text)
+                return json(res, 400, { error: "text required" });
+            // The normal client sends <=320-character utterances. A hard ceiling
+            // prevents an arbitrary local request from turning the user's hosted
+            // voice account into an unbounded, billable synthesis job.
+            if (text.length > 500)
+                return json(res, 413, { error: "voice utterances are limited to 500 characters" });
+            try {
+                const audio = await tts.speak(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined);
+                res.writeHead(200, {
+                    "content-type": audio.mime,
+                    "content-length": String(audio.bytes.byteLength),
+                    "cache-control": "no-store",
+                });
+                return res.end(Buffer.from(audio.bytes));
+            }
+            catch (e) {
+                // "you haven't set this up yet" is not a provider failure — 409 so
+                // the client can point at App Settings instead of showing a 502
+                if (e instanceof tts.NoVoiceConfigured)
+                    return json(res, 409, { error: e.message });
+                return json(res, 502, { error: e instanceof Error ? e.message : String(e) });
+            }
         }
         // ── connectors (Composio) ──
         if (method === "GET" && path === "/api/connectors/catalog") {

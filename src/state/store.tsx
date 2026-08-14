@@ -4,6 +4,7 @@
 // pure; everything async lives in the wrapped dispatch + SSE fold.
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -14,6 +15,8 @@ import {
 } from "react";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
+import { currentCall } from "@/lib/call";
+import { speaker } from "@/lib/tts";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -39,8 +42,10 @@ export interface Message {
   kind: "text" | "options" | "activity" | "screen";
   text?: string;
   card?: OptionCardData;
-  /** activity messages: tool name + outcome */
-  tool?: { name: string; ok?: boolean };
+  /** activity messages: tool name + outcome. `spoken` is the server's
+   * narration of the same chip ("reading a file"), used by call mode. */
+  /** `setup` marks an error fixed by installing something, not by retrying. */
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
@@ -104,6 +109,10 @@ export interface Bot {
   autoApprove?: boolean;
   /** tools this bot may always use without asking */
   alwaysAllow?: string[];
+  /** speak this bot's replies aloud as they settle */
+  speakReplies?: boolean;
+  /** this bot's own voice id (falls back to the app-wide one) */
+  voice?: string;
   pinned?: boolean;
   hidden?: boolean;
   messages: Message[];
@@ -143,8 +152,22 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
+  /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
+   * a voice, which is what it takes to actually speak. The key itself is
+   * never echoed back. */
+  tts?: { configured: boolean; ready: boolean; voice: string };
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
+}
+
+/** How an engine gets installed — declared by its driver, mirrors
+ * EngineInstall in server/contracts.ts. Absent for engines that need no
+ * local binary. `command` omits platforms that have no one-liner. */
+export interface EngineInstall {
+  command?: Partial<Record<"darwin" | "win32" | "linux", string>>;
+  docsUrl?: string;
+  signInCommand?: string;
+  needsNode?: boolean;
 }
 
 /** One row of GET /api/instances — the model picker's data. */
@@ -160,7 +183,10 @@ export interface InstanceInfo {
   };
   models: { default: string; options: Array<{ id: string; label: string }> };
   capabilities?: { computerMcp?: boolean; agentsMcp?: boolean };
+  install?: EngineInstall;
 }
+
+export type AppSettingsSection = "general" | "connections" | "voice" | "computer";
 
 interface AppState {
   bots: Bot[];
@@ -176,6 +202,7 @@ interface AppState {
   pluginsOpen: boolean;
   computerOpen: boolean;
   appSettingsOpen: boolean;
+  appSettingsSection: AppSettingsSection;
   /** latest live frame of a bot's computer, per botId */
   screens: Record<string, { png: string; mime: string }>;
   /** bots whose cloud computer is being provisioned */
@@ -251,14 +278,25 @@ type Action =
   | { type: "toggleSettings"; open?: boolean }
   | { type: "togglePlugins"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }
-  | { type: "toggleAppSettings"; open?: boolean }
+  | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection }
   | {
       type: "updateBot";
       botId: string;
       patch: Partial<
         Pick<
           Bot,
-          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden"
+          | "name"
+          | "title"
+          | "description"
+          | "notifications"
+          | "computer"
+          | "color"
+          | "mascotExpression"
+          | "autoApprove"
+          | "speakReplies"
+          | "voice"
+          | "pinned"
+          | "hidden"
         >
       >;
     };
@@ -522,6 +560,7 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         appSettingsOpen: open,
+        appSettingsSection: action.section ?? state.appSettingsSection,
         settingsOpen: open ? false : state.settingsOpen,
         computerOpen: open ? false : state.computerOpen,
         pluginsOpen: open ? false : state.pluginsOpen,
@@ -622,6 +661,7 @@ const initialState: AppState = {
   pluginsOpen: false,
   computerOpen: false,
   appSettingsOpen: false,
+  appSettingsSection: "general",
   screens: {},
   provisioning: {},
   connected: false,
@@ -660,6 +700,8 @@ export function useStreaming() {
 const StoreContext = createContext<{
   state: AppState;
   dispatch: React.Dispatch<Action>;
+  /** Re-fetch engine availability — after an install, without a restart. */
+  refreshInstances: () => Promise<void>;
 } | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -998,11 +1040,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return;
       }
       switch (frame.kind) {
-        case "message":
+        case "message": {
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
           // a settled assistant bubble replaces the in-flight stream
-          if (frame.message?.role === "bot" && frame.message?.kind === "text") clearStream(frame.threadId);
+          if (frame.message?.role === "bot" && frame.message?.kind === "text") {
+            clearStream(frame.threadId);
+            // Auto-speak lives HERE rather than in the chat view so a bot
+            // you switched away from still reads its answer out — which is
+            // the whole point of listening while you do something else. A
+            // bot on a call is excluded: call mode speaks in its own order,
+            // around its own microphone, and the two would fight.
+            const owner = stateRef.current.bots.find((b) => b.threadId === frame.threadId);
+            if (owner?.speakReplies && currentCall() !== owner.id && frame.message.text?.trim()) {
+              void speaker.speak(frame.message.text, {
+                botId: owner.id,
+                messageId: frame.message.id,
+                voiceId: owner.voice,
+              });
+            }
+          }
           break;
+        }
         case "message.patch":
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message });
           break;
@@ -1089,7 +1147,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "config":
           rawDispatch({
             type: "configStatus",
-            config: { xai: frame.xai, composio: frame.composio, box: frame.box, profile: frame.profile },
+            config: {
+              xai: frame.xai,
+              composio: frame.composio,
+              box: frame.box,
+              tts: frame.tts,
+              profile: frame.profile,
+            },
           });
           api("/api/instances")
             .then(({ instances }) => rawDispatch({ type: "instances", instances }))
@@ -1103,7 +1167,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const value = useMemo(() => ({ state, dispatch }), [state, dispatch]);
+  // Re-probe the engines on demand. A CLI installed while the app is running
+  // is invisible until something asks again — the setup screens expose this
+  // as "Check again" so the user isn't told to restart when a refresh will do.
+  const refreshInstances = useCallback(async () => {
+    try {
+      const { instances } = await api("/api/instances");
+      rawDispatch({ type: "instances", instances });
+    } catch {
+      /* offline or server down — the existing list stays */
+    }
+  }, []);
+
+  // Installing a CLI or signing one in happens in a terminal, outside this
+  // window — so the moment the user comes back is exactly when our engine
+  // snapshot is most likely stale. Re-probe on focus, throttled so that
+  // ordinary alt-tabbing doesn't spawn a `--version` call per switch.
+  const lastFocusProbe = useRef(0);
+  useEffect(() => {
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - lastFocusProbe.current < 3000) return;
+      lastFocusProbe.current = now;
+      void refreshInstances();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshInstances]);
+
+  const value = useMemo(() => ({ state, dispatch, refreshInstances }), [state, dispatch, refreshInstances]);
   return (
     <StoreContext.Provider value={value}>
       <StreamContext.Provider value={stream}>{children}</StreamContext.Provider>

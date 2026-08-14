@@ -15,7 +15,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DATA_DIR } from "../config.js";
 import { augmentedPath } from "../env-path.js";
-import { brokerSocketPath, execCli, killCliTree, spawnCli } from "../procs.js";
+import { brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.js";
 import { computerProxyEnv } from "../container-computer.js";
 import { newEventId, newId } from "../contracts.js";
 import { appendNative } from "./native.js";
@@ -167,6 +167,18 @@ function firstText(content) {
 export const ClaudeDriver = {
     driverKind: DRIVER_KIND,
     metadata: { displayName: "Claude", supportsMultipleInstances: true },
+    // npm on all three: the one recipe that is genuinely cross-platform. The
+    // native installers differ per OS and would need verifying separately.
+    install: {
+        command: {
+            darwin: "npm install -g @anthropic-ai/claude-code",
+            linux: "npm install -g @anthropic-ai/claude-code",
+            win32: "npm install -g @anthropic-ai/claude-code",
+        },
+        needsNode: true,
+        docsUrl: "https://claude.com/claude-code",
+        signInCommand: "claude",
+    },
     models: MODELS,
     decodeConfig,
     defaultConfig: () => decodeConfig({}),
@@ -398,7 +410,7 @@ export const ClaudeDriver = {
                     stderr = stderr.slice(-8192);
             });
             child.on("error", (e) => {
-                emit({ ...base(threadId, turnId), type: "runtime.error", message: `spawn failed: ${e.message}` });
+                emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
                 settle(false, "spawn_error");
             });
             child.on("close", (code) => {

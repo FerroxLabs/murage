@@ -2,32 +2,34 @@
 // id, so switching threads unmounts it and its local text state dies with
 // it. Drafts live in localStorage, so coming back to a bot — in this
 // session or after a restart — finds what you were typing still there.
-import { useCallback, useState } from "react";
+import { useCallback, useState, type SetStateAction } from "react";
+import { isAttachment, type Attachment } from "./composer-attachments.js";
 
 const KEY = "omb-drafts";
+const ATTACHMENTS_KEY = "omb-draft-attachments";
 
-type Drafts = Record<string, string>;
+type Values = Record<string, unknown>;
 type Store = Pick<Storage, "getItem" | "setItem"> | undefined;
 
 // Storage is best-effort: a full quota, a locked-down origin, or a garbled
 // value must never cost a keystroke — every failure reads as "no drafts".
-function read(store: Store): Drafts {
+function read(store: Store, key: string): Values {
   try {
-    const raw = store?.getItem(KEY);
+    const raw = store?.getItem(key);
     const parsed = raw ? JSON.parse(raw) : null;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Drafts) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Values) : {};
   } catch {
     return {};
   }
 }
 
 export function getDraft(store: Store, id: string): string {
-  const text = read(store)[id];
+  const text = read(store, KEY)[id];
   return typeof text === "string" ? text : "";
 }
 
 export function setDraft(store: Store, id: string, text: string): void {
-  const drafts = read(store);
+  const drafts = read(store, KEY);
   // an emptied composer drops its entry rather than storing "" forever
   if (text) drafts[id] = text;
   else delete drafts[id];
@@ -35,6 +37,22 @@ export function setDraft(store: Store, id: string, text: string): void {
     store?.setItem(KEY, JSON.stringify(drafts));
   } catch {
     /* quota / private mode — the draft just doesn't outlive the mount */
+  }
+}
+
+export function getDraftAttachments(store: Store, id: string): Attachment[] {
+  const attachments = read(store, ATTACHMENTS_KEY)[id];
+  return Array.isArray(attachments) ? attachments.filter(isAttachment) : [];
+}
+
+export function setDraftAttachments(store: Store, id: string, attachments: Attachment[]): void {
+  const drafts = read(store, ATTACHMENTS_KEY);
+  if (attachments.length) drafts[id] = attachments;
+  else delete drafts[id];
+  try {
+    store?.setItem(ATTACHMENTS_KEY, JSON.stringify(drafts));
+  } catch {
+    /* quota / private mode — attachments remain in component state */
   }
 }
 
@@ -60,4 +78,30 @@ export function useDraft(id: string): [string, (next: string) => void] {
     [store, id],
   );
   return [text, set];
+}
+
+/** A conversation's complete composer draft. Attachment storage is separate
+ * from text so typing does not stringify a large pasted payload per keypress. */
+export function useComposerDraft(
+  id: string,
+): [
+  string,
+  (next: string) => void,
+  Attachment[],
+  (next: SetStateAction<Attachment[]>) => void,
+] {
+  const store = getStore();
+  const [text, setText] = useDraft(id);
+  const [attachments, setAttachmentState] = useState(() => getDraftAttachments(store, id));
+  const setAttachments = useCallback(
+    (next: SetStateAction<Attachment[]>) => {
+      setAttachmentState((previous) => {
+        const value = typeof next === "function" ? next(previous) : next;
+        setDraftAttachments(store, id, value);
+        return value;
+      });
+    },
+    [store, id],
+  );
+  return [text, setText, attachments, setAttachments];
 }

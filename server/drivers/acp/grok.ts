@@ -27,6 +27,18 @@ const support: AcpSupport = {
   nativeSource: "grok.acp",
   loginNote: "Grok CLI is not signed in — run `grok login` in a terminal",
 
+  // No Windows one-liner: the installer is a POSIX shell script, and offering
+  // `curl … | bash` there would be advice that cannot run. Windows falls back
+  // to docsUrl, which is honest rather than broken.
+  install: {
+    command: {
+      darwin: "curl -fsSL https://x.ai/cli/install.sh | bash",
+      linux: "curl -fsSL https://x.ai/cli/install.sh | bash",
+    },
+    docsUrl: "https://x.ai/cli",
+    signInCommand: "grok login",
+  },
+
   // --permission-mode must always be explicit: ~/.grok/config.toml may set
   // permission_mode = "always-approve", which would silently make every
   // session yolo and never fire session/request_permission.

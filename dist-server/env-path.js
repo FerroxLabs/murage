@@ -42,17 +42,46 @@ function knownDirs() {
         ...nvmBinDirs(),
     ];
 }
+/** Windows equivalents of knownDirs. A GUI app inherits the user PATH at
+ * launch, but only at launch: a CLI installed while the app is running is
+ * invisible until it restarts, because Windows never pushes PATH changes
+ * into a live process. Scanning the standard install locations recovers
+ * those without a restart — `~/.grok/bin` (the x.ai installer) and
+ * `%APPDATA%\npm` (global npm shims), plus `%LOCALAPPDATA%\agy\bin`, cover
+ * every engine we ship an install command for. */
+function windowsKnownDirs() {
+    const home = homedir();
+    const appData = process.env.APPDATA ?? join(home, "AppData", "Roaming");
+    const localAppData = process.env.LOCALAPPDATA ?? join(home, "AppData", "Local");
+    return [
+        join(appData, "npm"), // npm -g shims: claude, codex
+        join(home, ".grok", "bin"), // x.ai installer
+        join(localAppData, "agy", "bin"), // Antigravity installer
+        join(home, ".local", "bin"), // claude native installer
+        join(home, ".claude", "local"),
+        join(home, ".bun", "bin"),
+        join(home, ".deno", "bin"),
+        join(home, "go", "bin"),
+    ];
+}
 let cached = null;
 let probed = false;
+/** Drop the memoized PATH so the next augmentedPath() rescans. Called when
+ * the app re-probes engines, so "check again" can find something installed
+ * since launch instead of answering from the PATH we booted with. */
+export function resetPathCache() {
+    cached = null;
+}
 /** Current best PATH, synchronously. Cheap after the first call. */
 export function augmentedPath() {
     if (cached === null) {
         cached = mergePaths([
             ...(process.env.OMB_EXTRA_PATH ? process.env.OMB_EXTRA_PATH.split(delimiter) : []),
             ...(process.env.PATH ? process.env.PATH.split(delimiter) : []),
-            // GUI apps on Windows inherit the user PATH already; the unix
-            // install-dir scan and shell probe are the darwin/linux cure
-            ...(process.platform === "win32" ? [] : knownDirs().filter((d) => existsSync(d))),
+            // Both platforms scan their standard install locations; only the
+            // login-shell probe below stays unix-only, since Windows has no
+            // equivalent rc file to source.
+            ...(process.platform === "win32" ? windowsKnownDirs() : knownDirs()).filter((d) => existsSync(d)),
         ]);
     }
     // belt-and-braces: fold in the login shell's PATH once, in the

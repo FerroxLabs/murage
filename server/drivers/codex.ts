@@ -11,7 +11,7 @@
 // and falls back to a fresh thread/start.
 import { homedir } from "node:os";
 
-import { execCli, killCliTree, spawnCli } from "../procs.ts";
+import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 
 import type {
   DriverCreateInput,
@@ -58,6 +58,16 @@ const DENY_TIMEOUT_NOTE =
 export const CodexDriver: ProviderDriver<CodexConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Codex", supportsMultipleInstances: true },
+  install: {
+    command: {
+      darwin: "npm install -g @openai/codex",
+      linux: "npm install -g @openai/codex",
+      win32: "npm install -g @openai/codex",
+    },
+    needsNode: true,
+    docsUrl: "https://github.com/openai/codex",
+    signInCommand: "codex",
+  },
   models: MODELS,
   decodeConfig,
   defaultConfig: () => decodeConfig({}),
@@ -331,7 +341,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (stderr.length > 8192) stderr = stderr.slice(-8192);
       });
       child.on("error", (e) => {
-        emit({ ...base(threadId, turnId), type: "runtime.error", message: `spawn failed: ${e.message}` });
+        emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
         settle(false, "spawn_error");
       });
       child.on("close", (code) => {

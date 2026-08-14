@@ -17,7 +17,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execCli, killCliTree, spawnCli } from "../../procs.js";
+import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.js";
 import { newEventId, newId } from "../../contracts.js";
 import { computerProxyEnv } from "../../container-computer.js";
 import { augmentedPath } from "../../env-path.js";
@@ -49,6 +49,7 @@ export function createAcpDriver(support) {
     return {
         driverKind: DRIVER_KIND,
         metadata: { displayName: support.displayName, supportsMultipleInstances: true },
+        install: support.install,
         models: support.models,
         decodeConfig,
         defaultConfig: () => decodeConfig({}),
@@ -330,7 +331,7 @@ export function createAcpDriver(support) {
                         stderr = stderr.slice(-8192);
                 });
                 child.on("error", (e) => {
-                    emit({ ...base(threadId, turnId), type: "runtime.error", message: `spawn failed: ${e.message}` });
+                    emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
                     settle(false, "spawn_error");
                 });
                 child.on("close", (code) => {
@@ -425,8 +426,17 @@ export function createAcpDriver(support) {
                     catch (e) {
                         if (!state.settled) {
                             const message = e.message;
-                            emit({ ...base(threadId, turnId), type: "runtime.error", message });
-                            settle(false, message === support.loginNote ? "auth_required" : "rpc_error");
+                            // "not signed in" is a setup problem like a missing binary: the
+                            // fix is a command in a terminal, not another attempt. Flagging
+                            // it lets the error card show the sign-in step.
+                            const needsAuth = message === support.loginNote;
+                            emit({
+                                ...base(threadId, turnId),
+                                type: "runtime.error",
+                                message,
+                                ...(needsAuth ? { setup: true } : {}),
+                            });
+                            settle(false, needsAuth ? "auth_required" : "rpc_error");
                         }
                     }
                 })();

@@ -10,7 +10,7 @@
 // resumeCursor is the codex thread id; a later turn tries thread/resume
 // and falls back to a fresh thread/start.
 import { homedir } from "node:os";
-import { execCli, killCliTree, spawnCli } from "../procs.js";
+import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.js";
 import { newEventId, newId } from "../contracts.js";
 import { augmentedPath } from "../env-path.js";
 import { appendNative } from "./native.js";
@@ -36,6 +36,16 @@ const DENY_TIMEOUT_NOTE = "OpenMausBot: nobody answered this permission request 
 export const CodexDriver = {
     driverKind: DRIVER_KIND,
     metadata: { displayName: "Codex", supportsMultipleInstances: true },
+    install: {
+        command: {
+            darwin: "npm install -g @openai/codex",
+            linux: "npm install -g @openai/codex",
+            win32: "npm install -g @openai/codex",
+        },
+        needsNode: true,
+        docsUrl: "https://github.com/openai/codex",
+        signInCommand: "codex",
+    },
     models: MODELS,
     decodeConfig,
     defaultConfig: () => decodeConfig({}),
@@ -304,7 +314,7 @@ export const CodexDriver = {
                     stderr = stderr.slice(-8192);
             });
             child.on("error", (e) => {
-                emit({ ...base(threadId, turnId), type: "runtime.error", message: `spawn failed: ${e.message}` });
+                emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
                 settle(false, "spawn_error");
             });
             child.on("close", (code) => {
