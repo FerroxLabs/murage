@@ -51,18 +51,24 @@ export function execCli(
 
 /** Stop a CLI and every process it spawned (MCP proxies included). */
 export function killCliTree(child: ChildProcess): void {
+  const pid = child.pid;
+  if (!pid || child.exitCode !== null || child.signalCode !== null) return;
+
   if (process.platform === "win32") {
-    if (child.pid) {
+    execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, (err) => {
+      if (!err) return;
       try {
-        spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+        // taskkill is unavailable or the tree lookup failed. At least stop
+        // the process we own instead of leaving the entire turn running.
+        child.kill();
       } catch {
         /* already gone */
       }
-    }
+    });
     return;
   }
   try {
-    process.kill(-child.pid!, "SIGTERM");
+    process.kill(-pid, "SIGTERM");
   } catch {
     try {
       child.kill("SIGTERM");
