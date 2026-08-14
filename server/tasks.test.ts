@@ -47,6 +47,21 @@ describe("tasks", () => {
     expect(store.messagesFor(firstThread).length).toBeGreaterThan(0);
   });
 
+  it("can create a detached routine task without changing the visible conversation", async () => {
+    const { store } = await freshStore();
+    const bot = store.createBot();
+    const visibleThread = bot.threadId;
+    const routineTask = store.createTask(bot.id, "Morning brief", false)!;
+
+    expect(routineTask.threadId).not.toBe(visibleThread);
+    expect(store.bot(bot.id)!.threadId).toBe(visibleThread);
+    expect(store.botByThread(routineTask.threadId)?.id).toBe(bot.id);
+
+    store.setResumeCursor(bot.id, "claude", "routine-session", routineTask.threadId);
+    expect(store.taskByThread(bot.id, routineTask.threadId)?.resumeCursors.claude).toBe("routine-session");
+    expect(store.activeTask(bot.id)?.resumeCursors.claude).toBeUndefined();
+  });
+
   it("keeps provider sessions apart — the whole point of a task", async () => {
     const { store } = await freshStore();
     const bot = store.createBot();

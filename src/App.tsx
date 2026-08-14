@@ -12,6 +12,7 @@ import { ComputerPanel } from "@/components/ComputerPanel";
 import { AppSettingsPanel } from "@/components/AppSettingsPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
+import { RoutinesPage } from "@/components/RoutinesPage";
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -53,7 +54,9 @@ function Shell() {
       <UpdateBanner />
       <div className="relative flex min-h-0 flex-1">
       <Sidebar />
-      {group ? (
+      {state.activeView === "routines" ? (
+        <RoutinesPage />
+      ) : group ? (
         <GroupView key={group.id} group={group} />
       ) : bot ? (
         <ChatView bot={bot} />

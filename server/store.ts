@@ -444,7 +444,7 @@ export class Store {
   }
 
   botByThread(threadId: string) {
-    return this.bots.find((b) => b.threadId === threadId) ?? null;
+    return this.bots.find((b) => b.threadId === threadId || b.tasks?.some((t) => t.threadId === threadId)) ?? null;
   }
 
   createBot(): BotRecord {
@@ -497,13 +497,15 @@ export class Store {
     return bot;
   }
 
-  setResumeCursor(botId: string, instanceId: string, cursor: unknown) {
+  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string) {
     const bot = this.bot(botId);
     if (!bot) return;
     // the cursor belongs to the task that produced it, not to the bot
-    const task = this.activeTask(botId);
+    const task = threadId ? this.taskByThread(botId, threadId) : this.activeTask(botId);
     if (task) task.resumeCursors[instanceId] = cursor;
-    bot.resumeCursors[instanceId] = cursor; // legacy mirror
+    // The legacy mirror follows the task visible in chat, never a detached
+    // routine task working in the background.
+    if (!threadId || bot.threadId === threadId) bot.resumeCursors[instanceId] = cursor;
     this.saveBots();
   }
 
@@ -523,9 +525,13 @@ export class Store {
     return bot?.tasks?.find((t) => t.threadId === bot.threadId);
   }
 
+  taskByThread(botId: string, threadId: string): TaskRecord | undefined {
+    return this.bot(botId)?.tasks?.find((t) => t.threadId === threadId);
+  }
+
   /** A fresh context on the same bot: new thread, new session, same
    * persona/tools/computer. Becomes the active task. */
-  createTask(botId: string, title?: string): TaskRecord | null {
+  createTask(botId: string, title?: string, activate = true): TaskRecord | null {
     const bot = this.bot(botId);
     if (!bot) return null;
     const task: TaskRecord = {
@@ -535,8 +541,10 @@ export class Store {
       resumeCursors: {},
     };
     bot.tasks = [task, ...(bot.tasks ?? [])];
-    bot.threadId = task.threadId;
-    bot.resumeCursors = {}; // legacy mirror follows the active task
+    if (activate) {
+      bot.threadId = task.threadId;
+      bot.resumeCursors = {}; // legacy mirror follows the active task
+    }
     this.saveBots();
     return task;
   }
@@ -560,8 +568,8 @@ export class Store {
   }
 
   /** Name a task after its first message, once. */
-  titleTaskFromFirstMessage(botId: string, text: string) {
-    const task = this.activeTask(botId);
+  titleTaskFromFirstMessage(botId: string, text: string, threadId?: string) {
+    const task = threadId ? this.taskByThread(botId, threadId) : this.activeTask(botId);
     if (!task || task.title !== UNTITLED_TASK) return;
     task.title = titleFromMessage(text);
     this.saveBots();

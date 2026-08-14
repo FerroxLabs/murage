@@ -4,6 +4,7 @@ import {
   ArrowDownToLine,
   BellDot,
   Bot as BotIcon,
+  CalendarDays,
   Check,
   ClipboardCopy,
   Copy,
@@ -162,7 +163,7 @@ function StackedMauses({ members }: { members: Bot[] }) {
 
 function GroupListItem({ group, onMenu }: { group: Group; onMenu: (menu: { groupId: string; x: number; y: number }) => void }) {
   const { state, dispatch } = useStore();
-  const selected = state.selectedId === group.id;
+  const selected = state.activeView === "chat" && state.selectedId === group.id;
   const members = group.memberIds
     .map((id) => state.bots.find((b) => b.id === id))
     .filter((b): b is Bot => Boolean(b));
@@ -413,7 +414,7 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
 
 function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => void }) {
   const { state, dispatch } = useStore();
-  const selected = state.selectedId === bot.id;
+  const selected = state.activeView === "chat" && state.selectedId === bot.id;
   const mascotMotion = selected && state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   // the visible branch, so a version switch changes the row with the chat
   const visible = visibleMessages(bot);
@@ -576,6 +577,19 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="px-3 pb-3 pt-2">
+        <button
+          onClick={() => dispatch({ type: "showRoutines" })}
+          className={cn(
+            "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
+            state.activeView === "routines" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+          )}
+        >
+          <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
+          <span className="flex-1 text-[14px]">Routines</span>
+          {state.routineRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
+            <span className="size-2 rounded-full bg-danger" />
+          )}
+        </button>
         <button
           onClick={() => dispatch({ type: "togglePlugins", open: true })}
           className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-raised/50"

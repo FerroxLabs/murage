@@ -18,6 +18,7 @@ import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { mentionedBots, Store, type Message } from "./store.ts";
 import { readCuaConnection } from "./local-computer.ts";
+import { RoutineManager } from "./routines.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -114,6 +115,13 @@ const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
 
+const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
+  ...bot,
+  messages: store.messagesFor(bot.threadId),
+  activeLeafId: store.activeLeaf(bot.threadId),
+  tasks: store.tasks(bot.id).map(({ resumeCursors, ...task }) => task),
+});
+
 // ── SSE fan-out to clients ─────────────────────────────────────────────
 const sseClients = new Set<ServerResponse>();
 function broadcast(payload: unknown) {
@@ -139,10 +147,11 @@ const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> 
 // Group threads: the fold needs to know WHO is talking — the turn engine
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
-
+let routines: RoutineManager | null = null;
 
 bus.subscribe((event: RuntimeEvent) => {
   broadcast({ kind: "runtime", event });
+  routines?.handleRuntimeEvent(event);
   const bot = store.botByThread(event.threadId);
   const group = bot ? undefined : store.groupByThread(event.threadId);
   if (!bot && !group) return;
@@ -157,7 +166,7 @@ bus.subscribe((event: RuntimeEvent) => {
   switch (event.type) {
     case "session.started":
       if (bot && event.sessionId && event.providerInstanceId) {
-        store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId);
+        store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId, event.threadId);
       }
       break;
     case "item.completed":
@@ -384,14 +393,23 @@ async function finalScreenFrame(botId: string): Promise<Frame | null> {
 async function startTurn(
   botId: string,
   text: string,
-  opts?: { commsDepth?: number; userMessage?: Message },
+  opts?: {
+    commsDepth?: number;
+    userMessage?: Message;
+    /** Routines run in detached tasks; pin the destination for the whole turn. */
+    threadId?: string;
+    onDispatchError?: (message: string) => void;
+  },
 ) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
+  const threadId = opts?.threadId ?? bot.threadId;
+  const task = store.taskByThread(bot.id, threadId);
+  if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
   const commsDepth = opts?.commsDepth ?? 0;
   // a task takes its name from the first thing you asked it to do
-  if (text.trim()) store.titleTaskFromFirstMessage(bot.id, text);
+  if (text.trim()) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
   const instance = registry.get(bot.modelSelection.instanceId);
   if (!instance) {
@@ -404,14 +422,14 @@ async function startTurn(
   // an edit hands us its already-branched user message; a plain send appends
   let userMessage = opts?.userMessage;
   if (!userMessage) {
-    userMessage = store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
-    broadcast({ kind: "message", threadId: bot.threadId, message: userMessage });
+    userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+    broadcast({ kind: "message", threadId, message: userMessage });
   }
 
   // transcript for API-backed drivers: settled text turns on the ACTIVE
   // branch only — abandoned forks never reach the model
   const transcript = store
-    .activePath(bot.threadId)
+    .activePath(threadId)
     .filter((m) => m.kind === "text" && m.text && m.id !== userMessage.id)
     .slice(-40)
     .map((m) => ({ role: m.role === "user" ? ("user" as const) : ("assistant" as const), text: m.text! }));
@@ -422,7 +440,7 @@ async function startTurn(
   // inline (transcript-replay drivers get it via transcript). The flag is
   // cleared only once the turn is actually dispatched — clearing it here
   // would cost the next attempt its history if this dispatch fails.
-  const rewound = Boolean(bot.rewound);
+  const rewound = threadId === bot.threadId && Boolean(bot.rewound);
   const turnText =
     rewound && instance.driverKind !== "grok" && transcript.length
       ? [
@@ -514,13 +532,13 @@ async function startTurn(
         : [];
 
       await instance.adapter.sendTurn({
-        threadId: bot.threadId,
+        threadId,
         text: turnText,
         model: bot.modelSelection.model,
         // a rewound thread never resumes the abandoned branch's session
         // the active task's own session — another task's cursor would
         // resume the wrong conversation and defeat the context bubble
-        resumeCursor: rewound ? undefined : store.activeTask(bot.id)?.resumeCursors[bot.modelSelection.instanceId],
+        resumeCursor: rewound ? undefined : task.resumeCursors[bot.modelSelection.instanceId],
         transcript,
         system:
           persona +
@@ -544,17 +562,43 @@ async function startTurn(
       if (previewBoxId) startScreenPoller(bot.id, previewBoxId);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      const failure = store.appendMessage(bot.threadId, {
+      const failure = store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
       });
-      broadcast({ kind: "message", threadId: bot.threadId, message: failure });
+      broadcast({ kind: "message", threadId, message: failure });
       store.patchBot(bot.id, { busy: false });
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
+      opts?.onDispatchError?.(message);
     }
   })();
 }
+
+// ── routines: persisted definitions → detached bot tasks ───────────────
+// The scheduler owns timing and receipts; the existing harness remains the
+// only owner of provider sessions, approvals, tools, computers and messages.
+routines = new RoutineManager({
+  emit: broadcast,
+  botState: (botId) => {
+    const bot = store.bot(botId);
+    return !bot ? "missing" : bot.busy ? "busy" : "ready";
+  },
+  createTask: (botId, title) => {
+    const task = store.createTask(botId, title, false);
+    const bot = store.bot(botId);
+    if (task && bot) broadcast({ kind: "bot", bot: publicBot(bot) });
+    return task;
+  },
+  startTurn: (botId, threadId, prompt, onDispatchError) =>
+    startTurn(botId, prompt, { threadId, onDispatchError }),
+  interruptTurn: async (botId, threadId) => {
+    const bot = store.bot(botId);
+    const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
+    await instance?.adapter.interruptTurn(threadId);
+  },
+});
+routines.start();
 
 // ── config hot-reload ─────────────────────────────────────────────────
 // ── group turn engine ──────────────────────────────────────────────────
@@ -886,6 +930,43 @@ const server = createServer(async (req, res) => {
       return json(res, 404, { error: "unknown internal endpoint" });
     }
 
+    // ── routines calendar ────────────────────────────────────────────────
+    if (path === "/api/routines" && method === "GET") {
+      const fromParam = url.searchParams.get("from");
+      const toParam = url.searchParams.get("to");
+      const from = fromParam == null ? undefined : Number(fromParam);
+      const to = toParam == null ? undefined : Number(toParam);
+      return json(res, 200, {
+        routines: routines!.listRoutines(),
+        runs: routines!.listRuns(from != null && Number.isFinite(from) ? from : undefined, to != null && Number.isFinite(to) ? to : undefined),
+      });
+    }
+    if (path === "/api/routines" && method === "POST") {
+      return json(res, 201, { routine: routines!.create(await readBody(req)) });
+    }
+    let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
+    if (routineMatch && method === "POST") {
+      const run = routines!.runNow(routineMatch[1]);
+      return run ? json(res, 201, { run }) : json(res, 404, { error: "no such routine" });
+    }
+    routineMatch = path.match(/^\/api\/routines\/([\w-]+)$/);
+    if (routineMatch && method === "PATCH") {
+      const routine = routines!.update(routineMatch[1], await readBody(req));
+      return routine ? json(res, 200, { routine }) : json(res, 404, { error: "no such routine" });
+    }
+    if (routineMatch && method === "DELETE") {
+      return routines!.remove(routineMatch[1])
+        ? json(res, 200, { ok: true })
+        : json(res, 404, { error: "no such routine" });
+    }
+    const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
+    if (runMatch && method === "POST") {
+      const run = runMatch[2] === "cancel"
+        ? await routines!.cancelRun(runMatch[1])
+        : routines!.markSeen(runMatch[1]);
+      return run ? json(res, 200, { run }) : json(res, 404, { error: "no such active run" });
+    }
+
     // ── events stream ──
     if (method === "GET" && path === "/api/events") {
       res.writeHead(200, {
@@ -910,12 +991,7 @@ const server = createServer(async (req, res) => {
     // ── bots ──
     if (method === "GET" && path === "/api/bots") {
       return json(res, 200, {
-        bots: store.bots.map((b) => ({
-          ...b,
-          messages: store.messagesFor(b.threadId),
-          activeLeafId: store.activeLeaf(b.threadId),
-          tasks: (b.tasks ?? []).map(({ resumeCursors, ...t }) => t),
-        })),
+        bots: store.bots.map(publicBot),
         groups: store.groups.map((g) => ({ ...g, messages: store.messagesFor(g.threadId) })),
       });
     }
@@ -1037,6 +1113,7 @@ const server = createServer(async (req, res) => {
       // a running turn dies with its bot
       await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => {});
       stopScreenPoller(bot.id);
+      routines!.disableForBot(bot.id);
       store.deleteBot(bot.id);
       for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
         try {
@@ -1157,6 +1234,11 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      const routineRun = routines!.activeRunForBot(bot.id);
+      if (routineRun) {
+        await routines!.cancelRun(routineRun.id);
+        return json(res, 200, { ok: true });
+      }
       const instance = registry.get(bot.modelSelection.instanceId);
       await instance?.adapter.interruptTurn(bot.threadId);
       return json(res, 200, { ok: true });
@@ -1203,7 +1285,7 @@ const server = createServer(async (req, res) => {
     }
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
-      if (bot?.busy && bot.threadId === m[2]) {
+      if (bot?.busy && (bot.threadId === m[2] || routines!.isActiveThread(m[2]))) {
         return json(res, 409, { error: "this task is running — stop it first" });
       }
       const updated = store.deleteTask(m[1], m[2]);
@@ -1328,6 +1410,7 @@ server.listen(PORT, "127.0.0.1", () => {
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
+    routines?.stop();
     void registry.disposeAll().finally(() => process.exit(0));
   });
 }

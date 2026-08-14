@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import type { MausColor, MausMotion } from "@/lib/mascot";
+import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -167,6 +168,9 @@ interface AppState {
   config: ConfigStatus | null;
   /** selected chat — a bot id OR a group id */
   selectedId: string;
+  activeView: "chat" | "routines";
+  routines: Routine[];
+  routineRuns: RoutineRun[];
   settingsOpen: boolean;
   pluginsOpen: boolean;
   computerOpen: boolean;
@@ -186,6 +190,17 @@ interface AppState {
 
 type Action =
   | { type: "hydrate"; bots: Bot[]; groups: Group[] }
+  | { type: "showRoutines" }
+  | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
+  | { type: "routinePatched"; routine: Routine }
+  | { type: "routineDeleted"; routineId: string }
+  | { type: "routineRunPatched"; run: RoutineRun }
+  | { type: "createRoutine"; input: RoutineInput }
+  | { type: "updateRoutine"; routineId: string; patch: Partial<RoutineInput> }
+  | { type: "deleteRoutine"; routineId: string }
+  | { type: "runRoutine"; routineId: string }
+  | { type: "cancelRoutineRun"; runId: string }
+  | { type: "markRoutineRunSeen"; runId: string }
   | { type: "groupPatched"; group: Partial<Group> & { id: string } }
   | { type: "groupDeleted"; groupId: string }
   | { type: "createGroup"; memberIds: string[]; name?: string }
@@ -283,6 +298,35 @@ function reducer(state: AppState, action: Action): AppState {
         state.selectedId && known(state.selectedId) ? state.selectedId : (action.bots[0]?.id ?? "");
       return { ...state, bots: action.bots, groups: action.groups, selectedId };
     }
+    case "showRoutines":
+      return {
+        ...state,
+        activeView: "routines",
+        settingsOpen: false,
+        computerOpen: false,
+        appSettingsOpen: false,
+        pluginsOpen: false,
+      };
+    case "routinesHydrated":
+      return { ...state, routines: action.routines, routineRuns: action.runs };
+    case "routinePatched": {
+      const exists = state.routines.some((routine) => routine.id === action.routine.id);
+      return {
+        ...state,
+        routines: exists
+          ? state.routines.map((routine) => (routine.id === action.routine.id ? action.routine : routine))
+          : [action.routine, ...state.routines],
+      };
+    }
+    case "routineDeleted":
+      return { ...state, routines: state.routines.filter((routine) => routine.id !== action.routineId) };
+    case "routineRunPatched": {
+      const exists = state.routineRuns.some((run) => run.id === action.run.id);
+      const runs = exists
+        ? state.routineRuns.map((run) => (run.id === action.run.id ? action.run : run))
+        : [action.run, ...state.routineRuns];
+      return { ...state, routineRuns: runs.sort((a, b) => b.scheduledFor - a.scheduledFor) };
+    }
     case "groupPatched": {
       const exists = state.groups.some((g) => g.id === action.group.id);
       const groups = exists
@@ -303,12 +347,13 @@ function reducer(state: AppState, action: Action): AppState {
       if (state.groups.some((g) => g.id === action.id)) {
         return {
           ...state,
+          activeView: "chat",
           selectedId: action.id,
           groups: state.groups.map((g) => (g.id === action.id ? { ...g, unread: false } : g)),
         };
       }
       return updateBot(
-        withMascotMotion({ ...state, selectedId: action.id }, action.id, "switch"),
+        withMascotMotion({ ...state, activeView: "chat", selectedId: action.id }, action.id, "switch"),
         action.id,
         (b) => ({ ...b, unread: false }),
       );
@@ -328,6 +373,7 @@ function reducer(state: AppState, action: Action): AppState {
       return withMascotMotion({
         ...state,
         bots: [action.bot, ...state.bots],
+        activeView: "chat",
         selectedId: action.bot.id,
       }, action.bot.id, "arrive");
     case "deleteBot": {
@@ -549,6 +595,12 @@ function reducer(state: AppState, action: Action): AppState {
     case "sendGroup":
     case "deleteGroup":
     case "interruptGroup":
+    case "createRoutine":
+    case "updateRoutine":
+    case "deleteRoutine":
+    case "runRoutine":
+    case "cancelRoutineRun":
+    case "markRoutineRunSeen":
       return state;
   }
 }
@@ -562,6 +614,9 @@ const initialState: AppState = {
   instances: [],
   config: null,
   selectedId: "",
+  activeView: "chat",
+  routines: [],
+  routineRuns: [],
   settingsOpen: false,
   pluginsOpen: false,
   computerOpen: false,
@@ -672,6 +727,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const wrapped: React.Dispatch<Action> = (action) => {
       rawDispatch(action);
       switch (action.type) {
+        case "createRoutine":
+          api("/api/routines", { method: "POST", body: JSON.stringify(action.input) }).catch(showError);
+          break;
+        case "updateRoutine":
+          api(`/api/routines/${action.routineId}`, {
+            method: "PATCH",
+            body: JSON.stringify(action.patch),
+          }).catch(showError);
+          break;
+        case "deleteRoutine":
+          api(`/api/routines/${action.routineId}`, { method: "DELETE" }).catch(showError);
+          break;
+        case "runRoutine":
+          api(`/api/routines/${action.routineId}/run`, { method: "POST" }).catch(showError);
+          break;
+        case "cancelRoutineRun":
+          api(`/api/routine-runs/${action.runId}/cancel`, { method: "POST" }).catch(showError);
+          break;
+        case "markRoutineRunSeen":
+          api(`/api/routine-runs/${action.runId}/seen`, { method: "POST" }).catch(showError);
+          break;
         case "send":
           api(`/api/bots/${action.botId}/messages`, {
             method: "POST",
@@ -901,6 +977,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       api("/api/config")
         .then((config) => alive && rawDispatch({ type: "configStatus", config }))
         .catch(() => {});
+      api("/api/routines")
+        .then(({ routines, runs }) => alive && rawDispatch({ type: "routinesHydrated", routines, runs }))
+        .catch(() => {});
     };
     loadAll();
 
@@ -961,6 +1040,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "group.deleted":
           rawDispatch({ type: "groupDeleted", groupId: frame.groupId });
+          break;
+        case "routine":
+          rawDispatch({ type: "routinePatched", routine: frame.routine });
+          break;
+        case "routine.deleted":
+          rawDispatch({ type: "routineDeleted", routineId: frame.routineId });
+          break;
+        case "routine.run":
+          rawDispatch({ type: "routineRunPatched", run: frame.run });
           break;
         case "runtime": {
           const event = frame.event;
