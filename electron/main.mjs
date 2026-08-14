@@ -1,9 +1,10 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
 import { startSpeech, stopSpeech } from "./speech.mjs";
+import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import capabilitiesModule from "./capabilities.cjs";
 
@@ -220,6 +221,15 @@ ipcMain.handle("screen:frame", async () => {
 // (screen:frame above / getDisplayMedia via the handler below) — macOS
 // prompts then, attributed correctly, at the moment of actual use. The
 // perm:open-settings deep link stays as the repair path for denials.
+// Copy the engine command, then open a blank terminal. Renderer-controlled
+// text must never become a process argument: the user reviews and pastes it.
+// Returns false when the renderer should show the clipboard fallback.
+ipcMain.handle("engine:open-terminal", async (_event, command) => {
+  if (typeof command !== "string" || !command.trim()) return false;
+  clipboard.writeText(command);
+  return openBlankTerminal();
+});
+
 ipcMain.handle("perm:status", () => ({
   mic:
     process.platform === "darwin"

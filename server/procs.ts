@@ -49,6 +49,24 @@ export function execCli(
   );
 }
 
+/** Human wording for a failed CLI spawn.
+ *
+ * Node reports these as bare errno strings — "spawn grok ENOENT" — which
+ * reads as a crash. On a CLI spawn the common codes mean exactly one thing
+ * each, and both are setup problems the user can fix, so say which. The
+ * `setup` flag lets the UI offer "Install" instead of a "Retry" that is
+ * guaranteed to fail the same way. */
+export function describeSpawnFailure(
+  err: NodeJS.ErrnoException,
+  cli: string,
+): { message: string; setup: boolean } {
+  if (err.code === "ENOENT")
+    return { message: `\`${cli}\` isn't installed, or isn't on this app's PATH`, setup: true };
+  if (err.code === "EACCES" || err.code === "EPERM")
+    return { message: `\`${cli}\` isn't executable — check its file permissions`, setup: true };
+  return { message: `spawn failed: ${err.message}`, setup: false };
+}
+
 /** Stop a CLI and every process it spawned (MCP proxies included). */
 export function killCliTree(child: ChildProcess): void {
   const pid = child.pid;

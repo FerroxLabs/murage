@@ -4,6 +4,7 @@
 // pure; everything async lives in the wrapped dispatch + SSE fold.
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -43,7 +44,8 @@ export interface Message {
   card?: OptionCardData;
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
-  tool?: { name: string; ok?: boolean; spoken?: string };
+  /** `setup` marks an error fixed by installing something, not by retrying. */
+  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
@@ -158,6 +160,16 @@ export interface ConfigStatus {
   profile?: { name: string; email: string };
 }
 
+/** How an engine gets installed — declared by its driver, mirrors
+ * EngineInstall in server/contracts.ts. Absent for engines that need no
+ * local binary. `command` omits platforms that have no one-liner. */
+export interface EngineInstall {
+  command?: Partial<Record<"darwin" | "win32" | "linux", string>>;
+  docsUrl?: string;
+  signInCommand?: string;
+  needsNode?: boolean;
+}
+
 /** One row of GET /api/instances — the model picker's data. */
 export interface InstanceInfo {
   instanceId: string;
@@ -170,6 +182,7 @@ export interface InstanceInfo {
     version?: string | null;
   };
   models: { default: string; options: Array<{ id: string; label: string }> };
+  install?: EngineInstall;
 }
 
 interface AppState {
@@ -681,6 +694,8 @@ export function useStreaming() {
 const StoreContext = createContext<{
   state: AppState;
   dispatch: React.Dispatch<Action>;
+  /** Re-fetch engine availability — after an install, without a restart. */
+  refreshInstances: () => Promise<void>;
 } | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -1146,7 +1161,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const value = useMemo(() => ({ state, dispatch }), [state, dispatch]);
+  // Re-probe the engines on demand. A CLI installed while the app is running
+  // is invisible until something asks again — the setup screens expose this
+  // as "Check again" so the user isn't told to restart when a refresh will do.
+  const refreshInstances = useCallback(async () => {
+    try {
+      const { instances } = await api("/api/instances");
+      rawDispatch({ type: "instances", instances });
+    } catch {
+      /* offline or server down — the existing list stays */
+    }
+  }, []);
+
+  // Installing a CLI or signing one in happens in a terminal, outside this
+  // window — so the moment the user comes back is exactly when our engine
+  // snapshot is most likely stale. Re-probe on focus, throttled so that
+  // ordinary alt-tabbing doesn't spawn a `--version` call per switch.
+  const lastFocusProbe = useRef(0);
+  useEffect(() => {
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - lastFocusProbe.current < 3000) return;
+      lastFocusProbe.current = now;
+      void refreshInstances();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshInstances]);
+
+  const value = useMemo(() => ({ state, dispatch, refreshInstances }), [state, dispatch, refreshInstances]);
   return (
     <StoreContext.Provider value={value}>
       <StreamContext.Provider value={stream}>{children}</StreamContext.Provider>

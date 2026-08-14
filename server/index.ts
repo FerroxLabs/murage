@@ -12,6 +12,7 @@ import * as box from "./box.ts";
 import * as composio from "./composio.ts";
 import { containerComputerStatus, setupCommands } from "./container-computer.ts";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
+import { resetPathCache } from "./env-path.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -110,10 +111,15 @@ function askBotAndWait(targetBotId: string, message: string, depth: number): Pro
 async function defaultSelection() {
   const described = await registry.describe();
   const available = described.filter((d) => d.snapshot.state === "available");
-  const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0] ?? described[0];
-  return { instanceId: pick?.instanceId ?? "claude", model: pick?.models.default || "claude-sonnet-5" };
+  // Deliberately NO fallback to described[0]. Handing a bot an engine whose
+  // CLI isn't installed makes it look ready and then fail on send with a raw
+  // spawn ENOENT — the single worst first-run experience, and the one every
+  // user with no CLIs used to get. An empty selection is honest: the UI shows
+  // the setup path instead of a bot that cannot answer.
+  const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0];
+  return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
-let bootSelection = { instanceId: "claude", model: "claude-sonnet-5" };
+let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
@@ -300,7 +306,11 @@ bus.subscribe((event: RuntimeEvent) => {
       break;
     }
     case "runtime.error":
-      pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
+      pushMessage({
+        role: "bot",
+        kind: "activity",
+        tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup },
+      });
       break;
     case "turn.completed": {
       if (bot) {
@@ -1345,6 +1355,11 @@ const server = createServer(async (req, res) => {
 
     // ── provider instances (model picker) ──
     if (method === "GET" && path === "/api/instances") {
+      // Rescan PATH first: this endpoint is how the app answers "what can I
+      // run?", and the interesting case is a CLI installed since launch.
+      // Windows never pushes PATH changes into a live process, so without
+      // this the answer is frozen at boot and "check again" is a no-op.
+      resetPathCache();
       return json(res, 200, { instances: await registry.describe() });
     }
 
