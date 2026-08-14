@@ -18,6 +18,8 @@ import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { mentionedBots, Store, type Message } from "./store.ts";
+import * as tts from "./tts/index.ts";
+import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { readCuaConnection } from "./local-computer.ts";
 import { RoutineManager, type RoutineRunOn } from "./routines.ts";
 
@@ -178,9 +180,12 @@ bus.subscribe((event: RuntimeEvent) => {
         const messageId = toolMessageByItem.get(itemKey);
         let toolName = "tool";
         if (messageId) {
-          toolName = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool";
+          // the whole tool object is replaced, so carry `spoken` across —
+          // dropping it here would silently un-narrate every completed tool
+          const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool;
+          toolName = existing?.name ?? "tool";
           const patched = store.patchMessage(event.threadId, messageId, {
-            tool: { name: toolName, ok: event.ok },
+            tool: { name: toolName, ok: event.ok, spoken: existing?.spoken },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
           toolMessageByItem.delete(itemKey);
@@ -199,7 +204,15 @@ bus.subscribe((event: RuntimeEvent) => {
         // ask_bot's raw tool chip is redundant — the internal endpoint
         // appends a richer "Messaged @X" chip linking to the channel
         if (event.title?.endsWith("__ask_bot")) break;
-        const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
+        const name = event.title ?? "tool";
+        // narration is folded in here, once, so call mode can read the
+        // chip aloud without re-deriving it — and so the phrase a user
+        // hears and the chip they see can never drift apart
+        const message = pushMessage({
+          role: "bot",
+          kind: "activity",
+          tool: { name, spoken: narrateTool(name) ?? undefined },
+        });
         if (event.itemId) toolMessageByItem.set(`${event.threadId}:${event.itemId}`, message.id);
       }
       break;
@@ -248,7 +261,7 @@ bus.subscribe((event: RuntimeEvent) => {
                 held: "Auto mode couldn't answer this one.",
               },
             });
-            askMessageByRequest.set(requestId, card.id);
+            askMessageByRequest.set(`${event.threadId}:${requestId}`, card.id);
           }
         })();
         break;
@@ -776,6 +789,9 @@ function configStatus() {
     xai: { configured: Boolean(cfg.xai?.key) },
     composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
     box: { configured: Boolean(cfg.box?.token) },
+    // the chosen voice is a setting, not a secret; the key is reported the
+    // same configured-or-not way as every other credential
+    tts: tts.describeVoice(cfg),
     // not a secret — the sidebar shows it
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
   };
@@ -1103,7 +1119,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "PATCH") {
       const body = await readBody(req);
       const patch: Record<string, unknown> = {};
-      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden"] as const) {
+      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "speakReplies", "voice"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       // the two permission fields decide what runs unattended, so they are
@@ -1339,7 +1355,7 @@ const server = createServer(async (req, res) => {
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
       const patch: Record<string, object> = {};
-      for (const key of ["xai", "composio", "box", "profile"] as const) {
+      for (const key of ["xai", "composio", "box", "tts", "profile"] as const) {
         if (body[key] && typeof body[key] === "object") patch[key] = body[key];
       }
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
@@ -1351,14 +1367,66 @@ const server = createServer(async (req, res) => {
         const check = await box.verifyToken(newBoxToken.trim());
         if (!check.ok) return json(res, 400, { error: check.message });
       }
+      // same rule for a voice key — and check it against the provider the
+      // patch SELECTS, not the one already saved, or pasting a Cartesia key
+      // while switching from ElevenLabs validates against the wrong service
+      const newTts = patch.tts as { key?: unknown } | undefined;
+      if (typeof newTts?.key === "string" && newTts.key.trim()) {
+        const check = await tts.verifyKey(newTts.key.trim());
+        if (!check.ok) return json(res, 400, { error: check.message });
+      }
       saveConfig(patch);
       Object.assign(cfg, loadConfig());
-      // provider keys change the fleet; a profile edit must not kill
-      // in-flight turns with a pointless reload
-      if (Object.keys(patch).some((k) => k !== "profile")) await reloadProviders();
+      // provider keys change the fleet; a profile or voice edit must not
+      // kill in-flight turns with a pointless reload — no driver reads
+      // either, and picking a voice mid-turn should be free
+      if (Object.keys(patch).some((k) => k !== "profile" && k !== "tts")) await reloadProviders();
       const status = configStatus();
       broadcast({ kind: "config", ...status });
       return json(res, 200, status);
+    }
+
+    // ── voice ─────────────────────────────────────────────────────────
+    // Splitting text into utterances lives HERE, not in the renderer, for
+    // the same reason approvalKey does — it is the piece most likely to be
+    // tuned against real transcripts, and it belongs next to the transform
+    // that produced it.
+    if (method === "POST" && path === "/api/tts/prepare") {
+      const body = await readBody(req);
+      return json(res, 200, {
+        ready: tts.voiceReady(cfg, typeof body.voiceId === "string" ? body.voiceId : undefined),
+        utterances: toUtterances(String(body.text ?? "")),
+      });
+    }
+    if (method === "GET" && path === "/api/tts/voices") {
+      try {
+        return json(res, 200, { voices: await tts.listVoices(cfg) });
+      } catch (e) {
+        return json(res, 200, { voices: [], error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (method === "POST" && path === "/api/tts/speak") {
+      const body = await readBody(req);
+      const text = String(body.text ?? "").trim();
+      if (!text) return json(res, 400, { error: "text required" });
+      // The normal client sends <=320-character utterances. A hard ceiling
+      // prevents an arbitrary local request from turning the user's hosted
+      // voice account into an unbounded, billable synthesis job.
+      if (text.length > 500) return json(res, 413, { error: "voice utterances are limited to 500 characters" });
+      try {
+        const audio = await tts.speak(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined);
+        res.writeHead(200, {
+          "content-type": audio.mime,
+          "content-length": String(audio.bytes.byteLength),
+          "cache-control": "no-store",
+        });
+        return res.end(Buffer.from(audio.bytes));
+      } catch (e) {
+        // "you haven't set this up yet" is not a provider failure — 409 so
+        // the client can point at App Settings instead of showing a 502
+        if (e instanceof tts.NoVoiceConfigured) return json(res, 409, { error: e.message });
+        return json(res, 502, { error: e instanceof Error ? e.message : String(e) });
+      }
     }
 
     // ── connectors (Composio) ──

@@ -33,7 +33,9 @@ declare global {
       platform: NodeJS.Platform;
       getCapabilities(): Promise<DesktopCapabilities>;
       screenFrame(): Promise<string | null>;
-      speechStart(): Promise<void>;
+      /** Start native dictation. Call mode supplies endpointMs so silence
+       * finalizes a turn; composer dictation omits it and remains manual. */
+      speechStart(options?: { endpointMs?: number }): Promise<void>;
       speechStop(): Promise<void>;
       onSpeechTranscript(
         cb: (line: { partial?: boolean; text?: string; error?: string }) => void,

@@ -52,8 +52,11 @@ export interface Message {
   kind: "text" | "options" | "activity" | "screen";
   text?: string;
   card?: OptionCardData;
-  /** activity messages: tool name + outcome */
-  tool?: { name: string; ok?: boolean };
+  /** activity messages: tool name + outcome. `spoken` is the same chip as
+   * a phrase a voice can read ("reading a file") — computed once here so
+   * call mode never has to re-derive it from the raw tool name, and absent
+   * for chips not worth interrupting the ear for. */
+  tool?: { name: string; ok?: boolean; spoken?: string };
   /** screen messages: a frame of the bot's computer (base64 image) */
   png?: string;
   mime?: string;
@@ -139,6 +142,13 @@ export interface BotRecord {
   /** Tools this bot may always use without asking, even outside auto mode
    * (set by "Always allow" on an approval card). */
   alwaysAllow?: string[];
+  /** Speak this bot's replies aloud as they settle, without being asked.
+   * Off by default: a hosted voice costs money per character, so speaking
+   * is something you turn on, never something that happens to you. */
+  speakReplies?: boolean;
+  /** This bot's own voice id, so a room of bots doesn't sound like one
+   * person. Falls back to the app-wide voice in config. */
+  voice?: string;
   /** true after an edit/branch-switch rewound the visible conversation:
    * provider sessions still hold the abandoned branch, so the next turn
    * must start fresh (drop cursors) and replay the surviving path. */

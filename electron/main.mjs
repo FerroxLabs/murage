@@ -250,14 +250,14 @@ ipcMain.handle("perm:open-settings", (_event, pane) => {
   return shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${anchor}`);
 });
 
-ipcMain.handle("speech:start", (event) => {
+ipcMain.handle("speech:start", (event, options) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return;
   if (process.platform !== "darwin") {
     win.webContents.send("speech:end", { code: 2, reason: "unsupported-platform" });
     return;
   }
-  startSpeech(win);
+  startSpeech(win, options);
 });
 ipcMain.handle("speech:stop", () => {
   if (process.platform === "darwin") stopSpeech();

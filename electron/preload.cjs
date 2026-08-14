@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld("ogb", {
   getCapabilities: () => ipcRenderer.invoke("desktop:capabilities"),
   /** One frame of this computer's screen as a data: URL when supported. */
   screenFrame: () => ipcRenderer.invoke("screen:frame"),
-  speechStart: () => ipcRenderer.invoke("speech:start"),
+  speechStart: (options) => ipcRenderer.invoke("speech:start", options),
   speechStop: () => ipcRenderer.invoke("speech:stop"),
   onSpeechTranscript: (cb) => {
     const handler = (_event, line) => cb(line);

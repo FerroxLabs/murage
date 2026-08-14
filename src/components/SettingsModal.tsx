@@ -3,19 +3,21 @@
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { KeyRound, Monitor, User, X } from "lucide-react";
+import { KeyRound, Monitor, User, Volume2, X } from "lucide-react";
 import { useStore } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
 import { LocalComputerSection } from "./LocalComputerSection";
 import { Card } from "./SettingsPrimitives";
+import { VoiceSettings } from "./VoiceSettings";
 import { cn } from "@/lib/cn";
 
-type SectionId = "general" | "connections" | "computer";
+type SectionId = "general" | "connections" | "voice" | "computer";
 
 const SECTIONS: Array<{ id: SectionId; label: string; icon: typeof User }> = [
   { id: "general", label: "General", icon: User },
   { id: "connections", label: "Connections", icon: KeyRound },
+  { id: "voice", label: "Voice", icon: Volume2 },
   { id: "computer", label: "Local computer", icon: Monitor },
 ];
 
@@ -212,6 +214,8 @@ export function SettingsModal() {
                 </div>
               </Card>
             )}
+
+            {section === "voice" && <VoiceSettings />}
 
             {section === "computer" && <LocalComputerSection />}
           </div>

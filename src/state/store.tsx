@@ -14,6 +14,8 @@ import {
 } from "react";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
+import { currentCall } from "@/lib/call";
+import { speaker } from "@/lib/tts";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -39,8 +41,9 @@ export interface Message {
   kind: "text" | "options" | "activity" | "screen";
   text?: string;
   card?: OptionCardData;
-  /** activity messages: tool name + outcome */
-  tool?: { name: string; ok?: boolean };
+  /** activity messages: tool name + outcome. `spoken` is the server's
+   * narration of the same chip ("reading a file"), used by call mode. */
+  tool?: { name: string; ok?: boolean; spoken?: string };
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
@@ -104,6 +107,10 @@ export interface Bot {
   autoApprove?: boolean;
   /** tools this bot may always use without asking */
   alwaysAllow?: string[];
+  /** speak this bot's replies aloud as they settle */
+  speakReplies?: boolean;
+  /** this bot's own voice id (falls back to the app-wide one) */
+  voice?: string;
   pinned?: boolean;
   hidden?: boolean;
   messages: Message[];
@@ -143,6 +150,10 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
+  /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
+   * a voice, which is what it takes to actually speak. The key itself is
+   * never echoed back. */
+  tts?: { configured: boolean; ready: boolean; voice: string };
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
 }
@@ -257,7 +268,18 @@ type Action =
       patch: Partial<
         Pick<
           Bot,
-          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden"
+          | "name"
+          | "title"
+          | "description"
+          | "notifications"
+          | "computer"
+          | "color"
+          | "mascotExpression"
+          | "autoApprove"
+          | "speakReplies"
+          | "voice"
+          | "pinned"
+          | "hidden"
         >
       >;
     };
@@ -997,11 +1019,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return;
       }
       switch (frame.kind) {
-        case "message":
+        case "message": {
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
           // a settled assistant bubble replaces the in-flight stream
-          if (frame.message?.role === "bot" && frame.message?.kind === "text") clearStream(frame.threadId);
+          if (frame.message?.role === "bot" && frame.message?.kind === "text") {
+            clearStream(frame.threadId);
+            // Auto-speak lives HERE rather than in the chat view so a bot
+            // you switched away from still reads its answer out — which is
+            // the whole point of listening while you do something else. A
+            // bot on a call is excluded: call mode speaks in its own order,
+            // around its own microphone, and the two would fight.
+            const owner = stateRef.current.bots.find((b) => b.threadId === frame.threadId);
+            if (owner?.speakReplies && currentCall() !== owner.id && frame.message.text?.trim()) {
+              void speaker.speak(frame.message.text, {
+                botId: owner.id,
+                messageId: frame.message.id,
+                voiceId: owner.voice,
+              });
+            }
+          }
           break;
+        }
         case "message.patch":
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message });
           break;
@@ -1088,7 +1126,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "config":
           rawDispatch({
             type: "configStatus",
-            config: { xai: frame.xai, composio: frame.composio, box: frame.box, profile: frame.profile },
+            config: {
+              xai: frame.xai,
+              composio: frame.composio,
+              box: frame.box,
+              tts: frame.tts,
+              profile: frame.profile,
+            },
           });
           api("/api/instances")
             .then(({ instances }) => rawDispatch({ type: "instances", instances }))
