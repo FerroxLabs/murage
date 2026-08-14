@@ -2,9 +2,10 @@
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { readFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
+import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
@@ -166,9 +167,10 @@ const COLORS: MausColor[] = [
 ];
 
 /** Resolve @mentions in a message against a bot roster: `@` must start a
- * word, names match case-insensitively, longest name wins (so "@New Bot 2"
- * never half-matches "New Bot"), hidden bots skipped, results deduped.
- * Callers pre-filter the sender out of `peers`. */
+ * word, the name must end on a word boundary (so "@New Bottle" never matches
+ * "New Bot"), names match case-insensitively, longest name wins (so
+ * "@New Bot 2" never half-matches "New Bot"), hidden bots skipped, results
+ * deduped. Callers pre-filter the sender out of `peers`. */
 export function mentionedBots<T extends { name: string; hidden?: boolean }>(text: string, peers: T[]): T[] {
   const candidates = peers
     .filter((p) => !p.hidden && p.name.trim())
@@ -179,7 +181,12 @@ export function mentionedBots<T extends { name: string; hidden?: boolean }>(text
   while ((at = lower.indexOf("@", at + 1)) !== -1) {
     if (at > 0 && !/\s/.test(text[at - 1])) continue; // user@host, not a tag
     const rest = lower.slice(at + 1);
-    const hit = candidates.find((p) => rest.startsWith(p.name.toLowerCase()));
+    const hit = candidates.find((p) => {
+      const name = p.name.toLowerCase();
+      if (!rest.startsWith(name)) return false;
+      const after = rest[name.length]; // must not run into a longer word
+      return after === undefined || !/[a-z0-9]/i.test(after);
+    });
     if (hit && !found.includes(hit)) found.push(hit);
   }
   return found;
@@ -236,11 +243,11 @@ export class Store {
   }
 
   private saveBots() {
-    writeFileSync(BOTS_FILE, JSON.stringify(this.bots, null, 2));
+    writeFileAtomic(BOTS_FILE, JSON.stringify(this.bots, null, 2));
   }
 
   private saveGroups() {
-    writeFileSync(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId, ...g }) => g), null, 2));
+    writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId, ...g }) => g), null, 2));
   }
 
   // ── groups ────────────────────────────────────────────────────────────
@@ -335,7 +342,7 @@ export class Store {
 
   private saveThread(threadId: string) {
     const t = this.thread(threadId);
-    writeFileSync(
+    writeFileAtomic(
       messagesFile(threadId),
       JSON.stringify({ activeLeafId: t.activeLeafId, messages: t.messages }, null, 2),
     );

@@ -130,8 +130,11 @@ function broadcast(payload: unknown) {
 // ── server-side event folding (upstream's ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript
 // and every client view are projections of it.
-const toolMessageByItem = new Map<string, string>(); // itemId -> messageId
-const askMessageByRequest = new Map<string, string>(); // requestId -> messageId
+// keyed by `${threadId}:${itemId}` / `${threadId}:${requestId}` — provider
+// item/request ids are only unique within a thread, so two bots acting at
+// once can collide on a bare id and patch each other's messages.
+const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
+const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
 
 // Group threads: the fold needs to know WHO is talking — the turn engine
 // records the active member here before dispatching its turn.
@@ -161,7 +164,8 @@ bus.subscribe((event: RuntimeEvent) => {
       if (event.itemType === "assistant_text") {
         pushMessage({ role: "bot", kind: "text", text: event.text });
       } else if (event.itemType === "tool" && event.itemId) {
-        const messageId = toolMessageByItem.get(event.itemId);
+        const itemKey = `${event.threadId}:${event.itemId}`;
+        const messageId = toolMessageByItem.get(itemKey);
         let toolName = "tool";
         if (messageId) {
           toolName = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool";
@@ -169,7 +173,7 @@ bus.subscribe((event: RuntimeEvent) => {
             tool: { name: toolName, ok: event.ok },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
-          toolMessageByItem.delete(event.itemId);
+          toolMessageByItem.delete(itemKey);
         }
         // the bot just acted ON ITS SCREEN — refresh the preview now. Only
         // computer tools can change the screen, and each capture competes
@@ -186,7 +190,7 @@ bus.subscribe((event: RuntimeEvent) => {
         // appends a richer "Messaged @X" chip linking to the channel
         if (event.title?.endsWith("__ask_bot")) break;
         const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
-        if (event.itemId) toolMessageByItem.set(event.itemId, message.id);
+        if (event.itemId) toolMessageByItem.set(`${event.threadId}:${event.itemId}`, message.id);
       }
       break;
     case "request.opened": {
@@ -253,11 +257,11 @@ bus.subscribe((event: RuntimeEvent) => {
           held: permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
         },
       });
-      if (event.requestId) askMessageByRequest.set(event.requestId, message.id);
+      if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
       break;
     }
     case "request.resolved": {
-      const messageId = event.requestId ? askMessageByRequest.get(event.requestId) : null;
+      const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
       if (messageId) {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
         if (existing?.card && !existing.card.answered) {
@@ -266,7 +270,7 @@ bus.subscribe((event: RuntimeEvent) => {
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
         }
-        if (event.requestId) askMessageByRequest.delete(event.requestId);
+        if (event.requestId) askMessageByRequest.delete(`${event.threadId}:${event.requestId}`);
       }
       break;
     }
@@ -748,18 +752,37 @@ function json(res: ServerResponse, status: number, body: unknown) {
 function readBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = "";
+    let bytes = 0;
+    let done = false;
+    const fail = (status: number, msg: string) => {
+      if (done) return;
+      done = true;
+      const err = Object.assign(new Error(msg), { status });
+      reject(err);
+    };
     req.on("data", (c) => {
+      if (done) return;
+      bytes += typeof c === "string" ? Buffer.byteLength(c) : c.length;
+      if (bytes > 1_000_000) {
+        // Keep draining the socket, but stop retaining attacker-controlled
+        // bytes. Destroying the request here prevents the caller from
+        // receiving the useful 413 response.
+        return fail(413, "body too large");
+      }
       data += c;
-      if (data.length > 1_000_000) reject(new Error("body too large"));
     });
     req.on("end", () => {
+      if (done) return;
+      let body: any;
       try {
-        resolve(data ? JSON.parse(data) : {});
+        body = data ? JSON.parse(data) : {};
       } catch {
-        reject(new Error("invalid JSON body"));
+        return fail(400, "invalid JSON body");
       }
+      done = true;
+      resolve(body);
     });
-    req.on("error", reject);
+    req.on("error", (e) => fail(400, e instanceof Error ? e.message : String(e)));
   });
 }
 

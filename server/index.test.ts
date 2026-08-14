@@ -124,6 +124,26 @@ describe("harness HTTP API", () => {
     expect(unknownApi.body.error).toContain("/api/not-a-real-route");
   });
 
+  it("rejects malformed and oversized JSON bodies without hanging", async () => {
+    const malformed = await fetch(`${BASE}/api/config`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: "invalid JSON body" });
+
+    const oversized = await fetch(`${BASE}/api/config`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profile: { name: "x".repeat(1_000_001) } }),
+    });
+    expect(oversized.status).toBe(413);
+    expect(await oversized.json()).toEqual({ error: "body too large" });
+
+    expect((await fetch(`${BASE}/api/health`)).status).toBe(200);
+  });
+
   it("seeds one starter bot with its greeting", async () => {
     const { status, body } = await api("GET", "/api/bots");
     expect(status).toBe(200);
