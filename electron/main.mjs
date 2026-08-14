@@ -257,10 +257,7 @@ ipcMain.handle("speech:start", (event, options) => {
     win.webContents.send("speech:end", { code: 2, reason: "unsupported-platform" });
     return;
   }
-  // options.endpointMs asks the helper to finish the utterance after a
-  // pause — call mode's turn-taking. The composer passes nothing and keeps
-  // listening until the user stops it.
-  startSpeech(win, options ?? {});
+  startSpeech(win, options);
 });
 ipcMain.handle("speech:stop", () => {
   if (process.platform === "darwin") stopSpeech();

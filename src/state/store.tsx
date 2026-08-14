@@ -253,7 +253,18 @@ type Action =
       patch: Partial<
         Pick<
           Bot,
-          "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression" | "pinned" | "hidden"
+          | "name"
+          | "title"
+          | "description"
+          | "notifications"
+          | "computer"
+          | "color"
+          | "mascotExpression"
+          | "autoApprove"
+          | "speakReplies"
+          | "voice"
+          | "pinned"
+          | "hidden"
         >
       >;
     };
@@ -1027,7 +1038,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "config":
           rawDispatch({
             type: "configStatus",
-            config: { xai: frame.xai, composio: frame.composio, box: frame.box, profile: frame.profile },
+            config: {
+              xai: frame.xai,
+              composio: frame.composio,
+              box: frame.box,
+              tts: frame.tts,
+              profile: frame.profile,
+            },
           });
           api("/api/instances")
             .then(({ instances }) => rawDispatch({ type: "instances", instances }))

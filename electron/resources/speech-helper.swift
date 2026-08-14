@@ -5,16 +5,11 @@
 // Runs until the final result or SIGTERM. Spawned by electron/speech.mjs
 // from the MAIN process so mic + speech TCC prompts attribute to the app.
 //
-// `--endpoint-ms N` turns on silence endpointing: after N milliseconds with
-// no new words, the utterance is ended and a final result is delivered.
-// Without the flag the helper behaves exactly as before — it listens until
-// it is stopped — because the composer's press-to-dictate depends on that.
-//
-// This is not optional cleverness. SFSpeechRecognizer does NOT finalize on
-// silence when it is fed from an audio buffer: `isFinal` arrives when the
-// audio stream ENDS, and the stream only ends when something calls
-// endAudio(). Anything that wants turn-taking has to detect the pause
-// itself, which is what Endpointer below does.
+// `--endpoint-ms N` ends the audio stream after N milliseconds without a
+// transcript change. SFSpeechRecognizer does not finalize a buffer-backed
+// request on silence by itself; it only produces `isFinal` after endAudio().
+// Composer dictation omits this flag and keeps its existing press-to-stop
+// behavior, while call mode opts into silence endpointing.
 import AVFoundation
 import Foundation
 import Speech
@@ -33,60 +28,60 @@ func fail(_ message: String) -> Never {
   exit(1)
 }
 
-/// Ends the utterance once the words stop changing — the endpointing the
-/// recognizer does not do for a buffer request.
-final class Endpointer {
+let endpointMs: Int = {
+  let args = CommandLine.arguments
+  guard
+    let index = args.firstIndex(of: "--endpoint-ms"),
+    index + 1 < args.count,
+    let value = Int(args[index + 1])
+  else { return 0 }
+  return min(5_000, max(250, value))
+}()
+
+/// SFSpeechRecognizer can keep revising/re-emitting a partial transcript
+/// after the user stops talking. Only a changed transcript resets the timer.
+final class SilenceEndpointer {
   private let queue = DispatchQueue(label: "com.openmausbot.speech.endpoint")
-  private let request: SFSpeechAudioBufferRecognitionRequest
   private let gap: TimeInterval
+  private let finish: () -> Void
   private var timer: DispatchSourceTimer?
   private var lastText = ""
-  private var lastChange = Date()
-  private var ended = false
+  private var lastChange = DispatchTime.now()
+  private var finished = false
 
-  init(request: SFSpeechAudioBufferRecognitionRequest, gapMs: Int) {
-    self.request = request
-    self.gap = Double(gapMs) / 1000
+  init(gapMs: Int, finish: @escaping () -> Void) {
+    gap = Double(gapMs) / 1_000
+    self.finish = finish
   }
 
   func start() {
-    let t = DispatchSource.makeTimerSource(queue: queue)
-    t.schedule(deadline: .now() + .milliseconds(150), repeating: .milliseconds(150))
-    t.setEventHandler { [weak self] in self?.tick() }
-    timer = t
-    t.resume()
+    let source = DispatchSource.makeTimerSource(queue: queue)
+    source.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
+    source.setEventHandler { [weak self] in self?.tick() }
+    timer = source
+    source.resume()
   }
 
-  /// Called with every partial. Only a CHANGE counts as speech — the
-  /// recognizer keeps re-emitting the same string while you are silent.
   func saw(_ text: String) {
     queue.async {
-      guard text != self.lastText else { return }
+      guard !self.finished, !text.isEmpty, text != self.lastText else { return }
       self.lastText = text
-      self.lastChange = Date()
+      self.lastChange = .now()
     }
   }
 
   private func tick() {
-    // nothing said yet: keep waiting rather than ending an empty turn the
-    // moment the microphone opens
-    guard !ended, !lastText.isEmpty else { return }
-    guard Date().timeIntervalSince(lastChange) >= gap else { return }
-    ended = true
+    // Never terminate an empty turn: a call may be quiet for as long as the
+    // user needs before they begin speaking.
+    guard !finished, !lastText.isEmpty else { return }
+    let silentFor = Double(DispatchTime.now().uptimeNanoseconds - lastChange.uptimeNanoseconds) / 1_000_000_000
+    guard silentFor >= gap else { return }
+    finished = true
     timer?.cancel()
     timer = nil
-    request.endAudio()  // this is what makes isFinal arrive
+    finish()
   }
 }
-
-let endpointMs: Int = {
-  let args = CommandLine.arguments
-  guard let i = args.firstIndex(of: "--endpoint-ms"), i + 1 < args.count, let value = Int(args[i + 1])
-  else { return 0 }
-  return max(0, value)
-}()
-
-var endpointer: Endpointer?
 
 SFSpeechRecognizer.requestAuthorization { status in
   guard status == .authorized else { fail("speech-not-authorized") }
@@ -107,14 +102,22 @@ SFSpeechRecognizer.requestAuthorization { status in
     request.requiresOnDeviceRecognition = true
   }
 
-  if endpointMs > 0 {
-    let e = Endpointer(request: request, gapMs: endpointMs)
-    endpointer = e
-    e.start()
-  }
-
   let engine = AVAudioEngine()
   let node = engine.inputNode
+  var endpointer: SilenceEndpointer?
+  if endpointMs > 0 {
+    endpointer = SilenceEndpointer(gapMs: endpointMs) {
+      // Stop capture before ending the request: appending another audio
+      // buffer after endAudio() can make the recognition task fail instead
+      // of delivering its final transcript.
+      DispatchQueue.main.async {
+        engine.stop()
+        node.removeTap(onBus: 0)
+        request.endAudio()
+      }
+    }
+    endpointer?.start()
+  }
   node.installTap(onBus: 0, bufferSize: 1024, format: node.outputFormat(forBus: 0)) { buffer, _ in
     request.append(buffer)
   }

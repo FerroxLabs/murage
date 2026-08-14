@@ -26,25 +26,42 @@ function ensureBuilt() {
   execFileSync("swiftc", ["-O", SRC, "-o", BIN], { stdio: "pipe", timeout: 120_000 });
 }
 
+function sendEnd(win, info) {
+  if (!win.isDestroyed()) win.webContents.send("speech:end", info);
+}
+
 /**
- * @param win     the window to stream transcripts to
- * @param options endpointMs > 0 finishes the utterance after that long
- *                without new words (call mode's turn-taking). Omit it and
- *                the helper listens until stopped, which is what the
- *                composer's press-to-dictate wants.
+ * Start one recognition session. `endpointMs` is call-mode-only: composer
+ * dictation deliberately keeps listening until its mic button is pressed.
  */
 export function startSpeech(win, options = {}) {
   stopSpeech();
   if (process.platform !== "darwin") {
     // the helper is a Swift SFSpeechRecognizer binary — macOS only; tell
     // the renderer with a distinct code so it can say why
-    if (!win.isDestroyed()) win.webContents.send("speech:end", { code: 2 });
+    sendEnd(win, { code: 2, reason: "unsupported-platform" });
     return;
   }
-  ensureBuilt();
-  const endpointMs = Number(options?.endpointMs) || 0;
-  const args = endpointMs > 0 ? ["--endpoint-ms", String(Math.round(endpointMs))] : [];
-  const proc = spawn(BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const requested = Number(options?.endpointMs);
+  const endpointMs = Number.isFinite(requested) && requested > 0
+    ? Math.min(5_000, Math.max(250, Math.round(requested)))
+    : 0;
+  const args = endpointMs ? ["--endpoint-ms", String(endpointMs)] : [];
+
+  try {
+    ensureBuilt();
+  } catch {
+    sendEnd(win, { code: 1, reason: "helper-build-failed" });
+    return;
+  }
+
+  let proc;
+  try {
+    proc = spawn(BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+  } catch {
+    sendEnd(win, { code: 1, reason: "helper-start-failed" });
+    return;
+  }
   child = proc;
 
   let buf = "";
@@ -56,26 +73,38 @@ export function startSpeech(win, options = {}) {
       buf = buf.slice(nl + 1);
       if (!line) continue;
       try {
-        if (!win.isDestroyed()) win.webContents.send("speech:transcript", JSON.parse(line));
+        // A stopped/replaced helper can flush one last chunk. Never let it
+        // leak into the session that replaced it.
+        if (child === proc && !win.isDestroyed()) {
+          win.webContents.send("speech:transcript", JSON.parse(line));
+        }
       } catch {
         /* non-JSON noise on stdout — ignore */
       }
     }
   });
   proc.on("close", (code) => {
-    if (child === proc) child = null;
-    if (!win.isDestroyed()) win.webContents.send("speech:end", { code });
+    // stopSpeech() clears child before killing it. Suppressing that close
+    // event is essential in call mode: otherwise muting for TTS looks like
+    // a natural end and immediately reopens the microphone during playback.
+    if (child !== proc) return;
+    child = null;
+    sendEnd(win, { code: code === 0 ? 0 : 1, reason: code === 0 ? "completed" : "helper-exited" });
   });
   proc.on("error", () => {
-    if (child === proc) child = null;
-    if (!win.isDestroyed()) win.webContents.send("speech:end", { code: 1 });
+    if (child !== proc) return;
+    child = null;
+    sendEnd(win, { code: 1, reason: "helper-start-failed" });
   });
 }
 
 export function stopSpeech() {
   if (!child) return;
-  try {
-    child.kill("SIGTERM");
-  } catch {}
+  const proc = child;
+  // Mark it intentional before sending the signal so its asynchronous close
+  // handler cannot be mistaken for the end of a spoken turn.
   child = null;
+  try {
+    proc.kill("SIGTERM");
+  } catch {}
 }

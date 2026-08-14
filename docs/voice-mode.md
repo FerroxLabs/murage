@@ -52,9 +52,14 @@ the two of them talk forever. So the mic is live only when the bot is not
 speaking, and interrupting is a tap, the Space bar, or Escape. Full-duplex
 barge-in needs AEC on the capture path — a real follow-up, not a footnote.
 
-**Turn detection costs nothing.** `result.isFinal` from the on-device recognizer
-*is* endpointing, and it already streams to the renderer — so there is no VAD
-model to bundle, no worklet asset to serve, and nothing to break offline.
+**Turn detection stays native and local.** A buffer-backed
+`SFSpeechRecognizer` does not emit `isFinal` just because the speaker becomes
+quiet; it finalizes only after its audio stream ends. Call mode therefore starts
+the native helper with a silence timeout. Once a non-empty transcript stops
+changing for 850ms, the helper stops capture and calls `endAudio()`, which
+produces the final transcript sent to the renderer. Composer dictation omits the
+timeout and keeps its press-to-stop behavior. No cloud STT or bundled VAD model
+is involved.
 
 **Narration is what makes it bearable.** An agent turn is 5–60 seconds of tool
 calls, and silence that long reads as a dropped call. Every activity chip the
@@ -65,7 +70,9 @@ you hear cannot drift apart.
 **Approvals are spoken.** A `request.opened` card is read out and answered with
 "yes"/"no". Anything that is not clearly a decision is refused and re-asked:
 consent must never be inferred from a sentence that merely contained the word
-"sure".
+"sure". Non-permission questions are read too, and the next complete spoken
+turn is returned as the answer, so an agent asking for input does not strand the
+call behind an invisible card.
 
 **Latency, honestly.** Endpointing is 300–700ms and time-to-first-byte is
 ~100–250ms, against an agent turn of 5–60s. The agent dominates by 50–100x, so
@@ -91,3 +98,16 @@ delegate real work to specialists over `ask_bot` — no new machinery required.
 - **No spend meter.** ElevenLabs bills per character. Auto-speak is off by
   default partly for that reason, but the app should eventually show usage.
 - **No voice barge-in** — see half-duplex above.
+
+## Failure boundaries
+
+- Intentional microphone stops (playback, hang-up, or replacement) do not emit
+  a natural `speech:end`; otherwise the renderer could reopen capture during
+  the bot's audio.
+- Call phases are updated synchronously alongside React state, so a helper exit
+  in the same event-loop turn as a final transcript cannot observe a stale
+  `listening` phase.
+- Leaving the bot view owns and ends its call. A hidden overlay cannot leave a
+  microphone session or a stale `currentCall` behind.
+- Synthesis requests are abortable from the renderer and individual utterances
+  are capped server-side to bound accidental hosted-voice spend.

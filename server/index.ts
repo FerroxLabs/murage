@@ -249,7 +249,7 @@ bus.subscribe((event: RuntimeEvent) => {
                 held: "Auto mode couldn't answer this one.",
               },
             });
-            askMessageByRequest.set(requestId, card.id);
+            askMessageByRequest.set(`${event.threadId}:${requestId}`, card.id);
           }
         })();
         break;
@@ -1287,7 +1287,7 @@ const server = createServer(async (req, res) => {
     if (method === "POST" && path === "/api/tts/prepare") {
       const body = await readBody(req);
       return json(res, 200, {
-        ready: tts.voiceConfigured(cfg),
+        ready: tts.voiceReady(cfg, typeof body.voiceId === "string" ? body.voiceId : undefined),
         utterances: toUtterances(String(body.text ?? "")),
       });
     }
@@ -1302,6 +1302,10 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
+      // The normal client sends <=320-character utterances. A hard ceiling
+      // prevents an arbitrary local request from turning the user's hosted
+      // voice account into an unbounded, billable synthesis job.
+      if (text.length > 500) return json(res, 413, { error: "voice utterances are limited to 500 characters" });
       try {
         const audio = await tts.speak(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined);
         res.writeHead(200, {

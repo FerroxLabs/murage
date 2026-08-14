@@ -24,6 +24,12 @@ export function voiceConfigured(cfg: AppConfig): boolean {
   return Boolean(cfg.tts?.key && cfg.tts?.voice);
 }
 
+/** A per-bot voice is a complete choice too; it should not be blocked just
+ * because the app-wide fallback has not been selected yet. */
+export function voiceReady(cfg: AppConfig, voiceId?: string): boolean {
+  return Boolean(cfg.tts?.key && (voiceId || cfg.tts?.voice));
+}
+
 /** What the settings panel needs. Never includes the key — same write-only
  * rule as every other credential. */
 export function describeVoice(cfg: AppConfig) {

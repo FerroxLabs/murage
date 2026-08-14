@@ -33,10 +33,8 @@ declare global {
       platform: NodeJS.Platform;
       getCapabilities(): Promise<DesktopCapabilities>;
       screenFrame(): Promise<string | null>;
-      /** endpointMs finishes the utterance after that long without new
-       * words (call mode). Omit it to listen until speechStop — the
-       * recognizer does NOT end a buffer-fed utterance on silence by
-       * itself, so this flag is the whole of turn detection. */
+      /** Start native dictation. Call mode supplies endpointMs so silence
+       * finalizes a turn; composer dictation omits it and remains manual. */
       speechStart(options?: { endpointMs?: number }): Promise<void>;
       speechStop(): Promise<void>;
       onSpeechTranscript(

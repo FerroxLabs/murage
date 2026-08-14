@@ -62,11 +62,13 @@ const cfg = (tts: AppConfig["tts"]): AppConfig => ({ tts });
 
 describe("configuration", () => {
   it("needs both a key and a voice before it can speak", async () => {
-    const { voiceConfigured } = await voice();
+    const { voiceConfigured, voiceReady } = await voice();
     expect(voiceConfigured({})).toBe(false);
     expect(voiceConfigured(cfg({ key: "k" }))).toBe(false);
     expect(voiceConfigured(cfg({ voice: "v-1" }))).toBe(false);
     expect(voiceConfigured(cfg({ key: "k", voice: "v-1" }))).toBe(true);
+    expect(voiceReady(cfg({ key: "k" }), "v-per-bot")).toBe(true);
+    expect(voiceReady({}, "v-per-bot")).toBe(false);
   });
 
   it("never reports the key itself", async () => {

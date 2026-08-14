@@ -23,15 +23,25 @@ export function currentCall(): string | null {
 }
 
 export function startCall(botId: string) {
+  if (current === botId) return;
+  // Switching calls must silence both halves before ownership changes; the
+  // old overlay may not unmount until React's next render.
+  speaker.stop();
+  void window.ogb?.speechStop();
   current = botId;
   notify();
 }
 
-export function endCall() {
+/** End the current call. A botId makes cleanup ownership-safe: an async
+ * teardown from call A cannot hang up a newer call B. */
+export function endCall(botId?: string): boolean {
+  if (botId && current !== botId) return false;
+  if (current === null) return false;
   current = null;
   speaker.stop();
   void window.ogb?.speechStop();
   notify();
+  return true;
 }
 
 export function useOnCall(): string | null {
