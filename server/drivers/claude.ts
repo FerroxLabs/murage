@@ -27,6 +27,7 @@ import type {
   RuntimeEventListener,
   SendTurnInput,
 } from "../contracts.ts";
+import { computerProxyEnv } from "../container-computer.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 
@@ -261,11 +262,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers.computer = {
           command: process.execPath,
           args: [PROXY_PATH],
-          env: {
-            ...NODE_ENV_FLAG,
-            OGB_BOX_ID: turn.integrations.computer.boxId,
-            OGB_BOX_TOKEN: turn.integrations.computer.token,
-          },
+          env: { ...NODE_ENV_FLAG, ...computerProxyEnv(turn.integrations.computer) },
         };
         allowed.push("mcp__computer");
       } else if (turn.integrations?.localComputer) {

@@ -84,9 +84,16 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
 
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
-      const boxId = turn.integrations?.computer?.boxId;
+      const computer = turn.integrations?.computer;
+      const boxId = computer && (!computer.kind || computer.kind === "box") ? computer.boxId : undefined;
       if (!token) throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.openmausbot/config.json');
-      if (!boxId) throw new Error("this bot has no computer yet — open the Computer panel and provision one");
+      if (!boxId) {
+        throw new Error(
+          computer?.kind === "container"
+            ? "this engine runs on a cloud box — switch this bot's computer to Cloud box, or pick another engine"
+            : "this bot has no computer yet — open the Computer panel and provision one",
+        );
+      }
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const turnId = newId();
       const model = turn.model || MODELS.default;

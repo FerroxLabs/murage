@@ -30,6 +30,7 @@ import type {
   SendTurnInput,
 } from "../../contracts.ts";
 import { newEventId, newId } from "../../contracts.ts";
+import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 
 // the computer proxy entry: .ts in dev (node type stripping), .js in the
@@ -156,11 +157,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             name: "computer",
             command: process.execPath,
             args: [COMPUTER_PROXY_PATH],
-            env: acpEnv({
-              ELECTRON_RUN_AS_NODE: "1",
-              OGB_BOX_ID: computer.boxId,
-              OGB_BOX_TOKEN: computer.token,
-            }),
+            env: acpEnv({ ELECTRON_RUN_AS_NODE: "1", ...computerProxyEnv(computer) }),
           });
         } else if (turn.integrations?.localComputer) {
           const local = turn.integrations.localComputer;

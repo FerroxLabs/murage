@@ -244,3 +244,14 @@ export function setupCommands(
     view: "http://localhost:6080/vnc.html",
   };
 }
+
+/** Env for the computer proxy: which transport it should use. Both drivers
+ * mount the same proxy, so this is the single place that decides. */
+export function computerProxyEnv(
+  computer: { kind?: string; boxId?: string; token?: string; container?: string; runtime?: string },
+): Record<string, string> {
+  if (computer.kind === "container" && computer.container) {
+    return { OGB_CONTAINER: computer.container, OGB_RUNTIME: computer.runtime ?? "docker" };
+  }
+  return { OGB_BOX_ID: computer.boxId ?? "", OGB_BOX_TOKEN: computer.token ?? "" };
+}

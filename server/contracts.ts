@@ -99,7 +99,11 @@ export interface SendTurnInput {
   integrations?: {
     composio?: { url?: string; key: string };
     /** The bot's cloud computer (box.ascii.dev) for desktop/browser use. */
-    computer?: { boxId: string; token: string };
+    /** the bot's computer: a cloud box, or a container on this machine.
+     * Both end up as the same MCP toolset — only the transport differs. */
+    computer?:
+      | { kind?: "box"; boxId: string; token: string }
+      | { kind: "container"; container: string; runtime: string };
     /** Local computer use via the Electron-hosted cua-driver daemon —
      * spawn config comes verbatim from cua-connection.json (the daemon
      * MUST be spawned by Electron main; the harness only points the agent

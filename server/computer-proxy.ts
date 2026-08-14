@@ -26,9 +26,18 @@
 //     type, Enter) in one round trip with one frame at the end.
 //
 // stdout is the MCP channel — never console.log here.
+import { spawn } from "node:child_process";
 const BOX_API = process.env.OGB_BOX_API ?? "https://ascii.dev/api/box/v1";
 const boxId = process.env.OGB_BOX_ID ?? "";
 const token = process.env.OGB_BOX_TOKEN ?? "";
+// The same desktop can live in a cloud box or in a container on this
+// machine. Only the two functions below know the difference — every tool
+// above them just runs shell and reads a file back.
+const container = process.env.OGB_CONTAINER ?? "";
+const runtime = process.env.OGB_RUNTIME || "docker";
+const local = Boolean(container);
+// the desktop images run X on :1; a cloud box uses :0
+const CONTAINER_DISPLAY = process.env.OGB_DISPLAY || ":1";
 
 /** The coordinate space the model sees: frames are downscaled to this
  * width, and clicks are scaled back up to the real display box-side. */
@@ -69,7 +78,38 @@ async function resumeBox(): Promise<boolean> {
   return false;
 }
 
+/** Run a command inside the local container. No network and no waking: a
+ * stopped container is reported plainly instead of hanging. */
+function runInContainer(command: string, timeoutMs: number): Promise<RunOut> {
+  return new Promise((resolve) => {
+    const child = spawn(
+      runtime,
+      ["exec", "-e", `DISPLAY=${CONTAINER_DISPLAY}`, container, "bash", "-lc", command],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    child.stdout.on("data", (c) => (stdout += c));
+    child.stderr.on("data", (c) => (stderr += c));
+    child.on("error", (e) =>
+      resolve({ ok: false, exitCode: null, stdout: "", stderr: `${runtime} not available: ${e.message}` }),
+    );
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({
+        ok: code === 0,
+        exitCode: code,
+        stdout,
+        stderr:
+          code === 0 ? stderr : stderr || `the local computer isn't running — start it: ${runtime} start ${container}`,
+      });
+    });
+  });
+}
+
 async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true): Promise<RunOut> {
+  if (local) return runInContainer(command, timeoutMs);
   const res = await fetch(`${BOX_API}/boxes/${boxId}/commands`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -93,7 +133,7 @@ async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true): 
   };
 }
 
-const ENV = 'export DISPLAY=${DISPLAY:-:0}';
+const ENV = local ? `export DISPLAY=${CONTAINER_DISPLAY}` : 'export DISPLAY=${DISPLAY:-:0}';
 /** Resolve the real display size into $W/$H for box-side click scaling. */
 const GEOMETRY = [
   "g=$(xdotool getdisplaygeometry 2>/dev/null)",
@@ -161,6 +201,13 @@ function wholeImage(bytes: Buffer, expectedBytes?: number): boolean {
  * envelope second. Both are validated — an error page served with a 200
  * must fall through, not reach the model as an "image". */
 async function fetchFrame(expectedBytes?: number): Promise<string | null> {
+  if (local) {
+    // no HTTP hop at all — read the bytes straight out of the container
+    const out = await runInContainer(`base64 -w0 ${SHOT_PATH}`, 30_000);
+    const data = out.stdout.trim();
+    if (!data) return null;
+    return wholeImage(Buffer.from(data, "base64"), expectedBytes) ? data : null;
+  }
   const auth = { authorization: `Bearer ${token}` };
   try {
     const res = await fetch(

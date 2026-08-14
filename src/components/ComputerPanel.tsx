@@ -351,12 +351,15 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                 (localAvailable
                   ? "Auto uses a cloud box when one exists, otherwise this computer. "
                   : "Auto uses a cloud box when one is configured; otherwise computer use stays off. ")}
-              Pick where this bot's computer lives.
+              Pick where this bot's computer lives. <b className="text-ink">Local VM</b> is a Linux desktop
+              in a container on this machine — free and separate from your own desktop. Set it up in App
+              Settings → Local computer.
           </div>
           <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
             {(
               [
                 ["cloud", "Cloud box"],
+                ["vm", "Local VM"],
                 ["local", "This computer"],
                 ["off", "Off"],
               ] as const

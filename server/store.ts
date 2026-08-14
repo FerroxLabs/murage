@@ -131,7 +131,7 @@ export interface BotRecord {
   resumeCursors: Record<string, unknown>;
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
-  computer?: "cloud" | "local" | "off";
+  computer?: "cloud" | "vm" | "local" | "off";
   /** Auto mode: the bot approves its own tool permissions and keeps
    * working instead of stopping to ask. Questions it asks YOU still come
    * through, and a short list of destructive commands still stops it. */
