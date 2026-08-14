@@ -44,6 +44,68 @@ function ensurePrivateDirectory(directory, fileSystem = fs, currentUid = process
   return directory;
 }
 
+function cleanupStaleRuntimeDirectories(root, {
+  fileSystem = fs,
+  currentUid = process.getuid?.() ?? os.userInfo().uid,
+  isProcessAlive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return error?.code !== "ESRCH";
+    }
+  },
+} = {}) {
+  let entries;
+  try {
+    entries = fileSystem.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const entry of entries) {
+    const match = /^([1-9][0-9]*)-([0-9a-f]{8}-[0-9a-f]{3})$/.exec(entry.name);
+    if (!match || !entry.isDirectory() || entry.isSymbolicLink()) continue;
+    const ownerPid = Number(match[1]);
+    if (!Number.isSafeInteger(ownerPid) || isProcessAlive(ownerPid)) continue;
+    const directory = path.join(root, entry.name);
+    try {
+      const directoryStat = fileSystem.lstatSync(directory);
+      if (
+        !directoryStat.isDirectory() ||
+        directoryStat.isSymbolicLink() ||
+        directoryStat.uid !== currentUid ||
+        (directoryStat.mode & 0o077) !== 0
+      ) {
+        continue;
+      }
+      const children = fileSystem.readdirSync(directory, { withFileTypes: true });
+      if (children.some((child) => !["driver.pid", "driver.sock"].includes(child.name))) continue;
+      const removable = [];
+      let safe = true;
+      for (const child of children) {
+        const childPath = path.join(directory, child.name);
+        const childStat = fileSystem.lstatSync(childPath);
+        const expectedType =
+          child.name === "driver.pid" ? childStat.isFile() : childStat.isSocket();
+        if (childStat.isSymbolicLink() || childStat.uid !== currentUid || !expectedType) {
+          safe = false;
+          break;
+        }
+        removable.push(childPath);
+      }
+      if (!safe) continue;
+      for (const childPath of removable) fileSystem.unlinkSync(childPath);
+      fileSystem.rmdirSync(directory);
+      removed += 1;
+    } catch {
+      // Runtime cleanup is best-effort and strictly scoped. A suspicious or
+      // concurrently changing entry is left untouched for manual inspection.
+    }
+  }
+  return removed;
+}
+
 function writePrivateJson(file, value, {
   fileSystem = fs,
   temporaryId = randomUUID,
@@ -436,7 +498,9 @@ function createLinuxCuaRuntime({
           stat.uid === currentUid &&
           (stat.mode & 0o077) === 0
         ) {
-          return ensurePrivateDirectory(path.join(configured, "openmausbot-cua"));
+          const root = ensurePrivateDirectory(path.join(configured, "openmausbot-cua"));
+          cleanupStaleRuntimeDirectories(root);
+          return root;
         }
       } catch {}
     }
@@ -444,7 +508,9 @@ function createLinuxCuaRuntime({
     // directly under the system temp root keeps the fallback deterministic
     // and short when XDG_RUNTIME_DIR is missing or unsafe.
     const currentUid = process.getuid?.() ?? os.userInfo().uid;
-    return ensurePrivateDirectory(path.join(os.tmpdir(), `openmausbot-cua-${currentUid}`));
+    const root = ensurePrivateDirectory(path.join(os.tmpdir(), `openmausbot-cua-${currentUid}`));
+    cleanupStaleRuntimeDirectories(root);
+    return root;
   };
 
   const cleanupRuntimeFiles = (owned) => {
@@ -664,6 +730,7 @@ function createLinuxCuaRuntime({
               CUA_DRIVER_EMBEDDED: "1",
               CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID,
               CUA_DRIVER_RS_UPDATE_CHECK: "false",
+              CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
               ...(runtimeSession === "wayland"
                 ? { CUA_DRIVER_RS_ENABLE_WAYLAND: "1" }
                 : {}),
@@ -770,6 +837,7 @@ module.exports = {
   HOST_BUNDLE_ID,
   REQUIRED_TOOLS,
   REQUIRED_WAYLAND_HEALTH_CHECKS,
+  cleanupStaleRuntimeDirectories,
   createLinuxCuaPreferenceStore,
   createLinuxCuaRuntime,
   ensurePrivateDirectory,

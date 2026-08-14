@@ -504,6 +504,7 @@ describe.skipIf(process.platform === "win32")("minimal child environment", () =>
       DISPLAY: ":0",
       PATH: "/usr/bin",
       CUA_DRIVER_RS_UPDATE_CHECK: "false",
+      CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
     });
   });
 });

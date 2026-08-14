@@ -226,9 +226,9 @@ The driver uses Cua's `standard` permission mode. Cua routine actions are prompt
 OpenMausBot requires its own **Allow** or **Deny** decision before every local action. Bot Auto mode, persistent
 **Always allow** grants, and cloud-computer approvals cannot authorize the local desktop in this beta.
 
-Cua Driver has content-free telemetry and an update check enabled by default. OpenMausBot disables the update
-check only for children it starts and does not change the user's persisted telemetry preference. Review or change
-that preference with the [official telemetry documentation](https://cua.ai/docs/reference/cua-driver/telemetry).
+Cua Driver has content-free telemetry and an update check enabled by default. OpenMausBot disables both for every
+Cua process it starts and does not change the user's persisted Cua preferences. Review or change those preferences
+with the [official telemetry documentation](https://cua.ai/docs/reference/cua-driver/telemetry).
 
 ## Validate a package change
 

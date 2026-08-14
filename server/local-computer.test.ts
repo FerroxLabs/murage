@@ -60,6 +60,7 @@ function linuxDescriptor(userData: string, { session = "x11" }: { session?: "x11
         CUA_DRIVER_EMBEDDED: "1",
         CUA_DRIVER_HOST_BUNDLE_ID: "com.openmausbot.app",
         CUA_DRIVER_RS_UPDATE_CHECK: "false",
+        CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
         ...(session === "wayland" ? { CUA_DRIVER_RS_ENABLE_WAYLAND: "1" } : {}),
       },
     },
@@ -148,6 +149,14 @@ describe("local computer descriptor", () => {
       }),
     ).toBeNull();
     expect(decodeLinuxDescriptor({ ...descriptor, toolNames: ["list_apps"] })).toBeNull();
+    const { CUA_DRIVER_RS_TELEMETRY_ENABLED: _missingTelemetry, ...telemetryEnabledEnv } =
+      descriptor.mcp.env;
+    expect(
+      decodeLinuxDescriptor({
+        ...descriptor,
+        mcp: { ...descriptor.mcp, env: telemetryEnabledEnv },
+      }),
+    ).toBeNull();
     expect(
       decodeLinuxDescriptor({
         ...descriptor,

@@ -379,7 +379,7 @@ function createWindow() {
       } catch (error) {
         console.error(`[smoke] renderer-failed ${error?.stack ?? error}`);
       } finally {
-        win.close();
+        if (process.env.OMB_SMOKE_KEEP_OPEN !== "1") win.close();
       }
     });
   }

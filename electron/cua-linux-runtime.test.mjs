@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 const { createCuaConnectionStore } = require("./cua-connection.cjs");
 const { validateDriverCandidate } = require("./cua-linux.cjs");
 const {
+  cleanupStaleRuntimeDirectories,
   createLinuxCuaPreferenceStore,
   createLinuxCuaRuntime,
   probePrivateDaemon,
@@ -191,6 +192,32 @@ afterEach(() => {
 // lifecycle contract exercises. Canonical short temp paths keep it portable
 // across Linux and macOS.
 describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", () => {
+  it("cleans only known private runtime files from a dead owner", () => {
+    const root = temporaryDirectory();
+    const stale = path.join(root, "99999999-01234567-89a");
+    const suspicious = path.join(root, "99999998-01234567-89a");
+    fs.mkdirSync(stale, { mode: 0o700 });
+    fs.writeFileSync(path.join(stale, "driver.pid"), "99999999\n", { mode: 0o600 });
+    fs.mkdirSync(suspicious, { mode: 0o700 });
+    fs.writeFileSync(path.join(suspicious, "unexpected"), "preserve", { mode: 0o600 });
+
+    expect(
+      cleanupStaleRuntimeDirectories(root, { isProcessAlive: () => false }),
+    ).toBe(1);
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.readFileSync(path.join(suspicious, "unexpected"), "utf8")).toBe("preserve");
+  });
+
+  it("preserves a certified runtime directory while its owner is alive", () => {
+    const root = temporaryDirectory();
+    const live = path.join(root, "1234-01234567-89a");
+    fs.mkdirSync(live, { mode: 0o700 });
+    fs.writeFileSync(path.join(live, "driver.pid"), "1234\n", { mode: 0o600 });
+
+    expect(cleanupStaleRuntimeDirectories(root, { isProcessAlive: () => true })).toBe(0);
+    expect(fs.existsSync(path.join(live, "driver.pid"))).toBe(true);
+  });
+
   it("does not inspect or execute a driver before explicit opt-in", async () => {
     const context = harness();
     await context.runtime.initialize();
@@ -238,6 +265,8 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
       CUA_DRIVER_EMBEDDED: "1",
       CUA_DRIVER_PARENT_LIVENESS_STDIN: "1",
       CUA_DRIVER_HOST_BUNDLE_ID: "com.openmausbot.app",
+      CUA_DRIVER_RS_UPDATE_CHECK: "false",
+      CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
     });
     expect(spawnOptions.env.OPENAI_API_KEY).toBeUndefined();
     expect(context.probe).toHaveBeenCalledWith(expect.stringMatching(/driver\.sock$/), {
@@ -263,6 +292,12 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
       mcp: {
         command: context.binary,
         args: ["mcp", "--embedded", "--socket", expect.stringMatching(/driver\.sock$/)],
+        env: {
+          CUA_DRIVER_EMBEDDED: "1",
+          CUA_DRIVER_HOST_BUNDLE_ID: "com.openmausbot.app",
+          CUA_DRIVER_RS_UPDATE_CHECK: "false",
+          CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
+        },
       },
     });
     const descriptor = path.join(context.userData, "cua-connection.json");
@@ -344,7 +379,13 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
       mode: "linux-wayland-gnome-supervised",
       session: "wayland",
       compositor: "gnome-mutter",
-      mcp: { env: { CUA_DRIVER_RS_ENABLE_WAYLAND: "1" } },
+      mcp: {
+        env: {
+          CUA_DRIVER_RS_ENABLE_WAYLAND: "1",
+          CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
+          CUA_DRIVER_RS_UPDATE_CHECK: "false",
+        },
+      },
     });
   });
 

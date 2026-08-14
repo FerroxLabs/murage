@@ -65,10 +65,10 @@ function desktopCommandEnvironment(source = process.env, additions = {}) {
     if (SESSION_ENV_KEYS.has(key) || key.startsWith("LC_")) env[key] = String(value);
   }
   env.PATH = sanitizePath(source.PATH);
-  // Keep the finite probes deterministic and avoid an unrelated network check.
-  // This affects only children owned by OpenMausBot and does not change the
-  // user's persisted Cua preferences.
+  // Keep every Cua child owned by OpenMausBot deterministic and local-only.
+  // This does not change the user's persisted Cua preferences.
   env.CUA_DRIVER_RS_UPDATE_CHECK = "false";
+  env.CUA_DRIVER_RS_TELEMETRY_ENABLED = "false";
   for (const [key, value] of Object.entries(additions)) {
     if (value != null) env[key] = String(value);
   }
