@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { approvalKey, autoDecision } from "./auto-approve.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
+import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import {
   containerComputerAction,
   containerComputerMcp,
@@ -623,6 +624,11 @@ async function startTurn(
             store.bots.filter((b) => b.id !== bot.id),
           )
         : [];
+      const coordinationPrompt = bot.chiefOfStaff
+        ? chiefOfStaffSystemPrompt(bot.id, store.bots, Boolean(integrations.agents))
+        : integrations.agents
+          ? "You can work with the user's other bots through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
+          : "";
 
       await instance.adapter.sendTurn({
         threadId,
@@ -642,9 +648,7 @@ async function startTurn(
               : computerKind === "local"
               ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
               : "") +
-          (integrations.agents
-            ? " You can work with the user's other bots through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
-            : "") +
+          (coordinationPrompt ? ` ${coordinationPrompt}` : "") +
           (tagged.length
             ? ` The user tagged ${tagged
                 .map((t) => `@${t.name} (ask_bot bot_id ${t.id})`)
@@ -1208,6 +1212,13 @@ const server = createServer(async (req, res) => {
       ) {
         return json(res, 400, { error: "computer must be cloud, vm, local, or off" });
       }
+      if (body.chiefOfStaff !== undefined && typeof body.chiefOfStaff !== "boolean") {
+        return json(res, 400, { error: "chiefOfStaff must be true or false" });
+      }
+      const existing = store.bot(m[1]);
+      if (body.hidden === true && existing?.chiefOfStaff && body.chiefOfStaff !== false) {
+        return json(res, 400, { error: "choose another Chief of Staff before hiding this bot" });
+      }
       // the two permission fields decide what runs unattended, so they are
       // type-checked rather than copied through: a string alwaysAllow would
       // still answer .includes() — with substring matches, not tool names
@@ -1223,7 +1234,16 @@ const server = createServer(async (req, res) => {
       }
       const bot = store.patchBot(m[1], patch);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      broadcast({ kind: "bot", bot });
+      const chiefChanges =
+        body.chiefOfStaff === true
+          ? store.setChiefOfStaff(bot.id)
+          : body.chiefOfStaff === false && bot.chiefOfStaff
+            ? store.setChiefOfStaff(null)
+            : [];
+      if (chiefChanges === null) return json(res, 404, { error: "no such bot" });
+      const changed = new Map([[bot.id, store.bot(bot.id)!]]);
+      for (const changedBot of chiefChanges) changed.set(changedBot.id, changedBot);
+      for (const changedBot of changed.values()) broadcast({ kind: "bot", bot: changedBot });
       return json(res, 200, { bot });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)$/);

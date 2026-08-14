@@ -164,6 +164,9 @@ export interface BotRecord {
   rewound?: boolean;
   pinned?: boolean;
   hidden?: boolean;
+  /** The single workspace-wide coordinator. The store enforces that at
+   * most one bot owns this role, even if an older/corrupt file says more. */
+  chiefOfStaff?: boolean;
   busy?: boolean;
   createdAt: number;
 }
@@ -289,14 +292,30 @@ export class Store {
     }
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
+    let botsMigrated = false;
+    let chiefSeen = false;
     let groupsMigrated = false;
     for (const b of this.bots) b.busy = false;
+    for (const b of this.bots) {
+      if (!b.chiefOfStaff) continue;
+      if (!chiefSeen) {
+        chiefSeen = true;
+        if (b.hidden) {
+          b.hidden = false;
+          botsMigrated = true;
+        }
+        continue;
+      }
+      b.chiefOfStaff = false;
+      botsMigrated = true;
+    }
     for (const g of this.groups) {
       g.busyBotId = null;
       const normalized = normalizeGroupDefaultResponder(g.defaultResponder, g.memberIds, Boolean(g.dm));
       if (JSON.stringify(normalized) !== JSON.stringify(g.defaultResponder)) groupsMigrated = true;
       g.defaultResponder = normalized;
     }
+    if (botsMigrated) this.saveBots();
     if (groupsMigrated) this.saveGroups();
     // bots saved before tasks existed have one endless thread; adopt it as
     // their first task so nothing is lost and nothing special-cases it
@@ -572,6 +591,28 @@ export class Store {
     Object.assign(bot, patch);
     this.saveBots();
     return bot;
+  }
+
+  /** Elect one Chief of Staff (or clear the role) as one persisted change.
+   * The changed records are returned so the server can update every open
+   * window, including the bot that just handed the role over. */
+  setChiefOfStaff(id: string | null): BotRecord[] | null {
+    if (id && !this.bot(id)) return null;
+    const changed: BotRecord[] = [];
+    for (const bot of this.bots) {
+      const next = bot.id === id;
+      if (Boolean(bot.chiefOfStaff) === next && !(next && bot.hidden)) continue;
+      if (next) {
+        bot.chiefOfStaff = true;
+        // The workspace's main contact must stay reachable in the sidebar.
+        bot.hidden = false;
+      } else {
+        bot.chiefOfStaff = false;
+      }
+      changed.push(bot);
+    }
+    if (changed.length) this.saveBots();
+    return changed;
   }
 
   setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string) {
