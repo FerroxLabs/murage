@@ -727,9 +727,9 @@ function configStatus() {
     xai: { configured: Boolean(cfg.xai?.key) },
     composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
     box: { configured: Boolean(cfg.box?.token) },
-    // provider/voice are choices, not secrets — the key is the secret, and
-    // it is reported the same configured-or-not way as every other one
-    tts: tts.describeProviders(cfg),
+    // the chosen voice is a setting, not a secret; the key is reported the
+    // same configured-or-not way as every other credential
+    tts: tts.describeVoice(cfg),
     // not a secret — the sidebar shows it
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
   };
@@ -1263,10 +1263,9 @@ const server = createServer(async (req, res) => {
       // same rule for a voice key — and check it against the provider the
       // patch SELECTS, not the one already saved, or pasting a Cartesia key
       // while switching from ElevenLabs validates against the wrong service
-      const newTts = patch.tts as { key?: unknown; provider?: unknown } | undefined;
+      const newTts = patch.tts as { key?: unknown } | undefined;
       if (typeof newTts?.key === "string" && newTts.key.trim()) {
-        const providerId = typeof newTts.provider === "string" ? newTts.provider : cfg.tts?.provider;
-        const check = await tts.verifyVoiceKey(providerId ?? tts.DEFAULT_PROVIDER_ID, newTts.key.trim());
+        const check = await tts.verifyKey(newTts.key.trim());
         if (!check.ok) return json(res, 400, { error: check.message });
       }
       saveConfig(patch);
@@ -1282,15 +1281,13 @@ const server = createServer(async (req, res) => {
 
     // ── voice ─────────────────────────────────────────────────────────
     // Splitting text into utterances lives HERE, not in the renderer, for
-    // the same reason approvalKey does: both tiers need the same answer,
-    // and it is the piece most likely to be tuned against real transcripts.
+    // the same reason approvalKey does — it is the piece most likely to be
+    // tuned against real transcripts, and it belongs next to the transform
+    // that produced it.
     if (method === "POST" && path === "/api/tts/prepare") {
       const body = await readBody(req);
-      const provider = tts.activeProvider(cfg);
       return json(res, 200, {
-        provider: provider.id,
-        runsOn: provider.runsOn,
-        voice: cfg.tts?.voice ?? "",
+        ready: tts.voiceConfigured(cfg),
         utterances: toUtterances(String(body.text ?? "")),
       });
     }
@@ -1314,11 +1311,9 @@ const server = createServer(async (req, res) => {
         });
         return res.end(Buffer.from(audio.bytes));
       } catch (e) {
-        // the local voice is synthesized in the renderer — say so precisely
-        // rather than 500ing, so the client knows to do it itself
-        if (e instanceof tts.ClientSideVoice) {
-          return json(res, 409, { clientSide: true, provider: e.providerId });
-        }
+        // "you haven't set this up yet" is not a provider failure — 409 so
+        // the client can point at App Settings instead of showing a 502
+        if (e instanceof tts.NoVoiceConfigured) return json(res, 409, { error: e.message });
         return json(res, 502, { error: e instanceof Error ? e.message : String(e) });
       }
     }

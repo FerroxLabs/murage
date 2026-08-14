@@ -149,23 +149,10 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
-  /** Voice: the chosen provider and voice are settings, not secrets — only
-   * `configured` says anything about the key. `effectiveProvider` is what
-   * will actually speak, which differs from `provider` when a hosted voice
-   * is selected but has no key yet (it falls back to the local one). */
-  tts?: {
-    provider: string;
-    effectiveProvider: string;
-    voice: string;
-    configured: boolean;
-    providers: Array<{
-      id: string;
-      displayName: string;
-      runsOn: "server" | "client";
-      needsKey: boolean;
-      blurb: string;
-    }>;
-  };
+  /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
+   * a voice, which is what it takes to actually speak. The key itself is
+   * never echoed back. */
+  tts?: { configured: boolean; ready: boolean; voice: string };
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
 }

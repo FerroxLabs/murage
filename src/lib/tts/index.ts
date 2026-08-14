@@ -2,16 +2,17 @@
 //
 // Deliberately a singleton: two bots talking over each other is never what
 // anyone wants, so starting a new utterance cancels whatever was speaking.
-// That single rule is also what makes barge-in work — call mode just calls
-// stop() the moment the microphone hears you.
+// That single rule is also what makes interrupting work — call mode just
+// calls stop().
 //
-// Text is split into utterances by the HARNESS (/api/tts/prepare), not
-// here. Both tiers need the same split, and the spoken-register transform
-// is the piece most likely to be tuned against real transcripts — keeping
-// it server-side means the local and hosted voices can never drift into
-// saying different things, the same reasoning as the server-computed
-// approval key.
-import { DEFAULT_LOCAL_VOICE, synthesizeLocal } from "./local";
+// Audio comes from the harness (POST /api/tts/speak), which holds the
+// ElevenLabs key. The renderer never sees it, and never talks to
+// ElevenLabs directly.
+//
+// Text is split into utterances by the harness too, next to the transform
+// that produced it — it is the piece most likely to be tuned against real
+// transcripts, and keeping it in one place is the same reasoning as the
+// server-computed approval key.
 
 export type SpeechStatus = "idle" | "preparing" | "speaking";
 
@@ -29,13 +30,6 @@ interface SpeakOptions {
   voiceId?: string;
   botId?: string;
   messageId?: string;
-}
-
-interface Prepared {
-  provider: string;
-  runsOn: "server" | "client";
-  voice: string;
-  utterances: string[];
 }
 
 const IDLE: SpeechSnapshot = { status: "idle" };
@@ -98,28 +92,26 @@ class Speaker {
     const live = () => this.token === mine;
 
     this.set({ status: "preparing", botId: opts.botId, messageId: opts.messageId });
-    let plan: Prepared;
+    let utterances: string[];
     try {
-      plan = await this.prepare(text);
+      utterances = await this.prepare(text);
     } catch (e) {
       if (live()) this.set({ ...IDLE, error: e instanceof Error ? e.message : String(e) });
       return;
     }
     if (!live()) return;
-    if (!plan.utterances.length) {
+    if (!utterances.length) {
       this.set(IDLE);
       return;
     }
 
-    const voiceId = opts.voiceId || plan.voice || (plan.runsOn === "client" ? DEFAULT_LOCAL_VOICE : "");
-
-    // Prefetch: render utterance n+1 while n is audible. This is what buys
-    // hosted-voice responsiveness without holding a streaming socket open
-    // for the whole turn — the only gap the listener hears is the first.
-    let next: Promise<Blob> | null = this.render(plan, plan.utterances[0], voiceId);
-    for (let i = 0; i < plan.utterances.length; i += 1) {
+    // Prefetch: request utterance n+1 while n is audible. This is what buys
+    // responsiveness without holding a streaming socket open for the whole
+    // turn — the only gap the listener hears is the first.
+    let next: Promise<Blob> | null = this.render(utterances[0], opts.voiceId);
+    for (let i = 0; i < utterances.length; i += 1) {
       const current = next;
-      next = i + 1 < plan.utterances.length ? this.render(plan, plan.utterances[i + 1], voiceId) : null;
+      next = i + 1 < utterances.length ? this.render(utterances[i + 1], opts.voiceId) : null;
       if (!current) break;
       let blob: Blob;
       try {
@@ -132,7 +124,7 @@ class Speaker {
         return;
       }
       if (!live()) return;
-      this.set({ status: "speaking", botId: opts.botId, messageId: opts.messageId, caption: plan.utterances[i] });
+      this.set({ status: "speaking", botId: opts.botId, messageId: opts.messageId, caption: utterances[i] });
       const finished = await this.play(blob, live);
       if (!finished || !live()) {
         next?.catch(() => {});
@@ -142,26 +134,24 @@ class Speaker {
     if (live()) this.set(IDLE);
   }
 
-  private async prepare(text: string): Promise<Prepared> {
+  private async prepare(text: string): Promise<string[]> {
     const res = await fetch("/api/tts/prepare", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
     });
     if (!res.ok) throw new Error("couldn't reach the voice service");
-    return (await res.json()) as Prepared;
+    const body = (await res.json()) as { ready: boolean; utterances: string[] };
+    if (!body.ready) throw new Error("Add an ElevenLabs key in App Settings to turn on voice.");
+    return body.utterances;
   }
 
-  private async render(plan: Prepared, text: string, voiceId: string): Promise<Blob> {
-    if (plan.runsOn === "client") return synthesizeLocal(text, voiceId);
+  private async render(text: string, voiceId?: string): Promise<Blob> {
     const res = await fetch("/api/tts/speak", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text, voiceId }),
     });
-    // the harness decided mid-flight that this one belongs to the renderer
-    // (the voice was switched while we were speaking) — just do it here
-    if (res.status === 409) return synthesizeLocal(text, voiceId);
     if (!res.ok) {
       const body = await res.json().catch(() => ({}) as { error?: string });
       throw new Error(body.error ?? `the voice service returned ${res.status}`);
@@ -192,5 +182,3 @@ class Speaker {
 }
 
 export const speaker = new Speaker();
-export { DEFAULT_LOCAL_VOICE, listLocalVoices, loadLocalVoice, onLocalVoiceProgress } from "./local";
-export type { LoadProgress, LocalVoice } from "./local";

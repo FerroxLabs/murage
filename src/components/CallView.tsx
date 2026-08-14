@@ -23,7 +23,7 @@ import { Loader2, Phone, PhoneOff, X } from "lucide-react";
 import { useStore, visibleMessages, type Bot } from "@/state/store";
 import { endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
-import { useSpeech, useLocalVoiceProgress } from "@/lib/tts/useSpeech";
+import { useSpeech } from "@/lib/tts/useSpeech";
 import { MausAvatar } from "./Avatar";
 import { pendingApprovals } from "./PendingApproval";
 import { cn } from "@/lib/cn";
@@ -38,10 +38,17 @@ const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
 type Phase = "listening" | "sending" | "working" | "speaking";
 
 export function CallButton({ bot }: { bot: Bot }) {
+  const { state } = useStore();
   const active = useOnCall() === bot.id;
+  // dictation is the microphone half; without it there is no call to make
   const dictation = window.ogb?.speechStart !== undefined;
   if (!dictation) return null;
-  const label = active ? `Hang up on ${bot.name}` : `Call ${bot.name}`;
+  const ready = Boolean(state.config?.tts?.ready);
+  const label = active
+    ? `Hang up on ${bot.name}`
+    : ready
+      ? `Call ${bot.name}`
+      : "Add an ElevenLabs key in App Settings to make calls";
   return (
     <button
       onClick={() => {
@@ -49,10 +56,11 @@ export function CallButton({ bot }: { bot: Bot }) {
         track("call_started", { driver: bot.modelSelection?.instanceId });
         startCall(bot.id);
       }}
+      disabled={!ready && !active}
       aria-label={label}
       title={label}
       className={cn(
-        "flex size-9 items-center justify-center rounded-full transition-colors",
+        "flex size-9 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
         active ? "bg-danger text-white hover:brightness-110" : "text-ink-secondary hover:bg-raised hover:text-ink",
       )}
     >
@@ -70,7 +78,6 @@ export function CallOverlay({ bot }: { bot: Bot }) {
 function Call({ bot }: { bot: Bot }) {
   const { dispatch } = useStore();
   const speech = useSpeech();
-  const download = useLocalVoiceProgress();
   const [phase, setPhase] = useState<Phase>("listening");
   const [heard, setHeard] = useState("");
   const [note, setNote] = useState<string | null>(null);
@@ -218,15 +225,13 @@ function Call({ bot }: { bot: Bot }) {
   const mascotState =
     phase === "listening" ? "listening" : phase === "speaking" ? "sending" : phase === "sending" ? "thinking" : "working";
   const status =
-    download && download.status === "downloading"
-      ? `Getting the voice ready… ${download.percent}%`
-      : phase === "listening"
-        ? "Listening"
-        : phase === "sending"
-          ? "One moment"
-          : phase === "speaking"
-            ? bot.name
-            : "Working";
+    phase === "listening"
+      ? "Listening"
+      : phase === "sending"
+        ? "One moment"
+        : phase === "speaking"
+          ? bot.name
+          : "Working";
 
   return (
     <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-6 bg-app/95 backdrop-blur-sm">
