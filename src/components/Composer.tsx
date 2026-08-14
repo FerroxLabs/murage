@@ -10,6 +10,7 @@ import {
   composeMessage,
   isLongPaste,
   pasteAttachment,
+  type Attachment,
 } from "@/lib/composer-attachments";
 import { normalizeState } from "@/lib/mascot";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
@@ -60,6 +61,10 @@ export function Composer({
   // text and its attachment chips have to outlive it (see lib/drafts).
   const [text, setText, attachments, setAttachments] = useComposerDraft(
     group ? `group:${group.id}` : `bot:${bot?.id ?? ""}`,
+  );
+  const addAttachments = useCallback(
+    (next: Attachment[]) => setAttachments((prev) => [...prev, ...next]),
+    [setAttachments],
   );
   const removeAttachment = useCallback(
     (id: string) => setAttachments((prev) => prev.filter((a) => a.id !== id)),
@@ -252,7 +257,11 @@ export function Composer({
             />
           </div>
         )}
-        <ComposerAttachments items={attachments} onRemove={removeAttachment} />
+        <ComposerAttachments
+          items={attachments}
+          onAdd={addAttachments}
+          onRemove={removeAttachment}
+        />
         <div className="flex items-end gap-2 rounded-3xl border border-hairline/40 bg-raised/60 py-2 pl-3 pr-2">
         <textarea
           ref={inputRef}
