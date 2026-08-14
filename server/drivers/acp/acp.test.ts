@@ -6,7 +6,7 @@
 //
 // The fake CLI is a shebang script Windows cannot exec directly —
 // resolveCliSpawn turns it into `node <script>`, so these run everywhere.
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
+import { KimiAgentDriver } from "./kimi.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -26,6 +27,15 @@ describe("ACP decodeConfig", () => {
   });
   it("gemini defaults to the gemini binary", () => {
     expect(GeminiAgentDriver.decodeConfig(undefined)).toEqual({ cli: "gemini", fullAuto: false, workspace: undefined });
+  });
+  it("kimi defaults to the kimi binary and declares cross-platform setup", () => {
+    expect(KimiAgentDriver.decodeConfig(undefined)).toEqual({ cli: "kimi", fullAuto: false, workspace: undefined });
+    expect(KimiAgentDriver.install?.command).toMatchObject({
+      darwin: expect.stringContaining("install.sh"),
+      linux: expect.stringContaining("install.sh"),
+      win32: expect.stringContaining("install.ps1"),
+    });
+    expect(KimiAgentDriver.install?.signInCommand).toBe("kimi login");
   });
   it("fullAuto only when explicitly true", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
@@ -176,5 +186,51 @@ describe("ACP snapshot", () => {
     const snap = await instance.snapshot();
     expect(snap.state).toBe("unavailable");
     await instance.dispose();
+  });
+
+  it("kimi checks KIMI_CODE_HOME before the child HOME", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-kimi-auth-"));
+    const kimiHome = join(scratch, "custom-kimi-home");
+    const childHome = join(scratch, "child-home");
+    mkdirSync(join(childHome, ".kimi-code", "credentials"), { recursive: true });
+    writeFileSync(join(childHome, ".kimi-code", "credentials", "kimi-code.json"), "{}");
+
+    const instance = await KimiAgentDriver.create({
+      instanceId: "kimi-custom-home",
+      displayName: undefined,
+      environment: { KIMI_CODE_HOME: kimiHome, HOME: childHome },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      expect((await instance.snapshot()).authenticated).toBe(false);
+      mkdirSync(join(kimiHome, "credentials"), { recursive: true });
+      writeFileSync(join(kimiHome, "credentials", "kimi-code.json"), "{}");
+      expect((await instance.snapshot()).authenticated).toBe(true);
+    } finally {
+      await instance.dispose();
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("kimi resolves default credentials from the child HOME", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-kimi-home-"));
+    const credentialDir = join(scratch, ".kimi-code", "credentials");
+    mkdirSync(credentialDir, { recursive: true });
+    writeFileSync(join(credentialDir, "kimi-code.json"), "{}");
+
+    const instance = await KimiAgentDriver.create({
+      instanceId: "kimi-child-home",
+      displayName: undefined,
+      environment: { HOME: scratch },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      expect((await instance.snapshot()).authenticated).toBe(true);
+    } finally {
+      await instance.dispose();
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
