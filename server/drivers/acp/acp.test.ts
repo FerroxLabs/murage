@@ -133,6 +133,34 @@ describe("ACP turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
   });
 
+  it("sets a configured model before sending the prompt", async () => {
+    const support: AcpSupport = {
+      driverKind: "model-config-test",
+      displayName: "Model Config Test",
+      models: { default: "fallback", options: [{ id: "fallback", label: "Fallback" }] },
+      defaultCli: FAKE_CLI,
+      nativeSource: "model-config-test.acp",
+      loginNote: "not authenticated",
+      spawnArgs: () => [],
+      modelConfigOption: "model",
+      pickAuthMethod: () => null,
+      authFailure: "continue",
+      isAuthenticated: () => true,
+    };
+    instance = await createAcpDriver(support).create({
+      instanceId: "model-config-test",
+      displayName: "Model Config Test",
+      environment: { FAKE_ACP_RPC_DUMP: join(scratch, "rpc.json") },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-model", text: "hi", model: "opencode-go/minimax-m3" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const methods = JSON.parse(readFileSync(join(scratch, "rpc.json"), "utf8")) as string[];
+    expect(methods.slice(-3)).toEqual(["session/set_config_option", "session/prompt", "session/prompt.result"]);
+  });
+
   it("passes ACP stdio flags and strips XAI_API_KEY from the child env", async () => {
     await create();
     const dump = join(scratch, "dump.json");

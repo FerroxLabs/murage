@@ -18,16 +18,21 @@ import { writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 const argv = process.argv.slice(2);
+if (process.env.FAKE_ACP_DUMP) {
+  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
+}
 if (argv.includes("--version")) {
   console.log("fake-acp 1.0.0");
   process.exit(0);
 }
-if (process.env.FAKE_ACP_DUMP) {
-  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
-}
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
+const rpcMethods: string[] = [];
+const recordMethod = (method: string) => {
+  rpcMethods.push(method);
+  if (process.env.FAKE_ACP_RPC_DUMP) writeFileSync(process.env.FAKE_ACP_RPC_DUMP, JSON.stringify(rpcMethods));
+};
 
 // pending server→client permission request id → resolver
 let pendingPermissionId: number | null = null;
@@ -119,6 +124,7 @@ function handle(msg: any) {
     return;
   }
   if (!msg.method) return;
+  recordMethod(msg.method);
 
   switch (msg.method) {
     case "initialize": {
@@ -142,6 +148,9 @@ function handle(msg: any) {
     case "session/load":
       result(msg.id, {});
       break;
+    case "session/set_config_option":
+      result(msg.id, {});
+      break;
     case "session/prompt": {
       if (mode === "hang") {
         // never resolve the prompt — lets tests exercise interrupt
@@ -149,7 +158,7 @@ function handle(msg: any) {
         return;
       }
       const complete = () =>
-        result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
+        (recordMethod("session/prompt.result"), result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } }));
       if (mode === "ask-peer" && agentsMcp) {
         // the comms e2e: reach a peer bot through the injected agents proxy
         // and reply with whatever it said (the peer's fake runs plain happy

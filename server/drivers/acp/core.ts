@@ -67,6 +67,8 @@ export interface AcpSupport {
   install?: EngineInstall;
   /** CLI argv AFTER the binary name to enter ACP stdio mode. */
   spawnArgs(config: AcpConfig, turn: SendTurnInput): string[];
+  /** ACP config option used to select the exact provider-qualified model. */
+  modelConfigOption?: string;
   /** Mutate the child env in place (e.g. strip a key). Optional. */
   transformEnv?(env: Record<string, string | undefined>): void;
   /** Pick the ACP authenticate methodId from initialize's advertised
@@ -462,6 +464,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const started = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
               sessionId = typeof started?.sessionId === "string" ? started.sessionId : null;
               if (!sessionId) throw new Error("session/new returned no sessionId");
+            }
+            if (support.modelConfigOption && turn.model) {
+              await request(
+                "session/set_config_option",
+                { sessionId, configId: support.modelConfigOption, value: turn.model },
+                INIT_TIMEOUT,
+              );
             }
             emit({
               ...base(threadId, turnId),
