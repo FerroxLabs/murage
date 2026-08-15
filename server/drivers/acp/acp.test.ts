@@ -122,6 +122,16 @@ describe("ACP turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
   });
 
+  it("reads token usage from the root of the prompt result", async () => {
+    process.env.FAKE_ACP_USAGE_ROOT = "1";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-usage-root", text: "go" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const usage = recorder.events.find((e) => e.type === "thread.token-usage.updated");
+    expect(usage).toMatchObject({ input: 10, output: 5 });
+  });
+
   it("passes ACP stdio flags and strips XAI_API_KEY from the child env", async () => {
     await create();
     const dump = join(scratch, "dump.json");

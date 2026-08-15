@@ -500,7 +500,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               sessionId,
               prompt: [{ type: "text", text }],
             });
-            const usage = result?._meta ?? {};
+            // opencode 1.18.18 reports usage at the result root; grok and
+            // gemini put it under _meta. Read both rather than lose the count.
+            const usage = result?.usage ?? result?._meta ?? {};
             if (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number") {
               emit({
                 ...base(threadId, turnId),

@@ -191,7 +191,14 @@ function handle(msg: any) {
         return;
       }
       const complete = () =>
-        result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
+        result(
+          msg.id,
+          // FAKE_ACP_USAGE_ROOT reproduces opencode 1.18.18's shape: usage at
+          // the result root with an empty _meta, instead of usage under _meta.
+          process.env.FAKE_ACP_USAGE_ROOT
+            ? { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5 }, _meta: {} }
+            : { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } },
+        );
       if (mode === "ask-peer" && agentsMcp) {
         // the comms e2e: reach a peer bot through the injected agents proxy
         // and reply with whatever it said (the peer's fake runs plain happy
