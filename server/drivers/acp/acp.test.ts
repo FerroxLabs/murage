@@ -15,11 +15,30 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
+
+/** A harness that exists only in tests: it exercises the opt-in session-config
+ *  model hook so PR 1 can prove the core capability without shipping a visible
+ *  engine. Real harnesses live in their own file. */
+const SELECT_MODEL_SUPPORT: AcpSupport = {
+  driverKind: "selectModelTest",
+  displayName: "Select Model Test",
+  models: { default: "m-one", options: [{ id: "m-one", label: "One" }, { id: "m-two", label: "Two" }] },
+  defaultCli: "fake-select-model",
+  nativeSource: "test.acp",
+  loginNote: "never reached",
+  selectModel: { configId: "model" },
+  spawnArgs: () => [],
+  pickAuthMethod: () => null,
+  authFailure: "continue",
+  isAuthenticated: () => true,
+};
+const SelectModelDriver = createAcpDriver(SELECT_MODEL_SUPPORT);
 
 describe("ACP decodeConfig", () => {
   it("grok defaults to the grok binary", () => {
@@ -70,6 +89,8 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_MODE;
     delete process.env.FAKE_ACP_DUMP;
     delete process.env.XAI_API_KEY;
+    delete process.env.FAKE_ACP_MODELS;
+    delete process.env.FAKE_ACP_USAGE_ROOT;
     recorder?.stop();
     await instance?.dispose();
     rmSync(scratch, { recursive: true, force: true });
@@ -171,6 +192,17 @@ describe("ACP turns (fake CLI)", () => {
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false });
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(true);
+  });
+
+  it("selectModel confirms the requested model before prompting", async () => {
+    process.env.FAKE_ACP_MODELS = "m-one,m-two";
+    await create(SelectModelDriver);
+    await instance.adapter.sendTurn({ threadId: "t-model", text: "go", model: "m-two" });
+
+    const started = await recorder.until((e) => e.type === "session.started");
+    expect(started).toMatchObject({ model: "m-two" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
   });
 });
 

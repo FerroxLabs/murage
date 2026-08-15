@@ -64,6 +64,11 @@ export interface AcpSupport {
   install?: EngineInstall;
   /** CLI argv AFTER the binary name to enter ACP stdio mode. */
   spawnArgs(config: AcpConfig, turn: SendTurnInput): string[];
+  /** Select the model through a session config option instead of argv, for
+   *  harnesses whose ACP subcommand takes no -m (opencode). The agent must
+   *  CONFIRM the requested model before we prompt: silently running a model
+   *  other than the one the picker shows is the failure this guards. */
+  selectModel?: { configId: string };
   /** Mutate the child env in place (e.g. strip a key). Optional. */
   transformEnv?(env: Record<string, string | undefined>): void;
   /** Pick the ACP authenticate methodId from initialize's advertised
@@ -439,24 +444,51 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
 
             const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+            let sessionResult: any = null;
             if (cursor) {
               try {
-                await request("session/load", { sessionId: cursor, cwd, mcpServers }, LOAD_SESSION_TIMEOUT);
+                sessionResult = await request(
+                  "session/load",
+                  { sessionId: cursor, cwd, mcpServers },
+                  LOAD_SESSION_TIMEOUT,
+                );
                 sessionId = cursor;
               } catch {
                 /* session gone, load unsupported, or too slow — start fresh */
               }
             }
             if (!sessionId) {
-              const started = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
-              sessionId = typeof started?.sessionId === "string" ? started.sessionId : null;
+              sessionResult = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
+              sessionId = typeof sessionResult?.sessionId === "string" ? sessionResult.sessionId : null;
               if (!sessionId) throw new Error("session/new returned no sessionId");
             }
+
+            let selectedModel: string | null = null;
+            if (support.selectModel) {
+              const { configId } = support.selectModel;
+              const currentOf = (r: any) =>
+                (Array.isArray(r?.configOptions) ? r.configOptions : []).find((o: any) => o?.id === configId)
+                  ?.currentValue ?? null;
+              selectedModel = currentOf(sessionResult);
+              if (turn.model && turn.model !== selectedModel) {
+                selectedModel = currentOf(
+                  await request("session/set_config_option", { sessionId, configId, value: turn.model }, INIT_TIMEOUT),
+                );
+                // an agent that answers OK but keeps its old model is worse than
+                // one that errors: it burns a paid turn on the wrong thing
+                if (selectedModel !== turn.model) {
+                  throw new Error(
+                    `${DRIVER_KIND} did not switch to ${turn.model} (still ${selectedModel ?? "unknown"})`,
+                  );
+                }
+              }
+            }
+
             emit({
               ...base(threadId, turnId),
               type: "session.started",
               sessionId,
-              model: init?._meta?.modelState?.currentModelId ?? turn.model ?? null,
+              model: selectedModel ?? init?._meta?.modelState?.currentModelId ?? turn.model ?? null,
             });
             state.promptSent = true;
             const text = support.buildPromptText
