@@ -10,6 +10,8 @@ import { afterAll } from "vitest";
 const home = mkdtempSync(join(tmpdir(), "omb-test-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+// A caller-supplied override must not escape the test sandbox.
+delete process.env.OMB_DATA_DIR;
 
 afterAll(async () => {
   // Windows holds a directory that is a live process's cwd, and a

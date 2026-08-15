@@ -366,7 +366,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     api(`/api/bots/${bot.id}/computer/${kind}`, { method: "POST" })
       .then((result) => {
         // the join URL's stream token rotates — always freshly minted, never cached
-        if (kind === "join" && result.joinUrl) window.open(result.joinUrl);
+        if (kind === "join" && result.joinUrl) window.open(result.joinUrl, "_blank", "noopener");
         if (kind === "provision") {
           setBoxState(result.container ?? null);
           if (result.ready) setPhase("ready");

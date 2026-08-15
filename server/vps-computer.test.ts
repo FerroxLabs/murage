@@ -19,6 +19,7 @@ import {
   vpsComputerMcp,
   vpsContainerMcpArgs,
   vpsContainerName,
+  vpsContainerRunArgs,
   vpsDockerArgs,
   vpsDriverError,
   reuseVps,
@@ -47,17 +48,19 @@ function fixture({
   networkMode = "default",
   containerImageId = IMAGE_ID,
   inspectedImageId = IMAGE_ID,
+  rebuiltImageId,
   containerId = CONTAINER_ID,
   privileged = false,
   pidMode = "",
-  ipcMode = "private",
+  ipcMode,
   capAdd = ["CAP_SETUID", "CAP_SETGID"],
   screenshotValid = true,
   screenshotCaptureFails = false,
   securityOpt = [],
   memory = 4 * 1024 * 1024 * 1024,
   restartPolicyName = "no",
-  cgroupnsMode = "private",
+  cgroupnsMode,
+  imageLabelsMatch = true,
 }: {
   image?: boolean;
   container?: boolean;
@@ -70,6 +73,7 @@ function fixture({
   networkMode?: string;
   containerImageId?: string;
   inspectedImageId?: string;
+  rebuiltImageId?: string;
   containerId?: string;
   privileged?: boolean;
   pidMode?: string;
@@ -81,10 +85,17 @@ function fixture({
   memory?: number;
   restartPolicyName?: string;
   cgroupnsMode?: string;
+  imageLabelsMatch?: boolean;
 } = {}) {
   const name = vpsContainerName(BOT_ID);
+  const provisioningArgs = vpsContainerRunArgs(name);
+  const argValue = (flag: string) => {
+    const index = provisioningArgs.indexOf(flag);
+    if (index >= 0) return provisioningArgs[index + 1] ?? "";
+    return provisioningArgs.find((arg) => arg.startsWith(`${flag}=`))?.slice(flag.length + 1) ?? "";
+  };
   const calls: Array<{ args: string[]; options?: { input?: string; timeoutMs?: number } }> = [];
-  const state = { image, container, running };
+  const state = { image, container, running, imageLabelsMatch, inspectedImageId };
   const runner: VpsCommandRunner = async (args, options) => {
     calls.push({ args, options });
     const command = args[2];
@@ -93,12 +104,12 @@ function fixture({
       if (!state.image) throw new Error("missing image");
       return {
         stdout: JSON.stringify([{
-          Config: { Labels: {
+          Config: { Labels: state.imageLabelsMatch ? {
             [MANAGED_LABEL]: "1",
             [DRIVER_LABEL]: CUA_DRIVER_VERSION,
             [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
-          } },
-           Id: inspectedImageId,
+          } : { [MANAGED_LABEL]: "0" } },
+          Id: state.inspectedImageId,
         }]),
         stderr: "",
       };
@@ -133,14 +144,14 @@ function fixture({
             CapAdd: capAdd,
             Privileged: privileged,
             PidMode: pidMode,
-            IpcMode: ipcMode,
+            IpcMode: ipcMode ?? argValue("--ipc"),
             UTSMode: "",
             ShmSize: 512 * 1024 * 1024,
             Devices: [],
             DeviceRequests: deviceRequests ? [{ Driver: "nvidia" }] : [],
             SecurityOpt: securityOpt,
             UsernsMode: "",
-            CgroupnsMode: cgroupnsMode,
+            CgroupnsMode: cgroupnsMode ?? argValue("--cgroupns"),
             OomKillDisable: false,
             AutoRemove: false,
             RestartPolicy: { Name: restartPolicyName, MaximumRetryCount: 0 },
@@ -164,6 +175,8 @@ function fixture({
     if (command === "pull") return { stdout: "pulled\n", stderr: "" };
     if (command === "build") {
       state.image = true;
+      state.imageLabelsMatch = true;
+      state.inspectedImageId = rebuiltImageId ?? state.inspectedImageId;
       expect(options?.input).toContain(`FROM ${BASE_IMAGE}`);
       return { stdout: "built\n", stderr: "" };
     }
@@ -300,11 +313,32 @@ describe("VPS computer", () => {
     const run = provision.calls.find(({ args }) => args[2] === "run")?.args ?? [];
     expect(run).toContain("--memory");
     expect(run).toContain("--pids-limit");
+    expect(run).toContain("--ipc");
+    expect(run[run.indexOf("--ipc") + 1]).toBe("private");
+    expect(run).toContain("--cgroupns");
+    expect(run[run.indexOf("--cgroupns") + 1]).toBe("private");
     expect(run.at(-1)).toBe(IMAGE_ID);
     expect(run.join(" ")).toContain(`--label ${VPS_MANAGED_LABEL}=1`);
     expect(run).not.toContain("--mount");
     expect(run).not.toContain("-p");
     expect(provision.calls.some(({ args }) => args[2] === "build")).toBe(true);
+  });
+
+  it("uses the image id produced by a rebuild", async () => {
+    const staleImageId = `sha256:${"b".repeat(64)}`;
+    const provision = fixture({
+      image: true,
+      imageLabelsMatch: false,
+      container: false,
+      inspectedImageId: staleImageId,
+      rebuiltImageId: IMAGE_ID,
+    });
+
+    const status = await vpsComputerAction("provision", CONFIG, BOT_ID, provision.runner);
+    expect(status.ready).toBe(true);
+    const run = provision.calls.find(({ args }) => args[2] === "run")?.args ?? [];
+    expect(run.at(-1)).toBe(IMAGE_ID);
+    expect(run.at(-1)).not.toBe(staleImageId);
   });
 
   it("starts and sleeps only the managed container, never the VPS", async () => {

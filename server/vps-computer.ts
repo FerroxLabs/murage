@@ -26,6 +26,7 @@ export const VPS_IMAGE = CUA_IMAGE;
 export const VPS_MANAGED_LABEL = "com.openmausbot.vps";
 export const VPS_CONTAINER_LABEL = "com.openmausbot.container";
 export const VPS_CONTAINER_PREFIX = "openmausbot-vps";
+const COMMAND_TIMEOUT_KILL_GRACE_MS = 1_000;
 
 const CONTAINER_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/;
 const CONTAINER_ID = /^[a-f0-9]{12,64}$/i;
@@ -88,7 +89,7 @@ export function vpsDockerArgs(alias: string, args: string[]): string[] {
   return ["-H", `ssh://${alias}`, ...args];
 }
 
-function defaultRunner(args: string[], options: VpsCommandOptions = {}): Promise<{ stdout: string; stderr: string }> {
+export function defaultRunner(args: string[], options: VpsCommandOptions = {}): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("docker", args, {
       shell: false,
@@ -98,11 +99,26 @@ function defaultRunner(args: string[], options: VpsCommandOptions = {}): Promise
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const timeout = setTimeout(() => {
+    let timedOut = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let timeout: ReturnType<typeof setTimeout>;
+    const settle = (finish: () => void) => {
       if (settled) return;
       settled = true;
-      child.kill();
-      reject(new Error("Docker-over-SSH command timed out"));
+      clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
+      finish();
+    };
+    timeout = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      killTimer = setTimeout(() => {
+        if (settled) return;
+        child.kill("SIGKILL");
+        settle(() => reject(new Error("Docker-over-SSH command timed out")));
+      }, COMMAND_TIMEOUT_KILL_GRACE_MS);
+      killTimer.unref?.();
+      child.kill("SIGTERM");
     }, options.timeoutMs ?? 120_000);
     timeout.unref?.();
 
@@ -114,21 +130,29 @@ function defaultRunner(args: string[], options: VpsCommandOptions = {}): Promise
     child.stderr.on("data", (chunk: string) => {
       stderr = `${stderr}${chunk}`.slice(-16 * 1024 * 1024);
     });
+    child.stdin.on("error", (error) => {
+      if (timedOut) return;
+      settle(() => reject(new Error(`Docker-over-SSH stdin failed: ${error.message}`)));
+    });
     child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(new Error(`Docker-over-SSH could not start: ${error.message}`));
+      settle(() => reject(new Error(`Docker-over-SSH could not start: ${error.message}`)));
     });
     child.on("close", (code, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (code === 0) return resolve({ stdout, stderr });
-      const detail = stderr.trim().slice(-1000);
-      reject(new Error(detail || `Docker-over-SSH exited ${code ?? signal ?? "without a status"}`));
+      if (timedOut) {
+        settle(() => reject(new Error("Docker-over-SSH command timed out")));
+        return;
+      }
+      settle(() => {
+        if (code === 0) return resolve({ stdout, stderr });
+        const detail = stderr.trim().slice(-1000);
+        reject(new Error(detail || `Docker-over-SSH exited ${code ?? signal ?? "without a status"}`));
+      });
     });
-    child.stdin.end(options.input);
+    try {
+      child.stdin.end(options.input);
+    } catch (error) {
+      settle(() => reject(new Error(`Docker-over-SSH stdin failed: ${error instanceof Error ? error.message : String(error)}`)));
+    }
   });
 }
 
@@ -418,6 +442,10 @@ export function vpsContainerRunArgs(containerName: string, imageRef = VPS_IMAGE)
     String(PIDS_LIMIT),
     "--network",
     "bridge",
+    "--ipc",
+    "private",
+    "--cgroupns",
+    "private",
     "--cap-drop",
     "ALL",
     "--cap-add",
@@ -517,8 +545,11 @@ export async function vpsComputerAction(
     const containerRef = before.container_id ?? before.container_name;
     if (action === "provision") {
       if (before.container === "missing") {
-        if (!before.image) await prepareVpsImage(alias, runner);
-        const imageRef = before.image_id ?? (await vpsComputerStatus(cfg, botId, runner)).image_id;
+        let imageRef = before.image ? before.image_id : null;
+        if (!before.image) {
+          await prepareVpsImage(alias, runner);
+          imageRef = (await vpsComputerStatus(cfg, botId, runner)).image_id;
+        }
         if (!imageRef) throw Object.assign(new Error("The prepared VPS image could not be identified"), { status: 409 });
         await run(vpsContainerRunArgs(before.container_name, imageRef));
       } else {

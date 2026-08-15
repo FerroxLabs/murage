@@ -9,6 +9,11 @@ describe("VPS config", () => {
     rmSync(DATA_DIR, { recursive: true, force: true });
   });
 
+  it("keeps test data in the throwaway home", () => {
+    expect(process.env.OMB_DATA_DIR).toBeUndefined();
+    expect(DATA_DIR).toContain("omb-test-home-");
+  });
+
   it("accepts a simple SSH config alias and rejects command-shaped targets", () => {
     expect(normalizeVpsConfig({ sshAlias: "production-vps" })).toEqual({ sshAlias: "production-vps" });
     expect(() => normalizeVpsConfig({ sshAlias: "production-vps; touch /tmp/pwned" })).toThrow(/SSH config alias/);

@@ -299,6 +299,11 @@ export class Store {
     let groupsMigrated = false;
     for (const b of this.bots) b.busy = false;
     for (const b of this.bots) {
+      // Older or hand-edited files can bypass the API validation.
+      if (b.cloudBackend !== undefined && b.cloudBackend !== "box" && b.cloudBackend !== "vps") {
+        delete b.cloudBackend;
+        botsMigrated = true;
+      }
       if (!b.chiefOfStaff) continue;
       if (!chiefSeen) {
         chiefSeen = true;

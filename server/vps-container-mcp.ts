@@ -21,17 +21,24 @@ const child = spawn("docker", args, {
   stdio: ["pipe", "pipe", "pipe"],
 });
 
+// docker may exit before it drains stdin; pipe() leaves this error unhandled.
+child.stdin.on("error", () => {});
 process.stdin.pipe(child.stdin);
 child.stdout.pipe(process.stdout);
 child.stderr.pipe(process.stderr);
 
 child.on("error", (error) => {
   process.stderr.write(`could not connect to VPS Cua Driver: ${error.message}\n`);
-  process.exit(1);
+  process.exitCode = 1;
+  process.stdin.unpipe(child.stdin);
+  process.stdin.pause();
 });
 child.on("close", (code, signal) => {
   if (signal) process.stderr.write(`VPS Cua Driver connection ended with ${signal}\n`);
-  process.exit(code ?? 1);
+  // Let stdout and stderr drain before the bridge exits.
+  process.exitCode = code ?? 1;
+  process.stdin.unpipe(child.stdin);
+  process.stdin.pause();
 });
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
