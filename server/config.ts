@@ -15,6 +15,8 @@ export interface AppConfig {
    * catalog with official logos in the plugins marketplace. */
   composio?: { key?: string; apiKey?: string; url?: string };
   box?: { token?: string };
+  /** OpenCode Go key; persisted write-only and passed only to its child. */
+  opencodeGo?: { apiKey?: string };
   /** Voice (ElevenLabs). `key` is the credential and is never echoed back;
    * `voice` is the chosen voice id, which is a setting, not a secret. */
   tts?: { key?: string; voice?: string };
@@ -53,6 +55,7 @@ export function loadConfig(): AppConfig {
   cfg.xai = { key: process.env.XAI_API_KEY, ...cfg.xai };
   cfg.composio = { key: process.env.COMPOSIO_KEY, ...cfg.composio };
   cfg.box = { token: process.env.BOX_TOKEN, ...cfg.box };
+  cfg.opencodeGo = { apiKey: process.env.OPENCODE_API_KEY, ...cfg.opencodeGo };
   cfg.tts = { key: process.env.OMB_TTS_KEY, ...cfg.tts };
   return cfg;
 }
@@ -67,7 +70,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   } catch {
     /* first write */
   }
-  for (const key of ["xai", "composio", "box", "tts", "profile"] as const) {
+  for (const key of ["xai", "composio", "box", "opencodeGo", "tts", "profile"] as const) {
     if (patch[key] && typeof patch[key] === "object") {
       disk[key] = { ...(disk[key] as object), ...patch[key] };
     }
@@ -103,12 +106,16 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
           claude: { driver: "claudeAgent" },
           codex: { driver: "codex" },
           antigravity: { driver: "antigravityAgent" },
+          opencodeGo: { driver: "opencodeGo" },
           computer: { driver: "boxAgent" },
         };
   for (const entry of Object.values(map)) {
     entry.environment = {
       ...(cfg.xai?.key ? { XAI_API_KEY: cfg.xai.key } : {}),
       ...(cfg.box?.token ? { BOX_TOKEN: cfg.box.token } : {}),
+      ...(entry.driver === "opencodeGo" && cfg.opencodeGo?.apiKey
+        ? { OPENCODE_API_KEY: cfg.opencodeGo.apiKey }
+        : {}),
       ...entry.environment,
     };
   }

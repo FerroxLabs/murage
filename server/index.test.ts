@@ -277,6 +277,17 @@ describe("harness HTTP API", () => {
     expect(after.body.profile).toEqual({ name: "Ada Lovelace", email: "Ada@Example.com" });
   });
 
+  it("stores OpenCode Go credentials as a configured-only status", async () => {
+    const put = await api("PUT", "/api/config", { opencodeGo: { apiKey: "opencode-secret" } });
+    expect(put.status).toBe(200);
+    expect(put.body.opencodeGo).toEqual({ configured: true });
+    expect(JSON.stringify(put.body)).not.toContain("opencode-secret");
+
+    const after = await api("GET", "/api/config");
+    expect(after.body.opencodeGo).toEqual({ configured: true });
+    expect(JSON.stringify(after.body)).not.toContain("opencode-secret");
+  });
+
   it("404s unknown routes with the route in the error", async () => {
     const res = await api("GET", "/api/definitely-not-a-route");
     expect(res.status).toBe(404);
