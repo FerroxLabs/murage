@@ -255,13 +255,16 @@ describe("ACP turns (fake CLI)", () => {
       threadId: "t-resume-model",
       text: "go",
       model: "m-two",
-      resumeCursor: "fake-acp-session",
+      // deliberately NOT "fake-acp-session", the id session/new returns: with
+      // that cursor a session/load that threw and fell back to session/new
+      // would emit the same sessionId and this test could not fail
+      resumeCursor: "resumed-thread-1",
     });
 
     // session/load feeds the same sessionResult as session/new, so the model
     // hook must fire on a resumed thread as well
     const started = await recorder.until((e) => e.type === "session.started");
-    expect(started).toMatchObject({ sessionId: "fake-acp-session", model: "m-two" });
+    expect(started).toMatchObject({ sessionId: "resumed-thread-1", model: "m-two" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
   });
