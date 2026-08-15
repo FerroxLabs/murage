@@ -69,16 +69,18 @@ export interface AcpSupport {
    *  CONFIRM the requested model before we prompt: silently running a model
    *  other than the one the picker shows is the failure this guards. */
   selectModel?: { configId: string };
-  /** Mutate the child env in place (e.g. strip a key). Optional. */
-  transformEnv?(env: Record<string, string | undefined>): void;
+  /** Mutate the child env in place: strip a key, inject a policy. Receives the
+   *  instance config so a support can vary with fullAuto. */
+  transformEnv?(env: Record<string, string | undefined>, config: AcpConfig): void;
   /** Pick the ACP authenticate methodId from initialize's advertised
    * authMethods; return null to skip the authenticate step. */
   pickAuthMethod(authMethods: Array<{ id?: string }>): string | null;
   /** "fail": abort the turn if auth is missing/errors (subscription CLIs).
    *  "continue": proceed anyway (CLIs that work off an ambient login). */
   authFailure: "fail" | "continue";
-  /** snapshot(): is the CLI signed in? (env already carries the merged config) */
-  isAuthenticated(env: Record<string, string | undefined>): boolean;
+  /** snapshot(): can this harness actually run a turn? (env already carries the
+   *  merged config). May be async for harnesses that have to ask the CLI. */
+  isAuthenticated(env: Record<string, string | undefined>, config: AcpConfig): boolean | Promise<boolean>;
   /** Compose the session/prompt text. Default prepends the persona. */
   buildPromptText?(turn: SendTurnInput): string;
 }
@@ -141,7 +143,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           ...input.environment,
           PATH: augmentedPath(),
         };
-        support.transformEnv?.(env);
+        support.transformEnv?.(env, config);
         return env;
       };
 
@@ -544,7 +546,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           );
         });
         if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
-        return { state: "available", version, authenticated: support.isAuthenticated(env) };
+        return { state: "available", version, authenticated: await support.isAuthenticated(env, config) };
       };
 
       return {

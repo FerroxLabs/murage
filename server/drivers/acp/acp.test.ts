@@ -40,6 +40,26 @@ const SELECT_MODEL_SUPPORT: AcpSupport = {
 };
 const SelectModelDriver = createAcpDriver(SELECT_MODEL_SUPPORT);
 
+/** Proves transformEnv can vary with the instance config, which is how the
+ *  opencode driver picks its permission policy from `fullAuto`. */
+const EnvPolicyDriver = createAcpDriver({
+  ...SELECT_MODEL_SUPPORT,
+  driverKind: "envPolicyTest",
+  selectModel: undefined,
+  transformEnv: (env, config) => {
+    env.TEST_POLICY = config.fullAuto ? "auto" : "ask";
+  },
+});
+
+/** Proves snapshot() awaits an async isAuthenticated, which is how the
+ *  opencode driver answers from a discovered catalog. */
+const AsyncAuthDriver = createAcpDriver({
+  ...SELECT_MODEL_SUPPORT,
+  driverKind: "asyncAuthTest",
+  selectModel: undefined,
+  isAuthenticated: async () => true,
+});
+
 describe("ACP decodeConfig", () => {
   it("grok defaults to the grok binary", () => {
     expect(GrokAgentDriver.decodeConfig({})).toEqual({ cli: "grok", fullAuto: false, workspace: undefined });
@@ -245,6 +265,24 @@ describe("ACP turns (fake CLI)", () => {
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
   });
+
+  it("transformEnv sees the instance config", async () => {
+    const dump = join(scratch, "policy.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    instance = await EnvPolicyDriver.create({
+      instanceId: "policy-test",
+      displayName: undefined,
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+
+    await instance.adapter.sendTurn({ threadId: "t-policy", text: "go" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    expect(JSON.parse(readFileSync(dump, "utf8")).env.TEST_POLICY).toBe("auto");
+  });
 });
 
 describe("ACP snapshot", () => {
@@ -304,6 +342,22 @@ describe("ACP snapshot", () => {
     } finally {
       await instance.dispose();
       rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("awaits an async isAuthenticated", async () => {
+    const instance = await AsyncAuthDriver.create({
+      instanceId: "async-auth",
+      displayName: undefined,
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      // without the await this is a Promise: truthy, but not `true`
+      expect((await instance.snapshot()).authenticated).toBe(true);
+    } finally {
+      await instance.dispose();
     }
   });
 });
