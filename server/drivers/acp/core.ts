@@ -74,11 +74,26 @@ export interface AcpSupport {
   authFailure: "fail" | "continue";
   /** snapshot(): is the CLI signed in? (env already carries the merged config) */
   isAuthenticated(env: Record<string, string | undefined>): boolean;
+  /** Per-instance model catalog, for CLIs whose real catalog is user-local
+   * (custom providers, favourites) rather than a fixed vendor list. Falls
+   * back to the static `models` when absent or when it throws. */
+  resolveModels?(env: Record<string, string | undefined>): AcpSupport["models"];
   /** Compose the session/prompt text. Default prepends the persona. */
   buildPromptText?(turn: SendTurnInput): string;
+  /** Apply per-session settings between session/new (or session/load) and the
+   * first session/prompt. Some CLIs ignore argv and take the model/mode over
+   * the wire instead (droid), so this is the only place the pick can land; a
+   * throw here fails the turn rather than silently running another model. */
+  configureSession?(ctx: {
+    request: (method: string, params: unknown, timeoutMs?: number) => Promise<any>;
+    sessionId: string;
+    config: AcpConfig;
+    turn: SendTurnInput;
+  }): Promise<void>;
 }
 
 const INIT_TIMEOUT = 20_000;
+const SESSION_CONFIG_TIMEOUT = 20_000; // configureSession's per-request default
 const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
 
@@ -138,6 +153,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         };
         support.transformEnv?.(env);
         return env;
+      };
+
+      // A user-local catalog must never be able to break the picker: any
+      // failure reading it falls back to the driver's static list.
+      const instanceModels = () => {
+        if (!support.resolveModels) return support.models;
+        try {
+          const resolved = support.resolveModels(childEnv());
+          return resolved.options.length ? resolved : support.models;
+        } catch {
+          return support.models;
+        }
       };
 
       // ACP session mcpServers: stdio is the baseline every ACP agent
@@ -452,12 +479,25 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               sessionId = typeof started?.sessionId === "string" ? started.sessionId : null;
               if (!sessionId) throw new Error("session/new returned no sessionId");
             }
+            // Emit BEFORE configureSession: session.started is the only place
+            // the resume cursor is recorded, so a hook that rejects (or an
+            // interrupt landing mid-config) must not strand the session that
+            // was just created — the next turn would start a fresh one and
+            // lose the thread's history.
             emit({
               ...base(threadId, turnId),
               type: "session.started",
               sessionId,
               model: init?._meta?.modelState?.currentModelId ?? turn.model ?? null,
             });
+            if (support.configureSession) {
+              await support.configureSession({
+                request: (method, params, timeoutMs) => request(method, params, timeoutMs ?? SESSION_CONFIG_TIMEOUT),
+                sessionId,
+                config,
+                turn,
+              });
+            }
             state.promptSent = true;
             const text = support.buildPromptText
               ? support.buildPromptText(turn)
@@ -518,7 +558,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         driverKind: DRIVER_KIND,
         displayName: input.displayName,
         enabled: input.enabled,
-        models: support.models,
+        // Read once per instance: the picker reads this synchronously, and a
+        // user-local catalog changes about as often as the CLI is reinstalled.
+        models: instanceModels(),
         snapshot,
         adapter: {
           provider: DRIVER_KIND,
