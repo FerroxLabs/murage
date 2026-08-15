@@ -26,6 +26,7 @@ import type {
   ProviderDriver,
   ProviderInstance,
   ProviderSnapshot,
+  ModelCatalog,
   RuntimeEvent,
   RuntimeEventListener,
   SendTurnInput,
@@ -56,6 +57,8 @@ export interface AcpSupport {
   models: { default: string; options: Array<{ id: string; label: string }> };
   /** Default CLI binary name if the instance config doesn't override it. */
   defaultCli: string;
+  /** Optional live model catalog. A failed lookup keeps the static fallback. */
+  resolveModels?(environment: Record<string, string>): Promise<ModelCatalog>;
   /** Native-protocol log label, e.g. "grok.acp". */
   nativeSource: string;
   /** Message shown when the CLI is present but not signed in. */
@@ -110,6 +113,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
     async create(input: DriverCreateInput<AcpConfig>): Promise<ProviderInstance> {
       const { instanceId, config } = input;
+      let models = support.models;
+      if (support.resolveModels) {
+        try {
+          models = await support.resolveModels(input.environment);
+        } catch {
+          // The CLI remains usable when the optional catalog endpoint is down.
+        }
+      }
       const listeners = new Set<RuntimeEventListener>();
       interface Turn {
         stop: () => void;
@@ -518,7 +529,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         driverKind: DRIVER_KIND,
         displayName: input.displayName,
         enabled: input.enabled,
-        models: support.models,
+        models,
         snapshot,
         adapter: {
           provider: DRIVER_KIND,

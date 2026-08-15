@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
@@ -22,6 +23,37 @@ import { KimiAgentDriver } from "./kimi.ts";
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
 describe("ACP decodeConfig", () => {
+  it("resolves a dynamic model catalog when a support provides one", async () => {
+    const support: AcpSupport = {
+      driverKind: "dynamic-test",
+      displayName: "Dynamic Test",
+      models: { default: "fallback", options: [{ id: "fallback", label: "Fallback" }] },
+      defaultCli: FAKE_CLI,
+      nativeSource: "dynamic-test.acp",
+      loginNote: "not authenticated",
+      spawnArgs: () => [],
+      pickAuthMethod: () => null,
+      authFailure: "continue",
+      isAuthenticated: () => true,
+      resolveModels: async () => ({
+        default: "dynamic-model",
+        options: [{ id: "dynamic-model", label: "Dynamic model" }],
+      }),
+    };
+    const driver = createAcpDriver(support);
+    const instance = await driver.create({
+      instanceId: "dynamic-test",
+      displayName: "Dynamic Test",
+      environment: {},
+      enabled: true,
+      config: driver.defaultConfig(),
+    });
+    expect(instance.models).toEqual({
+      default: "dynamic-model",
+      options: [{ id: "dynamic-model", label: "Dynamic model" }],
+    });
+    await instance.dispose();
+  });
   it("grok defaults to the grok binary", () => {
     expect(GrokAgentDriver.decodeConfig({})).toEqual({ cli: "grok", fullAuto: false, workspace: undefined });
   });
