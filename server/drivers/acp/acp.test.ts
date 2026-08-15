@@ -204,6 +204,37 @@ describe("ACP turns (fake CLI)", () => {
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
   });
+
+  it("a model the session does not advertise fails the turn instead of running another", async () => {
+    process.env.FAKE_ACP_MODELS = "m-one,m-two";
+    await create(SelectModelDriver);
+    await instance.adapter.sendTurn({ threadId: "t-bad-model", text: "go", model: "m-nope" });
+
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false });
+    const err = recorder.events.find((e) => e.type === "runtime.error")!;
+    expect(err.message).toMatch(/model not found/);
+    // nothing was generated: the prompt is never sent
+    expect(recorder.events.some((e) => e.type === "content.delta")).toBe(false);
+  });
+
+  it("selects the model on a resumed session too, not just a new one", async () => {
+    process.env.FAKE_ACP_MODELS = "m-one,m-two";
+    await create(SelectModelDriver);
+    await instance.adapter.sendTurn({
+      threadId: "t-resume-model",
+      text: "go",
+      model: "m-two",
+      resumeCursor: "fake-acp-session",
+    });
+
+    // session/load feeds the same sessionResult as session/new, so the model
+    // hook must fire on a resumed thread as well
+    const started = await recorder.until((e) => e.type === "session.started");
+    expect(started).toMatchObject({ sessionId: "fake-acp-session", model: "m-two" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+  });
 });
 
 describe("ACP snapshot", () => {
