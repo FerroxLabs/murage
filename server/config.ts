@@ -1,7 +1,7 @@
 // Config + data dirs. One file, ~/.openmausbot/config.json, env fallbacks:
 //   { "xai": {"key":"xai-…"}, "composio": {"key":"ck_…"}, "box": {"token":"…"},
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -67,7 +67,14 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     }
   }
   mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(p, JSON.stringify(disk, null, 2));
+  writeFileSync(p, JSON.stringify(disk, null, 2), { mode: 0o600 });
+  // the file is created/overwritten atomically enough for a local tool, but
+  // the default umask may leave group/other read on a pre-existing file
+  try {
+    chmodSync(p, 0o600);
+  } catch {
+    /* file may be gone — nothing to harden */
+  }
 }
 
 // Default fleet: one instance per built-in driver (upstream

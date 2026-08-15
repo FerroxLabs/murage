@@ -324,6 +324,11 @@ async function startTurn(botId: string, text: string, opts?: { commsDepth?: numb
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
       if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
+      // dweb network daemon integration — mounted whenever dweb is configured
+      // so the bot can query dweb status/repo/opencode through MCP tools
+      if (process.env.DWEB_URL || true) {
+        integrations.dweb = { url: process.env.DWEB_URL ?? "http://127.0.0.1:49737" };
+      }
       const wants = bot.computer; // 'cloud' | 'local' | 'off' | undefined(auto)
       if (wants !== "off" && wants !== "local" && box.boxConfigured(cfg)) {
         let b = await box.findBox(cfg, bot.id).catch(() => null);
@@ -449,11 +454,39 @@ function readBody(req: IncomingMessage): Promise<any> {
   });
 }
 
+// Loopback-only enforcement: the harness runs on 127.0.0.1 but accepts
+// requests from any loopback connection and any web page that DNS-rebinds
+// onto it. Reject non-loopback Hosts outright (defeats rebinding) and
+// cross-origin state-changing requests (defeats CSRF from any page).
+function isLoopbackHost(host: string | undefined): boolean {
+  if (!host) return false;
+  const clean = host.split(":")[0].toLowerCase().replace(/[\[\]]/g, "");
+  return clean === "localhost" || clean === "127.0.0.1" || clean === "::1" || clean === "0:0:0:0:0:0:0:1";
+}
+
+function isAllowedOrigin(origin: string | undefined | null): boolean {
+  if (!origin) return true; // non-browser clients (CLIs, curl, tests) send none
+  try {
+    const o = new URL(origin);
+    return isLoopbackHost(o.hostname) && (o.protocol === "http:" || o.protocol === "https:");
+  } catch {
+    return false;
+  }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
   const method = req.method ?? "GET";
   try {
+    // loopback-only + same-origin gate before any route (DNS-rebinding / CSRF)
+    if (!isLoopbackHost(req.headers.host)) {
+      return json(res, 403, { error: "forbidden: loopback host required" });
+    }
+    const origin = req.headers.origin;
+    if (origin && !isAllowedOrigin(origin)) {
+      return json(res, 403, { error: "forbidden: cross-origin request" });
+    }
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
     // discover peers and hand a message to one. Not part of the public API.
