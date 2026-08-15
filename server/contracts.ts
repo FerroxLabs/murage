@@ -10,6 +10,24 @@ export type InstanceId = string;
 export type ThreadId = string;
 export type TurnId = string;
 
+export type ProviderErrorCode =
+  | "missing_cli"
+  | "invalid_credentials"
+  | "inactive_subscription"
+  | "quota_or_region_restriction"
+  | "upstream_outage"
+  | "model_catalog_outage";
+
+export class ProviderError extends Error {
+  readonly code: ProviderErrorCode;
+
+  constructor(code: ProviderErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "ProviderError";
+    this.code = code;
+  }
+}
+
 // ── model selection ────────────────────────────────────────────────────
 // "Which model" is a data value carried on the request, never a service
 // binding (upstream ModelSelectionWire). instanceId is the routing key.
@@ -195,6 +213,8 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly enabled: boolean;
   readonly models: ModelCatalog;
+  /** Refresh a live catalog without recreating the provider instance. */
+  readonly refreshModels?: () => Promise<void>;
   readonly adapter: ProviderAdapter;
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */

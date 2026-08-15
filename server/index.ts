@@ -1498,6 +1498,10 @@ const server = createServer(async (req, res) => {
         if (body[key] && typeof body[key] === "object") patch[key] = body[key];
       }
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
+      const newOpenCode = patch.opencodeGo as { apiKey?: unknown } | undefined;
+      if (newOpenCode && "apiKey" in newOpenCode && typeof newOpenCode.apiKey !== "string") {
+        return json(res, 400, { error: "opencodeGo.apiKey must be a string" });
+      }
       // check a box token against the provider before storing it: a
       // rejected token used to save happily and only surface as a 401 in
       // another panel later, with nothing the user could act on

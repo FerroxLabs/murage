@@ -19,7 +19,21 @@ import { writeFileSync } from "node:fs";
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 const argv = process.argv.slice(2);
 if (process.env.FAKE_ACP_DUMP) {
-  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
+  const dumpEnv = Object.fromEntries(
+    [
+      "PATH",
+      "HOME",
+      "USERPROFILE",
+      "SystemRoot",
+      "FAKE_ACP_MODE",
+      "FAKE_ACP_RPC_DUMP",
+      "OPENCODE_API_KEY",
+      "OPENAI_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "XAI_API_KEY",
+    ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]] as const)),
+  );
+  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: dumpEnv }, null, 2));
 }
 if (argv.includes("--version")) {
   console.log("fake-acp 1.0.0");
@@ -142,14 +156,19 @@ function handle(msg: any) {
     case "session/new": {
       const servers: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
       agentsMcp = servers.find((s: any) => s?.name === "agents") ?? null;
-      result(msg.id, { sessionId: "fake-acp-session" });
+      result(msg.id, {
+        sessionId: "fake-acp-session",
+        configOptions: [{ id: "model", currentValue: "opencode-go/minimax-m3", options: [
+          { value: mode === "unsupported-model" ? "opencode-go/other" : "opencode-go/minimax-m3" },
+        ] }],
+      });
       break;
     }
     case "session/load":
-      result(msg.id, {});
+      result(msg.id, { configOptions: [{ id: "model", currentValue: "opencode-go/minimax-m3", options: [{ value: "opencode-go/minimax-m3" }] }] });
       break;
     case "session/set_config_option":
-      result(msg.id, {});
+      result(msg.id, { currentValue: mode === "mismatched-model" ? "opencode-go/other" : msg.params?.value });
       break;
     case "session/prompt": {
       if (mode === "hang") {

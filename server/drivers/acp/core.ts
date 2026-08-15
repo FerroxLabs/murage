@@ -30,6 +30,7 @@ import type {
   RuntimeEvent,
   RuntimeEventListener,
   SendTurnInput,
+  ProviderErrorCode,
 } from "../../contracts.ts";
 import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
@@ -79,6 +80,8 @@ export interface AcpSupport {
   authFailure: "fail" | "continue";
   /** snapshot(): is the CLI signed in? (env already carries the merged config) */
   isAuthenticated(env: Record<string, string | undefined>): boolean;
+  /** Classify provider-native failures without coupling the core to messages. */
+  classifyError?(error: unknown): ProviderErrorCode | undefined;
   /** Compose the session/prompt text. Default prepends the persona. */
   buildPromptText?(turn: SendTurnInput): string;
 }
@@ -116,13 +119,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
     async create(input: DriverCreateInput<AcpConfig>): Promise<ProviderInstance> {
       const { instanceId, config } = input;
       let models = support.models;
-      if (support.resolveModels) {
+      const refreshModels = async () => {
+        if (!support.resolveModels) return;
         try {
           models = await support.resolveModels(input.environment);
         } catch {
           // The CLI remains usable when the optional catalog endpoint is down.
         }
-      }
+      };
+      await refreshModels();
       const listeners = new Set<RuntimeEventListener>();
       interface Turn {
         stop: () => void;
@@ -452,9 +457,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
 
             const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+            let sessionInfo: any = null;
             if (cursor) {
               try {
-                await request("session/load", { sessionId: cursor, cwd, mcpServers }, LOAD_SESSION_TIMEOUT);
+                sessionInfo = await request("session/load", { sessionId: cursor, cwd, mcpServers }, LOAD_SESSION_TIMEOUT);
                 sessionId = cursor;
               } catch {
                 /* session gone, load unsupported, or too slow — start fresh */
@@ -462,21 +468,39 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
             if (!sessionId) {
               const started = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
+              sessionInfo = started;
               sessionId = typeof started?.sessionId === "string" ? started.sessionId : null;
               if (!sessionId) throw new Error("session/new returned no sessionId");
             }
+            let confirmedModel: string | null = null;
             if (support.modelConfigOption && turn.model) {
-              await request(
+              const option = Array.isArray(sessionInfo?.configOptions)
+                ? sessionInfo.configOptions.find((candidate: any) => candidate?.id === support.modelConfigOption)
+                : null;
+              const advertised = Array.isArray(option?.options)
+                ? option.options.some((candidate: any) => candidate?.value === turn.model)
+                : true;
+              if (!advertised) throw new Error(`model ${turn.model} is not advertised by ACP`);
+              const updated = await request(
                 "session/set_config_option",
                 { sessionId, configId: support.modelConfigOption, value: turn.model },
                 INIT_TIMEOUT,
               );
+              const returnedOption = Array.isArray(updated?.configOptions)
+                ? updated.configOptions.find((candidate: any) => candidate?.id === support.modelConfigOption)
+                : null;
+              confirmedModel = typeof updated?.currentValue === "string"
+                ? updated.currentValue
+                : typeof returnedOption?.currentValue === "string"
+                  ? returnedOption.currentValue
+                  : null;
+              if (confirmedModel !== turn.model) throw new Error(`ACP did not confirm model ${turn.model}`);
             }
             emit({
               ...base(threadId, turnId),
               type: "session.started",
               sessionId,
-              model: init?._meta?.modelState?.currentModelId ?? turn.model ?? null,
+              model: confirmedModel ?? init?._meta?.modelState?.currentModelId ?? turn.model ?? null,
             });
             state.promptSent = true;
             const text = support.buildPromptText
@@ -503,11 +527,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             else settle(false, reason ?? "failed");
           } catch (e) {
             if (!state.settled) {
-              const message = (e as Error).message;
-              // "not signed in" is a setup problem like a missing binary: the
-              // fix is a command in a terminal, not another attempt. Flagging
-              // it lets the error card show the sign-in step.
-              const needsAuth = message === support.loginNote;
+              const message = e instanceof Error ? e.message : String(e);
+              const code = support.classifyError?.(e);
+              // Authentication setup is a user action, not a retry. The
+              // classifier is preferred; loginNote remains a compatibility
+              // fallback for existing ACP supports.
+              const needsAuth = code === "invalid_credentials" || code === "inactive_subscription"
+                || message === support.loginNote;
               emit({
                 ...base(threadId, turnId),
                 type: "runtime.error",
@@ -538,7 +564,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         driverKind: DRIVER_KIND,
         displayName: input.displayName,
         enabled: input.enabled,
-        models,
+        get models() {
+          return models;
+        },
+        refreshModels: support.resolveModels ? refreshModels : undefined,
         snapshot,
         adapter: {
           provider: DRIVER_KIND,

@@ -1,7 +1,7 @@
 // OpenCode Go subscription/API product through the maintained OpenCode CLI's
 // ACP stdio interface. The generic protocol runtime lives in core.ts.
 import { createAcpDriver, type AcpSupport } from "./core.ts";
-import type { ModelCatalog } from "../../contracts.ts";
+import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 
 const CATALOG_URL = "https://opencode.ai/zen/go/v1/models";
 const STATIC_MODELS: ModelCatalog = {
@@ -94,9 +94,21 @@ const support = (fetcher: typeof fetch): AcpSupport => ({
   pickAuthMethod: () => null,
   authFailure: "continue",
   isAuthenticated: (env) => Boolean(env.OPENCODE_API_KEY),
+  classifyError: classifyOpenCodeGoError,
   resolveModels: () => fetchOpenCodeGoModels(fetcher),
   buildPromptText: (turn) => turn.system ? `${turn.system}\n\n${turn.text}` : turn.text,
 });
+
+function classifyOpenCodeGoError(error: unknown): ProviderErrorCode | undefined {
+  const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  const code = value.code;
+  if (code === "AUTH_REQUIRED" || code === "INVALID_API_KEY" || code === "UNAUTHORIZED") return "invalid_credentials";
+  if (code === "SUBSCRIPTION_INACTIVE") return "inactive_subscription";
+  if (code === "QUOTA_EXCEEDED" || code === "REGION_RESTRICTED") return "quota_or_region_restriction";
+  if (code === "UPSTREAM_UNAVAILABLE" || code === "SERVICE_UNAVAILABLE") return "upstream_outage";
+  if (code === "MODEL_CATALOG_UNAVAILABLE") return "model_catalog_outage";
+  return undefined;
+}
 
 export function createOpenCodeGoDriver(fetcher: typeof fetch = fetch) {
   return createAcpDriver(support(fetcher));

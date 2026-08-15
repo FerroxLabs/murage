@@ -7,10 +7,10 @@ same runtime as the other ACP engines.
 
 ## Setup
 
-1. Install the official CLI using the instructions in the
+1. Install the official CLI using the
+   [OpenCode CLI installation guide](https://opencode.ai/docs/cli/).
+2. Create or obtain an OpenCode Go API key according to the live
    [OpenCode Go documentation](https://opencode.ai/docs/go/).
-2. Create or obtain an OpenCode Go API key according to the live OpenCode
-   documentation.
 3. Open OpenMausBot Settings → Connections and save the key under **OpenCode
    Go API key**.
 

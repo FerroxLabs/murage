@@ -161,6 +161,66 @@ describe("ACP turns (fake CLI)", () => {
     expect(methods.slice(-3)).toEqual(["session/set_config_option", "session/prompt", "session/prompt.result"]);
   });
 
+  it("rejects a model that ACP does not advertise before prompting", async () => {
+    process.env.FAKE_ACP_MODE = "unsupported-model";
+    const support: AcpSupport = {
+      driverKind: "unsupported-model-test",
+      displayName: "Unsupported Model Test",
+      models: { default: "fallback", options: [{ id: "fallback", label: "Fallback" }] },
+      defaultCli: FAKE_CLI,
+      nativeSource: "unsupported-model-test.acp",
+      loginNote: "not authenticated",
+      spawnArgs: () => [],
+      modelConfigOption: "model",
+      pickAuthMethod: () => null,
+      authFailure: "continue",
+      isAuthenticated: () => true,
+    };
+    instance = await createAcpDriver(support).create({
+      instanceId: "unsupported-model-test",
+      displayName: "Unsupported Model Test",
+      environment: { FAKE_ACP_RPC_DUMP: join(scratch, "rpc.json") },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-unsupported", text: "hi", model: "opencode-go/minimax-m3" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const methods = JSON.parse(readFileSync(join(scratch, "rpc.json"), "utf8")) as string[];
+    expect(methods).not.toContain("session/prompt");
+    expect(recorder.events.some((e) => e.type === "runtime.error" && String((e as any).message).includes("not advertised"))).toBe(true);
+  });
+
+  it("rejects a model when ACP does not confirm the selected value", async () => {
+    process.env.FAKE_ACP_MODE = "mismatched-model";
+    const support: AcpSupport = {
+      driverKind: "mismatched-model-test",
+      displayName: "Mismatched Model Test",
+      models: { default: "fallback", options: [{ id: "fallback", label: "Fallback" }] },
+      defaultCli: FAKE_CLI,
+      nativeSource: "mismatched-model-test.acp",
+      loginNote: "not authenticated",
+      spawnArgs: () => [],
+      modelConfigOption: "model",
+      pickAuthMethod: () => null,
+      authFailure: "continue",
+      isAuthenticated: () => true,
+    };
+    instance = await createAcpDriver(support).create({
+      instanceId: "mismatched-model-test",
+      displayName: "Mismatched Model Test",
+      environment: { FAKE_ACP_RPC_DUMP: join(scratch, "rpc.json") },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-mismatch", text: "hi", model: "opencode-go/minimax-m3" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const methods = JSON.parse(readFileSync(join(scratch, "rpc.json"), "utf8")) as string[];
+    expect(methods).not.toContain("session/prompt");
+    expect(recorder.events.some((e) => e.type === "runtime.error" && String((e as any).message).includes("did not confirm"))).toBe(true);
+  });
+
   it("passes ACP stdio flags and strips XAI_API_KEY from the child env", async () => {
     await create();
     const dump = join(scratch, "dump.json");

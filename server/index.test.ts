@@ -288,6 +288,12 @@ describe("harness HTTP API", () => {
     expect(JSON.stringify(after.body)).not.toContain("opencode-secret");
   });
 
+  it("rejects a non-string OpenCode Go API key", async () => {
+    const bad = await api("PUT", "/api/config", { opencodeGo: { apiKey: 123 } });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toContain("opencodeGo.apiKey");
+  });
+
   it("404s unknown routes with the route in the error", async () => {
     const res = await api("GET", "/api/definitely-not-a-route");
     expect(res.status).toBe(404);

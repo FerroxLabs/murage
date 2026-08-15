@@ -40,6 +40,29 @@ describe("OpenCode Go catalog", () => {
     expect(fallback.default).toBe("opencode-go/kimi-k3");
   });
 
+  it("refreshes the same instance catalog on each explicit refresh", async () => {
+    let calls = 0;
+    const driver = createOpenCodeGoDriver(async () => {
+      calls += 1;
+      const id = calls === 1 ? "minimax-m3" : calls === 2 ? "kimi-k3" : "glm-5.2";
+      return new Response(JSON.stringify([{ id }]), { status: 200 });
+    });
+    const instance = await driver.create({
+      instanceId: "opencode-refresh",
+      displayName: "OpenCode Go",
+      environment: {},
+      enabled: true,
+      config: driver.defaultConfig(),
+    });
+
+    expect(instance.models.default).toBe("opencode-go/minimax-m3");
+    await instance.refreshModels?.();
+    expect(instance.models.default).toBe("opencode-go/kimi-k3");
+    await instance.refreshModels?.();
+    expect(instance.models.default).toBe("opencode-go/glm-5.2");
+    await instance.dispose();
+  });
+
   it("keeps the driver optional and declares the OpenCode CLI setup", () => {
     const driver = createOpenCodeGoDriver(async () => new Response("[]", { status: 200 }));
     expect(driver.driverKind).toBe("opencodeGo");

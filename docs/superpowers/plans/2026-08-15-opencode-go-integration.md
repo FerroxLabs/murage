@@ -30,7 +30,7 @@
 
 - [ ] Add a failing test proving an ACP support can provide `resolveModels(environment)` and that the created instance exposes the resolved catalog while existing static supports remain unchanged.
 - [ ] Run `pnpm vitest run server/drivers/acp/acp.test.ts`; expect the new test to fail because `AcpSupport` has no resolver.
-- [ ] Add `resolveModels?: (environment) => Promise<ModelCatalog>` to `AcpSupport`; resolve it once inside `create()` before returning the instance, falling back to `support.models` when it rejects.
+- [ ] Add `resolveModels?: (environment) => Promise<ModelCatalog>` to `AcpSupport`; resolve it at creation and expose `refreshModels()` so `/api/instances` can replace the existing instance catalog without recreating it, falling back to `support.models` when it rejects.
 - [ ] Run the focused test and then the existing ACP suite; expect all tests to pass.
 - [ ] Commit `feat(acp): support dynamic model catalogs`.
 
@@ -42,7 +42,7 @@
 - [ ] Write failing catalog tests using injected `fetch`: accept only valid model records, preserve deterministic labels, reject malformed/empty payloads, and return the last successful cache/static fallback on timeout or HTTP failure.
 - [ ] Run the focused tests and verify they fail for missing exports/driver.
 - [ ] Implement `fetchOpenCodeGoModels(fetcher)` with a module cache, 8-second timeout via `AbortController`, validation of `data`/array payloads, and a static fallback containing the documented Go model ids. Do not log response bodies or credentials.
-- [ ] Implement `OpenCodeGoDriver = createAcpDriver({ driverKind: "opencodeGo", displayName: "OpenCode Go", defaultCli: "opencode", nativeSource: "opencode-go.acp", spawnArgs: () => ["acp"], transformEnv: env => { if (env.OPENCODE_API_KEY) env.OPENCODE_API_KEY = env.OPENCODE_API_KEY; }, pickAuthMethod: () => null, authFailure: "continue", isAuthenticated: env => Boolean(env.OPENCODE_API_KEY), resolveModels: () => fetchOpenCodeGoModels() })`; the environment transform must remove known unrelated provider keys and leave only the intentionally injected OpenCode key.
+- [ ] Implement `OpenCodeGoDriver = createAcpDriver({ driverKind: "opencodeGo", displayName: "OpenCode Go", defaultCli: "opencode", nativeSource: "opencode-go.acp", spawnArgs: () => ["acp"], transformEnv: stripForeignProviderKeys, pickAuthMethod: () => null, authFailure: "continue", isAuthenticated: env => Boolean(env.OPENCODE_API_KEY), resolveModels: () => fetchOpenCodeGoModels() })`; the environment transform must remove known unrelated provider keys and leave the intentionally injected OpenCode key.
 - [ ] Add cross-platform setup commands, docs URL, and a login note that never asks OpenMausBot to edit OpenCode auth files.
 - [ ] Run the focused tests and commit `feat(acp): add OpenCode Go driver`.
 
@@ -81,7 +81,7 @@
 
 **Files:** `docs/opencode-go.md`, `README.md` only if the repository’s engine documentation index requires it
 
-- [ ] Document CLI installation via official live docs, `opencode login` as a user-managed alternative, API-key scope, model catalog behavior, supported platforms, and the fact that live tests are opt-in.
+- [ ] Document CLI installation via the official CLI guide, `opencode auth login` as a user-managed alternative, API-key scope, model catalog behavior, supported platforms, and the fact that live tests are opt-in.
 - [ ] Run `pnpm test`, `pnpm typecheck`, `pnpm build`, `pnpm check:electron`, and `git diff --check` from the worktree.
 - [ ] Search the diff and test output for `OPENCODE_API_KEY` values or serialized secrets; only variable names and configured booleans may remain.
 - [ ] Commit `docs: document OpenCode Go setup`.
