@@ -202,7 +202,7 @@ export interface InstanceInfo {
   install?: EngineInstall;
 }
 
-export type AppSettingsSection = "general" | "connections" | "voice" | "computer";
+export type AppSettingsSection = "general" | "connections" | "companion" | "voice" | "computer";
 
 interface AppState {
   bots: Bot[];
