@@ -13,6 +13,7 @@ let stubPort = 0;
 let child: ChildProcess;
 let repoStatus = 200;
 let runBody: unknown;
+let runResponse: unknown = { status: "ok", output: "model output" };
 const pending = new Map<number, (message: any) => void>();
 let nextId = 1;
 
@@ -49,7 +50,7 @@ beforeAll(async () => {
       req.on("data", (chunk) => (data += chunk));
       req.on("end", () => {
         runBody = JSON.parse(data);
-        res.end(JSON.stringify({ status: "ok", output: "model output" }));
+        res.end(JSON.stringify(runResponse));
       });
       return;
     }
@@ -104,6 +105,7 @@ describe("dweb-proxy MCP surface", () => {
   });
 
   it("forwards opencode runs with the selected model", async () => {
+    runResponse = { status: "ok", output: "model output" };
     const result = await callTool("dweb_opencode_run", { command: "inspect", model: "openai/gpt-test" });
     expect(result.result.content[0].text).toBe("model output");
     expect(runBody).toEqual({ command: "inspect", model: "openai/gpt-test" });
@@ -125,5 +127,11 @@ describe("dweb-proxy MCP surface", () => {
     expect(result.result.isError).toBe(true);
     expect(result.result.content[0].text).toContain(`http://127.0.0.1:${stubPort}`);
     expect(result.result.content[0].text).toContain("offline");
+
+    runResponse = { status: "error", error: "model unavailable" };
+    const run = await callTool("dweb_opencode_run", { command: "inspect" });
+    expect(run.result.isError).toBe(true);
+    expect(run.result.content[0].text).toContain(`http://127.0.0.1:${stubPort}`);
+    expect(run.result.content[0].text).toContain("model unavailable");
   });
 });

@@ -1061,7 +1061,7 @@ function readBody(req: IncomingMessage): Promise<any> {
 // Loopback-only enforcement: the harness runs on 127.0.0.1 but accepts
 // requests from any loopback connection and any web page that DNS-rebinds
 // onto it. Reject non-loopback Hosts outright (defeats rebinding) and
-// cross-origin state-changing requests (defeats CSRF from any page).
+// origins outside loopback (blocks remote-web CSRF).
 function isLoopbackHost(host: string | undefined): boolean {
   if (!host) return false;
   const value = host.trim().toLowerCase();
@@ -1103,7 +1103,7 @@ const server = createServer(async (req, res) => {
   /** scratch for route matches, shared by every `path.match` below */
   let m: RegExpMatchArray | null = null;
   try {
-    // loopback-only + same-origin gate before any route (DNS-rebinding / CSRF)
+    // loopback-host + loopback-origin gate before any route (DNS rebinding / CSRF)
     if (!isLoopbackHost(req.headers.host)) {
       return json(res, 403, { error: "forbidden: loopback host required" });
     }

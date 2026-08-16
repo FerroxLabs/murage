@@ -127,7 +127,12 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       body: JSON.stringify({ command, ...(model !== undefined ? { model } : {}) }),
       signal: AbortSignal.timeout(300000),
     });
-    if (r.status === "error") return { text: String(r.error ?? r.output ?? "opencode run failed"), isError: true };
+    if (r.status === "error") {
+      return {
+        text: `dweb request failed at ${DWEB_DISPLAY}: ${String(r.error ?? r.output ?? "opencode run failed")}`,
+        isError: true,
+      };
+    }
     return { text: String(r.output ?? "(no output)") };
   }
   return { text: `Unknown tool: ${name}`, isError: true };
