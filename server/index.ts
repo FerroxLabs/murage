@@ -1,7 +1,7 @@
 // OpenMausBot server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, extname, join } from "node:path";
@@ -21,6 +21,7 @@ import {
 } from "./container-computer.ts";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import { resetPathCache } from "./env-path.ts";
+import { buildNotification, type Notification } from "./notify.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -139,15 +140,99 @@ const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
   tasks: store.tasks(bot.id).map(({ resumeCursors, ...task }) => task),
 });
 
+// ── message pages ──────────────────────────────────────────────────────
+// GET /api/bots hands back every bot with its entire transcript, which is
+// the right answer over loopback and the wrong one over a phone network:
+// a long-running bot's thread is megabytes, and a turn-end desktop capture
+// is a base64 PNG sitting inline in it.
+//
+// `?messages=n` opts into a slim shape — the last n messages, with screen
+// captures reduced to a flag and fetched one at a time from the image
+// endpoint. Omitting the parameter returns exactly what it always did.
+const MESSAGE_PAGE_MAX = 200;
+const DEFAULT_PAGE = 50;
+
+/** undefined = absent, null = present but unusable (the caller answers 400). */
+function pageSize(raw: string | null): number | null | undefined {
+  if (raw === null) return undefined;
+  const size = Number(raw);
+  if (!Number.isInteger(size) || size < 0) return null;
+  return Math.min(size, MESSAGE_PAGE_MAX);
+}
+
+/** A screen message without its pixels. The client fetches those from
+ * `/api/threads/:threadId/messages/:id/image` when it actually shows one. */
+function slimMessage(message: Message): Message | Record<string, unknown> {
+  if (message.kind !== "screen" || !message.png) return message;
+  const { png, mime, ...rest } = message;
+  return { ...rest, hasImage: true };
+}
+
+/** `limit === undefined` is the original, unpaginated shape. */
+function messagePage(threadId: string, limit: number | undefined, before?: string | null) {
+  const all = store.messagesFor(threadId);
+  if (limit === undefined) return { messages: all };
+  const end = before ? all.findIndex((msg) => msg.id === before) : -1;
+  const stop = end === -1 ? all.length : end;
+  const start = Math.max(0, stop - limit);
+  return { messages: all.slice(start, stop).map(slimMessage), hasMore: start > 0 };
+}
+
 // ── SSE fan-out to clients ─────────────────────────────────────────────
-const sseClients = new Set<ServerResponse>();
-function broadcast(payload: unknown) {
-  const frame = `data: ${JSON.stringify(payload)}\n\n`;
-  for (const res of [...sseClients]) {
+/** One connected client, and what it asked to be sent. */
+interface SseClient {
+  res: ServerResponse;
+  /** Live screen frames carry a base64 desktop capture every few seconds
+   * while a bot works. A client that isn't showing the computer panel —
+   * a phone on cellular, most of all — should not pay for them. */
+  screens: boolean;
+}
+const sseClients = new Set<SseClient>();
+
+/** Every frame is numbered, and the last few hundred are kept, so a client
+ * whose connection dropped can ask for what it missed instead of
+ * re-downloading every transcript. The desktop reconnects in milliseconds
+ * and barely needs this; a phone reconnects every time it unlocks.
+ *
+ * The stream id makes the cursor safe across restarts: sequence numbers
+ * begin again at 1 on boot, so a cursor from a previous run must be
+ * rejected rather than used to replay a different run's frames. It rides
+ * inside the SSE `id:` field, which means a browser EventSource resumes
+ * correctly through its own Last-Event-ID with no client code at all. */
+const STREAM_ID = randomUUID().slice(0, 8);
+const REPLAY_MAX = 500;
+let lastSeq = 0;
+const replayBuffer: Array<{ seq: number; kind: string; frame: string | null }> = [];
+
+/** Screen frames are the only kind a client can decline. */
+const wants = (client: SseClient, kind: string) => kind !== "screen" || client.screens;
+
+/** `<streamId>:<seq>` — opaque to clients, and the only thing they need to
+ * remember to resume. Returns null when it belongs to another run. */
+function cursorSeq(raw: string | string[] | undefined): number | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return null;
+  const [stream, seq] = value.split(":");
+  if (stream !== STREAM_ID) return null;
+  const parsed = Number(seq);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function broadcast(payload: Record<string, unknown>) {
+  const seq = ++lastSeq;
+  const kind = String(payload.kind ?? "");
+  const frame = `id: ${STREAM_ID}:${seq}\ndata: ${JSON.stringify({ ...payload, seq })}\n\n`;
+  // Live desktop captures can each be hundreds of kilobytes and become stale
+  // as soon as the next one arrives. Keep their sequence slots so resume-gap
+  // detection stays honest, but never retain their base64 payloads.
+  replayBuffer.push({ seq, kind, frame: kind === "screen" ? null : frame });
+  if (replayBuffer.length > REPLAY_MAX) replayBuffer.shift();
+  for (const client of [...sseClients]) {
+    if (!wants(client, kind)) continue;
     try {
-      res.write(frame);
+      client.res.write(frame);
     } catch {
-      sseClients.delete(res);
+      sseClients.delete(client);
     }
   }
 }
@@ -160,6 +245,17 @@ function broadcast(payload: unknown) {
 // once can collide on a bare id and patch each other's messages.
 const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+// the last settled assistant text per thread, so a "finished" notification
+// can carry what the bot actually said
+const lastReply = new Map<string, string>();
+
+/** Put a notification on the wire. Clients decide what to do with it — a
+ * desktop notification now, a push to a paired phone later. */
+function notify(notification: Notification | null) {
+  // nested rather than spread — the frame's own `kind` names the frame,
+  // exactly like {kind:"message", message} and {kind:"bot", bot}
+  if (notification) broadcast({ kind: "notify", notification });
+}
 
 // Group threads: the fold needs to know WHO is talking — the turn engine
 // records the active member here before dispatching its turn.
@@ -194,6 +290,9 @@ bus.subscribe((event: RuntimeEvent) => {
     case "item.completed":
       if (event.itemType === "assistant_text") {
         pushMessage({ role: "bot", kind: "text", text: event.text });
+        // kept so "finished" can say what it finished with, rather than
+        // just that something ended
+        lastReply.set(event.threadId, event.text);
       } else if (event.itemType === "tool" && event.itemId) {
         const itemKey = `${event.threadId}:${event.itemId}`;
         const messageId = toolMessageByItem.get(itemKey);
@@ -302,6 +401,12 @@ bus.subscribe((event: RuntimeEvent) => {
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
+      // Notify from HERE, not from a separate subscriber on request.opened:
+      // this is the branch where a card actually reached a human. Anything
+      // auto mode answered took the early return above and never buzzes.
+      if (asker) {
+        notify(buildNotification(permission ? "approval" : "question", asker, event.threadId, event.summary));
+      }
       break;
     }
     case "request.resolved": {
@@ -327,9 +432,12 @@ bus.subscribe((event: RuntimeEvent) => {
       break;
     case "turn.completed": {
       if (activeVmThreadId === event.threadId) activeVmThreadId = null;
+      const reply = lastReply.get(event.threadId) ?? "";
+      lastReply.delete(event.threadId);
       if (bot) {
         store.patchBot(bot.id, { busy: false, unread: true });
         broadcast({ kind: "bot", bot: store.bot(bot.id) });
+        notify(buildNotification("done", bot, event.threadId, reply));
         if (screenPollers.has(bot.id)) {
           // the last live frame becomes a settled inline screen message —
           // the screenshot-in-chat moment. One fresh capture first, so the
@@ -522,7 +630,12 @@ async function startTurn(
   void (async () => {
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
-      if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
+      // the user's connected apps, but only to a driver that can mount
+      // them — a key in the config says the connections exist, not that
+      // this engine can reach them
+      if (cfg.composio?.key && instance.adapter.capabilities.composioMcp === true) {
+        integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
+      }
       const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the MAUS default
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
       const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
@@ -648,6 +761,11 @@ async function startTurn(
               : computerKind === "local"
               ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
               : "") +
+          // gated on the integration, not the key: the hint only goes to a
+          // bot whose driver actually mounted the tools
+          (integrations.composio
+            ? " The user's connected apps (Gmail, Calendar, Slack, Notion, and the rest) are reachable through the composio tools — find the right one with COMPOSIO_SEARCH_TOOLS and run it with COMPOSIO_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service."
+            : "") +
           (coordinationPrompt ? ` ${coordinationPrompt}` : "") +
           (tagged.length
             ? ` The user tagged ${tagged
@@ -938,6 +1056,8 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
   const method = req.method ?? "GET";
+  /** scratch for route matches, shared by every `path.match` below */
+  let m: RegExpMatchArray | null = null;
   try {
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
@@ -1073,13 +1193,41 @@ const server = createServer(async (req, res) => {
 
     // ── events stream ──
     if (method === "GET" && path === "/api/events") {
+      const client: SseClient = { res, screens: url.searchParams.get("screens") !== "off" };
       res.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
         connection: "keep-alive",
       });
-      res.write(`data: ${JSON.stringify({ kind: "hello" })}\n\n`);
-      sseClients.add(res);
+
+      // Resume, if the client offered a cursor we can honour. `?since=` is
+      // for clients that read the stream by hand; Last-Event-ID is what a
+      // browser EventSource sends by itself.
+      const since = cursorSeq(url.searchParams.get("since") ?? req.headers["last-event-id"]);
+      // The buffer only reaches so far back. If the client's cursor fell off
+      // the end, saying so is the only honest answer — a partial replay
+      // would leave a permanent hole in its state.
+      const resumed =
+        since !== null &&
+        since <= lastSeq &&
+        (replayBuffer.length === 0 ? since === lastSeq : replayBuffer[0].seq <= since + 1);
+      res.write(
+        `data: ${JSON.stringify({
+          kind: "hello",
+          cursor: `${STREAM_ID}:${lastSeq}`,
+          // false means "I could not give you what you missed — hydrate".
+          // A client that offered no cursor gets false too, which is exactly
+          // what a cold start should do.
+          resumed,
+        })}\n\n`,
+      );
+      if (resumed) {
+        for (const buffered of replayBuffer) {
+          if (buffered.seq > since && buffered.frame && wants(client, buffered.kind)) res.write(buffered.frame);
+        }
+      }
+
+      sseClients.add(client);
       const keepalive = setInterval(() => {
         try {
           res.write(": keepalive\n\n");
@@ -1087,21 +1235,63 @@ const server = createServer(async (req, res) => {
       }, 25_000);
       req.on("close", () => {
         clearInterval(keepalive);
-        sseClients.delete(res);
+        sseClients.delete(client);
       });
       return;
     }
 
     // ── bots ──
     if (method === "GET" && path === "/api/bots") {
+      const limit = pageSize(url.searchParams.get("messages"));
+      if (limit === null) return json(res, 400, { error: "messages must be a non-negative whole number" });
       return json(res, 200, {
-        bots: store.bots.map(publicBot),
-        groups: store.groups.map((g) => ({ ...g, messages: store.messagesFor(g.threadId) })),
+        bots: store.bots.map((bot) => ({ ...publicBot(bot), ...messagePage(bot.threadId, limit) })),
+        groups: store.groups.map((g) => ({ ...g, ...messagePage(g.threadId, limit) })),
       });
     }
 
+    // scrollback: the page before a message the client already holds
+    m = path.match(/^\/api\/threads\/([\w-]+)\/messages$/);
+    if (m && method === "GET") {
+      const threadId = m[1];
+      if (!store.botByThread(threadId) && !store.groupByThread(threadId)) {
+        return json(res, 404, { error: "no such conversation" });
+      }
+      const limit = pageSize(url.searchParams.get("limit"));
+      if (limit === null) return json(res, 400, { error: "limit must be a non-negative whole number" });
+      const before = url.searchParams.get("before");
+      // An unknown cursor must not silently answer with the newest page —
+      // the client would paginate in a circle and never reach the top.
+      if (before && !store.messagesFor(threadId).some((msg) => msg.id === before)) {
+        return json(res, 404, { error: "no such message" });
+      }
+      return json(res, 200, messagePage(threadId, limit ?? DEFAULT_PAGE, before));
+    }
+
+    // the pixels of one screen message, fetched only when something shows it
+    m = path.match(/^\/api\/threads\/([\w-]+)\/messages\/([\w-]+)\/image$/);
+    if (m && method === "GET") {
+      // Same guard as the page route above, and for the same reason twice
+      // over: an unknown id should 404 deliberately rather than by accident,
+      // and `messagesFor` materialises and caches a ThreadState for whatever
+      // it is handed. Without this, a client asking for images on ids that
+      // do not exist grows the thread map for as long as it keeps asking.
+      if (!store.botByThread(m[1]) && !store.groupByThread(m[1])) {
+        return json(res, 404, { error: "no such conversation" });
+      }
+      const message = store.messagesFor(m[1]).find((msg) => msg.id === m![2]);
+      if (!message?.png) return json(res, 404, { error: "no image on that message" });
+      const bytes = Buffer.from(message.png, "base64");
+      res.writeHead(200, {
+        "content-type": message.mime ?? "image/png",
+        "content-length": String(bytes.byteLength),
+        // a settled message's image never changes
+        "cache-control": "private, max-age=31536000, immutable",
+      });
+      return res.end(bytes);
+    }
+
     // ── rooms (group chats) ─────────────────────────────────────────────
-    let m: RegExpMatchArray | null = null;
     if (method === "POST" && path === "/api/groups") {
       const body = await readBody(req);
       const memberIds = (Array.isArray(body.memberIds) ? body.memberIds : []).filter(
@@ -1150,6 +1340,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const group = store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such room" });
+      lastReply.delete(group.threadId);
       store.deleteGroup(group.id);
       for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
         try {
@@ -1254,6 +1445,7 @@ const server = createServer(async (req, res) => {
       await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => {});
       stopScreenPoller(bot.id);
       routines!.disableForBot(bot.id);
+      lastReply.delete(bot.threadId);
       store.deleteBot(bot.id);
       for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
         try {

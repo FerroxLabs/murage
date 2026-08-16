@@ -9,9 +9,8 @@
 //                        whole-message frame, plus subagent noise to drop)
 //   FAKE_CLAUDE_DUMP   path to write {argv, env, prompt} as JSON, so the
 //                      test can assert on argv shape and env hygiene
-//   FAKE_CLAUDE_AUTH   in (default) | out | unsupported — what `auth status`
-//                      reports; `unsupported` fakes a CLI predating the
-//                      subcommand, so the driver's fallback path is exercised
+//   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
+//                      inherited-api-key — what `auth status` reports
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { writeFileSync } from "node:fs";
@@ -38,8 +37,15 @@ if (argv[0] === "auth" && argv[1] === "status") {
     process.stderr.write("error: unknown command 'auth'\n");
     process.exit(1);
   }
-  out({ loggedIn: auth !== "out", authMethod: "claude.ai", apiProvider: "firstParty" });
-  process.exit(0);
+  if (auth === "malformed") {
+    process.stdout.write("not json\n");
+    process.exit(0);
+  }
+  const loggedIn = auth === "in" || (auth === "inherited-api-key" && Boolean(process.env.ANTHROPIC_API_KEY));
+  process.stdout.write(
+    JSON.stringify({ loggedIn, authMethod: loggedIn ? "claude.ai" : "none", apiProvider: "firstParty" }) + "\n",
+    () => process.exit(auth === "out" ? 1 : 0),
+  );
 }
 
 let stdin = "";

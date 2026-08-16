@@ -6,9 +6,9 @@
 // These used to be POSIX-only: the fake CLI is a shebang script Windows
 // cannot exec, and the broker is a unix socket. Both now go through
 // resolveCliSpawn / permissionSocketPath, so they run everywhere.
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { connect } from "node:net";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -164,6 +164,32 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(allowed).toContain("mcp__agents");
   });
 
+  // the harness gates both the integration and the prompt hint on
+  // capabilities.composioMcp, so the flag and the mount must agree — a bot
+  // told about tools its driver never mounted burns the turn hunting
+  it("mounts the user's connected apps and claims the capability that gates them", async () => {
+    await create();
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    expect(instance.adapter.capabilities.composioMcp).toBe(true);
+    await instance.adapter.sendTurn({
+      threadId: "t-composio",
+      text: "hi",
+      integrations: { composio: { key: "ck_test" } },
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const mcpConfig = JSON.parse(seen.argv[seen.argv.indexOf("--mcp-config") + 1]);
+    expect(mcpConfig.mcpServers.composio).toMatchObject({
+      type: "http",
+      url: "https://connect.composio.dev/mcp",
+      headers: { "x-consumer-api-key": "ck_test" },
+    });
+    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1]).toContain("mcp__composio");
+  });
+
   it("resumes with --resume when a cursor exists and reports that session id", async () => {
     await create();
     const dump = join(scratch, "dump.json");
@@ -306,6 +332,7 @@ describe("ClaudeDriver snapshot auth (fake CLI)", () => {
 
   afterEach(async () => {
     delete process.env.FAKE_CLAUDE_AUTH;
+    delete process.env.ANTHROPIC_API_KEY;
     await instance?.dispose();
   });
 
@@ -321,18 +348,19 @@ describe("ClaudeDriver snapshot auth (fake CLI)", () => {
     expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
   });
 
-  it("falls back to the credential file when the CLI predates `auth status`", async () => {
-    process.env.FAKE_CLAUDE_AUTH = "unsupported";
+  it("fails closed instead of trusting stale credential storage", async () => {
     await create();
 
-    // HOME is a throwaway dir (server/testing/setup.ts), so the legacy file is
-    // ours to create — the fallback has to read it, both ways
-    const legacy = join(homedir(), ".claude", ".credentials.json");
-    mkdirSync(dirname(legacy), { recursive: true });
-    writeFileSync(legacy, "{}");
-    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true });
+    process.env.FAKE_CLAUDE_AUTH = "unsupported";
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
 
-    rmSync(legacy);
+    process.env.FAKE_CLAUDE_AUTH = "malformed";
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+
+    // The real turn removes inherited API keys, so the auth probe must do the
+    // same or setup can report a login the turn cannot use.
+    process.env.FAKE_CLAUDE_AUTH = "inherited-api-key";
+    process.env.ANTHROPIC_API_KEY = "sk-should-not-leak";
     expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
   });
 });
