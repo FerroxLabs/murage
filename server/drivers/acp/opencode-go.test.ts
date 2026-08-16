@@ -1,10 +1,15 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createOpenCodeGoDriver, fetchOpenCodeGoModels, resetOpenCodeGoModelCache } from "./opencode-go.ts";
+import {
+  classifyOpenCodeGoError,
+  createOpenCodeGoDriver,
+  fetchOpenCodeGoModels,
+  resetOpenCodeGoModelCache,
+} from "./opencode-go.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -68,6 +73,33 @@ describe("OpenCode Go catalog", () => {
     expect(driver.driverKind).toBe("opencodeGo");
     expect(driver.decodeConfig(undefined)).toEqual({ cli: "opencode", fullAuto: false, workspace: undefined });
     expect(driver.install?.docsUrl).toContain("opencode.ai");
+  });
+
+  it("recognizes an OpenCode Go login stored by the CLI", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-auth-"));
+    const authDir = join(scratch, "opencode");
+    mkdirSync(authDir, { recursive: true });
+    writeFileSync(join(authDir, "auth.json"), JSON.stringify({
+      "opencode-go": { type: "api", key: "stored-secret" },
+    }));
+    const driver = createOpenCodeGoDriver(async () => new Response("[]", { status: 200 }));
+    const instance = await driver.create({
+      instanceId: "opencode-auth",
+      displayName: "OpenCode Go",
+      environment: { XDG_DATA_HOME: scratch, OPENCODE_API_KEY: "" },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      expect((await instance.snapshot()).authenticated).toBe(true);
+    } finally {
+      await instance.dispose();
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies ACP's standard authentication error", () => {
+    expect(classifyOpenCodeGoError({ code: -32000 })).toBe("invalid_credentials");
   });
 
   it("keeps the OpenCode key in the child environment only", async () => {

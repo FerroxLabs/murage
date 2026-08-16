@@ -657,7 +657,12 @@ export function ChatView({ bot }: { bot: Bot }) {
       <CallOverlay bot={bot} />
       {/* Header */}
       <div
-        className={cn("flex items-center justify-between px-5 py-3", isWin && "pr-[148px]")}
+        className={cn(
+          "flex items-center justify-between px-5 py-3",
+          // Room for the drawer button, which overlays this corner below md.
+          "pl-11 md:pl-5",
+          isWin && "pr-[148px]",
+        )}
         style={drag}
       >
         <button

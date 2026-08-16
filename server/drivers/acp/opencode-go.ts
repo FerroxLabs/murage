@@ -1,5 +1,9 @@
 // OpenCode Go subscription/API product through the maintained OpenCode CLI's
 // ACP stdio interface. The generic protocol runtime lives in core.ts.
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 
@@ -71,6 +75,36 @@ const stripForeignProviderKeys = (env: Record<string, string | undefined>) => {
   ]) delete env[key];
 };
 
+function storedAuthPath(env: Record<string, string | undefined>) {
+  const home = env.HOME || env.USERPROFILE || homedir();
+  const dataRoot = env.XDG_DATA_HOME
+    || (process.platform === "darwin"
+      ? join(home, "Library", "Application Support")
+      : process.platform === "win32"
+        ? env.LOCALAPPDATA || join(home, "AppData", "Local")
+        : join(home, ".local", "share"));
+  return join(dataRoot, "opencode", "auth.json");
+}
+
+function hasStoredOpenCodeGoAuth(env: Record<string, string | undefined>) {
+  const candidates: string[] = [];
+  if (env.OPENCODE_AUTH_CONTENT) candidates.push(env.OPENCODE_AUTH_CONTENT);
+  try {
+    candidates.push(readFileSync(storedAuthPath(env), "utf8"));
+  } catch {
+    // A missing or unreadable file simply means there is no ambient login.
+  }
+  return candidates.some((raw) => {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const auth = parsed["opencode-go"];
+      return Boolean(auth && typeof auth === "object" && (auth as { key?: unknown }).key);
+    } catch {
+      return false;
+    }
+  });
+}
+
 const support = (fetcher: typeof fetch): AcpSupport => ({
   driverKind: "opencodeGo",
   displayName: "OpenCode Go",
@@ -84,24 +118,26 @@ const support = (fetcher: typeof fetch): AcpSupport => ({
       linux: "npm install -g opencode-ai",
       win32: "npm install -g opencode-ai",
     },
-    docsUrl: "https://opencode.ai/docs/go/",
+    docsUrl: "https://opencode.ai/docs/",
     signInCommand: "opencode auth login",
     needsNode: true,
   },
   spawnArgs: () => ["acp"],
-  modelConfigOption: "model",
+  credentialEnv: ["OPENCODE_API_KEY"],
+  selectModel: { configId: "model" },
   transformEnv: stripForeignProviderKeys,
   pickAuthMethod: () => null,
   authFailure: "continue",
-  isAuthenticated: (env) => Boolean(env.OPENCODE_API_KEY),
+  isAuthenticated: (env) => Boolean(env.OPENCODE_API_KEY) || hasStoredOpenCodeGoAuth(env),
   classifyError: classifyOpenCodeGoError,
   resolveModels: () => fetchOpenCodeGoModels(fetcher),
   buildPromptText: (turn) => turn.system ? `${turn.system}\n\n${turn.text}` : turn.text,
 });
 
-function classifyOpenCodeGoError(error: unknown): ProviderErrorCode | undefined {
+export function classifyOpenCodeGoError(error: unknown): ProviderErrorCode | undefined {
   const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
   const code = value.code;
+  if (code === -32000) return "invalid_credentials";
   if (code === "AUTH_REQUIRED" || code === "INVALID_API_KEY" || code === "UNAUTHORIZED") return "invalid_credentials";
   if (code === "SUBSCRIPTION_INACTIVE") return "inactive_subscription";
   if (code === "QUOTA_EXCEEDED" || code === "REGION_RESTRICTED") return "quota_or_region_restriction";

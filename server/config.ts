@@ -103,6 +103,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
       : {
           grok: { driver: "grokAgent" },
           kimi: { driver: "kimiAgent" },
+          droid: { driver: "droidAgent" },
           claude: { driver: "claudeAgent" },
           codex: { driver: "codex" },
           antigravity: { driver: "antigravityAgent" },

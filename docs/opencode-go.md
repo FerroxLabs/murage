@@ -8,16 +8,17 @@ same runtime as the other ACP engines.
 ## Setup
 
 1. Install the official CLI using the
-   [OpenCode CLI installation guide](https://opencode.ai/docs/cli/).
+   [OpenCode installation guide](https://opencode.ai/docs/).
 2. Create or obtain an OpenCode Go API key according to the live
    [OpenCode Go documentation](https://opencode.ai/docs/go/).
 3. Open OpenMausBot Settings → Connections and save the key under **OpenCode
    Go API key**.
 
 The key is stored locally as write-only configuration. OpenMausBot reports only
-whether it is configured, never the value. It is injected as `OPENCODE_API_KEY`
-only into the OpenCode child process; it is not sent to the renderer, logs,
-analytics, snapshots, error messages, or command arguments.
+whether it is configured, never the value. A key saved in OpenMausBot is
+injected as `OPENCODE_API_KEY` only into the OpenCode child process; it is not
+sent to the renderer, logs, analytics, snapshots, error messages, or command
+arguments.
 
 OpenCode Go remains unavailable until both the `opencode` executable and the
 credential are present. It is never selected as a runnable default while either

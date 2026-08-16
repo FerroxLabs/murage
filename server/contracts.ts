@@ -147,6 +147,10 @@ export interface ProviderAdapter {
      * told it has a computer whose tools its driver cannot mount — it
      * burns turns hunting for tools that aren't there. */
     computerMcp?: boolean;
+    /** True when the driver mounts turn.integrations.composio (the user's
+     * connected apps). Same rule again: a key in the config says the user
+     * HAS those connections, not that this driver can reach them. */
+    composioMcp?: boolean;
   };
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;
   interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void>;

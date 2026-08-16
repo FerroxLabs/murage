@@ -164,6 +164,32 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(allowed).toContain("mcp__agents");
   });
 
+  // the harness gates both the integration and the prompt hint on
+  // capabilities.composioMcp, so the flag and the mount must agree — a bot
+  // told about tools its driver never mounted burns the turn hunting
+  it("mounts the user's connected apps and claims the capability that gates them", async () => {
+    await create();
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    expect(instance.adapter.capabilities.composioMcp).toBe(true);
+    await instance.adapter.sendTurn({
+      threadId: "t-composio",
+      text: "hi",
+      integrations: { composio: { key: "ck_test" } },
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const mcpConfig = JSON.parse(seen.argv[seen.argv.indexOf("--mcp-config") + 1]);
+    expect(mcpConfig.mcpServers.composio).toMatchObject({
+      type: "http",
+      url: "https://connect.composio.dev/mcp",
+      headers: { "x-consumer-api-key": "ck_test" },
+    });
+    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1]).toContain("mcp__composio");
+  });
+
   it("resumes with --resume when a cursor exists and reports that session id", async () => {
     await create();
     const dump = join(scratch, "dump.json");
@@ -279,5 +305,62 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     ).rejects.toThrow(/pending request/);
     await instance.adapter.interruptTurn("t-perm-2");
     await recorder.until((e) => e.type === "turn.completed");
+  });
+});
+
+// Auth state must come from the CLI, not from probing its credential store:
+// on macOS the OAuth tokens live in the login Keychain, so the old
+// ~/.claude/.credentials.json check reported signed-in users as signed out
+// and disabled the model picker with them (#108).
+describe("ClaudeDriver snapshot auth (fake CLI)", () => {
+  let instance: ProviderInstance;
+
+  const create = async () => {
+    instance = await ClaudeDriver.create({
+      instanceId: "claude-auth-test",
+      displayName: "Claude Auth Test",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, permissionMode: "acceptEdits" },
+    });
+  };
+
+  beforeEach(() => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+  });
+
+  afterEach(async () => {
+    delete process.env.FAKE_CLAUDE_AUTH;
+    delete process.env.ANTHROPIC_API_KEY;
+    await instance?.dispose();
+  });
+
+  it("reports authenticated when `auth status` says loggedIn", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "in";
+    await create();
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true });
+  });
+
+  it("reports signed out when `auth status` says loggedIn:false", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "out";
+    await create();
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+  });
+
+  it("fails closed instead of trusting stale credential storage", async () => {
+    await create();
+
+    process.env.FAKE_CLAUDE_AUTH = "unsupported";
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+
+    process.env.FAKE_CLAUDE_AUTH = "malformed";
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+
+    // The real turn removes inherited API keys, so the auth probe must do the
+    // same or setup can report a login the turn cannot use.
+    process.env.FAKE_CLAUDE_AUTH = "inherited-api-key";
+    process.env.ANTHROPIC_API_KEY = "sk-should-not-leak";
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
   });
 });
