@@ -130,14 +130,14 @@ function memberKey(name, index, used) {
     return key;
 }
 /** Build a shareable definition only: no IDs, transcripts, engines or permissions. */
-export function createTeamManifest(group, bots) {
+export function createTeamManifest(team, bots) {
     const byId = new Map(bots.map((bot) => [bot.id, bot]));
     const usedKeys = new Set();
     const keyById = new Map();
-    const members = group.memberIds.map((id, index) => {
+    const members = team.memberIds.map((id, index) => {
         const bot = byId.get(id);
         if (!bot)
-            throw new Error(`Room member ${id} no longer exists`);
+            throw new Error(`Team member ${id} no longer exists`);
         const key = memberKey(bot.name, index, usedKeys);
         keyById.set(id, key);
         return {
@@ -152,24 +152,24 @@ export function createTeamManifest(group, bots) {
         };
     });
     let defaultResponder;
-    if (group.defaultResponder.kind === "member") {
-        const member = keyById.get(group.defaultResponder.botId) ?? members[0]?.key;
+    if (team.defaultResponder.kind === "member") {
+        const member = keyById.get(team.defaultResponder.botId) ?? members[0]?.key;
         if (!member)
             throw new Error("A team needs at least one member");
         defaultResponder = { kind: "member", member };
     }
     else {
-        defaultResponder = { kind: group.defaultResponder.kind };
+        defaultResponder = { kind: team.defaultResponder.kind };
     }
     const manifest = {
         format: TEAM_MANIFEST_FORMAT,
         version: TEAM_MANIFEST_VERSION,
         team: {
-            name: group.name,
+            name: team.name,
             members,
             room: {
-                name: group.name,
-                bulletin: group.bulletin,
+                name: team.name,
+                bulletin: team.bulletin,
                 defaultResponder,
             },
         },

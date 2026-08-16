@@ -12,6 +12,13 @@ export class ProviderError extends Error {
         this.code = code;
     }
 }
+/** Reasoning-effort levels, ascending. A union of everything any engine
+ * accepts; each driver declares the subset its CLI will take. */
+export const EFFORT_LEVELS = ["none", "low", "medium", "high", "xhigh", "max"];
+/** Narrow untrusted API/config input before it becomes a model selection. */
+export function isEffortLevel(value) {
+    return typeof value === "string" && EFFORT_LEVELS.includes(value);
+}
 let eventCounter = 0;
 export const newEventId = () => `ev-${Date.now().toString(36)}-${(eventCounter++).toString(36)}`;
 export const newId = () => crypto.randomUUID();

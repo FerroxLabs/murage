@@ -232,7 +232,6 @@ export class RoutineManager {
             routineId: input.webhookId,
             routineName: input.webhookName,
             prompt: input.prompt,
-            durationMinutes: input.durationMinutes,
             botId: input.botId,
             runOn: input.runOn,
             scheduledFor: input.receivedAt,
@@ -250,6 +249,9 @@ export class RoutineManager {
         this.emitRun(run);
         queueMicrotask(() => void this.tick());
         return { ...run };
+    }
+    activeWebhookRunCount(webhookId) {
+        return this.runs.filter((run) => run.webhookId === webhookId && ["queued", "running", "waiting"].includes(run.status)).length;
     }
     cancelQueuedWebhook(webhookId, message) {
         let changed = false;
@@ -348,7 +350,9 @@ export class RoutineManager {
                     this.emitRun(run);
                     continue;
                 }
-                const task = this.options.createTask(run.botId, run.routineName);
+                // A webhook is an incoming message, so make its task the bot's live
+                // chat immediately. Scheduled work remains detached and unobtrusive.
+                const task = this.options.createTask(run.botId, run.routineName, run.triggerSource === "webhook");
                 if (!task) {
                     run.status = "failed";
                     run.error = "Could not create a task for this run";

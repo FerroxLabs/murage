@@ -256,6 +256,8 @@ export const ClaudeDriver = {
                 args.push("--session-id", newSessionId);
             if (turn.model)
                 args.push("--model", turn.model);
+            if (turn.effort)
+                args.push("--effort", turn.effort);
             if (turn.system)
                 args.push("--append-system-prompt", turn.system);
             // integrations → MCP servers; pre-allow their tools (a headless
@@ -511,7 +513,13 @@ export const ClaudeDriver = {
             snapshot,
             adapter: {
                 provider: DRIVER_KIND,
-                capabilities: { sessionModelSwitch: "in-session", agentsMcp: true, computerMcp: true, composioMcp: true },
+                capabilities: {
+                    sessionModelSwitch: "in-session",
+                    agentsMcp: true,
+                    computerMcp: true,
+                    composioMcp: true,
+                    effortLevels: ["low", "medium", "high", "xhigh", "max"],
+                },
                 sendTurn,
                 interruptTurn: async (threadId) => active.get(threadId)?.stop(),
                 respondToRequest: async (threadId, requestId, decision) => {

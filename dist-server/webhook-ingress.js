@@ -61,19 +61,17 @@ function bearerSecret(req) {
     const match = authorization.match(/^Bearer\s+(.+)$/i);
     return match?.[1]?.trim() || header(req, "x-openmaus-secret")?.trim() || "";
 }
-function deliveryId(req, payload) {
-    const fromHeader = header(req, "idempotency-key") ??
+function deliveryId(req) {
+    return (header(req, "idempotency-key") ??
         header(req, "x-webhook-id") ??
         header(req, "x-github-delivery") ??
-        header(req, "webhook-id");
-    if (fromHeader?.trim())
-        return fromHeader.trim();
-    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-        const candidate = payload.id ?? payload.event_id;
-        if (typeof candidate === "string" || typeof candidate === "number")
-            return String(candidate);
-    }
-    return undefined;
+        header(req, "webhook-id"))?.trim() || undefined;
+}
+function eventName(req) {
+    return (header(req, "x-github-event") ??
+        header(req, "x-webhook-event") ??
+        header(req, "x-event-type") ??
+        header(req, "ce-type"))?.trim() || undefined;
 }
 export function createWebhookIngressHandler(manager) {
     return async (req, res) => {
@@ -90,26 +88,40 @@ export function createWebhookIngressHandler(manager) {
             const pathSecret = match[2] ? decodeURIComponent(match[2]) : "";
             const secret = pathSecret || bearerSecret(req);
             // Reject bad capability URLs before buffering or parsing attacker input.
-            if (!manager.authorize(match[1], secret))
+            if (!manager.authorize(match[1], secret)) {
+                manager.recordRejected(match[1], 401, "Invalid webhook URL or secret", {
+                    contentType: header(req, "content-type"),
+                    eventName: eventName(req),
+                    deliveryId: deliveryId(req),
+                });
                 return json(res, 401, { error: "Invalid webhook URL or secret" });
+            }
             const raw = await readRawBody(req);
             const contentType = header(req, "content-type")?.split(";")[0]?.trim().toLowerCase() ?? "text/plain";
             const payload = parsePayload(raw, contentType);
             const result = manager.receive(match[1], secret, {
                 payload,
                 contentType,
-                eventName: header(req, "x-github-event") ??
-                    header(req, "x-webhook-event") ??
-                    header(req, "x-event-type") ??
-                    header(req, "ce-type"),
+                eventName: eventName(req),
                 userAgent: header(req, "user-agent"),
-                deliveryId: deliveryId(req, payload),
+                deliveryId: deliveryId(req),
             });
             return json(res, 202, { accepted: true, ...result });
         }
         catch (error) {
             const status = Number(error?.status) || 500;
-            return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+            const message = error instanceof Error ? error.message : String(error);
+            // Manager-level validation records its own rejection with the parsed
+            // payload. Receiver-level failures happen earlier, so record metadata
+            // here without buffering untrusted data a second time.
+            if (status === 400 || status === 413) {
+                manager.recordRejected(match[1], status, message, {
+                    contentType: header(req, "content-type"),
+                    eventName: eventName(req),
+                    deliveryId: deliveryId(req),
+                });
+            }
+            return json(res, status, { error: message });
         }
     };
 }
