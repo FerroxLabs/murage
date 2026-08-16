@@ -5,6 +5,7 @@
 import { readFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.js";
+import { peerAllowKey } from "./peer-approval-key.js";
 import { DATA_DIR } from "./config.js";
 import { newId } from "./contracts.js";
 import { pickBotName } from "./names.js";
@@ -142,6 +143,28 @@ export class Store {
             }
             b.chiefOfStaff = false;
             botsMigrated = true;
+        }
+        // Peer grants originally used mutable display names (ask_bot:@Helper).
+        // Convert only when exactly one bot has that name; ambiguous legacy
+        // entries remain inert rather than granting access to the wrong bot.
+        for (const b of this.bots) {
+            if (!b.alwaysAllow?.length)
+                continue;
+            let changed = false;
+            const migrated = b.alwaysAllow.map((key) => {
+                const match = key.match(/^(ask_bot|delegate_bot):@(.+)$/);
+                if (!match)
+                    return key;
+                const candidates = this.bots.filter((candidate) => candidate.name === match[2]);
+                if (candidates.length !== 1)
+                    return key;
+                changed = true;
+                return peerAllowKey(match[1], candidates[0].id);
+            });
+            if (changed) {
+                b.alwaysAllow = [...new Set(migrated)];
+                botsMigrated = true;
+            }
         }
         for (const g of this.groups) {
             g.busyBotId = null;
@@ -366,18 +389,19 @@ export class Store {
     botByThread(threadId) {
         return this.bots.find((b) => b.threadId === threadId || b.tasks?.some((t) => t.threadId === threadId)) ?? null;
     }
-    createBot() {
-        const name = pickBotName(this.bots.map((b) => b.name));
+    createBot(profile = {}) {
+        const name = profile.name?.trim() || pickBotName(this.bots.map((b) => b.name));
         const bot = {
             id: newId(),
             threadId: newId(),
             name,
-            title: "",
-            description: "",
+            title: profile.title ?? "",
+            description: profile.description ?? "",
             notifications: true,
-            color: COLORS[this.bots.length % COLORS.length],
+            color: profile.color ?? COLORS[this.bots.length % COLORS.length],
+            ...(profile.mascotExpression ? { mascotExpression: profile.mascotExpression } : {}),
             unread: false,
-            modelSelection: this.defaultSelection(),
+            modelSelection: profile.modelSelection ?? this.defaultSelection(),
             resumeCursors: {},
             createdAt: Date.now(),
         };
