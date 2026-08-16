@@ -19,6 +19,7 @@ import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
+import { DroidAgentDriver } from "./droid.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -75,6 +76,15 @@ describe("ACP decodeConfig", () => {
       win32: expect.stringContaining("install.ps1"),
     });
     expect(KimiAgentDriver.install?.signInCommand).toBe("kimi login");
+  });
+  it("droid defaults to the droid binary and declares cross-platform setup", () => {
+    expect(DroidAgentDriver.decodeConfig(undefined)).toEqual({ cli: "droid", fullAuto: false, workspace: undefined });
+    expect(DroidAgentDriver.install?.command).toMatchObject({
+      darwin: expect.stringContaining("factory.ai/cli"),
+      linux: expect.stringContaining("factory.ai/cli"),
+      win32: expect.stringContaining("factory.ai/cli"),
+    });
+    expect(DroidAgentDriver.install?.signInCommand).toBe("droid");
   });
   it("fullAuto only when explicitly true", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
@@ -167,6 +177,85 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.argv).toContain("stdio");
     expect(seen.argv).toContain("--permission-mode");
     expect(seen.env.XAI_API_KEY).toBeUndefined();
+  });
+
+  it("droid takes model and autonomy over the wire, never through argv", async () => {
+    // `droid exec -m <id> -o acp` ignores the flag (verified against 0.196.0),
+    // so a model that only reached argv would silently run the CLI's own pick.
+    instance = await DroidAgentDriver.create({
+      instanceId: "droid-test",
+      displayName: "Droid Test",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    const dump = join(scratch, "droid-dump.json");
+    process.env.FAKE_ACP_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-droid", text: "go", model: "claude-sonnet-5" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv).toEqual(["exec", "-o", "acp"]);
+    expect(seen.argv).not.toContain("-m");
+
+    const applied = JSON.parse(readFileSync(`${dump}.config.json`, "utf8"));
+    expect(applied).toEqual([
+      { method: "session/set_mode", params: { sessionId: "fake-acp-session", modeId: "auto-high" } },
+      { method: "session/set_model", params: { sessionId: "fake-acp-session", modelId: "claude-sonnet-5" } },
+    ]);
+  });
+
+  it("droid pins read-only mode when fullAuto is off", async () => {
+    instance = await DroidAgentDriver.create({
+      instanceId: "droid-safe",
+      displayName: "Droid Safe",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const dump = join(scratch, "droid-safe.json");
+    process.env.FAKE_ACP_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-droid-safe", text: "go" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    // Both settings are explicit even with nothing on the turn: whatever
+    // ~/.factory/settings.json pinned (including a `custom:` provider with its
+    // own endpoint) must never be what the session silently runs on.
+    expect(JSON.parse(readFileSync(`${dump}.config.json`, "utf8"))).toEqual([
+      { method: "session/set_mode", params: { sessionId: "fake-acp-session", modeId: "normal" } },
+      { method: "session/set_model", params: { sessionId: "fake-acp-session", modelId: "claude-opus-5" } },
+    ]);
+  });
+
+  it("droid names the rejected setting when the agent predates session config", async () => {
+    // The realistic failure is version skew: an older droid answers -32601 to
+    // session/set_mode, and core surfaces the RPC message verbatim. A bare
+    // "method not found" tells the user nothing, so the driver wraps it.
+    process.env.FAKE_ACP_MODE = "no-session-config";
+    instance = await DroidAgentDriver.create({
+      instanceId: "droid-old-cli",
+      displayName: "Droid Old CLI",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+
+    await instance.adapter.sendTurn({ threadId: "t-droid-skew", text: "go" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+
+    expect(done).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    const err = recorder.events.find((e) => e.type === "runtime.error")!;
+    expect(err.message).toContain("session/set_mode");
+    expect(err.message).toContain('autonomy mode "normal"');
+    expect(err.message).toMatch(/`droid` is current/);
+    // The session id still reached the client, so the thread can resume rather
+    // than orphaning the session droid just created.
+    expect(recorder.events.some((e) => e.type === "session.started")).toBe(true);
   });
 
   it("surfaces a permission ask as request.opened and completes once allowed", async () => {
@@ -340,6 +429,126 @@ describe("ACP snapshot", () => {
       mkdirSync(join(kimiHome, "credentials"), { recursive: true });
       writeFileSync(join(kimiHome, "credentials", "kimi-code.json"), "{}");
       expect((await instance.snapshot()).authenticated).toBe(true);
+    } finally {
+      await instance.dispose();
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("droid resolves the signed-in CLI before falling back to FACTORY_API_KEY", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-droid-auth-"));
+    // FACTORY_HOME_OVERRIDE replaces the CLI's HOME, not its data root: droid
+    // writes <home>/.factory/auth.v2.file either way (verified against 0.196.0).
+    const overrideHome = join(scratch, "custom-home");
+    const childHome = join(scratch, "child-home");
+    mkdirSync(join(childHome, ".factory"), { recursive: true });
+    writeFileSync(join(childHome, ".factory", "auth.v2.file"), "{}");
+
+    // The child env inherits process.env (core.ts childEnv), so a developer
+    // machine with a real FACTORY_API_KEY exported would otherwise satisfy
+    // every case here and prove nothing about the on-disk lookup.
+    const make = (environment: Record<string, string>) =>
+      DroidAgentDriver.create({
+        instanceId: "droid-auth",
+        displayName: undefined,
+        environment: { FACTORY_API_KEY: "", ...environment },
+        enabled: true,
+        config: { cli: FAKE_CLI, fullAuto: false },
+      });
+
+    const instances: ProviderInstance[] = [];
+    try {
+      // FACTORY_HOME_OVERRIDE wins: the child HOME's credential must not count.
+      const overridden = await make({ FACTORY_HOME_OVERRIDE: overrideHome, HOME: childHome });
+      instances.push(overridden);
+      expect((await overridden.snapshot()).authenticated).toBe(false);
+      mkdirSync(join(overrideHome, ".factory"), { recursive: true });
+      writeFileSync(join(overrideHome, ".factory", "auth.v2.file"), "{}");
+      expect((await overridden.snapshot()).authenticated).toBe(true);
+
+      // A logged-out override is not rescued by a key on the way past it, but
+      // the key alone still authenticates when nothing is signed in on disk.
+      const loggedOutWithKey = await make({
+        FACTORY_HOME_OVERRIDE: join(scratch, "empty-home"),
+        HOME: childHome,
+        FACTORY_API_KEY: "fk-test",
+      });
+      instances.push(loggedOutWithKey);
+      expect((await loggedOutWithKey.snapshot()).authenticated).toBe(true);
+
+      const fromHome = await make({ HOME: childHome });
+      instances.push(fromHome);
+      expect((await fromHome.snapshot()).authenticated).toBe(true);
+
+      // secure_auth_storage writes the keychain/keyring variant instead of
+      // auth.v2.file, so a fresh macOS login has only this one.
+      const keychainHome = join(scratch, "keychain-home");
+      mkdirSync(join(keychainHome, ".factory"), { recursive: true });
+      writeFileSync(join(keychainHome, ".factory", "auth.v2.loginkeychain"), "{}");
+      const fromKeychain = await make({ HOME: keychainHome });
+      instances.push(fromKeychain);
+      expect((await fromKeychain.snapshot()).authenticated).toBe(true);
+
+      const neither = await make({ HOME: join(scratch, "empty") });
+      instances.push(neither);
+      expect((await neither.snapshot()).authenticated).toBe(false);
+    } finally {
+      for (const i of instances) await i.dispose();
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("droid reads custom models, favourites order, and the configured default", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-droid-models-"));
+    mkdirSync(join(scratch, ".factory"), { recursive: true });
+    writeFileSync(
+      join(scratch, ".factory", "settings.json"),
+      JSON.stringify({
+        customModels: [
+          { id: "custom:LMStudio-Qwen-0", displayName: "Qwen (local)" },
+          { id: "custom:Azure-Opus-0", displayName: "Azure Opus" },
+        ],
+        modelFavorites: ["custom:Azure-Opus-0", "custom:LMStudio-Qwen-0"],
+        sessionDefaultSettings: { model: "custom:LMStudio-Qwen-0" },
+      }),
+    );
+
+    const instance = await DroidAgentDriver.create({
+      instanceId: "droid-models",
+      displayName: undefined,
+      environment: { HOME: scratch },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      // favourites first in the user's own order, then the built-in slice
+      expect(instance.models.options.slice(0, 2)).toEqual([
+        { id: "custom:Azure-Opus-0", label: "Azure Opus" },
+        { id: "custom:LMStudio-Qwen-0", label: "Qwen (local)" },
+      ]);
+      expect(instance.models.options.some((o) => o.id === "claude-opus-5")).toBe(true);
+      expect(instance.models.default).toBe("custom:LMStudio-Qwen-0");
+    } finally {
+      await instance.dispose();
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("droid falls back to the built-in catalog when settings.json is unreadable", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-droid-nosettings-"));
+    mkdirSync(join(scratch, ".factory"), { recursive: true });
+    writeFileSync(join(scratch, ".factory", "settings.json"), "{ not json");
+
+    const instance = await DroidAgentDriver.create({
+      instanceId: "droid-models-fallback",
+      displayName: undefined,
+      environment: { HOME: scratch },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      expect(instance.models.default).toBe("claude-opus-5");
+      expect(instance.models.options.every((o) => !o.id.startsWith("custom:"))).toBe(true);
     } finally {
       await instance.dispose();
       rmSync(scratch, { recursive: true, force: true });

@@ -6,6 +6,8 @@
 // turn. Failure modes mirror how real ACP agents misbehave:
 //
 //   FAKE_ACP_MODE   happy (default) | exit-early | hang | no-auth | permission
+//                   | no-session-config (reject session/set_mode + set_model
+//                     with -32601, i.e. an agent predating those methods)
 //                   | ask-peer (spawn the injected "agents" MCP server from
 //                     session/new's mcpServers, call list_bots + ask_bot on a
 //                     peer, and reply with what the peer said — the comms e2e)
@@ -56,6 +58,9 @@ if (process.env.FAKE_ACP_DUMP) {
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
+
+// session/set_mode + session/set_model calls seen this run
+const configCalls: Array<{ method: string; params: unknown }> = [];
 
 // pending server→client permission request id → resolver
 let pendingPermissionId: number | null = null;
@@ -171,6 +176,32 @@ function handle(msg: any) {
     case "session/load": {
       const opts = configOptions();
       result(msg.id, opts ? { configOptions: opts } : {});
+      break;
+    }
+    // per-session settings (droid sets model/autonomy here, not via argv).
+    // Recorded next to FAKE_ACP_DUMP so a test can assert what was applied.
+    // NOTE: last writer wins — each turn spawns a fresh child, so a two-turn
+    // test would only ever see the final turn's calls.
+    case "session/set_mode":
+    case "session/set_model": {
+      if (mode === "no-session-config") {
+        // an older agent that predates these methods
+        return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
+      }
+      const settingId = msg.method === "session/set_mode" ? "modeId" : "modelId";
+      if (typeof msg.params?.sessionId !== "string" || typeof msg.params?.[settingId] !== "string") {
+        out({
+          jsonrpc: "2.0",
+          id: msg.id,
+          error: { code: -32602, message: `Invalid params: sessionId and ${settingId} must be strings` },
+        });
+        break;
+      }
+      configCalls.push({ method: msg.method, params: msg.params });
+      if (process.env.FAKE_ACP_DUMP) {
+        writeFileSync(`${process.env.FAKE_ACP_DUMP}.config.json`, JSON.stringify(configCalls, null, 2));
+      }
+      result(msg.id, {});
       break;
     }
     case "session/set_config_option": {
