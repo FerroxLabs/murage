@@ -103,7 +103,7 @@ function agentsIntegration(botId: string, threadId: string, depth: number) {
 /** Run a turn on `targetBotId` and resolve with its assistant text — the
  * synchronous half of ask_bot. Subscribes to the bus, folds assistant_text
  * for that thread, resolves on turn.completed (or a 4-min ceiling). */
-function askBotAndWait(targetBotId: string, message: string, depth: number): Promise<string> {
+function askBotAndWait(targetBotId: string, message: string, depth: number, fromBotId?: string): Promise<string> {
   const target = store.bot(targetBotId);
   if (!target) return Promise.resolve("(no such bot)");
   const threadId = target.threadId;
@@ -126,7 +126,10 @@ function askBotAndWait(targetBotId: string, message: string, depth: number): Pro
       }
     });
     const timer = setTimeout(() => finish(text || "(timed out waiting for the bot to reply)"), 4 * 60_000);
-    startTurn(targetBotId, message, { commsDepth: depth + 1 }).catch((err) =>
+    startTurn(targetBotId, message, {
+      commsDepth: depth + 1,
+      unattended: isUnattended(fromBotId),
+    }).catch((err) =>
       finish(`(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})`),
     );
   });
@@ -290,6 +293,43 @@ function notify(notification: Notification | null) {
 // Group threads: the fold needs to know WHO is talking — the turn engine
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
+
+// Bots currently working with nobody at the keyboard — a webhook turn, or a
+// turn a webhook-driven bot handed to a teammate. Auto mode is a decision
+// someone made for turns they were present for, so these don't inherit it:
+// the guard behind auto mode is a pattern list, not a security boundary, and
+// it must not stand in for a human at 3am.
+//
+// Keyed by BOT rather than thread because a bot runs one turn at a time, so
+// the identity is exact, and because the peer-comms paths know who is asking
+// but not always from which thread. Idle marks expire rather than clearing on
+// turn.completed: bus subscribers fire in registration order, and the
+// delegation drain runs AFTER the main fold — clearing there would blank the
+// flag before the hop that needs to read it. A busy bot never ages out, and a
+// stale mark only ever means "ask a human", so this fails closed.
+const unattendedBots = new Map<string, number>();
+const UNATTENDED_TTL_MS = 30 * 60_000;
+
+function markUnattended(botId: string) {
+  unattendedBots.set(botId, Date.now());
+}
+function clearUnattended(botId: string) {
+  unattendedBots.delete(botId);
+}
+function isUnattended(botId?: string | null): boolean {
+  if (!botId) return false;
+  const at = unattendedBots.get(botId);
+  if (at === undefined) return false;
+  // A long-running turn is still unattended even if its next approval comes
+  // more than 30 minutes after the previous one. Only an idle bot may age
+  // out; every positive read refreshes the inactivity window.
+  if (Date.now() - at > UNATTENDED_TTL_MS && !store.bot(botId)?.busy) {
+    unattendedBots.delete(botId);
+    return false;
+  }
+  unattendedBots.set(botId, Date.now());
+  return true;
+}
 let routines: RoutineManager | null = null;
 // The Local VM is intentionally one shared, visible desktop. Two agents
 // driving it simultaneously would mix clicks, keystrokes and screenshots,
@@ -372,7 +412,9 @@ bus.subscribe((event: RuntimeEvent) => {
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
       const settled = permission && asker && event.requestId
-        ? autoDecision(asker, event.tool, event.summary)
+        ? autoDecision(asker, event.tool, event.summary, {
+            unattended: isUnattended(asker.id),
+          })
         : null;
       if (settled && asker && event.requestId) {
         const instance = event.providerInstanceId
@@ -503,7 +545,10 @@ bus.subscribe((event: RuntimeEvent) => {
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
     // child. Every delegation failure has to land as a chip instead.
-    return startTurn(toBotId, text, { commsDepth }).catch((err) => {
+    return startTurn(toBotId, text, {
+      commsDepth,
+      unattended: isUnattended(store.botByThread(sourceThreadId)?.id),
+    }).catch((err) => {
       const bot = store.bot(toBotId);
       const why = err instanceof Error ? err.message : String(err);
       const source = store.botByThread(sourceThreadId);
@@ -612,6 +657,8 @@ async function startTurn(
     /** Lets the system prompt put externally supplied payloads behind an
      * explicit untrusted-data boundary without changing ordinary chat. */
     automationSource?: RoutineRunTrigger;
+    /** the caller was already running unattended, so this turn is too */
+    unattended?: boolean;
     onDispatchError?: (message: string) => void;
   },
 ) {
@@ -619,6 +666,10 @@ async function startTurn(
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
   const threadId = opts?.threadId ?? bot.threadId;
+  // a webhook turn, or one inherited from a bot already running unattended
+  if (opts?.automationSource === "webhook" || opts?.unattended) markUnattended(bot.id);
+  // a person typing into this bot ends the unattended window immediately
+  else if (opts?.automationSource === undefined && !opts?.commsDepth) clearUnattended(bot.id);
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
   const commsDepth = opts?.commsDepth ?? 0;
@@ -1308,7 +1359,7 @@ const server = createServer(async (req, res) => {
         const channel = getOrCreateChannel(store, currentFrom, currentTarget);
         mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
         const prefixed = `[Message from @${currentFrom.name}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
-        const reply = await askBotAndWait(toBotId, prefixed, depth);
+        const reply = await askBotAndWait(toBotId, prefixed, depth, fromBotId);
         mirrorReply(commsBus, currentTarget, reply, channel);
         return json(res, 200, { botName: currentTarget.name, text: reply });
       }

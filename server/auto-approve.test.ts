@@ -105,3 +105,20 @@ describe("autoDecision", () => {
     expect(autoDecision({ alwaysAllow: ["Bash"] }, "Bash", "sudo rm -rf /var")).toBeNull();
   });
 });
+
+describe("unattended turns", () => {
+  const bot = { autoApprove: true, alwaysAllow: ["Bash:git"] };
+
+  it("does not inherit auto mode when nobody started the turn", () => {
+    expect(autoDecision(bot, "Bash", "git status", { unattended: true })).toBeNull();
+  });
+
+  it("does not inherit an always-allow grant either", () => {
+    expect(autoDecision(bot, "Bash", "git log", { unattended: true })).toBeNull();
+  });
+
+  it("still auto-approves the same action when a person started the turn", () => {
+    expect(autoDecision(bot, "Bash", "git status")).toBeTruthy();
+    expect(autoDecision(bot, "Bash", "git status", { unattended: false })).toBeTruthy();
+  });
+});
