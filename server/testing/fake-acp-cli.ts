@@ -188,6 +188,15 @@ function handle(msg: any) {
         // an older agent that predates these methods
         return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
       }
+      const settingId = msg.method === "session/set_mode" ? "modeId" : "modelId";
+      if (typeof msg.params?.sessionId !== "string" || typeof msg.params?.[settingId] !== "string") {
+        out({
+          jsonrpc: "2.0",
+          id: msg.id,
+          error: { code: -32602, message: `Invalid params: sessionId and ${settingId} must be strings` },
+        });
+        break;
+      }
       configCalls.push({ method: msg.method, params: msg.params });
       if (process.env.FAKE_ACP_DUMP) {
         writeFileSync(`${process.env.FAKE_ACP_DUMP}.config.json`, JSON.stringify(configCalls, null, 2));
