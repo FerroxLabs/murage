@@ -51,11 +51,13 @@ export const BoxAgentDriver = {
         };
         const sendTurn = async (turn) => {
             const { threadId } = turn;
-            const boxId = turn.integrations?.computer?.boxId;
+            const computer = turn.integrations?.computer;
+            const boxId = computer && (!computer.kind || computer.kind === "box") ? computer.boxId : undefined;
             if (!token)
                 throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.openmausbot/config.json');
-            if (!boxId)
+            if (!boxId) {
                 throw new Error("this bot has no computer yet — open the Computer panel and provision one");
+            }
             if (active.has(threadId))
                 throw new Error("a turn is already running on this thread");
             const turnId = newId();
@@ -73,7 +75,9 @@ export const BoxAgentDriver = {
                 body: JSON.stringify({ provider: providerFor(model), model, prompt }),
             });
             appendNative(threadId, { dir: "out", source: "box.prompt", msg: { model, prompt, response: started } });
-            const promptId = started?.prompt?.id ?? started?.promptId ?? started?.id ?? null;
+            // real shape (2026-08): {type:"prompt.queued", promptId, promptRun:{id,…},
+            // id:<box id>} — never fall back to the bare id, it's the box's
+            const promptId = started?.promptRun?.id ?? started?.prompt?.id ?? started?.promptId ?? null;
             let cancelled = false;
             active.set(threadId, {
                 turnId,
@@ -104,10 +108,18 @@ export const BoxAgentDriver = {
                             seen.add(id);
                             appendNative(threadId, { dir: "in", source: "box.events", msg: ev });
                             const kind = String(ev.type ?? ev.kind ?? "");
-                            const text = ev.text ?? ev.message ?? ev.data?.text ?? null;
-                            if (/assistant|message|output/i.test(kind) && typeof text === "string" && text.trim()) {
+                            // "response" events carry the agent's text at data.content —
+                            // the FULL text so far, not a chunk. Clients accumulate
+                            // deltas, so forward only the growth; a drifted (non-prefix)
+                            // event re-sends whole and the settled message replaces the
+                            // stream anyway.
+                            const text = ev.text ?? ev.message ?? ev.data?.text ?? ev.data?.content ?? null;
+                            if (/assistant|message|output|response/i.test(kind) && typeof text === "string" && text.trim()) {
+                                const delta = text.startsWith(lastText) ? text.slice(lastText.length) : text;
                                 lastText = text;
-                                emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: text });
+                                if (delta) {
+                                    emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
+                                }
                             }
                             else if (/tool|command|exec|browse/i.test(kind)) {
                                 emit({
@@ -118,15 +130,37 @@ export const BoxAgentDriver = {
                                     title: String(ev.title ?? ev.command ?? kind).slice(0, 80),
                                 });
                             }
+                            // shape-drift backstop: without a promptId the status poll
+                            // below can never see a terminal state, so settle off the
+                            // events themselves instead of hanging to the 30-min ceiling
+                            if (!promptId && /complete|finish|done|success|fail|error/i.test(kind)) {
+                                active.delete(threadId);
+                                if (lastText) {
+                                    emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: lastText });
+                                }
+                                const failed = /fail|error/i.test(kind);
+                                emit({ ...base(threadId, turnId), type: "turn.completed", ok: !failed, stopReason: failed ? kind : null, cost: null });
+                                return;
+                            }
                         }
                         if (promptId) {
                             const status = await api(`/boxes/${boxId}/prompts/${promptId}`).catch(() => null);
-                            const state = String(status?.prompt?.status ?? status?.status ?? "");
                             appendNative(threadId, { dir: "in", source: "box.prompt.status", msg: status });
-                            if (/completed|succeeded|done/i.test(state)) {
-                                const result = status?.prompt?.result ?? status?.result ?? lastText;
-                                if (typeof result === "string" && result.trim() && result !== lastText) {
-                                    emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: result });
+                            // real shape (2026-08): {promptRun:{status:"finished",…}} —
+                            // flat fallbacks kept for drift
+                            const run = status?.promptRun ?? status?.prompt ?? status ?? {};
+                            const state = String(run?.status ?? "");
+                            if (/completed|succeeded|done|finished/i.test(state)) {
+                                const result = run?.result ?? run?.output ?? lastText;
+                                // stream only the growth past what events already sent —
+                                // the settled message below carries the full text regardless
+                                if (typeof result === "string" && result.trim() && result !== lastText && result.startsWith(lastText)) {
+                                    emit({
+                                        ...base(threadId, turnId),
+                                        type: "content.delta",
+                                        streamKind: "assistant_text",
+                                        delta: result.slice(lastText.length),
+                                    });
                                 }
                                 emit({
                                     ...base(threadId, turnId),

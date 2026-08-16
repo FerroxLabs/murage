@@ -6,8 +6,9 @@
 // session/new mcpServers → agents-proxy → /api/internal/ask-bot →
 // askBotAndWait → bus fold. The internal endpoints' auth is pinned too.
 //
-// The fake CLI is a shebang script, so the e2e half is POSIX-only (same
-// gating as acp.test.ts); the mention-resolution unit tests run everywhere.
+// The fake CLI is a shebang script — POSIX-only until resolveCliSpawn
+// turned it into `node <script>` on Windows too, so the e2e half now runs
+// everywhere alongside the mention-resolution units.
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,13 +16,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { mentionedBots } from "./store.ts";
+import { mentionedBots, normalizeGroupDefaultResponder, roomResponders } from "./store.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
-const posixOnly = describe.skipIf(process.platform === "win32");
 
 describe("mentionedBots", () => {
   const peers = [
@@ -44,9 +44,40 @@ describe("mentionedBots", () => {
     expect(mentionedBots("mail milind@milind.dev please", peers)).toEqual([]);
     expect(mentionedBots("@Ghost around?", peers)).toEqual([]);
   });
+  it("requires a word boundary at the end of the name", () => {
+    expect(mentionedBots("ask @New Bottle about it", peers)).toEqual([]);
+    expect(mentionedBots("@Milindo is someone else", peers)).toEqual([]);
+  });
 });
 
-posixOnly("comms e2e (fake ACP fleet)", () => {
+describe("roomResponders", () => {
+  const members = [
+    { id: "atlas", name: "Atlas" },
+    { id: "milind", name: "Milind" },
+  ];
+
+  it("routes an unmentioned message to the configured lead", () => {
+    expect(roomResponders("hello there", members, { kind: "member", botId: "atlas" })).toEqual([members[0]]);
+  });
+
+  it("lets explicit mentions override the configured lead", () => {
+    expect(roomResponders("@Milind take this", members, { kind: "member", botId: "atlas" })).toEqual([members[1]]);
+  });
+
+  it("supports everyone and mentions-only room policies", () => {
+    expect(roomResponders("hello", members, { kind: "everyone" })).toEqual(members);
+    expect(roomResponders("hello", members, { kind: "mentions" })).toEqual([]);
+    expect(roomResponders("@everyone hello", members, { kind: "mentions" })).toEqual(members);
+  });
+
+  it("keeps bot-to-bot channels on their last-speaker routing", () => {
+    expect(normalizeGroupDefaultResponder({ kind: "everyone" }, members.map((member) => member.id), true)).toEqual({
+      kind: "mentions",
+    });
+  });
+});
+
+describe("comms e2e (fake ACP fleet)", () => {
   let child: ChildProcess;
   let home: string;
   let stderr = "";
@@ -81,6 +112,8 @@ posixOnly("comms e2e (fake ACP fleet)", () => {
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+        // without SystemRoot, winsock fails to initialize in the child
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home,
         USERPROFILE: home,
         OMB_PORT: String(PORT),
@@ -157,15 +190,30 @@ posixOnly("comms e2e (fake ACP fleet)", () => {
       expect(reply.text).toContain("Helper replied:");
       expect(reply.text).toContain("hello from fake acp"); // B's happy-path turn text
 
-      // visibility: A's thread shows the outbound ask as an activity note
-      const note = askerBot.messages.find((m: any) => m.kind === "activity" && m.tool?.name?.startsWith("asked @Helper"));
+      // visibility: A's thread shows a clickable "Messaged @Helper" chip
+      // that links to the auto-created bot⇄bot channel
+      const note = askerBot.messages.find((m: any) => m.kind === "activity" && m.tool?.name === "Messaged @Helper");
       expect(note).toBeTruthy();
+      expect(note.comm?.groupId).toBeTruthy();
+      expect(note.comm?.withName).toBe("Helper");
 
-      // B's thread received the attributed message and ran a real turn
-      const helperBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === helper.id);
+      // the exchange is mirrored into that channel, attributed to each bot
+      const state = (await api("GET", "/api/bots")).body;
+      const channel = state.groups.find((g: any) => g.id === note.comm.groupId);
+      expect(channel?.dm).toBe(true);
+      expect(channel.memberIds).toContain(asker.id);
+      expect(channel.memberIds).toContain(helper.id);
+      expect(channel.messages.some((m: any) => m.from?.botId === asker.id)).toBe(true);
+      expect(channel.messages.some((m: any) => m.from?.botId === helper.id && m.text?.includes("hello from fake acp"))).toBe(true);
+
+      // B's thread received the attributed message and ran a real turn,
+      // plus a receive-side chip pointing at the same channel
+      const helperBot = state.bots.find((b: any) => b.id === helper.id);
       const inbound = helperBot.messages.find((m: any) => m.role === "user" && m.kind === "text");
       expect(inbound.text).toContain("[Message from @Asker");
       expect(inbound.text).toContain("ping from fake");
+      const rnote = helperBot.messages.find((m: any) => m.kind === "activity" && m.tool?.name === "Message from @Asker");
+      expect(rnote?.comm?.groupId).toBe(note.comm.groupId);
       expect(helperBot.busy).toBeFalsy();
     },
     40_000,

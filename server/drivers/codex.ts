@@ -9,8 +9,9 @@
 //
 // resumeCursor is the codex thread id; a later turn tries thread/resume
 // and falls back to a fresh thread/start.
-import { spawn, execFile } from "node:child_process";
 import { homedir } from "node:os";
+
+import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 
 import type {
   DriverCreateInput,
@@ -57,6 +58,16 @@ const DENY_TIMEOUT_NOTE =
 export const CodexDriver: ProviderDriver<CodexConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Codex", supportsMultipleInstances: true },
+  install: {
+    command: {
+      darwin: "npm install -g @openai/codex",
+      linux: "npm install -g @openai/codex",
+      win32: "npm install -g @openai/codex",
+    },
+    needsNode: true,
+    docsUrl: "https://github.com/openai/codex",
+    signInCommand: "codex",
+  },
   models: MODELS,
   decodeConfig,
   defaultConfig: () => decodeConfig({}),
@@ -92,11 +103,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // billing to pay-as-you-go (agentcal)
       delete env.OPENAI_API_KEY;
 
-      const child = spawn(config.cli, ["app-server"], {
+      const child = spawnCli(config.cli, ["app-server"], {
         cwd: turn.cwd ?? homedir(),
         env,
         stdio: ["pipe", "pipe", "pipe"],
-        detached: true,
       });
 
       const state = { settled: false, lastText: "", sawStreamDelta: false };
@@ -110,22 +120,29 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         } catch {}
         appendNative(threadId, { dir: "out", source: "codex.app-server", msg: obj });
       };
-      const request = (method: string, params: unknown) =>
+      const request = (method: string, params: unknown, timeoutMs = 60_000) =>
         new Promise<any>((resolve, reject) => {
           const id = nextId++;
-          rpcPending.set(id, { resolve, reject });
+          // a wedged app-server can accept stdin and never reply; without this
+          // the handshake await hangs forever and the bot stays busy for good
+          const timer = setTimeout(() => {
+            if (rpcPending.delete(id)) reject(new Error(`codex ${method} timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+          if (typeof timer.unref === "function") timer.unref();
+          rpcPending.set(id, {
+            resolve: (v) => {
+              clearTimeout(timer);
+              resolve(v);
+            },
+            reject: (e) => {
+              clearTimeout(timer);
+              reject(e);
+            },
+          });
           send({ jsonrpc: "2.0", id, method, params });
         });
 
-      const stop = () => {
-        try {
-          process.kill(-child.pid!, "SIGTERM");
-        } catch {
-          try {
-            child.kill("SIGTERM");
-          } catch {}
-        }
-      };
+      const stop = () => killCliTree(child);
 
       const settle = (ok: boolean, stopReason: string | null) => {
         if (state.settled) return;
@@ -276,12 +293,20 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             break;
           }
           case "error":
-            if (p.message) emit({ ...base(threadId, turnId), type: "runtime.error", message: p.message });
+            // shape drift: 0.144 sends {message}, 0.139 nests it under
+            // {error:{message}} — surface either (agentcal armor)
+            {
+              const message = p.message ?? p.error?.message;
+              if (message) emit({ ...base(threadId, turnId), type: "runtime.error", message: String(message).slice(0, 400) });
+            }
             break;
         }
       };
 
       let buf = "";
+      // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
+      // multibyte characters that straddle two reads and corrupts the text
+      child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {
         buf += chunk;
         let nl;
@@ -316,7 +341,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (stderr.length > 8192) stderr = stderr.slice(-8192);
       });
       child.on("error", (e) => {
-        emit({ ...base(threadId, turnId), type: "runtime.error", message: `spawn failed: ${e.message}` });
+        emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
         settle(false, "spawn_error");
       });
       child.on("close", (code) => {
@@ -378,7 +403,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const version = await new Promise<string | null>((resolve) => {
-        execFile(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) =>
+        execCli(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) =>
           resolve(err ? null : stdout.trim()),
         );
       });

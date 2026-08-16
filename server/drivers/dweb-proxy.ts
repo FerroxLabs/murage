@@ -12,7 +12,17 @@
 //   DWEB_URL  base URL of the local dweb daemon (http://127.0.0.1:49737)
 import readline from "node:readline";
 
-const DWEB = process.env.DWEB_URL ?? "http://127.0.0.1:49737";
+const DWEB = (process.env.DWEB_URL ?? "http://127.0.0.1:49737").replace(/\/+$/, "");
+const DWEB_DISPLAY = (() => {
+  try {
+    const url = new URL(DWEB);
+    url.username = "";
+    url.password = "";
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return "(invalid DWEB_URL)";
+  }
+})();
 
 const TOOLS = [
   {
@@ -57,6 +67,7 @@ const textResult = (id: unknown, text: string, isError = false) =>
 
 async function api(path: string, init?: RequestInit): Promise<Json> {
   const res = await fetch(DWEB + path, {
+    signal: AbortSignal.timeout(30_000),
     ...init,
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
   });
@@ -67,12 +78,7 @@ async function api(path: string, init?: RequestInit): Promise<Json> {
 
 async function callTool(name: string, args: Json): Promise<{ text: string; isError?: boolean }> {
   if (name === "dweb_status") {
-    let r: Json;
-    try {
-      r = await api("/ping");
-    } catch (e) {
-      return { text: `dweb server not reachable at ${DWEB}: ${(e as Error).message}`, isError: true };
-    }
+    const r = await api("/ping");
     const lines = [
       `status: ${String(r.status ?? "unknown")}`,
       `server: ${String(r.server ?? "unknown")}`,
@@ -101,13 +107,21 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const r = await api("/api/opencode/models");
     const models = Array.isArray(r.models) ? r.models : [];
     if (!models.length) return { text: "No models available on dweb's opencode integration." };
-    const lines = models.map((m) => `- ${String((m as Json).id ?? m)}`);
+    const lines = models.map((model) => {
+      const id = typeof model === "object" && model !== null && "id" in model ? model.id : model;
+      return `- ${String(id)}`;
+    });
     return { text: `Models available on dweb's opencode integration:\n${lines.join("\n")}` };
   }
   if (name === "dweb_opencode_run") {
-    const command = String(args.command ?? "").trim();
-    if (!command) return { text: "dweb_opencode_run needs a command.", isError: true };
-    const model = (args.model as string | undefined) ?? undefined;
+    if (typeof args.command !== "string" || !args.command.trim()) {
+      return { text: "dweb_opencode_run needs a string command.", isError: true };
+    }
+    if (args.model !== undefined && typeof args.model !== "string") {
+      return { text: "dweb_opencode_run model must be a string.", isError: true };
+    }
+    const command = args.command.trim();
+    const model = args.model?.trim() || undefined;
     const r = await api("/api/opencode/run", {
       method: "POST",
       body: JSON.stringify({ command, ...(model !== undefined ? { model } : {}) }),
@@ -145,10 +159,13 @@ async function handle(msg: Json) {
       const name = params.name as string;
       if (!TOOLS.some((t) => t.name === name)) return rpcErr(id, -32602, `Unknown tool: ${name}`);
       try {
-        const { text, isError } = await callTool(name, (params.arguments ?? {}) as Json);
+        const rawArgs = params.arguments;
+        const args = typeof rawArgs === "object" && rawArgs !== null && !Array.isArray(rawArgs) ? (rawArgs as Json) : {};
+        const { text, isError } = await callTool(name, args);
         textResult(id, text, isError);
       } catch (e) {
-        textResult(id, (e as Error).message, true);
+        const message = e instanceof Error ? e.message : String(e);
+        textResult(id, `dweb request failed at ${DWEB_DISPLAY}: ${message}`, true);
       }
       return;
     }

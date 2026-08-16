@@ -10,6 +10,24 @@ export type InstanceId = string;
 export type ThreadId = string;
 export type TurnId = string;
 
+export type ProviderErrorCode =
+  | "missing_cli"
+  | "invalid_credentials"
+  | "inactive_subscription"
+  | "quota_or_region_restriction"
+  | "upstream_outage"
+  | "model_catalog_outage";
+
+export class ProviderError extends Error {
+  readonly code: ProviderErrorCode;
+
+  constructor(code: ProviderErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "ProviderError";
+    this.code = code;
+  }
+}
+
 // ── model selection ────────────────────────────────────────────────────
 // "Which model" is a data value carried on the request, never a service
 // binding (upstream ModelSelectionWire). instanceId is the routing key.
@@ -76,7 +94,9 @@ export type RuntimeEvent = RuntimeEventBase &
       }
     | { type: "request.resolved"; behavior: string; source: string }
     | { type: "thread.token-usage.updated"; input: number; output: number }
-    | { type: "runtime.error"; message: string }
+    // `setup: true` marks a failure the user fixes by installing or
+    // configuring something, not by retrying — the UI offers setup instead.
+    | { type: "runtime.error"; message: string; setup?: boolean }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -98,12 +118,9 @@ export interface SendTurnInput {
   /** Per-bot integrations the driver may hand to the agent as tools. */
   integrations?: {
     composio?: { url?: string; key: string };
-    /** The bot's cloud computer (box.ascii.dev) for desktop/browser use. */
-    computer?: { boxId: string; token: string };
-    /** Local computer use via the Electron-hosted cua-driver daemon —
-     * spawn config comes verbatim from cua-connection.json (the daemon
-     * MUST be spawned by Electron main; the harness only points the agent
-     * CLI at the already-running socket via this MCP proxy command). */
+    /** Cloud computer, reached through OpenMausBot's REST-to-MCP adapter. */
+    computer?: { kind?: "box"; boxId: string; token: string };
+    /** Direct stdio connection to a Cua Driver MCP server (host or sandbox). */
     localComputer?: { command: string; args: string[]; env: Record<string, string> };
     /** Peer-agent comms: an MCP proxy (list_bots / ask_bot) that routes back
      * through the harness so this bot can message other bots. The harness
@@ -128,6 +145,15 @@ export interface ProviderAdapter {
      * the harness only offers agents tooling (and prompts about it) to
      * drivers that can actually hand it to the agent. */
     agentsMcp?: boolean;
+    /** True when the driver mounts turn.integrations.computer (the box's
+     * screenshot/click tools). Same rule as agentsMcp: a bot must never be
+     * told it has a computer whose tools its driver cannot mount — it
+     * burns turns hunting for tools that aren't there. */
+    computerMcp?: boolean;
+    /** True when the driver mounts turn.integrations.composio (the user's
+     * connected apps). Same rule again: a key in the config says the user
+     * HAS those connections, not that this driver can reach them. */
+    composioMcp?: boolean;
   };
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;
   interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void>;
@@ -147,6 +173,28 @@ export interface ProviderSnapshot {
   reason?: string;
   authenticated?: boolean;
   version?: string | null;
+}
+
+// ── engine install descriptor ───────────────────────────────────────────
+// How a user gets this engine onto their machine. Declared by the driver so
+// that adding a provider stays "one file in drivers/ plus a registration":
+// onboarding, the model picker, and settings all render from this instead of
+// hardcoding per-engine copy in the UI.
+//
+// Installing is rarely the whole job — most CLIs then need an interactive
+// sign-in, which is why signInCommand exists and why the UI sends people to a
+// terminal rather than trying to shell out silently.
+export interface EngineInstall {
+  /** One-liner per platform. Omit a platform that has no such command —
+   * the UI falls back to docsUrl rather than offering something that
+   * cannot work there (a curl|bash line is not a Windows command). */
+  command?: Partial<Record<"darwin" | "win32" | "linux", string>>;
+  /** Docs or download page. The only route for GUI-installed engines. */
+  docsUrl?: string;
+  /** Interactive sign-in run after installing, when install isn't enough. */
+  signInCommand?: string;
+  /** `command` needs npm on PATH, so the UI can say so when Node is absent. */
+  needsNode?: boolean;
 }
 
 // ── driver SPI (upstream ProviderDriver — a plain record, not a service) ─
@@ -172,6 +220,8 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly enabled: boolean;
   readonly models: ModelCatalog;
+  /** Refresh a live catalog without recreating the provider instance. */
+  readonly refreshModels?: () => Promise<void>;
   readonly adapter: ProviderAdapter;
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
@@ -182,6 +232,9 @@ export interface ProviderInstance {
 export interface ProviderDriver<Config = unknown> {
   readonly driverKind: DriverKind;
   readonly metadata: { displayName: string; supportsMultipleInstances?: boolean };
+  /** How to get this engine installed. Omit for engines that need no local
+   * binary (API-key drivers), which is what makes it optional. */
+  readonly install?: EngineInstall;
   /** Decode the opaque config envelope; throw on invalid (→ shadow). */
   decodeConfig(raw: unknown): Config;
   defaultConfig(): Config;

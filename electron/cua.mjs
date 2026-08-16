@@ -16,9 +16,14 @@
 
 import { app, ipcMain } from "electron";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const require = createRequire(import.meta.url);
+const { createCuaConnectionStore } = require("./cua-connection.cjs");
 
 const INSTALLED_DRIVER = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
 const STANDALONE_SOCKET = path.join(
@@ -28,7 +33,9 @@ const STANDALONE_SOCKET = path.join(
 const HOST_BUNDLE_ID = "com.openmausbot.app";
 
 let embeddedHost = null; // EmbeddedCuaDriverHost | null
-let connection = null; // descriptor exposed to harness + renderer
+const connectionStore = createCuaConnectionStore({
+  getUserData: () => app.getPath("userData"),
+});
 
 export function resolveDriverBinary() {
   if (process.env.CUA_DRIVER_PATH) return process.env.CUA_DRIVER_PATH;
@@ -54,11 +61,39 @@ function socketAlive(sockPath) {
   });
 }
 
+async function loadEmbeddedSdk() {
+  if (!app.isPackaged) {
+    const [embedded, permissions] = await Promise.all([
+      import("@trycua/cua-driver/embedded"),
+      import("@trycua/cua-driver/electron"),
+    ]);
+    return { ...embedded, ...permissions };
+  }
+  process.env.OPENMAUSBOT_CUA_SDK_LIBRARY = path.join(
+    process.resourcesPath,
+    "cua-sdk",
+    "native",
+    "libcua_driver_sdk.dylib",
+  );
+  return import(pathToFileURL(path.join(process.resourcesPath, "cua-sdk", "cua-sdk.mjs")).href);
+}
+
 async function startEmbedded(binary) {
-  // Dynamic import: the SDK ships a native FFI lib; keep dev startup
-  // resilient if it fails to load on this machine.
-  const { EmbeddedCuaDriverHost } = await import("@trycua/cua-driver/embedded");
-  embeddedHost = new EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
+  // Import from the staged Resources tree in production. The app intentionally
+  // excludes general node_modules, so a bare package import only works in dev.
+  const sdk = await loadEmbeddedSdk();
+  // CUA's embedding contract requires grants before the child daemon starts;
+  // these SDK calls execute in Electron main so macOS attributes them to
+  // OpenMausBot rather than to a terminal or helper process.
+  const permissionStatus = sdk.requestMacOSPermissions();
+  if (!sdk.hasRequiredMacOSPermissions(permissionStatus)) {
+    const missing = [
+      !permissionStatus.accessibility && "Accessibility",
+      !permissionStatus.screenRecording && "Screen Recording",
+    ].filter(Boolean).join(" and ");
+    throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart OpenMausBot`);
+  }
+  embeddedHost = new sdk.EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
   const conn = await embeddedHost.start();
   return {
     mode: "embedded",
@@ -72,25 +107,28 @@ async function startEmbedded(binary) {
 export async function startCua() {
   const binary = resolveDriverBinary();
   if (!binary) {
-    connection = { mode: "unavailable", reason: "cua-driver binary not found" };
-    return connection;
+    return connectionStore.persist({
+      mode: "unavailable",
+      reason: "cua-driver binary not found",
+    });
   }
 
   const wantEmbedded =
     app.isPackaged || process.env.OPENMAUSBOT_CUA_EMBEDDED === "1";
+  let nextConnection;
 
   if (wantEmbedded) {
     try {
-      connection = await startEmbedded(binary);
+      nextConnection = await startEmbedded(binary);
     } catch (err) {
-      connection = {
+      nextConnection = {
         mode: "unavailable",
         reason: `embedded host failed: ${err?.message ?? err}`,
       };
     }
   } else if (await socketAlive(STANDALONE_SOCKET)) {
     // Dev machine with CuaDriver.app's daemon already running.
-    connection = {
+    nextConnection = {
       mode: "standalone",
       socketPath: STANDALONE_SOCKET,
       mcpCommand: binary,
@@ -98,18 +136,14 @@ export async function startCua() {
       mcpEnv: {},
     };
   } else {
-    connection = {
+    nextConnection = {
       mode: "unavailable",
       reason:
         "no running cua-driver daemon; run `cua-driver serve` or grant via `cua-driver permissions grant`",
     };
   }
 
-  fs.writeFileSync(
-    path.join(app.getPath("userData"), "cua-connection.json"),
-    JSON.stringify(connection, null, 2),
-  );
-  return connection;
+  return connectionStore.persist(nextConnection);
 }
 
 export function cuaPermissionsStatus() {
@@ -136,9 +170,12 @@ export async function stopCua() {
     }
     embeddedHost = null;
   }
+  if (connectionStore.get()) {
+    connectionStore.persist({ mode: "unavailable", reason: "desktop-host-stopped" });
+  }
 }
 
 export function registerCuaIpc() {
-  ipcMain.handle("cua:connection", () => connection);
+  ipcMain.handle("cua:connection", () => connectionStore.get());
   ipcMain.handle("cua:permissions", () => cuaPermissionsStatus());
 }

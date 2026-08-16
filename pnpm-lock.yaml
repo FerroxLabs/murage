@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@trycua/cua-driver':
-        specifier: ^0.19.3
+        specifier: 0.19.3
         version: 0.19.3
       clsx:
         specifier: ^2.1.1

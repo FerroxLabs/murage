@@ -1,5 +1,6 @@
-import { ChevronLeft, X } from "lucide-react";
-import { useStore, type Bot } from "@/state/store";
+import { ChevronLeft, Crown, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { api, useStore, type Bot } from "@/state/store";
 import { MausAvatar } from "./Avatar";
 import {
   PICKABLE_STATES,
@@ -9,6 +10,7 @@ import {
 } from "@/lib/mascot";
 import { ModelPicker } from "./ModelPicker";
 import { cn } from "@/lib/cn";
+import { requestNotificationPermission } from "@/lib/notify";
 
 function Field({
   label,
@@ -30,13 +32,47 @@ const inputCls =
 
 export function SettingsPanel({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
+  const [voices, setVoices] = useState<Array<{ id: string; label: string; description?: string }>>([]);
+  const [voicesLoading, setVoicesLoading] = useState(false);
   const patch = (
     p: Partial<
-      Pick<Bot, "name" | "title" | "description" | "notifications" | "computer" | "color" | "mascotExpression">
+      Pick<
+        Bot,
+        | "name"
+        | "title"
+        | "description"
+        | "notifications"
+        | "computer"
+        | "color"
+        | "mascotExpression"
+        | "autoApprove"
+        | "speakReplies"
+        | "voice"
+        | "chiefOfStaff"
+      >
     >,
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const activeState = stateForBot(bot);
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
+  const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
+  const canCoordinate = engine?.capabilities?.agentsMcp === true;
+  const currentChief = state.bots.find((candidate) => candidate.chiefOfStaff);
+
+  useEffect(() => {
+    if (!state.config?.tts?.configured) {
+      setVoices([]);
+      return;
+    }
+    let alive = true;
+    setVoicesLoading(true);
+    api("/api/tts/voices")
+      .then((result: { voices?: typeof voices }) => alive && setVoices(result.voices ?? []))
+      .catch(() => alive && setVoices([]))
+      .finally(() => alive && setVoicesLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [state.config?.tts?.configured]);
 
   return (
     <aside className="animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
@@ -148,6 +184,54 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             />
           </Field>
 
+          <div className={cn(
+            "rounded-xl border p-4",
+            bot.chiefOfStaff ? "border-accent/40 bg-accent/10" : "border-hairline/40 bg-card",
+          )}>
+            <div className="flex items-center gap-3">
+              <span className={cn(
+                "flex size-8 shrink-0 items-center justify-center rounded-lg",
+                bot.chiefOfStaff ? "bg-accent text-white" : "bg-raised text-ink-secondary",
+              )}>
+                <Crown size={17} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[15px] font-medium text-ink">Chief of Staff</div>
+                <div className="text-[11.5px] text-ink-secondary">One per workspace</div>
+              </div>
+              <button
+                role="switch"
+                aria-checked={Boolean(bot.chiefOfStaff)}
+                aria-label="Chief of Staff"
+                disabled={!bot.chiefOfStaff && !canCoordinate}
+                onClick={() => patch({ chiefOfStaff: !bot.chiefOfStaff })}
+                title={!bot.chiefOfStaff && !canCoordinate ? "This engine cannot contact other bots" : undefined}
+                className={cn(
+                  "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                  bot.chiefOfStaff ? "bg-accent" : "bg-raised",
+                )}
+              >
+                <span
+                  className={cn(
+                    "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                    bot.chiefOfStaff ? "left-[21px]" : "left-[3px]",
+                  )}
+                />
+              </button>
+            </div>
+            <div className="mt-3 text-[13px] leading-relaxed text-ink-secondary">
+              {bot.chiefOfStaff && !canCoordinate
+                ? "This bot still holds the role, but its current engine cannot contact teammates. Choose a Claude or ACP engine to restore coordination."
+                : bot.chiefOfStaff
+                  ? "This is your primary contact. It can coordinate the other bots and combine their work into one answer."
+                : !canCoordinate
+                  ? "Choose a Claude or ACP engine to let this bot coordinate teammates."
+                  : currentChief
+                    ? `Make this bot your primary contact and hand the role over from ${currentChief.name}.`
+                    : "Make this bot your primary contact for work that may involve several bots."}
+            </div>
+          </div>
+
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">Model</div>
@@ -184,6 +268,86 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
+              <div className="text-[15px] font-medium text-ink">Auto mode</div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                {bot.autoApprove
+                  ? "Keeps going on its own — you'll still be asked about anything destructive, and about questions it asks you."
+                  : "Approve each action yourself. Turn on to let this bot keep working without stopping to ask."}
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={Boolean(bot.autoApprove)}
+              aria-label="Auto mode"
+              onClick={() => patch({ autoApprove: !bot.autoApprove })}
+              className={cn(
+                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
+                bot.autoApprove ? "bg-accent" : "bg-raised",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  bot.autoApprove ? "left-[21px]" : "left-[3px]",
+                )}
+              />
+            </button>
+          </div>
+
+          {state.config?.tts?.configured && (
+            <div className="rounded-xl bg-card p-4">
+              <div className="text-[15px] font-medium text-ink">Bot voice</div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                Use a distinct voice for calls and spoken replies, or inherit the app default
+              </div>
+              <select
+                value={bot.voice ?? ""}
+                onChange={(e) => patch({ voice: e.target.value })}
+                aria-label={`${bot.name}'s voice`}
+                className="mt-3 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus:border-hairline focus:outline-none"
+              >
+                <option value="">App default</option>
+                {bot.voice && !voices.some((voice) => voice.id === bot.voice) && (
+                  <option value={bot.voice}>Current bot voice</option>
+                )}
+                {voices.map((voice) => (
+                  <option key={voice.id} value={voice.id}>
+                    {voice.label}{voice.description ? ` — ${voice.description}` : ""}
+                  </option>
+                ))}
+              </select>
+              {voicesLoading && <div className="mt-1.5 text-[11.5px] text-ink-secondary">Loading voices…</div>}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+            <div>
+              <div className="text-[15px] font-medium text-ink">Read replies aloud</div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                Speak this bot's answers as they arrive, even when you're in another chat
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={Boolean(bot.speakReplies)}
+              aria-label="Read this bot's replies aloud"
+              onClick={() => patch({ speakReplies: !bot.speakReplies })}
+              className={cn(
+                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
+                bot.speakReplies ? "bg-accent" : "bg-raised",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  bot.speakReplies ? "left-[21px]" : "left-[3px]",
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+            <div>
               <div className="text-[15px] font-medium text-ink">
                 Notifications
               </div>
@@ -194,7 +358,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             <button
               role="switch"
               aria-checked={bot.notifications}
-              onClick={() => patch({ notifications: !bot.notifications })}
+              onClick={() => {
+                const enabled = !bot.notifications;
+                if (enabled) void requestNotificationPermission();
+                patch({ notifications: enabled });
+              }}
               className={cn(
                 "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
                 bot.notifications ? "bg-accent" : "bg-raised",

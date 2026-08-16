@@ -13,10 +13,20 @@
 // is never a security contract). session/load REPLAYS history as ordinary
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
-import { spawn, execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.js";
 import { newEventId, newId } from "../../contracts.js";
+import { computerProxyEnv } from "../../container-computer.js";
 import { augmentedPath } from "../../env-path.js";
+// the computer proxy entry: .ts in dev (node type stripping), .js in the
+// compiled dist-server the packaged app ships
+const COMPUTER_PROXY_PATH = (() => {
+    const ts = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "computer-proxy.ts");
+    return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
+})();
 import { appendNative } from "../native.js";
 const INIT_TIMEOUT = 20_000;
 const NEW_SESSION_TIMEOUT = 30_000;
@@ -39,6 +49,7 @@ export function createAcpDriver(support) {
     return {
         driverKind: DRIVER_KIND,
         metadata: { displayName: support.displayName, supportsMultipleInstances: true },
+        install: support.install,
         models: support.models,
         decodeConfig,
         defaultConfig: () => decodeConfig({}),
@@ -72,13 +83,30 @@ export function createAcpDriver(support) {
             // fine here. env is the ACP {name,value}[] shape.
             const acpMcpServers = (turn) => {
                 const servers = [];
+                const acpEnv = (env) => Object.entries(env).map(([name, value]) => ({ name, value: String(value) }));
                 const agents = turn.integrations?.agents;
                 if (agents) {
+                    servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(agents.env) });
+                }
+                // The bot's computer, mounted exactly like the Claude driver does.
+                // Cloud boxes use the REST adapter; host and sandbox Cua connections
+                // expose Cua Driver's official MCP server directly.
+                const computer = turn.integrations?.computer;
+                if (computer) {
                     servers.push({
-                        name: "agents",
-                        command: agents.command,
-                        args: agents.args,
-                        env: Object.entries(agents.env).map(([name, value]) => ({ name, value: String(value) })),
+                        name: "computer",
+                        command: process.execPath,
+                        args: [COMPUTER_PROXY_PATH],
+                        env: acpEnv({ ELECTRON_RUN_AS_NODE: "1", ...computerProxyEnv(computer) }),
+                    });
+                }
+                else if (turn.integrations?.localComputer) {
+                    const local = turn.integrations.localComputer;
+                    servers.push({
+                        name: "computer",
+                        command: local.command,
+                        args: local.args,
+                        env: acpEnv(local.env ?? {}),
                     });
                 }
                 return servers;
@@ -91,11 +119,10 @@ export function createAcpDriver(support) {
                 const cwd = turn.cwd ?? config.workspace ?? homedir();
                 const env = childEnv();
                 const mcpServers = acpMcpServers(turn);
-                const child = spawn(config.cli, support.spawnArgs(config, turn), {
+                const child = spawnCli(config.cli, support.spawnArgs(config, turn), {
                     cwd,
                     env,
                     stdio: ["pipe", "pipe", "pipe"],
-                    detached: true,
                 });
                 const state = { settled: false, promptSent: false, text: "" };
                 const asks = new Map();
@@ -123,17 +150,7 @@ export function createAcpDriver(support) {
                     rpcPending.set(id, { resolve, reject, timer });
                     send({ jsonrpc: "2.0", id, method, params });
                 });
-                const stop = () => {
-                    try {
-                        process.kill(-child.pid, "SIGTERM");
-                    }
-                    catch {
-                        try {
-                            child.kill("SIGTERM");
-                        }
-                        catch { }
-                    }
-                };
+                const stop = () => killCliTree(child);
                 const settle = (ok, stopReason) => {
                     if (state.settled)
                         return;
@@ -271,6 +288,9 @@ export function createAcpDriver(support) {
                     }
                 };
                 let buf = "";
+                // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
+                // multibyte characters that straddle two reads and corrupts the text
+                child.stdout.setEncoding("utf8");
                 child.stdout.on("data", (chunk) => {
                     buf += chunk;
                     let nl;
@@ -311,7 +331,7 @@ export function createAcpDriver(support) {
                         stderr = stderr.slice(-8192);
                 });
                 child.on("error", (e) => {
-                    emit({ ...base(threadId, turnId), type: "runtime.error", message: `spawn failed: ${e.message}` });
+                    emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
                     settle(false, "spawn_error");
                 });
                 child.on("close", (code) => {
@@ -406,8 +426,17 @@ export function createAcpDriver(support) {
                     catch (e) {
                         if (!state.settled) {
                             const message = e.message;
-                            emit({ ...base(threadId, turnId), type: "runtime.error", message });
-                            settle(false, message === support.loginNote ? "auth_required" : "rpc_error");
+                            // "not signed in" is a setup problem like a missing binary: the
+                            // fix is a command in a terminal, not another attempt. Flagging
+                            // it lets the error card show the sign-in step.
+                            const needsAuth = message === support.loginNote;
+                            emit({
+                                ...base(threadId, turnId),
+                                type: "runtime.error",
+                                message,
+                                ...(needsAuth ? { setup: true } : {}),
+                            });
+                            settle(false, needsAuth ? "auth_required" : "rpc_error");
                         }
                     }
                 })();
@@ -416,7 +445,7 @@ export function createAcpDriver(support) {
             const snapshot = async () => {
                 const env = childEnv();
                 const version = await new Promise((resolve) => {
-                    execFile(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) => resolve(err ? null : stdout.trim()));
+                    execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) => resolve(err ? null : stdout.trim()));
                 });
                 if (!version)
                     return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
@@ -431,7 +460,7 @@ export function createAcpDriver(support) {
                 snapshot,
                 adapter: {
                     provider: DRIVER_KIND,
-                    capabilities: { sessionModelSwitch: "unsupported", agentsMcp: true },
+                    capabilities: { sessionModelSwitch: "unsupported", agentsMcp: true, computerMcp: true },
                     sendTurn,
                     interruptTurn: async (threadId) => active.get(threadId)?.interrupt(),
                     respondToRequest: async (threadId, requestId, decision) => {

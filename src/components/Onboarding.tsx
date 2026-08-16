@@ -1,31 +1,29 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Check, AlertTriangle, Loader2, Mic } from "lucide-react";
 import { MausAvatar } from "./Avatar";
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
+import { useDesktopCapabilities } from "./DesktopCapabilities";
+import { EngineSetup } from "./EngineSetup";
+import type { InstanceInfo } from "@/state/store";
 
 // Three-step first-run onboarding: who you are (email), what's installed
 // (live engine checks from the harness), what the app may use (TCC).
 // Every check is skippable — onboarding must never brick the app.
 
-type InstanceRow = {
-  instanceId: string;
-  driverKind: string;
-  displayName: string;
-  snapshot: { state: "available" | "unavailable"; reason?: string; version?: string | null; authenticated?: boolean };
-};
-
-const isElectron = navigator.userAgent.includes("Electron");
+type InstanceRow = InstanceInfo;
 
 function StatusRow({
   ok,
   warn,
   title,
   detail,
+  children,
 }: {
   ok: boolean;
   warn?: boolean;
   title: string;
-  detail: string;
+  detail?: string;
+  children?: ReactNode;
 }) {
   return (
     <div className="flex items-start gap-3 rounded-xl bg-card p-3.5">
@@ -36,15 +34,43 @@ function StatusRow({
       >
         {ok ? <Check size={14} /> : <AlertTriangle size={13} />}
       </span>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="text-[14px] font-medium text-ink">{title}</div>
-        <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{detail}</div>
+        {detail && <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{detail}</div>}
+        {children}
       </div>
     </div>
   );
 }
 
+/** One engine's onboarding row. Ready states get a sentence; anything the
+ * user has to act on gets the shared setup UI, so the instructions come from
+ * the driver and are correct for this platform. */
+function EngineRow({
+  instance,
+  label,
+  readyNote,
+}: {
+  instance: InstanceRow | undefined;
+  label: string;
+  readyNote: string;
+}) {
+  const ready = instance?.snapshot.state === "available" && instance.snapshot.authenticated !== false;
+  const version = instance?.snapshot.version ? ` · ${instance.snapshot.version.split(" ")[0]}` : "";
+  return (
+    <StatusRow ok={ready} warn title={`${label}${version}`} detail={ready ? readyNote : undefined}>
+      {!ready &&
+        (instance ? (
+          <EngineSetup instance={instance} className="mt-0.5" />
+        ) : (
+          <div className="mt-0.5 text-[12.5px] text-ink-secondary">Not configured on this machine.</div>
+        ))}
+    </StatusRow>
+  );
+}
+
 export function Onboarding({ onDone }: { onDone: () => void }) {
+  const { capabilities } = useDesktopCapabilities();
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -66,20 +92,36 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   useEffect(() => {
     track("onboarding_step", { step });
-    if (step === 1 && !instances) {
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== 1) return;
+    let active = true;
+    let latestRequest = 0;
+    const refresh = () => {
+      const request = ++latestRequest;
       fetch("/api/instances")
         .then((r) => r.json())
-        .then((d) => setInstances(d.instances ?? []))
-        .catch(() => setInstances([]));
-    }
-    if (step === 2 && isElectron) {
+        .then((d) => active && request === latestRequest && setInstances(d.instances ?? []))
+        .catch(() => active && request === latestRequest && setInstances([]));
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [step]);
+
+  useEffect(() => {
+    if (step === 2 && capabilities.dictation.available) {
       const poll = () => window.ogb?.permStatus?.().then(setPerms).catch(() => {});
       poll();
       // keep polling — the user may grant in System Settings and come back
       const t = setInterval(poll, 2000);
       return () => clearInterval(t);
     }
-  }, [step, instances]);
+  }, [step, capabilities.dictation.available]);
 
   const finish = () => {
     track("onboarding_completed", {
@@ -94,6 +136,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const claude = byKind("claudeAgent");
   const codex = byKind("codex");
   const grok = byKind("grokAgent");
+  const antigravity = byKind("antigravityAgent");
+  const opencodeGo = byKind("opencodeGo");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-app">
@@ -145,7 +189,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           <div className="flex flex-col">
             <h1 className="text-[18px] font-semibold text-ink">Your engines</h1>
             <p className="mt-1 text-[13.5px] text-ink-secondary">
-              Bots run on the AI tools already on this Mac — here&rsquo;s what we found.
+              Bots run on AI tools installed on this computer — here&rsquo;s what we found.
             </p>
             <div className="mt-4 flex flex-col gap-2.5">
               {!instances ? (
@@ -154,45 +198,28 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 </div>
               ) : (
                 <>
-                  <StatusRow
-                    ok={claude?.snapshot.state === "available"}
-                    warn
-                    title={`Claude Code ${claude?.snapshot.version ? `· ${claude.snapshot.version.split(" ")[0]}` : ""}`}
-                    detail={
-                      claude?.snapshot.state === "available"
-                        ? claude.snapshot.authenticated
-                          ? "Installed and signed in — ready to power bots."
-                          : "Installed. Run `claude` once in a terminal to sign in."
-                        : "Not found. Install: npm i -g @anthropic-ai/claude-code"
-                    }
+                  <EngineRow
+                    instance={claude}
+                    label="Claude Code"
+                    readyNote="Installed and signed in — ready to power bots."
                   />
-                  <StatusRow
-                    ok={codex?.snapshot.state === "available"}
-                    warn
-                    title={`Codex ${codex?.snapshot.version ? `· ${codex.snapshot.version.replace("codex-cli ", "")}` : ""}`}
-                    detail={
-                      codex?.snapshot.state === "available"
-                        ? "Installed — bots can run on Codex too."
-                        : "Optional. Install: npm i -g @openai/codex"
-                    }
+                  <EngineRow instance={codex} label="Codex" readyNote="Installed — bots can run on Codex too." />
+                  <EngineRow
+                    instance={grok}
+                    label="Grok Build"
+                    readyNote="Installed and signed in — bots can run on Grok too."
                   />
-                  <StatusRow
-                    ok={grok?.snapshot.state === "available"}
-                    warn
-                    title={`Grok Build ${grok?.snapshot.version ? `· ${grok.snapshot.version.split(" ")[1]}` : ""}`}
-                    detail={
-                      grok?.snapshot.state === "available"
-                        ? grok.snapshot.authenticated
-                          ? "Installed and signed in — bots can run on Grok too."
-                          : "Installed. Run `grok login` in a terminal to sign in."
-                        : "Optional. Install: curl -fsSL https://x.ai/cli/install.sh | bash"
-                    }
+                  <EngineRow
+                    instance={antigravity}
+                    label="Antigravity"
+                    readyNote="Installed — bots can run on Antigravity too."
                   />
+                  <EngineRow instance={opencodeGo} label="OpenCode Go" readyNote="Installed and configured." />
                 </>
               )}
             </div>
             <button
-              onClick={() => (isElectron ? setStep(2) : finish())}
+              onClick={() => (capabilities.dictation.available ? setStep(2) : finish())}
               className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white"
             >
               Continue

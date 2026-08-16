@@ -4,16 +4,22 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { approvalKey, autoDecision } from "./auto-approve.js";
 import * as box from "./box.js";
 import * as composio from "./composio.js";
+import { containerComputerAction, containerComputerMcp, containerComputerScreenshot, containerComputerStatus, setupCommands, } from "./container-computer.js";
 import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.js";
+import { resetPathCache } from "./env-path.js";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.js";
 import { EventBus } from "./harness/bus.js";
 import { ProviderRegistry } from "./harness/registry.js";
 import { mentionedBots, Store } from "./store.js";
+import * as tts from "./tts/index.js";
+import { narrateTool, toUtterances } from "./tts/speech-text.js";
+import { readCuaConnection } from "./local-computer.js";
+import { RoutineManager } from "./routines.js";
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
 const MIME = {
@@ -97,13 +103,24 @@ function askBotAndWait(targetBotId, message, depth) {
 async function defaultSelection() {
     const described = await registry.describe();
     const available = described.filter((d) => d.snapshot.state === "available");
-    const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0] ?? described[0];
-    return { instanceId: pick?.instanceId ?? "claude", model: pick?.models.default || "claude-sonnet-5" };
+    // Deliberately NO fallback to described[0]. Handing a bot an engine whose
+    // CLI isn't installed makes it look ready and then fail on send with a raw
+    // spawn ENOENT — the single worst first-run experience, and the one every
+    // user with no CLIs used to get. An empty selection is honest: the UI shows
+    // the setup path instead of a bot that cannot answer.
+    const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0];
+    return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
-let bootSelection = { instanceId: "claude", model: "claude-sonnet-5" };
+let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
+const publicBot = (bot) => ({
+    ...bot,
+    messages: store.messagesFor(bot.threadId),
+    activeLeafId: store.activeLeaf(bot.threadId),
+    tasks: store.tasks(bot.id).map(({ resumeCursors, ...task }) => task),
+});
 // ── SSE fan-out to clients ─────────────────────────────────────────────
 const sseClients = new Set();
 function broadcast(payload) {
@@ -120,22 +137,37 @@ function broadcast(payload) {
 // ── server-side event folding (upstream's ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript
 // and every client view are projections of it.
-const toolMessageByItem = new Map(); // itemId -> messageId
-const askMessageByRequest = new Map(); // requestId -> messageId
+// keyed by `${threadId}:${itemId}` / `${threadId}:${requestId}` — provider
+// item/request ids are only unique within a thread, so two bots acting at
+// once can collide on a bare id and patch each other's messages.
+const toolMessageByItem = new Map(); // threadId:itemId -> messageId
+const askMessageByRequest = new Map(); // threadId:requestId -> messageId
+// Group threads: the fold needs to know WHO is talking — the turn engine
+// records the active member here before dispatching its turn.
+const groupSpeakers = new Map();
+let routines = null;
+// The Local VM is intentionally one shared, visible desktop. Two agents
+// driving it simultaneously would mix clicks, keystrokes and screenshots,
+// so only one thread may lease it at a time.
+let activeVmThreadId = null;
+let localVmLifecycleBusy = false;
 bus.subscribe((event) => {
     broadcast({ kind: "runtime", event });
+    routines?.handleRuntimeEvent(event);
     const bot = store.botByThread(event.threadId);
-    if (!bot)
+    const group = bot ? undefined : store.groupByThread(event.threadId);
+    if (!bot && !group)
         return;
+    const speaker = group ? groupSpeakers.get(event.threadId) : undefined;
     const pushMessage = (m) => {
-        const message = store.appendMessage(event.threadId, m);
+        const message = store.appendMessage(event.threadId, group && m.role === "bot" ? { ...m, from: speaker } : m);
         broadcast({ kind: "message", threadId: event.threadId, message });
         return message;
     };
     switch (event.type) {
         case "session.started":
-            if (event.sessionId && event.providerInstanceId) {
-                store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId);
+            if (bot && event.sessionId && event.providerInstanceId) {
+                store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId, event.threadId);
             }
             break;
         case "item.completed":
@@ -143,28 +175,101 @@ bus.subscribe((event) => {
                 pushMessage({ role: "bot", kind: "text", text: event.text });
             }
             else if (event.itemType === "tool" && event.itemId) {
-                const messageId = toolMessageByItem.get(event.itemId);
+                const itemKey = `${event.threadId}:${event.itemId}`;
+                const messageId = toolMessageByItem.get(itemKey);
+                let toolName = "tool";
                 if (messageId) {
+                    // the whole tool object is replaced, so carry `spoken` across —
+                    // dropping it here would silently un-narrate every completed tool
+                    const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool;
+                    toolName = existing?.name ?? "tool";
                     const patched = store.patchMessage(event.threadId, messageId, {
-                        tool: { name: store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool?.name ?? "tool", ok: event.ok },
+                        tool: { name: toolName, ok: event.ok, spoken: existing?.spoken },
                     });
                     if (patched)
                         broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
-                    toolMessageByItem.delete(event.itemId);
+                    toolMessageByItem.delete(itemKey);
                 }
-                // the bot just finished acting — refresh its screen preview now
-                pokeScreenPoller(bot.id);
+                // the bot just acted ON ITS SCREEN — refresh the preview now. Only
+                // computer tools can change the screen, and each capture competes
+                // with the agent for the box's command endpoint, so a bot grinding
+                // through file edits must not trigger one per tool.
+                if (bot && /computer|screenshot|click|type_text|press_key|scroll|open_url/i.test(toolName)) {
+                    pokeScreenPoller(bot.id);
+                }
             }
             break;
         case "item.started":
             if (event.itemType === "tool") {
-                const message = pushMessage({ role: "bot", kind: "activity", tool: { name: event.title ?? "tool" } });
+                // ask_bot's raw tool chip is redundant — the internal endpoint
+                // appends a richer "Messaged @X" chip linking to the channel
+                if (event.title?.endsWith("__ask_bot"))
+                    break;
+                const name = event.title ?? "tool";
+                // narration is folded in here, once, so call mode can read the
+                // chip aloud without re-deriving it — and so the phrase a user
+                // hears and the chip they see can never drift apart
+                const message = pushMessage({
+                    role: "bot",
+                    kind: "activity",
+                    tool: { name, spoken: narrateTool(name) ?? undefined },
+                });
                 if (event.itemId)
-                    toolMessageByItem.set(event.itemId, message.id);
+                    toolMessageByItem.set(`${event.threadId}:${event.itemId}`, message.id);
             }
             break;
         case "request.opened": {
             const permission = event.requestType === "permission";
+            // Auto mode / always-allow: answer routine tool permissions for the
+            // bot so it keeps working. A QUESTION always reaches the human — the
+            // whole point of asking is that a person decides — and anything that
+            // looks destructive stops even in auto mode.
+            const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
+            const settled = permission && asker && event.requestId
+                ? autoDecision(asker, event.tool, event.summary)
+                : null;
+            if (settled && asker && event.requestId) {
+                const instance = event.providerInstanceId
+                    ? registry.get(event.providerInstanceId)
+                    : registry.get(asker.modelSelection.instanceId);
+                const requestId = event.requestId;
+                const { tool, summary } = event;
+                // The chip is written only AFTER the provider takes the answer.
+                // Claiming approval first and correcting later means a moment
+                // where the transcript says "approved" over a request nothing
+                // answered — and if the provider is gone entirely, forever.
+                void (async () => {
+                    try {
+                        if (!instance)
+                            throw new Error("provider unavailable");
+                        await instance.adapter.respondToRequest(event.threadId, requestId, { behavior: "allow" });
+                        pushMessage({
+                            role: "bot",
+                            kind: "activity",
+                            tool: { name: `${settled}: ${summary.slice(0, 120)}`, ok: true },
+                        });
+                    }
+                    catch {
+                        // couldn't answer it for them — hand it back to the human
+                        // rather than leaving the bot waiting on nobody
+                        const card = pushMessage({
+                            role: "bot",
+                            kind: "options",
+                            card: {
+                                title: "Approval needed",
+                                subtitle: summary,
+                                options: ["Allow", "Deny"],
+                                requestId,
+                                tool,
+                                allowKey: approvalKey(tool, summary),
+                                held: "Auto mode couldn't answer this one.",
+                            },
+                        });
+                        askMessageByRequest.set(`${event.threadId}:${requestId}`, card.id);
+                    }
+                })();
+                break;
+            }
             const message = pushMessage({
                 role: "bot",
                 kind: "options",
@@ -173,14 +278,20 @@ bus.subscribe((event) => {
                     subtitle: event.summary,
                     options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
                     requestId: event.requestId,
+                    tool: permission ? event.tool : undefined,
+                    // the exact grant "always allow" would remember, decided here so
+                    // client and server can never derive it differently
+                    allowKey: permission ? approvalKey(event.tool, event.summary) : undefined,
+                    // in auto mode a card can only mean the guard stopped it — say so
+                    held: permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
                 },
             });
             if (event.requestId)
-                askMessageByRequest.set(event.requestId, message.id);
+                askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
             break;
         }
         case "request.resolved": {
-            const messageId = event.requestId ? askMessageByRequest.get(event.requestId) : null;
+            const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
             if (messageId) {
                 const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
                 if (existing?.card && !existing.card.answered) {
@@ -191,85 +302,115 @@ bus.subscribe((event) => {
                         broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
                 }
                 if (event.requestId)
-                    askMessageByRequest.delete(event.requestId);
+                    askMessageByRequest.delete(`${event.threadId}:${event.requestId}`);
             }
             break;
         }
         case "runtime.error":
-            pushMessage({ role: "bot", kind: "activity", tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false } });
+            pushMessage({
+                role: "bot",
+                kind: "activity",
+                tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup },
+            });
             break;
         case "turn.completed": {
-            // the last live frame becomes a settled inline screen message —
-            // the screenshot-in-chat moment
-            const frame = stopScreenPoller(bot.id);
-            if (frame)
-                pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
-            store.patchBot(bot.id, { busy: false, unread: true });
-            broadcast({ kind: "bot", bot: store.bot(bot.id) });
+            if (activeVmThreadId === event.threadId)
+                activeVmThreadId = null;
+            if (bot) {
+                store.patchBot(bot.id, { busy: false, unread: true });
+                broadcast({ kind: "bot", bot: store.bot(bot.id) });
+                if (screenPollers.has(bot.id)) {
+                    // the last live frame becomes a settled inline screen message —
+                    // the screenshot-in-chat moment. One fresh capture first, so the
+                    // frame shows the turn's END state (the final tool's poke may
+                    // still be in flight).
+                    void finalScreenFrame(bot.id).then((frame) => {
+                        // the bot may have been deleted while the capture ran
+                        if (frame && store.bot(bot.id)) {
+                            pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
+                        }
+                    });
+                }
+            }
+            // group busy/unread settle in the group turn engine, which knows
+            // whether more member turns are queued behind this one
             break;
         }
     }
 });
 const screenPollers = new Map();
-function startScreenPoller(botId) {
+/** The preview shares the box's single command endpoint with the agent's
+ * own actions, so every frame we take is latency stolen from the work the
+ * user is waiting on. Hence: a slow interval, a floor between captures,
+ * and never two in flight. */
+const SCREEN_POLL_MS = 6000;
+const SCREEN_MIN_GAP_MS = 3000;
+function startScreenPoller(botId, boxId) {
     if (screenPollers.has(botId) || !box.boxConfigured(cfg))
         return;
-    let inFlight = false;
-    const capture = async () => {
-        if (inFlight)
-            return;
-        inFlight = true;
-        try {
-            const { png, format } = await box.screenshotBox(cfg, botId);
-            const frame = { png, mime: format === "jpeg" ? "image/jpeg" : "image/png" };
-            entry.last = frame;
-            broadcast({ kind: "screen", botId, ...frame });
-        }
-        catch {
-            /* box asleep or mid-command — try again next tick */
-        }
-        finally {
-            inFlight = false;
-        }
-    };
+    // One capture at a time, shared by the interval, the pokes, and the
+    // turn-end grab: awaiting the in-flight promise (rather than dropping the
+    // call) is what lets the final frame be the settled one. The min-gap keeps
+    // a tool-heavy turn from spending the box's single command endpoint on
+    // previews the user isn't waiting for.
+    let current = null;
+    let lastAt = 0;
     const entry = {
-        timer: setInterval(capture, 4000),
-        capture,
+        timer: null,
+        capture: () => {
+            if (!current && Date.now() - lastAt < SCREEN_MIN_GAP_MS)
+                return Promise.resolve();
+            current ??= (async () => {
+                try {
+                    // boxId is resolved once per turn — re-resolving per frame cost a
+                    // full LIST of the account's boxes
+                    const { png, format } = await box.screenshotBox(cfg, botId, boxId);
+                    const frame = { png, mime: format === "jpeg" ? "image/jpeg" : "image/png" };
+                    entry.last = frame;
+                    broadcast({ kind: "screen", botId, ...frame });
+                }
+                catch {
+                    /* box asleep or mid-command — try again next tick */
+                }
+                finally {
+                    lastAt = Date.now();
+                    current = null;
+                }
+            })();
+            return current;
+        },
         last: null,
     };
+    entry.timer = setInterval(() => void entry.capture(), SCREEN_POLL_MS);
     screenPollers.set(botId, entry);
 }
 /** Event-driven refresh: capture NOW (the bot just acted on its screen)
- * instead of waiting for the next interval tick. */
+ * instead of waiting for the next interval tick. Rate-limited inside
+ * capture() — a tool-heavy turn used to fire one full REST chain per
+ * completed tool, competing with the agent for the same endpoint. */
 function pokeScreenPoller(botId) {
     void screenPollers.get(botId)?.capture();
 }
 function stopScreenPoller(botId) {
     const entry = screenPollers.get(botId);
     if (!entry)
-        return null;
-    clearInterval(entry.timer);
+        return;
+    if (entry.timer)
+        clearInterval(entry.timer);
     screenPollers.delete(botId);
-    return entry.last;
 }
-// Local computer-use contract written by Electron main on startup
-// (~/Library/Application Support/OpenMausBot/cua-connection.json). Read
-// fresh each turn — Electron may restart or permissions may change.
-function readCuaConnection() {
-    // new name first; pre-rename desktop builds used the old directory
-    for (const dir of ["OpenMausBot", "openmausbot", "OpenGrokBot", "opengrokbot"]) {
-        try {
-            const p = join(homedir(), "Library", "Application Support", dir, "cua-connection.json");
-            const conn = JSON.parse(readFileSync(p, "utf8"));
-            if (!conn || conn.mode === "unavailable" || !conn.mcpCommand)
-                continue;
-            return { command: conn.mcpCommand, args: conn.mcpArgs ?? ["mcp"], env: conn.mcpEnv ?? {} };
-        }
-        catch {
-            /* try the next location */
-        }
-    }
-    return null;
+/** Turn end: stop polling, then take ONE last fresh frame (awaiting any
+ * in-flight poke first) so the settled screenshot shows the screen's actual
+ * end state, not the previous action's. */
+async function finalScreenFrame(botId) {
+    const entry = screenPollers.get(botId);
+    if (!entry)
+        return null;
+    if (entry.timer)
+        clearInterval(entry.timer);
+    screenPollers.delete(botId);
+    await entry.capture();
+    return entry.last;
 }
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
 async function startTurn(botId, text, opts) {
@@ -278,19 +419,55 @@ async function startTurn(botId, text, opts) {
         throw Object.assign(new Error("no such bot"), { status: 404 });
     if (bot.busy)
         throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
+    const threadId = opts?.threadId ?? bot.threadId;
+    const task = store.taskByThread(bot.id, threadId);
+    if (!task)
+        throw Object.assign(new Error("no such task"), { status: 404 });
     const commsDepth = opts?.commsDepth ?? 0;
-    const instance = registry.get(bot.modelSelection.instanceId);
+    // a task takes its name from the first thing you asked it to do
+    if (text.trim())
+        store.titleTaskFromFirstMessage(bot.id, text, threadId);
+    const instance = opts?.runOn === "cloud"
+        ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
+        : registry.get(bot.modelSelection.instanceId);
     if (!instance) {
-        throw Object.assign(new Error(`provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`), { status: 409 });
+        throw Object.assign(new Error(opts?.runOn === "cloud"
+            ? "the Cloud VM runner is unavailable — configure Box in App Settings"
+            : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`), { status: 409 });
     }
-    const userMessage = store.appendMessage(bot.threadId, { role: "user", kind: "text", text });
-    broadcast({ kind: "message", threadId: bot.threadId, message: userMessage });
-    // transcript for API-backed drivers: settled text turns only
+    const instanceId = instance.instanceId;
+    const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
+    // an edit hands us its already-branched user message; a plain send appends
+    let userMessage = opts?.userMessage;
+    if (!userMessage) {
+        userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+        broadcast({ kind: "message", threadId, message: userMessage });
+    }
+    // transcript for API-backed drivers: settled text turns on the ACTIVE
+    // branch only — abandoned forks never reach the model
     const transcript = store
-        .messagesFor(bot.threadId)
+        .activePath(threadId)
         .filter((m) => m.kind === "text" && m.text && m.id !== userMessage.id)
         .slice(-40)
         .map((m) => ({ role: m.role === "user" ? "user" : "assistant", text: m.text }));
+    // After a rewind (edit / branch switch) the provider's native session
+    // still contains the abandoned branch: start a fresh session instead of
+    // resuming, and for cursor-resuming drivers replay the surviving path
+    // inline (transcript-replay drivers get it via transcript). The flag is
+    // cleared only once the turn is actually dispatched — clearing it here
+    // would cost the next attempt its history if this dispatch fails.
+    const rewound = threadId === bot.threadId && Boolean(bot.rewound);
+    const turnText = rewound && instance.driverKind !== "grok" && transcript.length
+        ? [
+            "[The user rewound this conversation (edited a message or switched to another version). Everything before this point was replaced by the following history:]",
+            "",
+            ...transcript.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`),
+            "",
+            "[Now reply to the user's latest message:]",
+            "",
+            text,
+        ].join("\n")
+        : text;
     const persona = [
         `You are ${bot.name}, a personal bot in OpenMausBot.`,
         bot.title && `Role: ${bot.title}.`,
@@ -308,25 +485,82 @@ async function startTurn(botId, text, opts) {
             const integrations = {};
             if (cfg.composio?.key)
                 integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
-            const wants = bot.computer; // 'cloud' | 'local' | 'off' | undefined(auto)
-            if (wants !== "off" && wants !== "local" && box.boxConfigured(cfg)) {
+            const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the MAUS default
+            const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
+            const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
+            let previewBoxId = null;
+            let computerKind = null;
+            // Explicit destinations are strict. In particular, Local VM must never
+            // fall through to host CUA and accidentally click on the user's Mac.
+            if (wants === "vm") {
+                if (!mountsComputerMcp || instance.driverKind === "boxAgent") {
+                    throw new Error("this model engine cannot use the Local VM — choose Claude or an ACP engine, or select another computer destination");
+                }
+                const localVm = await containerComputerStatus();
+                if (!localVm.ready || !localVm.runtime) {
+                    throw new Error(`${localVm.problem ?? "the Local VM is not ready"} (App Settings → Local VM)`);
+                }
+                if (activeVmThreadId && activeVmThreadId !== threadId) {
+                    throw new Error("the shared Local VM is already being used by another bot — wait for that turn to finish");
+                }
+                activeVmThreadId = threadId;
+                integrations.localComputer = containerComputerMcp(localVm.runtime);
+                computerKind = "vm";
+            }
+            else if (wants === "local") {
+                if (!mountsComputerMcp) {
+                    throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
+                }
+                const cua = readCuaConnection();
+                if (!cua)
+                    throw new Error("CUA Driver is not ready for this computer — check permissions and restart OpenMausBot");
+                integrations.localComputer = cua;
+                computerKind = "local";
+            }
+            // Cloud is also strict when explicitly selected. Auto (unset) reuses an
+            // existing cloud box, then falls back to host CUA without provisioning.
+            if ((wants === "cloud" || wants === undefined) && box.boxConfigured(cfg)) {
+                if (!mountsCloudComputer && wants === "cloud") {
+                    throw new Error("this model engine cannot use computer tools — choose Claude, an ACP engine, or the Computer engine");
+                }
                 let b = await box.findBox(cfg, bot.id).catch(() => null);
-                // the Computer driver runs ON the box — provision it on first use
-                if (!b && instance.driverKind === "boxAgent") {
+                // Explicit Cloud and the box-native Computer engine provision on first
+                // use. Auto remains non-surprising and only reuses an existing box.
+                if (!b && mountsCloudComputer && (wants === "cloud" || instance.driverKind === "boxAgent")) {
                     broadcast({ kind: "computer", botId: bot.id, state: "provisioning" });
                     await box.provisionBox(cfg, bot.id, bot.name);
                     b = await box.findBox(cfg, bot.id).catch(() => null);
                 }
-                if (b)
-                    integrations.computer = { boxId: b.id, token: cfg.box.token };
+                // an archived box answers every action with an error until it
+                // resumes — wake it here, once, instead of letting the agent
+                // discover it one failed tool call at a time. Only worth the
+                // resume (~8s, and it un-pauses billing) when the bot can act.
+                if (b && mountsCloudComputer && !["idle", "ready", "running"].includes(b.state)) {
+                    broadcast({ kind: "computer", botId: bot.id, state: "waking" });
+                    b = (await box.readyBox(cfg, bot.id).catch(() => null)) ?? b;
+                }
+                if (b) {
+                    previewBoxId = b.id;
+                    if (mountsCloudComputer) {
+                        integrations.computer = { kind: "box", boxId: b.id, token: cfg.box.token };
+                        computerKind = "box";
+                    }
+                }
             }
-            // local computer (this Mac) via the Electron-hosted cua-driver: the
-            // Electron main process owns the daemon (TCC attribution) and writes
-            // its spawn contract to cua-connection.json; the harness only reads it
-            if (!integrations.computer && wants !== "off" && wants !== "cloud") {
+            if (wants === "cloud" && !box.boxConfigured(cfg)) {
+                throw new Error("Cloud box is not configured — add a Box API key or choose Local VM");
+            }
+            if (wants === "cloud" && !integrations.computer) {
+                throw new Error("the cloud computer could not be created or reached");
+            }
+            // Auto-only host fallback. Electron owns cua-driver/TCC attribution;
+            // the harness only reads its already-running connection descriptor.
+            if (!integrations.computer && !integrations.localComputer && wants === undefined && mountsComputerMcp) {
                 const cua = readCuaConnection();
-                if (cua)
+                if (cua) {
                     integrations.localComputer = cua;
+                    computerKind = "local";
+                }
             }
             // peer-agent comms: give a user-initiated turn the list_bots/ask_bot
             // tools. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
@@ -347,17 +581,22 @@ async function startTurn(botId, text, opts) {
                 ? mentionedBots(text, store.bots.filter((b) => b.id !== bot.id))
                 : [];
             await instance.adapter.sendTurn({
-                threadId: bot.threadId,
-                text,
-                model: bot.modelSelection.model,
-                resumeCursor: bot.resumeCursors[bot.modelSelection.instanceId],
+                threadId,
+                text: turnText,
+                model,
+                // a rewound thread never resumes the abandoned branch's session
+                // the active task's own session — another task's cursor would
+                // resume the wrong conversation and defeat the context bubble
+                resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
                 transcript,
                 system: persona +
-                    (integrations.computer && instance.driverKind !== "boxAgent"
-                        ? " You have your own cloud computer — use the computer tools (screenshot, computer_exec, open_url) whenever browsing or acting on a desktop helps."
-                        : integrations.localComputer
-                            ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
-                            : "") +
+                    (computerKind === "vm"
+                        ? " You have a shared, isolated Cua sandbox: a Linux desktop in a container on this machine with no host folders mounted. Use the computer tools for desktop, accessibility, window, and shell work. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully."
+                        : computerKind === "box" && instance.driverKind !== "boxAgent"
+                            ? " You have your own cloud computer — use screenshot, click, type_text, open_url and computer_exec whenever a desktop helps. Every action already returns the resulting screen, so don't follow it with screenshot; batch predictable sequences with computer_batch."
+                            : computerKind === "local"
+                                ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
+                                : "") +
                     (integrations.agents
                         ? " You can work with the user's other bots through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
                         : "") +
@@ -368,28 +607,211 @@ async function startTurn(botId, text, opts) {
                         : ""),
                 integrations,
             });
-            if (integrations.computer)
-                startScreenPoller(bot.id);
+            // dispatched: the rewind is spent, and the old cursors are dead
+            if (rewound)
+                store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
+            if (previewBoxId)
+                startScreenPoller(bot.id, previewBoxId);
         }
         catch (e) {
+            if (activeVmThreadId === threadId)
+                activeVmThreadId = null;
             const message = e instanceof Error ? e.message : String(e);
-            const failure = store.appendMessage(bot.threadId, {
+            const failure = store.appendMessage(threadId, {
                 role: "bot",
                 kind: "activity",
                 tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
             });
-            broadcast({ kind: "message", threadId: bot.threadId, message: failure });
+            broadcast({ kind: "message", threadId, message: failure });
             store.patchBot(bot.id, { busy: false });
             broadcast({ kind: "bot", bot: store.bot(bot.id) });
+            opts?.onDispatchError?.(message);
         }
     })();
 }
+// ── routines: persisted definitions → detached bot tasks ───────────────
+// The scheduler owns timing and receipts; the existing harness remains the
+// only owner of provider sessions, approvals, tools, computers and messages.
+routines = new RoutineManager({
+    emit: broadcast,
+    botState: (botId) => {
+        const bot = store.bot(botId);
+        return !bot ? "missing" : bot.busy ? "busy" : "ready";
+    },
+    createTask: (botId, title) => {
+        const task = store.createTask(botId, title, false);
+        const bot = store.bot(botId);
+        if (task && bot)
+            broadcast({ kind: "bot", bot: publicBot(bot) });
+        return task;
+    },
+    startTurn: (botId, threadId, prompt, runOn, onDispatchError) => startTurn(botId, prompt, { threadId, runOn, onDispatchError }),
+    interruptTurn: async (botId, threadId, runOn) => {
+        const bot = store.bot(botId);
+        const instance = runOn === "cloud"
+            ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
+            : bot
+                ? registry.get(bot.modelSelection.instanceId)
+                : null;
+        await instance?.adapter.interruptTurn(threadId);
+    },
+});
+routines.start();
 // ── config hot-reload ─────────────────────────────────────────────────
+// ── group turn engine ──────────────────────────────────────────────────
+// The Buzz rule: in a room, a bot replies only when @mentioned. Mentioned
+// members run SEQUENTIALLY (one speaker at a time — the transcript and the
+// streaming bubble stay coherent), each on a fresh session with the recent
+// room conversation serialized into its prompt. A member's reply may
+// @mention teammates; those get one chained turn (hop 1), never deeper.
+const groupQueues = new Map();
+const GROUP_CONTEXT_MESSAGES = 30;
+const MAX_GROUP_HOPS = 1;
+function serializeRoomContext(threadId, userName) {
+    return store
+        .messagesFor(threadId)
+        .filter((m) => m.kind === "text" && m.text)
+        .slice(-GROUP_CONTEXT_MESSAGES)
+        .map((m) => `${m.role === "user" ? userName : (m.from?.name ?? "Bot")}: ${m.text}`)
+        .join("\n");
+}
+function broadcastGroup(groupId) {
+    const group = store.group(groupId);
+    if (group)
+        broadcast({ kind: "group", group });
+}
+async function runGroupMemberTurn(groupId, botId, hop, 
+// bots that already spoke for this user message — "@Scout ask @Pixel"
+// must not run Pixel twice (once chained, once as a direct responder)
+spoken = new Set()) {
+    const group = store.group(groupId);
+    const bot = store.bot(botId);
+    if (!group || !bot)
+        return;
+    spoken.add(botId);
+    const instance = registry.get(bot.modelSelection.instanceId);
+    const userName = cfg.profile?.name?.trim() || "User";
+    if (!instance) {
+        const failure = store.appendMessage(group.threadId, {
+            role: "bot",
+            kind: "activity",
+            from: { botId: bot.id, name: bot.name, color: bot.color },
+            tool: { name: `error: ${bot.name}'s model is unavailable`, ok: false },
+        });
+        broadcast({ kind: "message", threadId: group.threadId, message: failure });
+        return;
+    }
+    store.patchGroup(group.id, { busyBotId: bot.id });
+    broadcastGroup(group.id);
+    groupSpeakers.set(group.threadId, { botId: bot.id, name: bot.name, color: bot.color });
+    const roster = group.memberIds
+        .map((id) => store.bot(id))
+        .filter((b) => Boolean(b))
+        .map((b) => `@${b.name}${b.title ? ` (${b.title})` : ""}`)
+        .join(", ");
+    const system = [
+        `You are ${bot.name}, a bot in the room "${group.name}" in OpenMausBot.`,
+        bot.title && `Role: ${bot.title}.`,
+        bot.description && `About: ${bot.description}`,
+        `Room members: ${roster}, and ${userName} (the human).`,
+        group.bulletin.trim() && `Room bulletin (shared instructions for everyone):\n${group.bulletin.trim()}`,
+        `Reply as yourself, briefly and conversationally. To bring a teammate in, mention them like @Name — they'll see the conversation and respond.`,
+    ]
+        .filter(Boolean)
+        .join("\n");
+    const text = `${serializeRoomContext(group.threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)`;
+    // run the turn and wait for it to settle, folding the reply text so a
+    // chained @mention can be routed afterwards
+    let replyText = "";
+    await new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (done)
+                return;
+            done = true;
+            clearTimeout(timer);
+            unsub();
+            resolve();
+        };
+        const unsub = bus.subscribe((e) => {
+            if (e.threadId !== group.threadId)
+                return;
+            if (e.type === "item.completed" && e.itemType === "assistant_text")
+                replyText += `\n${e.text}`;
+            else if (e.type === "turn.completed")
+                finish();
+        });
+        const timer = setTimeout(finish, 5 * 60_000);
+        instance.adapter
+            .sendTurn({ threadId: group.threadId, text, system })
+            .catch((err) => {
+            const failure = store.appendMessage(group.threadId, {
+                role: "bot",
+                kind: "activity",
+                from: { botId: bot.id, name: bot.name, color: bot.color },
+                tool: { name: `error: ${err instanceof Error ? err.message.slice(0, 140) : "turn failed"}`, ok: false },
+            });
+            broadcast({ kind: "message", threadId: group.threadId, message: failure });
+            finish();
+        });
+    });
+    groupSpeakers.delete(group.threadId);
+    store.patchGroup(group.id, { busyBotId: null, unread: true });
+    broadcastGroup(group.id);
+    // chained mentions: a member's reply can summon teammates — one hop only
+    if (hop < MAX_GROUP_HOPS && replyText.trim()) {
+        const members = group.memberIds
+            .map((id) => store.bot(id))
+            .filter((b) => Boolean(b) && b.id !== bot.id);
+        for (const next of mentionedBots(replyText, members)) {
+            if (spoken.has(next.id))
+                continue;
+            await runGroupMemberTurn(groupId, next.id, hop + 1, spoken);
+        }
+    }
+}
+function startGroupTurn(groupId, text) {
+    const group = store.group(groupId);
+    if (!group)
+        throw Object.assign(new Error("no such group"), { status: 404 });
+    const userMessage = store.appendMessage(group.threadId, { role: "user", kind: "text", text });
+    broadcast({ kind: "message", threadId: group.threadId, message: userMessage });
+    const members = group.memberIds
+        .map((id) => store.bot(id))
+        .filter((b) => Boolean(b));
+    const mentioned = mentionedBots(text, members);
+    // Buzz rule: nobody replies unless mentioned — except a one-member room,
+    // where the single bot obviously IS the addressee
+    let responders = mentioned.length ? mentioned : members.length === 1 ? members : [];
+    // bot⇄bot channels: chipping in without a tag addresses the last speaker
+    if (!responders.length && group.dm) {
+        const lastSpeakerId = [...store.messagesFor(group.threadId)]
+            .reverse()
+            .find((msg) => msg.kind === "text" && msg.from)?.from?.botId;
+        const last = members.find((b) => b.id === lastSpeakerId) ?? members[0];
+        responders = last ? [last] : [];
+    }
+    if (!responders.length)
+        return;
+    const prev = groupQueues.get(groupId) ?? Promise.resolve();
+    const next = prev.then(async () => {
+        const spoken = new Set();
+        for (const responder of responders) {
+            if (spoken.has(responder.id))
+                continue;
+            await runGroupMemberTurn(groupId, responder.id, 0, spoken);
+        }
+    });
+    groupQueues.set(groupId, next.catch(() => { }));
+}
 function configStatus() {
     return {
         xai: { configured: Boolean(cfg.xai?.key) },
         composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
         box: { configured: Boolean(cfg.box?.token) },
+        // the chosen voice is a setting, not a secret; the key is reported the
+        // same configured-or-not way as every other credential
+        tts: tts.describeVoice(cfg),
         // not a secret — the sidebar shows it
         profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
     };
@@ -401,6 +823,20 @@ async function reloadProviders() {
     await registry.disposeAll();
     await registry.load(instanceConfigs(cfg));
     bus.attach(registry.instances());
+    // A killed turn's terminal events can die with the old fleet (dispose is
+    // async under the hood), stranding the bot busy — and its screen poller —
+    // forever. Settle anything still marked busy.
+    for (const b of store.bots.filter((b) => b.busy)) {
+        stopScreenPoller(b.id);
+        const note = store.appendMessage(b.threadId, {
+            role: "bot",
+            kind: "activity",
+            tool: { name: "error: turn interrupted — provider settings changed", ok: false },
+        });
+        broadcast({ kind: "message", threadId: b.threadId, message: note });
+        store.patchBot(b.id, { busy: false });
+        broadcast({ kind: "bot", bot: store.bot(b.id) });
+    }
 }
 // ── HTTP plumbing ─────────────────────────────────────────────────────
 function json(res, status, body) {
@@ -411,20 +847,41 @@ function json(res, status, body) {
 function readBody(req) {
     return new Promise((resolve, reject) => {
         let data = "";
+        let bytes = 0;
+        let done = false;
+        const fail = (status, msg) => {
+            if (done)
+                return;
+            done = true;
+            const err = Object.assign(new Error(msg), { status });
+            reject(err);
+        };
         req.on("data", (c) => {
+            if (done)
+                return;
+            bytes += typeof c === "string" ? Buffer.byteLength(c) : c.length;
+            if (bytes > 1_000_000) {
+                // Keep draining the socket, but stop retaining attacker-controlled
+                // bytes. Destroying the request here prevents the caller from
+                // receiving the useful 413 response.
+                return fail(413, "body too large");
+            }
             data += c;
-            if (data.length > 1_000_000)
-                reject(new Error("body too large"));
         });
         req.on("end", () => {
+            if (done)
+                return;
+            let body;
             try {
-                resolve(data ? JSON.parse(data) : {});
+                body = data ? JSON.parse(data) : {};
             }
             catch {
-                reject(new Error("invalid JSON body"));
+                return fail(400, "invalid JSON body");
             }
+            done = true;
+            resolve(body);
         });
-        req.on("error", reject);
+        req.on("error", (e) => fail(400, e instanceof Error ? e.message : String(e)));
     });
 }
 const server = createServer(async (req, res) => {
@@ -441,9 +898,18 @@ const server = createServer(async (req, res) => {
             }
             if (method === "GET" && path === "/api/internal/agents") {
                 const self = url.searchParams.get("self");
+                // title/description included so a "chief of staff"-style bot can
+                // judge the team (who does what, who has no job description yet)
                 const bots = store.bots
                     .filter((b) => b.id !== self && !b.hidden)
-                    .map((b) => ({ id: b.id, name: b.name, model: b.modelSelection.model, busy: !!b.busy }));
+                    .map((b) => ({
+                    id: b.id,
+                    name: b.name,
+                    model: b.modelSelection.model,
+                    busy: !!b.busy,
+                    title: b.title || undefined,
+                    description: b.description || undefined,
+                }));
                 return json(res, 200, { bots });
             }
             if (method === "POST" && path === "/api/internal/ask-bot") {
@@ -463,23 +929,96 @@ const server = createServer(async (req, res) => {
                     return json(res, 404, { error: "no such bot" });
                 if (target.busy)
                     return json(res, 200, { busy: true });
-                // visibility: surface the cross-talk on the caller's own thread so
-                // bot-to-bot turns are never invisible (they cost the user tokens)
                 const from = store.bot(fromBotId);
                 const fromName = from?.name ?? "another bot";
-                if (from) {
-                    const note = store.appendMessage(from.threadId, {
+                // the exchange is mirrored into a bot⇄bot channel: it shows up in
+                // the sidebar like any room, keeps the pair's full history, and the
+                // user can open it and chip in
+                let channel = from ? store.dmGroup(from.id, target.id) : undefined;
+                if (from && !channel) {
+                    channel = store.createGroup(`${from.name} ⇄ ${target.name}`, [from.id, target.id], true);
+                }
+                const mirror = (speaker, text) => {
+                    if (!channel || !text.trim())
+                        return;
+                    const msg = store.appendMessage(channel.threadId, {
+                        role: "bot",
+                        kind: "text",
+                        text,
+                        from: { botId: speaker.id, name: speaker.name, color: speaker.color },
+                    });
+                    broadcast({ kind: "message", threadId: channel.threadId, message: msg });
+                };
+                // both 1:1 threads get a clickable chip that opens the channel, so
+                // bot-to-bot turns are never invisible (they cost the user tokens)
+                const chip = (threadId, label, withBot) => {
+                    const note = store.appendMessage(threadId, {
                         role: "bot",
                         kind: "activity",
-                        tool: { name: `asked @${target.name}: ${message.slice(0, 80)}` },
+                        tool: { name: label },
+                        comm: channel
+                            ? { groupId: channel.id, withBotId: withBot.id, withName: withBot.name, withColor: withBot.color }
+                            : undefined,
                     });
-                    broadcast({ kind: "message", threadId: from.threadId, message: note });
+                    broadcast({ kind: "message", threadId, message: note });
+                };
+                if (from) {
+                    mirror(from, message);
+                    chip(from.threadId, `Messaged @${target.name}`, target);
+                    chip(target.threadId, `Message from @${from.name}`, from);
+                    if (channel) {
+                        store.patchGroup(channel.id, { unread: true });
+                        broadcastGroup(channel.id);
+                    }
                 }
                 const prefixed = `[Message from @${fromName}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
                 const reply = await askBotAndWait(toBotId, prefixed, depth);
+                if (from) {
+                    mirror(target, reply);
+                    if (channel) {
+                        store.patchGroup(channel.id, { unread: true });
+                        broadcastGroup(channel.id);
+                    }
+                }
                 return json(res, 200, { botName: target.name, text: reply });
             }
             return json(res, 404, { error: "unknown internal endpoint" });
+        }
+        // ── routines calendar ────────────────────────────────────────────────
+        if (path === "/api/routines" && method === "GET") {
+            const fromParam = url.searchParams.get("from");
+            const toParam = url.searchParams.get("to");
+            const from = fromParam == null ? undefined : Number(fromParam);
+            const to = toParam == null ? undefined : Number(toParam);
+            return json(res, 200, {
+                routines: routines.listRoutines(),
+                runs: routines.listRuns(from != null && Number.isFinite(from) ? from : undefined, to != null && Number.isFinite(to) ? to : undefined),
+            });
+        }
+        if (path === "/api/routines" && method === "POST") {
+            return json(res, 201, { routine: routines.create(await readBody(req)) });
+        }
+        let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
+        if (routineMatch && method === "POST") {
+            const run = routines.runNow(routineMatch[1]);
+            return run ? json(res, 201, { run }) : json(res, 404, { error: "no such routine" });
+        }
+        routineMatch = path.match(/^\/api\/routines\/([\w-]+)$/);
+        if (routineMatch && method === "PATCH") {
+            const routine = routines.update(routineMatch[1], await readBody(req));
+            return routine ? json(res, 200, { routine }) : json(res, 404, { error: "no such routine" });
+        }
+        if (routineMatch && method === "DELETE") {
+            return routines.remove(routineMatch[1])
+                ? json(res, 200, { ok: true })
+                : json(res, 404, { error: "no such routine" });
+        }
+        const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
+        if (runMatch && method === "POST") {
+            const run = runMatch[2] === "cancel"
+                ? await routines.cancelRun(runMatch[1])
+                : routines.markSeen(runMatch[1]);
+            return run ? json(res, 200, { run }) : json(res, 404, { error: "no such active run" });
         }
         // ── events stream ──
         if (method === "GET" && path === "/api/events") {
@@ -505,21 +1044,126 @@ const server = createServer(async (req, res) => {
         // ── bots ──
         if (method === "GET" && path === "/api/bots") {
             return json(res, 200, {
-                bots: store.bots.map((b) => ({ ...b, messages: store.messagesFor(b.threadId) })),
+                bots: store.bots.map(publicBot),
+                groups: store.groups.map((g) => ({ ...g, messages: store.messagesFor(g.threadId) })),
             });
+        }
+        // ── rooms (group chats) ─────────────────────────────────────────────
+        let m = null;
+        if (method === "POST" && path === "/api/groups") {
+            const body = await readBody(req);
+            const memberIds = (Array.isArray(body.memberIds) ? body.memberIds : []).filter((id) => typeof id === "string" && Boolean(store.bot(id)));
+            if (memberIds.length === 0)
+                return json(res, 400, { error: "a room needs at least one bot" });
+            const name = typeof body.name === "string" && body.name.trim()
+                ? body.name.trim()
+                : `${store.bot(memberIds[0]).name} & co.`;
+            const group = store.createGroup(name, memberIds);
+            broadcast({ kind: "group", group });
+            return json(res, 201, { group: { ...group, messages: [] } });
+        }
+        m = path.match(/^\/api\/groups\/([\w-]+)$/);
+        if (m && method === "PATCH") {
+            const body = await readBody(req);
+            const patch = {};
+            for (const key of ["name", "bulletin", "unread"]) {
+                if (body[key] !== undefined)
+                    patch[key] = body[key];
+            }
+            if (Array.isArray(body.memberIds)) {
+                const ids = body.memberIds.filter((id) => typeof id === "string" && Boolean(store.bot(id)));
+                if (ids.length)
+                    patch.memberIds = ids;
+            }
+            const group = store.patchGroup(m[1], patch);
+            if (!group)
+                return json(res, 404, { error: "no such room" });
+            broadcast({ kind: "group", group });
+            return json(res, 200, { group });
+        }
+        m = path.match(/^\/api\/groups\/([\w-]+)$/);
+        if (m && method === "DELETE") {
+            const group = store.group(m[1]);
+            if (!group)
+                return json(res, 404, { error: "no such room" });
+            store.deleteGroup(group.id);
+            for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
+                try {
+                    unlinkSync(join(dir, `${group.threadId}.ndjson`));
+                }
+                catch { }
+            }
+            broadcast({ kind: "group.deleted", groupId: group.id });
+            return json(res, 200, { ok: true });
+        }
+        m = path.match(/^\/api\/groups\/([\w-]+)\/messages$/);
+        if (m && method === "POST") {
+            const body = await readBody(req);
+            const text = String(body.text ?? "").trim();
+            if (!text)
+                return json(res, 400, { error: "text required" });
+            startGroupTurn(m[1], text);
+            return json(res, 202, { ok: true });
+        }
+        m = path.match(/^\/api\/groups\/([\w-]+)\/interrupt$/);
+        if (m && method === "POST") {
+            const group = store.group(m[1]);
+            if (!group)
+                return json(res, 404, { error: "no such room" });
+            const busy = group.busyBotId ? store.bot(group.busyBotId) : undefined;
+            const instance = busy ? registry.get(busy.modelSelection.instanceId) : undefined;
+            await instance?.adapter.interruptTurn(group.threadId).catch(() => { });
+            return json(res, 200, { ok: true });
+        }
+        // emoji reactions — works on any thread (1:1 or room)
+        m = path.match(/^\/api\/threads\/([\w-]+)\/messages\/([\w-]+)\/reactions$/);
+        if (m && method === "POST") {
+            const body = await readBody(req);
+            const emoji = String(body.emoji ?? "").slice(0, 8);
+            if (!emoji)
+                return json(res, 400, { error: "emoji required" });
+            const patched = store.toggleReaction(m[1], m[2], emoji, typeof body.by === "string" ? body.by : "user");
+            if (!patched)
+                return json(res, 404, { error: "no such message" });
+            broadcast({ kind: "message.patch", threadId: m[1], message: patched });
+            return json(res, 200, { message: patched });
         }
         if (method === "POST" && path === "/api/bots") {
             const bot = store.createBot();
             store.patchBot(bot.id, { modelSelection: await defaultSelection() });
-            return json(res, 201, { bot: { ...store.bot(bot.id), messages: store.messagesFor(bot.threadId) } });
+            return json(res, 201, {
+                bot: {
+                    ...store.bot(bot.id),
+                    messages: store.messagesFor(bot.threadId),
+                    activeLeafId: store.activeLeaf(bot.threadId),
+                },
+            });
         }
-        let m = path.match(/^\/api\/bots\/([\w-]+)$/);
+        m = path.match(/^\/api\/bots\/([\w-]+)$/);
         if (m && method === "PATCH") {
             const body = await readBody(req);
             const patch = {};
-            for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden"]) {
+            for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "speakReplies", "voice"]) {
                 if (body[key] !== undefined)
                     patch[key] = body[key];
+            }
+            if (body.computer !== undefined &&
+                !["cloud", "vm", "local", "off"].includes(String(body.computer))) {
+                return json(res, 400, { error: "computer must be cloud, vm, local, or off" });
+            }
+            // the two permission fields decide what runs unattended, so they are
+            // type-checked rather than copied through: a string alwaysAllow would
+            // still answer .includes() — with substring matches, not tool names
+            if (body.autoApprove !== undefined) {
+                if (typeof body.autoApprove !== "boolean")
+                    return json(res, 400, { error: "autoApprove must be true or false" });
+                patch.autoApprove = body.autoApprove;
+            }
+            if (body.alwaysAllow !== undefined) {
+                if (!Array.isArray(body.alwaysAllow) || body.alwaysAllow.some((t) => typeof t !== "string")) {
+                    return json(res, 400, { error: "alwaysAllow must be a list of tool keys" });
+                }
+                patch.alwaysAllow = [...new Set(body.alwaysAllow)].slice(0, 200);
             }
             const bot = store.patchBot(m[1], patch);
             if (!bot)
@@ -535,6 +1179,7 @@ const server = createServer(async (req, res) => {
             // a running turn dies with its bot
             await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => { });
             stopScreenPoller(bot.id);
+            routines.disableForBot(bot.id);
             store.deleteBot(bot.id);
             for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
                 try {
@@ -574,6 +1219,60 @@ const server = createServer(async (req, res) => {
             await startTurn(m[1], text);
             return json(res, 202, { ok: true });
         }
+        // edit a user message → fork the conversation there and rerun the turn.
+        // Rewinding a live thread is refused, exactly like switching versions
+        // below: interrupting mid-flight and branching under the dying turn is
+        // how a conversation ends up with two tails. Stop, then edit.
+        m = path.match(/^\/api\/bots\/([\w-]+)\/messages\/([\w-]+)\/edit$/);
+        if (m && method === "POST") {
+            const messageId = m[2];
+            const bot = store.bot(m[1]);
+            if (!bot)
+                return json(res, 404, { error: "no such bot" });
+            const body = await readBody(req);
+            const text = String(body.text ?? "").trim();
+            if (!text)
+                return json(res, 400, { error: "text required" });
+            // everything from here down is synchronous, so two racing edits can
+            // never both get past this check: startTurn flips busy before the
+            // next request is handled
+            if (bot.busy)
+                return json(res, 409, { error: "the bot is working — stop it before editing" });
+            const source = store.messagesFor(bot.threadId).find((msg) => msg.id === messageId);
+            if (!source || source.role !== "user" || source.kind !== "text") {
+                return json(res, 404, { error: "only user messages can be edited" });
+            }
+            if (!registry.get(bot.modelSelection.instanceId)) {
+                return json(res, 409, {
+                    error: `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
+                });
+            }
+            const message = store.branchMessage(bot.threadId, messageId, text);
+            if (!message)
+                return json(res, 404, { error: "no such message" });
+            store.patchBot(bot.id, { rewound: true });
+            broadcast({ kind: "message", threadId: bot.threadId, message });
+            broadcast({ kind: "thread", threadId: bot.threadId, activeLeafId: message.id });
+            await startTurn(bot.id, text, { userMessage: message });
+            return json(res, 202, { ok: true });
+        }
+        // switch which fork of the conversation is visible (no new turn)
+        m = path.match(/^\/api\/bots\/([\w-]+)\/active-branch$/);
+        if (m && method === "POST") {
+            const bot = store.bot(m[1]);
+            if (!bot)
+                return json(res, 404, { error: "no such bot" });
+            if (bot.busy)
+                return json(res, 409, { error: "the bot is working — stop it before switching versions" });
+            const body = await readBody(req);
+            const leaf = store.setActiveLeaf(bot.threadId, String(body.messageId ?? ""));
+            if (!leaf)
+                return json(res, 404, { error: "no such message" });
+            // provider sessions still hold the other branch — next turn replays
+            store.patchBot(bot.id, { rewound: true });
+            broadcast({ kind: "thread", threadId: bot.threadId, activeLeafId: leaf });
+            return json(res, 200, { activeLeafId: leaf });
+        }
         m = path.match(/^\/api\/bots\/([\w-]+)\/respond$/);
         if (m && method === "POST") {
             const bot = store.bot(m[1]);
@@ -589,14 +1288,128 @@ const server = createServer(async (req, res) => {
             });
             return json(res, 200, { ok: true });
         }
+        // Answer by THREAD, so a request raised inside a room can be answered
+        // too: a member's turn runs on the room's thread, and the bot that
+        // owns the pending request is the one currently speaking there.
+        m = path.match(/^\/api\/threads\/([\w-]+)\/respond$/);
+        if (m && method === "POST") {
+            const threadId = m[1];
+            const body = await readBody(req);
+            const group = store.groupByThread(threadId);
+            const owner = group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
+            if (!owner)
+                return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
+            const instance = registry.get(owner.modelSelection.instanceId);
+            if (!instance)
+                return json(res, 409, { error: "provider unavailable" });
+            await instance.adapter.respondToRequest(threadId, String(body.requestId), {
+                behavior: body.behavior,
+                message: body.message,
+            });
+            return json(res, 200, { ok: true });
+        }
         m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
         if (m && method === "POST") {
             const bot = store.bot(m[1]);
             if (!bot)
                 return json(res, 404, { error: "no such bot" });
+            const routineRun = routines.activeRunForBot(bot.id);
+            if (routineRun) {
+                await routines.cancelRun(routineRun.id);
+                return json(res, 200, { ok: true });
+            }
             const instance = registry.get(bot.modelSelection.instanceId);
             await instance?.adapter.interruptTurn(bot.threadId);
             return json(res, 200, { ok: true });
+        }
+        // ── tasks: a bot's separate contexts ────────────────────────────────
+        // The bot record answers with its messages because switching tasks
+        // changes which transcript is live, and a partial patch would leave
+        // the client showing the previous task's conversation.
+        const botWithThread = (bot) => ({
+            ...bot,
+            messages: store.messagesFor(bot.threadId),
+            activeLeafId: store.activeLeaf(bot.threadId),
+            tasks: store.tasks(bot.id).map(({ resumeCursors, ...t }) => t),
+        });
+        m = path.match(/^\/api\/bots\/([\w-]+)\/tasks$/);
+        if (m && method === "POST") {
+            const bot = store.bot(m[1]);
+            if (!bot)
+                return json(res, 404, { error: "no such bot" });
+            if (bot.busy)
+                return json(res, 409, { error: "this bot is working — let it finish before starting a task" });
+            const body = await readBody(req);
+            const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined);
+            if (!task)
+                return json(res, 500, { error: "couldn't create that task" });
+            const fresh = botWithThread(store.bot(bot.id));
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 201, { bot: fresh, task });
+        }
+        m = path.match(/^\/api\/bots\/([\w-]+)\/tasks\/([\w-]+)$/);
+        if (m && method === "POST") {
+            const switched = store.switchTask(m[1], m[2]);
+            if (!switched)
+                return json(res, 404, { error: "no such task" });
+            const fresh = botWithThread(switched);
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 200, { bot: fresh });
+        }
+        if (m && method === "PATCH") {
+            const body = await readBody(req);
+            const task = store.renameTask(m[1], m[2], String(body.title ?? ""));
+            if (!task)
+                return json(res, 404, { error: "no such task" });
+            const fresh = botWithThread(store.bot(m[1]));
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 200, { task });
+        }
+        if (m && method === "DELETE") {
+            const bot = store.bot(m[1]);
+            if (bot?.busy && (bot.threadId === m[2] || routines.isActiveThread(m[2]))) {
+                return json(res, 409, { error: "this task is running — stop it first" });
+            }
+            const updated = store.deleteTask(m[1], m[2]);
+            if (!updated)
+                return json(res, 400, { error: "a bot keeps at least one task" });
+            const fresh = botWithThread(updated);
+            broadcast({ kind: "bot", bot: fresh });
+            return json(res, 200, { bot: fresh });
+        }
+        // what the user's machine can host: which runtime is installed, whether
+        // its daemon is up, and whether the desktop image and container exist
+        if (method === "GET" && path === "/api/local-computer") {
+            const status = await containerComputerStatus();
+            return json(res, 200, { ...status, commands: setupCommands(status.runtime) });
+        }
+        m = path.match(/^\/api\/local-computer\/(pull|run|start|stop|remove)$/);
+        if (m && method === "POST") {
+            // Requiring JSON makes these localhost lifecycle mutations non-simple
+            // browser requests. A hostile web page cannot submit them with a form,
+            // and its cross-origin JSON request is stopped by the browser preflight
+            // because this server deliberately emits no CORS permission.
+            if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+                return json(res, 415, { error: "content-type must be application/json" });
+            }
+            const action = m[1];
+            if (localVmLifecycleBusy) {
+                return json(res, 409, { error: "another Local VM setup action is still running" });
+            }
+            if (activeVmThreadId && (action === "stop" || action === "remove" || action === "run")) {
+                return json(res, 409, { error: "the Local VM is being used by a bot — stop that turn first" });
+            }
+            localVmLifecycleBusy = true;
+            try {
+                const status = await containerComputerAction(action);
+                return json(res, 200, { ...status, commands: setupCommands(status.runtime) });
+            }
+            finally {
+                localVmLifecycleBusy = false;
+            }
+        }
+        if (method === "POST" && path === "/api/local-computer/screenshot") {
+            return json(res, 200, { image: await containerComputerScreenshot() });
         }
         // identity handshake for the packaged app's port fallback: the forked
         // child proves it is OURS by echoing its pid (a stray dev server has
@@ -606,6 +1419,11 @@ const server = createServer(async (req, res) => {
         }
         // ── provider instances (model picker) ──
         if (method === "GET" && path === "/api/instances") {
+            // Rescan PATH first: this endpoint is how the app answers "what can I
+            // run?", and the interesting case is a CLI installed since launch.
+            // Windows never pushes PATH changes into a live process, so without
+            // this the answer is frozen at boot and "check again" is a no-op.
+            resetPathCache();
             return json(res, 200, { instances: await registry.describe() });
         }
         // ── app config (API keys — never echoed back, booleans only) ──
@@ -615,21 +1433,87 @@ const server = createServer(async (req, res) => {
         if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
             const body = await readBody(req);
             const patch = {};
-            for (const key of ["xai", "composio", "box", "profile"]) {
+            for (const key of ["xai", "composio", "box", "tts", "profile"]) {
                 if (body[key] && typeof body[key] === "object")
                     patch[key] = body[key];
             }
             if (!Object.keys(patch).length)
                 return json(res, 400, { error: "nothing to save" });
+            // check a box token against the provider before storing it: a
+            // rejected token used to save happily and only surface as a 401 in
+            // another panel later, with nothing the user could act on
+            const newBoxToken = patch.box?.token;
+            if (typeof newBoxToken === "string" && newBoxToken.trim()) {
+                const check = await box.verifyToken(newBoxToken.trim());
+                if (!check.ok)
+                    return json(res, 400, { error: check.message });
+            }
+            // same rule for a voice key — and check it against the provider the
+            // patch SELECTS, not the one already saved, or pasting a Cartesia key
+            // while switching from ElevenLabs validates against the wrong service
+            const newTts = patch.tts;
+            if (typeof newTts?.key === "string" && newTts.key.trim()) {
+                const check = await tts.verifyKey(newTts.key.trim());
+                if (!check.ok)
+                    return json(res, 400, { error: check.message });
+            }
             saveConfig(patch);
             Object.assign(cfg, loadConfig());
-            // provider keys change the fleet; a profile edit must not kill
-            // in-flight turns with a pointless reload
-            if (Object.keys(patch).some((k) => k !== "profile"))
+            // provider keys change the fleet; a profile or voice edit must not
+            // kill in-flight turns with a pointless reload — no driver reads
+            // either, and picking a voice mid-turn should be free
+            if (Object.keys(patch).some((k) => k !== "profile" && k !== "tts"))
                 await reloadProviders();
             const status = configStatus();
             broadcast({ kind: "config", ...status });
             return json(res, 200, status);
+        }
+        // ── voice ─────────────────────────────────────────────────────────
+        // Splitting text into utterances lives HERE, not in the renderer, for
+        // the same reason approvalKey does — it is the piece most likely to be
+        // tuned against real transcripts, and it belongs next to the transform
+        // that produced it.
+        if (method === "POST" && path === "/api/tts/prepare") {
+            const body = await readBody(req);
+            return json(res, 200, {
+                ready: tts.voiceReady(cfg, typeof body.voiceId === "string" ? body.voiceId : undefined),
+                utterances: toUtterances(String(body.text ?? "")),
+            });
+        }
+        if (method === "GET" && path === "/api/tts/voices") {
+            try {
+                return json(res, 200, { voices: await tts.listVoices(cfg) });
+            }
+            catch (e) {
+                return json(res, 200, { voices: [], error: e instanceof Error ? e.message : String(e) });
+            }
+        }
+        if (method === "POST" && path === "/api/tts/speak") {
+            const body = await readBody(req);
+            const text = String(body.text ?? "").trim();
+            if (!text)
+                return json(res, 400, { error: "text required" });
+            // The normal client sends <=320-character utterances. A hard ceiling
+            // prevents an arbitrary local request from turning the user's hosted
+            // voice account into an unbounded, billable synthesis job.
+            if (text.length > 500)
+                return json(res, 413, { error: "voice utterances are limited to 500 characters" });
+            try {
+                const audio = await tts.speak(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined);
+                res.writeHead(200, {
+                    "content-type": audio.mime,
+                    "content-length": String(audio.bytes.byteLength),
+                    "cache-control": "no-store",
+                });
+                return res.end(Buffer.from(audio.bytes));
+            }
+            catch (e) {
+                // "you haven't set this up yet" is not a provider failure — 409 so
+                // the client can point at App Settings instead of showing a 502
+                if (e instanceof tts.NoVoiceConfigured)
+                    return json(res, 409, { error: e.message });
+                return json(res, 502, { error: e instanceof Error ? e.message : String(e) });
+            }
         }
         // ── connectors (Composio) ──
         if (method === "GET" && path === "/api/connectors/catalog") {
@@ -708,6 +1592,7 @@ server.listen(PORT, "127.0.0.1", () => {
 });
 for (const signal of ["SIGINT", "SIGTERM"]) {
     process.on(signal, () => {
+        routines?.stop();
         void registry.disposeAll().finally(() => process.exit(0));
     });
 }

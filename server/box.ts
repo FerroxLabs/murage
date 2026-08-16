@@ -12,7 +12,8 @@
 //   - the dedicated IP rotates across archive/resume — never persist it.
 import type { AppConfig } from "./config.ts";
 
-const BOX_API = "https://ascii.dev/api/box/v1";
+// overridable so tests can point at a stub instead of the live provider
+const BOX_API = process.env.OMB_BOX_API || "https://ascii.dev/api/box/v1";
 const READY = new Set(["idle", "ready", "running"]);
 
 function boxFetch(cfg: AppConfig, path: string, opts: RequestInit = {}) {
@@ -89,14 +90,84 @@ async function waitReady(cfg: AppConfig, boxId: string, budgetMs = 90_000) {
   return null;
 }
 
+// Resolving a bot's box means LISTing every box in the account, so it is
+// the most expensive thing on any hot path. The name is deterministic, so
+// once we know the id we can go straight at it — the cache is refreshed
+// whenever the direct read fails (deleted/renamed box) and always carries
+// the live state so callers can still see "archived".
+const boxIdCache = new Map<string, string>();
+
 export async function findBox(cfg: AppConfig, botId: string) {
+  const cachedId = boxIdCache.get(botId);
+  if (cachedId) {
+    const { ok, body } = await boxJson(cfg, `/boxes/${cachedId}`);
+    const box = body?.box;
+    if (ok && box?.id && box.state !== "error") return box;
+    boxIdCache.delete(botId); // gone or broken — fall back to the listing
+  }
   const name = await boxNameFor(botId);
   const { body } = await boxJson(cfg, "/boxes");
-  return (body?.boxes ?? []).find((b: any) => b.name === name && b.state !== "error") ?? null;
+  const found = (body?.boxes ?? []).find((b: any) => b.name === name && b.state !== "error") ?? null;
+  if (found?.id) boxIdCache.set(botId, found.id);
+  return found;
+}
+
+/** Ready-or-null without the LIST when we already know the box. */
+export async function readyBox(cfg: AppConfig, botId: string, budgetMs = 60_000) {
+  const box = await findBox(cfg, botId);
+  if (!box) return null;
+  if (READY.has(box.state)) return box;
+  return waitReady(cfg, box.id, budgetMs);
 }
 
 export function boxConfigured(cfg: AppConfig) {
   return Boolean(cfg.box?.token);
+}
+
+/** Ask the provider whether a token is real, before we let someone save
+ * it. Without this the paste "succeeds", and the first sign of trouble is
+ * a 401 in a different panel minutes later, with nothing to act on. */
+export async function verifyToken(token: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const res = await fetch(`${BOX_API}/boxes`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (res.ok) return { ok: true };
+    if (res.status === 401 || res.status === 403) {
+      // the common mistake is pasting some other credential entirely —
+      // box API keys are prefixed, so say which thing is wrong
+      return {
+        ok: false,
+        message: token.startsWith("box_")
+          ? "ascii.dev rejected that token — it may have been revoked or expired. Copy a fresh one from your ascii.dev account."
+          : "That doesn't look like a box API key: they start with box_. Copy the API key from your ascii.dev account (an account or session token won't work here).",
+      };
+    }
+    return { ok: false, message: `ascii.dev returned ${res.status} for that token — try again in a moment.` };
+  } catch {
+    return { ok: false, message: "Couldn't reach ascii.dev to check that token — check your connection and retry." };
+  }
+}
+
+/** Turn a provider refusal into something a person can act on. The
+ * provider's own message is better than anything we can invent — it knows
+ * the plan, the limit and the link — so prefer it and only fall back to
+ * our own wording when it says nothing useful. */
+export function boxErrorMessage(status: number, what: string, body?: any): string {
+  const theirs = typeof body?.message === "string" ? body.message.trim() : "";
+  const link = typeof body?.error?.details?.billingUrl === "string" ? body.error.details.billingUrl : "";
+  if (status === 402) {
+    // e.g. "Start the $20/month Box plan to create sandboxes."
+    return [theirs || "ascii.dev needs a paid Box plan before it will create a computer.", link].filter(Boolean).join(" ");
+  }
+  if (status === 401 || status === 403) {
+    return "your box token was rejected by ascii.dev — open App Settings and paste a current token (it starts with box_)";
+  }
+  if (status === 429) {
+    return theirs || "ascii.dev is rate-limiting this account — wait a minute and try again";
+  }
+  return theirs ? `${what} failed: ${theirs}` : `${what} failed (${status})`;
 }
 
 /** Box state for the Computer panel. */
@@ -128,7 +199,9 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
       // survives) if every stop path dies
       body: JSON.stringify({ ttlSeconds: 8 * 60 * 60 }),
     });
-    if (!createRes.ok || !createRes.body?.box?.id) throw new Error(`box create failed (${createRes.status})`);
+    if (!createRes.ok || !createRes.body?.box?.id) {
+      throw new Error(boxErrorMessage(createRes.status, "box create", createRes.body));
+    }
     box = createRes.body.box;
     created = true;
     await boxJson(cfg, `/boxes/${box.id}`, { method: "PATCH", body: JSON.stringify({ name: vmName }) });
@@ -203,30 +276,56 @@ export async function execOnBox(cfg: AppConfig, botId: string, command: string) 
   return { exitCode: out.exitCode, stdout: out.stdout.slice(-4000), stderr: out.stderr.slice(-2000) };
 }
 
-// Screenshot for the Computer panel + screen-in-chat. Two hops, both
-// deterministic: capture to a file on the box (scrot/import/ffmpeg chain,
-// downscaled), then read it back via the files API with encoding=base64.
-// Base64 over command stdout is NOT reliable (probed 2026-08-12: an
-// otherwise-complete payload came back with a corrupted length) — never
-// ship binary through the commands endpoint.
+// Screenshot for the Computer panel + screen-in-chat. Two hops: capture
+// to a file on the box (scrot straight to JPEG — no ImageMagick startup
+// unless a downscale is actually needed), then read the bytes back.
+// Base64 over command stdout is NOT reliable for the panel's full-size
+// frames (probed 2026-08-12: an otherwise-complete payload came back with
+// a corrupted length), so the frame is always fetched over HTTP here.
+const PANEL_PATH = "/tmp/ogb-panel.jpg";
+const PANEL_WIDTH = 1024;
 const SHOT_CMD = [
   "export DISPLAY=${DISPLAY:-:0}",
-  "f=/tmp/ogb-panel.png",
-  'scrot -o "$f" 2>/dev/null || import -window root "$f" 2>/dev/null || ffmpeg -y -f x11grab -i "$DISPLAY" -frames:v 1 "$f" >/dev/null 2>&1',
-  'command -v convert >/dev/null && convert "$f" -resize 1024x "$f" 2>/dev/null || true',
+  `f=${PANEL_PATH}`,
+  'w=$(xdotool getdisplaygeometry 2>/dev/null | cut -d" " -f1)',
+  'case "$w" in ""|*[!0-9]*) w=0;; esac',
+  'scrot -o -q 70 "$f" 2>/dev/null || import -window root -quality 70 "$f" 2>/dev/null || ffmpeg -y -f x11grab -i "$DISPLAY" -frames:v 1 -q:v 7 "$f" >/dev/null 2>&1',
+  `if [ "$w" -gt ${PANEL_WIDTH} ] 2>/dev/null && command -v convert >/dev/null 2>&1; then convert "$f" -thumbnail ${PANEL_WIDTH}x -quality 70 "$f" 2>/dev/null || true; fi`,
   'test -s "$f" && echo captured',
 ].join("; ");
 
-export async function screenshotBox(cfg: AppConfig, botId: string) {
-  const box = await findBox(cfg, botId);
-  if (!box) throw new Error("no computer for this bot yet");
-  if (!READY.has(box.state)) throw new Error(`box is ${box.state}`);
-  const out = await runCommand(cfg, box.id, SHOT_CMD, { timeoutMs: 60_000 });
+/** Read a file off the box as base64 — raw artifact bytes when the API
+ * supports it (33% less transfer, no JSON envelope), else the files API. */
+async function readFileBase64(cfg: AppConfig, boxId: string, path: string): Promise<string | null> {
+  try {
+    const res = await boxFetch(cfg, `/boxes/${boxId}/artifacts?path=${encodeURIComponent(path)}`);
+    if (res.ok) {
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (bytes.length) return bytes.toString("base64");
+    }
+  } catch {
+    /* fall through */
+  }
+  const { ok, body } = await boxJson(cfg, `/boxes/${boxId}/files?path=${encodeURIComponent(path)}&encoding=base64`);
+  const content = body?.content;
+  return ok && typeof content === "string" && content ? content : null;
+}
+
+/** `knownBoxId` skips box resolution entirely — the screen poller holds
+ * the id for the whole turn and must not re-resolve it every frame. */
+export async function screenshotBox(cfg: AppConfig, botId: string, knownBoxId?: string) {
+  let boxId = knownBoxId;
+  if (!boxId) {
+    const box = await findBox(cfg, botId);
+    if (!box) throw new Error("no computer for this bot yet");
+    if (!READY.has(box.state)) throw new Error(`box is ${box.state}`);
+    boxId = box.id as string;
+  }
+  const out = await runCommand(cfg, boxId, SHOT_CMD, { timeoutMs: 60_000 });
   if (!/captured/.test(out.stdout)) {
     throw new Error(out.stderr.slice(0, 200) || "screen capture failed on the box");
   }
-  const { ok, body } = await boxJson(cfg, `/boxes/${box.id}/files?path=/tmp/ogb-panel.png&encoding=base64`);
-  const png = body?.content;
-  if (!ok || typeof png !== "string" || !png) throw new Error("could not read the frame back from the box");
-  return { png, format: "png" };
+  const data = await readFileBase64(cfg, boxId, PANEL_PATH);
+  if (!data) throw new Error("could not read the frame back from the box");
+  return { png: data, format: "jpeg" };
 }
