@@ -4,6 +4,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { isIP } from "node:net";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -636,6 +637,10 @@ async function startTurn(
       if (cfg.composio?.key && instance.adapter.capabilities.composioMcp === true) {
         integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
       }
+      // dweb is opt-in: without an explicit daemon URL, do not advertise
+      // tools that would fail on every call or spawn an unnecessary proxy.
+      const dwebUrl = process.env.DWEB_URL?.trim();
+      if (dwebUrl) integrations.dweb = { url: dwebUrl };
       const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the MAUS default
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
       const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
@@ -1053,6 +1058,44 @@ function readBody(req: IncomingMessage): Promise<any> {
   });
 }
 
+// Loopback-only enforcement: the harness runs on 127.0.0.1 but accepts
+// requests from any loopback connection and any web page that DNS-rebinds
+// onto it. Reject non-loopback Hosts outright (defeats rebinding) and
+// origins outside loopback (blocks remote-web CSRF).
+function isLoopbackHost(host: string | undefined): boolean {
+  if (!host) return false;
+  const value = host.trim().toLowerCase();
+  if (!value) return false;
+
+  let hostname = value;
+  if (value.startsWith("[")) {
+    const close = value.indexOf("]");
+    if (close < 0 || (value.length > close + 1 && !/^:\d+$/.test(value.slice(close + 1)))) return false;
+    hostname = value.slice(1, close);
+  } else {
+    const firstColon = value.indexOf(":");
+    const lastColon = value.lastIndexOf(":");
+    if (firstColon >= 0 && firstColon === lastColon) {
+      if (!/^\d+$/.test(value.slice(firstColon + 1))) return false;
+      hostname = value.slice(0, firstColon);
+    }
+  }
+
+  if (hostname === "localhost" || hostname === "localhost.") return true;
+  if (isIP(hostname) === 4) return hostname.startsWith("127.");
+  return hostname === "::1" || hostname === "0:0:0:0:0:0:0:1";
+}
+
+function isAllowedOrigin(origin: string | undefined | null): boolean {
+  if (!origin) return true; // non-browser clients (CLIs, curl, tests) send none
+  try {
+    const o = new URL(origin);
+    return isLoopbackHost(o.hostname) && (o.protocol === "http:" || o.protocol === "https:");
+  } catch {
+    return false;
+  }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
@@ -1060,6 +1103,14 @@ const server = createServer(async (req, res) => {
   /** scratch for route matches, shared by every `path.match` below */
   let m: RegExpMatchArray | null = null;
   try {
+    // loopback-host + loopback-origin gate before any route (DNS rebinding / CSRF)
+    if (!isLoopbackHost(req.headers.host)) {
+      return json(res, 403, { error: "forbidden: loopback host required" });
+    }
+    const origin = req.headers.origin;
+    if (origin && !isAllowedOrigin(origin)) {
+      return json(res, 403, { error: "forbidden: cross-origin request" });
+    }
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
     // discover peers and hand a message to one. Not part of the public API.

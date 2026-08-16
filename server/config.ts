@@ -76,7 +76,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     }
   }
   mkdirSync(DATA_DIR, { recursive: true });
-  writeFileAtomic(p, JSON.stringify(disk, null, 2));
+  writeFileAtomic(p, JSON.stringify(disk, null, 2), { mode: 0o600 });
 }
 
 // Default fleet: one instance per built-in driver (upstream

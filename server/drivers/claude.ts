@@ -98,6 +98,7 @@ const proxyPath = (basename: string) => {
 };
 const PROXY_PATH = proxyPath("computer-proxy");
 const PERM_PROXY_PATH = proxyPath("permission-proxy");
+const DWEB_PROXY_PATH = proxyPath("drivers/dweb-proxy");
 // in the packaged app process.execPath is the Electron binary — this env
 // makes it behave as plain node for the spawned MCP proxies (harmless in dev)
 const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
@@ -332,6 +333,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (turn.integrations?.agents) {
         mcpServers.agents = { ...turn.integrations.agents };
         allowed.push("mcp__agents");
+      }
+      // dweb network daemon (status / repo / opencode model access) via
+      // server/drivers/dweb-proxy.ts — points at the configured dweb instance
+      if (turn.integrations?.dweb) {
+        mcpServers.dweb = {
+          command: process.execPath,
+          args: [DWEB_PROXY_PATH],
+          env: {
+            ...NODE_ENV_FLAG,
+            DWEB_URL: turn.integrations.dweb.url,
+          },
+        };
+        allowed.push("mcp__dweb");
       }
       // permission broker: anything acceptEdits would silently deny becomes
       // an Allow/Deny card in chat, and the agent gets ask_user. Skipped in

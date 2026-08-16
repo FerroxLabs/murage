@@ -4,8 +4,8 @@
 // suite is deterministic with or without agent CLIs installed — and pins
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, request, type Server } from "node:http";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,16 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
   });
   return { status: res.status, body: await res.json() };
 };
+
+const statusWithHeaders = (headers: Record<string, string>): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const req = request({ hostname: "127.0.0.1", port: PORT, path: "/api/health", headers }, (res) => {
+      res.resume();
+      resolve(res.statusCode ?? 0);
+    });
+    req.on("error", reject);
+    req.end();
+  });
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "omb-api-test-"));
@@ -97,6 +107,14 @@ afterAll(async () => {
 });
 
 describe("harness HTTP API", () => {
+  it("rejects non-loopback authorities while accepting IPv4 and IPv6 loopback forms", async () => {
+    expect(await statusWithHeaders({ host: "example.com" })).toBe(403);
+    expect(await statusWithHeaders({ origin: "https://example.com" })).toBe(403);
+    expect(await statusWithHeaders({ host: `127.0.0.2:${PORT}` })).toBe(200);
+    expect(await statusWithHeaders({ host: `[::1]:${PORT}` })).toBe(200);
+    expect(await statusWithHeaders({ origin: `http://[::1]:${PORT}` })).toBe(200);
+  });
+
   it("identifies itself on /api/health", async () => {
     const { status, body } = await api("GET", "/api/health");
     expect(status).toBe(200);
@@ -268,6 +286,10 @@ describe("harness HTTP API", () => {
 
     const nothing = await api("PUT", "/api/config", {});
     expect(nothing.status).toBe(400);
+  });
+
+  it.skipIf(process.platform === "win32")("stores the credentials file with owner-only permissions", () => {
+    expect(statSync(join(home, ".openmausbot", "config.json")).mode & 0o777).toBe(0o600);
   });
 
   it("stores and echoes the user profile (not write-only, unlike keys)", async () => {
