@@ -50,6 +50,7 @@ const statusProbe =
 function preparedImageInspect() {
   return JSON.stringify([
     {
+      Id: "sha256:managed-image-id",
       Config: {
         Labels: {
           [MANAGED_LABEL]: "1",
@@ -77,6 +78,7 @@ function readyInspect(overrides: Record<string, unknown> = {}) {
         Env: ["VNC_PW=secret123"],
       },
       State: { Running: true },
+      Image: "sha256:managed-image-id",
       HostConfig: {
         Memory: 4 * 1024 * 1024 * 1024,
         MemorySwap: 4 * 1024 * 1024 * 1024,
@@ -135,7 +137,7 @@ describe("containerComputerStatus", () => {
       [`container inspect ${CONTAINER}`]: JSON.stringify([
         {
           configuration: {
-            image: IMAGE,
+            image: { reference: IMAGE, descriptor: { digest: "sha256:managed-image-id" } },
             resources: { cpus: 2, memoryInBytes: 4 * 1024 * 1024 * 1024 },
             publishedPorts: [{ hostAddress: "127.0.0.1", containerPort: 6901 }],
             labels: {
@@ -239,11 +241,32 @@ describe("containerComputerStatus", () => {
       security: "hardened",
       persistence: "durable",
       desktopReady: true,
+      desktop_error: null,
       ready: true,
       problem: null,
       driver_version: "0.19.3",
     });
     expect(status.viewer_url).toContain("#autoconnect=true&resize=scale&password=secret123");
+  });
+
+  it("reports the bounded desktop startup error instead of waiting forever", async () => {
+    const errorProbe =
+      `docker exec ${CONTAINER} tail -n 4 /var/log/supervisor/cua-driver.error.log`;
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: readyInspect(),
+      [versionProbe]: new Error("driver unavailable"),
+      [errorProbe]: "X display :1 did not become ready within 45 seconds\n",
+    });
+
+    const status = await containerComputerStatus(fake.run, "linux");
+
+    expect(status.desktopReady).toBe(false);
+    expect(status.desktop_error).toContain("did not become ready");
+    expect(status.problem).toContain("desktop failed to start");
   });
 
   it("rejects a lookalike container with a different driver or base-image label", async () => {
@@ -266,6 +289,23 @@ describe("containerComputerStatus", () => {
     expect(status.ready).toBe(false);
     expect(status.problem).toContain("older desktop or Cua Driver");
     expect(fake.calls).not.toContain(versionProbe);
+  });
+
+  it("rejects a container created from a stale build under the same mutable tag", async () => {
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: readyInspect({ Image: "sha256:previous-build-id" }),
+    });
+
+    const status = await containerComputerStatus(fake.run, "linux");
+
+    expect(status.image_id).toBe("managed-image-id");
+    expect(status.imageMatches).toBe(false);
+    expect(status.ready).toBe(false);
+    expect(status.problem).toContain("older desktop or Cua Driver");
   });
 
   it("does not treat an unlabelled image under the local tag as prepared", async () => {
@@ -317,6 +357,8 @@ describe("Cua integration", () => {
     expect(dockerfile).toContain("migrate_profile chromium");
     expect(dockerfile).toContain("SingletonLock");
     expect(dockerfile).toContain(`${IMAGE_LAYER_LABEL}=\"${IMAGE_LAYER_VERSION}\"`);
+    expect(dockerfile).toContain("did not become ready within 45 seconds");
+    expect(dockerfile).not.toContain("while ! DISPLAY=:1 xset q");
   });
 
   it("captures the preview through Cua Driver rather than xdotool or VNC", async () => {

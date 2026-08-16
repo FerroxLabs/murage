@@ -42,6 +42,7 @@ import {
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { readCuaConnection } from "./local-computer.ts";
+import { LocalVmLease } from "./local-vm-lease.ts";
 import { RoutineManager, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { createTeamManifest, parseTeamManifest } from "./team-manifest.ts";
 import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./webhook-ingress.ts";
@@ -334,10 +335,13 @@ let routines: RoutineManager | null = null;
 // The Local VM is intentionally one shared, visible desktop. Two agents
 // driving it simultaneously would mix clicks, keystrokes and screenshots,
 // so only one thread may lease it at a time.
-let activeVmThreadId: string | null = null;
+const localVmLease = new LocalVmLease(30 * 60_000);
+const localVmOwnerBusy = (botId: string) => store.bot(botId)?.busy === true;
 let localVmLifecycleBusy = false;
 
 bus.subscribe((event: RuntimeEvent) => {
+  localVmLease.touch(event.threadId);
+  if (event.type === "turn.completed") localVmLease.release(event.threadId);
   broadcast({ kind: "runtime", event });
   routines?.handleRuntimeEvent(event);
   const bot = store.botByThread(event.threadId);
@@ -503,7 +507,6 @@ bus.subscribe((event: RuntimeEvent) => {
       });
       break;
     case "turn.completed": {
-      if (activeVmThreadId === event.threadId) activeVmThreadId = null;
       const reply = lastReply.get(event.threadId) ?? "";
       lastReply.delete(event.threadId);
       if (bot) {
@@ -777,14 +780,19 @@ async function startTurn(
         if (!mountsComputerMcp || instance.driverKind === "boxAgent") {
           throw new Error("this model engine cannot use the Local VM — choose Claude or an ACP engine, or select another computer destination");
         }
+        if (localVmLifecycleBusy) {
+          throw new Error("the Local VM is being started, stopped, or replaced — wait for setup to finish");
+        }
+        // Claim before the first await. The lifecycle route performs its
+        // matching check synchronously, so neither side can enter while the
+        // other is between inspection and mutation.
+        if (!localVmLease.claim(threadId, bot.id, localVmOwnerBusy)) {
+          throw new Error("the shared Local VM is already being used by another bot — wait for that turn to finish");
+        }
         const localVm = await containerComputerStatus();
         if (!localVm.ready || !localVm.runtime) {
           throw new Error(`${localVm.problem ?? "the Local VM is not ready"} (App Settings → Local VM)`);
         }
-        if (activeVmThreadId && activeVmThreadId !== threadId) {
-          throw new Error("the shared Local VM is already being used by another bot — wait for that turn to finish");
-        }
-        activeVmThreadId = threadId;
         integrations.localComputer = containerComputerMcp(localVm.runtime);
         computerKind = "vm";
       } else if (wants === "local") {
@@ -911,7 +919,7 @@ async function startTurn(
       if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
       if (previewBoxId) startScreenPoller(bot.id, previewBoxId);
     } catch (e) {
-      if (activeVmThreadId === threadId) activeVmThreadId = null;
+      localVmLease.release(threadId);
       const message = e instanceof Error ? e.message : String(e);
       const failure = store.appendMessage(threadId, {
         role: "bot",
@@ -2093,7 +2101,8 @@ const server = createServer(async (req, res) => {
       if (localVmLifecycleBusy) {
         return json(res, 409, { error: "another Local VM setup action is still running" });
       }
-      if (activeVmThreadId && (action === "stop" || action === "remove" || action === "run")) {
+      const vmOwner = localVmLease.current(localVmOwnerBusy);
+      if (vmOwner && (action === "stop" || action === "remove" || action === "run")) {
         return json(res, 409, { error: "the Local VM is being used by a bot — stop that turn first" });
       }
       localVmLifecycleBusy = true;
