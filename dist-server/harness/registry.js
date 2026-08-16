@@ -72,6 +72,7 @@ export class ProviderRegistry {
             const inst = entry.live;
             let snapshot;
             try {
+                await inst.refreshModels?.();
                 snapshot = await inst.snapshot();
             }
             catch (e) {

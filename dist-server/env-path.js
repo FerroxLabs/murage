@@ -59,6 +59,7 @@ function windowsKnownDirs() {
         join(localAppData, "agy", "bin"), // Antigravity installer
         join(home, ".local", "bin"), // claude native installer
         join(home, ".claude", "local"),
+        join(home, "bin"), // Factory droid installer (%USERPROFILE%\bin)
         join(home, ".bun", "bin"),
         join(home, ".deno", "bin"),
         join(home, "go", "bin"),

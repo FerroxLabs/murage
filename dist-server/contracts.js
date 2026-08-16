@@ -4,6 +4,14 @@
 // de-Effect-ed: Promises instead of Effect, listener callbacks instead of
 // Stream. The shapes and names are kept so the two codebases stay mutually
 // readable.
+export class ProviderError extends Error {
+    code;
+    constructor(code, message, options) {
+        super(message, options);
+        this.name = "ProviderError";
+        this.code = code;
+    }
+}
 let eventCounter = 0;
 export const newEventId = () => `ev-${Date.now().toString(36)}-${(eventCounter++).toString(36)}`;
 export const newId = () => crypto.randomUUID();

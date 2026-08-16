@@ -6,11 +6,14 @@
 // that fails to parse on next boot and is silently treated as empty state.
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-export function writeFileAtomic(path, data) {
+export function writeFileAtomic(path, data, options = {}) {
     const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
     let fd = null;
     try {
-        fd = openSync(tmp, "w");
+        // Apply sensitive-file permissions to the temporary inode itself. The
+        // final rename preserves them and never leaves a broader-permission
+        // config file visible between the write and a later chmod.
+        fd = openSync(tmp, "w", options.mode);
         writeFileSync(fd, data);
         fsyncSync(fd);
         closeSync(fd);
