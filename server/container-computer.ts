@@ -8,13 +8,14 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { augmentedPath } from "./env-path.ts";
+import { DATA_DIR } from "./config.ts";
 
 const run = promisify(execFile);
 
@@ -32,11 +33,16 @@ export const BASE_IMAGE = `${BASE_IMAGE_REPOSITORY}@${BASE_IMAGE_DIGEST}`;
 // This tag is built locally from the pinned Cua base. Image and container
 // labels below are the authoritative compatibility check, not the mutable tag.
 export const IMAGE_REPOSITORY = "openmausbot/cua-local-vm";
-export const IMAGE = `${IMAGE_REPOSITORY}:driver-${CUA_DRIVER_VERSION}`;
+export const IMAGE_LAYER_VERSION = "2";
+export const IMAGE_LAYER_LABEL = "com.openmausbot.image-layer";
+export const IMAGE = `${IMAGE_REPOSITORY}:driver-${CUA_DRIVER_VERSION}-v${IMAGE_LAYER_VERSION}`;
 export const CONTAINER = "openmausbot-computer";
 export const MANAGED_LABEL = "com.openmausbot.local-vm";
 export const DRIVER_LABEL = "com.openmausbot.cua-driver";
 export const BASE_IMAGE_LABEL = "com.openmausbot.cua-base";
+export const WORKSPACE_LABEL = "com.openmausbot.workspace";
+export const VM_WORKSPACE_DIR = join(DATA_DIR, "vm-home");
+export const VM_WORKSPACE_GUEST = "/home/cua/workspace";
 export const DISPLAY = ":1";
 export const CUA_SOCKET = "/run/user/1000/openmausbot-cua.sock";
 export const CUA_EXECUTABLE = "/usr/local/libexec/openmausbot/cua-driver";
@@ -82,9 +88,33 @@ RUN set -eux; \\
     driver_bin="$(find /opt/venv/lib -path '*/cua_driver/bin/cua-driver' -type f -print -quit)"; \\
     test -n "$driver_bin"; \\
     install -D -m 0755 "$driver_bin" ${CUA_EXECUTABLE}; \\
+    install -d -o cua -g cua -m 0700 ${VM_WORKSPACE_GUEST}; \\
     test "$(${CUA_EXECUTABLE} --version)" = "cua-driver ${CUA_DRIVER_VERSION}"
 RUN printf '%s\\n' \\
       '#!/bin/sh' \\
+      'set -eu' \\
+      'workspace=${VM_WORKSPACE_GUEST}' \\
+      'profiles="$workspace/.browser-profiles"' \\
+      'mkdir -p "$profiles/google-chrome" "$profiles/chromium" "$HOME/.config"' \\
+      'chmod 0700 "$workspace" "$profiles" "$profiles/google-chrome" "$profiles/chromium"' \\
+      'migrate_profile() {' \\
+      '  name="$1"' \\
+      '  source="$HOME/.config/$name"' \\
+      '  target="$profiles/$name"' \\
+      '  if [ -d "$source" ] && [ ! -L "$source" ] && [ -z "$(find "$target" -mindepth 1 -print -quit)" ]; then' \\
+      '    cp -a "$source"/. "$target"/' \\
+      '  fi' \\
+      '  rm -rf "$source"' \\
+      '  ln -s "$target" "$source"' \\
+      '}' \\
+      'migrate_profile google-chrome' \\
+      'migrate_profile chromium' \\
+      'find "$profiles" \\( -name SingletonLock -o -name SingletonSocket -o -name SingletonCookie -o -name .parentlock \\) -delete' \\
+      > /usr/local/bin/prepare-openmausbot-workspace.sh \\
+    && chmod 0755 /usr/local/bin/prepare-openmausbot-workspace.sh
+RUN printf '%s\\n' \\
+      '#!/bin/sh' \\
+      '/usr/local/bin/prepare-openmausbot-workspace.sh' \\
       'while ! DISPLAY=:1 xset q >/dev/null 2>&1; do sleep 1; done' \\
       'exec env CUA_DRIVER_INSTALL_CHANNEL=python_package ${CUA_EXECUTABLE} serve --socket ${CUA_SOCKET} --permission-mode standard' \\
       > /usr/local/bin/start-openmausbot-cua-driver.sh \\
@@ -103,7 +133,8 @@ RUN printf '%s\\n' \\
       >> /etc/supervisor/supervisord.conf
 LABEL ${MANAGED_LABEL}="1" \\
       ${DRIVER_LABEL}="${CUA_DRIVER_VERSION}" \\
-      ${BASE_IMAGE_LABEL}="${BASE_IMAGE_DIGEST}"
+      ${BASE_IMAGE_LABEL}="${BASE_IMAGE_DIGEST}" \\
+      ${IMAGE_LAYER_LABEL}="${IMAGE_LAYER_VERSION}"
 `;
 }
 
@@ -141,6 +172,7 @@ export interface ContainerComputerStatus {
   container: "running" | "stopped" | "missing";
   network: "loopback" | "unsafe" | "unknown";
   security: "hardened" | "unsafe" | "unknown";
+  persistence: "durable" | "unsafe" | "unknown";
   desktopReady: boolean;
   ready: boolean;
   problem: string | null;
@@ -148,6 +180,8 @@ export interface ContainerComputerStatus {
   base_image_ref: string;
   driver_version: string;
   container_name: string;
+  workspace_path: string;
+  workspace_guest_path: string;
   viewer_url: string;
 }
 
@@ -163,6 +197,7 @@ function emptyStatus(platform: NodeJS.Platform): ContainerComputerStatus {
     container: "missing",
     network: "unknown",
     security: "unknown",
+    persistence: "unknown",
     desktopReady: false,
     ready: false,
     problem: "Install a supported container runtime first",
@@ -170,6 +205,8 @@ function emptyStatus(platform: NodeJS.Platform): ContainerComputerStatus {
     base_image_ref: BASE_IMAGE,
     driver_version: CUA_DRIVER_VERSION,
     container_name: CONTAINER,
+    workspace_path: VM_WORKSPACE_DIR,
+    workspace_guest_path: VM_WORKSPACE_GUEST,
     viewer_url: `http://127.0.0.1:${HOST_VIEWER_PORT}/vnc.html`,
   };
 }
@@ -183,17 +220,23 @@ function statusProblem(status: ContainerComputerStatus): string | null {
   if (!status.managed) return "The existing container was not created by OpenMausBot; recreate it";
   if (status.network === "unsafe") return "The existing Local VM exposes its viewer publicly; recreate it";
   if (status.security === "unsafe") return "The existing Local VM is missing safety limits; recreate it";
+  if (status.persistence === "unsafe") return "The existing Local VM is missing its durable workspace; recreate it";
   if (status.container === "stopped") return "Start the Local VM";
   if (!status.desktopReady) return "The Local VM started, but Cua Driver is not ready yet";
   return null;
 }
 
-function labelsMatch(labels: Record<string, string> | undefined): boolean {
+function imageLabelsMatch(labels: Record<string, string> | undefined): boolean {
   return (
     labels?.[MANAGED_LABEL] === "1" &&
     labels?.[DRIVER_LABEL] === CUA_DRIVER_VERSION &&
-    labels?.[BASE_IMAGE_LABEL] === BASE_IMAGE_DIGEST
+    labels?.[BASE_IMAGE_LABEL] === BASE_IMAGE_DIGEST &&
+    labels?.[IMAGE_LAYER_LABEL] === IMAGE_LAYER_VERSION
   );
+}
+
+function containerLabelsMatch(labels: Record<string, string> | undefined): boolean {
+  return imageLabelsMatch(labels) && labels?.[WORKSPACE_LABEL] === "1";
 }
 
 function inspectedImageLabels(stdout: string): Record<string, string> | undefined {
@@ -273,7 +316,7 @@ export async function containerComputerStatus(
 
   try {
     const { stdout } = await runner(status.runtime, ["image", "inspect", IMAGE]);
-    status.image = labelsMatch(inspectedImageLabels(stdout));
+    status.image = imageLabelsMatch(inspectedImageLabels(stdout));
   } catch {
     // The prepared OpenMausBot derivative has not been built yet.
   }
@@ -288,6 +331,8 @@ export async function containerComputerStatus(
           resources?: { cpus?: number; memoryInBytes?: number };
           publishedPorts?: Array<{ hostAddress?: string; containerPort?: number }>;
           environment?: string[] | Record<string, string>;
+          labels?: Record<string, string>;
+          mounts?: Array<{ source?: string; destination?: string; options?: string[] }>;
         };
         status?: { state?: string };
       }>;
@@ -299,7 +344,10 @@ export async function containerComputerStatus(
           ? detail.configuration.image
           : detail?.configuration?.image?.reference ?? detail?.configuration?.imageReference;
       status.imageMatches = appleImage === IMAGE;
-      status.managed = status.imageMatches;
+      status.managed = containerLabelsMatch(detail?.configuration?.labels);
+      status.persistence = appleWorkspaceMountIsSafe(detail?.configuration?.mounts, platform)
+        ? "durable"
+        : "unsafe";
       const resources = detail?.configuration?.resources;
       status.security =
         (resources?.memoryInBytes ?? 0) >= MEMORY_BYTES && resources?.cpus === 2 ? "hardened" : "unsafe";
@@ -316,13 +364,20 @@ export async function containerComputerStatus(
           CapDrop?: string[] | null;
           CapAdd?: string[] | null;
         };
+        Mounts?: Array<{
+          Type?: string;
+          Source?: string;
+          Destination?: string;
+          RW?: boolean;
+        }>;
         State?: { Running?: boolean };
       }>;
       const detail = inspected[0];
       status.container = detail?.State?.Running ? "running" : "stopped";
       status.network = dockerPortsAreLocal(detail?.HostConfig?.PortBindings) ? "loopback" : "unsafe";
-      status.imageMatches = detail?.Config?.Image === IMAGE && labelsMatch(detail?.Config?.Labels);
-      status.managed = detail?.Config?.Labels?.[MANAGED_LABEL] === "1";
+      status.imageMatches = detail?.Config?.Image === IMAGE && imageLabelsMatch(detail?.Config?.Labels);
+      status.managed = containerLabelsMatch(detail?.Config?.Labels);
+      status.persistence = dockerWorkspaceMountIsSafe(detail?.Mounts, platform) ? "durable" : "unsafe";
       status.security = dockerSecurityIsHardened(detail?.HostConfig) ? "hardened" : "unsafe";
       status.viewer_url = viewerUrl(viewerPassword(detail?.Config?.Env));
     }
@@ -335,7 +390,8 @@ export async function containerComputerStatus(
     status.imageMatches &&
     status.managed &&
     status.network === "loopback" &&
-    status.security === "hardened";
+    status.security === "hardened" &&
+    status.persistence === "durable";
   if (canProbe) {
     try {
       const expected = `cua-driver ${CUA_DRIVER_VERSION}`;
@@ -375,6 +431,41 @@ function applePortsAreLocal(
   );
 }
 
+function sameWorkspaceSource(source: string | undefined, platform: NodeJS.Platform): boolean {
+  if (!source) return false;
+  const actual = resolve(source);
+  const expected = resolve(VM_WORKSPACE_DIR);
+  return platform === "win32" ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
+}
+
+function dockerWorkspaceMountIsSafe(
+  mounts:
+    | Array<{ Type?: string; Source?: string; Destination?: string; RW?: boolean }>
+    | undefined,
+  platform: NodeJS.Platform,
+): boolean {
+  return Boolean(
+    mounts?.length === 1 &&
+      mounts[0]?.Type === "bind" &&
+      sameWorkspaceSource(mounts[0]?.Source, platform) &&
+      mounts[0]?.Destination === VM_WORKSPACE_GUEST &&
+      mounts[0]?.RW !== false,
+  );
+}
+
+function appleWorkspaceMountIsSafe(
+  mounts: Array<{ source?: string; destination?: string; options?: string[] }> | undefined,
+  platform: NodeJS.Platform,
+): boolean {
+  const options = mounts?.[0]?.options ?? [];
+  return Boolean(
+    mounts?.length === 1 &&
+      sameWorkspaceSource(mounts[0]?.source, platform) &&
+      mounts[0]?.destination === VM_WORKSPACE_GUEST &&
+      !options.some((option) => option === "ro" || option === "readonly"),
+  );
+}
+
 function dockerSecurityIsHardened(
   config:
     | {
@@ -405,6 +496,18 @@ function dockerSecurityIsHardened(
 
 export function containerRunArgs(runtime: Runtime, password = "CHANGE_ME"): string[] {
   const common = ["run", "-d", "--name", CONTAINER];
+  common.push(
+    "--label",
+    `${MANAGED_LABEL}=1`,
+    "--label",
+    `${DRIVER_LABEL}=${CUA_DRIVER_VERSION}`,
+    "--label",
+    `${BASE_IMAGE_LABEL}=${BASE_IMAGE_DIGEST}`,
+    "--label",
+    `${IMAGE_LAYER_LABEL}=${IMAGE_LAYER_VERSION}`,
+    "--label",
+    `${WORKSPACE_LABEL}=1`,
+  );
   if (runtime === "container") {
     // Apple container already places each Linux container in a lightweight VM.
     common.push(
@@ -423,12 +526,8 @@ export function containerRunArgs(runtime: Runtime, password = "CHANGE_ME"): stri
     );
   } else {
     common.push(
-      "--label",
-      `${MANAGED_LABEL}=1`,
-      "--label",
-      `${DRIVER_LABEL}=${CUA_DRIVER_VERSION}`,
-      "--label",
-      `${BASE_IMAGE_LABEL}=${BASE_IMAGE_DIGEST}`,
+      "--hostname",
+      CONTAINER,
       "--memory",
       "4g",
       "--memory-swap",
@@ -448,6 +547,10 @@ export function containerRunArgs(runtime: Runtime, password = "CHANGE_ME"): stri
     );
   }
   common.push(
+    "--mount",
+    runtime === "podman"
+      ? `type=bind,source=${VM_WORKSPACE_DIR},target=${VM_WORKSPACE_GUEST},relabel=private,U=true`
+      : `type=bind,source=${VM_WORKSPACE_DIR},target=${VM_WORKSPACE_GUEST}`,
     "-e",
     `VNC_PW=${password}`,
     "-p",
@@ -455,6 +558,11 @@ export function containerRunArgs(runtime: Runtime, password = "CHANGE_ME"): stri
     IMAGE,
   );
   return common;
+}
+
+async function ensureVmWorkspace(platform: NodeJS.Platform): Promise<void> {
+  await mkdir(VM_WORKSPACE_DIR, { recursive: true, mode: 0o700 });
+  if (platform !== "win32") await chmod(VM_WORKSPACE_DIR, 0o700);
 }
 
 async function prepareManagedImage(runtime: Runtime, runner: CommandRunner): Promise<void> {
@@ -506,6 +614,7 @@ export async function containerComputerAction(
   if (action === "pull") {
     await prepareManagedImage(runtime, runner);
   } else {
+    if (action === "run") await ensureVmWorkspace(platform);
     const args =
       action === "run"
         ? containerRunArgs(runtime, randomBytes(6).toString("base64url"))

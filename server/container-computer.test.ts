@@ -10,7 +10,12 @@ import {
   CUA_SOCKET,
   DRIVER_LABEL,
   IMAGE,
+  IMAGE_LAYER_LABEL,
+  IMAGE_LAYER_VERSION,
   MANAGED_LABEL,
+  VM_WORKSPACE_DIR,
+  VM_WORKSPACE_GUEST,
+  WORKSPACE_LABEL,
   computerProxyEnv,
   containerComputerAction,
   containerComputerMcp,
@@ -50,6 +55,7 @@ function preparedImageInspect() {
           [MANAGED_LABEL]: "1",
           [DRIVER_LABEL]: CUA_DRIVER_VERSION,
           [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
+          [IMAGE_LAYER_LABEL]: IMAGE_LAYER_VERSION,
         },
       },
     },
@@ -65,6 +71,8 @@ function readyInspect(overrides: Record<string, unknown> = {}) {
           [MANAGED_LABEL]: "1",
           [DRIVER_LABEL]: CUA_DRIVER_VERSION,
           [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
+          [IMAGE_LAYER_LABEL]: IMAGE_LAYER_VERSION,
+          [WORKSPACE_LABEL]: "1",
         },
         Env: ["VNC_PW=secret123"],
       },
@@ -78,6 +86,14 @@ function readyInspect(overrides: Record<string, unknown> = {}) {
         CapAdd: ["CAP_SETUID", "CAP_SETGID"],
         PortBindings: { "6901/tcp": [{ HostIp: "127.0.0.1" }] },
       },
+      Mounts: [
+        {
+          Type: "bind",
+          Source: VM_WORKSPACE_DIR,
+          Destination: VM_WORKSPACE_GUEST,
+          RW: true,
+        },
+      ],
       ...overrides,
     },
   ]);
@@ -122,6 +138,14 @@ describe("containerComputerStatus", () => {
             image: IMAGE,
             resources: { cpus: 2, memoryInBytes: 4 * 1024 * 1024 * 1024 },
             publishedPorts: [{ hostAddress: "127.0.0.1", containerPort: 6901 }],
+            labels: {
+              [MANAGED_LABEL]: "1",
+              [DRIVER_LABEL]: CUA_DRIVER_VERSION,
+              [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
+              [IMAGE_LAYER_LABEL]: IMAGE_LAYER_VERSION,
+              [WORKSPACE_LABEL]: "1",
+            },
+            mounts: [{ source: VM_WORKSPACE_DIR, destination: VM_WORKSPACE_GUEST, options: [] }],
           },
           status: { state: "running" },
         },
@@ -162,6 +186,27 @@ describe("containerComputerStatus", () => {
     expect(status.ready).toBe(false);
   });
 
+  it("rejects missing or unexpected host mounts instead of exposing them to the bot", async () => {
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: readyInspect({
+        Mounts: [
+          { Type: "bind", Source: VM_WORKSPACE_DIR, Destination: VM_WORKSPACE_GUEST, RW: true },
+          { Type: "bind", Source: "/tmp/unexpected", Destination: "/host", RW: true },
+        ],
+      }),
+    });
+
+    const status = await containerComputerStatus(fake.run, "linux");
+
+    expect(status.persistence).toBe("unsafe");
+    expect(status.ready).toBe(false);
+    expect(status.problem).toContain("durable workspace");
+  });
+
   it("does not mistake an unrelated container executable for Apple container off macOS", async () => {
     const fake = runner({
       "where.exe docker": new Error("missing"),
@@ -192,6 +237,7 @@ describe("containerComputerStatus", () => {
       managed: true,
       network: "loopback",
       security: "hardened",
+      persistence: "durable",
       desktopReady: true,
       ready: true,
       problem: null,
@@ -266,6 +312,11 @@ describe("Cua integration", () => {
     expect(dockerfile).toContain(`install -D -m 0755 \"$driver_bin\" ${CUA_EXECUTABLE}`);
     expect(dockerfile).toContain(`cua-driver ${CUA_DRIVER_VERSION}`);
     expect(dockerfile).toContain(`serve --socket ${CUA_SOCKET} --permission-mode standard`);
+    expect(dockerfile).toContain("prepare-openmausbot-workspace.sh");
+    expect(dockerfile).toContain("migrate_profile google-chrome");
+    expect(dockerfile).toContain("migrate_profile chromium");
+    expect(dockerfile).toContain("SingletonLock");
+    expect(dockerfile).toContain(`${IMAGE_LAYER_LABEL}=\"${IMAGE_LAYER_VERSION}\"`);
   });
 
   it("captures the preview through Cua Driver rather than xdotool or VNC", async () => {
@@ -359,6 +410,18 @@ describe("setupCommands", () => {
     expect(command).toContain("--cap-drop ALL --cap-add SETUID --cap-add SETGID");
     expect(command).toContain(`--label ${MANAGED_LABEL}=1`);
     expect(command).toContain(`--label ${DRIVER_LABEL}=${CUA_DRIVER_VERSION}`);
+    expect(command).toContain(`--label ${WORKSPACE_LABEL}=1`);
+    expect(command).toContain(`--hostname ${CONTAINER}`);
+    expect(command).toContain(
+      `--mount type=bind,source=${VM_WORKSPACE_DIR},target=${VM_WORKSPACE_GUEST}`,
+    );
+  });
+
+  it("asks rootless Podman to map and privately relabel the durable workspace", () => {
+    const command = setupCommands("podman", "linux").run!;
+    expect(command).toContain(
+      `--mount type=bind,source=${VM_WORKSPACE_DIR},target=${VM_WORKSPACE_GUEST},relabel=private,U=true`,
+    );
   });
 
   it("shows the pinned base pull while creating the managed derivative through the API", () => {
