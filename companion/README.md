@@ -1,0 +1,104 @@
+# companion
+
+The sidecar a phone talks to.
+
+OpenMausBot's harness listens on `127.0.0.1` and nothing else, which is the
+right default and one it has recently gone out of its way to enforce: it now
+rejects any request whose `Host` is not loopback, defeating DNS rebinding.
+
+This is a separate process that sits in front of it. A paired device reaches
+*this*, over the LAN or a tailnet; this reaches the harness over loopback, as
+a request from the machine the harness already trusts. **The harness needs no
+changes and does not know this exists.**
+
+That is the entire point of the design. The alternative — teaching the harness
+to bind a second socket — means a patch to somebody else's request handler,
+carried across every release, and it is the patch that broke the first time
+upstream hardened its loopback gate.
+
+```
+  phone ──LAN/tailnet──▶ companion :8810 ──loopback──▶ harness :8799
+                          ▲                             ▲
+                          │ token, allowlist,           │ unmodified,
+                          │ Origin refused              │ loopback-only
+```
+
+## What it is responsible for
+
+| | |
+|---|---|
+| **Pairing** | A six-digit code shown on the computer, valid two minutes, five attempts. Redeeming it returns a device token stored only as a SHA-256 digest. |
+| **Authorisation** | Every request needs that token. A rebinding page cannot obtain one. |
+| **The allowlist** | Default deny, per method and path (`src/routes.ts`) — the list is every request the app makes, and nothing else. A route that appears in the harness later is closed to devices until someone adds it here on purpose. |
+| **Scrubbing** | `resumeCursors` — the harness's own provider session ids — never reach a device, whether or not the harness still sends them. |
+| **Discovery** | Bonjour, so a phone finds the computer by name instead of by typed address. |
+
+## What it deliberately does not do
+
+- **Serve the desktop UI.** A phone asking for `/` gets a 404. Serving HTML
+  here would make this a web server, which it is not.
+- **Accept anything with an `Origin` header.** A native app sends none, so a
+  request that carries one is a browser that has found this port. Refused
+  before the token is even looked at — stricter than the harness's own rule,
+  which allows loopback origins.
+- **Hold credentials, settings, or Local VM control.** Those stay on the
+  machine. See `src/routes.ts` for the exact refusals and why.
+
+## Running it
+
+With the harness already up (`pnpm dev:server`), from the repo root:
+
+```sh
+pnpm companion
+```
+
+It prints where to point the phone, and where you pair:
+
+```
+companion  http://0.0.0.0:8810  →  harness 127.0.0.1:8799
+pair here  http://127.0.0.1:8811
+on your phone, enter  macbook.tail1234.ts.net:8810
+```
+
+Open the pairing page, click **Start pairing**, and type the six digits into
+the phone. Stopping the process is the off switch — running it *is* the
+opt-in, so there is no toggle to forget.
+
+| Environment | Default | |
+|---|---|---|
+| `OMB_PORT` | `8799` | where the harness is |
+| `OMB_COMPANION_PORT` | `8810` | where devices connect |
+| `OMB_CONTROL_PORT` | `8811` | the pairing page, loopback only |
+| `OMB_COMPANION_DIR` | `~/.openmausbot-companion` | paired devices live here |
+| `OMB_COMPANION_NAME` | `OpenMausBot` | what the phone calls this computer |
+
+The harness owns two ports, not one: itself, and a webhook receiver one above
+it (`OMB_WEBHOOK_PORT`). The companion refuses to start on either and says
+which — the alternative is a race for the socket, where starting second means
+the companion will not come up and starting first means webhooks quietly stop
+working with the explanation logged somewhere else entirely.
+
+## Layout
+
+```
+src/index.ts    the entrypoint — three sockets, and the split between them
+src/proxy.ts    the forwarding handler; also owns /api/pair
+src/routes.ts   the allowlist — what a device may ask for
+src/wire.ts     scrubbing, including the SSE stream transform
+src/control.ts  the loopback pairing page
+src/devices.ts  pairing codes and device tokens
+src/listener.ts LAN and tailnet addresses
+src/mdns.ts     the zero-dependency Bonjour responder
+src/state.ts    where paired devices are written, atomically
+test/           run against a real harness, booted per file
+```
+
+## Tests
+
+`pnpm test` from the repo root covers this alongside everything else.
+
+`test/proxy.test.ts` boots the real harness and drives the real proxy, because
+every bug this design can have lives in the seam between them: an SSE event
+that never terminates, a resume cursor dropped in transit, a `content-length`
+set beside a `transfer-encoding`. None of those are visible to a unit test —
+the last one was found by this suite within a minute of it existing.

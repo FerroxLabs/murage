@@ -1,0 +1,136 @@
+// Companion device registry contract. The three properties that matter:
+// a token is never recoverable from disk, a pairing code cannot be ground
+// down by guessing, and revoking a device actually revokes it.
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { DATA_DIR } from "../src/state.ts";
+import { bearerToken, cleanDeviceName, DeviceRegistry, MAX_PAIRING_ATTEMPTS } from "../src/devices.ts";
+
+const pair = (registry: DeviceRegistry, name = "iPhone") => {
+  const { code } = registry.openPairing();
+  const result = registry.redeem(code, name);
+  if ("error" in result) throw new Error(`pairing failed: ${result.error}`);
+  return result;
+};
+
+describe("DeviceRegistry", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("issues a token that authenticates, and never stores it", () => {
+    const registry = new DeviceRegistry();
+    const { token, device } = pair(registry);
+
+    expect(token.startsWith("omb_")).toBe(true);
+    expect(registry.authenticate(token)?.id).toBe(device.id);
+
+    // the file on disk holds a digest, not the credential
+    const raw = readFileSync(join(DATA_DIR, "devices.json"), "utf8");
+    expect(raw).not.toContain(token);
+    expect(JSON.parse(raw).devices[0].tokenHash).toHaveLength(64);
+
+    // and nothing the UI can read exposes it either
+    expect(JSON.stringify(registry.list())).not.toContain(token);
+    expect(registry.list()[0]).not.toHaveProperty("tokenHash");
+  });
+
+  it("survives a restart", () => {
+    const { token } = pair(new DeviceRegistry());
+    expect(new DeviceRegistry().authenticate(token)).not.toBeNull();
+  });
+
+  it("refuses unknown, empty, and near-miss tokens", () => {
+    const registry = new DeviceRegistry();
+    const { token } = pair(registry);
+
+    expect(registry.authenticate(undefined)).toBeNull();
+    expect(registry.authenticate("")).toBeNull();
+    expect(registry.authenticate("omb_nope")).toBeNull();
+    expect(registry.authenticate(token.slice(0, -1))).toBeNull();
+    expect(registry.authenticate(`${token}x`)).toBeNull();
+  });
+
+  it("burns the pairing window after too many wrong codes", () => {
+    const registry = new DeviceRegistry();
+    const { code } = registry.openPairing();
+    const wrong = code === "000000" ? "111111" : "000000";
+
+    for (let i = 1; i < MAX_PAIRING_ATTEMPTS; i++) {
+      expect(registry.redeem(wrong, "iPhone")).toEqual({ error: "that code is not right" });
+      expect(registry.pairing()).not.toBeNull();
+    }
+    // the last one closes the window rather than counting down forever
+    expect(registry.redeem(wrong, "iPhone")).toMatchObject({ error: expect.stringContaining("start pairing again") });
+    expect(registry.pairing()).toBeNull();
+
+    // and the real code is worthless now
+    expect(registry.redeem(code, "iPhone")).toMatchObject({ error: expect.stringContaining("no pairing") });
+    expect(registry.count()).toBe(0);
+  });
+
+  it("spends a code exactly once", () => {
+    const registry = new DeviceRegistry();
+    const { code } = registry.openPairing();
+    expect(registry.redeem(code, "iPhone")).toHaveProperty("token");
+    expect(registry.redeem(code, "iPad")).toMatchObject({ error: expect.stringContaining("no pairing") });
+    expect(registry.count()).toBe(1);
+  });
+
+  it("refuses an expired window without a timer", () => {
+    const registry = new DeviceRegistry();
+    const window = registry.openPairing();
+    // reach in and age it, rather than sleeping for two minutes
+    window.expiresAt = Date.now() - 1;
+    expect(registry.pairing()).toBeNull();
+    expect(registry.redeem(window.code, "iPhone")).toMatchObject({ error: expect.stringContaining("no pairing") });
+  });
+
+  it("revokes one device without touching the others", () => {
+    const registry = new DeviceRegistry();
+    const phone = pair(registry, "iPhone");
+    const tablet = pair(registry, "iPad");
+    expect(registry.count()).toBe(2);
+
+    expect(registry.revoke(phone.device.id)).toBe(true);
+    expect(registry.revoke(phone.device.id)).toBe(false);
+    expect(registry.authenticate(phone.token)).toBeNull();
+    expect(registry.authenticate(tablet.token)?.name).toBe("iPad");
+
+    // revocation is durable, not just in-memory
+    expect(new DeviceRegistry().authenticate(phone.token)).toBeNull();
+  });
+
+  it("treats a corrupt devices.json as no paired devices", () => {
+    pair(new DeviceRegistry());
+    writeFileSync(join(DATA_DIR, "devices.json"), "{ not json");
+    expect(new DeviceRegistry().count()).toBe(0);
+  });
+});
+
+describe("cleanDeviceName", () => {
+  it("clamps, trims, and strips control characters", () => {
+    expect(cleanDeviceName("  Milind's iPhone  ")).toBe("Milind's iPhone");
+    // an untrusted label must not carry NULs or ANSI escapes into a UI
+    expect(cleanDeviceName("bad\u0000name\u001b[31m")).toBe("bad name [31m");
+    expect(cleanDeviceName("x".repeat(200))).toHaveLength(60);
+  });
+
+  it("falls back rather than allowing an empty label", () => {
+    expect(cleanDeviceName("")).toBe("Companion");
+    expect(cleanDeviceName(undefined)).toBe("Companion");
+    expect(cleanDeviceName("   ")).toBe("Companion");
+  });
+});
+
+describe("bearerToken", () => {
+  it("reads only a well-formed Bearer header", () => {
+    expect(bearerToken("Bearer omb_abc")).toBe("omb_abc");
+    expect(bearerToken("  Bearer omb_abc  ")).toBe("omb_abc");
+    expect(bearerToken("omb_abc")).toBeUndefined();
+    expect(bearerToken("Basic omb_abc")).toBeUndefined();
+    expect(bearerToken(undefined)).toBeUndefined();
+  });
+});
