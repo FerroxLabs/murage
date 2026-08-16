@@ -594,7 +594,13 @@ export function RoutinesPage() {
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
-      <header className="shrink-0 px-5 pb-4 pt-4">
+      <header
+        className={cn(
+          "shrink-0 px-5 pb-4 pt-4",
+          // Room for the drawer button, which overlays this corner below md.
+          "pl-11 md:pl-5",
+        )}
+      >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2.5"><CalendarDays size={21} className="text-accent" /><h1 className="text-[20px] font-semibold tracking-tight text-ink">Routines</h1></div>
