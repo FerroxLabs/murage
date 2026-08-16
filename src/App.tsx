@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, Menu } from "lucide-react";
 import { StoreProvider, useStore } from "@/state/store";
 import { Onboarding } from "@/components/Onboarding";
 import { emailGateDone, initAnalytics } from "@/lib/analytics";
@@ -17,6 +17,13 @@ import { NoEngines } from "@/components/NoEngines";
 
 function Shell() {
   const { state, dispatch } = useStore();
+  // Mobile-only drawer state. Above md, none of these properties are emitted
+  // at all — Sidebar scopes every mobile class with max-md: rather than
+  // cancelling them with md:, which would still emit a translate value and
+  // turn the aside into a containing block for its fixed descendants (see
+  // Sidebar.tsx's className comment).
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
 
@@ -59,12 +66,45 @@ function Shell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [state.bots, state.selectedId, dispatch]);
 
+  // Picking a conversation closes the drawer: on a phone the chat is what you
+  // asked for, and leaving the list up would hide it. Watching activeView too
+  // catches re-selecting the bot that is already current from another view —
+  // the reducer switches the view without changing selectedId. pluginsOpen
+  // and settingsOpen cover the same idea from a different trigger: close the
+  // drawer whenever an action opens something over the chat.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [state.selectedId, state.activeView, state.pluginsOpen, state.settingsOpen]);
+
   return (
     <div className="flex h-full flex-col">
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
       <div className="relative flex min-h-0 flex-1">
-      <Sidebar />
+      <button
+        type="button"
+        ref={menuButtonRef}
+        aria-label="Open bot list"
+        aria-expanded={drawerOpen}
+        onClick={() => setDrawerOpen(true)}
+        className="absolute left-3 top-3 z-30 rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink md:hidden"
+      >
+        <Menu size={18} />
+      </button>
+      {drawerOpen && (
+        <div
+          aria-hidden
+          onMouseDown={(e) => e.target === e.currentTarget && setDrawerOpen(false)}
+          className="absolute inset-0 z-30 bg-black/50 md:hidden"
+        />
+      )}
+      <Sidebar
+        open={drawerOpen}
+        onClose={() => {
+          setDrawerOpen(false);
+          menuButtonRef.current?.focus();
+        }}
+      />
       {state.activeView === "routines" ? (
         <RoutinesPage />
       ) : noEngines ? (
