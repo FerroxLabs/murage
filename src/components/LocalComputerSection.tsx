@@ -38,6 +38,7 @@ interface Status {
   workspace_path: string;
   workspace_guest_path: string;
   viewer_url: string;
+  idle_timeout_ms: number;
   commands: {
     install: string | null;
     runtimeStart: string | null;
@@ -184,7 +185,8 @@ export function LocalComputerSection() {
   const existing = status?.container !== "missing";
   const needsRecreate = Boolean(
     existing &&
-      (!status?.imageMatches ||
+      (status?.container === "stopped" ||
+        !status?.imageMatches ||
         !status?.managed ||
         status?.network === "unsafe" ||
         status?.security === "unsafe" ||
@@ -197,7 +199,7 @@ export function LocalComputerSection() {
     <>
       <Card
         title="Local VM"
-        subtitle={`A shared Cua Linux sandbox on this ${host} for bots to browse and work in — free, isolated, and backed by one durable workspace.`}
+        subtitle={`A shared Cua Linux sandbox on this ${host} for bots to browse and work in — isolated, backed by one durable workspace, and automatically recycled after 8 hours without activity.`}
       >
         <div className="flex flex-wrap items-center gap-2">
           <span
@@ -321,7 +323,7 @@ export function LocalComputerSection() {
         )}
         <div className="mt-3 break-all text-[11px] text-ink-secondary">
           Durable workspace: {status?.workspace_path ?? "not created"} ·{" "}
-          Cua Driver: {status?.driver_version ?? "0.19.3"} · Local image: {status?.image_ref ?? "not prepared"}
+          Cua Driver: {status?.driver_version ?? "0.20.0"} · Local image: {status?.image_ref ?? "not prepared"}
           {status?.base_image_ref ? <> · Base: {status.base_image_ref}</> : null}
         </div>
       </Card>

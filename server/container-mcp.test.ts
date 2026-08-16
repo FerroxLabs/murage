@@ -51,7 +51,8 @@ posixOnly("Local VM Cua MCP bridge", () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toBe(input);
     expect(result.stderr).toContain(
-      `ARGS:exec -i -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ${CONTAINER} ` +
+      `ARGS:exec -i -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ` +
+        `-e CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${CONTAINER} ` +
         `${CUA_EXECUTABLE} mcp --socket ${CUA_SOCKET}`,
     );
   });

@@ -27,6 +27,7 @@
 //
 // stdout is the MCP channel — never console.log here.
 import { normalizeBrowserUrl, normalizeCrop, ObservationCoordinator, parseBrowserTargets, safeBrowserUrl, } from "./computer-observation.js";
+import { ensureRemoteCuaCommand, REMOTE_CUA_EXECUTABLE, REMOTE_CUA_SESSION, REMOTE_CUA_SOCKET, REMOTE_CUA_VERSION, semanticBrowserCommand, } from "./remote-computer.js";
 const BOX_API = process.env.OGB_BOX_API ?? "https://ascii.dev/api/box/v1";
 const boxId = process.env.OGB_BOX_ID ?? "";
 const token = process.env.OGB_BOX_TOKEN ?? "";
@@ -40,8 +41,26 @@ const SETTLE_MS = 350;
 /** Gap between batched actions so focus changes land before typing. */
 const ACTION_GAP_MS = 120;
 const CHROME_PROFILE = "$HOME/.openmausbot/chrome-profile";
-const CHROME_DEBUG_FLAGS = `--user-data-dir="${CHROME_PROFILE}" --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222`;
-const CHROME_PROFILE_SETUP = `mkdir -p "${CHROME_PROFILE}" && chmod 700 "${CHROME_PROFILE}"`;
+const CHROME_DEBUG_FLAGS = `--user-data-dir="${CHROME_PROFILE}" --password-store=basic --disable-session-crashed-bubble --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222`;
+// Keep one durable browser identity regardless of which Chromium binary an
+// image supplies. Existing profiles are merged without overwriting files and
+// moved aside as backups before the conventional paths become symlinks.
+const CHROME_PROFILE_SETUP = [
+    `profile="${CHROME_PROFILE}"`,
+    'mkdir -p "$profile" "$HOME/.config"',
+    'chmod 700 "$profile"',
+    'for browser_dir in "$HOME/.config/google-chrome" "$HOME/.config/chromium"; do',
+    '  if [ -e "$browser_dir" ] && [ ! -L "$browser_dir" ]; then',
+    '    if [ -d "$browser_dir" ] && ! cp -a -n "$browser_dir"/. "$profile"/; then',
+    '      echo "failed to copy browser profile: $browser_dir" >&2',
+    "      exit 1",
+    "    fi",
+    '    mv "$browser_dir" "$browser_dir.pre-openmausbot-$(date +%s)-$$"',
+    "  fi",
+    '  if [ -L "$browser_dir" ]; then rm -f "$browser_dir"; fi',
+    '  ln -s "$profile" "$browser_dir"',
+    "done",
+].join("\n");
 /** Frames larger than this come back over the files API instead of
  * inline stdout (keeps us clear of the command endpoint's stdout cap). */
 const INLINE_MAX_BYTES = 400_000;
@@ -66,10 +85,26 @@ async function resumeBox() {
     return false;
 }
 async function runOnBox(command, timeoutMs = 60_000, allowWake = true) {
+    // Old boxes may predate noEnv:true. Run every agent-issued command with an
+    // explicit desktop-only environment so provider/account credentials cannot
+    // leak through `computer_exec` or a child GUI process.
+    const isolatedCommand = [
+        "exec env -i",
+        'HOME="$HOME"',
+        'USER="${USER:-$(id -un)}"',
+        'LOGNAME="${LOGNAME:-${USER:-$(id -un)}}"',
+        'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
+        'DISPLAY="${DISPLAY:-:0}"',
+        'XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"',
+        'XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"',
+        'DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}"',
+        "/bin/bash -c",
+        shellQuote(command),
+    ].join(" ");
     const res = await fetch(`${BOX_API}/boxes/${boxId}/commands`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ command }),
+        body: JSON.stringify({ command: isolatedCommand }),
         signal: AbortSignal.timeout(timeoutMs),
     });
     const body = await res.json().catch(() => null);
@@ -124,6 +159,7 @@ async function waitForNavigation(value, attempts = 3) {
     return { ok: false, targets };
 }
 const ENV = 'export DISPLAY=${DISPLAY:-:0}';
+const CUA_ENV = "CUA_DRIVER_INSTALL_CHANNEL=python_package CUA_DRIVER_RS_TELEMETRY_ENABLED=0";
 /** Resolve the real display size into $W/$H for box-side click scaling. */
 const GEOMETRY = [
     "g=$(xdotool getdisplaygeometry 2>/dev/null)",
@@ -139,6 +175,17 @@ const GEOMETRY = [
 function scaled(varName, value) {
     const v = Math.round(value);
     return `if [ "$W" -gt ${SHOT_WIDTH} ] 2>/dev/null; then ${varName}=$(( ${v} * W / ${SHOT_WIDTH} )); else ${varName}=${v}; fi`;
+}
+/** Prefer the official driver but keep the proven X11 command as a degraded
+ * path while a first install is finishing or if the daemon needs repair. */
+function cuaOrX11(tool, argumentsShell, fallback) {
+    return [
+        `if [ -x ${REMOTE_CUA_EXECUTABLE} ] && ${REMOTE_CUA_EXECUTABLE} status --socket ${REMOTE_CUA_SOCKET} >/dev/null 2>&1;`,
+        `then if CUA_OUT=$(env ${CUA_ENV} ${REMOTE_CUA_EXECUTABLE} call ${tool} ${argumentsShell} --socket ${REMOTE_CUA_SOCKET} 2>/tmp/ogb-cua-call.error);`,
+        `then echo "BACKEND CUA"; echo "CUA_RESULT $(printf %s "$CUA_OUT" | base64 -w0 2>/dev/null || printf %s "$CUA_OUT" | base64 | tr -d '\\n')"`,
+        `else ${fallback}; X11_RC=$?; echo "BACKEND X11"; [ "$X11_RC" -eq 0 ]; fi`,
+        `else ${fallback}; X11_RC=$?; echo "BACKEND X11"; [ "$X11_RC" -eq 0 ]; fi`,
+    ].join(" ");
 }
 /** act → settle → capture → canonical hash → optional crop → inline bytes.
  * The hash is taken before cropping, so change detection always describes
@@ -156,8 +203,10 @@ function captureBlock(settleMs = SETTLE_MS, crop = null) {
     return [
         settleMs > 0 ? `sleep ${(settleMs / 1000).toFixed(2)}` : "true",
         `f=${SHOT_PATH}`,
+        'raw=/tmp/ogb-shot.png',
         `rm -f "$f" 2>/dev/null || true`,
-        `scrot -o -q ${JPEG_QUALITY} "$f" 2>/dev/null || import -window root -quality ${JPEG_QUALITY} "$f" 2>/dev/null || ffmpeg -y -f x11grab -i "$DISPLAY" -frames:v 1 -q:v 6 "$f" >/dev/null 2>&1`,
+        `rm -f "$raw" 2>/dev/null || true`,
+        `if [ -x ${REMOTE_CUA_EXECUTABLE} ] && ${REMOTE_CUA_EXECUTABLE} status --socket ${REMOTE_CUA_SOCKET} >/dev/null 2>&1 && env ${CUA_ENV} ${REMOTE_CUA_EXECUTABLE} call get_desktop_state ${shellQuote(JSON.stringify({ scope: "desktop", session: REMOTE_CUA_SESSION }))} --socket ${REMOTE_CUA_SOCKET} --screenshot-out-file "$raw" >/dev/null 2>&1 && command -v convert >/dev/null 2>&1 && convert "$raw" -quality ${JPEG_QUALITY} "$f" 2>/dev/null; then echo "CAPTURE CUA"; else scrot -o -q ${JPEG_QUALITY} "$f" 2>/dev/null || import -window root -quality ${JPEG_QUALITY} "$f" 2>/dev/null || ffmpeg -y -f x11grab -i "$DISPLAY" -frames:v 1 -q:v 6 "$f" >/dev/null 2>&1; echo "CAPTURE X11"; fi`,
         // only re-encode when the display is bigger than the model's space —
         // ImageMagick startup is the most expensive step in the old pipeline
         downscale,
@@ -227,6 +276,8 @@ async function fetchFrame(expectedBytes) {
 }
 let inlineWorks = true; // flipped off for the proxy's life on first garbage
 let lastDisplayGeometry = null;
+let semanticBrowserUrl = null;
+let semanticBrowserRefs = new Set();
 function geometryFrom(stdout) {
     const match = stdout.match(/^GEOM\s+(\d+)\s+(\d+)$/m);
     if (!match)
@@ -234,6 +285,24 @@ function geometryFrom(stdout) {
     const width = Number(match[1]);
     const height = Number(match[2]);
     return width > 0 && height > 0 ? { width, height } : null;
+}
+function automationSummary(stdout) {
+    if (/^BACKEND CUA$/m.test(stdout)) {
+        const encoded = stdout.match(/^CUA_RESULT\s+([^\s]+)$/m)?.[1];
+        if (!encoded)
+            return `Cua Driver ${REMOTE_CUA_VERSION}`;
+        try {
+            const result = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+            const details = [result.effect, result.route, result.escalation]
+                .filter((value) => typeof value === "string" && Boolean(value))
+                .slice(0, 3);
+            return [`Cua Driver ${REMOTE_CUA_VERSION}`, ...details].join(" · ");
+        }
+        catch {
+            return `Cua Driver ${REMOTE_CUA_VERSION}`;
+        }
+    }
+    return /^BACKEND X11$/m.test(stdout) ? "X11 fallback" : "automation backend unavailable";
 }
 async function observationBounds() {
     let geometry = lastDisplayGeometry;
@@ -352,6 +421,29 @@ const TOOLS = [
         inputSchema: { type: "object", properties: {} },
     },
     {
+        name: "browser_snapshot",
+        description: "Read Chrome's semantic accessibility tree and return fresh element refs. Prefer this over screenshots for links, buttons, and form fields.",
+        inputSchema: { type: "object", properties: {} },
+    },
+    {
+        name: "browser_click",
+        description: "Click one element ref from the most recent browser_snapshot and return the resulting screen.",
+        inputSchema: {
+            type: "object",
+            properties: { ref: { type: "string" }, ...OBSERVE_PROPS },
+            required: ["ref"],
+        },
+    },
+    {
+        name: "browser_fill",
+        description: "Replace the text in one field ref from the most recent browser_snapshot and return the resulting screen.",
+        inputSchema: {
+            type: "object",
+            properties: { ref: { type: "string" }, text: { type: "string" }, ...OBSERVE_PROPS },
+            required: ["ref", "text"],
+        },
+    },
+    {
         name: "wait_for_navigation",
         description: "Verify that Chrome reached one exact http(s) URL, including its query and fragment, with at most three bounded checks.",
         inputSchema: {
@@ -363,6 +455,11 @@ const TOOLS = [
     {
         name: "observation_metrics",
         description: "Return this turn's observation, action, retry, and verification counters.",
+        inputSchema: { type: "object", properties: {} },
+    },
+    {
+        name: "computer_status",
+        description: "Report whether the cloud computer is using Cua Driver or the degraded X11 fallback.",
         inputSchema: { type: "object", properties: {} },
     },
     {
@@ -480,24 +577,37 @@ function actionShell(a) {
             return { error: "click needs numeric x,y" };
         const btn = a.button === "right" ? 3 : 1;
         const rep = a.double ? "--repeat 2 --delay 60 " : "";
-        return `${scaled("CX", x)}; ${scaled("CY", y)}; xdotool mousemove $CX $CY click ${rep}${btn}`;
+        const button = a.button === "right" ? "right" : "left";
+        const count = a.double ? 2 : 1;
+        const fallback = `xdotool mousemove $CX $CY click ${rep}${btn}`;
+        const args = `$(printf '{"x":%s,"y":%s,"button":"${button}","count":${count},"scope":"desktop","session":"${REMOTE_CUA_SESSION}"}' "$CX" "$CY")`;
+        return `${scaled("CX", x)}; ${scaled("CY", y)}; CUA_ARGS=${args}; ${cuaOrX11("click", '"$CUA_ARGS"', fallback)}`;
     }
     if (kind === "type_text") {
         const t = String(a.text ?? "");
         if (!t)
             return { error: "type_text needs text" };
-        return `xdotool type --delay 8 ${shellQuote(t)}`;
+        const cuaArgs = shellQuote(JSON.stringify({ text: t, scope: "desktop", session: REMOTE_CUA_SESSION }));
+        return cuaOrX11("type_text", cuaArgs, `xdotool type --clearmodifiers --delay 8 -- ${shellQuote(t)}`);
     }
     if (kind === "press_key") {
         const keys = String(a.keys ?? "").replace(/[^\w+]/g, "");
         if (!keys)
             return { error: "press_key needs keys" };
-        return `xdotool key ${keys}`;
+        const parts = keys.split("+").filter(Boolean);
+        const tool = parts.length > 1 ? "hotkey" : "press_key";
+        const cuaArgs = shellQuote(JSON.stringify(parts.length > 1
+            ? { keys: parts, scope: "desktop", session: REMOTE_CUA_SESSION }
+            : { key: parts[0]?.toLowerCase(), scope: "desktop", session: REMOTE_CUA_SESSION }));
+        return cuaOrX11(tool, cuaArgs, `xdotool key ${keys}`);
     }
     if (kind === "scroll") {
         const clicks = Math.min(Math.max(Math.round(Number(a.clicks) || 3), 1), 20);
         const btn = a.direction === "up" ? 4 : 5;
-        return `xdotool click --repeat ${clicks} ${btn}`;
+        const direction = a.direction === "up" ? "up" : "down";
+        const fallback = `xdotool click --repeat ${clicks} ${btn}`;
+        const args = `$(printf '{"x":%s,"y":%s,"direction":"${direction}","amount":${clicks},"by":"line","scope":"desktop","session":"${REMOTE_CUA_SESSION}"}' "$((W / 2))" "$((H / 2))")`;
+        return `CUA_ARGS=${args}; ${cuaOrX11("scroll", '"$CUA_ARGS"', fallback)}`;
     }
     if (kind === "wait") {
         const ms = Math.min(Math.max(Number(a.ms) || 500, 0), 5000);
@@ -527,16 +637,60 @@ async function actAndObserve(id, actions, note, args, timeoutMs = 60_000) {
     // ended up in. Joining with ";" alone made a failed action look
     // identical to one that did nothing.
     const guarded = `if { ${parts.join("; ")}; }; then ACT=ok; else ACT=failed; fi`;
-    const command = [ENV, GEOMETRY, guarded, observe ? captureBlock(settleOf(args)) : "true", 'echo "ACT $ACT"'].join("; ");
+    const command = [
+        ENV,
+        GEOMETRY,
+        ensureRemoteCuaCommand(),
+        guarded,
+        observe ? captureBlock(settleOf(args)) : "true",
+        'echo "ACT $ACT"',
+    ].join("; ");
     const out = await runOnBox(command, timeoutMs);
     const acted = /^ACT ok$/m.test(out.stdout);
     if (!acted && !out.stdout.includes("GEOM")) {
         return text(id, `${note.replace(/^./, (c) => c.toLowerCase())} failed: ${out.stderr.slice(0, 200) || `exit ${out.exitCode}`}`, true);
     }
-    const full = acted ? note : `${note}\n(the action reported an error: ${out.stderr.slice(0, 160) || "no detail"})`;
+    const backend = automationSummary(out.stdout);
+    const full = acted
+        ? `${note}\n(${backend})`
+        : `${note}\n(the action reported an error: ${out.stderr.slice(0, 160) || "no detail"}; ${backend})`;
     if (!observe)
         return text(id, full, !acted);
     return observed(id, full, await frameFrom(out));
+}
+async function semanticActAndObserve(id, action, ref, value, args) {
+    if (!semanticBrowserUrl || !semanticBrowserRefs.has(ref)) {
+        return text(id, "that browser ref is stale or unknown — take a new browser_snapshot", true);
+    }
+    const observe = wantsFrame(args);
+    const semantic = semanticBrowserCommand(action, {
+        ref,
+        ...(action === "fill" ? { text: value ?? "" } : {}),
+        url: semanticBrowserUrl,
+    });
+    const guarded = `if ${semantic}; then SEM=ok; else SEM=failed; fi`;
+    const command = [
+        ENV,
+        GEOMETRY,
+        guarded,
+        ensureRemoteCuaCommand(),
+        observe ? captureBlock(settleOf(args)) : "true",
+        'echo "SEM $SEM"',
+    ].join("; ");
+    observations.noteAction();
+    const out = await runOnBox(command, action === "fill" ? 120_000 : 60_000);
+    const acted = /^SEM ok$/m.test(out.stdout);
+    // DOM mutations can invalidate backend node IDs; force a fresh snapshot
+    // after every semantic action instead of risking a click on an old target.
+    semanticBrowserRefs.clear();
+    const note = acted
+        ? action === "fill"
+            ? `filled ${ref} with ${value?.length ?? 0} chars (trusted Chrome DevTools input)`
+            : `clicked ${ref} (trusted Chrome DevTools input)`
+        : `${action} ${ref} failed: ${out.stderr.slice(0, 200) || "the page changed; take a new browser_snapshot"}`;
+    if (!observe)
+        return text(id, note, !acted);
+    return observed(id, note, await frameFrom(out));
 }
 async function call(id, name, args) {
     if (name === "screenshot") {
@@ -550,7 +704,7 @@ async function call(id, name, args) {
                 return text(id, `region must be at least 32×32 and stay within the ${bounds.width}×${bounds.height} screenshot`, true);
             }
         }
-        const out = await runOnBox([ENV, GEOMETRY, captureBlock(0, crop)].join("; "), 60_000);
+        const out = await runOnBox([ENV, GEOMETRY, ensureRemoteCuaCommand(), captureBlock(0, crop)].join("; "), 60_000);
         if (/CROP_FAILED/.test(out.stdout)) {
             return text(id, `crop failed: ${out.stderr.slice(0, 200) || "ImageMagick could not create the requested region"}`, true);
         }
@@ -566,6 +720,38 @@ async function call(id, name, args) {
             ? `Structured browser state:\n${targets.map((target) => `- ${target.title || "Untitled"}: ${target.url}`).join("\n")}`
             : "Structured browser state unavailable. Use screenshot only if visual state is necessary.");
     }
+    if (name === "browser_snapshot") {
+        const out = await runOnBox(semanticBrowserCommand("snapshot", {}), 20_000);
+        if (!out.ok) {
+            semanticBrowserUrl = null;
+            semanticBrowserRefs.clear();
+            return text(id, "Semantic browser state is unavailable. Open Chrome with open_url, or use screenshot.", true);
+        }
+        try {
+            const snapshot = JSON.parse(out.stdout);
+            if (!Array.isArray(snapshot.elements) || typeof snapshot.url !== "string")
+                throw new Error("invalid snapshot");
+            semanticBrowserUrl = snapshot.url;
+            semanticBrowserRefs = new Set(snapshot.elements.map((element) => element.ref));
+            observations.noteStructuredObservation();
+            const publicUrl = safeBrowserUrl(snapshot.url) ?? "URL unavailable";
+            const lines = snapshot.elements.map((element) => `- [${element.ref}] ${element.role}${element.disabled ? " disabled" : ""}: ${element.name.replace(/\s+/g, " ").slice(0, 180)}`);
+            return text(id, `Semantic browser snapshot — ${snapshot.title || "Untitled"}: ${publicUrl}\n${lines.join("\n") || "No interactive elements found."}`);
+        }
+        catch {
+            semanticBrowserUrl = null;
+            semanticBrowserRefs.clear();
+            return text(id, "Chrome returned an invalid semantic snapshot; use screenshot.", true);
+        }
+    }
+    if (name === "browser_click") {
+        const ref = String(args.ref ?? "");
+        return semanticActAndObserve(id, "click", ref, undefined, args);
+    }
+    if (name === "browser_fill") {
+        const ref = String(args.ref ?? "");
+        return semanticActAndObserve(id, "fill", ref, String(args.text ?? ""), args);
+    }
     if (name === "wait_for_navigation") {
         const url = String(args.url ?? "");
         const publicUrl = safeBrowserUrl(url);
@@ -580,6 +766,22 @@ async function call(id, name, args) {
     }
     if (name === "observation_metrics")
         return text(id, metricsText());
+    if (name === "computer_status") {
+        const command = [
+            ENV,
+            ensureRemoteCuaCommand(),
+            `if [ -x ${REMOTE_CUA_EXECUTABLE} ] && ${REMOTE_CUA_EXECUTABLE} status --socket ${REMOTE_CUA_SOCKET} >/dev/null 2>&1; then`,
+            `  echo "CUA $(${REMOTE_CUA_EXECUTABLE} --version)"`,
+            `  env ${CUA_ENV} ${REMOTE_CUA_EXECUTABLE} call health_report '{}' --socket ${REMOTE_CUA_SOCKET} 2>/dev/null || true`,
+            "else echo 'X11 fallback'; fi",
+        ].join("\n");
+        const out = await runOnBox(command, 20_000);
+        if (!/^CUA /m.test(out.stdout)) {
+            return text(id, "Cloud computer automation: X11 fallback (Cua Driver is still installing or needs repair).", true);
+        }
+        const overall = out.stdout.match(/"overall"\s*:\s*"(ok|degraded|failed)"/)?.[1] ?? "unknown";
+        return text(id, `Cloud computer automation: Cua Driver ${REMOTE_CUA_VERSION} (${overall}).`);
+    }
     if (name === "click") {
         const x = Math.round(Number(args.x));
         const y = Math.round(Number(args.y));
@@ -629,7 +831,7 @@ async function call(id, name, args) {
         const note = `exit ${out.exitCode}\n${out.stdout.slice(-6000)}${out.stderr ? `\n[stderr]\n${out.stderr.slice(-2000)}` : ""}`;
         if (args.observe !== true)
             return text(id, note);
-        const shot = await runOnBox([ENV, GEOMETRY, captureBlock()].join("; "), 60_000);
+        const shot = await runOnBox([ENV, GEOMETRY, ensureRemoteCuaCommand(), captureBlock()].join("; "), 60_000);
         return observed(id, note, await frameFrom(shot));
     }
     if (name === "open_url") {
@@ -648,6 +850,7 @@ async function call(id, name, args) {
             CHROME_PROFILE_SETUP,
             `(google-chrome ${CHROME_DEBUG_FLAGS} ${q} || chromium ${CHROME_DEBUG_FLAGS} ${q} || chromium-browser ${CHROME_DEBUG_FLAGS} ${q} || xdg-open ${q}) >/dev/null 2>&1 &`,
             'for i in 1 2 3 4 5 6 7 8 9 10 11 12; do xdotool search --onlyvisible --class "chrom" >/dev/null 2>&1 && break; sleep 0.25; done',
+            ensureRemoteCuaCommand(),
             observe ? captureBlock(600) : "true",
         ].join("; ");
         observations.noteAction();
@@ -682,7 +885,11 @@ async function handle(msg) {
             return await call(msg.id, msg.params?.name, msg.params?.arguments ?? {});
         }
         catch (e) {
-            return text(msg.id, `computer tool failed: ${e.message}`, true);
+            const error = e instanceof Error ? e : new Error(String(e));
+            const timedOut = error.name === "TimeoutError" || /timed?\s*out|timeout/i.test(error.message);
+            return text(msg.id, timedOut
+                ? "computer tool timed out. The action may or may not have completed; take a screenshot to inspect the current state before retrying it."
+                : `computer tool failed: ${error.message}`, true);
         }
     }
     if (String(msg.method ?? "").startsWith("notifications/"))

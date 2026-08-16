@@ -26,7 +26,7 @@ export type CommandRunner = (
   timeout?: number,
 ) => Promise<{ stdout: string }>;
 
-export const CUA_DRIVER_VERSION = "0.19.3";
+export const CUA_DRIVER_VERSION = "0.20.0";
 export const BASE_IMAGE_REPOSITORY = "docker.io/trycua/xfce-cua";
 // Official multi-architecture Cua XFCE 0.1.0 manifest (amd64 + arm64).
 export const BASE_IMAGE_DIGEST = "sha256:274eb636f5cf3fc58f705916ee72b7a701270b3877369d08533a385c5325be9b";
@@ -34,7 +34,7 @@ export const BASE_IMAGE = `${BASE_IMAGE_REPOSITORY}@${BASE_IMAGE_DIGEST}`;
 // This tag is built locally from the pinned Cua base. Image and container
 // labels below are the authoritative compatibility check, not the mutable tag.
 export const IMAGE_REPOSITORY = "openmausbot/cua-local-vm";
-export const IMAGE_LAYER_VERSION = "2";
+export const IMAGE_LAYER_VERSION = "3";
 export const IMAGE_LAYER_LABEL = "com.openmausbot.image-layer";
 export const IMAGE = `${IMAGE_REPOSITORY}:driver-${CUA_DRIVER_VERSION}-v${IMAGE_LAYER_VERSION}`;
 export const CONTAINER = "openmausbot-computer";
@@ -60,12 +60,12 @@ const PIDS_LIMIT = 512;
 
 const LINUX_WHEELS = {
   x86_64: {
-    url: "https://files.pythonhosted.org/packages/88/26/1b372765b192a2f4f7ee7e1474d1e39be9ab3bd637765f632e30e7ee6e18/cua_driver-0.19.3-py3-none-manylinux_2_31_x86_64.whl",
-    sha256: "3f327a444f5b666037dee5e7c15c98990abbfb4fe83669ef708cb34c2cafef14",
+    url: "https://files.pythonhosted.org/packages/fa/d7/a43008a328a40c85e7bc706fc20235b9abedc75e28b413817655153157ff/cua_driver-0.20.0-py3-none-manylinux_2_31_x86_64.whl",
+    sha256: "f60c35696a37f37ac954935e478ae4754f220856d022036625c9400d72185961",
   },
   aarch64: {
-    url: "https://files.pythonhosted.org/packages/8f/ca/9b1b9e2fba756b5a6db710db4789d63682d6bdf8dc92280c10bdffeb9e77/cua_driver-0.19.3-py3-none-manylinux_2_31_aarch64.whl",
-    sha256: "99cdaaaaf78def68236558b645c799034ac0b6fe5bb37abdf5fc7abc3afeff67",
+    url: "https://files.pythonhosted.org/packages/94/9d/1c1838b69067e83266c3d2aae02d74eef353a43dc8644884ccf03fe7f933/cua_driver-0.20.0-py3-none-manylinux_2_31_aarch64.whl",
+    sha256: "48833bc5e4c60e701fc9eefb57dbac36ec77ef3990f816fbbe85b4e954af2c77",
   },
 } as const;
 
@@ -122,7 +122,7 @@ RUN printf '%s\\n' \\
       '  if [ "$attempt" -ge 45 ]; then echo "X display :1 did not become ready within 45 seconds" >&2; exit 1; fi' \\
       '  sleep 1' \\
       'done' \\
-      'exec env CUA_DRIVER_INSTALL_CHANNEL=python_package ${CUA_EXECUTABLE} serve --socket ${CUA_SOCKET} --permission-mode standard' \\
+      'exec env CUA_DRIVER_INSTALL_CHANNEL=python_package CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${CUA_EXECUTABLE} serve --socket ${CUA_SOCKET} --permission-mode standard' \\
       > /usr/local/bin/start-openmausbot-cua-driver.sh \\
     && chmod 0755 /usr/local/bin/start-openmausbot-cua-driver.sh
 RUN printf '%s\\n' \\
@@ -231,7 +231,7 @@ function statusProblem(status: ContainerComputerStatus): string | null {
   if (status.network === "unsafe") return "The existing Local VM exposes its viewer publicly; recreate it";
   if (status.security === "unsafe") return "The existing Local VM is missing safety limits; recreate it";
   if (status.persistence === "unsafe") return "The existing Local VM is missing its durable workspace; recreate it";
-  if (status.container === "stopped") return "Start the Local VM";
+  if (status.container === "stopped") return "This desktop image cannot safely resume; recreate the Local VM";
   if (status.desktop_error) return `The Local VM desktop failed to start: ${status.desktop_error}`;
   if (!status.desktopReady) return "The Local VM started, but Cua Driver is not ready yet";
   return null;
@@ -299,6 +299,8 @@ function cuaExecArgs(args: string[], interactive = false): string[] {
     `DISPLAY=${DISPLAY}`,
     "-e",
     "CUA_DRIVER_INSTALL_CHANNEL=python_package",
+    "-e",
+    "CUA_DRIVER_RS_TELEMETRY_ENABLED=0",
     CONTAINER,
     CUA_EXECUTABLE,
     ...args,
@@ -434,18 +436,56 @@ export async function containerComputerStatus(
       const version = await runner(status.runtime, cuaExecArgs(["--version"]), 8000);
       if (version.stdout.trim() !== expected) throw new Error(`expected ${expected}`);
       await runner(status.runtime, cuaExecArgs(["status", "--socket", CUA_SOCKET]), 8000);
+      const health = await runner(
+        status.runtime,
+        cuaExecArgs(["call", "health_report", "{}", "--socket", CUA_SOCKET]),
+        15_000,
+      );
+      const report = JSON.parse(health.stdout) as { schema_version?: string; overall?: string; checks?: unknown[] };
+      if (
+        report.schema_version !== "1" ||
+        !Array.isArray(report.checks) ||
+        (report.overall !== "ok" && report.overall !== "degraded")
+      ) {
+        throw new Error(`Cua health report is ${report.overall ?? "invalid"}`);
+      }
+      const readinessShot = "/tmp/openmausbot-readiness.png";
+      await runner(
+        status.runtime,
+        cuaExecArgs([
+          "call",
+          "get_desktop_state",
+          "{}",
+          "--socket",
+          CUA_SOCKET,
+          "--screenshot-out-file",
+          readinessShot,
+        ]),
+        20_000,
+      );
+      const captured = await runner(
+        status.runtime,
+        ["exec", CONTAINER, "base64", "-w0", readinessShot],
+        20_000,
+      );
+      if (!wholeScreenshot(Buffer.from(captured.stdout.trim(), "base64")).ok) {
+        throw new Error("Cua Driver returned an incomplete readiness screenshot");
+      }
       status.desktopReady = true;
-    } catch {
+    } catch (error) {
       // An empty log means XFCE and the supervisor-owned Cua daemon are
       // probably still starting. A real startup failure should be actionable
       // in the panel instead of looking like an endless readiness wait.
+      status.desktop_error = error instanceof Error ? error.message.slice(0, 320) : null;
       try {
         const errorLog = await runner(
           status.runtime,
           ["exec", CONTAINER, "tail", "-n", "4", "/var/log/supervisor/cua-driver.error.log"],
           4000,
         );
-        status.desktop_error = errorLog.stdout.replace(/\s+/g, " ").trim().slice(0, 320) || null;
+        status.desktop_error =
+          errorLog.stdout.replace(/\s+/g, " ").trim().slice(0, 320) ||
+          status.desktop_error;
       } catch {
         // The log may not exist during the first seconds of container boot.
       }
@@ -641,17 +681,8 @@ export async function containerComputerAction(
   if (action === "run" && !before.image) {
     throw Object.assign(new Error("Prepare the Cua desktop image before creating the Local VM"), { status: 409 });
   }
-  if (action === "start" && before.container !== "stopped") {
-    throw Object.assign(
-      new Error(before.container === "running" ? "The Local VM is already running" : "Create the Local VM first"),
-      { status: 409 },
-    );
-  }
-  if (
-    action === "start" &&
-    (!before.imageMatches || !before.managed || before.network !== "loopback" || before.security !== "hardened")
-  ) {
-    throw Object.assign(new Error("The existing Local VM is incompatible or unsafe; remove and recreate it"), {
+  if (action === "start") {
+    throw Object.assign(new Error("This desktop image cannot safely resume; remove and recreate the Local VM"), {
       status: 409,
     });
   }
@@ -796,10 +827,10 @@ export function setupCommands(
     install,
     runtimeStart,
     // This is the inspectable base download. The normal Prepare button also
-    // builds the checksum-pinned 0.19.3 derivative automatically.
+    // builds the checksum-pinned 0.20.0 derivative automatically.
     pull: command(["pull", BASE_IMAGE]),
     run: command(containerRunArgs(runtime)),
-    start: command(["start", CONTAINER]),
+    start: null,
     stop: command(["stop", CONTAINER]),
     remove: command(["rm", runtime === "container" ? "--force" : "-f", CONTAINER]),
     view: `http://127.0.0.1:${HOST_VIEWER_PORT}/vnc.html`,

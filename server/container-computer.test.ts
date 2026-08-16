@@ -40,12 +40,21 @@ function runner(responses: Record<string, string | Error>) {
   return { calls, run };
 }
 
-const versionProbe =
-  `docker exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ${CONTAINER} ` +
-  `${CUA_EXECUTABLE} --version`;
-const statusProbe =
-  `docker exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ${CONTAINER} ` +
-  `${CUA_EXECUTABLE} status --socket ${CUA_SOCKET}`;
+const driverExec =
+  `docker exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ` +
+  `-e CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${CONTAINER} ${CUA_EXECUTABLE}`;
+const versionProbe = `${driverExec} --version`;
+const statusProbe = `${driverExec} status --socket ${CUA_SOCKET}`;
+const healthProbe = `${driverExec} call health_report {} --socket ${CUA_SOCKET}`;
+const readinessProbe =
+  `${driverExec} call get_desktop_state {} --socket ${CUA_SOCKET} ` +
+  "--screenshot-out-file /tmp/openmausbot-readiness.png";
+const readinessRead = `docker exec ${CONTAINER} base64 -w0 /tmp/openmausbot-readiness.png`;
+const validPng = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.alloc(600),
+  Buffer.from("IEND", "ascii"),
+]);
 
 function preparedImageInspect() {
   return JSON.stringify([
@@ -230,6 +239,9 @@ describe("containerComputerStatus", () => {
       [`docker inspect ${CONTAINER}`]: readyInspect(),
       [versionProbe]: `cua-driver ${CUA_DRIVER_VERSION}\n`,
       [statusProbe]: "running\n",
+      [healthProbe]: JSON.stringify({ schema_version: "1", overall: "ok", checks: [] }),
+      [readinessProbe]: "{}\n",
+      [readinessRead]: validPng.toString("base64"),
     });
 
     const status = await containerComputerStatus(fake.run, "linux");
@@ -244,7 +256,7 @@ describe("containerComputerStatus", () => {
       desktop_error: null,
       ready: true,
       problem: null,
-      driver_version: "0.19.3",
+      driver_version: "0.20.0",
     });
     expect(status.viewer_url).toContain("#autoconnect=true&resize=scale&password=secret123");
   });
@@ -267,6 +279,27 @@ describe("containerComputerStatus", () => {
     expect(status.desktopReady).toBe(false);
     expect(status.desktop_error).toContain("did not become ready");
     expect(status.problem).toContain("desktop failed to start");
+  });
+
+  it("does not report ready when the driver's health contract fails", async () => {
+    const errorProbe = `docker exec ${CONTAINER} tail -n 4 /var/log/supervisor/cua-driver.error.log`;
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${CONTAINER}`]: readyInspect(),
+      [versionProbe]: `cua-driver ${CUA_DRIVER_VERSION}\n`,
+      [statusProbe]: "running\n",
+      [healthProbe]: JSON.stringify({ schema_version: "1", overall: "failed", checks: [] }),
+      [errorProbe]: "",
+    });
+
+    const status = await containerComputerStatus(fake.run, "linux");
+
+    expect(status.desktopReady).toBe(false);
+    expect(status.desktop_error).toContain("health report is failed");
+    expect(fake.calls).not.toContain(readinessProbe);
   });
 
   it("rejects a lookalike container with a different driver or base-image label", async () => {
@@ -325,7 +358,7 @@ describe("containerComputerStatus", () => {
 });
 
 describe("Cua integration", () => {
-  it("hands cloud credentials only to the legacy cloud adapter", () => {
+  it("hands cloud credentials only to the isolated remote adapter", () => {
     expect(computerProxyEnv({ boxId: "bx_1", token: "t" })).toEqual({
       OGB_BOX_ID: "bx_1",
       OGB_BOX_TOKEN: "t",
@@ -341,17 +374,18 @@ describe("Cua integration", () => {
     expect(connection.env).toEqual({ ELECTRON_RUN_AS_NODE: "1" });
   });
 
-  it("builds an exact, checksum-verified Cua Driver 0.19.3 image", () => {
+  it("builds an exact, checksum-verified Cua Driver 0.20.0 image", () => {
     const dockerfile = managedImageDockerfile();
     expect(BASE_IMAGE).toMatch(/@sha256:[a-f0-9]{64}$/);
     expect(dockerfile).toContain(`FROM ${BASE_IMAGE}`);
-    expect(dockerfile).toContain("cua_driver-0.19.3-py3-none-manylinux_2_31_x86_64.whl");
-    expect(dockerfile).toContain("cua_driver-0.19.3-py3-none-manylinux_2_31_aarch64.whl");
+    expect(dockerfile).toContain("cua_driver-0.20.0-py3-none-manylinux_2_31_x86_64.whl");
+    expect(dockerfile).toContain("cua_driver-0.20.0-py3-none-manylinux_2_31_aarch64.whl");
     expect(dockerfile).not.toContain("/tmp/cua-driver.whl");
     expect(dockerfile).toContain("sha256sum -c -");
     expect(dockerfile).toContain(`install -D -m 0755 \"$driver_bin\" ${CUA_EXECUTABLE}`);
     expect(dockerfile).toContain(`cua-driver ${CUA_DRIVER_VERSION}`);
     expect(dockerfile).toContain(`serve --socket ${CUA_SOCKET} --permission-mode standard`);
+    expect(dockerfile).toContain("CUA_DRIVER_RS_TELEMETRY_ENABLED=0");
     expect(dockerfile).toContain("prepare-openmausbot-workspace.sh");
     expect(dockerfile).toContain("migrate_profile google-chrome");
     expect(dockerfile).toContain("migrate_profile chromium");
@@ -363,14 +397,9 @@ describe("Cua integration", () => {
 
   it("captures the preview through Cua Driver rather than xdotool or VNC", async () => {
     const screenshotCall =
-      `docker exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ${CONTAINER} ` +
-      `${CUA_EXECUTABLE} call get_desktop_state {} --socket ${CUA_SOCKET} ` +
+      `${driverExec} call get_desktop_state {} --socket ${CUA_SOCKET} ` +
       "--screenshot-out-file /tmp/openmausbot-preview.png";
-    const png = Buffer.concat([
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      Buffer.alloc(600),
-      Buffer.from("IEND", "ascii"),
-    ]);
+    const png = validPng;
     const fake = runner({
       "/usr/bin/which docker": "docker\n",
       "/usr/bin/which podman": new Error("missing"),
@@ -379,6 +408,9 @@ describe("Cua integration", () => {
       [`docker inspect ${CONTAINER}`]: readyInspect(),
       [versionProbe]: `cua-driver ${CUA_DRIVER_VERSION}\n`,
       [statusProbe]: "running\n",
+      [healthProbe]: JSON.stringify({ schema_version: "1", overall: "degraded", checks: [] }),
+      [readinessProbe]: "{}\n",
+      [readinessRead]: png.toString("base64"),
       [screenshotCall]: "{}\n",
       [`docker exec ${CONTAINER} base64 -w0 /tmp/openmausbot-preview.png`]: png.toString("base64"),
     });
@@ -407,22 +439,16 @@ describe("containerComputerAction", () => {
     expect(fake.calls.some((call) => call.startsWith("docker run "))).toBe(false);
   });
 
-  it("never starts an older stopped VM that must be recreated", async () => {
+  it("never starts a stopped desktop because its stale X lock makes resume unsafe", async () => {
     const fake = runner({
       "/usr/bin/which docker": "docker\n",
       "/usr/bin/which podman": new Error("missing"),
       "docker info --format {{.ServerVersion}}": "29\n",
       [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
-      [`docker inspect ${CONTAINER}`]: JSON.stringify([
-        {
-          Config: { Image: "old-desktop:latest", Labels: {} },
-          State: { Running: false },
-          HostConfig: { PortBindings: { "6080/tcp": [{ HostIp: "127.0.0.1" }] } },
-        },
-      ]),
+      [`docker inspect ${CONTAINER}`]: readyInspect({ State: { Running: false } }),
     });
 
-    await expect(containerComputerAction("start", fake.run, "linux")).rejects.toThrow("remove and recreate");
+    await expect(containerComputerAction("start", fake.run, "linux")).rejects.toThrow("cannot safely resume");
     expect(fake.calls).not.toContain(`docker start ${CONTAINER}`);
   });
 });
@@ -443,6 +469,10 @@ describe("setupCommands", () => {
     expect(command).not.toContain(" -p 6080:6901");
     expect(command).not.toContain("5900");
     expect(command).toContain("VNC_PW=CHANGE_ME");
+  });
+
+  it("does not suggest docker start for an image that must be recreated", () => {
+    expect(setupCommands("docker", "linux").start).toBeNull();
   });
 
   it("limits resources and retains only the sandbox supervisor's identity-switch caps", () => {

@@ -46,7 +46,7 @@
     "package": "pnpm package:mac"
   },
   "dependencies": {
-    "@trycua/cua-driver": "0.19.3",
+    "@trycua/cua-driver": "0.20.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.539.0",
     "posthog-js": "^1.415.6",

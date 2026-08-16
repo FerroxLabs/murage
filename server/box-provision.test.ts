@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-type RequestRecord = { method: string; path: string; headers: IncomingMessage["headers"] };
+type RequestRecord = { method: string; path: string; headers: IncomingMessage["headers"]; body: string };
 
 describe("cloud computer provisioning cleanup", () => {
   let api: Server;
@@ -22,7 +22,7 @@ describe("cloud computer provisioning cleanup", () => {
       let body = "";
       req.on("data", (chunk) => (body += chunk));
       req.on("end", () => {
-        requests.push({ method: req.method ?? "GET", path: url.pathname, headers: req.headers });
+        requests.push({ method: req.method ?? "GET", path: url.pathname, headers: req.headers, body });
         res.setHeader("content-type", "application/json");
 
         if (url.pathname === "/api/box/v1/boxes" && req.method === "GET") {
@@ -71,6 +71,8 @@ describe("cloud computer provisioning cleanup", () => {
     );
 
     const removal = requests.find((request) => request.method === "DELETE");
+    const creation = requests.find((request) => request.method === "POST" && request.path.endsWith("/boxes"));
+    expect(JSON.parse(creation?.body ?? "{}")).toMatchObject({ noEnv: true });
     expect(removal?.path).toBe("/api/box/v1/boxes/new-box");
     expect(removal?.headers["x-ascii-confirm-delete"]).toBe("new-box");
   });

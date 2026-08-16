@@ -23,6 +23,8 @@ const child = spawn(
     "DISPLAY=:1",
     "-e",
     "CUA_DRIVER_INSTALL_CHANNEL=python_package",
+    "-e",
+    "CUA_DRIVER_RS_TELEMETRY_ENABLED=0",
     container,
     "/usr/local/libexec/openmausbot/cua-driver",
     "mcp",

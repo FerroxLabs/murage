@@ -8,14 +8,16 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { augmentedPath } from "./env-path.js";
+import { DATA_DIR } from "./config.js";
 const run = promisify(execFile);
-export const CUA_DRIVER_VERSION = "0.19.3";
+const SCREENSHOT_STATUS_TTL_MS = 10_000;
+export const CUA_DRIVER_VERSION = "0.20.0";
 export const BASE_IMAGE_REPOSITORY = "docker.io/trycua/xfce-cua";
 // Official multi-architecture Cua XFCE 0.1.0 manifest (amd64 + arm64).
 export const BASE_IMAGE_DIGEST = "sha256:274eb636f5cf3fc58f705916ee72b7a701270b3877369d08533a385c5325be9b";
@@ -23,11 +25,16 @@ export const BASE_IMAGE = `${BASE_IMAGE_REPOSITORY}@${BASE_IMAGE_DIGEST}`;
 // This tag is built locally from the pinned Cua base. Image and container
 // labels below are the authoritative compatibility check, not the mutable tag.
 export const IMAGE_REPOSITORY = "openmausbot/cua-local-vm";
-export const IMAGE = `${IMAGE_REPOSITORY}:driver-${CUA_DRIVER_VERSION}`;
+export const IMAGE_LAYER_VERSION = "3";
+export const IMAGE_LAYER_LABEL = "com.openmausbot.image-layer";
+export const IMAGE = `${IMAGE_REPOSITORY}:driver-${CUA_DRIVER_VERSION}-v${IMAGE_LAYER_VERSION}`;
 export const CONTAINER = "openmausbot-computer";
 export const MANAGED_LABEL = "com.openmausbot.local-vm";
 export const DRIVER_LABEL = "com.openmausbot.cua-driver";
 export const BASE_IMAGE_LABEL = "com.openmausbot.cua-base";
+export const WORKSPACE_LABEL = "com.openmausbot.workspace";
+export const VM_WORKSPACE_DIR = join(DATA_DIR, "vm-home");
+export const VM_WORKSPACE_GUEST = "/home/cua/workspace";
 export const DISPLAY = ":1";
 export const CUA_SOCKET = "/run/user/1000/openmausbot-cua.sock";
 export const CUA_EXECUTABLE = "/usr/local/libexec/openmausbot/cua-driver";
@@ -39,12 +46,12 @@ const NANO_CPUS = 2_000_000_000;
 const PIDS_LIMIT = 512;
 const LINUX_WHEELS = {
     x86_64: {
-        url: "https://files.pythonhosted.org/packages/88/26/1b372765b192a2f4f7ee7e1474d1e39be9ab3bd637765f632e30e7ee6e18/cua_driver-0.19.3-py3-none-manylinux_2_31_x86_64.whl",
-        sha256: "3f327a444f5b666037dee5e7c15c98990abbfb4fe83669ef708cb34c2cafef14",
+        url: "https://files.pythonhosted.org/packages/fa/d7/a43008a328a40c85e7bc706fc20235b9abedc75e28b413817655153157ff/cua_driver-0.20.0-py3-none-manylinux_2_31_x86_64.whl",
+        sha256: "f60c35696a37f37ac954935e478ae4754f220856d022036625c9400d72185961",
     },
     aarch64: {
-        url: "https://files.pythonhosted.org/packages/8f/ca/9b1b9e2fba756b5a6db710db4789d63682d6bdf8dc92280c10bdffeb9e77/cua_driver-0.19.3-py3-none-manylinux_2_31_aarch64.whl",
-        sha256: "99cdaaaaf78def68236558b645c799034ac0b6fe5bb37abdf5fc7abc3afeff67",
+        url: "https://files.pythonhosted.org/packages/94/9d/1c1838b69067e83266c3d2aae02d74eef353a43dc8644884ccf03fe7f933/cua_driver-0.20.0-py3-none-manylinux_2_31_aarch64.whl",
+        sha256: "48833bc5e4c60e701fc9eefb57dbac36ec77ef3990f816fbbe85b4e954af2c77",
     },
 };
 /** Reproducible, multi-architecture derivative of Cua's sandbox desktop.
@@ -67,11 +74,40 @@ RUN set -eux; \\
     driver_bin="$(find /opt/venv/lib -path '*/cua_driver/bin/cua-driver' -type f -print -quit)"; \\
     test -n "$driver_bin"; \\
     install -D -m 0755 "$driver_bin" ${CUA_EXECUTABLE}; \\
+    install -d -o cua -g cua -m 0700 ${VM_WORKSPACE_GUEST}; \\
     test "$(${CUA_EXECUTABLE} --version)" = "cua-driver ${CUA_DRIVER_VERSION}"
 RUN printf '%s\\n' \\
       '#!/bin/sh' \\
-      'while ! DISPLAY=:1 xset q >/dev/null 2>&1; do sleep 1; done' \\
-      'exec env CUA_DRIVER_INSTALL_CHANNEL=python_package ${CUA_EXECUTABLE} serve --socket ${CUA_SOCKET} --permission-mode standard' \\
+      'set -eu' \\
+      'workspace=${VM_WORKSPACE_GUEST}' \\
+      'profiles="$workspace/.browser-profiles"' \\
+      'mkdir -p "$profiles/google-chrome" "$profiles/chromium" "$HOME/.config"' \\
+      'chmod 0700 "$workspace" "$profiles" "$profiles/google-chrome" "$profiles/chromium"' \\
+      'migrate_profile() {' \\
+      '  name="$1"' \\
+      '  source="$HOME/.config/$name"' \\
+      '  target="$profiles/$name"' \\
+      '  if [ -d "$source" ] && [ ! -L "$source" ] && [ -z "$(find "$target" -mindepth 1 -print -quit)" ]; then' \\
+      '    cp -a "$source"/. "$target"/' \\
+      '  fi' \\
+      '  rm -rf "$source"' \\
+      '  ln -s "$target" "$source"' \\
+      '}' \\
+      'migrate_profile google-chrome' \\
+      'migrate_profile chromium' \\
+      'find "$profiles" \\( -name SingletonLock -o -name SingletonSocket -o -name SingletonCookie -o -name .parentlock \\) -delete' \\
+      > /usr/local/bin/prepare-openmausbot-workspace.sh \\
+    && chmod 0755 /usr/local/bin/prepare-openmausbot-workspace.sh
+RUN printf '%s\\n' \\
+      '#!/bin/sh' \\
+      '/usr/local/bin/prepare-openmausbot-workspace.sh' \\
+      'attempt=0' \\
+      'until DISPLAY=:1 xset q >/dev/null 2>&1; do' \\
+      '  attempt=$((attempt + 1))' \\
+      '  if [ "$attempt" -ge 45 ]; then echo "X display :1 did not become ready within 45 seconds" >&2; exit 1; fi' \\
+      '  sleep 1' \\
+      'done' \\
+      'exec env CUA_DRIVER_INSTALL_CHANNEL=python_package CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${CUA_EXECUTABLE} serve --socket ${CUA_SOCKET} --permission-mode standard' \\
       > /usr/local/bin/start-openmausbot-cua-driver.sh \\
     && chmod 0755 /usr/local/bin/start-openmausbot-cua-driver.sh
 RUN printf '%s\\n' \\
@@ -88,7 +124,8 @@ RUN printf '%s\\n' \\
       >> /etc/supervisor/supervisord.conf
 LABEL ${MANAGED_LABEL}="1" \\
       ${DRIVER_LABEL}="${CUA_DRIVER_VERSION}" \\
-      ${BASE_IMAGE_LABEL}="${BASE_IMAGE_DIGEST}"
+      ${BASE_IMAGE_LABEL}="${BASE_IMAGE_DIGEST}" \\
+      ${IMAGE_LAYER_LABEL}="${IMAGE_LAYER_VERSION}"
 `;
 }
 async function sh(cmd, args, timeout = 8000) {
@@ -121,13 +158,18 @@ function emptyStatus(platform) {
         container: "missing",
         network: "unknown",
         security: "unknown",
+        persistence: "unknown",
         desktopReady: false,
+        desktop_error: null,
         ready: false,
         problem: "Install a supported container runtime first",
         image_ref: IMAGE,
+        image_id: null,
         base_image_ref: BASE_IMAGE,
         driver_version: CUA_DRIVER_VERSION,
         container_name: CONTAINER,
+        workspace_path: VM_WORKSPACE_DIR,
+        workspace_guest_path: VM_WORKSPACE_GUEST,
         viewer_url: `http://127.0.0.1:${HOST_VIEWER_PORT}/vnc.html`,
     };
 }
@@ -148,21 +190,35 @@ function statusProblem(status) {
         return "The existing Local VM exposes its viewer publicly; recreate it";
     if (status.security === "unsafe")
         return "The existing Local VM is missing safety limits; recreate it";
+    if (status.persistence === "unsafe")
+        return "The existing Local VM is missing its durable workspace; recreate it";
     if (status.container === "stopped")
-        return "Start the Local VM";
+        return "This desktop image cannot safely resume; recreate the Local VM";
+    if (status.desktop_error)
+        return `The Local VM desktop failed to start: ${status.desktop_error}`;
     if (!status.desktopReady)
         return "The Local VM started, but Cua Driver is not ready yet";
     return null;
 }
-function labelsMatch(labels) {
+function imageLabelsMatch(labels) {
     return (labels?.[MANAGED_LABEL] === "1" &&
         labels?.[DRIVER_LABEL] === CUA_DRIVER_VERSION &&
-        labels?.[BASE_IMAGE_LABEL] === BASE_IMAGE_DIGEST);
+        labels?.[BASE_IMAGE_LABEL] === BASE_IMAGE_DIGEST &&
+        labels?.[IMAGE_LAYER_LABEL] === IMAGE_LAYER_VERSION);
 }
-function inspectedImageLabels(stdout) {
+function containerLabelsMatch(labels) {
+    return imageLabelsMatch(labels) && labels?.[WORKSPACE_LABEL] === "1";
+}
+function normalizeImageId(id) {
+    return id?.trim().replace(/^sha256:/, "") || null;
+}
+function inspectedImage(stdout) {
     const parsed = JSON.parse(stdout);
     const image = parsed[0];
-    return image?.Config?.Labels ?? image?.config?.Labels ?? image?.config?.labels ?? image?.configuration?.labels;
+    return {
+        labels: image?.Config?.Labels ?? image?.config?.Labels ?? image?.config?.labels ?? image?.configuration?.labels,
+        id: normalizeImageId(image?.Id ?? image?.id ?? image?.configuration?.descriptor?.digest),
+    };
 }
 function viewerPassword(env) {
     if (Array.isArray(env)) {
@@ -189,6 +245,8 @@ function cuaExecArgs(args, interactive = false) {
         `DISPLAY=${DISPLAY}`,
         "-e",
         "CUA_DRIVER_INSTALL_CHANNEL=python_package",
+        "-e",
+        "CUA_DRIVER_RS_TELEMETRY_ENABLED=0",
         CONTAINER,
         CUA_EXECUTABLE,
         ...args,
@@ -219,7 +277,9 @@ export async function containerComputerStatus(runner = sh, platform = process.pl
     }
     try {
         const { stdout } = await runner(status.runtime, ["image", "inspect", IMAGE]);
-        status.image = labelsMatch(inspectedImageLabels(stdout));
+        const image = inspectedImage(stdout);
+        status.image = imageLabelsMatch(image.labels);
+        status.image_id = image.id;
     }
     catch {
         // The prepared OpenMausBot derivative has not been built yet.
@@ -234,8 +294,15 @@ export async function containerComputerStatus(runner = sh, platform = process.pl
             const appleImage = typeof detail?.configuration?.image === "string"
                 ? detail.configuration.image
                 : detail?.configuration?.image?.reference ?? detail?.configuration?.imageReference;
-            status.imageMatches = appleImage === IMAGE;
-            status.managed = status.imageMatches;
+            const appleImageId = typeof detail?.configuration?.image === "object"
+                ? normalizeImageId(detail.configuration.image.descriptor?.digest)
+                : null;
+            status.imageMatches =
+                appleImage === IMAGE && status.image_id !== null && appleImageId === status.image_id;
+            status.managed = containerLabelsMatch(detail?.configuration?.labels);
+            status.persistence = appleWorkspaceMountIsSafe(detail?.configuration?.mounts, platform)
+                ? "durable"
+                : "unsafe";
             const resources = detail?.configuration?.resources;
             status.security =
                 (resources?.memoryInBytes ?? 0) >= MEMORY_BYTES && resources?.cpus === 2 ? "hardened" : "unsafe";
@@ -246,8 +313,13 @@ export async function containerComputerStatus(runner = sh, platform = process.pl
             const detail = inspected[0];
             status.container = detail?.State?.Running ? "running" : "stopped";
             status.network = dockerPortsAreLocal(detail?.HostConfig?.PortBindings) ? "loopback" : "unsafe";
-            status.imageMatches = detail?.Config?.Image === IMAGE && labelsMatch(detail?.Config?.Labels);
-            status.managed = detail?.Config?.Labels?.[MANAGED_LABEL] === "1";
+            status.imageMatches =
+                detail?.Config?.Image === IMAGE &&
+                    imageLabelsMatch(detail?.Config?.Labels) &&
+                    status.image_id !== null &&
+                    normalizeImageId(detail?.Image) === status.image_id;
+            status.managed = containerLabelsMatch(detail?.Config?.Labels);
+            status.persistence = dockerWorkspaceMountIsSafe(detail?.Mounts, platform) ? "durable" : "unsafe";
             status.security = dockerSecurityIsHardened(detail?.HostConfig) ? "hardened" : "unsafe";
             status.viewer_url = viewerUrl(viewerPassword(detail?.Config?.Env));
         }
@@ -259,7 +331,8 @@ export async function containerComputerStatus(runner = sh, platform = process.pl
         status.imageMatches &&
         status.managed &&
         status.network === "loopback" &&
-        status.security === "hardened";
+        status.security === "hardened" &&
+        status.persistence === "durable";
     if (canProbe) {
         try {
             const expected = `cua-driver ${CUA_DRIVER_VERSION}`;
@@ -267,10 +340,43 @@ export async function containerComputerStatus(runner = sh, platform = process.pl
             if (version.stdout.trim() !== expected)
                 throw new Error(`expected ${expected}`);
             await runner(status.runtime, cuaExecArgs(["status", "--socket", CUA_SOCKET]), 8000);
+            const health = await runner(status.runtime, cuaExecArgs(["call", "health_report", "{}", "--socket", CUA_SOCKET]), 15_000);
+            const report = JSON.parse(health.stdout);
+            if (report.schema_version !== "1" ||
+                !Array.isArray(report.checks) ||
+                (report.overall !== "ok" && report.overall !== "degraded")) {
+                throw new Error(`Cua health report is ${report.overall ?? "invalid"}`);
+            }
+            const readinessShot = "/tmp/openmausbot-readiness.png";
+            await runner(status.runtime, cuaExecArgs([
+                "call",
+                "get_desktop_state",
+                "{}",
+                "--socket",
+                CUA_SOCKET,
+                "--screenshot-out-file",
+                readinessShot,
+            ]), 20_000);
+            const captured = await runner(status.runtime, ["exec", CONTAINER, "base64", "-w0", readinessShot], 20_000);
+            if (!wholeScreenshot(Buffer.from(captured.stdout.trim(), "base64")).ok) {
+                throw new Error("Cua Driver returned an incomplete readiness screenshot");
+            }
             status.desktopReady = true;
         }
-        catch {
-            // XFCE and the supervisor-owned Cua daemon need a few seconds to start.
+        catch (error) {
+            // An empty log means XFCE and the supervisor-owned Cua daemon are
+            // probably still starting. A real startup failure should be actionable
+            // in the panel instead of looking like an endless readiness wait.
+            status.desktop_error = error instanceof Error ? error.message.slice(0, 320) : null;
+            try {
+                const errorLog = await runner(status.runtime, ["exec", CONTAINER, "tail", "-n", "4", "/var/log/supervisor/cua-driver.error.log"], 4000);
+                status.desktop_error =
+                    errorLog.stdout.replace(/\s+/g, " ").trim().slice(0, 320) ||
+                        status.desktop_error;
+            }
+            catch {
+                // The log may not exist during the first seconds of container boot.
+            }
         }
     }
     status.problem = statusProblem(status);
@@ -290,6 +396,27 @@ function applePortsAreLocal(bindings) {
         bindings[0]?.containerPort === INTERNAL_VIEWER_PORT &&
         loopback(bindings[0]?.hostAddress));
 }
+function sameWorkspaceSource(source, platform) {
+    if (!source)
+        return false;
+    const actual = resolve(source);
+    const expected = resolve(VM_WORKSPACE_DIR);
+    return platform === "win32" ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
+}
+function dockerWorkspaceMountIsSafe(mounts, platform) {
+    return Boolean(mounts?.length === 1 &&
+        mounts[0]?.Type === "bind" &&
+        sameWorkspaceSource(mounts[0]?.Source, platform) &&
+        mounts[0]?.Destination === VM_WORKSPACE_GUEST &&
+        mounts[0]?.RW !== false);
+}
+function appleWorkspaceMountIsSafe(mounts, platform) {
+    const options = mounts?.[0]?.options ?? [];
+    return Boolean(mounts?.length === 1 &&
+        sameWorkspaceSource(mounts[0]?.source, platform) &&
+        mounts[0]?.destination === VM_WORKSPACE_GUEST &&
+        !options.some((option) => option === "ro" || option === "readonly"));
+}
 function dockerSecurityIsHardened(config) {
     if (!config)
         return false;
@@ -307,15 +434,23 @@ function dockerSecurityIsHardened(config) {
 }
 export function containerRunArgs(runtime, password = "CHANGE_ME") {
     const common = ["run", "-d", "--name", CONTAINER];
+    common.push("--label", `${MANAGED_LABEL}=1`, "--label", `${DRIVER_LABEL}=${CUA_DRIVER_VERSION}`, "--label", `${BASE_IMAGE_LABEL}=${BASE_IMAGE_DIGEST}`, "--label", `${IMAGE_LAYER_LABEL}=${IMAGE_LAYER_VERSION}`, "--label", `${WORKSPACE_LABEL}=1`);
     if (runtime === "container") {
         // Apple container already places each Linux container in a lightweight VM.
         common.push("--memory", "4g", "--cpus", "2", "--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID", "--shm-size", "512m");
     }
     else {
-        common.push("--label", `${MANAGED_LABEL}=1`, "--label", `${DRIVER_LABEL}=${CUA_DRIVER_VERSION}`, "--label", `${BASE_IMAGE_LABEL}=${BASE_IMAGE_DIGEST}`, "--memory", "4g", "--memory-swap", "4g", "--cpus", "2", "--pids-limit", String(PIDS_LIMIT), "--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID", "--shm-size", "512m");
+        common.push("--hostname", CONTAINER, "--memory", "4g", "--memory-swap", "4g", "--cpus", "2", "--pids-limit", String(PIDS_LIMIT), "--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID", "--shm-size", "512m");
     }
-    common.push("-e", `VNC_PW=${password}`, "-p", `127.0.0.1:${HOST_VIEWER_PORT}:${INTERNAL_VIEWER_PORT}`, IMAGE);
+    common.push("--mount", runtime === "podman"
+        ? `type=bind,source=${VM_WORKSPACE_DIR},target=${VM_WORKSPACE_GUEST},relabel=private,U=true`
+        : `type=bind,source=${VM_WORKSPACE_DIR},target=${VM_WORKSPACE_GUEST}`, "-e", `VNC_PW=${password}`, "-p", `127.0.0.1:${HOST_VIEWER_PORT}:${INTERNAL_VIEWER_PORT}`, IMAGE);
     return common;
+}
+async function ensureVmWorkspace(platform) {
+    await mkdir(VM_WORKSPACE_DIR, { recursive: true, mode: 0o700 });
+    if (platform !== "win32")
+        await chmod(VM_WORKSPACE_DIR, 0o700);
 }
 async function prepareManagedImage(runtime, runner) {
     await runner(runtime, ["pull", BASE_IMAGE], 10 * 60_000);
@@ -329,6 +464,8 @@ async function prepareManagedImage(runtime, runner) {
     }
 }
 export async function containerComputerAction(action, runner = sh, platform = process.platform) {
+    if (runner === sh && platform === process.platform)
+        screenshotStatusCache = null;
     const before = await containerComputerStatus(runner, platform);
     const runtime = before.runtime;
     if (!runtime)
@@ -341,12 +478,8 @@ export async function containerComputerAction(action, runner = sh, platform = pr
     if (action === "run" && !before.image) {
         throw Object.assign(new Error("Prepare the Cua desktop image before creating the Local VM"), { status: 409 });
     }
-    if (action === "start" && before.container !== "stopped") {
-        throw Object.assign(new Error(before.container === "running" ? "The Local VM is already running" : "Create the Local VM first"), { status: 409 });
-    }
-    if (action === "start" &&
-        (!before.imageMatches || !before.managed || before.network !== "loopback" || before.security !== "hardened")) {
-        throw Object.assign(new Error("The existing Local VM is incompatible or unsafe; remove and recreate it"), {
+    if (action === "start") {
+        throw Object.assign(new Error("This desktop image cannot safely resume; remove and recreate the Local VM"), {
             status: 409,
         });
     }
@@ -359,6 +492,8 @@ export async function containerComputerAction(action, runner = sh, platform = pr
         await prepareManagedImage(runtime, runner);
     }
     else {
+        if (action === "run")
+            await ensureVmWorkspace(platform);
         const args = action === "run"
             ? containerRunArgs(runtime, randomBytes(6).toString("base64url"))
             : action === "remove"
@@ -385,28 +520,44 @@ function wholeScreenshot(bytes) {
     };
 }
 export async function containerComputerScreenshot(runner = sh, platform = process.platform) {
-    const status = await containerComputerStatus(runner, platform);
+    const cacheable = runner === sh && platform === process.platform;
+    const now = Date.now();
+    const status = cacheable && screenshotStatusCache && screenshotStatusCache.expiresAt > now
+        ? screenshotStatusCache.status
+        : await containerComputerStatus(runner, platform);
     if (!status.ready || !status.runtime) {
+        if (cacheable)
+            screenshotStatusCache = null;
         throw Object.assign(new Error(status.problem ?? "The Local VM is not ready"), { status: 409 });
     }
-    const screenshot = "/tmp/openmausbot-preview.png";
-    await runner(status.runtime, cuaExecArgs([
-        "call",
-        "get_desktop_state",
-        "{}",
-        "--socket",
-        CUA_SOCKET,
-        "--screenshot-out-file",
-        screenshot,
-    ]), 30_000);
-    const { stdout } = await runner(status.runtime, ["exec", CONTAINER, "base64", "-w0", screenshot], 30_000);
-    const data = stdout.trim();
-    const checked = wholeScreenshot(Buffer.from(data, "base64"));
-    if (!checked.ok) {
-        throw Object.assign(new Error("Cua Driver returned an incomplete screenshot"), { status: 502 });
+    if (cacheable)
+        screenshotStatusCache = { status, expiresAt: now + SCREENSHOT_STATUS_TTL_MS };
+    try {
+        const screenshot = "/tmp/openmausbot-preview.png";
+        await runner(status.runtime, cuaExecArgs([
+            "call",
+            "get_desktop_state",
+            "{}",
+            "--socket",
+            CUA_SOCKET,
+            "--screenshot-out-file",
+            screenshot,
+        ]), 30_000);
+        const { stdout } = await runner(status.runtime, ["exec", CONTAINER, "base64", "-w0", screenshot], 30_000);
+        const data = stdout.trim();
+        const checked = wholeScreenshot(Buffer.from(data, "base64"));
+        if (!checked.ok) {
+            throw Object.assign(new Error("Cua Driver returned an incomplete screenshot"), { status: 502 });
+        }
+        return `data:${checked.mime};base64,${data}`;
     }
-    return `data:${checked.mime};base64,${data}`;
+    catch (error) {
+        if (cacheable)
+            screenshotStatusCache = null;
+        throw error;
+    }
 }
+let screenshotStatusCache = null;
 const containerMcpPath = (() => {
     const ts = join(dirname(fileURLToPath(import.meta.url)), "container-mcp.ts");
     return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
@@ -455,10 +606,10 @@ export function setupCommands(runtime, platform = process.platform) {
         install,
         runtimeStart,
         // This is the inspectable base download. The normal Prepare button also
-        // builds the checksum-pinned 0.19.3 derivative automatically.
+        // builds the checksum-pinned 0.20.0 derivative automatically.
         pull: command(["pull", BASE_IMAGE]),
         run: command(containerRunArgs(runtime)),
-        start: command(["start", CONTAINER]),
+        start: null,
         stop: command(["stop", CONTAINER]),
         remove: command(["rm", runtime === "container" ? "--force" : "-f", CONTAINER]),
         view: `http://127.0.0.1:${HOST_VIEWER_PORT}/vnc.html`,
