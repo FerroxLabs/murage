@@ -33,6 +33,7 @@ function runBridge(bin: string, input: string) {
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     child.on("error", reject);
     child.on("close", (code) => resolve({ code, stdout, stderr }));
+    child.stdin.on("error", () => {});
     child.stdin.end(input);
   });
 }
