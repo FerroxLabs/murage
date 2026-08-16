@@ -202,6 +202,87 @@ describe("harness HTTP API", () => {
     expect(after.body.bots.find((b: { id: string }) => b.id === bot.id)).toBeUndefined();
   });
 
+  it("exports a room as a portable team and imports it with fresh IDs", async () => {
+    const first = (await api("POST", "/api/bots")).body.bot;
+    const second = (await api("POST", "/api/bots")).body.bot;
+    await api("PATCH", `/api/bots/${first.id}`, {
+      name: "Mira",
+      title: "Project Lead",
+      description: "Coordinates the crew",
+      color: "purple",
+      mascotExpression: "focused",
+      autoApprove: true,
+      alwaysAllow: ["Bash:git"],
+    });
+    await api("PATCH", `/api/bots/${second.id}`, {
+      name: "Scout",
+      title: "Researcher",
+      description: "Finds evidence",
+      color: "cyan",
+    });
+    const createdRoom = await api("POST", "/api/groups", {
+      name: "Launch Crew",
+      memberIds: [first.id, second.id],
+    });
+    const roomId = createdRoom.body.group.id;
+    await api("PATCH", `/api/groups/${roomId}`, {
+      bulletin: "Prepare the launch together",
+      defaultResponder: { kind: "member", botId: second.id },
+    });
+
+    const exported = await api("GET", `/api/groups/${roomId}/team`);
+    expect(exported.status).toBe(200);
+    expect(exported.body).toMatchObject({
+      format: "openmaus.team",
+      version: 1,
+      team: {
+        name: "Launch Crew",
+        members: [
+          { key: "mira", name: "Mira", title: "Project Lead", appearance: { color: "purple" } },
+          { key: "scout", name: "Scout", title: "Researcher", appearance: { color: "cyan" } },
+        ],
+        room: {
+          name: "Launch Crew",
+          bulletin: "Prepare the launch together",
+          defaultResponder: { kind: "member", member: "scout" },
+        },
+      },
+    });
+    expect(JSON.stringify(exported.body)).not.toMatch(/autoApprove|alwaysAllow|modelSelection|threadId/);
+
+    const stream = await openSse(`${BASE}/api/events`);
+    try {
+      await stream.until((frame) => frame.kind === "hello");
+      const imported = await api("POST", "/api/teams/import", exported.body);
+      expect(imported.status).toBe(201);
+      expect(imported.body.bots.map((bot: { name: string }) => bot.name)).toEqual(["Mira", "Scout"]);
+      expect(imported.body.bots.every((bot: { id: string }) => ![first.id, second.id].includes(bot.id))).toBe(true);
+      expect(imported.body.bots[0]).not.toHaveProperty("alwaysAllow");
+      expect(imported.body.group.memberIds).toEqual(imported.body.bots.map((bot: { id: string }) => bot.id));
+      expect(imported.body.group.defaultResponder).toEqual({ kind: "member", botId: imported.body.bots[1].id });
+
+      await stream.until((frame) => frame.kind === "group" && frame.group?.id === imported.body.group.id);
+      const importedBotIds = new Set(imported.body.bots.map((bot: { id: string }) => bot.id));
+      const importFrames = stream.frames.filter(
+        (frame) =>
+          (frame.kind === "bot" && importedBotIds.has(frame.bot?.id)) ||
+          (frame.kind === "group" && frame.group?.id === imported.body.group.id),
+      );
+      expect(importFrames.map((frame) => frame.kind)).toEqual(["bot", "bot", "group"]);
+
+      const invalid = await api("POST", "/api/teams/import", { ...exported.body, version: 2 });
+      expect(invalid.status).toBe(400);
+
+      expect((await api("DELETE", `/api/groups/${roomId}`)).status).toBe(200);
+      expect((await api("DELETE", `/api/groups/${imported.body.group.id}`)).status).toBe(200);
+      for (const bot of [first, second, ...imported.body.bots]) {
+        expect((await api("DELETE", `/api/bots/${bot.id}`)).status).toBe(200);
+      }
+    } finally {
+      stream.close();
+    }
+  });
+
   it("persists an answered onboarding card", async () => {
     const { body } = await api("GET", "/api/bots");
     const bot = body.bots[0];

@@ -36,6 +36,7 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { readCuaConnection } from "./local-computer.ts";
 import { RoutineManager, type RoutineRunOn } from "./routines.ts";
+import { createTeamManifest, parseTeamManifest } from "./team-manifest.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -1448,6 +1449,71 @@ const server = createServer(async (req, res) => {
       const group = store.createGroup(name, memberIds);
       broadcast({ kind: "group", group });
       return json(res, 201, { group: { ...group, messages: [] } });
+    }
+    m = path.match(/^\/api\/groups\/([\w-]+)\/team$/);
+    if (m && method === "GET") {
+      const group = store.group(m[1]);
+      if (!group || group.dm) return json(res, 404, { error: "no such shareable room" });
+      return json(res, 200, createTeamManifest(group, store.bots));
+    }
+    if (method === "POST" && path === "/api/teams/import") {
+      const body = await readBody(req);
+      let manifest;
+      try {
+        manifest = parseTeamManifest(body);
+      } catch (error) {
+        return json(res, 400, { error: error instanceof Error ? error.message : "Invalid team file" });
+      }
+
+      const importedBots: ReturnType<typeof store.createBot>[] = [];
+      let importedGroupId: string | null = null;
+      try {
+        const selection = await defaultSelection();
+        for (const member of manifest.team.members) {
+          importedBots.push(
+            store.createBot({
+              name: member.name,
+              title: member.title,
+              description: member.description,
+              color: member.appearance.color,
+              mascotExpression: member.appearance.mascotExpression,
+              modelSelection: selection,
+            }),
+          );
+        }
+        const idByKey = new Map(
+          manifest.team.members.map((member, index) => [member.key, importedBots[index]!.id]),
+        );
+        const group = store.createGroup(
+          manifest.team.room.name,
+          importedBots.map((bot) => bot.id),
+        );
+        importedGroupId = group.id;
+        const responder = manifest.team.room.defaultResponder;
+        const defaultResponder: GroupDefaultResponder =
+          responder.kind === "member"
+            ? { kind: "member", botId: idByKey.get(responder.member)! }
+            : { kind: responder.kind };
+        const configuredGroup = store.patchGroup(group.id, {
+          bulletin: manifest.team.room.bulletin,
+          defaultResponder,
+        });
+        if (!configuredGroup) throw new Error("The imported room could not be configured");
+
+        const publicBots = importedBots.map(publicBot);
+        // Other open windows need the new members before the room that
+        // references them. The importing window also folds the HTTP result.
+        for (const bot of publicBots) broadcast({ kind: "bot", bot });
+        broadcast({ kind: "group", group: configuredGroup });
+        return json(res, 201, {
+          bots: publicBots,
+          group: { ...configuredGroup, messages: [] },
+        });
+      } catch (error) {
+        if (importedGroupId) store.deleteGroup(importedGroupId);
+        for (const bot of importedBots) store.deleteBot(bot.id);
+        throw error;
+      }
     }
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
     if (m && method === "PATCH") {

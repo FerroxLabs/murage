@@ -444,6 +444,13 @@ function reducer(state: AppState, action: Action): AppState {
       return updateBot(withMascotMotion(state, action.botId, "surprise"), action.botId, (b) => ({ ...b, unread: true }));
     case "botPatched": {
       const before = state.bots.find((b) => b.id === action.bot.id);
+      // A bot event can announce a bot created by another app window (team
+      // import). Patch events for unknown partial records remain ignored.
+      if (!before) {
+        return Array.isArray(action.bot.messages)
+          ? { ...state, bots: [action.bot as Bot, ...state.bots] }
+          : state;
+      }
       const kind =
         action.bot.unread && !before?.unread
           ? "surprise"

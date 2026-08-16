@@ -567,18 +567,23 @@ export class Store {
     return this.bots.find((b) => b.threadId === threadId || b.tasks?.some((t) => t.threadId === threadId)) ?? null;
   }
 
-  createBot(): BotRecord {
-    const name = pickBotName(this.bots.map((b) => b.name));
+  createBot(
+    profile: Partial<
+      Pick<BotRecord, "name" | "title" | "description" | "color" | "mascotExpression" | "modelSelection">
+    > = {},
+  ): BotRecord {
+    const name = profile.name?.trim() || pickBotName(this.bots.map((b) => b.name));
     const bot: BotRecord = {
       id: newId(),
       threadId: newId(),
       name,
-      title: "",
-      description: "",
+      title: profile.title ?? "",
+      description: profile.description ?? "",
       notifications: true,
-      color: COLORS[this.bots.length % COLORS.length],
+      color: profile.color ?? COLORS[this.bots.length % COLORS.length],
+      ...(profile.mascotExpression ? { mascotExpression: profile.mascotExpression } : {}),
       unread: false,
-      modelSelection: this.defaultSelection(),
+      modelSelection: profile.modelSelection ?? this.defaultSelection(),
       resumeCursors: {},
       createdAt: Date.now(),
     };

@@ -3,7 +3,7 @@
 // does not become a wall of competing motion. Plain messages go to the room's
 // default responder; @mentions override that routing.
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ChevronDown, Pin } from "lucide-react";
+import { ArrowDown, ArrowDownToLine, Check, ChevronDown, Loader2, Pin } from "lucide-react";
 import {
   useStore,
   useStreaming,
@@ -21,6 +21,8 @@ import { GroupCallButton, GroupCallOverlay } from "./GroupCallView";
 import { ReactionBar, ReactionChips } from "./Reactions";
 import { ApprovalCard } from "./ApprovalCard";
 import { cn } from "@/lib/cn";
+import { downloadTeamFile } from "@/lib/team-files";
+import { track } from "@/lib/analytics";
 
 function dayLabel(at: number): string {
   const d = new Date(at);
@@ -187,6 +189,62 @@ function DefaultResponderSelect({ group, members }: { group: Group; members: Bot
   );
 }
 
+function ExportTeamButton({ groupId }: { groupId: string }) {
+  const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setStatus("idle");
+    setError("");
+  }, [groupId]);
+
+  useEffect(() => {
+    if (status !== "done") return;
+    const timer = window.setTimeout(() => setStatus("idle"), 2500);
+    return () => window.clearTimeout(timer);
+  }, [status]);
+
+  const download = async () => {
+    setStatus("working");
+    setError("");
+    try {
+      const exported = await downloadTeamFile(groupId);
+      track("team_exported", { members: exported.members });
+      setStatus("done");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setStatus("error");
+    }
+  };
+
+  const title = status === "done" ? "Team exported" : error || "Export this team";
+  return (
+    <button
+      type="button"
+      onClick={() => void download()}
+      disabled={status === "working"}
+      title={title}
+      aria-label={title}
+      className={cn(
+        "flex h-8 items-center gap-1.5 rounded-full bg-raised/60 px-2 sm:px-2.5 text-[12.5px] font-medium text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-60",
+        status === "error" && "text-danger",
+        status === "done" && "text-accent",
+      )}
+    >
+      {status === "working" ? (
+        <Loader2 size={13} className="animate-spin" />
+      ) : status === "done" ? (
+        <Check size={13} />
+      ) : (
+        <ArrowDownToLine size={13} />
+      )}
+      <span className="hidden sm:inline">
+        {status === "working" ? "Exporting…" : status === "done" ? "Exported" : "Export"}
+      </span>
+    </button>
+  );
+}
+
 export function GroupView({ group }: { group: Group }) {
   const { state, dispatch } = useStore();
   const stream = useStreaming();
@@ -240,6 +298,7 @@ export function GroupView({ group }: { group: Group }) {
       >
         <span className="text-[15px] font-semibold text-ink">{group.name}</span>
         <div className="flex items-center gap-1.5" style={noDrag}>
+          {!group.dm && <ExportTeamButton groupId={group.id} />}
           <GroupCallButton group={group} members={members} />
           {!group.dm && <DefaultResponderSelect group={group} members={members} />}
           {members.map((b) => (
