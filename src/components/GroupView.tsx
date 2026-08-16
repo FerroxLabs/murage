@@ -229,7 +229,15 @@ export function GroupView({ group }: { group: Group }) {
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
       <GroupCallOverlay group={group} members={members} />
       {/* Header: static member mauses; a ring + dot marks the working bot. */}
-      <div className={cn("flex items-center justify-between px-5 py-3", isWin && "pr-[148px]")} style={drag}>
+      <div
+        className={cn(
+          "flex items-center justify-between px-5 py-3",
+          // Room for the drawer button, which overlays this corner below md.
+          "pl-11 md:pl-5",
+          isWin && "pr-[148px]",
+        )}
+        style={drag}
+      >
         <span className="text-[15px] font-semibold text-ink">{group.name}</span>
         <div className="flex items-center gap-1.5" style={noDrag}>
           <GroupCallButton group={group} members={members} />

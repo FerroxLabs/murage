@@ -8,6 +8,7 @@
 //   - Composio Connect (connected apps → tools) over streamable HTTP
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
+import { execFile } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { homedir } from "node:os";
@@ -30,6 +31,51 @@ import type {
 import { computerProxyEnv } from "../container-computer.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
+
+/** Does the macOS Keychain hold Claude Code's credentials?
+ *
+ * Deliberately `find-generic-password` WITHOUT `-w`: that returns the item's
+ * attributes only. Asking for the secret would both be unnecessary — we only
+ * want to know whether sign-in happened — and would trigger a keychain
+ * authorization prompt the user has no reason to expect from a version probe.
+ */
+function keychainHasCredentials(): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(
+      "/usr/bin/security",
+      ["find-generic-password", "-s", "Claude Code-credentials"],
+      { timeout: 5000 },
+      (error) => resolve(!error),
+    );
+  });
+}
+
+/** Whether `claude` has been signed in.
+ *
+ * Claude Code writes `~/.claude/.credentials.json` on Linux and WSL, but on
+ * macOS it keeps its OAuth credentials in the Keychain and writes no such
+ * file. Checking only the file therefore reported every signed-in Mac as
+ * signed out — which is not cosmetic: `authenticated: false` greys the engine
+ * out in the model picker as "sign-in required".
+ *
+ * All three inputs — platform, keychain, credentials file — are injectable so
+ * the decision can be tested off a Mac, without depending on whoever is
+ * running the suite being signed into Claude, and above all without the test
+ * going anywhere near the real `~/.claude/.credentials.json`. A test that
+ * writes that file to set up a case has to delete it to tear the case down,
+ * and deleting it signs the developer out.
+ */
+export const credentialsFilePath = (): string => join(homedir(), ".claude", ".credentials.json");
+
+export async function claudeSignedIn(
+  platform: NodeJS.Platform = process.platform,
+  keychain: () => Promise<boolean> = keychainHasCredentials,
+  hasCredentialsFile: () => boolean = () => existsSync(credentialsFilePath()),
+): Promise<boolean> {
+  if (hasCredentialsFile()) return true;
+  if (platform !== "darwin") return false;
+  return keychain();
+}
 
 const DRIVER_KIND = "claudeAgent";
 
@@ -481,7 +527,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         );
       });
       if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
-      const authenticated = existsSync(join(homedir(), ".claude", ".credentials.json"));
+      const authenticated = await claudeSignedIn();
       return { state: "available", version, authenticated };
     };
 
