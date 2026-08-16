@@ -58,15 +58,21 @@ function keychainHasCredentials(): Promise<boolean> {
  * signed out — which is not cosmetic: `authenticated: false` greys the engine
  * out in the model picker as "sign-in required".
  *
- * The platform and the probe are injectable so the decision can be tested off
- * a Mac, and without depending on whoever is running the suite being signed
- * into Claude.
+ * All three inputs — platform, keychain, credentials file — are injectable so
+ * the decision can be tested off a Mac, without depending on whoever is
+ * running the suite being signed into Claude, and above all without the test
+ * going anywhere near the real `~/.claude/.credentials.json`. A test that
+ * writes that file to set up a case has to delete it to tear the case down,
+ * and deleting it signs the developer out.
  */
+export const credentialsFilePath = (): string => join(homedir(), ".claude", ".credentials.json");
+
 export async function claudeSignedIn(
   platform: NodeJS.Platform = process.platform,
   keychain: () => Promise<boolean> = keychainHasCredentials,
+  hasCredentialsFile: () => boolean = () => existsSync(credentialsFilePath()),
 ): Promise<boolean> {
-  if (existsSync(join(homedir(), ".claude", ".credentials.json"))) return true;
+  if (hasCredentialsFile()) return true;
   if (platform !== "darwin") return false;
   return keychain();
 }
