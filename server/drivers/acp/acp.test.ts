@@ -15,11 +15,50 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
+
+/** A harness that exists only in tests: it exercises the opt-in session-config
+ *  model hook so PR 1 can prove the core capability without shipping a visible
+ *  engine. Real harnesses live in their own file. */
+const SELECT_MODEL_SUPPORT: AcpSupport = {
+  driverKind: "selectModelTest",
+  displayName: "Select Model Test",
+  models: { default: "m-one", options: [{ id: "m-one", label: "One" }, { id: "m-two", label: "Two" }] },
+  defaultCli: "fake-select-model",
+  nativeSource: "test.acp",
+  loginNote: "never reached",
+  selectModel: { configId: "model" },
+  spawnArgs: () => [],
+  pickAuthMethod: () => null,
+  authFailure: "continue",
+  isAuthenticated: () => true,
+};
+const SelectModelDriver = createAcpDriver(SELECT_MODEL_SUPPORT);
+
+/** Proves transformEnv can vary with the instance config, which is how the
+ *  opencode driver picks its permission policy from `fullAuto`. */
+const EnvPolicyDriver = createAcpDriver({
+  ...SELECT_MODEL_SUPPORT,
+  driverKind: "envPolicyTest",
+  selectModel: undefined,
+  transformEnv: (env, config) => {
+    env.TEST_POLICY = config.fullAuto ? "auto" : "ask";
+  },
+});
+
+/** Proves snapshot() awaits an async isAuthenticated, which is how the
+ *  opencode driver answers from a discovered catalog. */
+const AsyncAuthDriver = createAcpDriver({
+  ...SELECT_MODEL_SUPPORT,
+  driverKind: "asyncAuthTest",
+  selectModel: undefined,
+  isAuthenticated: async () => true,
+});
 
 describe("ACP decodeConfig", () => {
   it("grok defaults to the grok binary", () => {
@@ -70,6 +109,9 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_MODE;
     delete process.env.FAKE_ACP_DUMP;
     delete process.env.XAI_API_KEY;
+    delete process.env.FAKE_ACP_MODELS;
+    delete process.env.FAKE_ACP_MODEL_STICKS;
+    delete process.env.FAKE_ACP_USAGE_ROOT;
     recorder?.stop();
     await instance?.dispose();
     rmSync(scratch, { recursive: true, force: true });
@@ -99,6 +141,16 @@ describe("ACP turns (fake CLI)", () => {
     const done = recorder.events.at(-1)!;
     expect(done).toMatchObject({ type: "turn.completed", ok: true });
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
+  });
+
+  it("reads token usage from the root of the prompt result", async () => {
+    process.env.FAKE_ACP_USAGE_ROOT = "1";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-usage-root", text: "go" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const usage = recorder.events.find((e) => e.type === "thread.token-usage.updated");
+    expect(usage).toMatchObject({ input: 10, output: 5 });
   });
 
   it("passes ACP stdio flags and strips XAI_API_KEY from the child env", async () => {
@@ -172,6 +224,87 @@ describe("ACP turns (fake CLI)", () => {
     expect(done).toMatchObject({ ok: false });
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(true);
   });
+
+  it("selectModel confirms the requested model before prompting", async () => {
+    process.env.FAKE_ACP_MODELS = "m-one,m-two";
+    await create(SelectModelDriver);
+    await instance.adapter.sendTurn({ threadId: "t-model", text: "go", model: "m-two" });
+
+    const started = await recorder.until((e) => e.type === "session.started");
+    expect(started).toMatchObject({ model: "m-two" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+  });
+
+  it("a model the session does not advertise fails the turn instead of running another", async () => {
+    process.env.FAKE_ACP_MODELS = "m-one,m-two";
+    await create(SelectModelDriver);
+    await instance.adapter.sendTurn({ threadId: "t-bad-model", text: "go", model: "m-nope" });
+
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false });
+    const err = recorder.events.find((e) => e.type === "runtime.error")!;
+    expect(err.message).toMatch(/model not found/);
+    // nothing was generated: the prompt is never sent
+    expect(recorder.events.some((e) => e.type === "content.delta")).toBe(false);
+  });
+
+  // The unadvertised-model test above rides the fake's -32602, so it settles in
+  // `request()` and never reaches the guard. This one is the silent case the
+  // guard was written for: the agent acknowledges the switch and keeps its old
+  // model, which no error surfaces.
+  it("a model switch acknowledged but not applied fails the turn", async () => {
+    process.env.FAKE_ACP_MODELS = "m-one,m-two";
+    process.env.FAKE_ACP_MODEL_STICKS = "1";
+    await create(SelectModelDriver);
+    await instance.adapter.sendTurn({ threadId: "t-stuck-model", text: "go", model: "m-two" });
+
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false });
+    const err = recorder.events.find((e) => e.type === "runtime.error")!;
+    expect(err.message).toMatch(/did not switch to m-two \(still m-one\)/);
+    // the whole point: no paid turn is spent on the wrong model
+    expect(recorder.events.some((e) => e.type === "content.delta")).toBe(false);
+  });
+
+  it("selects the model on a resumed session too, not just a new one", async () => {
+    process.env.FAKE_ACP_MODELS = "m-one,m-two";
+    await create(SelectModelDriver);
+    await instance.adapter.sendTurn({
+      threadId: "t-resume-model",
+      text: "go",
+      model: "m-two",
+      // deliberately NOT "fake-acp-session", the id session/new returns: with
+      // that cursor a session/load that threw and fell back to session/new
+      // would emit the same sessionId and this test could not fail
+      resumeCursor: "resumed-thread-1",
+    });
+
+    // session/load feeds the same sessionResult as session/new, so the model
+    // hook must fire on a resumed thread as well
+    const started = await recorder.until((e) => e.type === "session.started");
+    expect(started).toMatchObject({ sessionId: "resumed-thread-1", model: "m-two" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+  });
+
+  it("transformEnv sees the instance config", async () => {
+    const dump = join(scratch, "policy.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    instance = await EnvPolicyDriver.create({
+      instanceId: "policy-test",
+      displayName: undefined,
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+
+    await instance.adapter.sendTurn({ threadId: "t-policy", text: "go" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    expect(JSON.parse(readFileSync(dump, "utf8")).env.TEST_POLICY).toBe("auto");
+  });
 });
 
 describe("ACP snapshot", () => {
@@ -231,6 +364,22 @@ describe("ACP snapshot", () => {
     } finally {
       await instance.dispose();
       rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("awaits an async isAuthenticated", async () => {
+    const instance = await AsyncAuthDriver.create({
+      instanceId: "async-auth",
+      displayName: undefined,
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      // without the await this is a Promise: truthy, but not `true`
+      expect((await instance.snapshot()).authenticated).toBe(true);
+    } finally {
+      await instance.dispose();
     }
   });
 });
