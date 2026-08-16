@@ -209,6 +209,7 @@ export function SettingsModal() {
                   <ApiKeyRow section="composio" />
                   <ApiKeyRow section="composioApi" />
                   <ApiKeyRow section="box" />
+                  <ApiKeyRow section="opencodeGo" />
                 </div>
               </Card>
             )}

@@ -61,7 +61,48 @@ const AsyncAuthDriver = createAcpDriver({
   isAuthenticated: async () => true,
 });
 
+const ClassifiedErrorDriver = createAcpDriver({
+  ...SELECT_MODEL_SUPPORT,
+  driverKind: "classifiedErrorTest",
+  selectModel: undefined,
+  classifyError: (error) =>
+    error && typeof error === "object" && (error as { code?: unknown }).code === -32000
+      ? "invalid_credentials"
+      : undefined,
+});
+
 describe("ACP decodeConfig", () => {
+  it("resolves a dynamic model catalog when a support provides one", async () => {
+    const support: AcpSupport = {
+      driverKind: "dynamic-test",
+      displayName: "Dynamic Test",
+      models: { default: "fallback", options: [{ id: "fallback", label: "Fallback" }] },
+      defaultCli: FAKE_CLI,
+      nativeSource: "dynamic-test.acp",
+      loginNote: "not authenticated",
+      spawnArgs: () => [],
+      pickAuthMethod: () => null,
+      authFailure: "continue",
+      isAuthenticated: () => true,
+      resolveModels: async () => ({
+        default: "dynamic-model",
+        options: [{ id: "dynamic-model", label: "Dynamic model" }],
+      }),
+    };
+    const driver = createAcpDriver(support);
+    const instance = await driver.create({
+      instanceId: "dynamic-test",
+      displayName: "Dynamic Test",
+      environment: {},
+      enabled: true,
+      config: driver.defaultConfig(),
+    });
+    expect(instance.models).toEqual({
+      default: "dynamic-model",
+      options: [{ id: "dynamic-model", label: "Dynamic model" }],
+    });
+    await instance.dispose();
+  });
   it("grok defaults to the grok binary", () => {
     expect(GrokAgentDriver.decodeConfig({})).toEqual({ cli: "grok", fullAuto: false, workspace: undefined });
   });
@@ -119,6 +160,7 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_MODE;
     delete process.env.FAKE_ACP_DUMP;
     delete process.env.XAI_API_KEY;
+    delete process.env.OPENCODE_API_KEY;
     delete process.env.FAKE_ACP_MODELS;
     delete process.env.FAKE_ACP_MODEL_STICKS;
     delete process.env.FAKE_ACP_USAGE_ROOT;
@@ -163,11 +205,12 @@ describe("ACP turns (fake CLI)", () => {
     expect(usage).toMatchObject({ input: 10, output: 5 });
   });
 
-  it("passes ACP stdio flags and strips XAI_API_KEY from the child env", async () => {
+  it("passes ACP stdio flags and strips foreign provider keys from the child env", async () => {
     await create();
     const dump = join(scratch, "dump.json");
     process.env.FAKE_ACP_DUMP = dump;
     process.env.XAI_API_KEY = "xai-should-not-leak";
+    process.env.OPENCODE_API_KEY = "opencode-should-not-leak";
 
     await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "go" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -177,6 +220,7 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.argv).toContain("stdio");
     expect(seen.argv).toContain("--permission-mode");
     expect(seen.env.XAI_API_KEY).toBeUndefined();
+    expect(seen.env.OPENCODE_API_KEY).toBeUndefined();
   });
 
   // this driver has no Composio mount, so it must not claim the
@@ -320,6 +364,15 @@ describe("ACP turns (fake CLI)", () => {
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false });
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(true);
+  });
+
+  it("preserves ACP error codes for provider setup classification", async () => {
+    await create(ClassifiedErrorDriver, "auth-required");
+    await instance.adapter.sendTurn({ threadId: "t-auth-required", text: "go" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+
+    expect(done).toMatchObject({ ok: false, stopReason: "auth_required" });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ setup: true });
   });
 
   it("selectModel confirms the requested model before prompting", async () => {

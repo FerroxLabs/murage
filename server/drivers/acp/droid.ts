@@ -146,6 +146,7 @@ const support: AcpSupport = {
   // No model/mode flags here on purpose: see the header note. `-o acp` is the
   // ACP entry point; everything else is negotiated over the protocol.
   spawnArgs: () => ["exec", "-o", "acp"],
+  credentialEnv: ["FACTORY_API_KEY"],
 
   // The advertised methods are device-pairing (a browser flow that cannot be
   // driven over ACP) and factory-api-key (read from the child env, no

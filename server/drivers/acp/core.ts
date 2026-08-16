@@ -26,9 +26,11 @@ import type {
   ProviderDriver,
   ProviderInstance,
   ProviderSnapshot,
+  ModelCatalog,
   RuntimeEvent,
   RuntimeEventListener,
   SendTurnInput,
+  ProviderErrorCode,
 } from "../../contracts.ts";
 import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
@@ -56,6 +58,8 @@ export interface AcpSupport {
   models: { default: string; options: Array<{ id: string; label: string }> };
   /** Default CLI binary name if the instance config doesn't override it. */
   defaultCli: string;
+  /** Optional live model catalog. A failed lookup keeps the last usable catalog. */
+  resolveModels?(environment: Record<string, string | undefined>): ModelCatalog | Promise<ModelCatalog>;
   /** Native-protocol log label, e.g. "grok.acp". */
   nativeSource: string;
   /** Message shown when the CLI is present but not signed in. */
@@ -64,6 +68,8 @@ export interface AcpSupport {
   install?: EngineInstall;
   /** CLI argv AFTER the binary name to enter ACP stdio mode. */
   spawnArgs(config: AcpConfig, turn: SendTurnInput): string[];
+  /** Provider credential variables this ACP child is allowed to inherit. */
+  credentialEnv?: readonly string[];
   /** Select the model through a session config option instead of argv, for
    *  harnesses whose ACP subcommand takes no -m (opencode). The agent must
    *  CONFIRM the requested model before we prompt: silently running a model
@@ -81,10 +87,8 @@ export interface AcpSupport {
   /** snapshot(): can this harness actually run a turn? (env already carries the
    *  merged config). May be async for harnesses that have to ask the CLI. */
   isAuthenticated(env: Record<string, string | undefined>, config: AcpConfig): boolean | Promise<boolean>;
-  /** Per-instance model catalog, for CLIs whose real catalog is user-local
-   * (custom providers, favourites) rather than a fixed vendor list. Falls
-   * back to the static `models` when absent or when it throws. */
-  resolveModels?(env: Record<string, string | undefined>): AcpSupport["models"];
+  /** Classify provider-native failures without coupling the core to messages. */
+  classifyError?(error: unknown): ProviderErrorCode | undefined;
   /** Compose the session/prompt text. Default prepends the persona. */
   buildPromptText?(turn: SendTurnInput): string;
   /** Apply per-session settings between session/new (or session/load) and the
@@ -103,6 +107,17 @@ const INIT_TIMEOUT = 20_000;
 const SESSION_CONFIG_TIMEOUT = 20_000; // configureSession's per-request default
 const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
+const PROVIDER_CREDENTIAL_ENV = [
+  "ANTHROPIC_API_KEY",
+  "FACTORY_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "KIMI_API_KEY",
+  "MOONSHOT_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENCODE_API_KEY",
+  "XAI_API_KEY",
+] as const;
 
 function decodeAcpConfig(defaultCli: string) {
   return (raw: unknown): AcpConfig => {
@@ -132,6 +147,30 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
     async create(input: DriverCreateInput<AcpConfig>): Promise<ProviderInstance> {
       const { instanceId, config } = input;
+      const childEnv = () => {
+        const env: Record<string, string | undefined> = {
+          ...process.env,
+          ...input.environment,
+          PATH: augmentedPath(),
+        };
+        const allowedCredentials = new Set(support.credentialEnv ?? []);
+        for (const key of PROVIDER_CREDENTIAL_ENV) {
+          if (!allowedCredentials.has(key)) delete env[key];
+        }
+        support.transformEnv?.(env, config);
+        return env;
+      };
+      let models = support.models;
+      const refreshModels = async () => {
+        if (!support.resolveModels) return;
+        try {
+          const resolved = await support.resolveModels(childEnv());
+          if (resolved.options.length) models = resolved;
+        } catch {
+          // Keep the last usable catalog when an optional discovery source is down.
+        }
+      };
+      await refreshModels();
       const listeners = new Set<RuntimeEventListener>();
       interface Turn {
         stop: () => void;
@@ -151,28 +190,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         turnId,
         createdAt: new Date().toISOString(),
       });
-
-      const childEnv = () => {
-        const env: Record<string, string | undefined> = {
-          ...process.env,
-          ...input.environment,
-          PATH: augmentedPath(),
-        };
-        support.transformEnv?.(env, config);
-        return env;
-      };
-
-      // A user-local catalog must never be able to break the picker: any
-      // failure reading it falls back to the driver's static list.
-      const instanceModels = () => {
-        if (!support.resolveModels) return support.models;
-        try {
-          const resolved = support.resolveModels(childEnv());
-          return resolved.options.length ? resolved : support.models;
-        } catch {
-          return support.models;
-        }
-      };
 
       // ACP session mcpServers: stdio is the baseline every ACP agent
       // supports (mcpCapabilities.http/.sse only add EXTRA transports), so
@@ -412,7 +429,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               if (pend) {
                 rpcPending.delete(msg.id);
                 if (pend.timer) clearTimeout(pend.timer);
-                msg.error ? pend.reject(new Error(msg.error.message ?? JSON.stringify(msg.error))) : pend.resolve(msg.result);
+                if (msg.error) {
+                  const error = new Error(msg.error.message ?? JSON.stringify(msg.error));
+                  Object.assign(error, { code: msg.error.code, data: msg.error.data });
+                  pend.reject(error);
+                } else {
+                  pend.resolve(msg.result);
+                }
               }
             } else if (msg.id !== undefined && msg.method) {
               handleServerRequest(msg);
@@ -572,11 +595,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             else settle(false, reason ?? "failed");
           } catch (e) {
             if (!state.settled) {
-              const message = (e as Error).message;
-              // "not signed in" is a setup problem like a missing binary: the
-              // fix is a command in a terminal, not another attempt. Flagging
-              // it lets the error card show the sign-in step.
-              const needsAuth = message === support.loginNote;
+              const message = e instanceof Error ? e.message : String(e);
+              const code = support.classifyError?.(e);
+              // Authentication setup is a user action, not a retry. The
+              // classifier is preferred; loginNote remains a compatibility
+              // fallback for existing ACP supports.
+              const needsAuth = code === "invalid_credentials" || code === "inactive_subscription"
+                || message === support.loginNote;
               emit({
                 ...base(threadId, turnId),
                 type: "runtime.error",
@@ -607,9 +632,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         driverKind: DRIVER_KIND,
         displayName: input.displayName,
         enabled: input.enabled,
-        // Read once per instance: the picker reads this synchronously, and a
-        // user-local catalog changes about as often as the CLI is reinstalled.
-        models: instanceModels(),
+        get models() {
+          return models;
+        },
+        refreshModels: support.resolveModels ? refreshModels : undefined,
         snapshot,
         adapter: {
           provider: DRIVER_KIND,

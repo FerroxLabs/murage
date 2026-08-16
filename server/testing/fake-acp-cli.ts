@@ -5,7 +5,7 @@
 // session/prompt, and streams session/update notifications for a scripted
 // turn. Failure modes mirror how real ACP agents misbehave:
 //
-//   FAKE_ACP_MODE   happy (default) | exit-early | hang | no-auth | permission
+//   FAKE_ACP_MODE   happy (default) | exit-early | hang | no-auth | auth-required | permission
 //                   | no-session-config (reject session/set_mode + set_model
 //                     with -32601, i.e. an agent predating those methods)
 //                   | ask-peer (spawn the injected "agents" MCP server from
@@ -48,16 +48,36 @@ const configOptions = () =>
       ]
     : null;
 const argv = process.argv.slice(2);
+if (process.env.FAKE_ACP_DUMP) {
+  const dumpEnv = Object.fromEntries(
+    [
+      "PATH",
+      "HOME",
+      "USERPROFILE",
+      "SystemRoot",
+      "FAKE_ACP_MODE",
+      "FAKE_ACP_RPC_DUMP",
+      "TEST_POLICY",
+      "OPENCODE_API_KEY",
+      "OPENAI_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "XAI_API_KEY",
+    ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]] as const)),
+  );
+  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: dumpEnv }, null, 2));
+}
 if (argv.includes("--version")) {
   console.log("fake-acp 1.0.0");
   process.exit(0);
 }
-if (process.env.FAKE_ACP_DUMP) {
-  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
-}
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
+const rpcMethods: string[] = [];
+const recordMethod = (method: string) => {
+  rpcMethods.push(method);
+  if (process.env.FAKE_ACP_RPC_DUMP) writeFileSync(process.env.FAKE_ACP_RPC_DUMP, JSON.stringify(rpcMethods));
+};
 
 // session/set_mode + session/set_model calls seen this run
 const configCalls: Array<{ method: string; params: unknown }> = [];
@@ -152,6 +172,7 @@ function handle(msg: any) {
     return;
   }
   if (!msg.method) return;
+  recordMethod(msg.method);
 
   switch (msg.method) {
     case "initialize": {
@@ -167,6 +188,14 @@ function handle(msg: any) {
       result(msg.id, {});
       break;
     case "session/new": {
+      if (mode === "auth-required") {
+        out({
+          jsonrpc: "2.0",
+          id: msg.id,
+          error: { code: -32000, message: "Authentication required", data: { providerId: "opencode-go" } },
+        });
+        break;
+      }
       const servers: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
       agentsMcp = servers.find((s: any) => s?.name === "agents") ?? null;
       const opts = configOptions();
@@ -227,7 +256,8 @@ function handle(msg: any) {
         setInterval(() => {}, 1_000);
         return;
       }
-      const complete = () =>
+      const complete = () => {
+        recordMethod("session/prompt.result");
         result(
           msg.id,
           // FAKE_ACP_USAGE_ROOT reproduces opencode 1.18.18's shape: usage at
@@ -236,6 +266,7 @@ function handle(msg: any) {
             ? { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5 }, _meta: {} }
             : { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } },
         );
+      };
       if (mode === "ask-peer" && agentsMcp) {
         // the comms e2e: reach a peer bot through the injected agents proxy
         // and reply with whatever it said (the peer's fake runs plain happy

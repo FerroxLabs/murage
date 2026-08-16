@@ -6,7 +6,7 @@ import { Check, CircleHelp, ExternalLink, Loader2, TriangleAlert } from "lucide-
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
 
-export type ConfigSection = "composio" | "composioApi" | "box";
+export type ConfigSection = "composio" | "composioApi" | "box" | "opencodeGo";
 
 const SECTIONS: Record<
   ConfigSection,
@@ -18,6 +18,7 @@ const SECTIONS: Record<
     flag: (c) => c.composio.apiKeyConfigured ?? false,
   },
   box: { body: (v) => ({ box: { token: v } }), flag: (c) => c.box.configured },
+  opencodeGo: { body: (v) => ({ opencodeGo: { apiKey: v } }), flag: (c) => c.opencodeGo?.configured ?? false },
 };
 
 const CREDENTIALS: Record<
@@ -56,6 +57,14 @@ const CREDENTIALS: Record<
     linkLabel: "Open Box API key guide",
     optional: true,
     warning: "Box is a paid service after its trial. Usage may incur charges.",
+  },
+  opencodeGo: {
+    label: "OpenCode Go API key",
+    placeholder: "Paste your OpenCode Go API key",
+    description: "Run OpenCode Go models through the maintained OpenCode CLI and ACP.",
+    href: "https://opencode.ai/docs/go/",
+    linkLabel: "Open OpenCode Go setup guide",
+    optional: true,
   },
 };
 
