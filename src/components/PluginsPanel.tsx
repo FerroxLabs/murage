@@ -2,7 +2,7 @@
 // from /api/connectors/catalog — the full toolkit list with logos when a
 // Composio API key is configured, a curated set otherwise. Icons resolve
 // logo → favicon → monogram.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -40,6 +40,7 @@ function ServiceIcon({ card }: { card: ToolkitCard }) {
 
 export function PluginsPanel() {
   const { dispatch } = useStore();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [cards, setCards] = useState<ToolkitCard[] | null>(null);
   const [source, setSource] = useState<"api" | "curated">("curated");
   const [configured, setConfigured] = useState(true);
@@ -78,6 +79,48 @@ export function PluginsPanel() {
     };
   }, [refreshStatus]);
 
+  useEffect(() => {
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const focusable = () =>
+      Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+
+    (dialog?.querySelector<HTMLElement>("input") ?? focusable()[0] ?? dialog)?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dispatch({ type: "togglePlugins", open: false });
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const items = focusable();
+      if (items.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items.at(-1)!;
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      returnFocus?.focus();
+    };
+  }, [dispatch]);
+
   const connect = (slug: string) => {
     setBusySlug(slug);
     setError(null);
@@ -112,15 +155,20 @@ export function PluginsPanel() {
 
   return (
     <div
-      className="absolute inset-0 z-20 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-5 backdrop-blur-sm"
       onClick={() => dispatch({ type: "togglePlugins", open: false })}
     >
       <div
-        className="animate-pop-in flex max-h-[80%] w-[560px] flex-col rounded-2xl border border-hairline/50 bg-panel p-5 shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="connected-apps-title"
+        tabIndex={-1}
+        className="animate-pop-in flex max-h-[calc(100dvh-2.5rem)] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-hairline/50 bg-panel p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
-          <div className="text-[17px] font-semibold text-ink">Connected apps</div>
+          <div id="connected-apps-title" className="text-[17px] font-semibold text-ink">Connected apps</div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => refreshStatus(visible.map((c) => c.slug).slice(0, 40))}
@@ -131,6 +179,7 @@ export function PluginsPanel() {
             </button>
             <button
               onClick={() => dispatch({ type: "togglePlugins", open: false })}
+              aria-label="Close connected apps"
               className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
             >
               <X size={18} />
