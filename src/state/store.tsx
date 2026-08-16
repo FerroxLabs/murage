@@ -16,6 +16,7 @@ import {
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import { currentCall } from "@/lib/call";
+import { showNotification } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 
 export type { MausColor } from "@/lib/mascot";
@@ -1056,10 +1057,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     loadAll();
 
     const es = new EventSource("/api/events");
-    es.onopen = () => {
-      rawDispatch({ type: "connected", value: true });
-      loadAll(); // resync anything missed while disconnected
-    };
+    // The hydrate decision belongs to the hello frame, not to onopen: the
+    // server replays what we missed when it can, and re-downloading every
+    // transcript on a reconnect it already covered is pure waste.
+    es.onopen = () => rawDispatch({ type: "connected", value: true });
     es.onerror = () => rawDispatch({ type: "connected", value: false });
     es.onmessage = (raw) => {
       let frame: any;
@@ -1069,6 +1070,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return;
       }
       switch (frame.kind) {
+        // First frame on every connection. `resumed` is the server saying
+        // whether it could replay the gap — the browser resends its cursor
+        // as Last-Event-ID by itself, so there is nothing to track here.
+        case "hello":
+          if (!frame.resumed) loadAll();
+          break;
         case "message": {
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
           // a settled assistant bubble replaces the in-flight stream
@@ -1126,6 +1133,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           rawDispatch({ type: "groupPatched", group });
           break;
         }
+        // the harness decided this was worth interrupting for; the toggle
+        // in each bot's settings is what gates it, server-side
+        case "notify":
+          showNotification(frame.notification, (botId) => rawDispatch({ type: "select", id: botId }));
+          break;
         case "group.deleted":
           rawDispatch({ type: "groupDeleted", groupId: frame.groupId });
           break;
