@@ -10,6 +10,7 @@ import {
 } from "@/lib/mascot";
 import { ModelPicker } from "./ModelPicker";
 import { cn } from "@/lib/cn";
+import { requestNotificationPermission } from "@/lib/notify";
 
 function Field({
   label,
@@ -357,7 +358,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             <button
               role="switch"
               aria-checked={bot.notifications}
-              onClick={() => patch({ notifications: !bot.notifications })}
+              onClick={() => {
+                const enabled = !bot.notifications;
+                if (enabled) void requestNotificationPermission();
+                patch({ notifications: enabled });
+              }}
               className={cn(
                 "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
                 bot.notifications ? "bg-accent" : "bg-raised",

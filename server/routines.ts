@@ -79,7 +79,9 @@ interface RoutineFile {
 export interface RoutineManagerOptions {
   file?: string;
   now?: () => number;
-  emit?: (payload: unknown) => void;
+  /** Keyed frames only: every payload on this bus is `{ kind, … }`, which
+   * is what lets the server number and replay them. */
+  emit?: (payload: Record<string, unknown>) => void;
   botState: (botId: string) => "ready" | "busy" | "missing";
   createTask: (botId: string, title: string) => { threadId: string } | null;
   startTurn: (
