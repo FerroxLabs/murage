@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
+import { peerAllowKey } from "./peer-approval-key.ts";
 import { Store, type BotRecord } from "./store.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
@@ -75,6 +76,29 @@ describe("Store", () => {
     expect(back.busy).toBe(false);
     const messages = reloaded.messagesFor(bot.threadId);
     expect(messages.at(-1)).toMatchObject({ role: "user", text: "hi there" });
+  });
+
+  it("migrates unambiguous legacy peer grants without guessing duplicate names", () => {
+    const store = new Store(selection);
+    const requester = store.createBot();
+    const helper = store.patchBot(store.createBot().id, { name: "Helper" })!;
+    store.patchBot(store.createBot().id, { name: "Twin" });
+    store.patchBot(store.createBot().id, { name: "Twin" });
+    store.patchBot(requester.id, {
+      alwaysAllow: ["ask_bot:@Helper", "delegate_bot:@Twin", "Bash:git status"],
+    });
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(requester.id)?.alwaysAllow).toEqual([
+      peerAllowKey("ask_bot", helper.id),
+      "delegate_bot:@Twin",
+      "Bash:git status",
+    ]);
+
+    const persisted: BotRecord[] = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    expect(persisted.find((bot) => bot.id === requester.id)?.alwaysAllow).toEqual(
+      reloaded.bot(requester.id)?.alwaysAllow,
+    );
   });
 
   it("keeps exactly one persisted Chief of Staff and supports handoff", () => {

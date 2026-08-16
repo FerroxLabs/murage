@@ -393,7 +393,7 @@ describe("comms e2e (fake ACP fleet)", () => {
 
       // The card carries the allowKey the Always-allow flow mirrors back
       // into bot.alwaysAllow, and offers Allow / Deny / Always allow.
-      expect(card.card.allowKey).toBe("ask_bot:@Helper");
+      expect(card.card.allowKey).toBe(`ask_bot:${helper.id}`);
       expect(card.card.options).toEqual(["Allow", "Deny", "Always allow"]);
       expect(card.card.title).toContain("@Asker");
       expect(card.card.title).toContain("@Helper");
@@ -526,8 +526,9 @@ describe("comms e2e (fake ACP fleet)", () => {
   it("does not inject the agents integration into a depth-1 turn", async () => {
     const seeded = (await api("GET", "/api/bots")).body.bots[0];
     await api("PATCH", `/api/bots/${seeded.id}`, { hidden: true });
-    // Both bots run ask-peer: A delegates to B (still in ask-peer mode),
-    // so the regression signal is observable when the guard is broken.
+    // A runs delegate-peer and hands off to B, which runs ask-peer. If the
+    // depth guard broke, B's depth-1 turn would call ask_bot and its reply
+    // would carry the "one hop" refusal — the regression signal.
     const selection = { instanceId: "grok", model: "fake-model" };
     const askerSelection = { instanceId: "askerDelegate", model: "fake-model" };
     const helper = (await api("POST", "/api/bots")).body.bot;

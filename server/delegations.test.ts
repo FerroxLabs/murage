@@ -41,14 +41,14 @@ function setupBuses(store: Store): BusPair {
   return { commsBus, approvalBus, broadcasts, groupBroadcasts };
 }
 
-/** Poll until `predicate` returns a defined value or `timeout` elapses.
+/** Poll until `predicate` returns a truthy value or `timeout` elapses.
  * drainDelegations is fire-and-forget (processOne runs as a Promise) so
  * tests need to wait for its async steps to land. */
-async function waitFor<T>(predicate: () => T | undefined, timeout = 2_000): Promise<T> {
+async function waitFor<T>(predicate: () => T | undefined | false, timeout = 2_000): Promise<T> {
   const deadline = Date.now() + timeout;
   for (;;) {
     const v = predicate();
-    if (v !== undefined) return v;
+    if (v) return v as T;
     if (Date.now() > deadline) throw new Error("waitFor: timed out");
     await new Promise((r) => setTimeout(r, 25));
   }
@@ -128,6 +128,27 @@ describe("queueDelegation", () => {
     );
     expect(broadcast).toBeTruthy();
   });
+
+  it("keys detached routine delegations to their real source thread", async () => {
+    const routineTask = store.createTask(from.id, "Routine run", false)!;
+    const result = queueDelegation(
+      commsBus,
+      from,
+      { toBotId: target.id, message: "routine follow-up", depth: 0 },
+      1,
+      routineTask.threadId,
+    );
+
+    expect(result).toBe("ok");
+    expect(_pendingCount(routineTask.threadId)).toBe(1);
+    expect(_pendingCount(from.threadId)).toBe(0);
+    expect(
+      store.messagesFor(routineTask.threadId).some((m) => m.tool?.name === "Delegated to @Helper"),
+    ).toBe(true);
+    expect(
+      store.messagesFor(from.threadId).some((m) => m.tool?.name === "Delegated to @Helper"),
+    ).toBe(false);
+  });
 });
 
 describe("drainDelegations", () => {
@@ -136,7 +157,7 @@ describe("drainDelegations", () => {
   let target: BotRecord;
   let commsBus: CommsBus;
   let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
-  let runTargetCalls: Array<{ toBotId: string; message: string; commsDepth: number }>;
+  let runTargetCalls: Array<{ toBotId: string; message: string; commsDepth: number; sourceThreadId?: string }>;
 
   beforeEach(() => {
     rmSync(DATA_DIR, { recursive: true, force: true });
@@ -199,6 +220,76 @@ describe("drainDelegations", () => {
     expect(runTargetCalls[0]!.message).toContain("[Reason: next step]");
   });
 
+  it("drains and mirrors a detached routine delegation on its source thread", async () => {
+    const activeThreadId = from.threadId;
+    const routineTask = store.createTask(from.id, "Routine run", false)!;
+    queueDelegation(
+      commsBus,
+      from,
+      { toBotId: target.id, message: "routine follow-up", depth: 0 },
+      1,
+      routineTask.threadId,
+    );
+
+    drainDelegations(
+      commsBus,
+      approvalBus,
+      routineTask.threadId,
+      (toBotId, message, commsDepth, sourceThreadId) => {
+        runTargetCalls.push({ toBotId, message, commsDepth, sourceThreadId });
+      },
+    );
+
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(_pendingCount(routineTask.threadId)).toBe(0);
+    expect(runTargetCalls[0]?.sourceThreadId).toBe(routineTask.threadId);
+    expect(
+      store.messagesFor(routineTask.threadId).some((m) => m.tool?.name === "Messaged @Helper"),
+    ).toBe(true);
+    expect(
+      store.messagesFor(activeThreadId).some((m) => m.tool?.name === "Messaged @Helper"),
+    ).toBe(false);
+  });
+
+  it("contains a rejected delegation worker and reports it on the source thread", async () => {
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
+    drainDelegations(commsBus, approvalBus, from.threadId, () => {
+      throw new Error("target runner exploded");
+    });
+
+    const failure = await waitFor(() =>
+      store
+        .messagesFor(from.threadId)
+        .find((m) => m.tool?.ok === false && m.tool.name.includes("target runner exploded")),
+    );
+    expect(failure.tool?.name).toContain("delegation failed");
+  });
+
+  it("reports an asynchronous target-start rejection on a detached source thread", async () => {
+    const activeThreadId = from.threadId;
+    const routineTask = store.createTask(from.id, "Routine run", false)!;
+    queueDelegation(
+      commsBus,
+      from,
+      { toBotId: target.id, message: "do this", depth: 0 },
+      1,
+      routineTask.threadId,
+    );
+    drainDelegations(commsBus, approvalBus, routineTask.threadId, () =>
+      Promise.reject(new Error("provider disappeared")),
+    );
+
+    const failure = await waitFor(() =>
+      store
+        .messagesFor(routineTask.threadId)
+        .find((m) => m.tool?.ok === false && m.tool.name.includes("provider disappeared")),
+    );
+    expect(failure.tool?.name).toContain("delegation failed");
+    expect(
+      store.messagesFor(activeThreadId).some((m) => m.tool?.name.includes("provider disappeared")),
+    ).toBe(false);
+  });
+
   it("skips runTarget and emits a 'no such bot' chip when the target was deleted", async () => {
     queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
     store.deleteBot(target.id);
@@ -243,7 +334,7 @@ describe("drainDelegations", () => {
     );
     expect(card.card?.title).toContain("delegate to @Helper");
     expect(card.card?.tool).toBe("delegate_bot");
-    expect(card.card?.allowKey).toBe(peerAllowKey("delegate_bot", "Helper"));
+    expect(card.card?.allowKey).toBe(peerAllowKey("delegate_bot", target.id));
     expect(card.card?.options).toEqual(["Allow", "Deny", "Always allow"]);
     expect(runTargetCalls).toEqual([]);
 
@@ -277,7 +368,7 @@ describe("drainDelegations", () => {
   it("auto-allows when alwaysAllow already covers the pair (no card pushed)", async () => {
     store.patchBot(from.id, {
       approvePeerComms: true,
-      alwaysAllow: [peerAllowKey("delegate_bot", "Helper")],
+      alwaysAllow: [peerAllowKey("delegate_bot", target.id)],
     });
     queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
     drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {

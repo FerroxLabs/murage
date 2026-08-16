@@ -22,6 +22,7 @@ import readline from "node:readline";
 
 const HARNESS = process.env.OMB_HARNESS_URL ?? "http://127.0.0.1:8799";
 const BOT_ID = process.env.OMB_BOT_ID ?? "";
+const THREAD_ID = process.env.OMB_THREAD_ID ?? "";
 const TOKEN = process.env.OMB_COMMS_TOKEN ?? "";
 const DEPTH = Number(process.env.OMB_TURN_DEPTH ?? "0") || 0;
 
@@ -96,7 +97,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     if (!toBotId || !message) return { text: "ask_bot needs bot_id and message.", isError: true };
     const r = await api(`/api/internal/ask-bot`, {
       method: "POST",
-      body: JSON.stringify({ fromBotId: BOT_ID, toBotId, message, depth: DEPTH }),
+      body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, toBotId, message, depth: DEPTH }),
     });
     if (r.busy) return { text: `That bot is busy right now — try again after it finishes.` };
     if (r.error) return { text: `Couldn't reach that bot: ${r.error}`, isError: true };
@@ -107,7 +108,13 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const message = String(args.message ?? "").trim();
     const reason = typeof args.reason === "string" ? args.reason.trim() : "";
     if (!toBotId || !message) return { text: "delegate_bot needs bot_id and message.", isError: true };
-    const body: Record<string, unknown> = { fromBotId: BOT_ID, toBotId, message, depth: DEPTH };
+    const body: Record<string, unknown> = {
+      fromBotId: BOT_ID,
+      fromThreadId: THREAD_ID,
+      toBotId,
+      message,
+      depth: DEPTH,
+    };
     if (reason) body.reason = reason;
     const r = await api(`/api/internal/delegate-bot`, { method: "POST", body: JSON.stringify(body) });
     if (r.error) return { text: `Couldn't queue the delegation: ${r.error}`, isError: true };

@@ -74,7 +74,7 @@ const agentsProxyPath = (() => {
 // in the packaged app process.execPath is Electron — run the proxy as node
 const AGENTS_NODE_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 
-function agentsIntegration(botId: string, depth: number) {
+function agentsIntegration(botId: string, threadId: string, depth: number) {
   return {
     command: process.execPath,
     args: [agentsProxyPath],
@@ -82,6 +82,7 @@ function agentsIntegration(botId: string, depth: number) {
       ...AGENTS_NODE_FLAG,
       OMB_HARNESS_URL: `http://127.0.0.1:${PORT}`,
       OMB_BOT_ID: botId,
+      OMB_THREAD_ID: threadId,
       OMB_COMMS_TOKEN: COMMS_TOKEN,
       OMB_TURN_DEPTH: String(depth),
     },
@@ -472,22 +473,22 @@ bus.subscribe((event: RuntimeEvent) => {
   // firing it later: the user who hit Stop does not expect the delegations
   // that turn queued to run anyway, minutes later, on an unrelated turn.
   if (!event.ok) return void discardDelegations(commsBus, event.threadId);
-  drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth) => {
+  drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth, sourceThreadId) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
     // child. Every delegation failure has to land as a chip instead.
-    void startTurn(toBotId, text, { commsDepth }).catch((err) => {
+    return startTurn(toBotId, text, { commsDepth }).catch((err) => {
       const bot = store.bot(toBotId);
       const why = err instanceof Error ? err.message : String(err);
-      const source = store.botByThread(event.threadId);
+      const source = store.botByThread(sourceThreadId);
       if (!source) return;
-      const note = store.appendMessage(source.threadId, {
+      const note = store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `error: delegation to @${bot?.name ?? toBotId} could not start — ${why.slice(0, 120)}`, ok: false },
       });
-      broadcast({ kind: "message", threadId: source.threadId, message: note });
+      broadcast({ kind: "message", threadId: sourceThreadId, message: note });
     });
   });
 });
@@ -764,7 +765,7 @@ async function startTurn(
         instance.adapter.capabilities.agentsMcp === true &&
         store.bots.filter((b) => b.id !== bot.id && !b.hidden).length > 0
       ) {
-        integrations.agents = agentsIntegration(bot.id, commsDepth);
+        integrations.agents = agentsIntegration(bot.id, threadId, commsDepth);
       }
       // @mentions in the user's message (the composer's tagging UI) become
       // an explicit delegation nudge — the agent still does the ask_bot call
@@ -1203,7 +1204,12 @@ const server = createServer(async (req, res) => {
         // hard refusal — every peer turn has an accountable sender.
         const from = store.bot(fromBotId);
         if (!from) return json(res, 403, { error: "unknown sender" });
-        const fromName = from.name;
+        const fromThreadId = String(body.fromThreadId ?? from.threadId);
+        if (!store.taskByThread(from.id, fromThreadId)) {
+          return json(res, 403, { error: "source thread does not belong to sender" });
+        }
+        let currentFrom = from;
+        let currentTarget = target;
 
         // the exchange is mirrored into a bot⇄bot channel: it shows up in
         // the sidebar like any room, keeps the pair's full history, and the
@@ -1217,17 +1223,33 @@ const server = createServer(async (req, res) => {
         // and the chips are created only AFTER the verdict, so a denied
         // contact leaves no trace of an exchange that never happened.
         if (from.approvePeerComms) {
-          const verdict = await requestPeerApproval(approvalBus, from, target, message, "ask_bot");
+          const verdict = await requestPeerApproval(
+            approvalBus,
+            from,
+            target,
+            message,
+            "ask_bot",
+            fromThreadId,
+          );
           if (verdict !== "allow") return json(res, 200, { error: "denied by user" });
-          // the card may have been open for minutes — re-check the target
-          if (store.bot(toBotId)?.busy) return json(res, 200, { busy: true });
+          // The card may have been open for minutes. Re-read both records so
+          // deleted bots cannot recreate transcripts through stale objects.
+          const freshFrom = store.bot(fromBotId);
+          const freshTarget = store.bot(toBotId);
+          if (!freshFrom || !freshTarget) return json(res, 404, { error: "no such bot" });
+          if (!store.taskByThread(freshFrom.id, fromThreadId)) {
+            return json(res, 404, { error: "source task no longer exists" });
+          }
+          if (freshTarget.busy) return json(res, 200, { busy: true });
+          currentFrom = freshFrom;
+          currentTarget = freshTarget;
         }
-        const channel = getOrCreateChannel(store, from, target);
-        mirrorExchange(commsBus, from, target, message, channel);
-        const prefixed = `[Message from @${fromName}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
+        const channel = getOrCreateChannel(store, currentFrom, currentTarget);
+        mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
+        const prefixed = `[Message from @${currentFrom.name}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
         const reply = await askBotAndWait(toBotId, prefixed, depth);
-        mirrorReply(commsBus, target, reply, channel);
-        return json(res, 200, { botName: target.name, text: reply });
+        mirrorReply(commsBus, currentTarget, reply, channel);
+        return json(res, 200, { botName: currentTarget.name, text: reply });
       }
       // Async handoff: the source bot queues a task for a peer and goes
       // back to the user; the peer turn runs after the source's
@@ -1242,7 +1264,17 @@ const server = createServer(async (req, res) => {
         if (!toBotId || !message) return json(res, 400, { error: "toBotId and message required" });
         const from = store.bot(fromBotId);
         if (!from) return json(res, 404, { error: "no such bot" });
-        const result = queueDelegation(commsBus, from, { toBotId, message, reason, depth }, MAX_COMMS_DEPTH);
+        const fromThreadId = String(body.fromThreadId ?? from.threadId);
+        if (!store.taskByThread(from.id, fromThreadId)) {
+          return json(res, 403, { error: "source thread does not belong to sender" });
+        }
+        const result = queueDelegation(
+          commsBus,
+          from,
+          { toBotId, message, reason, depth },
+          MAX_COMMS_DEPTH,
+          fromThreadId,
+        );
         if (result !== "ok") {
           // the agent reads this string — a bare enum ("too_deep") tells it
           // nothing about what to do instead
@@ -1252,7 +1284,7 @@ const server = createServer(async (req, res) => {
             no_target: "no such bot",
             too_many: "too many delegations queued on this turn — finish some first",
           };
-          return json(res, 400, { error: said[result] });
+          return json(res, 200, { error: said[result] });
         }
         const targetName = store.bot(toBotId)?.name ?? toBotId;
         return json(res, 200, {

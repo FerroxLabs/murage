@@ -44,25 +44,26 @@ export function queueDelegation(
   from: BotRecord,
   item: DelegationItem,
   maxDepth: number,
+  sourceThreadId = from.threadId,
 ): QueueResult {
   if (item.toBotId === from.id) return "self";
   if (item.depth >= maxDepth) return "too_deep";
   const target = bus.store.bot(item.toBotId);
   if (!target) return "no_target";
-  const list = pendingDelegations.get(from.threadId) ?? [];
+  const list = pendingDelegations.get(sourceThreadId) ?? [];
   // Async handoff removes the backpressure that ask_bot got for free by
   // making the caller wait. Without a cap, one turn can queue unboundedly
   // and fan out into as many real turns on the next settle.
   if (list.length >= MAX_QUEUED_PER_THREAD) return "too_many";
   list.push(item);
-  pendingDelegations.set(from.threadId, list);
+  pendingDelegations.set(sourceThreadId, list);
   const label = `Delegated to @${target.name}${item.reason ? `: ${item.reason}` : ""}`;
-  const note = bus.store.appendMessage(from.threadId, {
+  const note = bus.store.appendMessage(sourceThreadId, {
     role: "bot",
     kind: "activity",
     tool: { name: label },
   });
-  bus.broadcast({ kind: "message", threadId: from.threadId, message: note });
+  bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
   return "ok";
 }
 
@@ -76,7 +77,12 @@ export function drainDelegations(
   bus: CommsBus,
   approvalBus: ApprovalBus,
   threadId: string,
-  runTarget: (toBotId: string, message: string, commsDepth: number) => void,
+  runTarget: (
+    toBotId: string,
+    message: string,
+    commsDepth: number,
+    sourceThreadId: string,
+  ) => void | Promise<void>,
 ): void {
   const list = pendingDelegations.get(threadId);
   if (!list?.length) return;
@@ -84,7 +90,19 @@ export function drainDelegations(
   const from = bus.store.botByThread(threadId);
   if (!from) return;
   for (const item of list) {
-    void processOne(bus, approvalBus, from, item, runTarget);
+    void processOne(bus, approvalBus, from, threadId, item, runTarget).catch((error) => {
+      const why = error instanceof Error ? error.message : String(error);
+      try {
+        const note = bus.store.appendMessage(threadId, {
+          role: "bot",
+          kind: "activity",
+          tool: { name: `error: delegation failed — ${why.slice(0, 120)}`, ok: false },
+        });
+        bus.broadcast({ kind: "message", threadId, message: note });
+      } catch (reportError) {
+        console.error("delegation failed and could not be reported", reportError);
+      }
+    });
   }
 }
 
@@ -96,49 +114,63 @@ export function discardDelegations(bus: CommsBus, threadId: string): void {
   pendingDelegations.delete(threadId);
   const from = bus.store.botByThread(threadId);
   if (!from) return;
-  const note = bus.store.appendMessage(from.threadId, {
+  const note = bus.store.appendMessage(threadId, {
     role: "bot",
     kind: "activity",
     tool: { name: `${list.length} queued delegation${list.length > 1 ? "s" : ""} dropped — the turn did not finish`, ok: false },
   });
-  bus.broadcast({ kind: "message", threadId: from.threadId, message: note });
+  bus.broadcast({ kind: "message", threadId, message: note });
 }
 
 async function processOne(
   bus: CommsBus,
   approvalBus: ApprovalBus,
   from: BotRecord,
+  sourceThreadId: string,
   item: DelegationItem,
-  runTarget: (toBotId: string, message: string, commsDepth: number) => void,
+  runTarget: (
+    toBotId: string,
+    message: string,
+    commsDepth: number,
+    sourceThreadId: string,
+  ) => void | Promise<void>,
 ): Promise<void> {
-  const target = bus.store.bot(item.toBotId);
+  let sender = from;
+  let target = bus.store.bot(item.toBotId);
   if (!target) {
-    const note = bus.store.appendMessage(from.threadId, {
+    const note = bus.store.appendMessage(sourceThreadId, {
       role: "bot",
       kind: "activity",
       tool: { name: `error: delegation to ${item.toBotId} failed — no such bot`, ok: false },
     });
-    bus.broadcast({ kind: "message", threadId: from.threadId, message: note });
+    bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
     return;
   }
   if (target.busy) {
-    const note = bus.store.appendMessage(from.threadId, {
+    const note = bus.store.appendMessage(sourceThreadId, {
       role: "bot",
       kind: "activity",
       tool: { name: `Delegation to @${target.name} canceled — @${target.name} is busy`, ok: false },
     });
-    bus.broadcast({ kind: "message", threadId: from.threadId, message: note });
+    bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
     return;
   }
-  if (from.approvePeerComms) {
-    const verdict = await requestPeerApproval(approvalBus, from, target, item.message, "delegate_bot");
+  if (sender.approvePeerComms) {
+    const verdict = await requestPeerApproval(
+      approvalBus,
+      sender,
+      target,
+      item.message,
+      "delegate_bot",
+      sourceThreadId,
+    );
     if (verdict !== "allow") {
-      const note = bus.store.appendMessage(from.threadId, {
+      const note = bus.store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `Delegation to @${target.name} denied by user`, ok: false },
       });
-      bus.broadcast({ kind: "message", threadId: from.threadId, message: note });
+      bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
       return;
     }
     // The approval could have been sitting for up to 15 minutes. Everything
@@ -146,23 +178,25 @@ async function processOne(
     // busy, or an allow can start a second turn on a bot that is mid-turn —
     // and mirror a "Messaged @X" chip for an exchange that never happens.
     const current = bus.store.bot(item.toBotId);
-    const sender = bus.store.bot(from.id);
-    if (!current || !sender) return;
+    const currentSender = bus.store.bot(from.id);
+    if (!current || !currentSender || !bus.store.taskByThread(currentSender.id, sourceThreadId)) return;
     if (current.busy) {
-      const note = bus.store.appendMessage(from.threadId, {
+      const note = bus.store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `Delegation to @${current.name} canceled — @${current.name} is busy`, ok: false },
       });
-      bus.broadcast({ kind: "message", threadId: from.threadId, message: note });
+      bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
       return;
     }
+    sender = currentSender;
+    target = current;
   }
-  const channel = getOrCreateChannel(bus.store, from, target);
-  mirrorExchange(bus, from, target, item.message, channel);
+  const channel = getOrCreateChannel(bus.store, sender, target);
+  mirrorExchange(bus, sender, target, item.message, channel, sourceThreadId);
   const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
-  const prefixed = `[Delegated by @${from.name}, another bot in this OpenMausBot workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
-  runTarget(item.toBotId, prefixed, item.depth + 1);
+  const prefixed = `[Delegated by @${sender.name}, another bot in this OpenMausBot workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
+  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId);
 }
 
 /** Test helper: how many items remain queued for a thread. */
