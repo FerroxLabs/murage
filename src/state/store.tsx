@@ -13,6 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { EffortLevel } from "../../server/contracts.ts";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
@@ -87,6 +88,7 @@ export interface Group {
 export interface ModelSelection {
   instanceId: string;
   model: string;
+  effort?: EffortLevel;
 }
 
 /** One of a bot's separate contexts: its own thread, transcript and
@@ -196,7 +198,7 @@ export interface InstanceInfo {
     version?: string | null;
   };
   models: { default: string; options: Array<{ id: string; label: string }> };
-  capabilities?: { computerMcp?: boolean; agentsMcp?: boolean };
+  capabilities?: { computerMcp?: boolean; agentsMcp?: boolean; effortLevels?: readonly EffortLevel[] };
   install?: EngineInstall;
 }
 
@@ -325,6 +327,7 @@ type Action =
           | "hidden"
           | "chiefOfStaff"
           | "approvePeerComms"
+          | "modelSelection"
         >
       >;
     };

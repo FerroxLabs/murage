@@ -291,6 +291,78 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("keeps the rest of a duplicate's fields when the source engine is offline", async () => {
+    // duplicateBot POSTs a blank bot, then PATCHes the source's whole
+    // modelSelection in one body beside its name, title and description.
+    // "ghost" is an unknown driver, so the registry resolves nothing and the
+    // level cannot be verified — which must not cost the copy everything
+    // else in the request.
+    const copy = (await api("POST", "/api/bots")).body.bot;
+
+    const patched = await api("PATCH", `/api/bots/${copy.id}`, {
+      name: "Reviewer copy",
+      title: "Reviewer",
+      description: "reads diffs",
+      modelSelection: { instanceId: "ghost", model: "ghost-1", effort: "xhigh" },
+    });
+
+    expect(patched.status).toBe(200);
+    expect(patched.body.bot).toMatchObject({
+      name: "Reviewer copy",
+      title: "Reviewer",
+      description: "reads diffs",
+      modelSelection: { instanceId: "ghost", model: "ghost-1", effort: "xhigh" },
+    });
+  });
+
+  it("rejects an unknown effort value even while the engine is offline", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const patched = await api("PATCH", `/api/bots/${bot.id}`, {
+      modelSelection: { instanceId: "ghost", model: "ghost-1", effort: "turbo" },
+    });
+
+    expect(patched.status).toBe(400);
+    expect(patched.body.error).toContain("not recognized");
+  });
+
+  it("leaves a bot with no effort level untouched", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    expect(bot.modelSelection.effort).toBeUndefined();
+
+    const renamed = await api("PATCH", `/api/bots/${bot.id}`, { name: "Plain" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.bot.modelSelection.effort).toBeUndefined();
+  });
+
+  // This fixture pins a single unknown driver, so no instance here ever
+  // resolves: these cover the gate's pass-through and the store's replace
+  // semantics, NOT the comparison against a live engine's declared list.
+  // That branch has no coverage at this layer, and manufacturing a live
+  // instance in this fixture would cost it its no-probe determinism.
+  it("round-trips an effort level and clears it when the key is dropped", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const selection = { instanceId: "ghost", model: "ghost-1" };
+
+    const set = await api("PATCH", `/api/bots/${bot.id}`, {
+      modelSelection: { ...selection, effort: "high" },
+    });
+    expect(set.status).toBe(200);
+    expect(set.body.bot.modelSelection.effort).toBe("high");
+
+    const reread = (await api("GET", "/api/bots")).body.bots.find((b: { id: string }) => b.id === bot.id);
+    expect(reread.modelSelection.effort).toBe("high");
+
+    // The panel's "Default" button spreads the selection with effort:
+    // undefined, and JSON.stringify drops the key — so clearing reaches the
+    // server as a modelSelection carrying no effort at all.
+    const cleared = await api("PATCH", `/api/bots/${bot.id}`, { modelSelection: selection });
+    expect(cleared.status).toBe(200);
+
+    const after = (await api("GET", "/api/bots")).body.bots.find((b: { id: string }) => b.id === bot.id);
+    expect(after.modelSelection).toEqual(selection);
+    expect(after.modelSelection.effort).toBeUndefined();
+  });
+
   it("persists an answered onboarding card", async () => {
     const { body } = await api("GET", "/api/bots");
     const bot = body.bots[0];

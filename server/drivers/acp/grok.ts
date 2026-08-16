@@ -23,6 +23,10 @@ const support: AcpSupport = {
       { id: "grok-4.5", label: "Grok 4.5" },
     ],
   },
+  // Grok's accepted levels vary by model and the CLI validates lazily — a
+  // rejected level only logs and falls back. Offer the intersection shared
+  // by every model in this driver's picker; notably, grok-4.5 rejects xhigh.
+  effortLevels: ["low", "medium", "high"],
   defaultCli: "grok",
   nativeSource: "grok.acp",
   loginNote: "Grok CLI is not signed in — run `grok login` in a terminal",
@@ -46,6 +50,9 @@ const support: AcpSupport = {
     "--permission-mode",
     config.fullAuto ? "bypassPermissions" : "default",
     ...(turn.model ? ["-m", turn.model] : []),
+    // long form on purpose: `--effort` is documented as an alias, and an
+    // alias is the part a CLI is free to rename
+    ...(turn.effort ? ["--reasoning-effort", turn.effort] : []),
     "agent",
     "stdio",
   ],

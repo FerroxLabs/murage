@@ -350,6 +350,39 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.interruptTurn("t-perm-2");
     await recorder.until((e) => e.type === "turn.completed");
   });
+
+  it("passes effort to the CLI, and omits the flag when unset", async () => {
+    await create();
+    const dump = join(scratch, "effort.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-effort", text: "hi", effort: "xhigh" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv).toContain("--effort");
+    expect(seen.argv[seen.argv.indexOf("--effort") + 1]).toBe("xhigh");
+    expect(seen.argv.filter((a: string) => a === "--effort")).toHaveLength(1);
+  });
+
+  it("adds no effort flag when the turn has none", async () => {
+    await create();
+    const dump = join(scratch, "no-effort.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-no-effort", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv).not.toContain("--effort");
+  });
+
+  it("declares the effort levels the CLI accepts", async () => {
+    await create();
+    expect(instance.adapter.capabilities.effortLevels).toEqual([
+      "low", "medium", "high", "xhigh", "max",
+    ]);
+  });
 });
 
 // Auth state must come from the CLI, not from probing its credential store:
