@@ -8,7 +8,6 @@
 //   - Composio Connect (connected apps → tools) over streamable HTTP
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
-import { execFile } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { homedir } from "node:os";
@@ -32,49 +31,45 @@ import { computerProxyEnv } from "../container-computer.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 
-/** Does the macOS Keychain hold Claude Code's credentials?
+/** Whether `claude` has been signed in.
  *
- * Deliberately `find-generic-password` WITHOUT `-w`: that returns the item's
- * attributes only. Asking for the secret would both be unnecessary — we only
- * want to know whether sign-in happened — and would trigger a keychain
- * authorization prompt the user has no reason to expect from a version probe.
+ * Credential storage is deliberately not inspected here. Claude Code uses the
+ * macOS Keychain for OAuth, a JSON file on some platforms, and may gain other
+ * backends over time. Presence checks also accept stale credentials. The CLI's
+ * own machine-readable auth command is the source of truth for every backend.
  */
-function keychainHasCredentials(): Promise<boolean> {
+export function claudeSignedIn(
+  cli: string,
+  env: NodeJS.ProcessEnv,
+  run: typeof execCli = execCli,
+): Promise<boolean> {
   return new Promise((resolve) => {
-    execFile(
-      "/usr/bin/security",
-      ["find-generic-password", "-s", "Claude Code-credentials"],
-      { timeout: 5000 },
-      (error) => resolve(!error),
-    );
+    run(cli, ["auth", "status", "--json"], { timeout: 8000, env }, (_error, stdout) => {
+      try {
+        const status: unknown = JSON.parse(stdout);
+        resolve(
+          typeof status === "object" && status !== null && "loggedIn" in status && status.loggedIn === true,
+        );
+      } catch {
+        resolve(false);
+      }
+    });
   });
 }
 
-/** Whether `claude` has been signed in.
+/** The CLI environment shared by auth probes and real turns.
  *
- * Claude Code writes `~/.claude/.credentials.json` on Linux and WSL, but on
- * macOS it keeps its OAuth credentials in the Keychain and writes no such
- * file. Checking only the file therefore reported every signed-in Mac as
- * signed out — which is not cosmetic: `authenticated: false` greys the engine
- * out in the model picker as "sign-in required".
- *
- * All three inputs — platform, keychain, credentials file — are injectable so
- * the decision can be tested off a Mac, without depending on whoever is
- * running the suite being signed into Claude, and above all without the test
- * going anywhere near the real `~/.claude/.credentials.json`. A test that
- * writes that file to set up a case has to delete it to tear the case down,
- * and deleting it signs the developer out.
+ * Subscription users can be billed pay-as-you-go if an inherited API key
+ * leaks through, and a nested CLI must not inherit this session's identity.
+ * Keeping the probe and turn environments identical prevents setup from
+ * claiming an API-key login that the turn itself would deliberately remove.
  */
-export const credentialsFilePath = (): string => join(homedir(), ".claude", ".credentials.json");
-
-export async function claudeSignedIn(
-  platform: NodeJS.Platform = process.platform,
-  keychain: () => Promise<boolean> = keychainHasCredentials,
-  hasCredentialsFile: () => boolean = () => existsSync(credentialsFilePath()),
-): Promise<boolean> {
-  if (hasCredentialsFile()) return true;
-  if (platform !== "darwin") return false;
-  return keychain();
+function claudeEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
+  delete env.ANTHROPIC_API_KEY;
+  delete env.CLAUDECODE;
+  delete env.CLAUDE_CODE_ENTRYPOINT;
+  return env;
 }
 
 const DRIVER_KIND = "claudeAgent";
@@ -374,12 +369,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         args.push("--allowedTools", allowed.join(","));
       }
 
-      const env: Record<string, string | undefined> = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
-      // subscription users get billed pay-as-you-go if this leaks through;
-      // and a nested CLI must not inherit this session's identity (agentcal)
-      delete env.ANTHROPIC_API_KEY;
-      delete env.CLAUDECODE;
-      delete env.CLAUDE_CODE_ENTRYPOINT;
+      const env = claudeEnvironment();
 
       const child = spawnCli(config.cli, args, {
         cwd: turn.cwd ?? homedir(),
@@ -521,13 +511,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
+      const env = claudeEnvironment();
       const version = await new Promise<string | null>((resolve) => {
-        execCli(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) =>
+        execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
           resolve(err ? null : stdout.trim()),
         );
       });
       if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
-      const authenticated = await claudeSignedIn();
+      const authenticated = await claudeSignedIn(config.cli, env);
       return { state: "available", version, authenticated };
     };
 

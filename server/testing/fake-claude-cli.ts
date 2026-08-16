@@ -9,6 +9,8 @@
 //                        whole-message frame, plus subagent noise to drop)
 //   FAKE_CLAUDE_DUMP   path to write {argv, env, prompt} as JSON, so the
 //                      test can assert on argv shape and env hygiene
+//   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
+//                      inherited-api-key — what `auth status` reports
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { writeFileSync } from "node:fs";
@@ -22,6 +24,29 @@ const argAfter = (flag: string): string | null => {
 };
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
+
+// Snapshot probes: both answer on argv alone and exit without reading stdin.
+if (argv[0] === "--version") {
+  process.stdout.write("2.1.232 (Claude Code)\n");
+  process.exit(0);
+}
+
+if (argv[0] === "auth" && argv[1] === "status") {
+  const auth = process.env.FAKE_CLAUDE_AUTH ?? "in";
+  if (auth === "unsupported") {
+    process.stderr.write("error: unknown command 'auth'\n");
+    process.exit(1);
+  }
+  if (auth === "malformed") {
+    process.stdout.write("not json\n");
+    process.exit(0);
+  }
+  const loggedIn = auth === "in" || (auth === "inherited-api-key" && Boolean(process.env.ANTHROPIC_API_KEY));
+  process.stdout.write(
+    JSON.stringify({ loggedIn, authMethod: loggedIn ? "claude.ai" : "none", apiProvider: "firstParty" }) + "\n",
+    () => process.exit(auth === "out" ? 1 : 0),
+  );
+}
 
 let stdin = "";
 process.stdin.on("data", (c) => (stdin += c));
