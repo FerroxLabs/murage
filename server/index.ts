@@ -202,7 +202,7 @@ const sseClients = new Set<SseClient>();
 const STREAM_ID = randomUUID().slice(0, 8);
 const REPLAY_MAX = 500;
 let lastSeq = 0;
-const replayBuffer: Array<{ seq: number; kind: string; frame: string }> = [];
+const replayBuffer: Array<{ seq: number; kind: string; frame: string | null }> = [];
 
 /** Screen frames are the only kind a client can decline. */
 const wants = (client: SseClient, kind: string) => kind !== "screen" || client.screens;
@@ -222,7 +222,10 @@ function broadcast(payload: Record<string, unknown>) {
   const seq = ++lastSeq;
   const kind = String(payload.kind ?? "");
   const frame = `id: ${STREAM_ID}:${seq}\ndata: ${JSON.stringify({ ...payload, seq })}\n\n`;
-  replayBuffer.push({ seq, kind, frame });
+  // Live desktop captures can each be hundreds of kilobytes and become stale
+  // as soon as the next one arrives. Keep their sequence slots so resume-gap
+  // detection stays honest, but never retain their base64 payloads.
+  replayBuffer.push({ seq, kind, frame: kind === "screen" ? null : frame });
   if (replayBuffer.length > REPLAY_MAX) replayBuffer.shift();
   for (const client of [...sseClients]) {
     if (!wants(client, kind)) continue;
@@ -1210,7 +1213,7 @@ const server = createServer(async (req, res) => {
       );
       if (resumed) {
         for (const buffered of replayBuffer) {
-          if (buffered.seq > since && wants(client, buffered.kind)) res.write(buffered.frame);
+          if (buffered.seq > since && buffered.frame && wants(client, buffered.kind)) res.write(buffered.frame);
         }
       }
 
@@ -1327,6 +1330,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const group = store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such room" });
+      lastReply.delete(group.threadId);
       store.deleteGroup(group.id);
       for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
         try {
@@ -1431,6 +1435,7 @@ const server = createServer(async (req, res) => {
       await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => {});
       stopScreenPoller(bot.id);
       routines!.disableForBot(bot.id);
+      lastReply.delete(bot.threadId);
       store.deleteBot(bot.id);
       for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
         try {

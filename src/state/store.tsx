@@ -1040,24 +1040,57 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // ── initial load + SSE fold ──────────────────────────────────────────
   useEffect(() => {
     let alive = true;
-    const loadAll = () => {
-      api("/api/bots")
-        .then(({ bots, groups }) => alive && rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }))
-        .catch(() => {});
-      api("/api/instances")
-        .then(({ instances }) => alive && rawDispatch({ type: "instances", instances }))
-        .catch(() => {});
-      api("/api/config")
-        .then((config) => alive && rawDispatch({ type: "configStatus", config }))
-        .catch(() => {});
-      api("/api/routines")
-        .then(({ routines, runs }) => alive && rawDispatch({ type: "routinesHydrated", routines, runs }))
-        .catch(() => {});
+    const loadAll = () =>
+      Promise.all([
+        api("/api/bots")
+          .then(({ bots, groups }) => alive && rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }))
+          .catch(() => {}),
+        api("/api/instances")
+          .then(({ instances }) => alive && rawDispatch({ type: "instances", instances }))
+          .catch(() => {}),
+        api("/api/config")
+          .then((config) => alive && rawDispatch({ type: "configStatus", config }))
+          .catch(() => {}),
+        api("/api/routines")
+          .then(({ routines, runs }) => alive && rawDispatch({ type: "routinesHydrated", routines, runs }))
+          .catch(() => {}),
+      ]);
+
+    // A snapshot and the live fold have to meet at a defined boundary. Start
+    // hydration only after the stream says hello, queue frames that arrive
+    // while the REST snapshot is in flight, then apply them on top. Otherwise
+    // a late hydrate can overwrite a newer event, or an event can land between
+    // an eager request and the stream opening and disappear entirely.
+    let hydrated = false;
+    let hydrating = false;
+    let rehydrateRequested = false;
+    const pendingFrames: any[] = [];
+    let handleFrame: (frame: any) => void;
+    const hydrate = () => {
+      if (hydrating) {
+        // A second non-resumable hello means this snapshot may have started
+        // before another connection gap. Run one more after it settles.
+        rehydrateRequested = true;
+        return;
+      }
+      hydrating = true;
+      hydrated = false;
+      void loadAll().finally(() => {
+        if (!alive) return;
+        hydrating = false;
+        if (rehydrateRequested) {
+          rehydrateRequested = false;
+          hydrate();
+          return;
+        }
+        hydrated = true;
+        for (const frame of pendingFrames.splice(0)) handleFrame(frame);
+      });
     };
-    loadAll();
-    // The eager call above is the cold start. `hello` below decides whether
-    // a *reconnect* needs another one, and this first connection never does.
-    let firstHello = true;
+    // If SSE is unavailable, the app should still show its saved state. A
+    // later first hello hydrates again because it cannot prove there was no
+    // gap before that connection opened.
+    const hydrationFallback = setTimeout(hydrate, 1_000);
 
     const es = new EventSource("/api/events");
     // The hydrate decision belongs to the hello frame, not to onopen: the
@@ -1065,26 +1098,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // transcript on a reconnect it already covered is pure waste.
     es.onopen = () => rawDispatch({ type: "connected", value: true });
     es.onerror = () => rawDispatch({ type: "connected", value: false });
-    es.onmessage = (raw) => {
-      let frame: any;
-      try {
-        frame = JSON.parse(raw.data);
-      } catch {
-        return;
-      }
+    handleFrame = (frame) => {
       switch (frame.kind) {
-        // First frame on every connection. `resumed` is the server saying
-        // whether it could replay the gap — the browser resends its cursor
-        // as Last-Event-ID by itself, so there is nothing to track here.
-        case "hello":
-          // The eager load already covered the cold start, so the first
-          // hello is never a reason to repeat it — treating it as one cost
-          // eight API calls and two full transcript downloads on every page
-          // load. Only a reconnect the server could not replay needs fresh
-          // state.
-          if (!firstHello && !frame.resumed) loadAll();
-          firstHello = false;
-          break;
         case "message": {
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
           // a settled assistant bubble replaces the in-flight stream
@@ -1216,8 +1231,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
       }
     };
+    es.onmessage = (raw) => {
+      let frame: any;
+      try {
+        frame = JSON.parse(raw.data);
+      } catch {
+        return;
+      }
+      // `hello` is the snapshot boundary. A false `resumed` means the server
+      // could not fill the gap, so queue subsequent frames behind a hydrate.
+      if (frame.kind === "hello") {
+        clearTimeout(hydrationFallback);
+        if (!frame.resumed) hydrate();
+        return;
+      }
+      if (hydrated) handleFrame(frame);
+      else pendingFrames.push(frame);
+    };
     return () => {
       alive = false;
+      clearTimeout(hydrationFallback);
       es.close();
     };
   }, []);

@@ -12,12 +12,21 @@ export interface SseRecorder {
 export async function openSse(url: string, headers: Record<string, string> = {}): Promise<SseRecorder> {
   const controller = new AbortController();
   const res = await fetch(url, { headers: { accept: "text/event-stream", ...headers }, signal: controller.signal });
-  if (!res.ok || !res.body) throw new Error(`SSE connect failed: ${res.status}`);
+  if (!res.ok || !res.body) {
+    controller.abort();
+    throw new Error(`SSE connect failed: ${res.status}`);
+  }
 
   const frames: any[] = [];
-  const waiters: Array<{ pred: (frame: any) => boolean; resolve: (frame: any) => void }> = [];
+  const waiters: Array<{
+    pred: (frame: any) => boolean;
+    resolve: (frame: any) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }> = [];
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
+  let closed = false;
 
   void (async () => {
     let buffer = "";
@@ -41,7 +50,10 @@ export async function openSse(url: string, headers: Record<string, string> = {})
           }
           frames.push(frame);
           for (let i = waiters.length - 1; i >= 0; i--) {
-            if (waiters[i].pred(frame)) waiters.splice(i, 1)[0].resolve(frame);
+            if (!waiters[i].pred(frame)) continue;
+            const waiter = waiters.splice(i, 1)[0];
+            clearTimeout(waiter.timer);
+            waiter.resolve(frame);
           }
         }
       }
@@ -55,8 +67,8 @@ export async function openSse(url: string, headers: Record<string, string> = {})
     until(pred, timeoutMs = 10_000) {
       const seen = frames.find(pred);
       if (seen) return Promise.resolve(seen);
+      if (closed) return Promise.reject(new Error("SSE stream closed before a matching frame arrived"));
       return new Promise((resolve, reject) => {
-        const waiter = { pred, resolve: (frame: any) => (clearTimeout(timer), resolve(frame)) };
         const timer = setTimeout(() => {
           const index = waiters.indexOf(waiter);
           if (index !== -1) waiters.splice(index, 1);
@@ -67,9 +79,18 @@ export async function openSse(url: string, headers: Record<string, string> = {})
           );
         }, timeoutMs);
         timer.unref?.();
+        const waiter = { pred, resolve, reject, timer };
         waiters.push(waiter);
       });
     },
-    close: () => controller.abort(),
+    close: () => {
+      if (closed) return;
+      closed = true;
+      controller.abort();
+      for (const waiter of waiters.splice(0)) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error("SSE stream closed before a matching frame arrived"));
+      }
+    },
   };
 }

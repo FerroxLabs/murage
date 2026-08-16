@@ -1,14 +1,9 @@
 // Desktop notifications, driven by the harness's {kind:"notify"} frames.
 // The server decides *whether* something is worth an interruption (it owns
 // the per-bot toggle); this only decides how to show it here.
-export interface NotifyFrame {
-  kind: "approval" | "question" | "done" | "routine-failed";
-  botId: string;
-  botName: string;
-  threadId: string;
-  title: string;
-  body: string;
-}
+import type { Notification } from "../../server/notify.ts";
+
+export type NotifyFrame = Notification;
 
 /** Show one, unless the app is already in front of the user — a banner over
  * the window you are looking at is noise, and the chat itself already shows
