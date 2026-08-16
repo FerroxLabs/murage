@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { approvalKey, autoDecision } from "./auto-approve.ts";
 import * as box from "./box.ts";
+import { cloudBackendChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import {
@@ -1789,6 +1790,10 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "chiefOfStaff must be true or false" });
       }
       const existing = store.bot(m[1]);
+      if (body.cloudBackend !== undefined) {
+        const backendError = cloudBackendChangeError(Boolean(existing?.busy), activeVpsThreads.has(m[1]));
+        if (backendError) return json(res, 409, { error: backendError });
+      }
       if (body.hidden === true && existing?.chiefOfStaff && body.chiefOfStaff !== false) {
         return json(res, 400, { error: "choose another Chief of Staff before hiding this bot" });
       }

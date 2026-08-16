@@ -230,6 +230,12 @@ describe("VPS computer", () => {
       problem: null,
     });
     expect(fake.calls[0]?.args).toEqual(["-H", "ssh://production-vps", "info", "--format", "{{.ServerVersion}}"]);
+    const probes = fake.calls.filter(
+      ({ args }) => args[2] === "exec" && (args.at(-1) === "--version" || args.includes("status")),
+    );
+    expect(probes).toHaveLength(2);
+    expect(probes.every(({ args }) => args.includes(CONTAINER_ID))).toBe(true);
+    expect(probes.every(({ args }) => !args.includes(fake.name))).toBe(true);
   });
 
   it("refuses host mounts, public ports, and unowned containers", async () => {

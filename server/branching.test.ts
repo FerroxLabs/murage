@@ -184,6 +184,10 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first try" })).status).toBe(202);
       await waitFor(async () => (await getBot(created.id)).busy === true, "the hung turn to start");
 
+      const backendChange = await api("PATCH", `/api/bots/${created.id}`, { cloudBackend: "vps" });
+      expect(backendChange.status).toBe(409);
+      expect(backendChange.body.error).toContain("stop the active turn");
+
       // a second send while busy is refused — never a parallel turn
       const parallel = await api("POST", `/api/bots/${created.id}/messages`, { text: "sneaky second" });
       expect(parallel.status).toBe(409);

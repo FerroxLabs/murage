@@ -381,7 +381,7 @@ export async function vpsComputerStatus(
       status.network === "private" &&
       status.mounts === "none" &&
       status.security === "hardened";
-    if (canProbe) {
+    if (canProbe && status.container_id) {
       const exec = [
         "exec",
         "-u",
@@ -392,7 +392,7 @@ export async function vpsComputerStatus(
         "DISPLAY=:1",
         "-e",
         "CUA_DRIVER_INSTALL_CHANNEL=python_package",
-        status.container_name,
+        status.container_id,
         CUA_EXECUTABLE,
       ];
       try {
