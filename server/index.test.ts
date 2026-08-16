@@ -205,7 +205,7 @@ describe("harness HTTP API", () => {
     expect(after.body.bots.find((b: { id: string }) => b.id === bot.id)).toBeUndefined();
   });
 
-  it("exports a room as a portable team and imports it with fresh IDs", async () => {
+  it("exports selected bots without a room and imports the team with fresh IDs", async () => {
     const first = (await api("POST", "/api/bots")).body.bot;
     const second = (await api("POST", "/api/bots")).body.bot;
     await api("PATCH", `/api/bots/${first.id}`, {
@@ -223,40 +223,46 @@ describe("harness HTTP API", () => {
       description: "Finds evidence",
       color: "cyan",
     });
-    const createdRoom = await api("POST", "/api/groups", {
-      name: "Launch Crew",
+
+    const roomsBeforeSelectionExport = (await api("GET", "/api/bots")).body.groups.length;
+    const selectedExport = await api("POST", "/api/teams/export", {
+      name: "Field Team",
       memberIds: [first.id, second.id],
     });
-    const roomId = createdRoom.body.group.id;
-    await api("PATCH", `/api/groups/${roomId}`, {
-      bulletin: "Prepare the launch together",
-      defaultResponder: { kind: "member", botId: second.id },
-    });
-
-    const exported = await api("GET", `/api/groups/${roomId}/team`);
-    expect(exported.status).toBe(200);
-    expect(exported.body).toMatchObject({
+    expect(selectedExport.status).toBe(200);
+    expect(selectedExport.body).toMatchObject({
       format: "openmaus.team",
       version: 1,
       team: {
-        name: "Launch Crew",
+        name: "Field Team",
         members: [
           { key: "mira", name: "Mira", title: "Project Lead", appearance: { color: "purple" } },
           { key: "scout", name: "Scout", title: "Researcher", appearance: { color: "cyan" } },
         ],
         room: {
-          name: "Launch Crew",
-          bulletin: "Prepare the launch together",
-          defaultResponder: { kind: "member", member: "scout" },
+          name: "Field Team",
+          bulletin: "",
+          defaultResponder: { kind: "everyone" },
         },
       },
     });
-    expect(JSON.stringify(exported.body)).not.toMatch(/autoApprove|alwaysAllow|modelSelection|threadId/);
+    expect(JSON.stringify(selectedExport.body)).not.toMatch(/autoApprove|alwaysAllow|modelSelection|threadId/);
+    expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBeforeSelectionExport);
+    expect((await api("POST", "/api/teams/export", { name: "", memberIds: [first.id] })).status).toBe(400);
+    expect((await api("POST", "/api/teams/export", { name: "Empty", memberIds: [] })).status).toBe(400);
+    expect((await api("POST", "/api/teams/export", { name: "Missing", memberIds: ["no-such-bot"] })).status).toBe(400);
+
+    const importManifest = structuredClone(selectedExport.body);
+    importManifest.team.room = {
+      name: "Launch Crew",
+      bulletin: "Prepare the launch together",
+      defaultResponder: { kind: "member", member: "scout" },
+    };
 
     const stream = await openSse(`${BASE}/api/events`);
     try {
       await stream.until((frame) => frame.kind === "hello");
-      const imported = await api("POST", "/api/teams/import", exported.body);
+      const imported = await api("POST", "/api/teams/import", importManifest);
       expect(imported.status).toBe(201);
       expect(imported.body.bots.map((bot: { name: string }) => bot.name)).toEqual(["Mira", "Scout"]);
       expect(imported.body.bots.every((bot: { id: string }) => ![first.id, second.id].includes(bot.id))).toBe(true);
@@ -273,10 +279,9 @@ describe("harness HTTP API", () => {
       );
       expect(importFrames.map((frame) => frame.kind)).toEqual(["bot", "bot", "group"]);
 
-      const invalid = await api("POST", "/api/teams/import", { ...exported.body, version: 2 });
+      const invalid = await api("POST", "/api/teams/import", { ...importManifest, version: 2 });
       expect(invalid.status).toBe(400);
 
-      expect((await api("DELETE", `/api/groups/${roomId}`)).status).toBe(200);
       expect((await api("DELETE", `/api/groups/${imported.body.group.id}`)).status).toBe(200);
       for (const bot of [first, second, ...imported.body.bots]) {
         expect((await api("DELETE", `/api/bots/${bot.id}`)).status).toBe(200);

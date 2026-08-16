@@ -30,7 +30,7 @@ import { MausAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
-import { downloadTeamFile } from "@/lib/team-files";
+import { downloadSelectedTeam } from "@/lib/team-files";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
@@ -202,11 +202,9 @@ function GroupListItem({ group, onMenu }: { group: Group; onMenu: (menu: { group
 function RoomContextMenu({
   menu,
   onClose,
-  onExport,
 }: {
   menu: { groupId: string; x: number; y: number };
   onClose: () => void;
-  onExport: (groupId: string) => void;
 }) {
   const { state, dispatch } = useStore();
   const group = state.groups.find((g) => g.id === menu.groupId);
@@ -245,18 +243,6 @@ function RoomContextMenu({
         <ClipboardCopy size={16} className="text-ink-secondary" />
         Copy conversation ID
       </button>
-      {!group.dm && (
-        <button
-          onClick={() => {
-            onExport(group.id);
-            onClose();
-          }}
-          className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
-        >
-          <ArrowDownToLine size={16} className="text-ink-secondary" />
-          Export Team
-        </button>
-      )}
       <button
         onClick={() => {
           dispatch({ type: "deleteGroup", groupId: group.id });
@@ -437,6 +423,191 @@ function ImportTeamPanel({
             {working ? <Loader2 size={15} className="animate-spin" /> : <FileUp size={15} />}
             {working ? "Importing…" : "Import Team"}
           </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ExportTeamPanel({
+  onClose,
+  onExported,
+  returnFocusRef,
+}: {
+  onClose: () => void;
+  onExported: (name: string) => void;
+  returnFocusRef: React.RefObject<HTMLButtonElement | null>;
+}) {
+  const { state } = useStore();
+  const [name, setName] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+  const bots = state.bots.filter((bot) => !bot.hidden);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    nameRef.current?.focus();
+    return () => returnFocusRef.current?.focus();
+  }, [returnFocusRef]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !working) {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialogRef.current?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose, working]);
+
+  const toggle = (id: string) => {
+    setPicked((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < 50) next.add(id);
+      return next;
+    });
+  };
+
+  const exportTeam = async () => {
+    const teamName = name.trim();
+    if (!teamName || picked.size === 0) return;
+    setWorking(true);
+    setError("");
+    try {
+      const exported = await downloadSelectedTeam(teamName, [...picked]);
+      track("team_exported", { members: exported.members });
+      onExported(exported.name);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45"
+      onMouseDown={(event) => event.target === event.currentTarget && !working && onClose()}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="export-team-title"
+        tabIndex={-1}
+        className="w-[380px] max-w-[calc(100vw-32px)] rounded-2xl border border-hairline/50 bg-card p-5 shadow-2xl"
+      >
+        <div id="export-team-title" className="text-[17px] font-semibold text-ink">Export Team</div>
+        <div className="mt-1 text-[13px] text-ink-secondary">
+          Choose any bots to share. You do not need to create a room first.
+        </div>
+        <input
+          ref={nameRef}
+          value={name}
+          maxLength={100}
+          disabled={working}
+          onChange={(event) => setName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") void exportTeam();
+          }}
+          placeholder="Team name"
+          aria-label="Team name"
+          className="mt-4 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none disabled:opacity-60"
+        />
+        <div className="mt-3 flex max-h-64 flex-col gap-0.5 overflow-y-auto rounded-xl bg-raised/30 p-1.5">
+          {bots.length === 0 && (
+            <div className="px-2 py-5 text-center text-[13px] text-ink-secondary">
+              Create a bot first, then it can be shared as part of a team.
+            </div>
+          )}
+          {bots.map((bot) => {
+            const selected = picked.has(bot.id);
+            const capped = !selected && picked.size >= 50;
+            return (
+              <button
+                key={bot.id}
+                type="button"
+                aria-pressed={selected}
+                disabled={working || capped}
+                onClick={() => toggle(bot.id)}
+                className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-raised/70 disabled:opacity-40"
+              >
+                <MausAvatar color={bot.color} state="happy" size={28} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] text-ink">{bot.name}</span>
+                  {bot.title && <span className="block truncate text-[11.5px] text-ink-secondary">{bot.title}</span>}
+                </span>
+                <span
+                  className={cn(
+                    "flex size-[18px] shrink-0 items-center justify-center rounded-full border",
+                    selected ? "border-accent bg-accent text-white" : "border-hairline/60",
+                  )}
+                >
+                  {selected && <Check size={12} />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-3 text-[12.5px] leading-relaxed text-ink-secondary">
+          Messages, permissions, credentials, engines, and computer access are never included.
+        </div>
+        {error && (
+          <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">
+            {error}
+          </div>
+        )}
+        <div className="mt-5 flex items-center justify-between gap-3">
+          <span className="text-[12.5px] text-ink-secondary">
+            {picked.size} {picked.size === 1 ? "bot" : "bots"} selected
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={working}
+              className="rounded-lg px-3.5 py-2 text-[13.5px] text-ink-secondary hover:bg-raised disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void exportTeam()}
+              disabled={working || !name.trim() || picked.size === 0}
+              className="flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-[13.5px] font-medium text-white hover:bg-accent/90 disabled:opacity-40"
+            >
+              {working ? <Loader2 size={15} className="animate-spin" /> : <ArrowDownToLine size={15} />}
+              {working ? "Exporting…" : "Export"}
+            </button>
+          </div>
         </div>
       </div>
     </div>,
@@ -698,6 +869,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [roomMenu, setRoomMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
+  const [exportTeamOpen, setExportTeamOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PendingTeamImport | null>(null);
   const [teamFeedback, setTeamFeedback] = useState<{ error: boolean; text: string } | null>(null);
   const [query, setQuery] = useState("");
@@ -720,17 +892,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     const timer = window.setTimeout(() => setTeamFeedback(null), 5000);
     return () => window.clearTimeout(timer);
   }, [teamFeedback]);
-
-  const exportTeam = async (groupId: string) => {
-    setTeamFeedback(null);
-    try {
-      const exported = await downloadTeamFile(groupId);
-      track("team_exported", { members: exported.members });
-      setTeamFeedback({ error: false, text: `${exported.name} exported` });
-    } catch (cause) {
-      setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
-    }
-  };
 
   const chooseTeamFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
@@ -809,7 +970,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             ref={importReturnRef}
             onClick={() => setPlusOpen((o) => !o)}
             className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
-            title="New bot or room"
+            title="New or share"
           >
             <Plus size={20} strokeWidth={2} />
           </button>
@@ -837,6 +998,16 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 >
                   <Users size={16} className="text-ink-secondary" />
                   New Room
+                </button>
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    setExportTeamOpen(true);
+                  }}
+                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                >
+                  <ArrowDownToLine size={16} className="text-ink-secondary" />
+                  Export Team
                 </button>
                 <button
                   onClick={() => {
@@ -946,10 +1117,19 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         <RoomContextMenu
           menu={roomMenu}
           onClose={() => setRoomMenu(null)}
-          onExport={(groupId) => void exportTeam(groupId)}
         />
       )}
       {newRoom && <NewRoomPanel onClose={() => setNewRoom(false)} />}
+      {exportTeamOpen && (
+        <ExportTeamPanel
+          returnFocusRef={importReturnRef}
+          onClose={() => setExportTeamOpen(false)}
+          onExported={(name) => {
+            setExportTeamOpen(false);
+            setTeamFeedback({ error: false, text: `${name} exported` });
+          }}
+        />
+      )}
       {pendingImport && (
         <ImportTeamPanel
           pending={pendingImport}

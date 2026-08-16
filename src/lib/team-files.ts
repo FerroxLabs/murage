@@ -7,9 +7,7 @@ interface ExportedTeam {
   };
 }
 
-/** Fetch a safe server-built manifest and hand it to the browser as a file. */
-export async function downloadTeamFile(groupId: string): Promise<{ name: string; members: number }> {
-  const manifest = (await api(`/api/groups/${groupId}/team`)) as ExportedTeam;
+function downloadManifest(manifest: ExportedTeam): { name: string; members: number } {
   const slug =
     manifest.team.name
       .trim()
@@ -28,4 +26,16 @@ export async function downloadTeamFile(groupId: string): Promise<{ name: string;
   // alive long enough for slower engines to start reading, then clean it up.
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   return { name: manifest.team.name, members: manifest.team.members.length };
+}
+
+/** Export an ad-hoc selection of bots without creating a room first. */
+export async function downloadSelectedTeam(
+  name: string,
+  memberIds: string[],
+): Promise<{ name: string; members: number }> {
+  const manifest = (await api("/api/teams/export", {
+    method: "POST",
+    body: JSON.stringify({ name, memberIds }),
+  })) as ExportedTeam;
+  return downloadManifest(manifest);
 }

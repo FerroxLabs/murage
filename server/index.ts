@@ -1530,11 +1530,35 @@ const server = createServer(async (req, res) => {
       broadcast({ kind: "group", group });
       return json(res, 201, { group: { ...group, messages: [] } });
     }
-    m = path.match(/^\/api\/groups\/([\w-]+)\/team$/);
-    if (m && method === "GET") {
-      const group = store.group(m[1]);
-      if (!group || group.dm) return json(res, 404, { error: "no such shareable room" });
-      return json(res, 200, createTeamManifest(group, store.bots));
+    if (method === "POST" && path === "/api/teams/export") {
+      const body = await readBody(req);
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const rawMemberIds = Array.isArray(body.memberIds) ? body.memberIds : [];
+      if (!name) return json(res, 400, { error: "team name is required" });
+      if (rawMemberIds.length === 0) return json(res, 400, { error: "a team needs at least one bot" });
+      if (
+        rawMemberIds.some((id: unknown) => typeof id !== "string" || !store.bot(id)) ||
+        new Set(rawMemberIds).size !== rawMemberIds.length
+      ) {
+        return json(res, 400, { error: "team members are invalid" });
+      }
+      try {
+        return json(
+          res,
+          200,
+          createTeamManifest(
+            {
+              name,
+              memberIds: rawMemberIds as string[],
+              bulletin: "",
+              defaultResponder: { kind: "everyone" },
+            },
+            store.bots,
+          ),
+        );
+      } catch (error) {
+        return json(res, 400, { error: error instanceof Error ? error.message : "Team could not be exported" });
+      }
     }
     if (method === "POST" && path === "/api/teams/import") {
       const body = await readBody(req);

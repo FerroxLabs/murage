@@ -56,7 +56,7 @@ interface ExportableBot {
   mascotExpression?: string | null;
 }
 
-interface ExportableGroup {
+interface ExportableTeam {
   name: string;
   memberIds: string[];
   bulletin: string;
@@ -181,13 +181,13 @@ function memberKey(name: string, index: number, used: Set<string>): string {
 }
 
 /** Build a shareable definition only: no IDs, transcripts, engines or permissions. */
-export function createTeamManifest(group: ExportableGroup, bots: ExportableBot[]): TeamManifestV1 {
+export function createTeamManifest(team: ExportableTeam, bots: ExportableBot[]): TeamManifestV1 {
   const byId = new Map(bots.map((bot) => [bot.id, bot]));
   const usedKeys = new Set<string>();
   const keyById = new Map<string, string>();
-  const members = group.memberIds.map((id, index) => {
+  const members = team.memberIds.map((id, index) => {
     const bot = byId.get(id);
-    if (!bot) throw new Error(`Room member ${id} no longer exists`);
+    if (!bot) throw new Error(`Team member ${id} no longer exists`);
     const key = memberKey(bot.name, index, usedKeys);
     keyById.set(id, key);
     return {
@@ -203,23 +203,23 @@ export function createTeamManifest(group: ExportableGroup, bots: ExportableBot[]
   });
 
   let defaultResponder: TeamManifestResponder;
-  if (group.defaultResponder.kind === "member") {
-    const member = keyById.get(group.defaultResponder.botId) ?? members[0]?.key;
+  if (team.defaultResponder.kind === "member") {
+    const member = keyById.get(team.defaultResponder.botId) ?? members[0]?.key;
     if (!member) throw new Error("A team needs at least one member");
     defaultResponder = { kind: "member", member };
   } else {
-    defaultResponder = { kind: group.defaultResponder.kind };
+    defaultResponder = { kind: team.defaultResponder.kind };
   }
 
   const manifest: TeamManifestV1 = {
     format: TEAM_MANIFEST_FORMAT,
     version: TEAM_MANIFEST_VERSION,
     team: {
-      name: group.name,
+      name: team.name,
       members,
       room: {
-        name: group.name,
-        bulletin: group.bulletin,
+        name: team.name,
+        bulletin: team.bulletin,
         defaultResponder,
       },
     },
