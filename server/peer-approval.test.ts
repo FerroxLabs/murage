@@ -10,6 +10,7 @@ import type { ModelSelection } from "./contracts.ts";
 import {
   cancelPeerApprovalsFor,
   dismissStalePeerCards,
+  peerAllowKey,
   requestPeerApproval,
   resolvePeerComms,
   type ApprovalBus,
@@ -69,6 +70,22 @@ describe("peer approval card lifecycle", () => {
     expect(resolvePeerComms(bus, "not-a-peer-request", "allow")).toBe(false);
   });
 
+  it("keys persistent grants by target identity, not mutable or duplicate names", async () => {
+    const originalName = target.name;
+    store.patchBot(from.id, { alwaysAllow: [peerAllowKey("ask_bot", target.id)] });
+    store.patchBot(target.id, { name: "Renamed helper" });
+
+    await expect(requestPeerApproval(bus, from, target, "ping", "ask_bot")).resolves.toBe("allow");
+    expect(pendingCard(store, from)).toBeUndefined();
+
+    const impostor = store.patchBot(store.createBot().id, { name: originalName })!;
+    const verdict = requestPeerApproval(bus, from, impostor, "ping", "ask_bot");
+    const card = pendingCard(store, from);
+    expect(card).toBeTruthy();
+    cancelPeerApprovalsFor(impostor.id);
+    await expect(verdict).resolves.toBe("deny");
+  });
+
   it("denies and settles when the bot on either side is deleted", async () => {
     const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot");
     const card = pendingCard(store, from)!;
@@ -100,6 +117,26 @@ describe("peer approval card lifecycle", () => {
     expect(settled?.card?.dismissed).toBe(true);
     // and it is idempotent — a second boot must not re-dismiss or double count
     expect(dismissStalePeerCards(bus)).toBe(0);
+  });
+
+  it("dismisses stale cards in non-active task threads", () => {
+    const background = store.createTask(from.id, "Background", false)!;
+    const orphan = store.appendMessage(background.threadId, {
+      role: "bot",
+      kind: "options",
+      card: {
+        title: "@Asker wants to contact @Helper",
+        subtitle: "ping",
+        options: ["Allow", "Deny"],
+        requestId: "background-dead-process",
+        tool: "ask_bot",
+      },
+    });
+
+    expect(dismissStalePeerCards(bus)).toBe(1);
+    expect(
+      store.messagesFor(background.threadId).find((message) => message.id === orphan.id)?.card?.dismissed,
+    ).toBe(true);
   });
 
   it("leaves a live card alone at boot", async () => {

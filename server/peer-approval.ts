@@ -10,7 +10,7 @@
 // way nothing front-end has to learn about peer comms.
 //
 // "Always allow" rides on the existing per-bot `alwaysAllow` list. The
-// card carries an `allowKey` (`ask_bot:@Name` / `delegate_bot:@Name`) and
+// card carries an ID-based `allowKey` and
 // the user-facing Always-allow flow already mirrors that key back into
 // `alwaysAllow`, so the two sides never disagree about what was granted.
 
@@ -66,8 +66,8 @@ const APPROVAL_TIMEOUT_MS = 15 * 60_000;
 /** The narrow grant "always allow" remembers for a peer comm. Mirrored
  * back into `bot.alwaysAllow` when the user picks "Always allow" on the
  * card. */
-export function peerAllowKey(action: "ask_bot" | "delegate_bot", targetName: string): string {
-  return `${action}:@${targetName}`;
+export function peerAllowKey(action: "ask_bot" | "delegate_bot", targetId: string): string {
+  return `${action}:${targetId}`;
 }
 
 function allowKeyAllowed(from: BotRecord, allowKey: string): boolean {
@@ -81,9 +81,10 @@ function pushApprovalCard(
   message: string,
   action: "ask_bot" | "delegate_bot",
   requestId: string,
+  sourceThreadId: string,
 ): Message {
   const subtitle = message.length > 200 ? `${message.slice(0, 200)}…` : message;
-  const note = bus.store.appendMessage(from.threadId, {
+  const note = bus.store.appendMessage(sourceThreadId, {
     role: "bot",
     kind: "options",
     card: {
@@ -92,14 +93,14 @@ function pushApprovalCard(
       options: ["Allow", "Deny", "Always allow"],
       requestId,
       tool: action,
-      allowKey: peerAllowKey(action, target.name),
+      allowKey: peerAllowKey(action, target.id),
     },
   });
-  bus.broadcast({ kind: "message", threadId: from.threadId, message: note });
+  bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
   return note;
 }
 
-/** Ask the user (in `from`'s thread) whether `from` may `action` `target`.
+/** Ask the user (in the source task thread) whether `from` may `action` `target`.
  * Resolves with `"allow"` or `"deny"`. If `from.alwaysAllow` already
  * covers the (action, target) pair, returns `"allow"` immediately
  * without a card. */
@@ -109,15 +110,16 @@ export function requestPeerApproval(
   target: BotRecord,
   message: string,
   action: "ask_bot" | "delegate_bot",
+  sourceThreadId = from.threadId,
 ): Promise<"allow" | "deny"> {
-  if (allowKeyAllowed(from, peerAllowKey(action, target.name))) {
+  if (allowKeyAllowed(from, peerAllowKey(action, target.id))) {
     return Promise.resolve("allow");
   }
   return new Promise((resolve) => {
     const requestId = newId();
     // the card has to exist before the entry, so a timeout or an answer can
     // always find it to settle
-    const card = pushApprovalCard(bus, from, target, message, action, requestId);
+    const card = pushApprovalCard(bus, from, target, message, action, requestId, sourceThreadId);
     const timer = setTimeout(() => {
       // 15 minutes without an answer → deny. Keeps an unattended bot from
       // stalling its own turn forever (matches the Claude broker timeout).
@@ -134,7 +136,7 @@ export function requestPeerApproval(
       fromBotId: from.id,
       toBotId: target.id,
       message,
-      threadId: from.threadId,
+      threadId: sourceThreadId,
       messageId: card.id,
       bus,
     });
@@ -178,17 +180,20 @@ export function cancelPeerApprovalsFor(botId: string): void {
 export function dismissStalePeerCards(bus: ApprovalBus): number {
   let dismissed = 0;
   for (const bot of bus.store.bots) {
-    for (const message of bus.store.messagesFor(bot.threadId)) {
-      const card = message.card;
-      if (!card?.requestId || card.answered || card.dismissed) continue;
-      if (card.tool !== "ask_bot" && card.tool !== "delegate_bot") continue;
-      if (pendingComms.has(card.requestId)) continue;
-      const patched = bus.store.patchMessage(bot.threadId, message.id, {
-        card: { ...card, answered: "deny", dismissed: true },
-      });
-      if (patched) {
-        bus.broadcast({ kind: "message.patch", threadId: bot.threadId, message: patched });
-        dismissed += 1;
+    const threadIds = new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)]);
+    for (const threadId of threadIds) {
+      for (const message of bus.store.messagesFor(threadId)) {
+        const card = message.card;
+        if (!card?.requestId || card.answered || card.dismissed) continue;
+        if (card.tool !== "ask_bot" && card.tool !== "delegate_bot") continue;
+        if (pendingComms.has(card.requestId)) continue;
+        const patched = bus.store.patchMessage(threadId, message.id, {
+          card: { ...card, answered: "deny", dismissed: true },
+        });
+        if (patched) {
+          bus.broadcast({ kind: "message.patch", threadId, message: patched });
+          dismissed += 1;
+        }
       }
     }
   }
