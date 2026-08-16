@@ -404,6 +404,7 @@ describe("harness HTTP API", () => {
 
     const listed = await api("GET", "/api/webhooks");
     expect(listed.body.webhooks).toHaveLength(1);
+    expect(listed.body.attempts).toEqual([]);
     expect(JSON.stringify(listed.body)).not.toContain(created.body.credential.secret);
 
     const deliver = () => fetch(created.body.credential.url, {
@@ -418,6 +419,9 @@ describe("harness HTTP API", () => {
     const retry = await deliver();
     expect(retry.status).toBe(202);
     expect(await retry.json()).toMatchObject({ accepted: true, duplicate: true, runId: accepted.runId });
+
+    const afterDelivery = await api("GET", "/api/webhooks");
+    expect(afterDelivery.body.attempts.map((attempt: { outcome: string }) => attempt.outcome)).toEqual(["accepted", "duplicate"]);
 
     const receipts = await api("GET", "/api/routines");
     expect(receipts.body.runs.find((run: { id: string }) => run.id === accepted.runId)).toMatchObject({

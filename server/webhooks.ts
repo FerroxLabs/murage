@@ -19,6 +19,12 @@ export interface WebhookTrigger {
   lastReceivedAt?: number;
   lastRunId?: string;
   deliveryCount: number;
+  /** New UI-created hooks capture one authenticated request before they can run. */
+  verificationPending?: boolean;
+  verifiedAt?: number;
+  verificationSample?: WebhookVerificationSample;
+  /** Optional event-name allowlist. Empty means every event type. */
+  eventTypes?: string[];
 }
 
 export interface WebhookTriggerInput {
@@ -27,6 +33,30 @@ export interface WebhookTriggerInput {
   botId: string;
   runOn?: RoutineRunOn;
   enabled?: boolean;
+  verificationPending?: boolean;
+  eventTypes?: string[];
+}
+
+export interface WebhookVerificationSample {
+  receivedAt: number;
+  eventName?: string;
+  contentType?: string;
+  preview: string;
+}
+
+export type WebhookAttemptOutcome = "accepted" | "captured" | "duplicate" | "ignored" | "rejected";
+
+export interface WebhookAttempt {
+  id: string;
+  webhookId: string;
+  receivedAt: number;
+  outcome: WebhookAttemptOutcome;
+  statusCode: number;
+  eventName?: string;
+  preview?: string;
+  deliveryId?: string;
+  runId?: string;
+  reason?: string;
 }
 
 interface StoredWebhookTrigger extends WebhookTrigger {
@@ -43,6 +73,7 @@ interface WebhookFile {
   version: 1;
   webhooks: StoredWebhookTrigger[];
   deliveries: DeliveryReceipt[];
+  attempts?: WebhookAttempt[];
 }
 
 export interface WebhookEvent {
@@ -54,9 +85,11 @@ export interface WebhookEvent {
 }
 
 export interface WebhookReceiveResult {
-  runId: string;
+  runId?: string;
   deliveryId: string;
   duplicate: boolean;
+  captured?: boolean;
+  ignored?: boolean;
 }
 
 export interface WebhookManagerOptions {
@@ -74,12 +107,15 @@ export interface WebhookManagerOptions {
     receivedAt: number;
   }) => { id: string };
   cancelQueued?: (webhookId: string, message: string) => void;
+  pendingRuns?: (webhookId: string) => number;
 }
 
 const MAX_DELIVERIES = 2_000;
+const MAX_ATTEMPTS = 2_000;
 const MAX_EVENT_CHARS = 48_000;
 const RATE_WINDOW_MS = 60_000;
-const RATE_LIMIT = 60;
+const RATE_LIMIT = 10;
+const MAX_PENDING_RUNS = 3;
 
 function fail(status: number, message: string): never {
   throw Object.assign(new Error(message), { status });
@@ -104,21 +140,28 @@ function newSecret(): string {
   return `whsec_${randomBytes(32).toString("base64url")}`;
 }
 
-function cleanInput(input: WebhookTriggerInput): Omit<WebhookTrigger, "id" | "endpointId" | "createdAt" | "updatedAt" | "lastReceivedAt" | "lastRunId" | "deliveryCount"> {
+function cleanInput(input: WebhookTriggerInput): Omit<WebhookTrigger, "id" | "endpointId" | "createdAt" | "updatedAt" | "lastReceivedAt" | "lastRunId" | "deliveryCount" | "verifiedAt" | "verificationSample"> {
   const name = String(input.name ?? "").trim().slice(0, 80);
   const prompt = String(input.prompt ?? "").trim().slice(0, 20_000);
   const botId = String(input.botId ?? "").trim();
   const runOn = input.runOn ?? "maus";
   if (!name) fail(400, "Give the webhook a name");
-  if (!prompt) fail(400, "Tell the MAUS what to do when the webhook arrives");
   if (!botId) fail(400, "Choose a MAUS");
   if (runOn !== "maus" && runOn !== "cloud") fail(400, "Choose where this webhook runs");
+  const eventTypes = Array.from(new Set(
+    (Array.isArray(input.eventTypes) ? input.eventTypes : [])
+      .map((value) => String(value).trim().slice(0, 200))
+      .filter(Boolean),
+  )).slice(0, 20);
+  const enabled = input.enabled !== false;
   return {
     name,
     prompt,
     botId,
     runOn,
-    enabled: input.enabled !== false,
+    enabled,
+    verificationPending: enabled ? false : input.verificationPending === true,
+    ...(eventTypes.length ? { eventTypes } : {}),
   };
 }
 
@@ -146,6 +189,17 @@ function serializePayload(payload: unknown): string {
   return `${text.slice(0, MAX_EVENT_CHARS)}\n\n[Payload truncated by OpenMausBot]`;
 }
 
+function previewPayload(payload: unknown): string {
+  return serializePayload(payload).replace(/\s+/g, " ").trim().slice(0, 2_000);
+}
+
+function taskFromPayload(payload: unknown): string {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
+  const record = payload as Record<string, unknown>;
+  const task = typeof record.task === "string" ? record.task : typeof record.message === "string" ? record.message : "";
+  return task.trim().slice(0, 20_000);
+}
+
 function eventPrompt(trigger: StoredWebhookTrigger, event: WebhookEvent, receivedAt: number, deliveryId: string): string {
   const metadata = [
     `Received: ${new Date(receivedAt).toISOString()}`,
@@ -154,10 +208,19 @@ function eventPrompt(trigger: StoredWebhookTrigger, event: WebhookEvent, receive
     event.contentType && `Content-Type: ${event.contentType.slice(0, 200)}`,
     event.userAgent && `Sender: ${event.userAgent.slice(0, 300)}`,
   ].filter(Boolean);
+  const configured = trigger.prompt.trim();
+  const requestedTask = configured ? "" : taskFromPayload(event.payload);
+  const instructionBlock = configured
+    ? ["[USER-CONFIGURED WEBHOOK INSTRUCTIONS]", configured, "[/USER-CONFIGURED WEBHOOK INSTRUCTIONS]"]
+    : requestedTask
+      ? ["[AUTHENTICATED WEBHOOK TASK]", requestedTask, "[/AUTHENTICATED WEBHOOK TASK]"]
+      : [
+          "[DEFAULT WEBHOOK INSTRUCTIONS]",
+          "Review the incoming event and summarize what happened. Do not take external actions unless the event clearly requires them and existing permissions allow them.",
+          "[/DEFAULT WEBHOOK INSTRUCTIONS]",
+        ];
   return [
-    "[USER-CONFIGURED WEBHOOK INSTRUCTIONS]",
-    trigger.prompt,
-    "[/USER-CONFIGURED WEBHOOK INSTRUCTIONS]",
+    ...instructionBlock,
     "",
     "[UNTRUSTED WEBHOOK EVENT DATA]",
     ...metadata,
@@ -173,6 +236,7 @@ export class WebhookManager {
   private readonly options: WebhookManagerOptions;
   private webhooks: StoredWebhookTrigger[] = [];
   private deliveries: DeliveryReceipt[] = [];
+  private attempts: WebhookAttempt[] = [];
   private rate = new Map<string, number[]>();
 
   constructor(options: WebhookManagerOptions) {
@@ -183,14 +247,20 @@ export class WebhookManager {
       const disk = JSON.parse(readFileSync(this.file, "utf8")) as Partial<WebhookFile>;
       this.webhooks = Array.isArray(disk.webhooks) ? disk.webhooks.map(withoutLegacyDuration) : [];
       this.deliveries = Array.isArray(disk.deliveries) ? disk.deliveries.slice(-MAX_DELIVERIES) : [];
+      this.attempts = Array.isArray(disk.attempts) ? disk.attempts.slice(-MAX_ATTEMPTS) : [];
     } catch {
       this.webhooks = [];
       this.deliveries = [];
+      this.attempts = [];
     }
   }
 
   list(): WebhookTrigger[] {
     return this.webhooks.map(publicTrigger);
+  }
+
+  listAttempts(): WebhookAttempt[] {
+    return this.attempts.map((attempt) => ({ ...attempt }));
   }
 
   create(input: WebhookTriggerInput): { webhook: WebhookTrigger; secret: string } {
@@ -222,9 +292,12 @@ export class WebhookManager {
       botId: patch.botId ?? trigger.botId,
       runOn: patch.runOn ?? trigger.runOn,
       enabled: patch.enabled ?? trigger.enabled,
+      verificationPending: patch.verificationPending ?? trigger.verificationPending,
+      eventTypes: patch.eventTypes ?? trigger.eventTypes,
     });
     if (this.options.botState(clean.botId) === "missing") fail(400, "That MAUS no longer exists");
     Object.assign(trigger, clean, { updatedAt: this.now() });
+    if (!clean.eventTypes?.length) delete trigger.eventTypes;
     if (patch.enabled === false) {
       this.options.cancelQueued?.(trigger.id, "The webhook was paused before this delivery started");
     }
@@ -238,6 +311,7 @@ export class WebhookManager {
     if (at === -1) return false;
     const [trigger] = this.webhooks.splice(at, 1);
     this.deliveries = this.deliveries.filter((delivery) => !delivery.key.startsWith(`${trigger.endpointId}:`));
+    this.attempts = this.attempts.filter((attempt) => attempt.webhookId !== trigger.id);
     this.rate.delete(trigger.endpointId);
     this.options.cancelQueued?.(trigger.id, "The webhook was deleted before this delivery started");
     this.save();
@@ -277,31 +351,73 @@ export class WebhookManager {
   receive(endpointId: string, secret: string, event: WebhookEvent): WebhookReceiveResult {
     const trigger = this.webhooks.find((candidate) => candidate.endpointId === endpointId);
     if (!trigger || !secretMatches(secret, trigger.secretHash)) fail(401, "Invalid webhook URL or secret");
-    return this.dispatch(trigger, event);
+    if (trigger.verificationPending && !trigger.enabled) return this.captureVerification(trigger, event);
+    try {
+      return this.dispatch(trigger, event);
+    } catch (error) {
+      this.recordRejectedForTrigger(trigger, Number((error as { status?: number })?.status) || 500, error instanceof Error ? error.message : String(error), event);
+      throw error;
+    }
   }
 
   test(id: string, payload: unknown = { event: "openmaus.test", message: "Test webhook delivery" }): WebhookReceiveResult | null {
     const trigger = this.webhooks.find((candidate) => candidate.id === id);
     if (!trigger) return null;
+    const eventName = trigger.eventTypes?.[0] ?? "openmaus.test";
     return this.dispatch(trigger, {
       payload,
       contentType: "application/json",
-      eventName: "openmaus.test",
+      eventName,
       userAgent: "OpenMausBot webhook tester",
       deliveryId: `test-${randomUUID()}`,
     });
+  }
+
+  recordRejected(endpointId: string, statusCode: number, reason: string, event: Partial<WebhookEvent> = {}): WebhookAttempt | null {
+    const trigger = this.webhooks.find((candidate) => candidate.endpointId === endpointId);
+    if (!trigger) return null;
+    return this.recordRejectedForTrigger(trigger, statusCode, reason, event);
   }
 
   private dispatch(trigger: StoredWebhookTrigger, event: WebhookEvent): WebhookReceiveResult {
     if (!trigger.enabled) fail(409, "This webhook is paused");
     if (this.options.botState(trigger.botId) === "missing") fail(410, "The assigned MAUS no longer exists");
 
+    const allowed = trigger.eventTypes ?? [];
+    if (allowed.length > 0 && (!event.eventName || !allowed.includes(event.eventName))) {
+      const deliveryId = String(event.deliveryId ?? "").trim().slice(0, 200) || randomUUID();
+      this.appendAttempt(trigger, event, {
+        outcome: "ignored",
+        statusCode: 202,
+        deliveryId,
+        reason: event.eventName ? `Event type “${event.eventName}” is not enabled` : "Event type is missing",
+      });
+      this.save();
+      return { deliveryId, duplicate: false, ignored: true };
+    }
+
     const now = this.now();
     const requestedDeliveryId = String(event.deliveryId ?? "").trim().slice(0, 200);
     if (requestedDeliveryId) {
       const key = `${trigger.endpointId}:${requestedDeliveryId}`;
       const duplicate = this.deliveries.find((delivery) => delivery.key === key);
-      if (duplicate) return { runId: duplicate.runId, deliveryId: requestedDeliveryId, duplicate: true };
+      if (duplicate) {
+        this.appendAttempt(trigger, event, {
+          outcome: "duplicate",
+          statusCode: 202,
+          deliveryId: requestedDeliveryId,
+          runId: duplicate.runId,
+          reason: "Duplicate delivery ignored",
+        });
+        this.save();
+        return { runId: duplicate.runId, deliveryId: requestedDeliveryId, duplicate: true };
+      }
+    }
+
+    // A sender retrying an already-accepted delivery must remain idempotent
+    // even while this webhook's queue is full. Only new work consumes a slot.
+    if ((this.options.pendingRuns?.(trigger.id) ?? 0) >= MAX_PENDING_RUNS) {
+      fail(429, "This webhook already has too many unfinished tasks");
     }
 
     const recent = (this.rate.get(trigger.endpointId) ?? []).filter((at) => now - at < RATE_WINDOW_MS);
@@ -327,9 +443,73 @@ export class WebhookManager {
     trigger.lastRunId = run.id;
     trigger.deliveryCount += 1;
     trigger.updatedAt = now;
+    this.appendAttempt(trigger, event, {
+      outcome: "accepted",
+      statusCode: 202,
+      deliveryId,
+      runId: run.id,
+    });
     this.save();
     this.emit(trigger);
     return { runId: run.id, deliveryId, duplicate: false };
+  }
+
+  private captureVerification(trigger: StoredWebhookTrigger, event: WebhookEvent): WebhookReceiveResult {
+    const receivedAt = this.now();
+    const deliveryId = String(event.deliveryId ?? "").trim().slice(0, 200) || randomUUID();
+    trigger.verificationPending = false;
+    trigger.verifiedAt = receivedAt;
+    trigger.lastReceivedAt = receivedAt;
+    trigger.updatedAt = receivedAt;
+    trigger.verificationSample = {
+      receivedAt,
+      ...(event.eventName ? { eventName: event.eventName.slice(0, 200) } : {}),
+      ...(event.contentType ? { contentType: event.contentType.slice(0, 200) } : {}),
+      preview: previewPayload(event.payload),
+    };
+    this.appendAttempt(trigger, event, {
+      outcome: "captured",
+      statusCode: 202,
+      deliveryId,
+      reason: "Test event captured; enable the webhook to start MAUS tasks",
+    });
+    this.save();
+    this.emit(trigger);
+    return { deliveryId, duplicate: false, captured: true };
+  }
+
+  private recordRejectedForTrigger(trigger: StoredWebhookTrigger, statusCode: number, reason: string, event: Partial<WebhookEvent>): WebhookAttempt {
+    const attempt = this.appendAttempt(trigger, event, {
+      outcome: "rejected",
+      statusCode,
+      reason: reason.slice(0, 500),
+      deliveryId: event.deliveryId,
+    });
+    this.save();
+    return attempt;
+  }
+
+  private appendAttempt(
+    trigger: StoredWebhookTrigger,
+    event: Partial<WebhookEvent>,
+    details: Pick<WebhookAttempt, "outcome" | "statusCode"> & Partial<Pick<WebhookAttempt, "deliveryId" | "runId" | "reason">>,
+  ): WebhookAttempt {
+    const attempt: WebhookAttempt = {
+      id: randomUUID(),
+      webhookId: trigger.id,
+      receivedAt: this.now(),
+      outcome: details.outcome,
+      statusCode: details.statusCode,
+      ...(event.eventName ? { eventName: event.eventName.slice(0, 200) } : {}),
+      ...(event.payload !== undefined ? { preview: previewPayload(event.payload) } : {}),
+      ...(details.deliveryId ? { deliveryId: details.deliveryId.slice(0, 200) } : {}),
+      ...(details.runId ? { runId: details.runId } : {}),
+      ...(details.reason ? { reason: details.reason } : {}),
+    };
+    this.attempts.push(attempt);
+    if (this.attempts.length > MAX_ATTEMPTS) this.attempts.splice(0, this.attempts.length - MAX_ATTEMPTS);
+    this.options.emit?.({ kind: "webhook.attempt", attempt: { ...attempt } });
+    return attempt;
   }
 
   private emit(trigger: StoredWebhookTrigger): void {
@@ -340,7 +520,7 @@ export class WebhookManager {
     mkdirSync(dirname(this.file), { recursive: true });
     writeFileAtomic(
       this.file,
-      JSON.stringify({ version: 1, webhooks: this.webhooks, deliveries: this.deliveries } satisfies WebhookFile, null, 2),
+      JSON.stringify({ version: 1, webhooks: this.webhooks, deliveries: this.deliveries, attempts: this.attempts } satisfies WebhookFile, null, 2),
       { mode: 0o600 },
     );
   }

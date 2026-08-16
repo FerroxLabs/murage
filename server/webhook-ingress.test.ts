@@ -10,11 +10,12 @@ let dir: string;
 let ingress: WebhookIngress;
 let endpointId: string;
 let secret: string;
+let manager: WebhookManager;
 const queued: Array<Record<string, unknown>> = [];
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "omb-webhook-ingress-"));
-  const manager = new WebhookManager({
+  manager = new WebhookManager({
     file: join(dir, "webhooks.json"),
     botState: () => "ready",
     enqueue: (input) => {
@@ -68,6 +69,33 @@ describe("webhook-only ingress", () => {
     expect(queued.at(-1)?.prompt).toContain('"ticket": "42"');
   });
 
+  it("does not deduplicate separate requests that reuse a generic payload id", async () => {
+    const credential = webhookCredential(ingress.baseUrl, endpointId, secret);
+    const before = queued.length;
+    const send = () => fetch(credential.url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "shared-record", task: "Handle this update" }),
+    });
+    expect((await send()).status).toBe(202);
+    expect((await send()).status).toBe(202);
+    expect(queued).toHaveLength(before + 2);
+  });
+
+  it("captures a verification event without queueing work", async () => {
+    const created = manager.create({ name: "Verify", prompt: "", botId: "maus-1", enabled: false, verificationPending: true });
+    const before = queued.length;
+    const response = await fetch(webhookCredential(ingress.baseUrl, created.webhook.endpointId, created.secret).url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-webhook-event": "support.created" },
+      body: JSON.stringify({ task: "Triage ticket 42" }),
+    });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ accepted: true, captured: true });
+    expect(queued).toHaveLength(before);
+    expect(manager.list().find((webhook) => webhook.id === created.webhook.id)).toMatchObject({ verificationPending: false, enabled: false });
+  });
+
   it("rejects invalid credentials, malformed JSON and oversized bodies", async () => {
     const unauthorized = await fetch(`${ingress.baseUrl}/hooks/${endpointId}/wrong`, { method: "POST", body: "{}" });
     expect(unauthorized.status).toBe(401);
@@ -85,5 +113,6 @@ describe("webhook-only ingress", () => {
       body: "x".repeat(MAX_WEBHOOK_BODY_BYTES + 1),
     });
     expect(oversized.status).toBe(413);
+    expect(manager.listAttempts().filter((attempt) => attempt.webhookId === manager.list().find((webhook) => webhook.endpointId === endpointId)?.id && attempt.outcome === "rejected").length).toBeGreaterThanOrEqual(3);
   });
 });

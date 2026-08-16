@@ -15,7 +15,7 @@ import {
 } from "react";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
-import type { WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
+import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
 import { showNotification } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
@@ -213,6 +213,7 @@ interface AppState {
   routines: Routine[];
   routineRuns: RoutineRun[];
   webhooks: WebhookTrigger[];
+  webhookAttempts: WebhookAttempt[];
   webhookIngress: WebhookIngressStatus | null;
   settingsOpen: boolean;
   pluginsOpen: boolean;
@@ -239,8 +240,9 @@ type Action =
   | { type: "routinePatched"; routine: Routine }
   | { type: "routineDeleted"; routineId: string }
   | { type: "routineRunPatched"; run: RoutineRun }
-  | { type: "webhooksHydrated"; webhooks: WebhookTrigger[]; ingress: WebhookIngressStatus }
+  | { type: "webhooksHydrated"; webhooks: WebhookTrigger[]; attempts: WebhookAttempt[]; ingress: WebhookIngressStatus }
   | { type: "webhookPatched"; webhook: WebhookTrigger }
+  | { type: "webhookAttempted"; attempt: WebhookAttempt }
   | { type: "webhookDeleted"; webhookId: string }
   | { type: "createRoutine"; input: RoutineInput }
   | { type: "updateRoutine"; routineId: string; patch: Partial<RoutineInput> }
@@ -282,6 +284,7 @@ type Action =
     }
   | { type: "newTask"; botId: string }
   | { type: "switchTask"; botId: string; threadId: string }
+  | { type: "taskSwitched"; bot: Bot }
   | { type: "renameTask"; botId: string; threadId: string; title: string }
   | { type: "deleteTask"; botId: string; threadId: string }
   | { type: "newBot" }
@@ -392,7 +395,7 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, routineRuns: runs.sort((a, b) => b.scheduledFor - a.scheduledFor) };
     }
     case "webhooksHydrated":
-      return { ...state, webhooks: action.webhooks, webhookIngress: action.ingress };
+      return { ...state, webhooks: action.webhooks, webhookAttempts: action.attempts, webhookIngress: action.ingress };
     case "webhookPatched": {
       const exists = state.webhooks.some((webhook) => webhook.id === action.webhook.id);
       return {
@@ -403,7 +406,17 @@ function reducer(state: AppState, action: Action): AppState {
       };
     }
     case "webhookDeleted":
-      return { ...state, webhooks: state.webhooks.filter((webhook) => webhook.id !== action.webhookId) };
+      return {
+        ...state,
+        webhooks: state.webhooks.filter((webhook) => webhook.id !== action.webhookId),
+        webhookAttempts: state.webhookAttempts.filter((attempt) => attempt.webhookId !== action.webhookId),
+      };
+    case "webhookAttempted": {
+      const attempts = state.webhookAttempts.some((attempt) => attempt.id === action.attempt.id)
+        ? state.webhookAttempts.map((attempt) => attempt.id === action.attempt.id ? action.attempt : attempt)
+        : [...state.webhookAttempts, action.attempt];
+      return { ...state, webhookAttempts: attempts.slice(-2_000) };
+    }
     case "groupPatched": {
       const exists = state.groups.some((g) => g.id === action.group.id);
       const groups = exists
@@ -689,6 +702,8 @@ function reducer(state: AppState, action: Action): AppState {
     case "renameTask":
     case "deleteTask":
       return state;
+    case "taskSwitched":
+      return updateBot(state, action.bot.id, (bot) => ({ ...bot, ...action.bot, messages: action.bot.messages ?? [] }));
     case "newBot":
     case "duplicateBot":
     case "interrupt":
@@ -719,6 +734,7 @@ const initialState: AppState = {
   routines: [],
   routineRuns: [],
   webhooks: [],
+  webhookAttempts: [],
   webhookIngress: null,
   settingsOpen: false,
   pluginsOpen: false,
@@ -1027,12 +1043,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // because switching changes which conversation is on screen
         case "newTask":
           api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: "{}" })
-            .then((r: any) => r?.bot && dispatch({ type: "botPatched", bot: r.bot }))
+            .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", bot: r.bot }))
             .catch(showError);
           break;
         case "switchTask":
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "POST" })
-            .then((r: any) => r?.bot && dispatch({ type: "botPatched", bot: r.bot }))
+            .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", bot: r.bot }))
             .catch(showError);
           break;
         case "renameTask":
@@ -1043,7 +1059,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "deleteTask":
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "DELETE" })
-            .then((r: any) => r?.bot && dispatch({ type: "botPatched", bot: r.bot }))
+            .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", bot: r.bot }))
             .catch(showError);
           break;
         case "interruptGroup":
@@ -1088,7 +1104,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           .then(({ routines, runs }) => alive && rawDispatch({ type: "routinesHydrated", routines, runs }))
           .catch(() => {}),
         api("/api/webhooks")
-          .then(({ webhooks, ingress }) => alive && rawDispatch({ type: "webhooksHydrated", webhooks, ingress }))
+          .then(({ webhooks, attempts, ingress }) => alive && rawDispatch({ type: "webhooksHydrated", webhooks, attempts: attempts ?? [], ingress }))
           .catch(() => {}),
       ]);
 
@@ -1217,6 +1233,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "webhook":
           rawDispatch({ type: "webhookPatched", webhook: frame.webhook });
+          break;
+        case "webhook.attempt":
+          rawDispatch({ type: "webhookAttempted", attempt: frame.attempt });
           break;
         case "webhook.deleted":
           rawDispatch({ type: "webhookDeleted", webhookId: frame.webhookId });

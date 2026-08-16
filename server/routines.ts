@@ -356,6 +356,12 @@ export class RoutineManager {
     return { ...run };
   }
 
+  activeWebhookRunCount(webhookId: string): number {
+    return this.runs.filter(
+      (run) => run.webhookId === webhookId && ["queued", "running", "waiting"].includes(run.status),
+    ).length;
+  }
+
   cancelQueuedWebhook(webhookId: string, message: string): void {
     let changed = false;
     for (const run of this.runs) {

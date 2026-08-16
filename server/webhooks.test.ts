@@ -14,6 +14,7 @@ function harness() {
   let now = new Date("2026-08-16T10:00:00.000Z").getTime();
   let bot: "ready" | "busy" | "missing" = "ready";
   let run = 0;
+  let pending = 0;
   const queued: Array<Record<string, unknown>> = [];
   const cancelled: Array<{ id: string; message: string }> = [];
   const emitted: unknown[] = [];
@@ -27,6 +28,7 @@ function harness() {
       return { id: `run-${++run}` };
     },
     cancelQueued: (id, message) => cancelled.push({ id, message }),
+    pendingRuns: () => pending,
   };
   const manager = new WebhookManager(options);
   return {
@@ -38,6 +40,7 @@ function harness() {
     emitted,
     setNow: (value: number) => (now = value),
     setBot: (value: typeof bot) => (bot = value),
+    setPending: (value: number) => (pending = value),
   };
 }
 
@@ -105,6 +108,33 @@ describe("WebhookManager", () => {
     expect(h.manager.list()[0]).toMatchObject({ lastRunId: "run-1", deliveryCount: 1 });
   });
 
+  it("uses an authenticated task from the payload when default instructions are empty", () => {
+    const h = harness();
+    const { webhook, secret } = h.manager.create({ name: "Direct tasks", prompt: "", botId: "maus-1" });
+    h.manager.receive(webhook.endpointId, secret, { payload: { task: "Check the failed checkout test", error: "500" } });
+
+    expect(h.queued[0]?.prompt).toContain("[AUTHENTICATED WEBHOOK TASK]");
+    expect(h.queued[0]?.prompt).toContain("Check the failed checkout test");
+    expect(h.queued[0]?.prompt).toContain("[UNTRUSTED WEBHOOK EVENT DATA]");
+  });
+
+  it("captures the first real request for verification without starting a task", () => {
+    const h = harness();
+    const { webhook, secret } = h.manager.create({
+      name: "Verify me",
+      prompt: "",
+      botId: "maus-1",
+      enabled: false,
+      verificationPending: true,
+    });
+    const result = h.manager.receive(webhook.endpointId, secret, { payload: { task: "Hello" }, eventName: "demo" });
+
+    expect(result).toMatchObject({ captured: true, duplicate: false });
+    expect(h.queued).toHaveLength(0);
+    expect(h.manager.list()[0]).toMatchObject({ enabled: false, verificationPending: false, verifiedAt: expect.any(Number) });
+    expect(h.manager.listAttempts().at(-1)).toMatchObject({ outcome: "captured", eventName: "demo" });
+  });
+
   it("deduplicates retries by delivery id, including after a restart", () => {
     const h = harness();
     const { webhook, secret } = create(h.manager);
@@ -112,6 +142,7 @@ describe("WebhookManager", () => {
     expect(h.manager.receive(webhook.endpointId, secret, event).duplicate).toBe(false);
 
     const reloaded = new WebhookManager(h.options);
+    h.setPending(3);
     const retry = reloaded.receive(webhook.endpointId, secret, event);
     expect(retry).toEqual({ runId: "run-1", deliveryId: "same-event", duplicate: true });
     expect(h.queued).toHaveLength(1);
@@ -129,21 +160,28 @@ describe("WebhookManager", () => {
     h.manager.update(webhook.id, { enabled: false });
     expect(() => h.manager.receive(webhook.endpointId, rotated.secret, { payload: {} })).toThrow("paused");
     expect(h.cancelled.at(-1)?.id).toBe(webhook.id);
+    expect(h.manager.listAttempts().at(-1)).toMatchObject({ outcome: "rejected", statusCode: 409 });
 
     expect(h.manager.remove(webhook.id)).toBe(true);
     expect(h.manager.list()).toHaveLength(0);
   });
 
-  it("rejects missing bots and rate-limits a noisy endpoint", () => {
+  it("filters event types, caps unfinished work, and rate-limits a noisy endpoint", () => {
     const h = harness();
-    const { webhook, secret } = create(h.manager);
+    const { webhook, secret } = h.manager.create({ name: "Builds", prompt: "Review it", botId: "maus-1", eventTypes: ["push"] });
+    expect(h.manager.receive(webhook.endpointId, secret, { payload: {}, eventName: "issues" })).toMatchObject({ ignored: true });
+    expect(h.queued).toHaveLength(0);
+
     h.setBot("missing");
-    expect(() => h.manager.receive(webhook.endpointId, secret, { payload: {} })).toThrow("no longer exists");
+    expect(() => h.manager.receive(webhook.endpointId, secret, { payload: {}, eventName: "push" })).toThrow("no longer exists");
 
     h.setBot("ready");
-    for (let index = 0; index < 60; index++) {
-      h.manager.receive(webhook.endpointId, secret, { payload: { index }, deliveryId: `delivery-${index}` });
+    h.setPending(3);
+    expect(() => h.manager.receive(webhook.endpointId, secret, { payload: {}, eventName: "push" })).toThrow("unfinished tasks");
+    h.setPending(0);
+    for (let index = 0; index < 10; index++) {
+      h.manager.receive(webhook.endpointId, secret, { payload: { index }, eventName: "push", deliveryId: `delivery-${index}` });
     }
-    expect(() => h.manager.receive(webhook.endpointId, secret, { payload: { overflow: true } })).toThrow("rate limit");
+    expect(() => h.manager.receive(webhook.endpointId, secret, { payload: { overflow: true }, eventName: "push" })).toThrow("rate limit");
   });
 });

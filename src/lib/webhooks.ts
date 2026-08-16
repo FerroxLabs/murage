@@ -13,6 +13,10 @@ export interface WebhookTrigger {
   lastReceivedAt?: number;
   lastRunId?: string;
   deliveryCount: number;
+  verificationPending?: boolean;
+  verifiedAt?: number;
+  verificationSample?: WebhookVerificationSample;
+  eventTypes?: string[];
 }
 
 export interface WebhookTriggerInput {
@@ -21,6 +25,30 @@ export interface WebhookTriggerInput {
   botId: string;
   runOn?: RoutineRunOn;
   enabled?: boolean;
+  verificationPending?: boolean;
+  eventTypes?: string[];
+}
+
+export interface WebhookVerificationSample {
+  receivedAt: number;
+  eventName?: string;
+  contentType?: string;
+  preview: string;
+}
+
+export type WebhookAttemptOutcome = "accepted" | "captured" | "duplicate" | "ignored" | "rejected";
+
+export interface WebhookAttempt {
+  id: string;
+  webhookId: string;
+  receivedAt: number;
+  outcome: WebhookAttemptOutcome;
+  statusCode: number;
+  eventName?: string;
+  preview?: string;
+  deliveryId?: string;
+  runId?: string;
+  reason?: string;
 }
 
 export interface WebhookIngressStatus {

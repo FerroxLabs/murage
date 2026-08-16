@@ -502,7 +502,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-[15px] font-medium text-ink">
               <CalendarClock size={16} className="text-accent" />
-              Routines
+              Scheduled tasks
             </div>
             {botRoutines.length > 0 && (
               <span className="rounded-full bg-raised px-2 py-0.5 text-[10px] font-medium text-ink-secondary">
@@ -516,7 +516,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           {!computerDestination && (
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-[11.5px] leading-relaxed text-warning">
               <Power size={13} className="mt-0.5 shrink-0" />
-              MAUS-setup routines will not have desktop access while this is Off. Choose Cloud VM in the routine editor to run the whole job there.
+              Scheduled tasks on this computer will not have desktop access while this is Off. Choose Cloud VM in the schedule editor to run the whole job there.
             </div>
           )}
           {activeRoutineRun && (
@@ -556,15 +556,15 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent py-2 text-[13px] font-medium text-white hover:brightness-110"
             >
               <Plus size={14} />
-              Create routine
+              Create schedule
             </button>
             <button
               onClick={() => dispatch({ type: "showRoutines" })}
               className="flex items-center justify-center gap-1.5 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover"
-              title="Open routines calendar"
+              title="Open schedules"
             >
               <CalendarDays size={14} />
-              Calendar
+              Schedules
             </button>
           </div>
         </div>

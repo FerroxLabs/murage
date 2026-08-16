@@ -71,18 +71,22 @@ function bearerSecret(req: IncomingMessage): string {
   return match?.[1]?.trim() || header(req, "x-openmaus-secret")?.trim() || "";
 }
 
-function deliveryId(req: IncomingMessage, payload: unknown): string | undefined {
-  const fromHeader =
+function deliveryId(req: IncomingMessage): string | undefined {
+  return (
     header(req, "idempotency-key") ??
     header(req, "x-webhook-id") ??
     header(req, "x-github-delivery") ??
-    header(req, "webhook-id");
-  if (fromHeader?.trim()) return fromHeader.trim();
-  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-    const candidate = (payload as Record<string, unknown>).id ?? (payload as Record<string, unknown>).event_id;
-    if (typeof candidate === "string" || typeof candidate === "number") return String(candidate);
-  }
-  return undefined;
+    header(req, "webhook-id")
+  )?.trim() || undefined;
+}
+
+function eventName(req: IncomingMessage): string | undefined {
+  return (
+    header(req, "x-github-event") ??
+    header(req, "x-webhook-event") ??
+    header(req, "x-event-type") ??
+    header(req, "ce-type")
+  )?.trim() || undefined;
 }
 
 export function createWebhookIngressHandler(manager: WebhookManager) {
@@ -99,25 +103,39 @@ export function createWebhookIngressHandler(manager: WebhookManager) {
       const pathSecret = match[2] ? decodeURIComponent(match[2]) : "";
       const secret = pathSecret || bearerSecret(req);
       // Reject bad capability URLs before buffering or parsing attacker input.
-      if (!manager.authorize(match[1], secret)) return json(res, 401, { error: "Invalid webhook URL or secret" });
+      if (!manager.authorize(match[1], secret)) {
+        manager.recordRejected(match[1], 401, "Invalid webhook URL or secret", {
+          contentType: header(req, "content-type"),
+          eventName: eventName(req),
+          deliveryId: deliveryId(req),
+        });
+        return json(res, 401, { error: "Invalid webhook URL or secret" });
+      }
       const raw = await readRawBody(req);
       const contentType = header(req, "content-type")?.split(";")[0]?.trim().toLowerCase() ?? "text/plain";
       const payload = parsePayload(raw, contentType);
       const result = manager.receive(match[1], secret, {
         payload,
         contentType,
-        eventName:
-          header(req, "x-github-event") ??
-          header(req, "x-webhook-event") ??
-          header(req, "x-event-type") ??
-          header(req, "ce-type"),
+        eventName: eventName(req),
         userAgent: header(req, "user-agent"),
-        deliveryId: deliveryId(req, payload),
+        deliveryId: deliveryId(req),
       });
       return json(res, 202, { accepted: true, ...result });
     } catch (error) {
       const status = Number((error as { status?: number })?.status) || 500;
-      return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      // Manager-level validation records its own rejection with the parsed
+      // payload. Receiver-level failures happen earlier, so record metadata
+      // here without buffering untrusted data a second time.
+      if (status === 400 || status === 413) {
+        manager.recordRejected(match[1], status, message, {
+          contentType: header(req, "content-type"),
+          eventName: eventName(req),
+          deliveryId: deliveryId(req),
+        });
+      }
+      return json(res, status, { error: message });
     }
   };
 }
