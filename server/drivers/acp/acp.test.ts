@@ -179,6 +179,14 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.env.XAI_API_KEY).toBeUndefined();
   });
 
+  // this driver has no Composio mount, so it must not claim the
+  // capability: claiming it is what would tell an ACP bot to call
+  // composio tools it was never given
+  it("does not claim the Composio capability it cannot honour", async () => {
+    await create();
+    expect(instance.adapter.capabilities.composioMcp).not.toBe(true);
+  });
+
   it("droid takes model and autonomy over the wire, never through argv", async () => {
     // `droid exec -m <id> -o acp` ignores the flag (verified against 0.196.0),
     // so a model that only reached argv would silently run the CLI's own pick.
