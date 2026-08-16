@@ -15,6 +15,9 @@
 //                        surface: session/new and session/load return
 //                        configOptions, and session/set_config_option switches
 //                        the model (rejecting an unadvertised one with -32602).
+//   FAKE_ACP_MODEL_STICKS  session/set_config_option succeeds but leaves the
+//                        model where it was, so the confirmation guard in
+//                        core.ts has something to catch
 //   FAKE_ACP_USAGE_ROOT  put the prompt result's usage at the root instead of
 //                        under _meta (what opencode 1.18.18 actually does)
 //
@@ -180,7 +183,10 @@ function handle(msg: any) {
         });
         break;
       }
-      currentModel = value;
+      // FAKE_ACP_MODEL_STICKS: answer OK and keep the old model anyway. Nothing
+      // in the protocol forbids it, and it is the shape core.ts's confirmation
+      // guard exists for — an error is loud, this is silent.
+      if (!process.env.FAKE_ACP_MODEL_STICKS) currentModel = value;
       result(msg.id, { configOptions: configOptions() });
       break;
     }

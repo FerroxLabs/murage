@@ -110,6 +110,7 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_DUMP;
     delete process.env.XAI_API_KEY;
     delete process.env.FAKE_ACP_MODELS;
+    delete process.env.FAKE_ACP_MODEL_STICKS;
     delete process.env.FAKE_ACP_USAGE_ROOT;
     recorder?.stop();
     await instance?.dispose();
@@ -245,6 +246,24 @@ describe("ACP turns (fake CLI)", () => {
     const err = recorder.events.find((e) => e.type === "runtime.error")!;
     expect(err.message).toMatch(/model not found/);
     // nothing was generated: the prompt is never sent
+    expect(recorder.events.some((e) => e.type === "content.delta")).toBe(false);
+  });
+
+  // The unadvertised-model test above rides the fake's -32602, so it settles in
+  // `request()` and never reaches the guard. This one is the silent case the
+  // guard was written for: the agent acknowledges the switch and keeps its old
+  // model, which no error surfaces.
+  it("a model switch acknowledged but not applied fails the turn", async () => {
+    process.env.FAKE_ACP_MODELS = "m-one,m-two";
+    process.env.FAKE_ACP_MODEL_STICKS = "1";
+    await create(SelectModelDriver);
+    await instance.adapter.sendTurn({ threadId: "t-stuck-model", text: "go", model: "m-two" });
+
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false });
+    const err = recorder.events.find((e) => e.type === "runtime.error")!;
+    expect(err.message).toMatch(/did not switch to m-two \(still m-one\)/);
+    // the whole point: no paid turn is spent on the wrong model
     expect(recorder.events.some((e) => e.type === "content.delta")).toBe(false);
   });
 
