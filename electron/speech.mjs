@@ -80,6 +80,7 @@ export function startSpeech(win, options = {}) {
   const outputPath = path.join(sessionDir, "stdout.ndjson");
   const errorPath = path.join(sessionDir, "stderr.log");
   const stopPath = path.join(sessionDir, "stop");
+  const finishPath = path.join(sessionDir, "finish");
   writeFileSync(outputPath, "");
   writeFileSync(errorPath, "");
 
@@ -100,6 +101,8 @@ export function startSpeech(win, options = {}) {
         ...args,
         "--stop-file",
         stopPath,
+        "--finish-file",
+        finishPath,
       ],
       { stdio: "ignore" },
     );
@@ -109,7 +112,7 @@ export function startSpeech(win, options = {}) {
     return;
   }
 
-  const speechSession = { proc, outputPath, errorPath, stopPath, sessionDir };
+  const speechSession = { proc, outputPath, errorPath, stopPath, finishPath, sessionDir };
   child = speechSession;
   let buf = "";
   let offset = 0;
@@ -184,5 +187,14 @@ export function stopSpeech() {
   child = null;
   try {
     writeFileSync(speechSession.stopPath, "stop");
+  } catch {}
+}
+
+/** Finalize the active request and keep it owned until the recognizer emits
+ * its final transcript. Used by push-to-talk key release. */
+export function finishSpeech() {
+  if (!child) return;
+  try {
+    writeFileSync(child.finishPath, "finish");
   } catch {}
 }

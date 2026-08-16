@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("ogb", {
   screenFrame: () => ipcRenderer.invoke("screen:frame"),
   speechStart: (options) => ipcRenderer.invoke("speech:start", options),
   speechStop: () => ipcRenderer.invoke("speech:stop"),
+  speechFinish: () => ipcRenderer.invoke("speech:finish"),
   onSpeechTranscript: (cb) => {
     const handler = (_event, line) => cb(line);
     ipcRenderer.on("speech:transcript", handler);

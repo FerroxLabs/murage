@@ -16,6 +16,7 @@ import {
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import { currentCall } from "@/lib/call";
+import { showNotification } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 
 export type { MausColor } from "@/lib/mascot";
@@ -61,12 +62,18 @@ export interface Message {
   comm?: { groupId: string; withBotId: string; withName: string; withColor: MausColor };
 }
 
+export type GroupDefaultResponder =
+  | { kind: "member"; botId: string }
+  | { kind: "everyone" }
+  | { kind: "mentions" };
+
 /** A room: several bots + you in one shared thread. */
 export interface Group {
   id: string;
   threadId: string;
   name: string;
   memberIds: string[];
+  defaultResponder: GroupDefaultResponder;
   bulletin: string;
   unread: boolean;
   createdAt: number;
@@ -115,6 +122,8 @@ export interface Bot {
   voice?: string;
   pinned?: boolean;
   hidden?: boolean;
+  /** The workspace's one primary coordinator. */
+  chiefOfStaff?: boolean;
   messages: Message[];
   /** leaf of the visible conversation branch (see visibleMessages) */
   activeLeafId?: string | null;
@@ -233,7 +242,11 @@ type Action =
   | { type: "groupDeleted"; groupId: string }
   | { type: "createGroup"; memberIds: string[]; name?: string }
   | { type: "sendGroup"; groupId: string; text: string }
-  | { type: "patchGroup"; groupId: string; patch: Partial<Pick<Group, "name" | "bulletin" | "memberIds">> }
+  | {
+      type: "patchGroup";
+      groupId: string;
+      patch: Partial<Pick<Group, "name" | "bulletin" | "memberIds" | "defaultResponder">>;
+    }
   | { type: "deleteGroup"; groupId: string }
   | { type: "toggleReaction"; threadId: string; messageId: string; emoji: string }
   | { type: "interruptGroup"; groupId: string }
@@ -252,7 +265,7 @@ type Action =
       type: "decideRequest";
       threadId: string;
       requestId: string;
-      behavior: "allow" | "deny";
+      behavior: "allow" | "deny" | "answer";
       message?: string;
       /** remember this exact grant (the server's allowKey) for the bot */
       alwaysAllow?: { botId: string; key: string };
@@ -297,6 +310,7 @@ type Action =
           | "voice"
           | "pinned"
           | "hidden"
+          | "chiefOfStaff"
         >
       >;
     };
@@ -433,7 +447,15 @@ function reducer(state: AppState, action: Action): AppState {
             : action.bot.busy === false && before?.busy
               ? "celebrate"
               : null;
-      const next = kind ? withMascotMotion(state, action.bot.id, kind) : state;
+      const animated = kind ? withMascotMotion(state, action.bot.id, kind) : state;
+      const next = action.bot.chiefOfStaff
+        ? {
+            ...animated,
+            bots: animated.bots.map((b) =>
+              b.id === action.bot.id ? b : { ...b, chiefOfStaff: false },
+            ),
+          }
+        : animated;
       return updateBot(next, action.bot.id, (b) => ({ ...b, ...action.bot, messages: b.messages }));
     }
     case "messageAdded": {
@@ -570,9 +592,17 @@ function reducer(state: AppState, action: Action): AppState {
       const mascotChanged =
         Object.prototype.hasOwnProperty.call(action.patch, "color") ||
         Object.prototype.hasOwnProperty.call(action.patch, "mascotExpression");
-      const next = mascotChanged
+      const animated = mascotChanged
         ? withMascotMotion(state, action.botId, "customize")
         : state;
+      const next = action.patch.chiefOfStaff
+        ? {
+            ...animated,
+            bots: animated.bots.map((b) =>
+              b.id === action.botId ? b : { ...b, chiefOfStaff: false },
+            ),
+          }
+        : animated;
       return updateBot(next, action.botId, (b) => ({ ...b, ...action.patch }));
     }
     case "threadActive": {
@@ -1010,35 +1040,65 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // ── initial load + SSE fold ──────────────────────────────────────────
   useEffect(() => {
     let alive = true;
-    const loadAll = () => {
-      api("/api/bots")
-        .then(({ bots, groups }) => alive && rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }))
-        .catch(() => {});
-      api("/api/instances")
-        .then(({ instances }) => alive && rawDispatch({ type: "instances", instances }))
-        .catch(() => {});
-      api("/api/config")
-        .then((config) => alive && rawDispatch({ type: "configStatus", config }))
-        .catch(() => {});
-      api("/api/routines")
-        .then(({ routines, runs }) => alive && rawDispatch({ type: "routinesHydrated", routines, runs }))
-        .catch(() => {});
-    };
-    loadAll();
+    const loadAll = () =>
+      Promise.all([
+        api("/api/bots")
+          .then(({ bots, groups }) => alive && rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }))
+          .catch(() => {}),
+        api("/api/instances")
+          .then(({ instances }) => alive && rawDispatch({ type: "instances", instances }))
+          .catch(() => {}),
+        api("/api/config")
+          .then((config) => alive && rawDispatch({ type: "configStatus", config }))
+          .catch(() => {}),
+        api("/api/routines")
+          .then(({ routines, runs }) => alive && rawDispatch({ type: "routinesHydrated", routines, runs }))
+          .catch(() => {}),
+      ]);
 
-    const es = new EventSource("/api/events");
-    es.onopen = () => {
-      rawDispatch({ type: "connected", value: true });
-      loadAll(); // resync anything missed while disconnected
-    };
-    es.onerror = () => rawDispatch({ type: "connected", value: false });
-    es.onmessage = (raw) => {
-      let frame: any;
-      try {
-        frame = JSON.parse(raw.data);
-      } catch {
+    // A snapshot and the live fold have to meet at a defined boundary. Start
+    // hydration only after the stream says hello, queue frames that arrive
+    // while the REST snapshot is in flight, then apply them on top. Otherwise
+    // a late hydrate can overwrite a newer event, or an event can land between
+    // an eager request and the stream opening and disappear entirely.
+    let hydrated = false;
+    let hydrating = false;
+    let rehydrateRequested = false;
+    const pendingFrames: any[] = [];
+    let handleFrame: (frame: any) => void;
+    const hydrate = () => {
+      if (hydrating) {
+        // A second non-resumable hello means this snapshot may have started
+        // before another connection gap. Run one more after it settles.
+        rehydrateRequested = true;
         return;
       }
+      hydrating = true;
+      hydrated = false;
+      void loadAll().finally(() => {
+        if (!alive) return;
+        hydrating = false;
+        if (rehydrateRequested) {
+          rehydrateRequested = false;
+          hydrate();
+          return;
+        }
+        hydrated = true;
+        for (const frame of pendingFrames.splice(0)) handleFrame(frame);
+      });
+    };
+    // If SSE is unavailable, the app should still show its saved state. A
+    // later first hello hydrates again because it cannot prove there was no
+    // gap before that connection opened.
+    const hydrationFallback = setTimeout(hydrate, 1_000);
+
+    const es = new EventSource("/api/events");
+    // The hydrate decision belongs to the hello frame, not to onopen: the
+    // server replays what we missed when it can, and re-downloading every
+    // transcript on a reconnect it already covered is pure waste.
+    es.onopen = () => rawDispatch({ type: "connected", value: true });
+    es.onerror = () => rawDispatch({ type: "connected", value: false });
+    handleFrame = (frame) => {
       switch (frame.kind) {
         case "message": {
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
@@ -1048,10 +1108,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // Auto-speak lives HERE rather than in the chat view so a bot
             // you switched away from still reads its answer out — which is
             // the whole point of listening while you do something else. A
-            // bot on a call is excluded: call mode speaks in its own order,
-            // around its own microphone, and the two would fight.
+            // Auto-speak is disabled during any call. Call mode owns both the
+            // singleton speaker and microphone ordering for its whole lifetime.
             const owner = stateRef.current.bots.find((b) => b.threadId === frame.threadId);
-            if (owner?.speakReplies && currentCall() !== owner.id && frame.message.text?.trim()) {
+            if (owner?.speakReplies && currentCall() === null && frame.message.text?.trim()) {
               void speaker.speak(frame.message.text, {
                 botId: owner.id,
                 messageId: frame.message.id,
@@ -1097,6 +1157,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           rawDispatch({ type: "groupPatched", group });
           break;
         }
+        // the harness decided this was worth interrupting for; the toggle
+        // in each bot's settings is what gates it, server-side
+        case "notify":
+          // the wrapped dispatch, not rawDispatch: `select` clears the badge
+          // in local state either way, but only the wrapper PATCHes
+          // unread:false back. Opening a bot from its own notification and
+          // watching the badge return on the next hydration is exactly the
+          // bug that makes notifications feel broken.
+          showNotification(frame.notification, (botId) => dispatch({ type: "select", id: botId }));
+          break;
         case "group.deleted":
           rawDispatch({ type: "groupDeleted", groupId: frame.groupId });
           break;
@@ -1161,8 +1231,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
       }
     };
+    es.onmessage = (raw) => {
+      let frame: any;
+      try {
+        frame = JSON.parse(raw.data);
+      } catch {
+        return;
+      }
+      // `hello` is the snapshot boundary. A false `resumed` means the server
+      // could not fill the gap, so queue subsequent frames behind a hydrate.
+      if (frame.kind === "hello") {
+        clearTimeout(hydrationFallback);
+        if (!frame.resumed) hydrate();
+        return;
+      }
+      if (hydrated) handleFrame(frame);
+      else pendingFrames.push(frame);
+    };
     return () => {
       alive = false;
+      clearTimeout(hydrationFallback);
       es.close();
     };
   }, []);

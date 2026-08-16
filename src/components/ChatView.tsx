@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Crown,
   Loader2,
   Monitor,
   Pencil,
@@ -656,7 +657,12 @@ export function ChatView({ bot }: { bot: Bot }) {
       <CallOverlay bot={bot} />
       {/* Header */}
       <div
-        className={cn("flex items-center justify-between px-5 py-3", isWin && "pr-[148px]")}
+        className={cn(
+          "flex items-center justify-between px-5 py-3",
+          // Room for the drawer button, which overlays this corner below md.
+          "pl-11 md:pl-5",
+          isWin && "pr-[148px]",
+        )}
         style={drag}
       >
         <button
@@ -673,6 +679,11 @@ export function ChatView({ bot }: { bot: Bot }) {
             motionKey={mascotMotion?.nonce ?? 0}
           />
           <span className="text-[15px] font-semibold text-ink">{bot.name}</span>
+          {bot.chiefOfStaff && (
+            <span className="flex items-center gap-1 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent">
+              <Crown size={11} /> Chief of Staff
+            </span>
+          )}
           {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
         </button>
         <div className="flex items-center gap-2" style={noDrag}>

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
-import { startSpeech, stopSpeech } from "./speech.mjs";
+import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import capabilitiesModule from "./capabilities.cjs";
@@ -271,6 +271,9 @@ ipcMain.handle("speech:start", (event, options) => {
 });
 ipcMain.handle("speech:stop", () => {
   if (process.platform === "darwin") stopSpeech();
+});
+ipcMain.handle("speech:finish", () => {
+  if (process.platform === "darwin") finishSpeech();
 });
 
 ipcMain.handle("desktop:capabilities", async () =>
