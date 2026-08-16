@@ -41,6 +41,7 @@ const support: AcpSupport = {
   loginNote: "Gemini CLI is not signed in — run `gemini` once to log in, or set GEMINI_API_KEY",
 
   spawnArgs: (_config, turn) => ["--experimental-acp", ...(turn.model ? ["-m", turn.model] : [])],
+  credentialEnv: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
 
   pickAuthMethod: (methods) => {
     const ids = methods.map((m) => m.id).filter((id): id is string => typeof id === "string");

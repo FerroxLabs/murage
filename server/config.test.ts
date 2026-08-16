@@ -2,7 +2,15 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { DATA_DIR, loadConfig, normalizeVpsConfig, saveConfig, vpsSshAlias } from "./config.ts";
+import {
+  DATA_DIR,
+  instanceConfigs,
+  loadConfig,
+  normalizeVpsConfig,
+  saveConfig,
+  vpsSshAlias,
+  type AppConfig,
+} from "./config.ts";
 
 describe("VPS config", () => {
   beforeEach(() => {
@@ -42,5 +50,21 @@ describe("VPS config", () => {
     saveConfig({ vps: { sshAlias: "production-vps" } });
     saveConfig({ vps: { sshAlias: "" } });
     expect(vpsSshAlias(loadConfig())).toBeNull();
+  });
+});
+
+describe("OpenCode Go configuration", () => {
+  it("injects the key only into OpenCode Go instances", () => {
+    const cfg: AppConfig = {
+      opencodeGo: { apiKey: "secret-value" },
+      instances: {
+        opencode: { driver: "opencodeGo" },
+        grok: { driver: "grokAgent" },
+      },
+    };
+
+    const instances = instanceConfigs(cfg);
+    expect(instances.opencode.environment).toEqual({ OPENCODE_API_KEY: "secret-value" });
+    expect(instances.grok.environment).toEqual({});
   });
 });

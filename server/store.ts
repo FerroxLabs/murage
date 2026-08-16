@@ -6,6 +6,7 @@ import { readFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
@@ -169,6 +170,10 @@ export interface BotRecord {
   /** The single workspace-wide coordinator. The store enforces that at
    * most one bot owns this role, even if an older/corrupt file says more. */
   chiefOfStaff?: boolean;
+  /** Pause for human approval before this bot talks to a peer (ask_bot,
+   * delegate_bot). Off by default: a chief-of-staff-style bot is most
+   * useful when it can coordinate without nagging. */
+  approvePeerComms?: boolean;
   busy?: boolean;
   createdAt: number;
 }
@@ -315,6 +320,25 @@ export class Store {
       }
       b.chiefOfStaff = false;
       botsMigrated = true;
+    }
+    // Peer grants originally used mutable display names (ask_bot:@Helper).
+    // Convert only when exactly one bot has that name; ambiguous legacy
+    // entries remain inert rather than granting access to the wrong bot.
+    for (const b of this.bots) {
+      if (!b.alwaysAllow?.length) continue;
+      let changed = false;
+      const migrated = b.alwaysAllow.map((key) => {
+        const match = key.match(/^(ask_bot|delegate_bot):@(.+)$/);
+        if (!match) return key;
+        const candidates = this.bots.filter((candidate) => candidate.name === match[2]);
+        if (candidates.length !== 1) return key;
+        changed = true;
+        return peerAllowKey(match[1] as PeerAction, candidates[0]!.id);
+      });
+      if (changed) {
+        b.alwaysAllow = [...new Set(migrated)];
+        botsMigrated = true;
+      }
     }
     for (const g of this.groups) {
       g.busyBotId = null;
@@ -550,18 +574,23 @@ export class Store {
     return this.bots.find((b) => b.threadId === threadId || b.tasks?.some((t) => t.threadId === threadId)) ?? null;
   }
 
-  createBot(): BotRecord {
-    const name = pickBotName(this.bots.map((b) => b.name));
+  createBot(
+    profile: Partial<
+      Pick<BotRecord, "name" | "title" | "description" | "color" | "mascotExpression" | "modelSelection">
+    > = {},
+  ): BotRecord {
+    const name = profile.name?.trim() || pickBotName(this.bots.map((b) => b.name));
     const bot: BotRecord = {
       id: newId(),
       threadId: newId(),
       name,
-      title: "",
-      description: "",
+      title: profile.title ?? "",
+      description: profile.description ?? "",
       notifications: true,
-      color: COLORS[this.bots.length % COLORS.length],
+      color: profile.color ?? COLORS[this.bots.length % COLORS.length],
+      ...(profile.mascotExpression ? { mascotExpression: profile.mascotExpression } : {}),
       unread: false,
-      modelSelection: this.defaultSelection(),
+      modelSelection: profile.modelSelection ?? this.defaultSelection(),
       resumeCursors: {},
       createdAt: Date.now(),
     };

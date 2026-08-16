@@ -6,7 +6,7 @@
 // These used to be POSIX-only: the fake CLI is a shebang script Windows
 // cannot exec, and the broker is a unix socket. Both now go through
 // resolveCliSpawn / permissionSocketPath, so they run everywhere.
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -155,13 +155,83 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
-    const mcpConfig = JSON.parse(seen.argv[seen.argv.indexOf("--mcp-config") + 1]);
-    expect(mcpConfig.mcpServers.agents).toMatchObject({
+    expect(seen.mcpConfig.mcpServers.agents).toMatchObject({
       args: ["/fake/agents-proxy.js"],
       env: { OMB_BOT_ID: "b1", OMB_COMMS_TOKEN: "tok" },
     });
+    // the config goes in a private file, never on argv, where `ps` would
+    // show the comms token to every other user on the machine
+    expect(JSON.stringify(seen.argv)).not.toContain("tok");
     const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
     expect(allowed).toContain("mcp__agents");
+  });
+
+  it("mounts the dweb proxy from the drivers directory and pre-allows its tools", async () => {
+    await create();
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-dweb",
+      text: "hi",
+      integrations: { dweb: { url: "http://127.0.0.1:49737" } },
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpConfig.mcpServers.dweb.args[0]).toMatch(/[\\/]drivers[\\/]dweb-proxy\.(?:ts|js)$/);
+    expect(seen.mcpConfig.mcpServers.dweb.env.DWEB_URL).toBe("http://127.0.0.1:49737");
+    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1]).toContain("mcp__dweb");
+  });
+
+  // the harness gates both the integration and the prompt hint on
+  // capabilities.composioMcp, so the flag and the mount must agree — a bot
+  // told about tools its driver never mounted burns the turn hunting
+  it("mounts the user's connected apps and claims the capability that gates them", async () => {
+    await create();
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    expect(instance.adapter.capabilities.composioMcp).toBe(true);
+    await instance.adapter.sendTurn({
+      threadId: "t-composio",
+      text: "hi",
+      integrations: { composio: { key: "ck_test" } },
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpConfig.mcpServers.composio).toMatchObject({
+      type: "http",
+      url: "https://connect.composio.dev/mcp",
+      headers: { "x-consumer-api-key": "ck_test" },
+    });
+    // the user's Composio key must not be readable via `ps`
+    expect(JSON.stringify(seen.argv)).not.toContain("ck_test");
+    expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1]).toContain("mcp__composio");
+  });
+
+  // the config file holds live credentials, so it must not outlive the turn —
+  // including when the CLI dies mid-turn, which is the path that leaks if
+  // cleanup is hung off the happy-path result instead of settle()
+  it.each([
+    ["a completed turn", "happy"],
+    ["a crashed turn", "exit-early"],
+  ])("deletes the mcp config file after %s", async (_label, mode) => {
+    await create(mode);
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-cleanup", text: "hi", integrations: { composio: { key: "ck_x" } } });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const configPath = (() => {
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      return seen.argv[seen.argv.indexOf("--mcp-config") + 1] as string;
+    })();
+    expect(configPath).toMatch(/omb-mcp-/);
+    expect(existsSync(configPath)).toBe(false);
+    expect(existsSync(dirname(configPath))).toBe(false);
   });
 
   it("resumes with --resume when a cursor exists and reports that session id", async () => {
@@ -279,5 +349,62 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     ).rejects.toThrow(/pending request/);
     await instance.adapter.interruptTurn("t-perm-2");
     await recorder.until((e) => e.type === "turn.completed");
+  });
+});
+
+// Auth state must come from the CLI, not from probing its credential store:
+// on macOS the OAuth tokens live in the login Keychain, so the old
+// ~/.claude/.credentials.json check reported signed-in users as signed out
+// and disabled the model picker with them (#108).
+describe("ClaudeDriver snapshot auth (fake CLI)", () => {
+  let instance: ProviderInstance;
+
+  const create = async () => {
+    instance = await ClaudeDriver.create({
+      instanceId: "claude-auth-test",
+      displayName: "Claude Auth Test",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, permissionMode: "acceptEdits" },
+    });
+  };
+
+  beforeEach(() => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+  });
+
+  afterEach(async () => {
+    delete process.env.FAKE_CLAUDE_AUTH;
+    delete process.env.ANTHROPIC_API_KEY;
+    await instance?.dispose();
+  });
+
+  it("reports authenticated when `auth status` says loggedIn", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "in";
+    await create();
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true });
+  });
+
+  it("reports signed out when `auth status` says loggedIn:false", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "out";
+    await create();
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+  });
+
+  it("fails closed instead of trusting stale credential storage", async () => {
+    await create();
+
+    process.env.FAKE_CLAUDE_AUTH = "unsupported";
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+
+    process.env.FAKE_CLAUDE_AUTH = "malformed";
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+
+    // The real turn removes inherited API keys, so the auth probe must do the
+    // same or setup can report a login the turn cannot use.
+    process.env.FAKE_CLAUDE_AUTH = "inherited-api-key";
+    process.env.ANTHROPIC_API_KEY = "sk-should-not-leak";
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
   });
 });

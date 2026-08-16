@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -41,6 +41,16 @@ describe("writeFileAtomic", () => {
     writeFileAtomic(p, s);
     expect(readFileSync(p, "utf8")).toBe(s);
     expect(existsSync(p)).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("applies the requested mode when replacing a file", () => {
+    const p = join(dir, "secret.json");
+    writeFileAtomic(p, "old");
+    chmodSync(p, 0o644);
+
+    writeFileAtomic(p, "new", { mode: 0o600 });
+
+    expect(statSync(p).mode & 0o777).toBe(0o600);
   });
 
   it("cleans up the temporary file when replacement fails", () => {

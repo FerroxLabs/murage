@@ -8,9 +8,9 @@
 //   - Composio Connect (connected apps → tools) over streamable HTTP
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DATA_DIR } from "../config.js";
@@ -19,6 +19,40 @@ import { brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli 
 import { computerProxyEnv } from "../container-computer.js";
 import { newEventId, newId } from "../contracts.js";
 import { appendNative } from "./native.js";
+/** Whether `claude` has been signed in.
+ *
+ * Credential storage is deliberately not inspected here. Claude Code uses the
+ * macOS Keychain for OAuth, a JSON file on some platforms, and may gain other
+ * backends over time. Presence checks also accept stale credentials. The CLI's
+ * own machine-readable auth command is the source of truth for every backend.
+ */
+export function claudeSignedIn(cli, env, run = execCli) {
+    return new Promise((resolve) => {
+        run(cli, ["auth", "status", "--json"], { timeout: 8000, env }, (_error, stdout) => {
+            try {
+                const status = JSON.parse(stdout);
+                resolve(typeof status === "object" && status !== null && "loggedIn" in status && status.loggedIn === true);
+            }
+            catch {
+                resolve(false);
+            }
+        });
+    });
+}
+/** The CLI environment shared by auth probes and real turns.
+ *
+ * Subscription users can be billed pay-as-you-go if an inherited API key
+ * leaks through, and a nested CLI must not inherit this session's identity.
+ * Keeping the probe and turn environments identical prevents setup from
+ * claiming an API-key login that the turn itself would deliberately remove.
+ */
+function claudeEnvironment() {
+    const env = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
+    delete env.ANTHROPIC_API_KEY;
+    delete env.CLAUDECODE;
+    delete env.CLAUDE_CODE_ENTRYPOINT;
+    return env;
+}
 const DRIVER_KIND = "claudeAgent";
 // model catalog ported from upstream packages/contracts/src/model.ts
 const MODELS = {
@@ -38,6 +72,7 @@ const proxyPath = (basename) => {
 };
 const PROXY_PATH = proxyPath("computer-proxy");
 const PERM_PROXY_PATH = proxyPath("permission-proxy");
+const DWEB_PROXY_PATH = proxyPath("drivers/dweb-proxy");
 // in the packaged app process.execPath is the Electron binary — this env
 // makes it behave as plain node for the spawned MCP proxies (harmless in dev)
 const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
@@ -258,6 +293,19 @@ export const ClaudeDriver = {
                 mcpServers.agents = { ...turn.integrations.agents };
                 allowed.push("mcp__agents");
             }
+            // dweb network daemon (status / repo / opencode model access) via
+            // server/drivers/dweb-proxy.ts — points at the configured dweb instance
+            if (turn.integrations?.dweb) {
+                mcpServers.dweb = {
+                    command: process.execPath,
+                    args: [DWEB_PROXY_PATH],
+                    env: {
+                        ...NODE_ENV_FLAG,
+                        DWEB_URL: turn.integrations.dweb.url,
+                    },
+                };
+                allowed.push("mcp__dweb");
+            }
             // permission broker: anything acceptEdits would silently deny becomes
             // an Allow/Deny card in chat, and the agent gets ask_user. Skipped in
             // bypassPermissions (fullAuto) — nothing would ever ask.
@@ -287,16 +335,20 @@ export const ClaudeDriver = {
                 mcpServers.ogb = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG } };
                 allowed.push("mcp__ogb");
             }
+            // The MCP config carries credentials — a Composio consumer key in a
+            // header, the box token in the computer proxy's env, the comms token in
+            // the agents proxy's env. On argv every one of those is world-readable
+            // through `ps` for the life of the turn, to any local process. The CLI
+            // accepts a FILE for this flag, so the secrets go in a 0600 file that
+            // is removed when the turn settles.
+            let mcpConfigPath = null;
             if (Object.keys(mcpServers).length) {
-                args.push("--mcp-config", JSON.stringify({ mcpServers }));
+                mcpConfigPath = join(mkdtempSync(join(tmpdir(), "omb-mcp-")), "mcp.json");
+                writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers }), { mode: 0o600 });
+                args.push("--mcp-config", mcpConfigPath);
                 args.push("--allowedTools", allowed.join(","));
             }
-            const env = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
-            // subscription users get billed pay-as-you-go if this leaks through;
-            // and a nested CLI must not inherit this session's identity (agentcal)
-            delete env.ANTHROPIC_API_KEY;
-            delete env.CLAUDECODE;
-            delete env.CLAUDE_CODE_ENTRYPOINT;
+            const env = claudeEnvironment();
             const child = spawnCli(config.cli, args, {
                 cwd: turn.cwd ?? homedir(),
                 env,
@@ -308,6 +360,13 @@ export const ClaudeDriver = {
                     return;
                 settled = true;
                 broker?.close();
+                // the config file holds live credentials — it must not outlive the turn
+                if (mcpConfigPath) {
+                    try {
+                        rmSync(dirname(mcpConfigPath), { recursive: true, force: true });
+                    }
+                    catch { }
+                }
                 active.delete(threadId);
                 emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost });
             };
@@ -434,12 +493,13 @@ export const ClaudeDriver = {
             return { turnId };
         };
         const snapshot = async () => {
+            const env = claudeEnvironment();
             const version = await new Promise((resolve) => {
-                execCli(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => resolve(err ? null : stdout.trim()));
+                execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) => resolve(err ? null : stdout.trim()));
             });
             if (!version)
                 return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
-            const authenticated = existsSync(join(homedir(), ".claude", ".credentials.json"));
+            const authenticated = await claudeSignedIn(config.cli, env);
             return { state: "available", version, authenticated };
         };
         return {
@@ -451,7 +511,7 @@ export const ClaudeDriver = {
             snapshot,
             adapter: {
                 provider: DRIVER_KIND,
-                capabilities: { sessionModelSwitch: "in-session", agentsMcp: true, computerMcp: true },
+                capabilities: { sessionModelSwitch: "in-session", agentsMcp: true, computerMcp: true, composioMcp: true },
                 sendTurn,
                 interruptTurn: async (threadId) => active.get(threadId)?.stop(),
                 respondToRequest: async (threadId, requestId, decision) => {

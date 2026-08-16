@@ -5,6 +5,7 @@
 import { readFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.js";
+import { peerAllowKey } from "./peer-approval-key.js";
 import { DATA_DIR } from "./config.js";
 import { newId } from "./contracts.js";
 import { pickBotName } from "./names.js";
@@ -58,6 +59,45 @@ export function mentionedBots(text, peers) {
     }
     return found;
 }
+/** Normalize persisted or API-provided routing. Old rooms did not have this
+ * field; giving them their first member as lead fixes the old silent-send
+ * behavior without making every prompt fan out to every model. */
+export function normalizeGroupDefaultResponder(value, memberIds, dm = false) {
+    if (dm)
+        return { kind: "mentions" };
+    if (value && typeof value === "object") {
+        const candidate = value;
+        if (candidate.kind === "everyone")
+            return { kind: "everyone" };
+        if (candidate.kind === "mentions")
+            return { kind: "mentions" };
+        if (candidate.kind === "member" &&
+            typeof candidate.botId === "string" &&
+            memberIds.includes(candidate.botId)) {
+            return { kind: "member", botId: candidate.botId };
+        }
+    }
+    if (memberIds.length === 0)
+        return { kind: "mentions" };
+    return { kind: "member", botId: memberIds[0] };
+}
+/** Resolve the bots invoked by a human room message. Explicit targets win;
+ * otherwise the room policy chooses one member, everyone, or nobody. */
+export function roomResponders(text, members, defaultResponder) {
+    const available = members.filter((member) => !member.hidden);
+    if (/(?:^|\s)@everyone\b/i.test(text))
+        return available;
+    const mentioned = mentionedBots(text, available);
+    if (mentioned.length)
+        return mentioned;
+    if (defaultResponder.kind === "everyone")
+        return available;
+    if (defaultResponder.kind === "member") {
+        const lead = available.find((member) => member.id === defaultResponder.botId);
+        return lead ? [lead] : [];
+    }
+    return [];
+}
 const onboardingCard = () => ({
     title: "What do you mostly want help with?",
     subtitle: "Pick whatever's closest; we can always expand from there.",
@@ -83,11 +123,60 @@ export class Store {
         catch {
             this.groups = [];
         }
-        // busy never survives a restart — no turn does either
+        // busy never survives a restart — no turn does either. Rooms saved
+        // before default responders existed adopt their first member as lead.
+        let botsMigrated = false;
+        let chiefSeen = false;
+        let groupsMigrated = false;
         for (const b of this.bots)
             b.busy = false;
-        for (const g of this.groups)
+        for (const b of this.bots) {
+            if (!b.chiefOfStaff)
+                continue;
+            if (!chiefSeen) {
+                chiefSeen = true;
+                if (b.hidden) {
+                    b.hidden = false;
+                    botsMigrated = true;
+                }
+                continue;
+            }
+            b.chiefOfStaff = false;
+            botsMigrated = true;
+        }
+        // Peer grants originally used mutable display names (ask_bot:@Helper).
+        // Convert only when exactly one bot has that name; ambiguous legacy
+        // entries remain inert rather than granting access to the wrong bot.
+        for (const b of this.bots) {
+            if (!b.alwaysAllow?.length)
+                continue;
+            let changed = false;
+            const migrated = b.alwaysAllow.map((key) => {
+                const match = key.match(/^(ask_bot|delegate_bot):@(.+)$/);
+                if (!match)
+                    return key;
+                const candidates = this.bots.filter((candidate) => candidate.name === match[2]);
+                if (candidates.length !== 1)
+                    return key;
+                changed = true;
+                return peerAllowKey(match[1], candidates[0].id);
+            });
+            if (changed) {
+                b.alwaysAllow = [...new Set(migrated)];
+                botsMigrated = true;
+            }
+        }
+        for (const g of this.groups) {
             g.busyBotId = null;
+            const normalized = normalizeGroupDefaultResponder(g.defaultResponder, g.memberIds, Boolean(g.dm));
+            if (JSON.stringify(normalized) !== JSON.stringify(g.defaultResponder))
+                groupsMigrated = true;
+            g.defaultResponder = normalized;
+        }
+        if (botsMigrated)
+            this.saveBots();
+        if (groupsMigrated)
+            this.saveGroups();
         // bots saved before tasks existed have one endless thread; adopt it as
         // their first task so nothing is lost and nothing special-cases it
         for (const b of this.bots) {
@@ -122,6 +211,7 @@ export class Store {
             threadId: newId(),
             name,
             memberIds,
+            defaultResponder: dm ? { kind: "mentions" } : { kind: "member", botId: memberIds[0] },
             bulletin: "",
             unread: false,
             createdAt: Date.now(),
@@ -141,6 +231,7 @@ export class Store {
         if (!group)
             return null;
         Object.assign(group, patch);
+        group.defaultResponder = normalizeGroupDefaultResponder(group.defaultResponder, group.memberIds, Boolean(group.dm));
         this.saveGroups();
         return group;
     }
@@ -298,18 +389,19 @@ export class Store {
     botByThread(threadId) {
         return this.bots.find((b) => b.threadId === threadId || b.tasks?.some((t) => t.threadId === threadId)) ?? null;
     }
-    createBot() {
-        const name = pickBotName(this.bots.map((b) => b.name));
+    createBot(profile = {}) {
+        const name = profile.name?.trim() || pickBotName(this.bots.map((b) => b.name));
         const bot = {
             id: newId(),
             threadId: newId(),
             name,
-            title: "",
-            description: "",
+            title: profile.title ?? "",
+            description: profile.description ?? "",
             notifications: true,
-            color: COLORS[this.bots.length % COLORS.length],
+            color: profile.color ?? COLORS[this.bots.length % COLORS.length],
+            ...(profile.mascotExpression ? { mascotExpression: profile.mascotExpression } : {}),
             unread: false,
-            modelSelection: this.defaultSelection(),
+            modelSelection: profile.modelSelection ?? this.defaultSelection(),
             resumeCursors: {},
             createdAt: Date.now(),
         };
@@ -347,6 +439,31 @@ export class Store {
         Object.assign(bot, patch);
         this.saveBots();
         return bot;
+    }
+    /** Elect one Chief of Staff (or clear the role) as one persisted change.
+     * The changed records are returned so the server can update every open
+     * window, including the bot that just handed the role over. */
+    setChiefOfStaff(id) {
+        if (id && !this.bot(id))
+            return null;
+        const changed = [];
+        for (const bot of this.bots) {
+            const next = bot.id === id;
+            if (Boolean(bot.chiefOfStaff) === next && !(next && bot.hidden))
+                continue;
+            if (next) {
+                bot.chiefOfStaff = true;
+                // The workspace's main contact must stay reachable in the sidebar.
+                bot.hidden = false;
+            }
+            else {
+                bot.chiefOfStaff = false;
+            }
+            changed.push(bot);
+        }
+        if (changed.length)
+            this.saveBots();
+        return changed;
     }
     setResumeCursor(botId, instanceId, cursor, threadId) {
         const bot = this.bot(botId);

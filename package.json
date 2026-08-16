@@ -1,7 +1,7 @@
 {
   "name": "openmausbot",
   "private": true,
-  "version": "0.1.17",
+  "version": "0.1.19",
   "description": "A local-first chat app for running a team of AI agents.",
   "homepage": "https://github.com/milind-soni/OpenMausBot",
   "repository": {
@@ -26,7 +26,8 @@
     "dev:desktop": "electron .",
     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
-    "test": "vitest run",
+    "test": "vitest run && pnpm test:updater",
+    "test:updater": "node --test electron/updater-coordinator.node-test.mjs",
     "bench:observation": "node --experimental-strip-types scripts/bench-observation.ts",
     "test:watch": "vitest",
     "test:cua": "pnpm build:cua && node scripts/smoke-cua.mjs",

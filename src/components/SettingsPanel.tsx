@@ -10,6 +10,7 @@ import {
 } from "@/lib/mascot";
 import { ModelPicker } from "./ModelPicker";
 import { cn } from "@/lib/cn";
+import { requestNotificationPermission } from "@/lib/notify";
 
 function Field({
   label,
@@ -49,6 +50,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "speakReplies"
         | "voice"
         | "chiefOfStaff"
+        | "approvePeerComms"
       >
     >,
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
@@ -235,6 +237,38 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
+              <div className="text-[15px] font-medium text-ink">
+                Ask me before contacting other bots
+              </div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                {bot.approvePeerComms
+                  ? "This bot will stop and ask before it reaches out to another bot."
+                  : "Let this bot talk to teammates on its own, without a confirmation step."}
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={Boolean(bot.approvePeerComms)}
+              aria-label="Ask me before contacting other bots"
+              disabled={!bot.approvePeerComms && !canCoordinate}
+              onClick={() => patch({ approvePeerComms: !bot.approvePeerComms })}
+              title={!bot.approvePeerComms && !canCoordinate ? "This engine cannot contact other bots" : undefined}
+              className={cn(
+                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                bot.approvePeerComms ? "bg-accent" : "bg-raised",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  bot.approvePeerComms ? "left-[21px]" : "left-[3px]",
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+            <div>
               <div className="text-[15px] font-medium text-ink">Model</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 Which provider and model this bot runs on
@@ -387,7 +421,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             <button
               role="switch"
               aria-checked={bot.notifications}
-              onClick={() => patch({ notifications: !bot.notifications })}
+              onClick={() => {
+                const enabled = !bot.notifications;
+                if (enabled) void requestNotificationPermission();
+                patch({ notifications: enabled });
+              }}
               className={cn(
                 "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
                 bot.notifications ? "bg-accent" : "bg-raised",

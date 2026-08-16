@@ -11,6 +11,24 @@ export type ThreadId = string;
 export type TurnId = string;
 export type CloudBackend = "box" | "vps";
 
+export type ProviderErrorCode =
+  | "missing_cli"
+  | "invalid_credentials"
+  | "inactive_subscription"
+  | "quota_or_region_restriction"
+  | "upstream_outage"
+  | "model_catalog_outage";
+
+export class ProviderError extends Error {
+  readonly code: ProviderErrorCode;
+
+  constructor(code: ProviderErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "ProviderError";
+    this.code = code;
+  }
+}
+
 // ── model selection ────────────────────────────────────────────────────
 // "Which model" is a data value carried on the request, never a service
 // binding (upstream ModelSelectionWire). instanceId is the routing key.
@@ -109,6 +127,9 @@ export interface SendTurnInput {
      * through the harness so this bot can message other bots. The harness
      * owns turns, permissions, and recursion limits; the proxy only forwards. */
     agents?: { command: string; args: string[]; env: Record<string, string> };
+    /** dweb network daemon: an MCP proxy exposing dweb status, repo, and
+     * opencode model access as tools. url is the dweb HTTP base. */
+    dweb?: { url: string };
   };
   cwd?: string;
 }
@@ -130,6 +151,10 @@ export interface ProviderAdapter {
      * told it has a computer whose tools its driver cannot mount — it
      * burns turns hunting for tools that aren't there. */
     computerMcp?: boolean;
+    /** True when the driver mounts turn.integrations.composio (the user's
+     * connected apps). Same rule again: a key in the config says the user
+     * HAS those connections, not that this driver can reach them. */
+    composioMcp?: boolean;
   };
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;
   interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void>;
@@ -196,6 +221,8 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly enabled: boolean;
   readonly models: ModelCatalog;
+  /** Refresh a live catalog without recreating the provider instance. */
+  readonly refreshModels?: () => Promise<void>;
   readonly adapter: ProviderAdapter;
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */

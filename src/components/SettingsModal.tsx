@@ -210,6 +210,7 @@ export function SettingsModal() {
                   <ApiKeyRow section="composioApi" />
                   <ApiKeyRow section="box" />
                   <VpsConnection />
+                  <ApiKeyRow section="opencodeGo" />
                 </div>
               </Card>
             )}

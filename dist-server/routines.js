@@ -219,6 +219,52 @@ export class RoutineManager {
         queueMicrotask(() => void this.tick());
         return { ...run };
     }
+    /** Queue an event-driven job without inventing a calendar schedule. Webhook
+     * definitions live in their own store; the execution receipt deliberately
+     * reuses this manager so busy-bot ordering, task creation and VM routing stay
+     * identical for every unattended job. */
+    enqueueWebhook(input) {
+        if (this.options.botState(input.botId) === "missing") {
+            throw Object.assign(new Error("The assigned MAUS no longer exists"), { status: 410 });
+        }
+        const run = {
+            id: randomUUID(),
+            routineId: input.webhookId,
+            routineName: input.webhookName,
+            prompt: input.prompt,
+            durationMinutes: input.durationMinutes,
+            botId: input.botId,
+            runOn: input.runOn,
+            scheduledFor: input.receivedAt,
+            status: "queued",
+            manual: false,
+            triggerSource: "webhook",
+            webhookId: input.webhookId,
+            deliveryId: input.deliveryId,
+            createdAt: this.now(),
+        };
+        this.runs.push(run);
+        if (this.runs.length > MAX_RUNS)
+            this.runs.splice(0, this.runs.length - MAX_RUNS);
+        this.save();
+        this.emitRun(run);
+        queueMicrotask(() => void this.tick());
+        return { ...run };
+    }
+    cancelQueuedWebhook(webhookId, message) {
+        let changed = false;
+        for (const run of this.runs) {
+            if (run.webhookId !== webhookId || run.status !== "queued")
+                continue;
+            run.status = "cancelled";
+            run.finishedAt = this.now();
+            run.error = message.slice(0, 500);
+            this.emitRun(run);
+            changed = true;
+        }
+        if (changed)
+            this.save();
+    }
     async cancelRun(id) {
         const run = this.runs.find((r) => r.id === id);
         if (!run || !["queued", "running", "waiting"].includes(run.status))
@@ -322,7 +368,8 @@ export class RoutineManager {
                         this.failThread(task.threadId, "The routine was deleted before it could start");
                         continue;
                     }
-                    await this.options.startTurn(run.botId, task.threadId, prompt, run.runOn ?? "maus", (message) => this.failThread(task.threadId, message));
+                    const triggerSource = run.triggerSource ?? (run.manual ? "manual" : "schedule");
+                    await this.options.startTurn(run.botId, task.threadId, prompt, run.runOn ?? "maus", triggerSource, (message) => this.failThread(task.threadId, message));
                 }
                 catch (error) {
                     this.failThread(task.threadId, error instanceof Error ? error.message : String(error));
@@ -392,6 +439,7 @@ export class RoutineManager {
             scheduledFor,
             status: "queued",
             manual,
+            triggerSource: manual ? "manual" : "schedule",
             createdAt: this.now(),
         };
         this.runs.push(run);

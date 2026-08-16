@@ -7,11 +7,14 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 
-export function writeFileAtomic(path: string, data: string): void {
+export function writeFileAtomic(path: string, data: string, options: { mode?: number } = {}): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | null = null;
   try {
-    fd = openSync(tmp, "w");
+    // Apply sensitive-file permissions to the temporary inode itself. The
+    // final rename preserves them and never leaves a broader-permission
+    // config file visible between the write and a later chmod.
+    fd = openSync(tmp, "w", options.mode);
     writeFileSync(fd, data);
     fsyncSync(fd);
     closeSync(fd);

@@ -15,7 +15,9 @@ import {
 } from "react";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
+import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
+import { showNotification } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 
 export type { MausColor } from "@/lib/mascot";
@@ -125,6 +127,9 @@ export interface Bot {
   hidden?: boolean;
   /** The workspace's one primary coordinator. */
   chiefOfStaff?: boolean;
+  /** When this bot wants to talk to another bot (ask_bot/delegate_bot),
+   * pause and ask the user first. Off by default. */
+  approvePeerComms?: boolean;
   messages: Message[];
   /** leaf of the visible conversation branch (see visibleMessages) */
   activeLeafId?: string | null;
@@ -163,6 +168,7 @@ export interface ConfigStatus {
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
   vps?: { configured: boolean; sshAlias: string };
+  opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
    * never echoed back. */
@@ -209,6 +215,9 @@ interface AppState {
   activeView: "chat" | "routines";
   routines: Routine[];
   routineRuns: RoutineRun[];
+  webhooks: WebhookTrigger[];
+  webhookAttempts: WebhookAttempt[];
+  webhookIngress: WebhookIngressStatus | null;
   settingsOpen: boolean;
   pluginsOpen: boolean;
   computerOpen: boolean;
@@ -234,6 +243,10 @@ type Action =
   | { type: "routinePatched"; routine: Routine }
   | { type: "routineDeleted"; routineId: string }
   | { type: "routineRunPatched"; run: RoutineRun }
+  | { type: "webhooksHydrated"; webhooks: WebhookTrigger[]; attempts: WebhookAttempt[]; ingress: WebhookIngressStatus }
+  | { type: "webhookPatched"; webhook: WebhookTrigger }
+  | { type: "webhookAttempted"; attempt: WebhookAttempt }
+  | { type: "webhookDeleted"; webhookId: string }
   | { type: "createRoutine"; input: RoutineInput }
   | { type: "updateRoutine"; routineId: string; patch: Partial<RoutineInput> }
   | { type: "deleteRoutine"; routineId: string }
@@ -274,6 +287,7 @@ type Action =
     }
   | { type: "newTask"; botId: string }
   | { type: "switchTask"; botId: string; threadId: string }
+  | { type: "taskSwitched"; bot: Bot }
   | { type: "renameTask"; botId: string; threadId: string; title: string }
   | { type: "deleteTask"; botId: string; threadId: string }
   | { type: "newBot" }
@@ -314,6 +328,7 @@ type Action =
           | "pinned"
           | "hidden"
           | "chiefOfStaff"
+          | "approvePeerComms"
         >
       >;
     };
@@ -383,6 +398,29 @@ function reducer(state: AppState, action: Action): AppState {
         : [action.run, ...state.routineRuns];
       return { ...state, routineRuns: runs.sort((a, b) => b.scheduledFor - a.scheduledFor) };
     }
+    case "webhooksHydrated":
+      return { ...state, webhooks: action.webhooks, webhookAttempts: action.attempts, webhookIngress: action.ingress };
+    case "webhookPatched": {
+      const exists = state.webhooks.some((webhook) => webhook.id === action.webhook.id);
+      return {
+        ...state,
+        webhooks: exists
+          ? state.webhooks.map((webhook) => (webhook.id === action.webhook.id ? action.webhook : webhook))
+          : [action.webhook, ...state.webhooks],
+      };
+    }
+    case "webhookDeleted":
+      return {
+        ...state,
+        webhooks: state.webhooks.filter((webhook) => webhook.id !== action.webhookId),
+        webhookAttempts: state.webhookAttempts.filter((attempt) => attempt.webhookId !== action.webhookId),
+      };
+    case "webhookAttempted": {
+      const attempts = state.webhookAttempts.some((attempt) => attempt.id === action.attempt.id)
+        ? state.webhookAttempts.map((attempt) => attempt.id === action.attempt.id ? action.attempt : attempt)
+        : [...state.webhookAttempts, action.attempt];
+      return { ...state, webhookAttempts: attempts.slice(-2_000) };
+    }
     case "groupPatched": {
       const exists = state.groups.some((g) => g.id === action.group.id);
       const groups = exists
@@ -442,6 +480,13 @@ function reducer(state: AppState, action: Action): AppState {
       return updateBot(withMascotMotion(state, action.botId, "surprise"), action.botId, (b) => ({ ...b, unread: true }));
     case "botPatched": {
       const before = state.bots.find((b) => b.id === action.bot.id);
+      // A bot event can announce a bot created by another app window (team
+      // import). Patch events for unknown partial records remain ignored.
+      if (!before) {
+        return Array.isArray(action.bot.messages)
+          ? { ...state, bots: [action.bot as Bot, ...state.bots] }
+          : state;
+      }
       const kind =
         action.bot.unread && !before?.unread
           ? "surprise"
@@ -661,6 +706,8 @@ function reducer(state: AppState, action: Action): AppState {
     case "renameTask":
     case "deleteTask":
       return state;
+    case "taskSwitched":
+      return updateBot(state, action.bot.id, (bot) => ({ ...bot, ...action.bot, messages: action.bot.messages ?? [] }));
     case "newBot":
     case "duplicateBot":
     case "interrupt":
@@ -690,6 +737,9 @@ const initialState: AppState = {
   activeView: "chat",
   routines: [],
   routineRuns: [],
+  webhooks: [],
+  webhookAttempts: [],
+  webhookIngress: null,
   settingsOpen: false,
   pluginsOpen: false,
   computerOpen: false,
@@ -998,12 +1048,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // because switching changes which conversation is on screen
         case "newTask":
           api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: "{}" })
-            .then((r: any) => r?.bot && dispatch({ type: "botPatched", bot: r.bot }))
+            .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", bot: r.bot }))
             .catch(showError);
           break;
         case "switchTask":
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "POST" })
-            .then((r: any) => r?.bot && dispatch({ type: "botPatched", bot: r.bot }))
+            .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", bot: r.bot }))
             .catch(showError);
           break;
         case "renameTask":
@@ -1014,7 +1064,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "deleteTask":
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "DELETE" })
-            .then((r: any) => r?.bot && dispatch({ type: "botPatched", bot: r.bot }))
+            .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", bot: r.bot }))
             .catch(showError);
           break;
         case "interruptGroup":
@@ -1044,35 +1094,68 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // ── initial load + SSE fold ──────────────────────────────────────────
   useEffect(() => {
     let alive = true;
-    const loadAll = () => {
-      api("/api/bots")
-        .then(({ bots, groups }) => alive && rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }))
-        .catch(() => {});
-      api("/api/instances")
-        .then(({ instances }) => alive && rawDispatch({ type: "instances", instances }))
-        .catch(() => {});
-      api("/api/config")
-        .then((config) => alive && rawDispatch({ type: "configStatus", config }))
-        .catch(() => {});
-      api("/api/routines")
-        .then(({ routines, runs }) => alive && rawDispatch({ type: "routinesHydrated", routines, runs }))
-        .catch(() => {});
-    };
-    loadAll();
+    const loadAll = () =>
+      Promise.all([
+        api("/api/bots")
+          .then(({ bots, groups }) => alive && rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }))
+          .catch(() => {}),
+        api("/api/instances")
+          .then(({ instances }) => alive && rawDispatch({ type: "instances", instances }))
+          .catch(() => {}),
+        api("/api/config")
+          .then((config) => alive && rawDispatch({ type: "configStatus", config }))
+          .catch(() => {}),
+        api("/api/routines")
+          .then(({ routines, runs }) => alive && rawDispatch({ type: "routinesHydrated", routines, runs }))
+          .catch(() => {}),
+        api("/api/webhooks")
+          .then(({ webhooks, attempts, ingress }) => alive && rawDispatch({ type: "webhooksHydrated", webhooks, attempts: attempts ?? [], ingress }))
+          .catch(() => {}),
+      ]);
 
-    const es = new EventSource("/api/events");
-    es.onopen = () => {
-      rawDispatch({ type: "connected", value: true });
-      loadAll(); // resync anything missed while disconnected
-    };
-    es.onerror = () => rawDispatch({ type: "connected", value: false });
-    es.onmessage = (raw) => {
-      let frame: any;
-      try {
-        frame = JSON.parse(raw.data);
-      } catch {
+    // A snapshot and the live fold have to meet at a defined boundary. Start
+    // hydration only after the stream says hello, queue frames that arrive
+    // while the REST snapshot is in flight, then apply them on top. Otherwise
+    // a late hydrate can overwrite a newer event, or an event can land between
+    // an eager request and the stream opening and disappear entirely.
+    let hydrated = false;
+    let hydrating = false;
+    let rehydrateRequested = false;
+    const pendingFrames: any[] = [];
+    let handleFrame: (frame: any) => void;
+    const hydrate = () => {
+      if (hydrating) {
+        // A second non-resumable hello means this snapshot may have started
+        // before another connection gap. Run one more after it settles.
+        rehydrateRequested = true;
         return;
       }
+      hydrating = true;
+      hydrated = false;
+      void loadAll().finally(() => {
+        if (!alive) return;
+        hydrating = false;
+        if (rehydrateRequested) {
+          rehydrateRequested = false;
+          hydrate();
+          return;
+        }
+        hydrated = true;
+        for (const frame of pendingFrames.splice(0)) handleFrame(frame);
+      });
+    };
+    // If SSE is unavailable, the app should still show its saved state. A
+    // later first hello hydrates again because it cannot prove there was no
+    // gap before that connection opened.
+    const hydrationFallback = setTimeout(hydrate, 1_000);
+
+    const es = new EventSource("/api/events");
+    // The hydrate decision belongs to the hello frame, not to onopen: the
+    // server replays what we missed when it can, and re-downloading every
+    // transcript on a reconnect it already covered is pure waste.
+    es.onopen = () => rawDispatch({ type: "connected", value: true });
+    es.onerror = () => rawDispatch({ type: "connected", value: false });
+    handleFrame = (frame) => {
       switch (frame.kind) {
         case "message": {
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
@@ -1131,6 +1214,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           rawDispatch({ type: "groupPatched", group });
           break;
         }
+        // the harness decided this was worth interrupting for; the toggle
+        // in each bot's settings is what gates it, server-side
+        case "notify":
+          // the wrapped dispatch, not rawDispatch: `select` clears the badge
+          // in local state either way, but only the wrapper PATCHes
+          // unread:false back. Opening a bot from its own notification and
+          // watching the badge return on the next hydration is exactly the
+          // bug that makes notifications feel broken.
+          showNotification(frame.notification, (botId) => dispatch({ type: "select", id: botId }));
+          break;
         case "group.deleted":
           rawDispatch({ type: "groupDeleted", groupId: frame.groupId });
           break;
@@ -1142,6 +1235,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "routine.run":
           rawDispatch({ type: "routineRunPatched", run: frame.run });
+          break;
+        case "webhook":
+          rawDispatch({ type: "webhookPatched", webhook: frame.webhook });
+          break;
+        case "webhook.attempt":
+          rawDispatch({ type: "webhookAttempted", attempt: frame.attempt });
+          break;
+        case "webhook.deleted":
+          rawDispatch({ type: "webhookDeleted", webhookId: frame.webhookId });
           break;
         case "runtime": {
           const event = frame.event;
@@ -1196,8 +1298,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
       }
     };
+    es.onmessage = (raw) => {
+      let frame: any;
+      try {
+        frame = JSON.parse(raw.data);
+      } catch {
+        return;
+      }
+      // `hello` is the snapshot boundary. A false `resumed` means the server
+      // could not fill the gap, so queue subsequent frames behind a hydrate.
+      if (frame.kind === "hello") {
+        clearTimeout(hydrationFallback);
+        if (!frame.resumed) hydrate();
+        return;
+      }
+      if (hydrated) handleFrame(frame);
+      else pendingFrames.push(frame);
+    };
     return () => {
       alive = false;
+      clearTimeout(hydrationFallback);
       es.close();
     };
   }, []);

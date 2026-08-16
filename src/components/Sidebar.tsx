@@ -1,5 +1,6 @@
 import { track } from "@/lib/analytics";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowDownToLine,
   BellDot,
@@ -10,6 +11,7 @@ import {
   Copy,
   Crown,
   EyeOff,
+  FileUp,
   FolderPlus,
   Loader2,
   Pencil,
@@ -23,11 +25,12 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
+import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
 import { MausAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
+import { downloadSelectedTeam } from "@/lib/team-files";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
@@ -196,7 +199,13 @@ function GroupListItem({ group, onMenu }: { group: Group; onMenu: (menu: { group
   );
 }
 
-function RoomContextMenu({ menu, onClose }: { menu: { groupId: string; x: number; y: number }; onClose: () => void }) {
+function RoomContextMenu({
+  menu,
+  onClose,
+}: {
+  menu: { groupId: string; x: number; y: number };
+  onClose: () => void;
+}) {
   const { state, dispatch } = useStore();
   const group = state.groups.find((g) => g.id === menu.groupId);
 
@@ -216,9 +225,9 @@ function RoomContextMenu({ menu, onClose }: { menu: { groupId: string; x: number
   }, [onClose]);
 
   if (!group) return null;
-  const top = Math.min(menu.y, window.innerHeight - 120);
+  const top = Math.min(menu.y, window.innerHeight - 164);
   const left = Math.min(menu.x, window.innerWidth - 240);
-  return (
+  return createPortal(
     <div
       data-room-menu
       style={{ top, left }}
@@ -244,7 +253,365 @@ function RoomContextMenu({ menu, onClose }: { menu: { groupId: string; x: number
         <Trash2 size={16} />
         Delete Room
       </button>
-    </div>
+    </div>,
+    document.body,
+  );
+}
+
+interface PendingTeamImport {
+  manifest: unknown;
+  name: string;
+  roomName: string;
+  members: Array<{ name: string; title: string }>;
+}
+
+function importPreview(manifest: unknown): PendingTeamImport {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw new Error("This file does not contain a team.");
+  }
+  const root = manifest as Record<string, unknown>;
+  if (root.format !== "openmaus.team") throw new Error("This is not an OpenMaus team file.");
+  if (root.version !== 1) throw new Error(`Team file version ${String(root.version)} is not supported.`);
+  if (!root.team || typeof root.team !== "object" || Array.isArray(root.team)) {
+    throw new Error("This team file is missing its team definition.");
+  }
+  const team = root.team as Record<string, unknown>;
+  if (typeof team.name !== "string" || !team.name.trim()) throw new Error("This team does not have a name.");
+  if (!Array.isArray(team.members) || team.members.length === 0) throw new Error("This team has no members.");
+  const members = team.members.map((member, index) => {
+    if (!member || typeof member !== "object" || Array.isArray(member)) {
+      throw new Error(`Team member ${index + 1} is invalid.`);
+    }
+    const value = member as Record<string, unknown>;
+    if (typeof value.name !== "string" || !value.name.trim()) {
+      throw new Error(`Team member ${index + 1} does not have a name.`);
+    }
+    return {
+      name: value.name.trim(),
+      title: typeof value.title === "string" ? value.title.trim() : "",
+    };
+  });
+  const room = team.room;
+  const roomName =
+    room && typeof room === "object" && !Array.isArray(room) && typeof (room as Record<string, unknown>).name === "string"
+      ? String((room as Record<string, unknown>).name).trim()
+      : team.name.trim();
+  return { manifest, name: team.name.trim(), roomName, members };
+}
+
+function ImportTeamPanel({
+  pending,
+  onClose,
+  onImported,
+  returnFocusRef,
+}: {
+  pending: PendingTeamImport;
+  onClose: () => void;
+  onImported: (name: string) => void;
+  returnFocusRef: React.RefObject<HTMLButtonElement | null>;
+}) {
+  const { dispatch } = useStore();
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    confirmRef.current?.focus();
+    return () => returnFocusRef.current?.focus();
+  }, [returnFocusRef]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !working) {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialogRef.current?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose, working]);
+
+  const importTeam = async () => {
+    setWorking(true);
+    setError("");
+    try {
+      const response = (await api("/api/teams/import", {
+        method: "POST",
+        body: JSON.stringify(pending.manifest),
+      })) as { bots: Bot[]; group: Group };
+      for (const bot of response.bots) dispatch({ type: "botAdded", bot });
+      dispatch({ type: "groupPatched", group: response.group });
+      dispatch({ type: "select", id: response.group.id });
+      track("team_imported", { members: response.bots.length });
+      onImported(pending.name);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45"
+      onMouseDown={(event) => event.target === event.currentTarget && !working && onClose()}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="import-team-title"
+        tabIndex={-1}
+        className="w-[420px] max-w-[calc(100vw-32px)] rounded-2xl border border-hairline/50 bg-card p-5 shadow-2xl"
+      >
+        <div id="import-team-title" className="text-[17px] font-semibold text-ink">Import {pending.name}?</div>
+        <div className="mt-1 text-[13px] text-ink-secondary">
+          This creates {pending.members.length} new {pending.members.length === 1 ? "bot" : "bots"} and the room “{pending.roomName}”.
+        </div>
+        <div className="mt-4 max-h-64 space-y-1 overflow-y-auto rounded-xl bg-raised/50 p-2">
+          {pending.members.map((member, index) => (
+            <div key={`${member.name}-${index}`} className="flex items-baseline gap-2 rounded-lg px-2.5 py-2">
+              <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{member.name}</span>
+              <span className="max-w-[190px] truncate text-[12.5px] text-ink-secondary">
+                {member.title || "General assistant"}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 text-[12.5px] leading-relaxed text-ink-secondary">
+          The bots will use your default engine. Conversations, permissions, and computer access are never imported.
+        </div>
+        {error && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={working}
+            className="rounded-lg px-3.5 py-2 text-[13.5px] text-ink-secondary hover:bg-raised disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            ref={confirmRef}
+            onClick={() => void importTeam()}
+            disabled={working}
+            className="flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-[13.5px] font-medium text-white hover:bg-accent/90 disabled:opacity-60"
+          >
+            {working ? <Loader2 size={15} className="animate-spin" /> : <FileUp size={15} />}
+            {working ? "Importing…" : "Import Team"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ExportTeamPanel({
+  onClose,
+  onExported,
+  returnFocusRef,
+}: {
+  onClose: () => void;
+  onExported: (name: string) => void;
+  returnFocusRef: React.RefObject<HTMLButtonElement | null>;
+}) {
+  const { state } = useStore();
+  const [name, setName] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+  const bots = state.bots.filter((bot) => !bot.hidden);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    nameRef.current?.focus();
+    return () => returnFocusRef.current?.focus();
+  }, [returnFocusRef]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !working) {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialogRef.current?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose, working]);
+
+  const toggle = (id: string) => {
+    setPicked((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < 50) next.add(id);
+      return next;
+    });
+  };
+
+  const exportTeam = async () => {
+    const teamName = name.trim();
+    if (!teamName || picked.size === 0) return;
+    setWorking(true);
+    setError("");
+    try {
+      const exported = await downloadSelectedTeam(teamName, [...picked]);
+      track("team_exported", { members: exported.members });
+      onExported(exported.name);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45"
+      onMouseDown={(event) => event.target === event.currentTarget && !working && onClose()}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="export-team-title"
+        tabIndex={-1}
+        className="w-[380px] max-w-[calc(100vw-32px)] rounded-2xl border border-hairline/50 bg-card p-5 shadow-2xl"
+      >
+        <div id="export-team-title" className="text-[17px] font-semibold text-ink">Export Team</div>
+        <div className="mt-1 text-[13px] text-ink-secondary">
+          Choose any bots to share. You do not need to create a room first.
+        </div>
+        <input
+          ref={nameRef}
+          value={name}
+          maxLength={100}
+          disabled={working}
+          onChange={(event) => setName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") void exportTeam();
+          }}
+          placeholder="Team name"
+          aria-label="Team name"
+          className="mt-4 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none disabled:opacity-60"
+        />
+        <div className="mt-3 flex max-h-64 flex-col gap-0.5 overflow-y-auto rounded-xl bg-raised/30 p-1.5">
+          {bots.length === 0 && (
+            <div className="px-2 py-5 text-center text-[13px] text-ink-secondary">
+              Create a bot first, then it can be shared as part of a team.
+            </div>
+          )}
+          {bots.map((bot) => {
+            const selected = picked.has(bot.id);
+            const capped = !selected && picked.size >= 50;
+            return (
+              <button
+                key={bot.id}
+                type="button"
+                aria-pressed={selected}
+                disabled={working || capped}
+                onClick={() => toggle(bot.id)}
+                className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-raised/70 disabled:opacity-40"
+              >
+                <MausAvatar color={bot.color} state="happy" size={28} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] text-ink">{bot.name}</span>
+                  {bot.title && <span className="block truncate text-[11.5px] text-ink-secondary">{bot.title}</span>}
+                </span>
+                <span
+                  className={cn(
+                    "flex size-[18px] shrink-0 items-center justify-center rounded-full border",
+                    selected ? "border-accent bg-accent text-white" : "border-hairline/60",
+                  )}
+                >
+                  {selected && <Check size={12} />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-3 text-[12.5px] leading-relaxed text-ink-secondary">
+          Messages, permissions, credentials, engines, and computer access are never included.
+        </div>
+        {error && (
+          <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">
+            {error}
+          </div>
+        )}
+        <div className="mt-5 flex items-center justify-between gap-3">
+          <span className="text-[12.5px] text-ink-secondary">
+            {picked.size} {picked.size === 1 ? "bot" : "bots"} selected
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={working}
+              className="rounded-lg px-3.5 py-2 text-[13.5px] text-ink-secondary hover:bg-raised disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void exportTeam()}
+              disabled={working || !name.trim() || picked.size === 0}
+              className="flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-[13.5px] font-medium text-white hover:bg-accent/90 disabled:opacity-40"
+            >
+              {working ? <Loader2 size={15} className="animate-spin" /> : <ArrowDownToLine size={15} />}
+              {working ? "Exporting…" : "Export"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -493,14 +860,59 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const importReturnRef = useRef<HTMLButtonElement>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [roomMenu, setRoomMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
+  const [exportTeamOpen, setExportTeamOpen] = useState(false);
+  const [pendingImport, setPendingImport] = useState<PendingTeamImport | null>(null);
+  const [teamFeedback, setTeamFeedback] = useState<{ error: boolean; text: string } | null>(null);
   const [query, setQuery] = useState("");
+
+  // Esc closes the drawer, mirroring ApiKeys.tsx:75-85. Bound only while the
+  // drawer is open — on mobile, exactly when a bot/room context menu or the
+  // New Room panel can be open on top of it, so the same Escape press closes
+  // them together. Fine, since both directions are "get me out of here."
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!teamFeedback) return;
+    const timer = window.setTimeout(() => setTeamFeedback(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [teamFeedback]);
+
+  const chooseTeamFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    if (file.size > 1_000_000) {
+      setTeamFeedback({ error: true, text: "That team file is too large." });
+      return;
+    }
+    try {
+      const manifest: unknown = JSON.parse(await file.text());
+      setPendingImport(importPreview(manifest));
+      setTeamFeedback(null);
+    } catch (cause) {
+      setTeamFeedback({
+        error: true,
+        text: cause instanceof SyntaxError ? "That team file is not valid JSON." : cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+  };
+
   const macInset = capabilities.windowChrome === "mac-inset";
   const browser = capabilities.host.label === "Browser";
 
@@ -521,7 +933,21 @@ export function Sidebar() {
   const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
 
   return (
-    <aside className="flex h-full w-[320px] shrink-0 flex-col border-r border-hairline/40 bg-panel">
+    <aside
+      className={cn(
+        "flex h-full w-[320px] shrink-0 flex-col border-r border-hairline/40 bg-panel",
+        // Below md only: the sidebar leaves the flow and slides in over the chat.
+        // Scoped with max-md: rather than cancelled with md: on purpose — Tailwind
+        // v4 emits the native `translate` property, and any value other than
+        // `none` turns this element into a containing block for its `fixed`
+        // descendants. Cancelling it with an `md:` prefix still emits a value, which
+        // silently reparents NewRoomPanel's overlay and the "+" menu backdrop on
+        // desktop.
+        "max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-40",
+        "max-md:transition-transform max-md:duration-200",
+        open ? "max-md:translate-x-0" : "max-md:-translate-x-full",
+      )}
+    >
       {/* macOS owns inset traffic lights; Linux/Windows use native chrome. */}
       <div
         className="flex items-center justify-between px-4 pt-3.5 pb-1"
@@ -541,9 +967,10 @@ export function Sidebar() {
           style={macInset ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}
         >
           <button
+            ref={importReturnRef}
             onClick={() => setPlusOpen((o) => !o)}
             className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
-            title="New bot or room"
+            title="New or share"
           >
             <Plus size={20} strokeWidth={2} />
           </button>
@@ -572,11 +999,40 @@ export function Sidebar() {
                   <Users size={16} className="text-ink-secondary" />
                   New Room
                 </button>
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    setExportTeamOpen(true);
+                  }}
+                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                >
+                  <ArrowDownToLine size={16} className="text-ink-secondary" />
+                  Export Team
+                </button>
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    importInputRef.current?.click();
+                  }}
+                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                >
+                  <FileUp size={16} className="text-ink-secondary" />
+                  Import Team
+                </button>
               </div>
             </>
           )}
         </div>
       </div>
+
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".json,.mausteam.json,application/json"
+        onChange={(event) => void chooseTeamFile(event)}
+        className="hidden"
+        aria-label="Choose an OpenMaus team file"
+      />
 
       {/* Search */}
       <div className="px-3 pt-2 pb-3">
@@ -623,7 +1079,7 @@ export function Sidebar() {
           )}
         >
           <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
-          <span className="flex-1 text-[14px]">Routines</span>
+          <span className="flex-1 text-[14px]">Automations</span>
           {state.routineRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
             <span className="size-2 rounded-full bg-danger" />
           )}
@@ -657,8 +1113,49 @@ export function Sidebar() {
       </div>
 
       {menu && <BotContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {roomMenu && <RoomContextMenu menu={roomMenu} onClose={() => setRoomMenu(null)} />}
+      {roomMenu && (
+        <RoomContextMenu
+          menu={roomMenu}
+          onClose={() => setRoomMenu(null)}
+        />
+      )}
       {newRoom && <NewRoomPanel onClose={() => setNewRoom(false)} />}
+      {exportTeamOpen && (
+        <ExportTeamPanel
+          returnFocusRef={importReturnRef}
+          onClose={() => setExportTeamOpen(false)}
+          onExported={(name) => {
+            setExportTeamOpen(false);
+            setTeamFeedback({ error: false, text: `${name} exported` });
+          }}
+        />
+      )}
+      {pendingImport && (
+        <ImportTeamPanel
+          pending={pendingImport}
+          returnFocusRef={importReturnRef}
+          onClose={() => setPendingImport(null)}
+          onImported={(name) => {
+            setPendingImport(null);
+            setTeamFeedback({ error: false, text: `${name} imported` });
+          }}
+        />
+      )}
+      {teamFeedback &&
+        createPortal(
+          <div
+            role="status"
+            className={cn(
+              "fixed bottom-4 left-4 z-[60] max-w-[300px] rounded-xl border px-3.5 py-2.5 text-[13px] shadow-xl",
+              teamFeedback.error
+                ? "border-danger/30 bg-card text-danger"
+                : "border-hairline/50 bg-card text-ink",
+            )}
+          >
+            {teamFeedback.text}
+          </div>,
+          document.body,
+        )}
     </aside>
   );
 }

@@ -14,10 +14,12 @@ import {
   Play,
   Plus,
   Trash2,
+  Webhook,
   X,
 } from "lucide-react";
 
 import { MausAvatar } from "@/components/Avatar";
+import { WebhooksPanel } from "@/components/WebhooksPanel";
 import { cn } from "@/lib/cn";
 import { MAUS_COLORS, type MausState } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun, RoutineRunOn, RoutineRunStatus } from "@/lib/routines";
@@ -135,6 +137,13 @@ function nextHour() {
   return date.getTime();
 }
 
+function webhookPromptParts(prompt?: string) {
+  if (!prompt) return null;
+  const instructions = prompt.match(/\[USER-CONFIGURED WEBHOOK INSTRUCTIONS\]\n([\s\S]*?)\n\[\/USER-CONFIGURED WEBHOOK INSTRUCTIONS\]/)?.[1];
+  const eventData = prompt.match(/\[UNTRUSTED WEBHOOK EVENT DATA\]\n([\s\S]*?)\n\[\/UNTRUSTED WEBHOOK EVENT DATA\]/)?.[1];
+  return instructions && eventData ? { instructions, eventData } : null;
+}
+
 function projectedItems(routines: Routine[], runs: RoutineRun[], from: number, to: number): CalendarItem[] {
   const items: CalendarItem[] = runs
     .filter((run) => run.scheduledFor >= from && run.scheduledFor < to)
@@ -185,7 +194,9 @@ function RoutineCard({ item, bot, compact, onOpen }: { item: CalendarItem; bot: 
       )}
       style={{
         top: `${((new Date(item.at).getHours() * 60 + new Date(item.at).getMinutes()) / 60) * HOUR_HEIGHT}px`,
-        minHeight: `${Math.max(48, ((item.routine?.durationMinutes ?? item.run?.durationMinutes ?? 30) / 60) * HOUR_HEIGHT)}px`,
+        minHeight: item.run?.triggerSource === "webhook"
+          ? "48px"
+          : `${Math.max(48, ((item.routine?.durationMinutes ?? item.run?.durationMinutes ?? 30) / 60) * HOUR_HEIGHT)}px`,
         background: `linear-gradient(115deg, color-mix(in srgb, ${color} 48%, #181818), color-mix(in srgb, ${color} 20%, #111))`,
       }}
     >
@@ -204,6 +215,7 @@ function RoutineCard({ item, bot, compact, onOpen }: { item: CalendarItem; bot: 
             {animated && <Loader2 size={10} className="animate-spin" />}
             <span>{niceTime(item.at)}</span>
             <span>·</span>
+            {item.run?.triggerSource === "webhook" && <><Webhook size={10} /><span>Webhook</span><span>·</span></>}
             <span className="truncate">
               {status ? status.replace("waiting", "needs you") : bot.name}
               {(item.routine?.runOn ?? item.run?.runOn) === "cloud" ? " · VM" : ""}
@@ -355,14 +367,14 @@ export function RoutineEditor({
       <div className="max-h-[90vh] w-full max-w-[620px] overflow-y-auto rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-hairline/40 bg-panel/95 px-5 py-4 backdrop-blur">
           <div>
-            <div className="text-[17px] font-semibold text-ink">{routine ? "Edit routine" : "New routine"}</div>
+            <div className="text-[17px] font-semibold text-ink">{routine ? "Edit schedule" : "New schedule"}</div>
             <div className="mt-0.5 text-[12px] text-ink-secondary">Give a MAUS scheduled work with a calendar you can trust.</div>
           </div>
           <button onClick={onClose} className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"><X size={18} /></button>
         </div>
         <div className="space-y-5 p-5">
           <label className="block">
-            <span className="mb-1.5 block text-[12px] font-medium text-ink-secondary">Routine name</span>
+            <span className="mb-1.5 block text-[12px] font-medium text-ink-secondary">Schedule name</span>
             <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Morning research brief" className="w-full rounded-xl border border-hairline/60 bg-inset px-3.5 py-2.5 text-[14px] text-ink outline-none placeholder:text-ink-secondary/60 focus:border-accent/70" />
           </label>
           <div>
@@ -376,7 +388,7 @@ export function RoutineEditor({
                   runOn === "maus" ? "border-accent/70 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised/60",
                 )}
               >
-                <div className="flex items-center gap-2 text-[13px] font-medium text-ink"><Laptop size={15} />MAUS setup</div>
+                <div className="flex items-center gap-2 text-[13px] font-medium text-ink"><Laptop size={15} />This computer</div>
                 <div className="mt-1 text-[11px] leading-relaxed text-ink-secondary">Uses this MAUS's selected model and computer setting.</div>
               </button>
               <button
@@ -447,7 +459,7 @@ export function RoutineEditor({
         <div className="sticky bottom-0 flex justify-end gap-2 border-t border-hairline/40 bg-panel/95 px-5 py-4 backdrop-blur">
           <button onClick={onClose} className="rounded-xl px-4 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
           <button onClick={save} disabled={saving || !name.trim() || !prompt.trim() || !botId} className="flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40">
-            {saving && <Loader2 size={14} className="animate-spin" />}{routine ? "Save changes" : "Create routine"}
+            {saving && <Loader2 size={14} className="animate-spin" />}{routine ? "Save changes" : "Create schedule"}
           </button>
         </div>
       </div>
@@ -462,6 +474,8 @@ function RoutineDetails({ item, bot, onClose, onEdit }: { item: CalendarItem; bo
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const title = routine?.name ?? run?.routineName ?? "Routine";
+  const webhookParts = run?.triggerSource === "webhook" ? webhookPromptParts(run.prompt) : null;
+  const visibleInstructions = webhookParts?.instructions ?? routine?.prompt ?? run?.prompt;
 
   const invoke = async (path: string, method = "POST") => {
     setWorking(true);
@@ -503,7 +517,15 @@ function RoutineDetails({ item, bot, onClose, onEdit }: { item: CalendarItem; bo
               <div className="rounded-xl bg-inset p-3"><div className="text-[10px] uppercase tracking-wider text-ink-secondary">Duration</div><div className="mt-1 text-[13px] text-ink">{routine.durationMinutes} minutes</div></div>
             </div>
           )}
-          {(routine?.prompt ?? run?.prompt) && <div><div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-secondary">Instructions</div><div className="whitespace-pre-wrap rounded-xl border border-hairline/40 bg-inset px-3.5 py-3 text-[13px] leading-relaxed text-ink">{routine?.prompt ?? run?.prompt}</div></div>}
+          {run?.triggerSource === "webhook" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl bg-inset p-3"><div className="text-[10px] uppercase tracking-wider text-ink-secondary">Triggered by</div><div className="mt-1 flex items-center gap-1.5 text-[13px] text-ink"><Webhook size={13} />Webhook</div></div>
+              <div className="rounded-xl bg-inset p-3"><div className="text-[10px] uppercase tracking-wider text-ink-secondary">Runs on</div><div className="mt-1 flex items-center gap-1.5 text-[13px] text-ink">{run.runOn === "cloud" ? <Cloud size={13} /> : <Laptop size={13} />}{run.runOn === "cloud" ? "Cloud VM" : "MAUS setup"}</div></div>
+              {run.deliveryId && <div className="col-span-2 rounded-xl bg-inset p-3"><div className="text-[10px] uppercase tracking-wider text-ink-secondary">Delivery ID</div><div className="mt-1 truncate font-mono text-[11.5px] text-ink">{run.deliveryId}</div></div>}
+            </div>
+          )}
+          {visibleInstructions && <div><div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-secondary">Instructions</div><div className="whitespace-pre-wrap rounded-xl border border-hairline/40 bg-inset px-3.5 py-3 text-[13px] leading-relaxed text-ink">{visibleInstructions}</div></div>}
+          {webhookParts?.eventData && <div><div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-secondary">Webhook event data</div><pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-xl border border-accent/15 bg-accent/5 px-3.5 py-3 font-mono text-[11.5px] leading-relaxed text-ink-secondary">{webhookParts.eventData}</pre></div>}
           {run?.output && <div><div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-secondary">Last output</div><div className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-xl border border-success/20 bg-success/5 px-3.5 py-3 text-[13px] leading-relaxed text-ink">{run.output}</div></div>}
           {run?.error && <div className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-3 text-[13px] text-danger"><CircleAlert size={16} className="mt-0.5 shrink-0" /><span>{run.error}</span></div>}
           {error && <div className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-3 text-[13px] text-danger"><CircleAlert size={16} className="mt-0.5 shrink-0" /><span>{error}</span></div>}
@@ -553,6 +575,7 @@ function PausedRoutines({ routines, bots, onClose, onEdit }: { routines: Routine
 
 export function RoutinesPage() {
   const { state, dispatch } = useStore();
+  const [section, setSection] = useState<"calendar" | "webhooks">("calendar");
   const [viewDays, setViewDays] = useState<1 | 3 | 7>(7);
   const [anchor, setAnchor] = useState(() => startOfWeek(Date.now()));
   const [botFilter, setBotFilter] = useState("all");
@@ -594,20 +617,30 @@ export function RoutinesPage() {
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
-      <header className="shrink-0 px-5 pb-4 pt-4">
+      <header
+        className={cn(
+          "shrink-0 px-5 pb-4 pt-4",
+          // Room for the drawer button, which overlays this corner below md.
+          "pl-11 md:pl-5",
+        )}
+      >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2.5"><CalendarDays size={21} className="text-accent" /><h1 className="text-[20px] font-semibold tracking-tight text-ink">Routines</h1></div>
-            <p className="mt-1 text-[12.5px] text-ink-secondary">Scheduled work runs through your real MAUS team while OpenMausBot is open.</p>
+            <div className="flex items-center gap-2.5">{section === "calendar" ? <CalendarDays size={21} className="text-accent" /> : <Webhook size={21} className="text-accent" />}<h1 className="text-[20px] font-semibold tracking-tight text-ink">Automations</h1></div>
+            <p className="mt-1 text-[12.5px] text-ink-secondary">{section === "calendar" ? "Run MAUS tasks on a schedule." : "Run MAUS tasks when an event arrives."}</p>
           </div>
           <div className="flex items-center gap-2">
             {running > 0 && <span className="flex items-center gap-1.5 rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1.5 text-[11px] text-accent"><Loader2 size={12} className="animate-spin" />{running} active</span>}
             {unseenFailures > 0 && <span className="flex items-center gap-1.5 rounded-full border border-danger/25 bg-danger/10 px-2.5 py-1.5 text-[11px] text-danger"><CircleAlert size={12} />{unseenFailures} need attention</span>}
             {paused.length > 0 && <button onClick={() => setPausedOpen(true)} className="flex items-center gap-1.5 rounded-full border border-hairline/50 bg-panel px-2.5 py-1.5 text-[11px] text-ink-secondary hover:bg-raised hover:text-ink"><Pause size={12} />{paused.length} paused</button>}
-            <button onClick={() => setEditor("new")} disabled={visibleBots.length === 0} className="flex items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-[13px] font-medium text-white shadow-lg shadow-accent/10 hover:brightness-110 disabled:opacity-40"><Plus size={15} />New routine</button>
+            {section === "calendar" && <button onClick={() => setEditor("new")} disabled={visibleBots.length === 0} className="flex items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-[13px] font-medium text-white shadow-lg shadow-accent/10 hover:brightness-110 disabled:opacity-40"><Plus size={15} />New schedule</button>}
           </div>
         </div>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="mt-4 flex items-center gap-1 rounded-xl bg-panel p-1 sm:w-fit">
+          <button onClick={() => setSection("calendar")} className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium", section === "calendar" ? "bg-raised text-ink shadow" : "text-ink-secondary hover:text-ink")}><CalendarDays size={13} />Schedules</button>
+          <button onClick={() => setSection("webhooks")} className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium", section === "webhooks" ? "bg-raised text-ink shadow" : "text-ink-secondary hover:text-ink")}><Webhook size={13} />Webhooks{state.webhooks.length > 0 && <span className="rounded-full bg-accent/15 px-1.5 text-[10px] text-accent">{state.webhooks.length}</span>}</button>
+        </div>
+        {section === "calendar" && <div className="mt-3 flex flex-wrap items-center gap-2">
           <div className="flex items-center rounded-xl border border-hairline/50 bg-panel p-0.5">
             <button onClick={() => move(-1)} className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Previous dates"><ChevronLeft size={16} /></button>
             <button onClick={goToday} className="px-2.5 py-1.5 text-[12px] font-medium text-ink hover:text-accent">Today</button>
@@ -623,10 +656,12 @@ export function RoutinesPage() {
           <div className="ml-auto flex rounded-xl bg-panel p-1">
             {([1, 3, 7] as const).map((days) => <button key={days} onClick={() => { setViewDays(days); setAnchor(days === 7 ? startOfWeek(anchor) : startOfDay(anchor)); }} className={cn("rounded-lg px-3 py-1.5 text-[11px] font-medium", viewDays === days ? "bg-raised text-ink shadow" : "text-ink-secondary hover:text-ink")}>{days === 1 ? "Day" : days === 3 ? "3 days" : "Week"}</button>)}
           </div>
-        </div>
+        </div>}
       </header>
 
-      {state.routines.length === 0 && state.routineRuns.length === 0 ? (
+      {section === "webhooks" ? (
+        <WebhooksPanel bots={visibleBots} />
+      ) : state.routines.length === 0 && state.routineRuns.length === 0 ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-8">
           <div className="max-w-[430px] text-center">
             <div className="relative mx-auto mb-5 flex h-28 w-44 items-end justify-center">
@@ -635,7 +670,7 @@ export function RoutinesPage() {
             </div>
             <h2 className="text-[18px] font-semibold text-ink">Put your MAUS team on a rhythm</h2>
             <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">Plan research briefs, daily check-ins, recurring reviews, or one-time work. Every run becomes a separate task with its own result.</p>
-            <button onClick={() => setEditor("new")} disabled={visibleBots.length === 0} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40"><Plus size={15} />Create your first routine</button>
+            <button onClick={() => setEditor("new")} disabled={visibleBots.length === 0} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40"><Plus size={15} />Create your first schedule</button>
             {visibleBots.length === 0 && <p className="mt-3 text-[12px] text-warning">Create a bot first, then come back to schedule it.</p>}
           </div>
         </div>

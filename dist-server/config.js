@@ -35,6 +35,7 @@ export function loadConfig() {
     cfg.xai = { key: process.env.XAI_API_KEY, ...cfg.xai };
     cfg.composio = { key: process.env.COMPOSIO_KEY, ...cfg.composio };
     cfg.box = { token: process.env.BOX_TOKEN, ...cfg.box };
+    cfg.opencodeGo = { apiKey: process.env.OPENCODE_API_KEY, ...cfg.opencodeGo };
     cfg.tts = { key: process.env.OMB_TTS_KEY, ...cfg.tts };
     return cfg;
 }
@@ -49,13 +50,13 @@ export function saveConfig(patch) {
     catch {
         /* first write */
     }
-    for (const key of ["xai", "composio", "box", "tts", "profile"]) {
+    for (const key of ["xai", "composio", "box", "opencodeGo", "tts", "profile"]) {
         if (patch[key] && typeof patch[key] === "object") {
             disk[key] = { ...disk[key], ...patch[key] };
         }
     }
     mkdirSync(DATA_DIR, { recursive: true });
-    writeFileAtomic(p, JSON.stringify(disk, null, 2));
+    writeFileAtomic(p, JSON.stringify(disk, null, 2), { mode: 0o600 });
 }
 // Default fleet: one instance per built-in driver (upstream
 // defaultInstanceIdForDriver — instanceId defaults to the driver kind).
@@ -79,15 +80,21 @@ export function instanceConfigs(cfg) {
         ? cfg.instances
         : {
             grok: { driver: "grokAgent" },
+            kimi: { driver: "kimiAgent" },
+            droid: { driver: "droidAgent" },
             claude: { driver: "claudeAgent" },
             codex: { driver: "codex" },
             antigravity: { driver: "antigravityAgent" },
+            opencodeGo: { driver: "opencodeGo" },
             computer: { driver: "boxAgent" },
         };
     for (const entry of Object.values(map)) {
         entry.environment = {
             ...(cfg.xai?.key ? { XAI_API_KEY: cfg.xai.key } : {}),
             ...(cfg.box?.token ? { BOX_TOKEN: cfg.box.token } : {}),
+            ...(entry.driver === "opencodeGo" && cfg.opencodeGo?.apiKey
+                ? { OPENCODE_API_KEY: cfg.opencodeGo.apiKey }
+                : {}),
             ...entry.environment,
         };
     }

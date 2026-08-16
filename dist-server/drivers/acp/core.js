@@ -29,8 +29,20 @@ const COMPUTER_PROXY_PATH = (() => {
 })();
 import { appendNative } from "../native.js";
 const INIT_TIMEOUT = 20_000;
+const SESSION_CONFIG_TIMEOUT = 20_000; // configureSession's per-request default
 const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
+const PROVIDER_CREDENTIAL_ENV = [
+    "ANTHROPIC_API_KEY",
+    "FACTORY_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "KIMI_API_KEY",
+    "MOONSHOT_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENCODE_API_KEY",
+    "XAI_API_KEY",
+];
 function decodeAcpConfig(defaultCli) {
     return (raw) => {
         const o = (raw ?? {});
@@ -55,6 +67,34 @@ export function createAcpDriver(support) {
         defaultConfig: () => decodeConfig({}),
         async create(input) {
             const { instanceId, config } = input;
+            const childEnv = () => {
+                const env = {
+                    ...process.env,
+                    ...input.environment,
+                    PATH: augmentedPath(),
+                };
+                const allowedCredentials = new Set(support.credentialEnv ?? []);
+                for (const key of PROVIDER_CREDENTIAL_ENV) {
+                    if (!allowedCredentials.has(key))
+                        delete env[key];
+                }
+                support.transformEnv?.(env, config);
+                return env;
+            };
+            let models = support.models;
+            const refreshModels = async () => {
+                if (!support.resolveModels)
+                    return;
+                try {
+                    const resolved = await support.resolveModels(childEnv());
+                    if (resolved.options.length)
+                        models = resolved;
+                }
+                catch {
+                    // Keep the last usable catalog when an optional discovery source is down.
+                }
+            };
+            await refreshModels();
             const listeners = new Set();
             const active = new Map();
             const emit = (event) => {
@@ -68,15 +108,6 @@ export function createAcpDriver(support) {
                 turnId,
                 createdAt: new Date().toISOString(),
             });
-            const childEnv = () => {
-                const env = {
-                    ...process.env,
-                    ...input.environment,
-                    PATH: augmentedPath(),
-                };
-                support.transformEnv?.(env);
-                return env;
-            };
             // ACP session mcpServers: stdio is the baseline every ACP agent
             // supports (mcpCapabilities.http/.sse only add EXTRA transports), so
             // an injected stdio proxy — e.g. the peer-agent comms tool — attaches
@@ -313,7 +344,14 @@ export function createAcpDriver(support) {
                                 rpcPending.delete(msg.id);
                                 if (pend.timer)
                                     clearTimeout(pend.timer);
-                                msg.error ? pend.reject(new Error(msg.error.message ?? JSON.stringify(msg.error))) : pend.resolve(msg.result);
+                                if (msg.error) {
+                                    const error = new Error(msg.error.message ?? JSON.stringify(msg.error));
+                                    Object.assign(error, { code: msg.error.code, data: msg.error.data });
+                                    pend.reject(error);
+                                }
+                                else {
+                                    pend.resolve(msg.result);
+                                }
                             }
                         }
                         else if (msg.id !== undefined && msg.method) {
@@ -375,9 +413,10 @@ export function createAcpDriver(support) {
                             throw new Error(support.loginNote);
                         }
                         const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+                        let sessionResult = null;
                         if (cursor) {
                             try {
-                                await request("session/load", { sessionId: cursor, cwd, mcpServers }, LOAD_SESSION_TIMEOUT);
+                                sessionResult = await request("session/load", { sessionId: cursor, cwd, mcpServers }, LOAD_SESSION_TIMEOUT);
                                 sessionId = cursor;
                             }
                             catch {
@@ -385,17 +424,55 @@ export function createAcpDriver(support) {
                             }
                         }
                         if (!sessionId) {
-                            const started = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
-                            sessionId = typeof started?.sessionId === "string" ? started.sessionId : null;
+                            sessionResult = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
+                            sessionId = typeof sessionResult?.sessionId === "string" ? sessionResult.sessionId : null;
                             if (!sessionId)
                                 throw new Error("session/new returned no sessionId");
                         }
-                        emit({
-                            ...base(threadId, turnId),
-                            type: "session.started",
-                            sessionId,
-                            model: init?._meta?.modelState?.currentModelId ?? turn.model ?? null,
-                        });
+                        let selectedModel = null;
+                        let sessionStarted = false;
+                        const emitSessionStarted = () => {
+                            if (sessionStarted)
+                                return;
+                            sessionStarted = true;
+                            emit({
+                                ...base(threadId, turnId),
+                                type: "session.started",
+                                sessionId,
+                                model: selectedModel ?? init?._meta?.modelState?.currentModelId ?? turn.model ?? null,
+                            });
+                        };
+                        try {
+                            if (support.selectModel) {
+                                const { configId } = support.selectModel;
+                                const currentOf = (r) => (Array.isArray(r?.configOptions) ? r.configOptions : []).find((o) => o?.id === configId)
+                                    ?.currentValue ?? null;
+                                selectedModel = currentOf(sessionResult);
+                                if (turn.model && turn.model !== selectedModel) {
+                                    selectedModel = currentOf(await request("session/set_config_option", { sessionId, configId, value: turn.model }, INIT_TIMEOUT));
+                                    // an agent that answers OK but keeps its old model is worse than
+                                    // one that errors: it burns a paid turn on the wrong thing
+                                    if (selectedModel !== turn.model) {
+                                        throw new Error(`${DRIVER_KIND} did not switch to ${turn.model} (still ${selectedModel ?? "unknown"})`);
+                                    }
+                                }
+                            }
+                            if (support.configureSession) {
+                                await support.configureSession({
+                                    request: (method, params, timeoutMs) => request(method, params, timeoutMs ?? SESSION_CONFIG_TIMEOUT),
+                                    sessionId,
+                                    config,
+                                    turn,
+                                });
+                            }
+                        }
+                        catch (error) {
+                            // session.started is the only place the resume cursor is recorded,
+                            // so a rejected setting must not orphan a session we just created.
+                            emitSessionStarted();
+                            throw error;
+                        }
+                        emitSessionStarted();
                         state.promptSent = true;
                         const text = support.buildPromptText
                             ? support.buildPromptText(turn)
@@ -406,7 +483,9 @@ export function createAcpDriver(support) {
                             sessionId,
                             prompt: [{ type: "text", text }],
                         });
-                        const usage = result?._meta ?? {};
+                        // opencode 1.18.18 reports usage at the result root; grok and
+                        // gemini put it under _meta. Read both rather than lose the count.
+                        const usage = result?.usage ?? result?._meta ?? {};
                         if (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number") {
                             emit({
                                 ...base(threadId, turnId),
@@ -425,11 +504,13 @@ export function createAcpDriver(support) {
                     }
                     catch (e) {
                         if (!state.settled) {
-                            const message = e.message;
-                            // "not signed in" is a setup problem like a missing binary: the
-                            // fix is a command in a terminal, not another attempt. Flagging
-                            // it lets the error card show the sign-in step.
-                            const needsAuth = message === support.loginNote;
+                            const message = e instanceof Error ? e.message : String(e);
+                            const code = support.classifyError?.(e);
+                            // Authentication setup is a user action, not a retry. The
+                            // classifier is preferred; loginNote remains a compatibility
+                            // fallback for existing ACP supports.
+                            const needsAuth = code === "invalid_credentials" || code === "inactive_subscription"
+                                || message === support.loginNote;
                             emit({
                                 ...base(threadId, turnId),
                                 type: "runtime.error",
@@ -449,14 +530,17 @@ export function createAcpDriver(support) {
                 });
                 if (!version)
                     return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
-                return { state: "available", version, authenticated: support.isAuthenticated(env) };
+                return { state: "available", version, authenticated: await support.isAuthenticated(env, config) };
             };
             return {
                 instanceId,
                 driverKind: DRIVER_KIND,
                 displayName: input.displayName,
                 enabled: input.enabled,
-                models: support.models,
+                get models() {
+                    return models;
+                },
+                refreshModels: support.resolveModels ? refreshModels : undefined,
                 snapshot,
                 adapter: {
                     provider: DRIVER_KIND,
