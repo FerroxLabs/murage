@@ -1055,6 +1055,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .catch(() => {});
     };
     loadAll();
+    // The eager call above is the cold start. `hello` below decides whether
+    // a *reconnect* needs another one, and this first connection never does.
+    let firstHello = true;
 
     const es = new EventSource("/api/events");
     // The hydrate decision belongs to the hello frame, not to onopen: the
@@ -1074,7 +1077,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // whether it could replay the gap — the browser resends its cursor
         // as Last-Event-ID by itself, so there is nothing to track here.
         case "hello":
-          if (!frame.resumed) loadAll();
+          // The eager load already covered the cold start, so the first
+          // hello is never a reason to repeat it — treating it as one cost
+          // eight API calls and two full transcript downloads on every page
+          // load. Only a reconnect the server could not replay needs fresh
+          // state.
+          if (!firstHello && !frame.resumed) loadAll();
+          firstHello = false;
           break;
         case "message": {
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
@@ -1136,7 +1145,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // the harness decided this was worth interrupting for; the toggle
         // in each bot's settings is what gates it, server-side
         case "notify":
-          showNotification(frame.notification, (botId) => rawDispatch({ type: "select", id: botId }));
+          // the wrapped dispatch, not rawDispatch: `select` clears the badge
+          // in local state either way, but only the wrapper PATCHes
+          // unread:false back. Opening a bot from its own notification and
+          // watching the badge return on the next hydration is exactly the
+          // bug that makes notifications feel broken.
+          showNotification(frame.notification, (botId) => dispatch({ type: "select", id: botId }));
           break;
         case "group.deleted":
           rawDispatch({ type: "groupDeleted", groupId: frame.groupId });

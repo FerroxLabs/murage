@@ -1258,6 +1258,14 @@ const server = createServer(async (req, res) => {
     // the pixels of one screen message, fetched only when something shows it
     m = path.match(/^\/api\/threads\/([\w-]+)\/messages\/([\w-]+)\/image$/);
     if (m && method === "GET") {
+      // Same guard as the page route above, and for the same reason twice
+      // over: an unknown id should 404 deliberately rather than by accident,
+      // and `messagesFor` materialises and caches a ThreadState for whatever
+      // it is handed. Without this, a client asking for images on ids that
+      // do not exist grows the thread map for as long as it keeps asking.
+      if (!store.botByThread(m[1]) && !store.groupByThread(m[1])) {
+        return json(res, 404, { error: "no such conversation" });
+      }
       const message = store.messagesFor(m[1]).find((msg) => msg.id === m![2]);
       if (!message?.png) return json(res, 404, { error: "no image on that message" });
       const bytes = Buffer.from(message.png, "base64");

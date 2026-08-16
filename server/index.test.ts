@@ -363,6 +363,20 @@ describe("message pages", () => {
     const res = await fetch(`${BASE}/api/threads/${full.threadId}/messages/${full.messages[0].id}/image`);
     expect(res.status).toBe(404);
   });
+
+  it("404s an image on a conversation that does not exist, without inventing one", async () => {
+    // `messagesFor` materialises and caches a ThreadState for any id it is
+    // given, so an unguarded route lets a client grow that map by asking
+    // for threads that were never real. The 404 is the visible half; not
+    // creating the thread is the half worth having.
+    const before = (await api("GET", "/api/bots")).body.bots.length;
+    const res = await fetch(`${BASE}/api/threads/not-a-thread/messages/not-a-message/image`);
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: string }).error).toBe("no such conversation");
+    // and the phantom thread is not now answerable as an empty conversation
+    expect((await api("GET", "/api/threads/not-a-thread/messages")).status).toBe(404);
+    expect((await api("GET", "/api/bots")).body.bots.length).toBe(before);
+  });
 });
 
 // A phone reconnects every time it unlocks, so "what did I miss?" has to
