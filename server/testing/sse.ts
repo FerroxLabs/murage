@@ -27,13 +27,24 @@ export async function openSse(url: string, headers: Record<string, string> = {})
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let closed = false;
+  const finish = (error: Error) => {
+    if (closed) return;
+    closed = true;
+    for (const waiter of waiters.splice(0)) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+  };
 
   void (async () => {
     let buffer = "";
     try {
       for (;;) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          finish(new Error("SSE stream closed before a matching frame arrived"));
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
         let split: number;
         // frames are separated by a blank line; keepalives are comments
@@ -57,8 +68,8 @@ export async function openSse(url: string, headers: Record<string, string> = {})
           }
         }
       }
-    } catch {
-      /* aborted by close(), or the server went away */
+    } catch (error) {
+      if (!closed) finish(error instanceof Error ? error : new Error("SSE stream read failed"));
     }
   })();
 
@@ -85,12 +96,8 @@ export async function openSse(url: string, headers: Record<string, string> = {})
     },
     close: () => {
       if (closed) return;
-      closed = true;
+      finish(new Error("SSE stream closed before a matching frame arrived"));
       controller.abort();
-      for (const waiter of waiters.splice(0)) {
-        clearTimeout(waiter.timer);
-        waiter.reject(new Error("SSE stream closed before a matching frame arrived"));
-      }
     },
   };
 }
