@@ -180,8 +180,20 @@ describe("computer proxy (fake box)", () => {
       params: { name: "type_text", arguments: { text: "hello" } },
     });
     const res = await waitFor(5);
-    expect(commands.at(-1)).toMatch(/xdotool type --delay 8 'hello'/);
+    expect(commands.at(-1)).toMatch(/xdotool type --clearmodifiers --delay 8 -- 'hello'/);
     expect(res.result.content[1]).toMatchObject({ type: "image" });
+  });
+
+  it("types leading hyphens as text after clearing stuck modifiers", async () => {
+    hash = "bbbb2223";
+    rpc({
+      jsonrpc: "2.0",
+      id: 51,
+      method: "tools/call",
+      params: { name: "type_text", arguments: { text: "--safe" } },
+    });
+    await waitFor(51);
+    expect(commands.at(-1)).toContain("xdotool type --clearmodifiers --delay 8 -- '--safe'");
   });
 
   it("runs a whole batch in one round trip with one frame at the end", async () => {
@@ -339,9 +351,16 @@ describe("computer proxy (fake box)", () => {
     const result = await waitFor(130);
     const issued = commands.slice(before);
     expect(issued).toHaveLength(2);
-    expect(issued[0]).toContain('mkdir -p "$HOME/.openmausbot/chrome-profile"');
-    expect(issued[0]).toContain('chmod 700 "$HOME/.openmausbot/chrome-profile"');
+    expect(issued[0]).toContain('profile="$HOME/.openmausbot/chrome-profile"');
+    expect(issued[0]).toContain('chmod 700 "$profile"');
+    expect(issued[0]).toContain('! cp -a -n "$browser_dir"/. "$profile"/');
+    expect(issued[0]).toContain('echo "failed to copy browser profile: $browser_dir" >&2');
+    expect(issued[0]).toContain('ln -s "$profile" "$browser_dir"');
+    expect(issued[0]).not.toContain("do;");
+    expect(issued[0]).not.toContain("then;");
     expect(issued[0]).toContain('--user-data-dir="$HOME/.openmausbot/chrome-profile"');
+    expect(issued[0]).toContain("--password-store=basic");
+    expect(issued[0]).toContain("--disable-session-crashed-bubble");
     expect(issued[0]).not.toContain("user:password@");
     expect(issued[0]).toContain("'https://example.com/requested?token=secret#fragment'");
     expect(result.result.content[0].text).toContain("https://example.com/landed");

@@ -262,6 +262,14 @@ export async function joinBox(cfg: AppConfig, botId: string) {
 export async function sleepBox(cfg: AppConfig, botId: string) {
   const box = await findBox(cfg, botId);
   if (!box) throw new Error("no computer for this bot");
+  // Ask the browser's oldest (main) process to exit before the provider
+  // snapshots the disk. This gives Chrome a chance to flush cookies and
+  // session state instead of restoring a crash-marked profile next wake.
+  const quiesceBrowser = [
+    'for name in chrome google-chrome chromium chromium-browser; do pid=$(pgrep -o -x "$name" 2>/dev/null || true); [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null || true; done',
+    'for i in 1 2 3 4 5 6 7 8; do if ! pgrep -x chrome >/dev/null 2>&1 && ! pgrep -x google-chrome >/dev/null 2>&1 && ! pgrep -x chromium >/dev/null 2>&1 && ! pgrep -x chromium-browser >/dev/null 2>&1; then break; fi; sleep 0.25; done',
+  ].join("; ");
+  await runCommand(cfg, box.id, quiesceBrowser, { timeoutMs: 5_000 }).catch(() => null);
   await boxJson(cfg, `/boxes/${box.id}/stop`, { method: "POST" }).catch(() => {});
   return { ok: true };
 }

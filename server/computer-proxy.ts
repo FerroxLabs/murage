@@ -51,9 +51,26 @@ const SETTLE_MS = 350;
 const ACTION_GAP_MS = 120;
 const CHROME_PROFILE = "$HOME/.openmausbot/chrome-profile";
 const CHROME_DEBUG_FLAGS =
-  `--user-data-dir="${CHROME_PROFILE}" --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222`;
-const CHROME_PROFILE_SETUP =
-  `mkdir -p "${CHROME_PROFILE}" && chmod 700 "${CHROME_PROFILE}"`;
+  `--user-data-dir="${CHROME_PROFILE}" --password-store=basic --disable-session-crashed-bubble --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222`;
+// Keep one durable browser identity regardless of which Chromium binary an
+// image supplies. Existing profiles are merged without overwriting files and
+// moved aside as backups before the conventional paths become symlinks.
+const CHROME_PROFILE_SETUP = [
+  `profile="${CHROME_PROFILE}"`,
+  'mkdir -p "$profile" "$HOME/.config"',
+  'chmod 700 "$profile"',
+  'for browser_dir in "$HOME/.config/google-chrome" "$HOME/.config/chromium"; do',
+  '  if [ -e "$browser_dir" ] && [ ! -L "$browser_dir" ]; then',
+  '    if [ -d "$browser_dir" ] && ! cp -a -n "$browser_dir"/. "$profile"/; then',
+  '      echo "failed to copy browser profile: $browser_dir" >&2',
+  "      exit 1",
+  "    fi",
+  '    mv "$browser_dir" "$browser_dir.pre-openmausbot-$(date +%s)-$$"',
+  "  fi",
+  '  if [ -L "$browser_dir" ]; then rm -f "$browser_dir"; fi',
+  '  ln -s "$profile" "$browser_dir"',
+  "done",
+].join("\n");
 /** Frames larger than this come back over the files API instead of
  * inline stdout (keeps us clear of the command endpoint's stdout cap). */
 const INLINE_MAX_BYTES = 400_000;
@@ -534,7 +551,7 @@ function actionShell(a: any): string | { error: string } {
   if (kind === "type_text") {
     const t = String(a.text ?? "");
     if (!t) return { error: "type_text needs text" };
-    return `xdotool type --delay 8 ${shellQuote(t)}`;
+    return `xdotool type --clearmodifiers --delay 8 -- ${shellQuote(t)}`;
   }
   if (kind === "press_key") {
     const keys = String(a.keys ?? "").replace(/[^\w+]/g, "");
@@ -743,7 +760,15 @@ async function handle(msg: any) {
     try {
       return await call(msg.id, msg.params?.name, msg.params?.arguments ?? {});
     } catch (e) {
-      return text(msg.id, `computer tool failed: ${(e as Error).message}`, true);
+      const error = e instanceof Error ? e : new Error(String(e));
+      const timedOut = error.name === "TimeoutError" || /timed?\s*out|timeout/i.test(error.message);
+      return text(
+        msg.id,
+        timedOut
+          ? "computer tool timed out. The action may or may not have completed; take a screenshot to inspect the current state before retrying it."
+          : `computer tool failed: ${error.message}`,
+        true,
+      );
     }
   }
   if (String(msg.method ?? "").startsWith("notifications/")) return;
