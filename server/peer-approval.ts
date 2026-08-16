@@ -15,7 +15,10 @@
 // `alwaysAllow`, so the two sides never disagree about what was granted.
 
 import { newId } from "./contracts.ts";
+import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import type { BotRecord, Message, Store } from "./store.ts";
+
+export { peerAllowKey } from "./peer-approval-key.ts";
 
 /** What a peer-approval helper needs from the outside world: the store
  * for thread append + persist, and the SSE broadcaster so the chat
@@ -66,10 +69,6 @@ const APPROVAL_TIMEOUT_MS = 15 * 60_000;
 /** The narrow grant "always allow" remembers for a peer comm. Mirrored
  * back into `bot.alwaysAllow` when the user picks "Always allow" on the
  * card. */
-export function peerAllowKey(action: "ask_bot" | "delegate_bot", targetId: string): string {
-  return `${action}:${targetId}`;
-}
-
 function allowKeyAllowed(from: BotRecord, allowKey: string): boolean {
   return from.alwaysAllow?.includes(allowKey) ?? false;
 }
@@ -79,7 +78,7 @@ function pushApprovalCard(
   from: BotRecord,
   target: BotRecord,
   message: string,
-  action: "ask_bot" | "delegate_bot",
+  action: PeerAction,
   requestId: string,
   sourceThreadId: string,
 ): Message {
@@ -109,7 +108,7 @@ export function requestPeerApproval(
   from: BotRecord,
   target: BotRecord,
   message: string,
-  action: "ask_bot" | "delegate_bot",
+  action: PeerAction,
   sourceThreadId = from.threadId,
 ): Promise<"allow" | "deny"> {
   if (allowKeyAllowed(from, peerAllowKey(action, target.id))) {

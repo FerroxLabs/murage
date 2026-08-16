@@ -77,7 +77,12 @@ export function drainDelegations(
   bus: CommsBus,
   approvalBus: ApprovalBus,
   threadId: string,
-  runTarget: (toBotId: string, message: string, commsDepth: number) => void,
+  runTarget: (
+    toBotId: string,
+    message: string,
+    commsDepth: number,
+    sourceThreadId: string,
+  ) => void | Promise<void>,
 ): void {
   const list = pendingDelegations.get(threadId);
   if (!list?.length) return;
@@ -123,7 +128,12 @@ async function processOne(
   from: BotRecord,
   sourceThreadId: string,
   item: DelegationItem,
-  runTarget: (toBotId: string, message: string, commsDepth: number) => void,
+  runTarget: (
+    toBotId: string,
+    message: string,
+    commsDepth: number,
+    sourceThreadId: string,
+  ) => void | Promise<void>,
 ): Promise<void> {
   let sender = from;
   let target = bus.store.bot(item.toBotId);
@@ -186,7 +196,7 @@ async function processOne(
   mirrorExchange(bus, sender, target, item.message, channel, sourceThreadId);
   const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
   const prefixed = `[Delegated by @${sender.name}, another bot in this OpenMausBot workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
-  runTarget(item.toBotId, prefixed, item.depth + 1);
+  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId);
 }
 
 /** Test helper: how many items remain queued for a thread. */

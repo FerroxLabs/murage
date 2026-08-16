@@ -6,6 +6,7 @@ import { readFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
@@ -312,6 +313,25 @@ export class Store {
       }
       b.chiefOfStaff = false;
       botsMigrated = true;
+    }
+    // Peer grants originally used mutable display names (ask_bot:@Helper).
+    // Convert only when exactly one bot has that name; ambiguous legacy
+    // entries remain inert rather than granting access to the wrong bot.
+    for (const b of this.bots) {
+      if (!b.alwaysAllow?.length) continue;
+      let changed = false;
+      const migrated = b.alwaysAllow.map((key) => {
+        const match = key.match(/^(ask_bot|delegate_bot):@(.+)$/);
+        if (!match) return key;
+        const candidates = this.bots.filter((candidate) => candidate.name === match[2]);
+        if (candidates.length !== 1) return key;
+        changed = true;
+        return peerAllowKey(match[1] as PeerAction, candidates[0]!.id);
+      });
+      if (changed) {
+        b.alwaysAllow = [...new Set(migrated)];
+        botsMigrated = true;
+      }
     }
     for (const g of this.groups) {
       g.busyBotId = null;

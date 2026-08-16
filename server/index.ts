@@ -473,22 +473,22 @@ bus.subscribe((event: RuntimeEvent) => {
   // firing it later: the user who hit Stop does not expect the delegations
   // that turn queued to run anyway, minutes later, on an unrelated turn.
   if (!event.ok) return void discardDelegations(commsBus, event.threadId);
-  drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth) => {
+  drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth, sourceThreadId) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
     // child. Every delegation failure has to land as a chip instead.
-    void startTurn(toBotId, text, { commsDepth }).catch((err) => {
+    return startTurn(toBotId, text, { commsDepth }).catch((err) => {
       const bot = store.bot(toBotId);
       const why = err instanceof Error ? err.message : String(err);
-      const source = store.botByThread(event.threadId);
+      const source = store.botByThread(sourceThreadId);
       if (!source) return;
-      const note = store.appendMessage(source.threadId, {
+      const note = store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `error: delegation to @${bot?.name ?? toBotId} could not start — ${why.slice(0, 120)}`, ok: false },
       });
-      broadcast({ kind: "message", threadId: source.threadId, message: note });
+      broadcast({ kind: "message", threadId: sourceThreadId, message: note });
     });
   });
 });

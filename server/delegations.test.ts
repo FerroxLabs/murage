@@ -157,7 +157,7 @@ describe("drainDelegations", () => {
   let target: BotRecord;
   let commsBus: CommsBus;
   let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
-  let runTargetCalls: Array<{ toBotId: string; message: string; commsDepth: number }>;
+  let runTargetCalls: Array<{ toBotId: string; message: string; commsDepth: number; sourceThreadId?: string }>;
 
   beforeEach(() => {
     rmSync(DATA_DIR, { recursive: true, force: true });
@@ -231,12 +231,18 @@ describe("drainDelegations", () => {
       routineTask.threadId,
     );
 
-    drainDelegations(commsBus, approvalBus, routineTask.threadId, (toBotId, message, commsDepth) => {
-      runTargetCalls.push({ toBotId, message, commsDepth });
-    });
+    drainDelegations(
+      commsBus,
+      approvalBus,
+      routineTask.threadId,
+      (toBotId, message, commsDepth, sourceThreadId) => {
+        runTargetCalls.push({ toBotId, message, commsDepth, sourceThreadId });
+      },
+    );
 
     await waitFor(() => runTargetCalls.length === 1);
     expect(_pendingCount(routineTask.threadId)).toBe(0);
+    expect(runTargetCalls[0]?.sourceThreadId).toBe(routineTask.threadId);
     expect(
       store.messagesFor(routineTask.threadId).some((m) => m.tool?.name === "Messaged @Helper"),
     ).toBe(true);
@@ -257,6 +263,31 @@ describe("drainDelegations", () => {
         .find((m) => m.tool?.ok === false && m.tool.name.includes("target runner exploded")),
     );
     expect(failure.tool?.name).toContain("delegation failed");
+  });
+
+  it("reports an asynchronous target-start rejection on a detached source thread", async () => {
+    const activeThreadId = from.threadId;
+    const routineTask = store.createTask(from.id, "Routine run", false)!;
+    queueDelegation(
+      commsBus,
+      from,
+      { toBotId: target.id, message: "do this", depth: 0 },
+      1,
+      routineTask.threadId,
+    );
+    drainDelegations(commsBus, approvalBus, routineTask.threadId, () =>
+      Promise.reject(new Error("provider disappeared")),
+    );
+
+    const failure = await waitFor(() =>
+      store
+        .messagesFor(routineTask.threadId)
+        .find((m) => m.tool?.ok === false && m.tool.name.includes("provider disappeared")),
+    );
+    expect(failure.tool?.name).toContain("delegation failed");
+    expect(
+      store.messagesFor(activeThreadId).some((m) => m.tool?.name.includes("provider disappeared")),
+    ).toBe(false);
   });
 
   it("skips runTarget and emits a 'no such bot' chip when the target was deleted", async () => {
