@@ -26,29 +26,29 @@ desktop app now ships.
 
 ## Stage 0 — get the branch
 
-The work is on `claude/open-mouse-ios-companion-mhzsdu` in `mnthr7/OpenMausMobile`.
+The work is on `upstreaming/9-ios-app` in `mnthr7/OpenMausMobile`.
 
 Fresh clone:
 
 ```sh
 git clone https://github.com/mnthr7/OpenMausMobile
 cd OpenMausMobile
-git checkout claude/open-mouse-ios-companion-mhzsdu
+git checkout upstreaming/9-ios-app
 ```
 
 Or, if you already have the repo:
 
 ```sh
 cd OpenMausMobile
-git fetch origin claude/open-mouse-ios-companion-mhzsdu
-git checkout claude/open-mouse-ios-companion-mhzsdu
-git pull origin claude/open-mouse-ios-companion-mhzsdu
+git fetch origin upstreaming/9-ios-app
+git checkout upstreaming/9-ios-app
+git pull origin upstreaming/9-ios-app
 ```
 
-Sanity check — `ios/` and the companion server files should be present:
+Sanity check — `ios/` and the companion sidecar should be present:
 
 ```sh
-ls ios/Sources/CompanionCore server/devices.ts server/mdns.ts
+ls ios/Sources/CompanionCore companion/src/devices.ts companion/src/mdns.ts
 ```
 
 ---
@@ -109,7 +109,7 @@ Verify from a second terminal that the socket is real and refuses strangers:
 
 ```sh
 curl -s http://192.168.x.x:8810/api/bots            # expect 401 + "pair this device…"
-curl -s http://127.0.0.1:8799/api/remote | jq       # enabled, discovery, devices
+curl -s http://127.0.0.1:8811/state | jq            # addresses, pairing, devices, discovery
 dns-sd -B _openmausbot._tcp                         # macOS: should list the service
 ```
 
@@ -225,8 +225,9 @@ so this is also how the phone reaches the Mac over cellular.
 3. **In OpenMausBot → Settings → Companion:** with the toggle on, the panel now
    prints the tailnet name — something like `macbook.tail1234.ts.net:8810`, with
    the LAN address listed separately underneath. If it still only shows a
-   `192.168.x.x` address, the harness could not find the Tailscale CLI; restart
-   `pnpm dev:server` after Tailscale is running.
+   `192.168.x.x` address, the sidecar could not find the Tailscale CLI — it
+   asks once at startup, so turn the Companion toggle off and on again (or
+   restart `pnpm companion` if running it by hand) after Tailscale is up.
 4. **On the phone:** pair by typing that name. Discovery does not help here —
    Bonjour is multicast and a tailnet does not carry it — so the typed address
    is the path, and it is the one path that works from anywhere.
@@ -250,8 +251,12 @@ port — only the route to it is different.
 Not built yet, so not bugs:
 
 - **Nothing arrives while the app is closed.** No push until APNs.
-- **No token-by-token streaming.** Replies land whole, when the turn settles.
-- **No computer panel, no voice, no routines.**
+- **No voice, no routines.**
+
+(Two entries that used to sit on this list have since shipped: replies stream
+token by token as the provider emits them, and each bot has a computer panel —
+open it from the chat and frames arrive for exactly as long as it is on
+screen.)
 
 ## If the phone sits on "Connecting…"
 
