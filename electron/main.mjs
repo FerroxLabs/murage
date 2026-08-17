@@ -295,6 +295,25 @@ ipcMain.handle("engine:open-terminal", async (_event, command) => {
   return openBlankTerminal();
 });
 
+// OAuth/connect links are returned asynchronously, after Chromium's direct
+// click gesture has ended. Opening them through window.open can therefore be
+// rejected as a popup before setWindowOpenHandler ever sees the URL. Keep the
+// renderer sandboxed and let the main process open only ordinary web links.
+ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {
+  if (typeof rawUrl !== "string") throw new Error("A web address is required");
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error("That web address is invalid");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Only web links can be opened");
+  }
+  await shell.openExternal(url.toString());
+  return true;
+});
+
 ipcMain.handle("perm:status", () => ({
   mic:
     process.platform === "darwin"

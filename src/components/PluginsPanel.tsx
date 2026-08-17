@@ -15,6 +15,26 @@ interface ToolkitCard {
   domain: string | null;
 }
 
+export interface ConnectorStatus {
+  connected: boolean;
+  pending?: boolean;
+  status?: string;
+}
+
+export function mergeCurrentConnectorStatus(
+  current: Record<string, ConnectorStatus>,
+  incoming: Record<string, ConnectorStatus>,
+  latestGenerations: ReadonlyMap<string, number>,
+  requestGenerations: ReadonlyMap<string, number>,
+) {
+  const next = { ...current };
+  for (const [slug, state] of Object.entries(incoming)) {
+    if ((latestGenerations.get(slug) ?? 0) !== (requestGenerations.get(slug) ?? 0)) continue;
+    next[slug] = state;
+  }
+  return next;
+}
+
 function ServiceIcon({ card }: { card: ToolkitCard }) {
   // 0 = official logo, 1 = favicon by domain, 2 = monogram
   const [stage, setStage] = useState(card.logo ? 0 : card.domain ? 1 : 2);
@@ -44,23 +64,50 @@ export function PluginsPanel() {
   const [cards, setCards] = useState<ToolkitCard[] | null>(null);
   const [source, setSource] = useState<"api" | "curated">("curated");
   const [configured, setConfigured] = useState(true);
-  const [status, setStatus] = useState<Record<string, { connected: boolean }>>({});
+  const [status, setStatus] = useState<Record<string, ConnectorStatus>>({});
+  const [pendingUrls, setPendingUrls] = useState<Record<string, string>>({});
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  const refreshStatus = useCallback((slugs: string[]): Promise<Record<string, { connected: boolean }>> => {
+  const pollTimers = useRef(new Map<string, ReturnType<typeof setInterval>>());
+  const statusGenerations = useRef(new Map<string, number>());
+
+  const refreshStatus = useCallback((slugs: string[]): Promise<Record<string, ConnectorStatus>> => {
     if (!slugs.length) return Promise.resolve({});
+    const requestGenerations = new Map(slugs.map((slug) => [slug, statusGenerations.current.get(slug) ?? 0]));
     setRefreshing(true);
     return api(`/api/connectors?services=${slugs.join(",")}`)
       .then((r) => {
-        const services: Record<string, { connected: boolean }> = r.services ?? {};
-        setStatus(services);
+        const services: Record<string, ConnectorStatus> = r.services ?? {};
+        // A one-service OAuth poll must not erase every other app's state.
+        // A request that began before Connect must also not erase the newer
+        // local INITIATED state when its stale not_connected result arrives.
+        setStatus((current) => mergeCurrentConnectorStatus(
+          current,
+          services,
+          statusGenerations.current,
+          requestGenerations,
+        ));
+        for (const [slug, state] of Object.entries(services)) {
+          const isCurrent = (statusGenerations.current.get(slug) ?? 0) === (requestGenerations.get(slug) ?? 0);
+          if (isCurrent && state.connected) setPendingUrls((current) => {
+            if (!current[slug]) return current;
+            const next = { ...current };
+            delete next[slug];
+            return next;
+          });
+        }
         return services;
       })
       .catch(() => ({}))
       .finally(() => setRefreshing(false));
+  }, []);
+
+  useEffect(() => () => {
+    for (const timer of pollTimers.current.values()) clearInterval(timer);
+    pollTimers.current.clear();
   }, []);
 
   useEffect(() => {
@@ -121,24 +168,53 @@ export function PluginsPanel() {
     };
   }, [dispatch]);
 
-  const connect = (slug: string) => {
+  const openConnectUrl = async (url: string) => {
+    if (window.ogb?.openExternal) {
+      await window.ogb.openExternal(url);
+      return;
+    }
+    // Browser development fallback. If a popup blocker rejects the first
+    // asynchronous open, the visible Continue button retries from a direct
+    // user gesture using the URL retained in pendingUrls.
+    const opened = window.open("", "_blank");
+    if (!opened) throw new Error("Your browser blocked the connection page. Click Continue to open it.");
+    // Open a same-origin blank page first so the OAuth origin never receives
+    // an opener reference, while a real null remains a reliable blocked signal.
+    opened.opener = null;
+    opened.location.replace(url);
+  };
+
+  const startPolling = (slug: string) => {
+    const old = pollTimers.current.get(slug);
+    if (old) clearInterval(old);
+    let tries = 0;
+    const timer = setInterval(() => {
+      void refreshStatus([slug]).then((services) => {
+        const state = services[slug];
+        if (++tries >= 24 || state?.connected || (state?.status && /^(expired|failed)$/i.test(state.status))) {
+          clearInterval(timer);
+          pollTimers.current.delete(slug);
+        }
+      });
+    }, 5000);
+    pollTimers.current.set(slug, timer);
+  };
+
+  const connect = async (slug: string) => {
+    statusGenerations.current.set(slug, (statusGenerations.current.get(slug) ?? 0) + 1);
     setBusySlug(slug);
     setError(null);
-    api(`/api/connectors/${slug}/authorize`, { method: "POST" })
-      .then(({ url }) => {
-        window.open(url);
-        // the user finishes OAuth in the browser; poll a few times to catch it.
-        // check the freshly-fetched result, not the `status` captured in this
-        // closure — that snapshot never updates, so it would always poll 6×
-        let tries = 0;
-        const timer = setInterval(() => {
-          void refreshStatus([slug]).then((s) => {
-            if (++tries >= 6 || s[slug]?.connected) clearInterval(timer);
-          });
-        }, 5000);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setBusySlug(null));
+    try {
+      const { url } = await api(`/api/connectors/${slug}/authorize`, { method: "POST" });
+      setPendingUrls((current) => ({ ...current, [slug]: url }));
+      setStatus((current) => ({ ...current, [slug]: { connected: false, pending: true, status: "INITIATED" } }));
+      startPolling(slug);
+      await openConnectUrl(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusySlug(null);
+    }
   };
 
   const disconnect = (slug: string) => {
@@ -236,7 +312,10 @@ export function PluginsPanel() {
             </div>
           ) : (
             visible.map((card, i) => {
-              const connected = status[card.slug]?.connected;
+              const serviceStatus = status[card.slug];
+              const connected = serviceStatus?.connected;
+              const pending = serviceStatus?.pending;
+              const failed = serviceStatus?.status && /^(expired|failed)$/i.test(serviceStatus.status);
               const busy = busySlug === card.slug;
               return (
                 <div
@@ -252,11 +331,19 @@ export function PluginsPanel() {
                       {card.label}
                       {connected && <span className="size-1.5 rounded-full bg-success" />}
                     </div>
-                    <div className="truncate text-[12px] text-ink-secondary">{card.blurb}</div>
+                    <div className="truncate text-[12px] text-ink-secondary">
+                      {pending ? "Finish setup in your browser" : failed ? "Authorization expired — try again" : card.blurb}
+                    </div>
                   </div>
                   <button
                     disabled={!configured || busy}
-                    onClick={() => (connected ? disconnect(card.slug) : connect(card.slug))}
+                    onClick={() => {
+                      if (connected) disconnect(card.slug);
+                      else if (pending && pendingUrls[card.slug]) {
+                        setError(null);
+                        void openConnectUrl(pendingUrls[card.slug]).catch((e) => setError(e.message));
+                      } else void connect(card.slug);
+                    }}
                     className={cn(
                       "w-[92px] rounded-lg py-1.5 text-[13px] disabled:opacity-50",
                       connected
@@ -268,6 +355,10 @@ export function PluginsPanel() {
                       <Loader2 size={13} className="mx-auto animate-spin" />
                     ) : connected ? (
                       "Disconnect"
+                    ) : pending ? (
+                      "Continue"
+                    ) : failed ? (
+                      "Retry"
                     ) : (
                       "Connect"
                     )}

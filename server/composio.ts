@@ -114,18 +114,61 @@ export async function connectionStatus(cfg: AppConfig, slugs: string[]) {
   const session = await ensureProjectSession(cfg);
   const params = new URLSearchParams({ limit: "50" });
   if (slugs.length) params.set("toolkits", slugs.join(","));
-  const res = await fetch(
-    `${apiBase()}/tool_router/session/${encodeURIComponent(session.session_id)}/toolkits?${params}`,
-    { headers: projectHeaders(cfg.composio.apiKey), signal: AbortSignal.timeout(15_000) },
-  );
+  const userId = session.config?.user_id ?? cfg.composio.userId;
+  const [res, accounts] = await Promise.all([
+    fetch(`${apiBase()}/tool_router/session/${encodeURIComponent(session.session_id)}/toolkits?${params}`, {
+      headers: projectHeaders(cfg.composio.apiKey),
+      signal: AbortSignal.timeout(15_000),
+    }),
+    // Session toolkits only include an account once it is usable. Read the
+    // account lifecycle too so the UI can distinguish an OAuth flow that is
+    // still waiting in the browser from one that expired or failed. Scoped
+    // keys may omit connected-account read permission, so this is additive:
+    // the normal session result remains the fallback.
+    userId
+      ? fetch(
+          `${apiBase()}/connected_accounts?${new URLSearchParams({ limit: "50", user_ids: userId })}`,
+          { headers: projectHeaders(cfg.composio.apiKey), signal: AbortSignal.timeout(15_000) },
+        )
+          .then(async (accountRes) => {
+            if (!accountRes.ok) return [];
+            const accountBody = (await accountRes.json()) as {
+              items?: Array<{ toolkit?: { slug?: string }; status?: string; updated_at?: string }>;
+            };
+            return Array.isArray(accountBody?.items) ? accountBody.items : [];
+          })
+          .catch(() => [])
+      : Promise.resolve([]),
+  ]);
   if (!res.ok) throw new Error(await responseError(res, `Composio toolkits: HTTP ${res.status}`));
   const body = (await res.json()) as { items?: Array<{ slug?: string; is_no_auth?: boolean; connected_account?: { status?: string } }> };
   const bySlug = new Map((body.items ?? []).map((item) => [item.slug?.toLowerCase(), item]));
+  const accountBySlug = new Map<string, { status?: string; updated_at?: string }>();
+  for (const account of accounts) {
+    const slug = account.toolkit?.slug?.toLowerCase();
+    if (!slug || !slugs.some((candidate) => candidate.toLowerCase() === slug)) continue;
+    const current = accountBySlug.get(slug);
+    // Prefer an active account. Otherwise the API is newest-first, but keep
+    // the timestamp comparison explicit so response ordering cannot lie.
+    if (
+      !current
+      || /^active$/i.test(account.status ?? "")
+      || (!/^active$/i.test(current.status ?? "") && (account.updated_at ?? "") > (current.updated_at ?? ""))
+    ) {
+      accountBySlug.set(slug, account);
+    }
+  }
   return Object.fromEntries(
     slugs.map((slug) => {
       const item = bySlug.get(slug.toLowerCase());
-      const state = item?.connected_account?.status ?? (item?.is_no_auth ? "ACTIVE" : "not_connected");
-      return [slug, { connected: item?.is_no_auth === true || /^active$/i.test(state), status: state }];
+      const account = accountBySlug.get(slug.toLowerCase());
+      const state = item?.connected_account?.status
+        ?? (item?.is_no_auth ? "ACTIVE" : account?.status ?? "not_connected");
+      return [slug, {
+        connected: item?.is_no_auth === true || /^active$/i.test(state),
+        pending: /^(initiated|initializing|pending)$/i.test(state),
+        status: state,
+      }];
     }),
   );
 }

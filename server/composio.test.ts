@@ -13,6 +13,7 @@ import {
 let api: Server;
 let base = "";
 const calls: Array<{ method: string; path: string; query: string; body: any }> = [];
+let malformedConnectedAccounts = false;
 
 beforeAll(async () => {
   api = createServer(async (req, res) => {
@@ -50,6 +51,17 @@ beforeAll(async () => {
           { slug: "github", connected_account: { id: "ca_github", status: "ACTIVE" } },
           { slug: "gmail", is_no_auth: true },
           { slug: "slack" },
+        ],
+      }));
+    }
+    if (req.method === "GET" && url.pathname === "/api/v3.1/connected_accounts") {
+      res.writeHead(200, { "content-type": "application/json" });
+      if (malformedConnectedAccounts) return res.end(JSON.stringify({ items: {} }));
+      return res.end(JSON.stringify({
+        items: [
+          { toolkit: { slug: "github" }, status: "ACTIVE", updated_at: "2026-08-17T08:00:00Z" },
+          { toolkit: { slug: "notion" }, status: "INITIATED", updated_at: "2026-08-17T08:01:00Z" },
+          { toolkit: { slug: "linear" }, status: "EXPIRED", updated_at: "2026-08-17T08:02:00Z" },
         ],
       }));
     }
@@ -113,11 +125,12 @@ describe.sequential("Composio Sessions", () => {
     const cfg: AppConfig = {
       composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
     };
-    await expect(connectionStatus(cfg, ["github", "gmail", "slack", "notion"])).resolves.toEqual({
-      github: { connected: true, status: "ACTIVE" },
-      gmail: { connected: true, status: "ACTIVE" },
-      slack: { connected: false, status: "not_connected" },
-      notion: { connected: false, status: "not_connected" },
+    await expect(connectionStatus(cfg, ["github", "gmail", "slack", "notion", "linear"])).resolves.toEqual({
+      github: { connected: true, pending: false, status: "ACTIVE" },
+      gmail: { connected: true, pending: false, status: "ACTIVE" },
+      slack: { connected: false, pending: false, status: "not_connected" },
+      notion: { connected: false, pending: true, status: "INITIATED" },
+      linear: { connected: false, pending: false, status: "EXPIRED" },
     });
     await expect(authorizeService(cfg, "github")).resolves.toEqual({
       url: "https://connect.composio.dev/link/github",
@@ -128,5 +141,20 @@ describe.sequential("Composio Sessions", () => {
         && call.path.endsWith("/connected_accounts/ca_github")
         && call.query === "?revoke_on_delete=true",
     )).toBe(true);
+  });
+
+  it("falls back to session toolkit state when connected-account items is malformed", async () => {
+    const cfg: AppConfig = {
+      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+    };
+    malformedConnectedAccounts = true;
+    try {
+      await expect(connectionStatus(cfg, ["github", "slack"])).resolves.toEqual({
+        github: { connected: true, pending: false, status: "ACTIVE" },
+        slack: { connected: false, pending: false, status: "not_connected" },
+      });
+    } finally {
+      malformedConnectedAccounts = false;
+    }
   });
 });
