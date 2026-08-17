@@ -1,7 +1,7 @@
 // Store persistence contract: bots.json + messages-<threadId>.json are
 // the durable record — everything here must survive a process restart
 // except `busy`, which never does (no turn survives one either).
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -27,6 +27,35 @@ describe("Store", () => {
     expect(messages[1].kind).toBe("options");
     expect(messages[1].card?.options.length).toBeGreaterThan(1);
     expect(bot.modelSelection).toEqual(selection());
+  });
+
+  it("createBot with seedMessages:false starts with an empty transcript", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({ name: "Imported" }, { seedMessages: false });
+    expect(store.messagesFor(bot.threadId)).toHaveLength(0);
+  });
+
+  it("addTaskUsage accumulates settled-turn totals per task and survives a restart", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    expect(store.addTaskUsage(bot.id, bot.threadId, { input: 1200, output: 300 })).toMatchObject({
+      usage: { input: 1200, output: 300, turns: 1 },
+    });
+    store.addTaskUsage(bot.id, bot.threadId, { input: 800, output: 100 });
+    store.addTaskUsage(bot.id, bot.threadId, { input: Number.NaN, output: -20 });
+    // a different thread never inherits another task's tally
+    expect(store.addTaskUsage(bot.id, "no-such-thread", { input: 5, output: 5 })).toBeNull();
+
+    const reloaded = new Store(selection);
+    expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 2000, output: 400, turns: 3 });
+  });
+
+  it("persists the per-bot composio gate", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.patchBot(bot.id, { composio: false });
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(bot.id)?.composio).toBe(false);
   });
 
   it("rotates colors across created bots", () => {
@@ -143,15 +172,15 @@ describe("Store", () => {
     expect(store.patchMessage(bot.threadId, "nope", {})).toBeNull();
   });
 
-  it("deleteBot removes the bot and its transcript file", () => {
+  it("deleteBot removes the bot and its durable transcript", () => {
     const store = new Store(selection);
     const bot = store.createBot();
-    const file = join(DATA_DIR, `messages-${bot.threadId}.json`);
-    expect(existsSync(file)).toBe(true);
+    // the transcript is durable — a fresh Store sees the seeded messages
+    expect(new Store(selection).messagesFor(bot.threadId).length).toBeGreaterThan(0);
 
     expect(store.deleteBot(bot.id)).toBe(true);
     expect(store.bot(bot.id)).toBeNull();
-    expect(existsSync(file)).toBe(false);
+    expect(new Store(selection).messagesFor(bot.threadId)).toHaveLength(0);
     expect(store.deleteBot(bot.id)).toBe(false);
   });
 
@@ -239,7 +268,9 @@ describe("Store", () => {
 
   it("migrates a pre-branching flat transcript file", () => {
     const store = new Store(selection);
-    const bot = store.createBot();
+    // seedMessages:false — a legacy-era thread has its history ONLY in the
+    // JSON file; any DB rows would (correctly) take precedence over it
+    const bot = store.createBot({}, { seedMessages: false });
     const legacy = [
       { id: "m1", role: "bot", kind: "text", text: "hello", at: 1 },
       { id: "m2", role: "user", kind: "text", text: "hi", at: 2 },
@@ -304,6 +335,13 @@ describe("Store task working folder", () => {
     store.patchBot(bot.id, { cwd: "/tmp/project-a" });
     expect(store.pinTaskCwd(bot.id, bot.threadId)).toBeNull();
     expect(store.taskByThread(bot.id, bot.threadId)?.cwd).toBeNull();
+  });
+
+  it("pins a supplied private workspace when the bot has no custom folder", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    expect(store.pinTaskCwd(bot.id, bot.threadId, "/private/bot-workspace")).toBe("/private/bot-workspace");
+    expect(store.taskByThread(bot.id, bot.threadId)?.cwd).toBe("/private/bot-workspace");
   });
 
   it("a legacy task that already has a session pins to the default, not the bot's new folder", () => {

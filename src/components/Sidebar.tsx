@@ -27,6 +27,19 @@ import {
   X,
 } from "lucide-react";
 import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
+
+/** One /api/search result: a text message somewhere in a transcript. */
+interface MessageHit {
+  threadId: string;
+  messageId: string;
+  at: number;
+  role: string;
+  snippet: string;
+  name: string;
+  botId?: string;
+  groupId?: string;
+  task?: string;
+}
 import { MausAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { useUpdaterState } from "@/lib/updater";
@@ -750,6 +763,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     restoreBot?: { id: string; name: string };
   } | null>(null);
   const [query, setQuery] = useState("");
+  const [messageHits, setMessageHits] = useState<MessageHit[]>([]);
 
   // Esc closes the drawer, mirroring ApiKeys.tsx:75-85. Bound only while the
   // drawer is open — on mobile, exactly when a bot/room context menu or the
@@ -870,6 +884,27 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const browser = capabilities.host.label === "Browser";
 
   const q = query.trim().toLowerCase();
+
+  // Message search rides the same box as the name filter: names match
+  // instantly from local state; transcript hits arrive from /api/search a
+  // debounce later. A stale response for an outdated query is dropped.
+  useEffect(() => {
+    if (!q) {
+      setMessageHits([]);
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      api(`/api/search?q=${encodeURIComponent(q)}&limit=12`)
+        .then((result: { hits?: MessageHit[] }) => alive && setMessageHits(result.hits ?? []))
+        .catch(() => alive && setMessageHits([]));
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [q]);
+
   const matchingBots = state.bots
     .filter((b) => !b.hidden)
     .filter(
@@ -1014,7 +1049,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       {/* Bot list */}
       <div className="flex-1 overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5">
-          {!chiefBot && visibleBots.length === 0 && visibleGroups.length === 0 && q && (
+          {!chiefBot && visibleBots.length === 0 && visibleGroups.length === 0 && messageHits.length === 0 && q && (
             <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">Nothing matches “{query}”</div>
           )}
           {chiefBot && (
@@ -1039,6 +1074,35 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               archiveDisabled={activeBotCount <= 1}
             />
           ))}
+          {q && messageHits.length > 0 && (
+            <div className="mt-3">
+              <div className="px-3 pb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
+                In conversations
+              </div>
+              {messageHits.map((hit) => (
+                <button
+                  key={`${hit.threadId}:${hit.messageId}`}
+                  onClick={() => {
+                    const targetBot = hit.botId ? state.bots.find((b) => b.id === hit.botId) : undefined;
+                    dispatch({ type: "select", id: hit.botId ?? hit.groupId ?? "" });
+                    // a hit on a non-active task opens THAT task, not
+                    // whichever one the bot happens to have in front
+                    if (targetBot && targetBot.threadId !== hit.threadId) {
+                      dispatch({ type: "switchTask", botId: targetBot.id, threadId: hit.threadId });
+                    }
+                    setQuery("");
+                  }}
+                  className="flex w-full flex-col gap-0.5 rounded-xl px-3 py-2 text-left hover:bg-raised/50"
+                >
+                  <span className="truncate text-[13px] font-medium text-ink">
+                    {hit.name}
+                    {hit.task ? <span className="font-normal text-ink-secondary"> · {hit.task}</span> : null}
+                  </span>
+                  <span className="line-clamp-2 text-[12.5px] text-ink-secondary">{hit.snippet}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

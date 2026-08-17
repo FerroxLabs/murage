@@ -5,7 +5,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll } from "vitest";
+import { afterAll, afterEach } from "vitest";
 
 import { removeTempDir } from "./cleanup.ts";
 
@@ -19,6 +19,15 @@ process.env.USERPROFILE = home;
 // footing that delete should stand on.
 process.env.OMB_COMPANION_DIR = join(home, ".openmausbot-companion");
 
+// SQLite keeps the database file open for the lifetime of its handle.
+// Windows will not remove a directory containing an open database, so close
+// the per-test handle before the next test resets its throwaway data dir.
+const { closeMessageDb } = await import("../message-db.ts");
+afterEach(closeMessageDb);
+
 // Windows holds a directory that is a live process's cwd, and a just-killed
 // CLI lets go a beat after the kill call returns — see removeTempDir.
-afterAll(() => removeTempDir(home));
+afterAll(async () => {
+  closeMessageDb();
+  await removeTempDir(home);
+});
