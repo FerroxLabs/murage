@@ -46,6 +46,7 @@ import { readCuaConnection } from "./local-computer.ts";
 import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease } from "./local-vm-lease.ts";
 import { RoutineManager, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { fetchGithubTeam, fetchLibraryTeam, fetchTeamCatalog } from "./team-library.ts";
 import { createTeamManifest, parseTeamManifest } from "./team-manifest.ts";
 import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./webhook-ingress.ts";
 import { WebhookManager } from "./webhooks.ts";
@@ -1837,16 +1838,15 @@ const server = createServer(async (req, res) => {
     }
     if (method === "POST" && path === "/api/teams/export") {
       const body = await readBody(req);
-      const name = typeof body.name === "string" ? body.name.trim() : "";
-      const rawMemberIds = Array.isArray(body.memberIds) ? body.memberIds : [];
-      if (!name) return json(res, 400, { error: "team name is required" });
-      if (rawMemberIds.length === 0) return json(res, 400, { error: "a team needs at least one bot" });
-      if (
-        rawMemberIds.some((id: unknown) => typeof id !== "string" || !store.bot(id)) ||
-        new Set(rawMemberIds).size !== rawMemberIds.length
-      ) {
-        return json(res, 400, { error: "team members are invalid" });
-      }
+      const profileName = cfg.profile?.name?.trim();
+      const name =
+        typeof body.name === "string" && body.name.trim()
+          ? body.name.trim()
+          : profileName
+            ? `${profileName}'s Team`
+            : "My OpenMaus Team";
+      const memberIds = store.bots.filter((bot) => !bot.hidden).map((bot) => bot.id);
+      if (memberIds.length === 0) return json(res, 400, { error: "Create a bot before exporting your team" });
       try {
         return json(
           res,
@@ -1854,15 +1854,41 @@ const server = createServer(async (req, res) => {
           createTeamManifest(
             {
               name,
-              memberIds: rawMemberIds as string[],
-              bulletin: "",
-              defaultResponder: { kind: "everyone" },
+              memberIds,
             },
             store.bots,
           ),
         );
       } catch (error) {
         return json(res, 400, { error: error instanceof Error ? error.message : "Team could not be exported" });
+      }
+    }
+    if (method === "GET" && path === "/api/team-library/catalog") {
+      try {
+        return json(res, 200, await fetchTeamCatalog());
+      } catch (error) {
+        return json(res, 502, { error: error instanceof Error ? error.message : "The team library is unavailable" });
+      }
+    }
+    m = path.match(/^\/api\/team-library\/teams\/([a-z0-9][a-z0-9-]*)$/);
+    if (m && method === "GET") {
+      try {
+        return json(res, 200, await fetchLibraryTeam(m[1]));
+      } catch (error) {
+        const status = (error as { status?: number }).status === 404 ? 404 : 502;
+        return json(res, status, { error: error instanceof Error ? error.message : "The team could not be loaded" });
+      }
+    }
+    if (method === "POST" && path === "/api/team-library/github") {
+      const body = await readBody(req);
+      if (typeof body.url !== "string" || !body.url.trim()) {
+        return json(res, 400, { error: "A GitHub URL is required" });
+      }
+      try {
+        return json(res, 200, await fetchGithubTeam(body.url));
+      } catch (error) {
+        const status = (error as { status?: number }).status === 404 ? 404 : 400;
+        return json(res, status, { error: error instanceof Error ? error.message : "The GitHub team could not be loaded" });
       }
     }
     if (method === "POST" && path === "/api/teams/import") {
@@ -1875,7 +1901,6 @@ const server = createServer(async (req, res) => {
       }
 
       const importedBots: ReturnType<typeof store.createBot>[] = [];
-      let importedGroupId: string | null = null;
       try {
         const selection = await defaultSelection();
         for (const member of manifest.team.members) {
@@ -1890,36 +1915,10 @@ const server = createServer(async (req, res) => {
             }),
           );
         }
-        const idByKey = new Map(
-          manifest.team.members.map((member, index) => [member.key, importedBots[index]!.id]),
-        );
-        const group = store.createGroup(
-          manifest.team.room.name,
-          importedBots.map((bot) => bot.id),
-        );
-        importedGroupId = group.id;
-        const responder = manifest.team.room.defaultResponder;
-        const defaultResponder: GroupDefaultResponder =
-          responder.kind === "member"
-            ? { kind: "member", botId: idByKey.get(responder.member)! }
-            : { kind: responder.kind };
-        const configuredGroup = store.patchGroup(group.id, {
-          bulletin: manifest.team.room.bulletin,
-          defaultResponder,
-        });
-        if (!configuredGroup) throw new Error("The imported room could not be configured");
-
         const publicBots = importedBots.map(publicBot);
-        // Other open windows need the new members before the room that
-        // references them. The importing window also folds the HTTP result.
         for (const bot of publicBots) broadcast({ kind: "bot", bot });
-        broadcast({ kind: "group", group: configuredGroup });
-        return json(res, 201, {
-          bots: publicBots,
-          group: { ...configuredGroup, messages: [] },
-        });
+        return json(res, 201, { bots: publicBots });
       } catch (error) {
-        if (importedGroupId) store.deleteGroup(importedGroupId);
         for (const bot of importedBots) store.deleteBot(bot.id);
         throw error;
       }

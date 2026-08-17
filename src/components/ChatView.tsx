@@ -41,6 +41,7 @@ import { SpeakButton } from "./SpeakButton";
 import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
 import { webhookMessageView } from "@/lib/webhook-message";
+import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -641,29 +642,41 @@ export function ChatView({ bot }: { bot: Bot }) {
   // false for a frame, and breaking there kills follow permanently
   // (upstream-verified failure). Scrolling back to the end re-arms it.
   const [follow, setFollow] = useState(true);
+  const followRef = useRef(true);
+  const previousScrollTop = useRef(0);
   const touchY = useRef(0);
 
-  useEffect(() => setFollow(true), [bot.id]);
+  const setBottomFollow = useCallback((next: boolean) => {
+    followRef.current = next;
+    setFollow(next);
+  }, []);
+
+  useEffect(() => setBottomFollow(true), [bot.id, setBottomFollow]);
   useEffect(() => {
-    if (follow) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    const el = scrollRef.current;
+    if (!el || !followRef.current) return;
+    el.scrollTo({ top: el.scrollHeight });
+    previousScrollTop.current = el.scrollTop;
   }, [bot.id, messages.length, streaming, reasoning, bot.busy, follow]);
 
   // keyboard is a scroll gesture too (upstream lesson): PageUp/Home break
   // follow like an upward wheel; the at-end onScroll check re-arms it
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "PageUp" || (e.key === "Home" && !(e.target instanceof HTMLTextAreaElement))) setFollow(false);
+      if (e.key === "PageUp" || (e.key === "Home" && !(e.target instanceof HTMLTextAreaElement))) {
+        setBottomFollow(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [setBottomFollow]);
 
   const atEnd = () => {
     const el = scrollRef.current;
-    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_FOLLOW_THRESHOLD;
   };
   const jumpToLatest = () => {
-    setFollow(true);
+    setBottomFollow(true);
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   };
 
@@ -749,17 +762,27 @@ export function ChatView({ bot }: { bot: Bot }) {
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-5 [overflow-anchor:none]"
         onWheel={(e) => {
-          if (e.deltaY < 0) setFollow(false);
-          else if (atEnd()) setFollow(true);
+          if (e.deltaY < 0) setBottomFollow(false);
+          else if (atEnd()) setBottomFollow(true);
         }}
         onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
         onTouchMove={(e) => {
           const y = e.touches[0]?.clientY ?? 0;
-          if (y > touchY.current + 4) setFollow(false);
-          else if (atEnd()) setFollow(true);
+          if (y > touchY.current + 4) setBottomFollow(false);
+          else if (atEnd()) setBottomFollow(true);
         }}
         onScroll={() => {
-          if (!follow && atEnd()) setFollow(true);
+          const el = scrollRef.current;
+          if (!el) return;
+          const scrollTop = el.scrollTop;
+          const resume = shouldResumeBottomFollow({
+            following: followRef.current,
+            previousScrollTop: previousScrollTop.current,
+            scrollTop,
+            distanceFromBottom: el.scrollHeight - scrollTop - el.clientHeight,
+          });
+          previousScrollTop.current = scrollTop;
+          if (resume) setBottomFollow(true);
         }}
       >
         <div

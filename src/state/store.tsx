@@ -472,7 +472,9 @@ function reducer(state: AppState, action: Action): AppState {
     case "botAdded":
       return withMascotMotion({
         ...state,
-        bots: [action.bot, ...state.bots],
+        // An HTTP create/import response and its SSE broadcast can race. Fold
+        // both paths without ever showing the same bot twice.
+        bots: [action.bot, ...state.bots.filter((bot) => bot.id !== action.bot.id)],
         activeView: "chat",
         selectedId: action.bot.id,
       }, action.bot.id, "arrive");

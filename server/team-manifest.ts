@@ -1,7 +1,9 @@
-import type { GroupDefaultResponder, MausColor } from "./store.ts";
+import type { MausColor } from "./store.ts";
 
 export const TEAM_MANIFEST_FORMAT = "openmaus.team" as const;
-export const TEAM_MANIFEST_VERSION = 1 as const;
+export const TEAM_MANIFEST_VERSION = 2 as const;
+export const LEGACY_TEAM_MANIFEST_VERSION = 1 as const;
+export const MAX_TEAM_MEMBERS = 200;
 
 const COLORS: readonly MausColor[] = [
   "green",
@@ -32,18 +34,31 @@ export type TeamManifestResponder =
   | { kind: "everyone" }
   | { kind: "mentions" };
 
-export interface TeamManifestV1 {
+export interface TeamManifestRoom {
+  name: string;
+  bulletin: string;
+  defaultResponder: TeamManifestResponder;
+}
+
+export interface ParsedTeamManifest {
+  format: typeof TEAM_MANIFEST_FORMAT;
+  version: typeof LEGACY_TEAM_MANIFEST_VERSION | typeof TEAM_MANIFEST_VERSION;
+  team: {
+    name: string;
+    description?: string;
+    members: TeamManifestMember[];
+    /** Present on legacy v1 files. New imports intentionally do not create it. */
+    room?: TeamManifestRoom;
+  };
+}
+
+export interface TeamManifestV2 {
   format: typeof TEAM_MANIFEST_FORMAT;
   version: typeof TEAM_MANIFEST_VERSION;
   team: {
     name: string;
     description?: string;
     members: TeamManifestMember[];
-    room: {
-      name: string;
-      bulletin: string;
-      defaultResponder: TeamManifestResponder;
-    };
   };
 }
 
@@ -59,8 +74,6 @@ interface ExportableBot {
 interface ExportableTeam {
   name: string;
   memberIds: string[];
-  bulletin: string;
-  defaultResponder: GroupDefaultResponder;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -82,10 +95,10 @@ function optionalString(value: unknown, field: string, max: number): string | un
 }
 
 /** Parse an untrusted shared file into the small, portable subset we support. */
-export function parseTeamManifest(value: unknown): TeamManifestV1 {
+export function parseTeamManifest(value: unknown): ParsedTeamManifest {
   if (!isRecord(value)) throw new Error("This is not a team file");
   if (value.format !== TEAM_MANIFEST_FORMAT) throw new Error("This is not an OpenMaus team file");
-  if (value.version !== TEAM_MANIFEST_VERSION) {
+  if (value.version !== LEGACY_TEAM_MANIFEST_VERSION && value.version !== TEAM_MANIFEST_VERSION) {
     throw new Error(`Team file version ${String(value.version)} is not supported`);
   }
   if (!isRecord(value.team)) throw new Error("team is required");
@@ -96,7 +109,9 @@ export function parseTeamManifest(value: unknown): TeamManifestV1 {
   if (!Array.isArray(team.members) || team.members.length === 0) {
     throw new Error("A team needs at least one member");
   }
-  if (team.members.length > 50) throw new Error("A team can have at most 50 members");
+  if (team.members.length > MAX_TEAM_MEMBERS) {
+    throw new Error(`A team can have at most ${MAX_TEAM_MEMBERS} members`);
+  }
 
   const seenKeys = new Set<string>();
   const members = team.members.map((raw, index): TeamManifestMember => {
@@ -132,36 +147,42 @@ export function parseTeamManifest(value: unknown): TeamManifestV1 {
     };
   });
 
-  if (!isRecord(team.room)) throw new Error("team.room is required");
-  const responder = team.room.defaultResponder;
-  if (!isRecord(responder) || typeof responder.kind !== "string") {
-    throw new Error("team.room.defaultResponder is required");
-  }
-  let defaultResponder: TeamManifestResponder;
-  if (responder.kind === "everyone" || responder.kind === "mentions") {
-    defaultResponder = { kind: responder.kind };
-  } else if (responder.kind === "member") {
-    const member = requiredString(responder.member, "team.room.defaultResponder.member", 64);
-    if (!seenKeys.has(member)) throw new Error(`Unknown default responder: ${member}`);
-    defaultResponder = { kind: "member", member };
-  } else {
-    throw new Error(`Unknown default responder kind: ${responder.kind}`);
-  }
-
-  return {
+  const parsed: ParsedTeamManifest = {
     format: TEAM_MANIFEST_FORMAT,
-    version: TEAM_MANIFEST_VERSION,
+    version: value.version,
     team: {
       name,
       ...(description ? { description } : {}),
       members,
-      room: {
-        name: requiredString(team.room.name, "team.room.name", 100),
-        bulletin: optionalString(team.room.bulletin, "team.room.bulletin", 12_000) ?? "",
-        defaultResponder,
-      },
     },
   };
+
+  // Version 1 bundled a room with every team. Validate it for compatibility,
+  // but importing a definition no longer creates that room implicitly.
+  if (value.version === LEGACY_TEAM_MANIFEST_VERSION) {
+    if (!isRecord(team.room)) throw new Error("team.room is required");
+    const responder = team.room.defaultResponder;
+    if (!isRecord(responder) || typeof responder.kind !== "string") {
+      throw new Error("team.room.defaultResponder is required");
+    }
+    let defaultResponder: TeamManifestResponder;
+    if (responder.kind === "everyone" || responder.kind === "mentions") {
+      defaultResponder = { kind: responder.kind };
+    } else if (responder.kind === "member") {
+      const member = requiredString(responder.member, "team.room.defaultResponder.member", 64);
+      if (!seenKeys.has(member)) throw new Error(`Unknown default responder: ${member}`);
+      defaultResponder = { kind: "member", member };
+    } else {
+      throw new Error(`Unknown default responder kind: ${responder.kind}`);
+    }
+    parsed.team.room = {
+      name: requiredString(team.room.name, "team.room.name", 100),
+      bulletin: optionalString(team.room.bulletin, "team.room.bulletin", 12_000) ?? "",
+      defaultResponder,
+    };
+  }
+
+  return parsed;
 }
 
 function memberKey(name: string, index: number, used: Set<string>): string {
@@ -181,15 +202,13 @@ function memberKey(name: string, index: number, used: Set<string>): string {
 }
 
 /** Build a shareable definition only: no IDs, transcripts, engines or permissions. */
-export function createTeamManifest(team: ExportableTeam, bots: ExportableBot[]): TeamManifestV1 {
+export function createTeamManifest(team: ExportableTeam, bots: ExportableBot[]): TeamManifestV2 {
   const byId = new Map(bots.map((bot) => [bot.id, bot]));
   const usedKeys = new Set<string>();
-  const keyById = new Map<string, string>();
   const members = team.memberIds.map((id, index) => {
     const bot = byId.get(id);
     if (!bot) throw new Error(`Team member ${id} no longer exists`);
     const key = memberKey(bot.name, index, usedKeys);
-    keyById.set(id, key);
     return {
       key,
       name: bot.name,
@@ -202,29 +221,15 @@ export function createTeamManifest(team: ExportableTeam, bots: ExportableBot[]):
     };
   });
 
-  let defaultResponder: TeamManifestResponder;
-  if (team.defaultResponder.kind === "member") {
-    const member = keyById.get(team.defaultResponder.botId) ?? members[0]?.key;
-    if (!member) throw new Error("A team needs at least one member");
-    defaultResponder = { kind: "member", member };
-  } else {
-    defaultResponder = { kind: team.defaultResponder.kind };
-  }
-
-  const manifest: TeamManifestV1 = {
+  const manifest: TeamManifestV2 = {
     format: TEAM_MANIFEST_FORMAT,
     version: TEAM_MANIFEST_VERSION,
     team: {
       name: team.name,
       members,
-      room: {
-        name: team.name,
-        bulletin: team.bulletin,
-        defaultResponder,
-      },
     },
   };
   // Keep export and import in lockstep: a file produced here must satisfy
   // the exact same limits and normalization as an untrusted shared file.
-  return parseTeamManifest(manifest);
+  return parseTeamManifest(manifest) as TeamManifestV2;
 }
