@@ -85,6 +85,14 @@ Open the pairing page, click **Start pairing**, and type the six digits into
 the phone. Stopping the process is the off switch — running it *is* the
 opt-in, so there is no toggle to forget.
 
+That is the standalone way to run it, and it is what to reach for when the
+harness is running on its own — a headless box, or `pnpm dev:server` in a
+terminal. **The normal desktop workflow is Settings → Companion**, which
+starts and stops this same sidecar as a child process and offers pairing and
+revocation inline; the loopback page above is the same API rendered for
+people not running the desktop app. Either way the sidecar only listens while
+it is switched on, so the opt-in is never implicit.
+
 | Environment | Default | |
 |---|---|---|
 | `OMB_PORT` | `8799` | where the harness is |

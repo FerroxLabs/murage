@@ -14,8 +14,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
-import { stopAndClean } from "./testing/teardown.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -114,7 +114,8 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await stopAndClean(child, home);
+    await waitForExit(child, { signal: "SIGTERM" });
+    await removeTempDir(home);
   });
 
   it(

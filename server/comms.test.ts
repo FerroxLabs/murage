@@ -16,9 +16,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { stopAndClean } from "./testing/teardown.ts";
 
 import { mentionedBots, normalizeGroupDefaultResponder, roomResponders } from "./store.ts";
+import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -173,7 +173,8 @@ describe("comms e2e (fake ACP fleet)", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await stopAndClean(child, home);
+    await waitForExit(child, { signal: "SIGTERM" });
+    await removeTempDir(home);
   });
 
   it("seals the internal comms endpoints behind the boot token", async () => {

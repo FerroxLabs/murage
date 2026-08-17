@@ -11,8 +11,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { openSse } from "./testing/sse.ts";
-import { stopAndClean } from "./testing/teardown.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -120,10 +120,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   boxStub?.close();
-  // Upstream added a bounded rmSync retry here for the same symptom; the
-  // shared teardown supersedes it — it also waits out the same-tick-SIGKILL
-  // race that makes the retry necessary in the first place.
-  await stopAndClean(child, home);
+  // Upstream fixed this same Linux scratch-cleanup flake with an inline
+  // retry loop; these helpers are that fix plus the cause — the retry AND
+  // an exit that is actually waited for before the delete begins.
+  await waitForExit(child, { signal: "SIGTERM" });
+  await removeTempDir(home);
 });
 
 describe("harness HTTP API", () => {
