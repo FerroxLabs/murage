@@ -11,6 +11,10 @@
 // sidecar to depend on someone else's API: assume nothing, and be correct
 // either way.
 
+/** Most an unterminated SSE frame may buffer before it is abandoned. Well
+ * clear of any real event — the harness's largest are a few KB. */
+const MAX_PENDING_BYTES = 1024 * 1024;
+
 /** Recursively drop `resumeCursors`, wherever it appears. */
 export function scrub<T>(value: T): T {
   if (Array.isArray(value)) return value.map(scrub) as unknown as T;
@@ -60,6 +64,17 @@ export function createSseScrubber(): (chunk: string) => string {
       pending = pending.slice(boundary + 2);
       out += scrubEvent(event) + "\n\n";
     }
+    // Buffering to a frame boundary is bounded by the frame. Buffering for a
+    // boundary that never comes is not, and there are two ways to get there:
+    // a stream framed with CRLF, where `\n\n` simply never matches, and a
+    // content-type that said event-stream over something that is not one.
+    // Both end as this process growing until it is killed.
+    //
+    // Past the cap the buffer is dropped rather than trimmed. A partial
+    // event is not recoverable — resuming mid-frame would emit a fragment
+    // that parses as a different event — so the honest outcome is to lose
+    // the frame and stay live for the next boundary.
+    if (pending.length > MAX_PENDING_BYTES) pending = "";
     return out;
   };
 }

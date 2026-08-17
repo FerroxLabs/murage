@@ -13,8 +13,23 @@
 // serve. Nothing upstream has to change, or even know this exists.
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 
+import { bearerToken } from "./devices.ts";
 import { denyReason } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
+
+/** How long a non-streaming harness call may take before we give up on it.
+ * Generous: some harness routes probe local CLIs, which is slow but real
+ * work. Short enough that a phone gets an answer rather than a spinner. */
+const UPSTREAM_TIMEOUT_MS = 30_000;
+
+/** Distinguishes "the harness never answered" from "there was nothing to
+ * answer" at the point where the only thing left is an error object. */
+class UpstreamTimeout extends Error {
+  constructor() {
+    super("upstream timed out");
+    this.name = "UpstreamTimeout";
+  }
+}
 
 export interface ProxyOptions {
   /** Where the harness is listening on loopback. */
@@ -60,12 +75,26 @@ const readJson = (req: IncomingMessage, limit = 64 * 1024): Promise<Record<strin
     });
   });
 
-const bearer = (header: string | undefined): string | null => {
-  const value = (header ?? "").trim();
-  return value.toLowerCase().startsWith("bearer ") ? value.slice(7).trim() || null : null;
-};
+/** One parser, shared with the registry that checks what it returns. Two of
+ * them is how a header authenticates on one code path and not the other. */
+const bearer = (header: string | undefined): string | null => bearerToken(header) ?? null;
 
+/**
+ * Answer with JSON, unless the response has already begun.
+ *
+ * Once a byte is on the wire the status line is spent, and writeHead throws
+ * ERR_HTTP_HEADERS_SENT. That matters most on the failure paths: an upstream
+ * that dies mid-stream fires `error` long after the SSE headers were flushed,
+ * and turning that into a second, fatal error inside an error handler would
+ * take the whole sidecar down. Destroying the socket is the only honest
+ * ending available at that point — the device sees a truncated response and
+ * reconnects, which is what it already does for a dropped connection.
+ */
 const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
   const text = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json",
@@ -89,6 +118,11 @@ const forwardHeaders = (req: IncomingMessage): Record<string, string> => {
   return out;
 };
 
+/** The request handler a paired device talks to.
+ *
+ * Checks the allowlist, answers pairing itself, and replays everything else
+ * to the harness on loopback as a request from this machine — which is what
+ * satisfies the harness's Host check without the harness knowing this exists. */
 export function createProxyHandler(options: ProxyOptions) {
   return function handle(req: IncomingMessage, res: ServerResponse): void {
     const path = (req.url ?? "/").split("?")[0];
@@ -135,6 +169,10 @@ export function createProxyHandler(options: ProxyOptions) {
         const isStream = String(contentType ?? "").includes("text/event-stream");
 
         if (isStream) {
+          // An idle SSE connection is a healthy one, so the inactivity
+          // deadline set below must not apply to it.
+          upstream.setTimeout(0);
+
           // Headers first and flushed, or nothing downstream believes the
           // connection is live. content-length is meaningless here and
           // content-encoding would be a lie once we rewrite the bytes.
@@ -154,7 +192,18 @@ export function createProxyHandler(options: ProxyOptions) {
           harness.setEncoding("utf8");
           harness.on("data", (chunk: string) => {
             const rewritten = scrubStream(chunk);
-            if (rewritten) res.write(rewritten);
+            if (!rewritten) return;
+            // res.write() returning false means the kernel buffer for the
+            // device's socket is full. Ignoring it is how a phone that has
+            // walked out of wifi — connected, not reading — turns into
+            // unbounded memory here: the harness keeps producing, and every
+            // unwritten frame stays queued in this process. Pause the
+            // upstream until the device catches up, which lets the
+            // backpressure reach the harness instead of stopping at us.
+            if (!res.write(rewritten)) {
+              harness.pause();
+              res.once("drain", () => harness.resume());
+            }
           });
           harness.on("end", () => res.end());
           harness.on("error", () => res.destroy());
@@ -233,8 +282,27 @@ export function createProxyHandler(options: ProxyOptions) {
       },
     );
 
-    upstream.on("error", () =>
-      sendJson(res, 502, { error: "OpenMausBot is not running on this computer" }),
+    // A harness that accepts the connection and then says nothing is not the
+    // same as one that is down, and only the second has an error to report.
+    // Without a deadline the first holds the device's request open forever —
+    // the phone shows a spinner with nothing behind it, and the socket is
+    // still pinned on both sides. Streams are exempt: an idle SSE connection
+    // is the normal, healthy state of one, and this timer would kill it.
+    //
+    // Set on the request, so it covers connect and first-byte alike.
+    upstream.setTimeout(UPSTREAM_TIMEOUT_MS, () => {
+      upstream.destroy(new UpstreamTimeout());
+    });
+
+    // Down and wedged are different things to be told, and only one of them
+    // is fixed by starting the app.
+    upstream.on("error", (err) =>
+      sendJson(res, 502, {
+        error:
+          err instanceof UpstreamTimeout
+            ? "OpenMausBot is not answering on this computer"
+            : "OpenMausBot is not running on this computer",
+      }),
     );
     req.pipe(upstream);
   };

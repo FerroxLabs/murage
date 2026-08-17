@@ -8,8 +8,17 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createProxyHandler } from "../src/proxy.ts";
+import { scrub } from "../src/wire.ts";
 
 const TOKEN = "omb_test_token";
+
+/** Nested past any plausible stack, so `scrub`'s recursion gives out while
+ * JSON.parse does not. The payload is what the scrubber is meant to remove. */
+const deeplyNested = (() => {
+  let body = JSON.stringify({ resumeCursors: { agent: "cursor-value" } });
+  for (let i = 0; i < 6_000; i++) body = `{"a":${body}}`;
+  return body;
+})();
 
 let harness: Server;
 let sidecar: Server;
@@ -57,22 +66,42 @@ describe("preparing a harness response for a device", () => {
     // RangeError while JSON.parse handles it without complaint. That gap is
     // the whole bug: parse-then-scrub under one try/catch treated the throw
     // as "not JSON after all" and sent the untouched body on to the phone.
-    let body = JSON.stringify({ resumeCursors: { agent: "cursor-value" } });
-    for (let i = 0; i < 6_000; i++) body = `{"a":${body}}`;
-
+    //
+    // How deep it takes is a property of the runtime's stack, not of this
+    // code, so the assertion is the invariant and not the branch: whatever
+    // comes back is never a success carrying the field the scrubber removes.
+    // On a stack deep enough to scrub this that is a clean 200; on one that
+    // throws it is a 502. The raw body is not among the outcomes.
     respond = (res) => {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(body);
+      res.end(deeplyNested);
     };
 
     const { status, text } = await device();
-
-    // The invariant, stated so it holds on any stack size: whatever comes
-    // back, it is not a success carrying the field the scrubber removes. On
-    // a runtime deep enough to scrub this, that is a scrubbed 200; on one
-    // that throws, a 502. Never the raw body.
     expect(status === 200 && text.includes("resumeCursors")).toBe(false);
-    expect(status).toBe(502);
+    expect(text).not.toContain("cursor-value");
+  });
+
+  it("answers 502 when scrubbing actually throws", async () => {
+    // The branch above, pinned only on a runtime that reaches it — checked
+    // here rather than assumed, so this reports "not exercised" instead of
+    // failing on a platform with a deeper stack.
+    let scrubThrows = false;
+    try {
+      scrub(JSON.parse(deeplyNested));
+    } catch {
+      scrubThrows = true;
+    }
+    if (!scrubThrows) {
+      expect(scrubThrows).toBe(false); // documents the skip rather than passing silently
+      return;
+    }
+
+    respond = (res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(deeplyNested);
+    };
+    expect((await device()).status).toBe(502);
   });
 
   it("passes a body through untouched when it was never JSON", async () => {

@@ -90,4 +90,27 @@ describe("createSseScrubber", () => {
     );
     expect(out).toBe('id: a:1\ndata: {"a":1}\n\nid: a:2\ndata: {"b":2}\n\n');
   });
+
+  it("gives up on a frame boundary that never arrives", () => {
+    // A CRLF-framed stream contains no "\n\n" at all, so every byte would be
+    // buffered forever waiting for a terminator that cannot appear. The two
+    // realistic sources are an intermediary that rewrites line endings and a
+    // content-type claiming event-stream over something that is not one.
+    const scrubStream = createSseScrubber();
+    const megabyte = "x".repeat(1024 * 1024);
+
+    expect(scrubStream(`data: ${megabyte}\r\n\r\n`)).toBe("");
+    // Whatever it was holding is gone rather than growing: a well-formed
+    // event after the drop still comes out whole, which is the property that
+    // matters — the stream stays live instead of dying with the buffer.
+    expect(scrubStream('data: {"kind":"hello"}\n\n')).toBe('data: {"kind":"hello"}\n\n');
+  });
+
+  it("does not drop a large but well-formed event", () => {
+    // The cap must sit clear of anything real, or a big-but-legitimate frame
+    // would vanish and look exactly like a bug in the harness.
+    const big = JSON.stringify({ kind: "bot", blob: "y".repeat(200 * 1024) });
+    const out = createSseScrubber()(`data: ${big}\n\n`);
+    expect(out).toBe(`data: ${big}\n\n`);
+  });
 });
