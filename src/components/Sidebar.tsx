@@ -2,6 +2,7 @@ import { track } from "@/lib/analytics";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  Archive,
   ArrowDownToLine,
   BellDot,
   Bot as BotIcon,
@@ -10,7 +11,6 @@ import {
   ClipboardCopy,
   Copy,
   Crown,
-  EyeOff,
   FolderPlus,
   Library,
   Loader2,
@@ -24,15 +24,16 @@ import {
   Puzzle,
   Trash2,
   Users,
+  X,
 } from "lucide-react";
-import { useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
+import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
 import { MausAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
 import { downloadAllBots } from "@/lib/team-files";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
-import { TeamLibraryPanel } from "./TeamLibraryPanel";
+import { TeamLibraryPanel, type TeamImportResult } from "./TeamLibraryPanel";
 import { RenameTitle } from "./RenameTitle";
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
@@ -347,7 +348,15 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }) {
+function BotContextMenu({
+  menu,
+  onClose,
+  onArchive,
+}: {
+  menu: MenuState;
+  onClose: () => void;
+  onArchive: (bot: Bot) => void;
+}) {
   const { state, dispatch } = useStore();
   const bot = state.bots.find((b) => b.id === menu.botId);
 
@@ -369,6 +378,13 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
   if (!bot) return null;
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
+  const visibleBotCount = state.bots.filter((candidate) => !candidate.hidden).length;
+  const archiveBlocked = Boolean(bot.chiefOfStaff) || visibleBotCount <= 1;
+  const archiveHint = bot.chiefOfStaff
+    ? "Choose another Chief of Staff first"
+    : visibleBotCount <= 1
+      ? "Keep at least one active bot"
+      : undefined;
   // keep the menu on-screen near the click
   const top = Math.max(8, Math.min(menu.y, window.innerHeight - 380));
   const left = Math.min(menu.x, window.innerWidth - 240);
@@ -441,12 +457,12 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
         }),
         divider("d3"),
         item(
-          <EyeOff size={16} className="text-ink-secondary" />,
-          "Hide from sidebar",
-          () => dispatch({ type: "updateBot", botId: bot.id, patch: { hidden: true } }),
+          <Archive size={16} className="text-ink-secondary" />,
+          "Archive",
+          () => onArchive(bot),
           {
-            disabled: Boolean(bot.chiefOfStaff),
-            hint: bot.chiefOfStaff ? "Choose another Chief of Staff first" : undefined,
+            disabled: archiveBlocked,
+            hint: archiveHint,
           },
         ),
         item(<Trash2 size={16} />, "Delete", () => dispatch({ type: "deleteBot", botId: bot.id }), {
@@ -457,7 +473,17 @@ function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => voi
   );
 }
 
-function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => void }) {
+function BotListItem({
+  bot,
+  onMenu,
+  onArchive,
+  archiveDisabled,
+}: {
+  bot: Bot;
+  onMenu: (menu: MenuState) => void;
+  onArchive: (bot: Bot) => void;
+  archiveDisabled: boolean;
+}) {
   const { state, dispatch } = useStore();
   const [renaming, setRenaming] = useState(false);
   const selected = state.activeView === "chat" && state.selectedId === bot.id;
@@ -466,7 +492,7 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
   const visible = visibleMessages(bot);
   const last = visible.at(-1);
   const rowClass = cn(
-    "flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left",
+    "flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 pr-10 text-left",
     bot.chiefOfStaff
       ? selected
         ? "border-accent/40 bg-accent/15"
@@ -497,7 +523,7 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
             />
           </span>
           {selected && last && !renaming && (
-            <span className="shrink-0 text-xs text-ink-secondary">
+            <span className="shrink-0 text-xs text-ink-secondary transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
               {formatTime(last.at)}
             </span>
           )}
@@ -535,21 +561,174 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
   }
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={() => dispatch({ type: "select", id: bot.id })}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          dispatch({ type: "select", id: bot.id });
+    <div className="group relative">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => dispatch({ type: "select", id: bot.id })}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            dispatch({ type: "select", id: bot.id });
+          }
+        }}
+        onContextMenu={onContextMenu}
+        className={rowClass}
+      >
+        {body}
+      </div>
+      <button
+        type="button"
+        disabled={archiveDisabled}
+        onClick={() => onArchive(bot)}
+        aria-label={`Archive ${bot.name}`}
+        title={
+          bot.chiefOfStaff
+            ? "Choose another Chief of Staff first"
+            : archiveDisabled
+              ? "Keep at least one active bot"
+              : `Archive ${bot.name}`
         }
-      }}
-      onContextMenu={onContextMenu}
-      className={rowClass}
-    >
-      {body}
+        className="absolute right-2 top-2.5 flex size-7 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 disabled:cursor-default disabled:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100"
+      >
+        <Archive size={14} />
+      </button>
     </div>
+  );
+}
+
+function ArchivedBotsPanel({
+  bots,
+  onClose,
+  onRestored,
+}: {
+  bots: Bot[];
+  onClose: () => void;
+  onRestored: (message: string) => void;
+}) {
+  const { dispatch } = useStore();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [restoringAll, setRestoringAll] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busyId && !restoringAll) onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busyId, onClose, restoringAll]);
+
+  const restore = async (bot: Bot) => {
+    setBusyId(bot.id);
+    setError("");
+    try {
+      const response = await api(`/api/bots/${bot.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ hidden: false }),
+      });
+      dispatch({ type: "botPatched", bot: response.bot });
+      dispatch({ type: "select", id: bot.id });
+      onRestored(`${bot.name} restored`);
+      if (bots.length === 1) onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const restoreAll = async () => {
+    setRestoringAll(true);
+    setError("");
+    try {
+      const responses = await Promise.all(
+        bots.map((bot) =>
+          api(`/api/bots/${bot.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ hidden: false }),
+          }),
+        ),
+      );
+      for (const response of responses) dispatch({ type: "botPatched", bot: response.bot });
+      const first = bots[0];
+      if (first) dispatch({ type: "select", id: first.id });
+      onRestored(`${bots.length} ${bots.length === 1 ? "bot" : "bots"} restored`);
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRestoringAll(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
+      onMouseDown={(event) => event.target === event.currentTarget && !busyId && !restoringAll && onClose()}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="archived-bots-title"
+        tabIndex={-1}
+        className="animate-pop-in flex max-h-[min(680px,calc(100dvh-2rem))] w-full max-w-[760px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
+      >
+        <header className="flex items-start justify-between gap-4 px-6 pb-4 pt-6 sm:px-8 sm:pt-7">
+          <div>
+            <h2 id="archived-bots-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Archived bots</h2>
+            <p className="mt-1 text-[13px] text-ink-secondary">Conversations are kept until you choose to delete a bot.</p>
+          </div>
+          <div className="flex items-center gap-1">
+            {bots.length > 1 && (
+              <button
+                onClick={() => void restoreAll()}
+                disabled={restoringAll || Boolean(busyId)}
+                className="flex items-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
+              >
+                {restoringAll && <Loader2 size={13} className="animate-spin" />}
+                Restore all
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              disabled={restoringAll || Boolean(busyId)}
+              className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
+              aria-label="Close archived bots"
+            >
+              <X size={21} />
+            </button>
+          </div>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-3 sm:px-8">
+          <div className="mb-3 text-[12px] font-medium text-ink-secondary">{bots.length} archived</div>
+          <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
+            {bots.map((bot) => (
+              <div key={bot.id} className="flex min-h-[82px] items-center gap-3 border-b border-hairline/35 px-1 py-3">
+                <MausAvatar color={bot.color} state="happy" size={42} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[14px] font-medium text-ink">{bot.name}</div>
+                  <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{bot.title || "Bot"}</div>
+                </div>
+                <button
+                  onClick={() => void restore(bot)}
+                  disabled={restoringAll || Boolean(busyId)}
+                  className="flex min-w-[78px] items-center justify-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
+                >
+                  {busyId === bot.id && <Loader2 size={13} className="animate-spin" />}
+                  Restore
+                </button>
+              </div>
+            ))}
+          </div>
+          {error && <div role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -562,8 +741,14 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
   const [teamLibraryOpen, setTeamLibraryOpen] = useState(false);
+  const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [exportingTeam, setExportingTeam] = useState(false);
-  const [teamFeedback, setTeamFeedback] = useState<{ error: boolean; text: string } | null>(null);
+  const [teamFeedback, setTeamFeedback] = useState<{
+    error: boolean;
+    text: string;
+    undo?: TeamImportResult;
+    restoreBot?: { id: string; name: string };
+  } | null>(null);
   const [query, setQuery] = useState("");
 
   // Esc closes the drawer, mirroring ApiKeys.tsx:75-85. Bound only while the
@@ -602,6 +787,85 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     }
   };
 
+  const undoTeamLoad = async (result: TeamImportResult) => {
+    setTeamFeedback(null);
+    try {
+      const archiveNew = await Promise.all(
+        result.importedBotIds.map((botId) =>
+          api(`/api/bots/${botId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ hidden: true, chiefOfStaff: false }),
+          }),
+        ),
+      );
+      for (const response of archiveNew) dispatch({ type: "botPatched", bot: response.bot });
+
+      const previousChief = result.archived.find((bot) => bot.chiefOfStaff);
+      const restoreOthers = await Promise.all(
+        result.archived
+          .filter((bot) => !bot.chiefOfStaff)
+          .map((bot) =>
+            api(`/api/bots/${bot.id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ hidden: false }),
+            }),
+          ),
+      );
+      for (const response of restoreOthers) dispatch({ type: "botPatched", bot: response.bot });
+      if (previousChief) {
+        const response = await api(`/api/bots/${previousChief.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ hidden: false, chiefOfStaff: true }),
+        });
+        dispatch({ type: "botPatched", bot: response.bot });
+      }
+      const first = result.archived[0];
+      if (first) dispatch({ type: "select", id: first.id });
+      setTeamFeedback({ error: false, text: "Previous team restored" });
+    } catch (cause) {
+      setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
+    }
+  };
+
+  const archiveBot = async (bot: Bot) => {
+    const activeBots = state.bots.filter((candidate) => !candidate.hidden);
+    if (bot.chiefOfStaff || activeBots.length <= 1) return;
+    setTeamFeedback(null);
+    try {
+      const response = await api(`/api/bots/${bot.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ hidden: true }),
+      });
+      dispatch({ type: "botPatched", bot: response.bot });
+      if (state.selectedId === bot.id) {
+        const next = activeBots.find((candidate) => candidate.id !== bot.id);
+        if (next) dispatch({ type: "select", id: next.id });
+      }
+      setTeamFeedback({
+        error: false,
+        text: `${bot.name} archived`,
+        restoreBot: { id: bot.id, name: bot.name },
+      });
+    } catch (cause) {
+      setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
+    }
+  };
+
+  const undoBotArchive = async (bot: { id: string; name: string }) => {
+    setTeamFeedback(null);
+    try {
+      const response = await api(`/api/bots/${bot.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ hidden: false }),
+      });
+      dispatch({ type: "botPatched", bot: response.bot });
+      dispatch({ type: "select", id: bot.id });
+      setTeamFeedback({ error: false, text: `${bot.name} restored` });
+    } catch (cause) {
+      setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
+    }
+  };
+
   const macInset = capabilities.windowChrome === "mac-inset";
   const browser = capabilities.host.label === "Browser";
 
@@ -620,6 +884,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     .filter((bot) => !bot.chiefOfStaff)
     .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
   const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
+  const activeBotCount = state.bots.filter((bot) => !bot.hidden).length;
+  const archivedBots = state.bots.filter((bot) => bot.hidden);
+  const pendingTeamUndo = teamFeedback?.undo;
+  const pendingBotUndo = teamFeedback?.restoreBot;
 
   return (
     <aside
@@ -707,8 +975,21 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <Library size={16} className="text-ink-secondary" />
-                  Add Team
+                  Teams
                 </button>
+                {archivedBots.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setPlusOpen(false);
+                      setArchivedBotsOpen(true);
+                    }}
+                    className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                  >
+                    <Archive size={16} className="text-ink-secondary" />
+                    <span className="flex-1">Archived bots</span>
+                    <span className="text-[11.5px] text-ink-secondary">{archivedBots.length}</span>
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -738,14 +1019,25 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           )}
           {chiefBot && (
             <div className="mb-1.5">
-              <BotListItem bot={chiefBot} onMenu={setMenu} />
+              <BotListItem
+                bot={chiefBot}
+                onMenu={setMenu}
+                onArchive={(bot) => void archiveBot(bot)}
+                archiveDisabled
+              />
             </div>
           )}
           {visibleGroups.map((g) => (
             <GroupListItem key={g.id} group={g} onMenu={setRoomMenu} />
           ))}
           {visibleBots.map((b) => (
-            <BotListItem key={b.id} bot={b} onMenu={setMenu} />
+            <BotListItem
+              key={b.id}
+              bot={b}
+              onMenu={setMenu}
+              onArchive={(bot) => void archiveBot(bot)}
+              archiveDisabled={activeBotCount <= 1}
+            />
           ))}
         </div>
       </div>
@@ -793,7 +1085,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
       </div>
 
-      {menu && <BotContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {menu && <BotContextMenu menu={menu} onClose={() => setMenu(null)} onArchive={(bot) => void archiveBot(bot)} />}
       {roomMenu && (
         <RoomContextMenu
           menu={roomMenu}
@@ -801,13 +1093,31 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         />
       )}
       {newRoom && <NewRoomPanel onClose={() => setNewRoom(false)} />}
+      {archivedBotsOpen && (
+        <ArchivedBotsPanel
+          bots={archivedBots}
+          onClose={() => setArchivedBotsOpen(false)}
+          onRestored={(message) => setTeamFeedback({ error: false, text: message })}
+        />
+      )}
       {teamLibraryOpen && (
         <TeamLibraryPanel
           returnFocusRef={importReturnRef}
           onClose={() => setTeamLibraryOpen(false)}
-          onImported={(name, members) => {
+          onImported={(result) => {
             setTeamLibraryOpen(false);
-            setTeamFeedback({ error: false, text: `${name} imported · ${members} ${members === 1 ? "bot" : "bots"}` });
+            setTeamFeedback(
+              result.archived.length > 0
+                ? {
+                    error: false,
+                    text: `${result.name} loaded · ${result.members} ${result.members === 1 ? "bot" : "bots"}`,
+                    undo: result,
+                  }
+                : {
+                    error: false,
+                    text: `${result.name} loaded · ${result.members} ${result.members === 1 ? "bot" : "bots"}`,
+                  },
+            );
           }}
         />
       )}
@@ -822,7 +1132,25 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 : "border-hairline/50 bg-card text-ink",
             )}
           >
-            {teamFeedback.text}
+            <div className="flex items-center gap-3">
+              <span>{teamFeedback.text}</span>
+              {pendingTeamUndo && (
+                <button
+                  onClick={() => void undoTeamLoad(pendingTeamUndo)}
+                  className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
+                >
+                  Undo
+                </button>
+              )}
+              {pendingBotUndo && (
+                <button
+                  onClick={() => void undoBotArchive(pendingBotUndo)}
+                  className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
+                >
+                  Undo
+                </button>
+              )}
+            </div>
           </div>,
           document.body,
         )}

@@ -9,6 +9,7 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { approvalKey, autoDecision } from "./auto-approve.ts";
+import { validateBotCwd } from "./bot-cwd.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
@@ -1041,6 +1042,9 @@ async function startTurn(
                 .join(" and ")} in their message — bring them in with ask_bot and fold their reply into your answer.`
             : ""),
         integrations,
+        // pinned per task on its first turn — see TaskRecord.cwd. A cloud
+        // run happens on the box, where a host folder means nothing.
+        cwd: opts?.runOn === "cloud" ? undefined : (store.pinTaskCwd(bot.id, threadId) ?? undefined),
       });
       // dispatched: the rewind is spent, and the old cursors are dead
       if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
@@ -1907,6 +1911,10 @@ const server = createServer(async (req, res) => {
       }
     }
     if (method === "POST" && path === "/api/teams/import") {
+      const importMode = url.searchParams.get("mode") ?? "add";
+      if (importMode !== "add" && importMode !== "replace") {
+        return json(res, 400, { error: "Team import mode must be add or replace" });
+      }
       const body = await readBody(req);
       let manifest;
       try {
@@ -1915,6 +1923,14 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: error instanceof Error ? error.message : "Invalid team file" });
       }
 
+      // Snapshot before creating anything so replace never archives the new
+      // team. Old bots are hidden only after every new bot was created; a
+      // failed import therefore leaves the current workspace untouched.
+      const archived = importMode === "replace"
+        ? store.bots
+            .filter((bot) => !bot.hidden)
+            .map((bot) => ({ id: bot.id, chiefOfStaff: Boolean(bot.chiefOfStaff) }))
+        : [];
       const importedBots: ReturnType<typeof store.createBot>[] = [];
       try {
         const selection = await defaultSelection();
@@ -1930,9 +1946,14 @@ const server = createServer(async (req, res) => {
             }),
           );
         }
+        const archivedBots = archived.flatMap(({ id }) => {
+          const bot = store.patchBot(id, { hidden: true, chiefOfStaff: false });
+          return bot ? [publicBot(bot)] : [];
+        });
         const publicBots = importedBots.map(publicBot);
+        for (const bot of archivedBots) broadcast({ kind: "bot", bot });
         for (const bot of publicBots) broadcast({ kind: "bot", bot });
-        return json(res, 201, { bots: publicBots });
+        return json(res, 201, { bots: publicBots, archivedBots, archived });
       } catch (error) {
         for (const bot of importedBots) store.deleteBot(bot.id);
         throw error;
@@ -2066,6 +2087,11 @@ const server = createServer(async (req, res) => {
       }
       if (body.chiefOfStaff !== undefined && typeof body.chiefOfStaff !== "boolean") {
         return json(res, 400, { error: "chiefOfStaff must be true or false" });
+      }
+      if (body.cwd !== undefined) {
+        const checked = validateBotCwd(body.cwd);
+        if (!checked.ok) return json(res, 400, { error: checked.error });
+        patch.cwd = checked.cwd ?? undefined;
       }
       if (body.hidden === true && existing?.chiefOfStaff && body.chiefOfStaff !== false) {
         return json(res, 400, { error: "choose another Chief of Staff before hiding this bot" });
