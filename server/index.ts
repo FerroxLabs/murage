@@ -543,6 +543,13 @@ bus.subscribe((event: RuntimeEvent) => {
       const reply = lastReply.get(event.threadId) ?? "";
       lastReply.delete(event.threadId);
       if (bot) {
+        // bank what this turn spent before the bot broadcast below carries
+        // the task list to every window
+        store.addTaskUsage(bot.id, event.threadId, {
+          input: event.usage?.input,
+          output: event.usage?.output,
+          costUsd: event.cost ?? null,
+        });
         store.patchBot(bot.id, { busy: false, unread: true });
         broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
         notify(buildNotification("done", bot, event.threadId, reply));

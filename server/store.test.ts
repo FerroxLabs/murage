@@ -273,3 +273,47 @@ describe("Store", () => {
     expect(reloaded.bot(bot.id)?.busy).toBe(false);
   });
 });
+
+describe("Store task usage", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("banks each turn's tokens and cost on the task, counting turns", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    expect(store.addTaskUsage(bot.id, bot.threadId, { input: 100, output: 20, costUsd: 0.01 })).toEqual({
+      input: 100,
+      output: 20,
+      costUsd: 0.01,
+      turns: 1,
+    });
+    expect(store.addTaskUsage(bot.id, bot.threadId, { input: 50, output: 5, costUsd: 0.005 })).toEqual({
+      input: 150,
+      output: 25,
+      costUsd: 0.015,
+      turns: 2,
+    });
+    expect(store.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 150, output: 25, costUsd: 0.015, turns: 2 });
+  });
+
+  it("keeps cost null until some turn reports one, then sums only reported costs", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    expect(store.addTaskUsage(bot.id, bot.threadId, { input: 10, output: 1, costUsd: null })?.costUsd).toBeNull();
+    expect(store.addTaskUsage(bot.id, bot.threadId, { input: 10, output: 1, costUsd: 0.02 })?.costUsd).toBe(0.02);
+    expect(store.addTaskUsage(bot.id, bot.threadId, { input: 10, output: 1, costUsd: null })?.costUsd).toBe(0.02);
+  });
+
+  it("counts a turn that reported no tokens at all", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    expect(store.addTaskUsage(bot.id, bot.threadId, { costUsd: null })).toEqual({ input: 0, output: 0, costUsd: null, turns: 1 });
+  });
+
+  it("ignores an unknown task", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    expect(store.addTaskUsage(bot.id, "nope", { input: 1, output: 1, costUsd: null })).toBeNull();
+  });
+});

@@ -97,6 +97,16 @@ export interface Task {
   threadId: string;
   title: string;
   createdAt: number;
+  /** what this task has spent, banked once per settled turn */
+  usage?: TaskUsage;
+}
+
+export interface TaskUsage {
+  input: number;
+  output: number;
+  /** null until any turn reported a cost — most engines never do */
+  costUsd: number | null;
+  turns: number;
 }
 
 export interface Bot {
@@ -196,6 +206,8 @@ export interface InstanceInfo {
     reason?: string;
     authenticated?: boolean;
     version?: string | null;
+    /** a reported cost on a subscription is notional; the UI says so */
+    billing?: "metered" | "subscription";
   };
   models: { default: string; options: Array<{ id: string; label: string; custom?: boolean }> };
   capabilities?: { computerMcp?: boolean; agentsMcp?: boolean; effortLevels?: readonly EffortLevel[] };
@@ -209,7 +221,7 @@ export interface InstanceInfo {
   cliCandidates?: string[];
 }
 
-export type AppSettingsSection = "general" | "connections" | "engines" | "voice" | "computer";
+export type AppSettingsSection = "general" | "connections" | "engines" | "voice" | "computer" | "usage";
 
 interface AppState {
   bots: Bot[];

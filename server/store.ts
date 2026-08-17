@@ -115,6 +115,16 @@ export interface TaskRecord {
   createdAt: number;
   /** provider-native continuation per instance, for THIS task only */
   resumeCursors: Record<string, unknown>;
+  /** what this task has spent: banked once per turn from turn.completed */
+  usage?: TaskUsage;
+}
+
+export interface TaskUsage {
+  input: number;
+  output: number;
+  /** null until any turn reports a cost — most engines never do */
+  costUsd: number | null;
+  turns: number;
 }
 
 /** What a task is called before its first message names it. */
@@ -654,6 +664,28 @@ export class Store {
     // routine task working in the background.
     if (!threadId || bot.threadId === threadId) bot.resumeCursors[instanceId] = cursor;
     this.saveBots();
+  }
+
+  /** Bank one settled turn onto its task. Called once per turn.completed;
+   * the running per-driver token indicator is deliberately not used here
+   * because its meaning differs by driver. */
+  addTaskUsage(
+    botId: string,
+    threadId: string,
+    turn: { input?: number; output?: number; costUsd: number | null },
+  ): TaskUsage | null {
+    const task = this.taskByThread(botId, threadId);
+    if (!task) return null;
+    const prev = task.usage ?? { input: 0, output: 0, costUsd: null, turns: 0 };
+    const cost = typeof turn.costUsd === "number" && Number.isFinite(turn.costUsd) ? turn.costUsd : null;
+    task.usage = {
+      input: prev.input + (turn.input ?? 0),
+      output: prev.output + (turn.output ?? 0),
+      costUsd: cost === null ? prev.costUsd : (prev.costUsd ?? 0) + cost,
+      turns: prev.turns + 1,
+    };
+    this.saveBots();
+    return task.usage;
   }
 
   // ── tasks ─────────────────────────────────────────────────────────────
