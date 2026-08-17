@@ -20,13 +20,14 @@ import {
   setupCommands,
   type LifecycleAction,
 } from "./container-computer.ts";
-import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
-import { resetPathCache } from "./env-path.ts";
+import { ensureDirs, instanceConfigs, loadConfig, saveConfig, withInstanceCli, EVENTS_DIR, NATIVE_DIR, type AppConfig } from "./config.ts";
+import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts";
+import { describeSpawnFailure, execCli } from "./procs.ts";
 import { buildNotification, type Notification } from "./notify.ts";
 import { isEffortLevel, type RuntimeEvent } from "./contracts.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
-import { getOrCreateChannel, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
+import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
 import { discardDelegations, drainDelegations, queueDelegation, type QueueResult } from "./delegations.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
@@ -558,12 +559,45 @@ bus.subscribe((event: RuntimeEvent) => {
           });
         }
       }
+      // A delegated turn's terminal state belongs in the A⇄B channel:
+      // the request was mirrored there when the delegation drained, and a
+      // channel that only ever shows requests is half a record. Mirror the
+      // reply on success; mirror a failed/stopped terminal chip otherwise.
+      finalizeDelegationWatch(event.threadId, event.ok, reply);
       // group busy/unread settle in the group turn engine, which knows
       // whether more member turns are queued behind this one
       break;
     }
   }
 });
+
+// Delegated turns are fire-and-forget, so the drain cannot hand the
+// peer's reply back to the caller the way ask_bot does. This watch map
+// (target threadId → channel) lets the main fold mirror the delegated
+// turn's TERMINAL state into the A⇄B channel when it completes — the
+// channel stays the full record of the handoff, not just its request.
+const delegationWatch = new Map<string, { channelId?: string; toBotId: string }>();
+
+/** Consume one delegated-turn watch and mirror exactly one terminal state.
+ * Some harness paths settle a busy bot without a provider turn.completed
+ * event, so they call this same finalizer explicitly. */
+function finalizeDelegationWatch(
+  threadId: string,
+  ok: boolean,
+  reply = "",
+  failureName = "Delegated turn did not finish",
+): boolean {
+  const watched = delegationWatch.get(threadId);
+  if (!watched) return false;
+  delegationWatch.delete(threadId);
+  const target = store.bot(watched.toBotId);
+  const channel = watched.channelId ? store.group(watched.channelId) : undefined;
+  if (!target || !channel) return true;
+  if (ok && reply.trim()) mirrorReply(commsBus, target, reply, channel);
+  else if (ok) mirrorActivity(commsBus, target, channel, "Delegated turn completed", true);
+  else mirrorActivity(commsBus, target, channel, failureName, false);
+  return true;
+}
 
 // Drain queued delegations for a source thread after its turn settles.
 // Run as a separate subscriber so the drain logic stays out of the main
@@ -575,17 +609,27 @@ bus.subscribe((event: RuntimeEvent) => {
   // firing it later: the user who hit Stop does not expect the delegations
   // that turn queued to run anyway, minutes later, on an unrelated turn.
   if (!event.ok) return void discardDelegations(commsBus, event.threadId);
-  drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth, sourceThreadId) => {
+  drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth, sourceThreadId, channel) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
     // child. Every delegation failure has to land as a chip instead.
-    return startTurn(toBotId, text, {
-      commsDepth,
-      unattended: isUnattended(store.botByThread(sourceThreadId)?.id),
-    }).catch((err) => {
+    const targetThreadId = store.bot(toBotId)?.threadId;
+    if (targetThreadId) delegationWatch.set(targetThreadId, { channelId: channel?.id, toBotId });
+    let failureReported = false;
+    const reportStartFailure = (error: unknown) => {
+      if (failureReported) return;
+      failureReported = true;
       const bot = store.bot(toBotId);
-      const why = err instanceof Error ? err.message : String(err);
+      const why = error instanceof Error ? error.message : String(error);
+      if (targetThreadId) {
+        finalizeDelegationWatch(
+          targetThreadId,
+          false,
+          "",
+          `Delegated turn could not start — ${why.slice(0, 120)}`,
+        );
+      }
       const source = store.botByThread(sourceThreadId);
       if (!source) return;
       const note = store.appendMessage(sourceThreadId, {
@@ -594,6 +638,16 @@ bus.subscribe((event: RuntimeEvent) => {
         tool: { name: `error: delegation to @${bot?.name ?? toBotId} could not start — ${why.slice(0, 120)}`, ok: false },
       });
       broadcast({ kind: "message", threadId: sourceThreadId, message: note });
+    };
+    return startTurn(toBotId, text, {
+      commsDepth,
+      unattended: isUnattended(store.botByThread(sourceThreadId)?.id),
+      // startTurn schedules provider/integration setup after marking the bot
+      // busy. Those asynchronous setup failures do not emit turn.completed,
+      // so clear the watch and report them through this callback too.
+      onDispatchError: reportStartFailure,
+    }).catch((err) => {
+      reportStartFailure(err);
     });
   });
 });
@@ -793,8 +847,9 @@ async function startTurn(
       // the user's connected apps, but only to a driver that can mount
       // them — a key in the config says the connections exist, not that
       // this engine can reach them
-      if (cfg.composio?.key && instance.adapter.capabilities.composioMcp === true) {
-        integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
+      if (cfg.composio?.apiKey && instance.adapter.capabilities.composioMcp === true) {
+        const connection = await composio.mcpIntegration(cfg);
+        if (connection) integrations.composio = connection;
       }
       // dweb is opt-in: without an explicit daemon URL, do not advertise
       // tools that would fail on every call or spawn an unnecessary proxy.
@@ -1199,10 +1254,83 @@ function startGroupTurn(groupId: string, text: string) {
   groupQueues.set(groupId, next.catch(() => {}));
 }
 
+/** Pre-save probe for a CLI path override: run `<cli> --version` with the
+ * same environment a real turn gets (augmented PATH). Returns ok + the
+ * version line, or a fail the UI can act on — ENOENT on a GUI-launched app
+ * usually means "not on the app's PATH", the exact mistake this catches
+ * before the override is saved. */
+async function testCliBinary(
+  cli: string,
+  driver: (typeof BUILT_IN_DRIVERS)[number] | undefined,
+): Promise<{ ok: boolean; version?: string; message?: string; install?: (typeof BUILT_IN_DRIVERS)[number]["install"] }> {
+  return new Promise((resolve) => {
+    execCli(
+      cli,
+      ["--version"],
+      {
+        timeout: 10_000,
+        // SIGKILL, not SIGTERM: a child that traps TERM (sh -c "trap '' TERM;
+        // sleep 99999") would otherwise never fire the callback and pin the
+        // HTTP socket forever. maxBuffer bounds a chatty --version too.
+        killSignal: "SIGKILL",
+        maxBuffer: 1024 * 64,
+        env: cliProbeEnvironment(),
+      },
+      (err, stdout) => {
+        if (err) {
+          const e = err as NodeJS.ErrnoException & { killed?: boolean };
+          // err.code is an errno CONSTANT ("ENOENT", "EACCES") only for spawn
+          // failures; for a non-zero exit it's the exit STATUS (a number) and
+          // for a timeout it's null + killed:true — describeSpawnFailure words
+          // only the first kind
+          const exceededBuffer = e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+          const isSpawnError = typeof e.code === "string" && !exceededBuffer;
+          const message = exceededBuffer
+            ? "CLI test produced more than 64 KiB of output"
+            : isSpawnError
+              ? describeSpawnFailure(e, cli).message
+              : e.killed
+              ? "CLI test timed out after 10s"
+              : `CLI exited with error ${String(e.code)}: ${(stderrOf(err) || "").slice(0, 200) || err.message.split("\n")[0]}`;
+          resolve({ ok: false, message, ...(driver?.install && isSpawnError ? { install: driver.install } : {}) });
+          return;
+        }
+        resolve({ ok: true, version: stdout.trim().split("\n")[0] });
+      },
+    );
+  });
+}
+
+/** A pre-save probe only needs PATH. Never hand credentials inherited by the
+ * desktop/server process to an arbitrary wrapper selected through Settings. */
+function cliProbeEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath() };
+  for (const key of [
+    "XAI_API_KEY",
+    "BOX_TOKEN",
+    "OPENCODE_API_KEY",
+    "COMPOSIO_API_KEY",
+    "OMB_TTS_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+  ]) {
+    delete env[key];
+  }
+  return env;
+}
+
+/** execFile's error carries the child's stderr in .stderr. */
+function stderrOf(err: unknown): string {
+  const s = (err as { stderr?: unknown }).stderr;
+  return typeof s === "string" ? s : Buffer.isBuffer(s) ? s.toString("utf8") : "";
+}
+
 function configStatus() {
   return {
     xai: { configured: Boolean(cfg.xai?.key) },
-    composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
+    composio: {
+      configured: Boolean(cfg.composio?.apiKey),
+    },
     box: { configured: Boolean(cfg.box?.token) },
     opencodeGo: { configured: Boolean(cfg.opencodeGo?.apiKey) },
     // the chosen voice is a setting, not a secret; the key is reported the
@@ -1224,7 +1352,18 @@ async function reloadProviders() {
   // async under the hood), stranding the bot busy — and its screen poller —
   // forever. Settle anything still marked busy.
   for (const b of store.bots.filter((b) => b.busy)) {
+    const vmLease = localVmLease.current(localVmOwnerBusy);
+    if (vmLease?.botId === b.id) {
+      localVmLease.release(vmLease.threadId);
+      if (localVmActiveThread === vmLease.threadId) localVmActiveThread = null;
+    }
     stopScreenPoller(b.id);
+    finalizeDelegationWatch(
+      b.threadId,
+      false,
+      "",
+      "Delegated turn did not finish — provider settings changed",
+    );
     const note = store.appendMessage(b.threadId, {
       role: "bot",
       kind: "activity",
@@ -1235,6 +1374,11 @@ async function reloadProviders() {
     broadcast({ kind: "bot", bot: wireBot(store.bot(b.id)!) });
   }
 }
+
+// Config writes rebuild the whole provider registry. Keep the read-modify-write
+// and reload sequence single-flight so two settings requests cannot drop one
+// another's changes or dispose a fleet while another reload is creating it.
+let providerConfigBusy = false;
 
 // ── HTTP plumbing ─────────────────────────────────────────────────────
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -2179,12 +2323,95 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { instances: await registry.describe() });
     }
 
+    // ── CLI binary discovery for the Engines "detected" dropdown ──
+    // ?name=claude → absolute paths of every `claude` on the augmented PATH,
+    // in PATH order (first = what a bare name runs). Polled when the user
+    // opens the Custom picker so a just-installed CLI appears without a restart.
+    if (method === "GET" && path === "/api/cli-candidates") {
+      const name = url.searchParams.get("name") ?? "";
+      resetPathCache();
+      return json(res, 200, { candidates: findCliCandidates(name) });
+    }
+
+    // ── pre-save CLI probe: does this path actually run? ──
+    // POST {cli, driver} → spawn `<cli> --version` with the same PATH the
+    // turn itself would use. A miss here (typo, missing exec bit, a binary
+    // the GUI app can't see) means every turn would fail, so the UI asks
+    // before saving rather than registering a dead engine.
+    if (method === "POST" && path === "/api/cli-test") {
+      // same gate as the local-VM lifecycle routes: this executes a local
+      // binary, so a hostile page must not be able to submit it as a simple
+      // text/plain cross-origin request
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      const cli = typeof body?.cli === "string" ? body.cli.trim() : "";
+      if (!cli || /[\n\r]/.test(cli)) return json(res, 400, { error: "cli must be a non-empty path" });
+      const driver = typeof body?.driver === "string" ? BUILT_IN_DRIVERS.find((d) => d.driverKind === body.driver) : undefined;
+      // Probe the exact configured wrapper plus --version. testCliBinary uses
+      // a credential-redacted environment, so fixed wrapper arguments cannot
+      // turn this endpoint into an inherited-secret reader.
+      const probe = await testCliBinary(cli, driver);
+      return json(res, 200, probe);
+    }
+
+    // ── per-instance CLI path override (custom builds / versioned bins) ──
+    // PATCH /api/instances/:id {cli: "/path/to/cli" | ""} — "" reverts to the
+    // driver default. Kills in-flight turns like any provider reload.
+    const instancePatch = /^\/api\/instances\/([\w.-]+)$/.exec(path);
+    if (method === "PATCH" && instancePatch) {
+      // same non-simple-request gate as the local-VM lifecycle routes
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      if (typeof body?.cli !== "string") return json(res, 400, { error: "cli must be a string" });
+      if (/[\n\r]/.test(body.cli)) return json(res, 400, { error: "cli must not contain newlines" });
+      if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
+      providerConfigBusy = true;
+      try {
+        const result = withInstanceCli(cfg, instancePatch[1], body.cli);
+        if (!result.ok) return json(res, 404, { error: `unknown instance "${instancePatch[1]}"` });
+        // persist the whole instances map this rebuild produced — a fresh
+        // saveConfig({instances}) merge would re-derive defaults identically,
+        // but writing the resolved map keeps disk and runtime in lockstep
+        saveConfig({ instances: result.config.instances });
+        Object.assign(cfg, loadConfig());
+        await reloadProviders();
+        // rescan BEFORE describe(): the response's cliCandidates are computed
+        // from the memoized PATH, so resetting after would answer this request
+        // with the pre-reset cache
+        resetPathCache();
+        return json(res, 200, { instances: await registry.describe() });
+      } finally {
+        providerConfigBusy = false;
+      }
+    }
+
     // ── app config (API keys — never echoed back, booleans only) ──
     if (method === "GET" && path === "/api/config") {
       return json(res, 200, configStatus());
     }
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
+      const rawComposio = body.composio;
+      if (
+        rawComposio !== undefined
+        && (rawComposio === null || typeof rawComposio !== "object" || Array.isArray(rawComposio))
+      ) {
+        return json(res, 400, { error: "composio must be an object" });
+      }
+      if (rawComposio) {
+        for (const field of ["apiKey"] as const) {
+          if (
+            Object.prototype.hasOwnProperty.call(rawComposio, field)
+            && typeof (rawComposio as Record<string, unknown>)[field] !== "string"
+          ) {
+            return json(res, 400, { error: `composio.${field} must be a string` });
+          }
+        }
+      }
       const rawOpenCode = body.opencodeGo;
       if (
         rawOpenCode !== undefined
@@ -2204,6 +2431,25 @@ const server = createServer(async (req, res) => {
         if (body[key] && typeof body[key] === "object") patch[key] = body[key];
       }
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
+      if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
+      providerConfigBusy = true;
+      try {
+      // A project key is useful only if it can create/reuse the Session that
+      // powers both the connections UI and the agent MCP. Validate it before
+      // persisting, and save the non-secret ids needed to reuse that Session.
+      const requestedComposioKey = (patch.composio as { apiKey?: unknown } | undefined)?.apiKey;
+      if (typeof requestedComposioKey === "string") {
+        if (requestedComposioKey.trim()) {
+          try {
+            const prepared = await composio.prepareProjectSession(requestedComposioKey, cfg.composio);
+            patch.composio = { ...(patch.composio ?? {}), ...prepared };
+          } catch (error) {
+            return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+          }
+        } else {
+          patch.composio = { ...(patch.composio ?? {}), apiKey: "", sessionId: "" };
+        }
+      }
       // check a box token against the provider before storing it: a
       // rejected token used to save happily and only surface as a 401 in
       // another panel later, with nothing the user could act on
@@ -2220,8 +2466,20 @@ const server = createServer(async (req, res) => {
         const check = await tts.verifyKey(newTts.key.trim());
         if (!check.ok) return json(res, 400, { error: check.message });
       }
-      saveConfig(patch);
-      Object.assign(cfg, loadConfig());
+      const externalSecretStorage = url.searchParams.get("secretStorage") === "external";
+      if (externalSecretStorage && patch.composio) {
+        // Electron stores the project key with OS-backed encryption. Persist
+        // only the non-secret Session ids here, while keeping the supplied
+        // key live in this process until the next launch injects it by env.
+        const composioPatch = patch.composio as NonNullable<AppConfig["composio"]>;
+        const { apiKey: _secret, ...metadata } = composioPatch;
+        saveConfig({ composio: { ...metadata, apiKey: "" } });
+        cfg.composio = { ...cfg.composio, ...composioPatch };
+        if (typeof composioPatch.apiKey === "string") process.env.COMPOSIO_API_KEY = composioPatch.apiKey;
+      } else {
+        saveConfig(patch);
+        Object.assign(cfg, loadConfig());
+      }
       // provider keys change the fleet; a profile or voice edit must not
       // kill in-flight turns with a pointless reload — no driver reads
       // either, and picking a voice mid-turn should be free
@@ -2229,6 +2487,9 @@ const server = createServer(async (req, res) => {
       const status = configStatus();
       broadcast({ kind: "config", ...status });
       return json(res, 200, status);
+      } finally {
+        providerConfigBusy = false;
+      }
     }
 
     // ── voice ─────────────────────────────────────────────────────────
@@ -2277,11 +2538,13 @@ const server = createServer(async (req, res) => {
     // ── connectors (Composio) ──
     if (method === "GET" && path === "/api/connectors/catalog") {
       const { cards, source } = await composio.listToolkits(cfg);
-      return json(res, 200, { configured: Boolean(cfg.composio?.key), source, cards });
+      return json(res, 200, { configured: Boolean(cfg.composio?.apiKey), source, cards });
     }
     if (method === "GET" && path === "/api/connectors") {
       const services = (url.searchParams.get("services") ?? "").split(",").filter(Boolean);
-      if (!cfg.composio?.key) return json(res, 200, { configured: false, services: {} });
+      if (!cfg.composio?.apiKey) {
+        return json(res, 200, { configured: false, services: {} });
+      }
       const status = await composio.connectionStatus(cfg, services.length ? services : composio.CURATED_SLUGS);
       return json(res, 200, { configured: true, services: status });
     }

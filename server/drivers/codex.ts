@@ -23,20 +23,14 @@ import type {
   SendTurnInput,
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
+import { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
+import { codexLocalProviderArgs } from "./local-inject.ts";
 import { augmentedPath } from "../env-path.ts";
 import { appendNative } from "./native.ts";
 
-const DRIVER_KIND = "codex";
+export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
-// catalog ported from upstream packages/contracts/src/model.ts
-const MODELS = {
-  default: "gpt-5.6-sol",
-  options: [
-    { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-    { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-    { id: "gpt-5.4", label: "GPT-5.4" },
-  ],
-};
+const DRIVER_KIND = "codex";
 
 export interface CodexConfig {
   cli: string;
@@ -66,14 +60,37 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     },
     needsNode: true,
     docsUrl: "https://github.com/openai/codex",
-    signInCommand: "codex",
+    signInCommand: "codex login",
   },
-  models: MODELS,
+  models: STATIC_CODEX_MODELS,
   decodeConfig,
   defaultConfig: () => decodeConfig({}),
 
   async create(input: DriverCreateInput<CodexConfig>): Promise<ProviderInstance> {
     const { instanceId, config } = input;
+    const childEnv = (): Record<string, string | undefined> => {
+      const env: Record<string, string | undefined> = {
+        ...process.env,
+        ...input.environment,
+        PATH: augmentedPath(),
+        NPM_CONFIG_LOGLEVEL: "error",
+      };
+      // The CLI owns its own ChatGPT login; a leaked API key silently flips
+      // billing to pay-as-you-go (agentcal).
+      delete env.OPENAI_API_KEY;
+      return env;
+    };
+    const catalogEnv = childEnv();
+    let models = STATIC_CODEX_MODELS;
+    const refreshModels = async () => {
+      try {
+        const resolved = await readCodexModelCatalog(catalogEnv);
+        if (resolved.options.length) models = resolved;
+      } catch {
+        // Keep the last usable catalog when a local provider is down.
+      }
+    };
+    await refreshModels();
     const listeners = new Set<RuntimeEventListener>();
     interface Turn {
       stop: () => void;
@@ -98,12 +115,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const turnId = newId();
 
-      const env: Record<string, string | undefined> = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
-      // the CLI owns its own ChatGPT login; a leaked API key silently flips
-      // billing to pay-as-you-go (agentcal)
-      delete env.OPENAI_API_KEY;
+      const env = childEnv();
 
-      const child = spawnCli(config.cli, ["app-server"], {
+      const child = spawnCli(config.cli, ["app-server", ...codexLocalProviderArgs(env, turn.model)], {
         cwd: turn.cwd ?? homedir(),
         env,
         stdio: ["pipe", "pipe", "pipe"],
@@ -375,9 +389,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             }
           }
           if (!codexThreadId) {
+            const selection = decodeCodexSelection(turn.model);
             const started = await request("thread/start", {
               cwd: turn.cwd ?? homedir(),
-              model: turn.model || null,
+              model: selection.model,
+              ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
               sandbox: config.fullAuto ? "danger-full-access" : "workspace-write",
               approvalPolicy: config.fullAuto ? "never" : "on-request",
               ephemeral: false,
@@ -402,8 +418,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           });
         } catch (e) {
           if (!state.settled) {
-            emit({ ...base(threadId, turnId), type: "runtime.error", message: (e as Error).message });
-            settle(false, "rpc_error");
+            const message = e instanceof Error ? e.message : String(e);
+            const needsAuth = /(?:\b401\b|unauthorized|missing bearer|authentication required)/i.test(message);
+            emit({
+              ...base(threadId, turnId),
+              type: "runtime.error",
+              message,
+              ...(needsAuth ? { setup: true } : {}),
+            });
+            settle(false, needsAuth ? "auth_required" : "rpc_error");
           }
         }
       })();
@@ -412,13 +435,19 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
+      const env = childEnv();
       const version = await new Promise<string | null>((resolve) => {
-        execCli(config.cli, ["--version"], { timeout: 8000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) =>
+        execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
           resolve(err ? null : stdout.trim()),
         );
       });
       if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
-      return { state: "available", version };
+      const authenticated = await new Promise<boolean>((resolve) => {
+        execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout) =>
+          resolve(!err && /logged in/i.test(stdout)),
+        );
+      });
+      return { state: "available", version, authenticated };
     };
 
     return {
@@ -426,7 +455,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
       enabled: input.enabled,
-      models: MODELS,
+      get models() {
+        return models;
+      },
+      refreshModels,
       snapshot,
       adapter: {
         provider: DRIVER_KIND,

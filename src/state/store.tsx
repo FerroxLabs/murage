@@ -165,7 +165,7 @@ export function messageVersions(bot: Bot, message: Message): Message[] {
 /** GET /api/config — configured flags only; secrets are never echoed. */
 export interface ConfigStatus {
   xai?: { configured: boolean };
-  composio: { configured: boolean; apiKeyConfigured?: boolean };
+  composio: { configured: boolean };
   box: { configured: boolean };
   opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
@@ -197,12 +197,19 @@ export interface InstanceInfo {
     authenticated?: boolean;
     version?: string | null;
   };
-  models: { default: string; options: Array<{ id: string; label: string }> };
+  models: { default: string; options: Array<{ id: string; label: string; custom?: boolean }> };
   capabilities?: { computerMcp?: boolean; agentsMcp?: boolean; effortLevels?: readonly EffortLevel[] };
   install?: EngineInstall;
+  /** Configured CLI path override — set ONLY when the user overrode it;
+   * absent means the driver default is in effect. */
+  cli?: string;
+  /** Driver's default binary name (e.g. "claude"). */
+  cliDefault?: string;
+  /** Absolute paths of every default binary found on PATH, PATH order. */
+  cliCandidates?: string[];
 }
 
-export type AppSettingsSection = "general" | "connections" | "voice" | "computer";
+export type AppSettingsSection = "general" | "connections" | "engines" | "voice" | "computer";
 
 interface AppState {
   bots: Bot[];
