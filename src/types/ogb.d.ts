@@ -73,7 +73,14 @@ declare global {
 }
 
 export interface UpdaterState {
-  status: "idle" | "checking" | "available" | "downloading" | "downloaded" | "error";
+  status:
+    | "idle"
+    | "checking"
+    | "available"
+    | "downloading"
+    | "downloaded"
+    | "installing"
+    | "error";
   version?: string;
   percent?: number;
   message?: string;
