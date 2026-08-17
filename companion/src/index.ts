@@ -25,6 +25,7 @@ import { lanAddresses, refreshTailnetName, tailnetName, tailscaleAddress } from 
 import { advertisableAddresses, defaultHostName, dnsLabel, MdnsResponder, type ServiceInfo } from "./mdns.ts";
 import { createProxyHandler } from "./proxy.ts";
 
+/** Read a port from the environment, falling back when it is unset or junk. */
 const num = (value: string | undefined, fallback: number): number => {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? parsed : fallback;
@@ -48,6 +49,7 @@ const HARNESS_PORTS = new Map([
   [WEBHOOK_PORT, "the harness's webhook receiver"],
 ]);
 
+/** Name the harness port this one collides with, or null when it is clear. */
 const conflict = (name: string, port: number): string | null => {
   const owner = HARNESS_PORTS.get(port);
   return owner ? `${name} is set to port ${port}, which is ${owner}` : null;
@@ -65,8 +67,11 @@ const conflict = (name: string, port: number): string | null => {
  * label, and no part of pairing depends on it. */
 let cachedName = process.env.OMB_COMPANION_NAME?.trim() || "";
 
+/** What the phone should call this computer, once known. */
 const machineName = (): string => cachedName || "OpenMausBot";
 
+/** Ask the harness whose computer this is. Best effort: a name is a nicety,
+ * and the sidecar must come up without one. */
 async function refreshMachineName(): Promise<void> {
   if (cachedName) return; // an explicit override is not ours to second-guess
   try {
@@ -85,6 +90,7 @@ async function refreshMachineName(): Promise<void> {
 const devices = new DeviceRegistry();
 const mdns = new MdnsResponder();
 
+/** The Bonjour record this sidecar publishes. */
 const service = (): ServiceInfo => ({
   // one DNS label: no dots, and inside the 63-byte limit
   name: dnsLabel(machineName()),
@@ -113,6 +119,7 @@ const control = createControlServer({
   discovery: () => ({ advertising: mdns.advertising, name: service().name }),
 });
 
+/** Bind, turning EADDRINUSE into a sentence naming the variable to change. */
 const listen = (server: ReturnType<typeof createServer>, port: number, host: string): Promise<void> =>
   new Promise((resolve, reject) => {
     const onError = (error: NodeJS.ErrnoException) => {
@@ -138,6 +145,7 @@ const listen = (server: ReturnType<typeof createServer>, port: number, host: str
     server.listen(port, host);
   });
 
+/** Bind both ports, then advertise. Order matters — see refreshMachineName. */
 async function main(): Promise<void> {
   const clash =
     conflict("OMB_COMPANION_PORT", COMPANION_PORT) ?? conflict("OMB_CONTROL_PORT", CONTROL_PORT);
@@ -179,6 +187,7 @@ async function main(): Promise<void> {
   }
 }
 
+/** Stop advertising and close both sockets before exiting. */
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`\n${signal} — stopping`);
   await mdns.stop().catch(() => {});

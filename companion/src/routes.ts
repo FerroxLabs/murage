@@ -91,6 +91,11 @@ const EXPLAINED: ReadonlyArray<{ path: RegExp; error: string }> = [
   { path: /^\/api\/teams(\/|$)/, error: "teams are imported and exported on your computer" },
 ];
 
+/** Why this request may not be forwarded, or null when it may.
+ *
+ * Allowlist, not blocklist: a route nobody here has heard of is denied. That
+ * is the property the whole module exists for, and the one that quietly
+ * stopped being true once before. */
 export function denyReason({ path, method, authenticated }: RouteRequest): Denial | null {
   // Pairing is the one thing a device does before it has a credential.
   if (method === "POST" && path === "/api/pair") return null;

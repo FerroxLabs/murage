@@ -61,6 +61,7 @@ export type ResourceRecord =
   | { name: string; type: 16; data: string[] }
   | { name: string; type: 33; data: { port: number; target: string } };
 
+/** A DNS name as length-prefixed labels, NUL-terminated (RFC 1035 §3.1). */
 export function encodeName(name: string): Buffer {
   const chunks: Buffer[] = [];
   for (const label of name.split(".").filter(Boolean)) {
@@ -134,6 +135,8 @@ export function decodeMessage(buf: Buffer): DnsMessage | null {
   }
 }
 
+/** One resource record on the wire. `ttlOverride` is how a goodbye packet
+ * retracts a record without building a different one: same bytes, TTL 0. */
 function encodeRecord(record: ResourceRecord, ttlOverride?: number): Buffer {
   let rdata: Buffer;
   let ttl: number;
@@ -182,6 +185,7 @@ function encodeRecord(record: ResourceRecord, ttlOverride?: number): Buffer {
   return Buffer.concat([name, fixed, rdata]);
 }
 
+/** A complete mDNS response: header, echoed questions, then the answers. */
 export function encodeResponse(
   answers: ResourceRecord[],
   additionals: ResourceRecord[] = [],
@@ -226,9 +230,12 @@ export interface ServiceInfo {
   txt: string[];
 }
 
+/** Identity for deduping — name, type and payload, deliberately not TTL. */
 const recordKey = (record: ResourceRecord) =>
   `${record.name.toLowerCase()}|${record.type}|${JSON.stringify(record.data)}`;
 
+/** Drop repeats and anything already known, keeping order. Sending the same
+ * answer twice in one packet is legal and makes a responder look broken. */
 function dedupe(records: ResourceRecord[], exclude: ResourceRecord[] = []): ResourceRecord[] {
   const seen = new Set(exclude.map(recordKey));
   const out: ResourceRecord[] = [];

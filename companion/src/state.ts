@@ -13,6 +13,7 @@ import { join } from "node:path";
 /** OMB_COMPANION_DIR isolates a test rig from a real paired fleet. */
 export const DATA_DIR = process.env.OMB_COMPANION_DIR ?? join(homedir(), ".openmausbot-companion");
 
+/** Create the data directory if it is not there yet. Idempotent. */
 export function ensureDataDir(): void {
   mkdirSync(DATA_DIR, { recursive: true });
 }
