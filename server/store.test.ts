@@ -353,3 +353,19 @@ describe("Store task working folder", () => {
     expect(store.pinTaskCwd(bot.id, bot.threadId)).toBeNull();
   });
 });
+
+describe("Store task working folder — cloud runs", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+  it("a cloud run pins the default so the bot's host folder never shows for that task", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.patchBot(bot.id, { cwd: "/tmp/project-a" });
+    expect(store.pinTaskCwd(bot.id, bot.threadId)).toBe("/tmp/project-a");
+    expect(store.pinTaskCwd(bot.id, bot.threadId, undefined, { none: true })).toBeNull();
+    expect(store.taskByThread(bot.id, bot.threadId)?.cwd).toBeNull();
+    // and it stays pinned even if a host run follows
+    expect(store.pinTaskCwd(bot.id, bot.threadId)).toBeNull();
+  });
+});
