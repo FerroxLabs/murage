@@ -31,6 +31,28 @@ const json = (res: ServerResponse, status: number, body: unknown) => {
   res.end(text);
 };
 
+/**
+ * Is this `Origin` one we are willing to accept a state change from?
+ *
+ * Absent counts as yes: a non-browser client (the Electron main process, curl,
+ * the phone's own app) sends no Origin, and those are exactly the callers a
+ * CSRF check is not aimed at. A browser always sends one on a cross-site
+ * request and cannot forge it, so an Origin that parses to loopback is the
+ * page this server itself served.
+ */
+export function originIsLoopback(origin: string | undefined): boolean {
+  if (!origin) return true;
+  // "null" is what a sandboxed iframe or a file:// page sends. It is not
+  // loopback, and treating the string as absent would reopen the hole.
+  let hostname: string;
+  try {
+    ({ hostname } = new URL(origin));
+  } catch {
+    return false;
+  }
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]" || hostname === "::1";
+}
+
 export function companionState(options: ControlOptions) {
   const addresses = lanAddresses();
   const tailscale = tailscaleAddress(addresses);
@@ -60,6 +82,25 @@ export function createControlServer(options: ControlOptions): Server {
     const host = String(req.headers.host ?? "").split(":")[0].toLowerCase();
     if (host && host !== "127.0.0.1" && host !== "localhost" && host !== "[::1]" && host !== "::1") {
       return json(res, 403, { error: "forbidden: loopback only" });
+    }
+
+    // A loopback bind is not a defence against a browser. Any page on the
+    // internet can submit a form to http://127.0.0.1:<port>/pairing, and the
+    // Host header on that request is the one we just approved. The same-origin
+    // policy hides our reply from the attacker, which stops them reading the
+    // pairing code — but the window still opens, and the code is then sitting
+    // on the victim's screen waiting to be social-engineered out of them.
+    //
+    // So: state-changing methods must come from loopback or from no origin at
+    // all. The page this server serves is itself loopback, and the Electron
+    // main process sends no Origin because it is not a browser. Safe methods
+    // are left alone — the SOP already stops a foreign page reading a reply,
+    // and this server sets no CORS headers to weaken that.
+    //
+    // proxy.ts refuses any Origin outright for the same reason. This is the
+    // control plane; it should not be the laxer of the two.
+    if (method !== "GET" && method !== "HEAD" && !originIsLoopback(req.headers.origin)) {
+      return json(res, 403, { error: "forbidden: cross-origin request" });
     }
 
     if (method === "GET" && (path === "/" || path === "/index.html")) {
