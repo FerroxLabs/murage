@@ -402,7 +402,12 @@ describe("the sidecar in front of an unmodified harness", () => {
   // kept being buffered.
   it("hangs up on the harness when the device disappears", async () => {
     let upstreamClosed: () => void;
+    let upstreamReached: () => void;
     const closed = new Promise<void>((r) => (upstreamClosed = r));
+    // The disconnect only means anything once the request has actually
+    // arrived upstream. Waiting a fixed 250ms for that is a bet on how fast
+    // the machine is, and this file has already lost one of those.
+    const reached = new Promise<void>((r) => (upstreamReached = r));
     const slow = createServer((_req, res) => {
       res.on("error", () => {
         /* the sidecar hanging up is the pass condition */
@@ -411,6 +416,7 @@ describe("the sidecar in front of an unmodified harness", () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.write('{"bots":[');
       // and then keeps the response open, as a slow endpoint does
+      upstreamReached();
     });
     await new Promise<void>((r) => slow.listen(0, "127.0.0.1", r));
     const slowPort = (slow.address() as { port: number }).port;
@@ -436,7 +442,7 @@ describe("the sidecar in front of an unmodified harness", () => {
       }).catch(() => {
         /* aborted on purpose */
       });
-      await new Promise((r) => setTimeout(r, 250));
+      await reached;
       abort.abort();
       // the upstream response closes because the sidecar dropped it, not
       // because the stub finished — it never finishes
