@@ -14,16 +14,21 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
+import { freePortBlock } from "../../server/testing/ports.ts";
 import { createProxyHandler } from "../src/proxy.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
-const HARNESS_PORT = 19600 + Math.floor(Math.random() * 3000);
 // +10, not +1: the harness opens its webhook receiver one port above itself,
-// and this file needs three consecutive free ports of its own.
-const SIDECAR_PORT = HARNESS_PORT + 10;
-const HARNESS = `http://127.0.0.1:${HARNESS_PORT}`;
-const SIDECAR = `http://127.0.0.1:${SIDECAR_PORT}`;
+// and this file needs room of its own clear of both.
+const SIDECAR_OFFSET = 10;
+// Probed rather than assumed. A blind random port is fine until a second
+// suite runs at the same time, and then the loser fails at a bind it never
+// checked — which reports as anything except "that port was taken".
+let HARNESS_PORT = 0;
+let SIDECAR_PORT = 0;
+let HARNESS = "";
+let SIDECAR = "";
 
 const TOKEN = "omb_test_token";
 let harness: ChildProcess;
@@ -69,6 +74,12 @@ const withHost = (port: number, host: string, path = "/api/health", headers: Rec
   });
 
 beforeAll(async () => {
+  // the harness's own port, its webhook receiver one above, and the sidecar
+  HARNESS_PORT = await freePortBlock([0, 1, SIDECAR_OFFSET]);
+  SIDECAR_PORT = HARNESS_PORT + SIDECAR_OFFSET;
+  HARNESS = `http://127.0.0.1:${HARNESS_PORT}`;
+  SIDECAR = `http://127.0.0.1:${SIDECAR_PORT}`;
+
   home = mkdtempSync(join(tmpdir(), "companion-test-"));
   mkdirSync(join(home, ".openmausbot"), { recursive: true });
   writeFileSync(
@@ -117,8 +128,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((r) => (sidecar ? sidecar.close(() => r()) : r()));
-  harness?.kill("SIGTERM");
-  await waitForExit(harness);
+  await waitForExit(harness, { signal: "SIGTERM" });
   await removeTempDir(home);
 });
 

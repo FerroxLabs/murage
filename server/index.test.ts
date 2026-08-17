@@ -101,8 +101,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   boxStub?.close();
-  child?.kill("SIGTERM");
-  await waitForExit(child);
+  await waitForExit(child, { signal: "SIGTERM" });
   await removeTempDir(home);
 });
 

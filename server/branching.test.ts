@@ -112,8 +112,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   }, 30_000);
 
   afterAll(async () => {
-    child?.kill("SIGTERM");
-    await waitForExit(child);
+    await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
   });
 

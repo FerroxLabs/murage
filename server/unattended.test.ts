@@ -122,8 +122,7 @@ posixOnly("unattended turns keep asking", () => {
   }, 40_000);
 
   afterAll(async () => {
-    child?.kill("SIGTERM");
-    await waitForExit(child);
+    await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
   });
 

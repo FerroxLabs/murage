@@ -3,10 +3,16 @@
 // down by guessing, and revoking a device actually revokes it.
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "../src/state.ts";
-import { bearerToken, cleanDeviceName, DeviceRegistry, MAX_PAIRING_ATTEMPTS } from "../src/devices.ts";
+import {
+  bearerToken,
+  cleanDeviceName,
+  DeviceRegistry,
+  MAX_PAIRING_ATTEMPTS,
+  PAIRING_TTL_MS,
+} from "../src/devices.ts";
 
 const pair = (registry: DeviceRegistry, name = "iPhone") => {
   const { code } = registry.openPairing();
@@ -80,12 +86,30 @@ describe("DeviceRegistry", () => {
   });
 
   it("refuses an expired window without a timer", () => {
-    const registry = new DeviceRegistry();
-    const window = registry.openPairing();
-    // reach in and age it, rather than sleeping for two minutes
-    window.expiresAt = Date.now() - 1;
-    expect(registry.pairing()).toBeNull();
-    expect(registry.redeem(window.code, "iPhone")).toMatchObject({ error: expect.stringContaining("no pairing") });
+    // Move the clock, not the object. Ageing the window returned by
+    // openPairing() only works while that object is the registry's own — the
+    // day it hands back a copy, the test would be asserting against something
+    // the registry never reads. The contract is "expiry is evaluated on read
+    // against the wall clock", so the clock is the thing to control.
+    vi.useFakeTimers();
+    try {
+      const registry = new DeviceRegistry();
+      const { code } = registry.openPairing();
+      expect(registry.pairing()).not.toBeNull();
+
+      // one tick short of the TTL: still live, so the assertion below is
+      // about expiry rather than about pairing being broken outright
+      vi.advanceTimersByTime(PAIRING_TTL_MS - 1);
+      expect(registry.pairing()).not.toBeNull();
+
+      vi.advanceTimersByTime(2);
+      expect(registry.pairing()).toBeNull();
+      expect(registry.redeem(code, "iPhone")).toMatchObject({
+        error: expect.stringContaining("no pairing"),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("revokes one device without touching the others", () => {

@@ -16,7 +16,7 @@ to bind a second socket — means a patch to somebody else's request handler,
 carried across every release, and it is the patch that broke the first time
 upstream hardened its loopback gate.
 
-```
+```text
   phone ──LAN/tailnet──▶ companion :8810 ──loopback──▶ harness :8799
                           ▲                             ▲
                           │ token, allowlist,           │ unmodified,
@@ -54,7 +54,7 @@ pnpm companion
 
 It prints where to point the phone, and where you pair:
 
-```
+```text
 companion  http://0.0.0.0:8810  →  harness 127.0.0.1:8799
 pair here  http://127.0.0.1:8811
 on your phone, enter  macbook.tail1234.ts.net:8810
@@ -87,7 +87,7 @@ working with the explanation logged somewhere else entirely.
 
 ## Layout
 
-```
+```text
 src/index.ts    the entrypoint — three sockets, and the split between them
 src/proxy.ts    the forwarding handler; also owns /api/pair
 src/routes.ts   the allowlist — what a device may ask for

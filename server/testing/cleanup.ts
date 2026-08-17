@@ -8,23 +8,40 @@
 import type { ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 
+/** How `waitForExit` should end the child, and how long to allow. */
+export interface WaitForExitOptions {
+  /** Sent immediately. Omit for a child the caller has already signalled. */
+  signal?: NodeJS.Signals;
+  /** How long the polite signal gets before SIGKILL. */
+  graceMs?: number;
+}
+
 /**
- * Wait for a killed child to actually be gone.
+ * End a child process and wait for it to actually be gone.
  *
  * `kill()` asks; it does not wait. A caller that proceeds straight from the
  * kill call to deleting the child's home directory is racing a process that
- * may still be mid-write, and on Linux that surfaces as an EACCES from `rm`
- * rather than anything that names the real cause.
+ * may still be mid-write, and on Linux that surfaces as an EACCES or ENOTEMPTY
+ * from `rm` rather than anything that names the real cause.
  *
- * So: resolve on `close`, escalate to SIGKILL only after `graceMs`, and keep
- * waiting for `close` even then — a SIGKILL is not an exit either, it just
- * makes one imminent. The final backstop bounds the whole thing so a wedged
- * child can never hang the suite.
+ * Pass `signal` and this sends it, rather than leaving the caller to send one
+ * and then wait out a grace period that has already started counting. Both
+ * halves of "stop it, and know that it stopped" then live in one call.
+ *
+ * From there: resolve on `close`, escalate to SIGKILL only after `graceMs`,
+ * and keep waiting for `close` even then — a SIGKILL is not an exit either,
+ * it just makes one imminent. The final backstop bounds the whole thing so a
+ * wedged child can never hang the suite.
  *
  * A loaded CI runner loses that race; a laptop wins it every time, which is
  * why it reads as a phantom.
  */
-export function waitForExit(child: ChildProcess | undefined, graceMs = 5_000): Promise<void> {
+export function waitForExit(
+  child: ChildProcess | undefined,
+  options: WaitForExitOptions | number = {},
+): Promise<void> {
+  const { signal, graceMs = 5_000 } = typeof options === "number" ? { graceMs: options } : options;
+
   return new Promise<void>((resolve) => {
     // signalCode, not just exitCode: a process killed by a signal reports its
     // death in the former and leaves the latter null.
@@ -36,6 +53,14 @@ export function waitForExit(child: ChildProcess | undefined, graceMs = 5_000): P
       resolve();
     };
     child.on("close", done);
+
+    if (signal) {
+      try {
+        child.kill(signal);
+      } catch {
+        /* already gone — `close` still arrives, or already has */
+      }
+    }
 
     timer = setTimeout(() => {
       child.kill("SIGKILL");
