@@ -1,4 +1,4 @@
-import { ChevronLeft, Crown, X } from "lucide-react";
+import { ChevronLeft, Crown, FolderOpen, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
 import { MausAvatar } from "./Avatar";
@@ -9,9 +9,11 @@ import {
   MAUS_COLOR_NAMES,
 } from "@/lib/mascot";
 import { ModelPicker } from "./ModelPicker";
+import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { requestNotificationPermission } from "@/lib/notify";
 import { botUsage, costCaption, formatTokens, formatUsd } from "@/lib/usage";
+import { shortPath } from "@/lib/short-path";
 
 function Field({
   label,
@@ -72,6 +74,86 @@ function BotUsageCard({ bot }: { bot: Bot }) {
 const inputCls =
   "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:outline-none focus:border-hairline";
 
+/** Where a bot's shell tools run. Set per bot; each task pins its own copy
+ * on its first turn (the server does the pinning — Claude keeps sessions
+ * per project folder, so a folder must not move under a live task). The
+ * PATCH is made directly rather than through updateBot: the server
+ * validates the path and a rejected folder must not stick in local state. */
+function WorkingFolder({ bot }: { bot: Bot }) {
+  const { capabilities } = useDesktopCapabilities();
+  const home = capabilities.host.homeDir;
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const canPick = Boolean(window.ogb?.pickFolder);
+  const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
+  const pinned = task?.cwd; // undefined = not yet, null = legacy home, string = folder
+  const pinnedElsewhere = pinned !== undefined && (pinned ?? undefined) !== bot.cwd;
+
+  const save = async (cwd: string | null) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api(`/api/bots/${bot.id}`, { method: "PATCH", body: JSON.stringify({ cwd }) });
+      setDraft(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const pick = async () => {
+    const chosen = await window.ogb?.pickFolder?.(bot.cwd);
+    if (chosen) void save(chosen);
+  };
+
+  return (
+    <div className="rounded-xl bg-card p-4">
+      <div className="text-[15px] font-medium text-ink">Working folder</div>
+      <div className="mt-0.5 text-[13px] text-ink-secondary">Where this bot runs its shell and file tools.</div>
+      {canPick ? (
+        <div className="mt-3 flex items-center gap-2">
+          <div className="min-w-0 flex-1 truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={bot.cwd}>
+            {bot.cwd ? shortPath(bot.cwd, home) : <span className="text-ink-secondary">Private bot workspace</span>}
+          </div>
+          <button onClick={() => void pick()} disabled={saving} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
+            <FolderOpen size={14} /> Choose…
+          </button>
+          {bot.cwd && (
+            <button onClick={() => void save(null)} disabled={saving} className="shrink-0 rounded-lg px-2 py-2 text-[13px] text-ink-secondary hover:text-ink disabled:opacity-50">
+              Clear
+            </button>
+          )}
+        </div>
+      ) : (
+        <form
+          className="mt-3 flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save(draft ?? bot.cwd ?? "");
+          }}
+        >
+          <input
+            className={cn(inputCls, "font-mono text-[12.5px]")}
+            placeholder="Private bot workspace — or an absolute path"
+            value={draft ?? bot.cwd ?? ""}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <button type="submit" disabled={saving || draft === null} className="shrink-0 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
+            Save
+          </button>
+        </form>
+      )}
+      {error && <div className="mt-2 text-[12px] text-danger">{error}</div>}
+      {pinnedElsewhere && (
+        <div className="mt-2 text-[12px] text-ink-secondary">
+          New tasks start here. This task is pinned to {pinned ? <span className="font-mono">{shortPath(pinned, home)}</span> : "the home folder"} — start a new task to use the new folder.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPanel({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const [voices, setVoices] = useState<Array<{ id: string; label: string; description?: string }>>([]);
@@ -92,6 +174,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "voice"
         | "chiefOfStaff"
         | "approvePeerComms"
+        | "composio"
         | "modelSelection"
       >
     >,
@@ -100,6 +183,9 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
+  const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
+  const connectedAppsConfigured = state.config?.composio?.configured === true;
+  const connectedAppsEnabled = bot.composio !== false;
   const currentChief = state.bots.find((candidate) => candidate.chiefOfStaff);
 
   useEffect(() => {
@@ -310,6 +396,48 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
+              <div className="text-[15px] font-medium text-ink">Connected apps</div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                {!connectedAppsConfigured
+                  ? "Connect apps in App Settings before giving this bot access."
+                  : !canUseConnectedApps
+                    ? "This bot's current engine cannot use connected apps."
+                    : connectedAppsEnabled
+                      ? "Let this bot use your connected Gmail, Calendar, Slack, and other apps."
+                      : "Keep your connected apps unavailable to this bot."}
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={connectedAppsEnabled}
+              aria-label="Allow this bot to use connected apps"
+              disabled={
+                !connectedAppsEnabled && (!connectedAppsConfigured || !canUseConnectedApps)
+              }
+              onClick={() => patch({ composio: !connectedAppsEnabled })}
+              title={
+                !connectedAppsEnabled && !connectedAppsConfigured
+                  ? "Connect apps in App Settings first"
+                  : !connectedAppsEnabled && !canUseConnectedApps
+                    ? "This engine cannot use connected apps"
+                    : undefined
+              }
+              className={cn(
+                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                connectedAppsEnabled ? "bg-accent" : "bg-raised",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  connectedAppsEnabled ? "left-[21px]" : "left-[3px]",
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+            <div>
               <div className="text-[15px] font-medium text-ink">Model</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 Which provider and model this bot runs on
@@ -376,6 +504,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
           </div>
 
           <BotUsageCard bot={bot} />
+          <WorkingFolder bot={bot} />
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>

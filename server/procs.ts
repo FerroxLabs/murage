@@ -29,12 +29,18 @@ export function spawnCli(
   opts: SpawnOptions,
 ): ChildProcessByStdio<Writable, Readable, Readable> {
   const resolved = resolveCli(cli, args);
-  return spawn(resolved.command, resolved.args, {
+  const child = spawn(resolved.command, resolved.args, {
     ...opts,
     // posix: own process group so kill(-pid) reaps child MCP servers;
     // win32: taskkill /T does the reaping instead (see killCliTree)
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
   }) as ChildProcessByStdio<Writable, Readable, Readable>; // callers always pipe all three
+  // Force-stopping a CLI can make Windows deliver an asynchronous EPIPE or
+  // ECONNRESET on stdin. Without an owner, EventEmitter treats that expected
+  // pipe teardown as an uncaught exception and takes the harness down too.
+  // The child `error`/`close` handlers remain the authoritative turn result.
+  child.stdin?.on("error", () => {});
+  return child;
 }
 
 export function execCli(
@@ -56,10 +62,9 @@ export function execCli(
  * each, and both are setup problems the user can fix, so say which. The
  * `setup` flag lets the UI offer "Install" instead of a "Retry" that is
  * guaranteed to fail the same way. */
-export function describeSpawnFailure(
-  err: NodeJS.ErrnoException,
-  cli: string,
-): { message: string; setup: boolean } {
+type SpawnFailure = { message: string; setup: boolean };
+
+export function describeSpawnFailure(err: NodeJS.ErrnoException, cli: string): SpawnFailure {
   if (err.code === "ENOENT")
     return { message: `\`${cli}\` isn't installed, or isn't on this app's PATH`, setup: true };
   if (err.code === "EACCES" || err.code === "EPERM")
