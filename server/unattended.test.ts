@@ -11,11 +11,12 @@
 //      survive the peer-comms hop, or it protects the bot that read the
 //      payload and releases the one that acts on it
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -122,12 +123,8 @@ posixOnly("unattended turns keep asking", () => {
 
   afterAll(async () => {
     child?.kill("SIGTERM");
-    await new Promise<void>((resolve) => {
-      if (!child || child.exitCode !== null) return resolve();
-      child.on("close", () => resolve());
-      setTimeout(() => (child.kill("SIGKILL"), resolve()), 5000).unref?.();
-    });
-    rmSync(home, { recursive: true, force: true });
+    await waitForExit(child);
+    await removeTempDir(home);
   });
 
   it(
