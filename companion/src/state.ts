@@ -6,15 +6,40 @@
 // exact coupling this design exists to avoid. If the harness reorganises its
 // files tomorrow, nothing here notices.
 import { randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 /** OMB_COMPANION_DIR isolates a test rig from a real paired fleet. */
 export const DATA_DIR = process.env.OMB_COMPANION_DIR ?? join(homedir(), ".openmausbot-companion");
 
+/** 0700 on the directory, 0600 on the files it holds.
+ *
+ * devices.json holds token hashes, and a hash is not nothing: it is an offline
+ * target for anyone who can read it. The default 0755/0644 hands that to every
+ * other account on a shared machine for no reason at all — this process is the
+ * only reader there has ever been. */
+const DIR_MODE = 0o700;
+export const FILE_MODE = 0o600;
+
 export function ensureDataDir(): void {
-  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(DATA_DIR, { recursive: true, mode: DIR_MODE });
+  // `recursive` leaves an existing directory's mode alone, so a data dir from
+  // a build that predates this is tightened here rather than at creation.
+  try {
+    chmodSync(DATA_DIR, DIR_MODE);
+  } catch {
+    /* not ours to chmod, or a filesystem without modes — the write still works */
+  }
 }
 
 /**
@@ -31,7 +56,9 @@ export function writeFileAtomic(path: string, data: string): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | null = null;
   try {
-    fd = openSync(tmp, "w");
+    // The mode goes on at creation, not after: a file that is briefly 0644 is
+    // readable for exactly as long as it takes someone to look.
+    fd = openSync(tmp, "w", FILE_MODE);
     writeFileSync(fd, data);
     fsyncSync(fd);
     closeSync(fd);

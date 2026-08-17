@@ -79,6 +79,23 @@ export function cleanDeviceName(raw: unknown): string {
   return name || "Companion";
 }
 
+/** A timestamp we are willing to render, or a stand-in. `0` would date a
+ * device to 1970 in the UI; "now" is at least true of when we learned of it. */
+const timestamp = (value: unknown, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+
+/** Complete a stored record, whatever shape the file had. */
+function normalizeDevice(record: DeviceRecord): DeviceRecord {
+  const createdAt = timestamp(record.createdAt, Date.now());
+  return {
+    id: record.id,
+    name: cleanDeviceName(record.name),
+    tokenHash: record.tokenHash,
+    createdAt,
+    lastSeenAt: timestamp(record.lastSeenAt, createdAt),
+  };
+}
+
 export class DeviceRegistry {
   private devices: DeviceRecord[] = [];
   private window: PairingWindow | null = null;
@@ -88,10 +105,17 @@ export class DeviceRegistry {
     try {
       const parsed = JSON.parse(readFileSync(DEVICES_FILE, "utf8"));
       if (Array.isArray(parsed?.devices)) {
-        this.devices = parsed.devices.filter(
-          (d: unknown): d is DeviceRecord =>
-            typeof (d as DeviceRecord)?.id === "string" && typeof (d as DeviceRecord)?.tokenHash === "string",
-        );
+        this.devices = parsed.devices
+          .filter(
+            (d: unknown): d is DeviceRecord =>
+              typeof (d as DeviceRecord)?.id === "string" && typeof (d as DeviceRecord)?.tokenHash === "string",
+          )
+          // id and tokenHash are the only fields worth refusing a record over
+          // — the rest are labels, and a record written by an older build (or
+          // hand-edited) can be missing them. Filling them in here is what
+          // stops "undefined" and "Last seen NaN" reaching the control page:
+          // every reader downstream gets a complete record or none at all.
+          .map((d: DeviceRecord) => normalizeDevice(d));
       }
     } catch {
       /* first run, or a file we can't read — start with no paired devices */
@@ -190,9 +214,14 @@ export class DeviceRegistry {
   }
 }
 
-/** Pull the bearer token out of an Authorization header. */
+/** Pull the bearer token out of an Authorization header.
+ *
+ * The scheme is matched case-insensitively because RFC 7235 says it is: a
+ * client sending `bearer <token>` is within its rights, and two parsers in
+ * this codebase disagreeing about that is how a phone gets a 401 it cannot
+ * explain. One function, used everywhere a token is read. */
 export function bearerToken(header: string | undefined): string | undefined {
   if (!header) return undefined;
-  const match = /^Bearer (.+)$/.exec(header.trim());
-  return match ? match[1].trim() : undefined;
+  const match = /^Bearer[ \t]+(.+)$/i.exec(header.trim());
+  return match ? match[1].trim() || undefined : undefined;
 }

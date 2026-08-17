@@ -103,14 +103,22 @@ export function CompanionSection() {
 
   // While a code is on screen it has to count down — and the same tick is
   // what notices the phone on the other end finishing the handshake.
+  //
+  // The dependency is a boolean, not `state.pairing` itself. Each poll
+  // replaces `state` with a freshly parsed object, so the pairing window is a
+  // new identity every second even when its code and expiry are unchanged —
+  // and depending on it tore this interval down and built another one on
+  // every tick. The thing that actually decides whether the timer should run
+  // is whether a window is open at all.
+  const pairingOpen = Boolean(state?.pairing);
   useEffect(() => {
-    if (!state?.pairing) return;
+    if (!pairingOpen) return;
     const timer = window.setInterval(() => {
       setNow(Date.now());
       void load();
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [state?.pairing, load]);
+  }, [pairingOpen, load]);
 
   if (!bridge()) {
     return (

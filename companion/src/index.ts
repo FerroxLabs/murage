@@ -21,7 +21,14 @@ import { createServer } from "node:http";
 import { createControlServer } from "./control.ts";
 import { DeviceRegistry } from "./devices.ts";
 import { lanAddresses, refreshTailnetName, tailnetName, tailscaleAddress } from "./listener.ts";
-import { advertisableAddresses, defaultHostName, dnsLabel, MdnsResponder, type ServiceInfo } from "./mdns.ts";
+import {
+  advertisableAddresses,
+  clampBytes,
+  defaultHostName,
+  dnsLabel,
+  MdnsResponder,
+  type ServiceInfo,
+} from "./mdns.ts";
 import { createProxyHandler } from "./proxy.ts";
 
 const num = (value: string | undefined, fallback: number): number => {
@@ -91,8 +98,9 @@ const service = (): ServiceInfo => ({
   port: COMPANION_PORT,
   host: defaultHostName(),
   addresses: advertisableAddresses(),
-  // TXT entries cap at 255 bytes, and this one is user-supplied
-  txt: ["v=1", `name=${machineName().slice(0, 200)}`],
+  // TXT entries cap at 255 bytes, and this one is user-supplied — measured in
+  // bytes, since that is the unit the wire format actually counts in.
+  txt: ["v=1", `name=${clampBytes(machineName(), 200)}`],
 });
 
 const companion = createServer(
@@ -100,7 +108,7 @@ const companion = createServer(
     harnessPort: HARNESS_PORT,
     // `authenticate` also stamps lastSeenAt, which is what makes the control
     // page able to say when a phone was last heard from.
-    authenticate: (token) => Boolean(devices.authenticate(token ?? undefined)),
+    authenticate: (token) => Boolean(devices.authenticate(token)),
     redeem: (code, deviceName) => devices.redeem(code, deviceName),
     serverName: machineName,
   }),
@@ -130,6 +138,14 @@ const listen = (server: ReturnType<typeof createServer>, port: number, host: str
     };
     const onListening = () => {
       server.removeListener("error", onError);
+      // Removing the startup handler and leaving nothing in its place is how a
+      // running sidecar dies later: 'error' on an EventEmitter with no listener
+      // is re-thrown, so an interface disappearing under an open socket ends
+      // the process. It is worth a line on stderr and nothing more — the other
+      // listener, and every connection on this one, carry on.
+      server.on("error", (error: NodeJS.ErrnoException) => {
+        console.warn(`companion: error on ${host}:${port} — ${error.message}`);
+      });
       resolve();
     };
     server.once("error", onError);
@@ -141,6 +157,16 @@ async function main(): Promise<void> {
   const clash =
     conflict("OMB_COMPANION_PORT", COMPANION_PORT) ?? conflict("OMB_CONTROL_PORT", CONTROL_PORT);
   if (clash) throw new Error(`${clash}. Pick another port.`);
+
+  // The two sockets this process opens itself, checked in the same breath and
+  // for the same reason. Left alone it surfaces as EADDRINUSE on the second
+  // bind, whose message blames "another copy of the companion" — a diagnosis
+  // that sends someone looking for a process that is not there.
+  if (COMPANION_PORT === CONTROL_PORT) {
+    throw new Error(
+      `OMB_COMPANION_PORT and OMB_CONTROL_PORT are both set to port ${COMPANION_PORT}, and they cannot share one. Pick another port.`,
+    );
+  }
 
   await listen(control, CONTROL_PORT, "127.0.0.1");
   await listen(companion, COMPANION_PORT, "0.0.0.0");

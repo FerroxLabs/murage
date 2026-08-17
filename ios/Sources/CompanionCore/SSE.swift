@@ -118,6 +118,19 @@ public func eventStream(
                 //
                 // `bytes` also stays in scope for this whole loop, which is
                 // the other half of keeping this connection alive — see above.
+                //
+                // A byte at a time reads as expensive, and for a screen frame
+                // — a few hundred kilobytes of base64 PNG — it is a few
+                // hundred thousand iterations. It is not a few hundred
+                // thousand round trips, though: `AsyncBytes` iterates a buffer
+                // URLSession has already filled, so all but one call per chunk
+                // returns without suspending. What is left is call overhead on
+                // an append, against a stream whose frames are otherwise small
+                // and infrequent. Reading the chunks directly means a
+                // `URLSessionDataDelegate` and a session built around it,
+                // which is precisely the ownership the comment above says this
+                // file exists to get right — so it stays as it is until there
+                // is a Mac to prove the replacement on.
                 for try await byte in bytes {
                     guard byte == 0x0A else {
                         line.append(byte)

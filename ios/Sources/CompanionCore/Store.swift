@@ -160,8 +160,17 @@ public struct CompanionState: Sendable {
 
         case let .botDeleted(botId):
             if let index = bots.firstIndex(where: { $0.id == botId }) {
-                messages.removeValue(forKey: bots[index].threadId)
-                hasMore.removeValue(forKey: bots[index].threadId)
+                let threadId = bots[index].threadId
+                messages.removeValue(forKey: threadId)
+                hasMore.removeValue(forKey: threadId)
+                // Everything else keyed by this bot goes too. A deleted bot
+                // whose live text survives is a thread that keeps "typing"
+                // with nothing to type into, and a retained screen frame is
+                // hundreds of kilobytes of a desktop nobody can look at any
+                // more — held for as long as the app runs, because deletion
+                // was the last event that could ever mention this id.
+                clearStream(threadId)
+                clearScreen(botId)
                 bots.remove(at: index)
             }
 
@@ -179,8 +188,12 @@ public struct CompanionState: Sendable {
 
         case let .roomDeleted(groupId):
             if let index = rooms.firstIndex(where: { $0.id == groupId }) {
-                messages.removeValue(forKey: rooms[index].threadId)
-                hasMore.removeValue(forKey: rooms[index].threadId)
+                let threadId = rooms[index].threadId
+                messages.removeValue(forKey: threadId)
+                hasMore.removeValue(forKey: threadId)
+                // Same reasoning as a deleted bot: the thread is gone, so the
+                // half-written reply streaming into it has nowhere to land.
+                clearStream(threadId)
                 rooms.remove(at: index)
             }
 

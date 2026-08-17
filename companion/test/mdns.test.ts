@@ -14,7 +14,9 @@ import {
   defaultHostName,
   dnsLabel,
   encodeName,
+  clampBytes,
   encodeResponse,
+  isOnLink,
   MdnsResponder,
   SERVICE_ENUMERATION,
   serviceRecords,
@@ -356,5 +358,69 @@ describe("tailscaleAddress", () => {
     expect(tailscaleAddress(["100.128.0.1"])).toBeNull();
     expect(tailscaleAddress(["10.0.0.5", "192.168.1.1", "172.16.0.1"])).toBeNull();
     expect(tailscaleAddress([])).toBeNull();
+  });
+});
+
+// RFC 6762 §5.5: a multicast DNS responder answers link-local queries only.
+// A responder that replies to anything able to route to it is an off-link
+// discovery service for whoever asks — it names this computer, its addresses
+// and its owner — and a UDP reflector besides, since the reply goes wherever
+// the source address claims and that claim is free to make.
+describe("isOnLink", () => {
+  const interfaces = {
+    lo: [{ family: "IPv4", address: "127.0.0.1", netmask: "255.0.0.0", internal: true }],
+    en0: [{ family: "IPv4", address: "192.168.1.42", netmask: "255.255.255.0", internal: false }],
+    ts0: [{ family: "IPv4", address: "100.102.178.88", netmask: "255.192.0.0", internal: false }],
+  } as unknown as ReturnType<typeof import("node:os").networkInterfaces>;
+
+  it("accepts a source on a directly attached subnet", () => {
+    expect(isOnLink("192.168.1.7", interfaces)).toBe(true);
+    expect(isOnLink("192.168.1.42", interfaces)).toBe(true);
+    expect(isOnLink("100.102.178.1", interfaces)).toBe(true);
+    // the test rig, and the desktop app, both speak to this over loopback
+    expect(isOnLink("127.0.0.1", interfaces)).toBe(true);
+  });
+
+  it("refuses one that had to be routed here", () => {
+    expect(isOnLink("192.168.2.7", interfaces)).toBe(false);
+    expect(isOnLink("8.8.8.8", interfaces)).toBe(false);
+    expect(isOnLink("203.0.113.9", interfaces)).toBe(false);
+  });
+
+  it("refuses anything it cannot read as an address", () => {
+    expect(isOnLink("", interfaces)).toBe(false);
+    expect(isOnLink("not-an-address", interfaces)).toBe(false);
+    expect(isOnLink("999.1.1.1", interfaces)).toBe(false);
+    // IPv6 does not reach a udp4 socket except in mapped form, which does
+    expect(isOnLink("::1", interfaces)).toBe(false);
+    expect(isOnLink("::ffff:192.168.1.7", interfaces)).toBe(true);
+  });
+});
+
+describe("clampBytes", () => {
+  it("leaves anything already inside the budget alone", () => {
+    expect(clampBytes("Ada's computer", 200)).toBe("Ada's computer");
+    expect(clampBytes("", 200)).toBe("");
+  });
+
+  // The limit DNS-SD enforces is bytes, and `.slice()` counts UTF-16 code
+  // units — so a name in a non-Latin script overran the record rather than
+  // being truncated by it, and discovery failed silently for its owner.
+  it("counts bytes, not characters", () => {
+    const cjk = "\u5c0f\u718a".repeat(60); // 2 chars, 6 bytes, x60
+    expect(cjk.length).toBe(120);
+    const clamped = clampBytes(cjk, 200);
+    expect(Buffer.byteLength(clamped, "utf8")).toBeLessThanOrEqual(200);
+    expect(Buffer.byteLength(clamped, "utf8")).toBeGreaterThan(194);
+  });
+
+  it("never cuts a character in half", () => {
+    // an emoji is one code point in four bytes: with three bytes left it has
+    // to be dropped whole, not turned into a replacement character
+    const clamped = clampBytes("abc\u{1F600}", 6);
+    expect(clamped).toBe("abc");
+    expect(clamped).not.toContain("\uFFFD");
+    expect(clampBytes("\u{1F600}", 4)).toBe("\u{1F600}");
+    expect(clampBytes("\u{1F600}", 3)).toBe("");
   });
 });

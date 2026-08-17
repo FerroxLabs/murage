@@ -24,6 +24,30 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
         self.port = port
     }
 
+    /// Plain HTTP, and that is a real limitation rather than an oversight.
+    ///
+    /// The bearer token goes out in a header on every request, so anyone who
+    /// can observe the path between phone and computer can lift it and use it
+    /// until the device is revoked. What that means in practice depends
+    /// entirely on how you reach the computer, and the two supported routes
+    /// are not equivalent:
+    ///
+    /// - **Over a tailnet** — the recommended route, and the only one that
+    ///   works away from home — the traffic is inside WireGuard before it
+    ///   reaches any network, so it is encrypted and authenticated end to end
+    ///   even though this URL says `http`.
+    /// - **Over a LAN**, it is cleartext on that network. Trust it exactly as
+    ///   far as you trust everyone on the wifi: fine at home, not fine on a
+    ///   café or conference network — pair over the tailnet there instead.
+    ///
+    /// TLS is not a drop-in improvement here, which is why it is not simply
+    /// switched on. A self-signed certificate on a LAN address is a
+    /// certificate nothing can validate, so it would have to be pinned at
+    /// pairing time and re-pinned whenever the sidecar regenerates it — a
+    /// meaningful amount of machinery whose benefit, on the tailnet path, is
+    /// zero. The honest position is: the tailnet carries the encryption, the
+    /// LAN path is documented as trusted-network-only, and pinned TLS is what
+    /// this needs before it could claim otherwise. See `docs/ios-companion.md`.
     public var baseURL: URL? {
         var components = URLComponents()
         components.scheme = "http"

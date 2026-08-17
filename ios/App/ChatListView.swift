@@ -40,12 +40,12 @@ struct ChatListView: View {
                             }
                         }
 
-                        ForEach(chats) { chat in
-                            NavigationLink(value: chat) {
+                        ForEach(chats) { summary in
+                            NavigationLink(value: summary.chat) {
                                 ChatRow(
-                                    chat: chat,
-                                    preview: session.state.preview(chat),
-                                    at: session.state.lastActivity(chat)
+                                    chat: summary.chat,
+                                    preview: summary.preview,
+                                    at: summary.lastActivity
                                 )
                             }
                             .buttonStyle(.plain)
@@ -54,7 +54,7 @@ struct ChatListView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 24)
                 }
-                .refreshable { session.connect() }
+                .refreshable { await session.refresh() }
                 .overlay {
                     if chats.isEmpty {
                         ContentUnavailableView(
@@ -127,13 +127,13 @@ struct ChatListView: View {
         .padding(.bottom, 10)
     }
 
-    private var chats: [Chat] {
-        let all = session.state.chats
+    private var chats: [ChatSummary] {
+        let all = session.state.chatSummaries
         guard !query.isEmpty else { return all }
         return all.filter {
-            $0.name.localizedCaseInsensitiveContains(query)
-                || $0.subtitle.localizedCaseInsensitiveContains(query)
-                || session.state.preview($0).localizedCaseInsensitiveContains(query)
+            $0.chat.name.localizedCaseInsensitiveContains(query)
+                || $0.chat.subtitle.localizedCaseInsensitiveContains(query)
+                || $0.preview.localizedCaseInsensitiveContains(query)
         }
     }
 

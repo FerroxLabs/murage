@@ -1,17 +1,14 @@
-// The companion listener — a second HTTP socket, off by default, that a
-// paired phone can reach. It runs the same request handler as the loopback
-// server; the only difference is the `remote` flag the handler gets, which
-// is what turns on authentication and turns off the routes a phone has no
-// business calling.
+// Where this computer can be reached, and what to call it.
 //
-// Two listeners rather than one bind on 0.0.0.0, deliberately. A single
-// socket cannot tell "the desktop app on this machine" from "something else
-// on the coffee-shop wifi" — `req.socket.localAddress` is 127.0.0.1 for both
-// when a 0.0.0.0 listener is reached over loopback. Separate sockets make
-// the distinction structural instead of a guess, so the trusted path stays
-// exactly as trusted as it was before this file existed.
+// This file used to own the listener socket as well, back when the companion
+// lived inside the harness and a `RemoteListener` class turned it on and off.
+// The sidecar opens its own sockets in index.ts, so that class went with it —
+// what is left is the part nothing else duplicates: working out which of this
+// machine's addresses a phone could actually dial, telling a tailnet address
+// apart from a LAN one, and asking Tailscale for the MagicDNS name that iOS
+// insists on. The name stayed because the answers are still about the
+// listener; only the socket moved.
 import { execFile } from "node:child_process";
-import { createServer, type RequestListener, type Server } from "node:http";
 import { homedir, networkInterfaces } from "node:os";
 import { join } from "node:path";
 
@@ -102,7 +99,16 @@ export async function refreshTailnetName(
       execFile(
         cli,
         ["status", "--json"],
-        { timeout: 5000, env: { ...process.env, PATH: searchPath() } },
+        {
+          timeout: 5000,
+          env: { ...process.env, PATH: searchPath() },
+          // `tailscale status --json` describes every peer in the tailnet, and
+          // Node's default 1 MiB cap turns a large one into ENOBUFS — read as
+          // "no MagicDNS name" by the code below, which is a wrong answer
+          // rather than a missing one. The ceiling is only there to bound a
+          // runaway subprocess; it does not need to be tight.
+          maxBuffer: 16 * 1024 * 1024,
+        },
         (error, stdout) => {
           if (error) {
             onAttempt?.(cli, error.message.split("\n")[0]);
@@ -127,101 +133,4 @@ export async function refreshTailnetName(
     }
   }
   cachedTailnetName = null;
-}
-
-export interface RemoteState {
-  enabled: boolean;
-  port: number;
-  addresses: string[];
-  /** The tailnet address, when this machine is on one. */
-  tailscale?: string;
-  /** Its MagicDNS name, when Tailscale will tell us. */
-  tailnetName?: string;
-  /** Why the listener is not up despite being enabled (e.g. port in use). */
-  error?: string;
-}
-
-export class RemoteListener {
-  private server: Server | null = null;
-  private lastError: string | undefined;
-  private readonly handler: RequestListener;
-  readonly port: number;
-
-  // Plain assignments, not constructor parameter properties: the harness
-  // runs straight off .ts through Node's strip-only type stripping, which
-  // rejects any TypeScript syntax that emits code.
-  constructor(handler: RequestListener, port: number) {
-    this.handler = handler;
-    this.port = port;
-  }
-
-  get running(): boolean {
-    return this.server !== null;
-  }
-
-  state(): RemoteState {
-    const addresses = this.running ? lanAddresses() : [];
-    const tailscale = tailscaleAddress(addresses);
-    const name = tailnetName();
-    return {
-      enabled: this.running,
-      port: this.port,
-      addresses,
-      ...(tailscale ? { tailscale } : {}),
-      ...(tailscale && name ? { tailnetName: name } : {}),
-      ...(this.lastError ? { error: this.lastError } : {}),
-    };
-  }
-
-  /** Bind 0.0.0.0:port. Resolves with the new state either way — a port
-   * conflict is a message the user can act on, never a crashed harness. */
-  async enable(): Promise<RemoteState> {
-    if (this.server) return this.state();
-    const server = createServer(this.handler);
-    this.lastError = undefined;
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const onError = (err: NodeJS.ErrnoException) => {
-          server.removeListener("listening", onListening);
-          reject(err);
-        };
-        const onListening = () => {
-          server.removeListener("error", onError);
-          resolve();
-        };
-        server.once("error", onError);
-        server.once("listening", onListening);
-        server.listen(this.port, "0.0.0.0");
-      });
-    } catch (e) {
-      const err = e as NodeJS.ErrnoException;
-      this.lastError =
-        err.code === "EADDRINUSE"
-          ? `port ${this.port} is already in use — close whatever is using it and try again`
-          : err.message;
-      try {
-        server.close();
-      } catch {
-        /* never bound */
-      }
-      return this.state();
-    }
-    // A listener whose sockets keep the process alive would stop the harness
-    // from exiting on SIGTERM while a phone holds an SSE stream open.
-    server.unref();
-    this.server = server;
-    return this.state();
-  }
-
-  async disable(): Promise<RemoteState> {
-    const server = this.server;
-    this.server = null;
-    this.lastError = undefined;
-    if (!server) return this.state();
-    // close() waits for open connections, and an SSE stream never ends on
-    // its own — drop the sockets so "turn it off" means off, now.
-    server.closeAllConnections?.();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    return this.state();
-  }
 }

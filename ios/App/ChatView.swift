@@ -6,9 +6,14 @@
 // did that and having two folds is how two clients start disagreeing.
 import SwiftUI
 import CompanionCore
-#if canImport(UIKit)
+// Unconditional, because the uses below are: `Color(uiColor:)` and
+// `UIImage(data:)` are reached on every path through this file. A
+// `canImport` guard around the import alone does not make the file portable
+// — it only moves the failure from "no such module" to "no such type", and
+// hides that this view is iOS-only behind something that looks like it
+// isn't. The App target is iOS; CompanionCore is where the portable half
+// lives.
 import UIKit
-#endif
 
 struct ChatView: View {
     let chat: Chat

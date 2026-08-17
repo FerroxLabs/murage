@@ -61,6 +61,22 @@ describe("port conflicts with the harness", () => {
     expect(err).toContain("webhook receiver");
   }, 20_000);
 
+  // The two sockets this process opens itself. Left to EADDRINUSE it fails
+  // on the second bind, whose message blames "another copy of the companion"
+  // — sending someone to hunt for a process that is not running.
+  it("refuses to put both of its own sockets on one port", async () => {
+    const { code, err } = await start({
+      OMB_PORT: "9100",
+      OMB_COMPANION_PORT: "9300",
+      OMB_CONTROL_PORT: "9300",
+    });
+    expect(code).toBe(1);
+    expect(err).toContain("OMB_COMPANION_PORT");
+    expect(err).toContain("OMB_CONTROL_PORT");
+    expect(err).toContain("9300");
+    expect(err).not.toContain("already in use");
+  }, 20_000);
+
   // An explicit OMB_WEBHOOK_PORT moves the receiver, which frees the port
   // above the harness. Refusing it anyway would be refusing a port nothing
   // is on.

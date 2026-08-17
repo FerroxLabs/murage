@@ -25,6 +25,9 @@ export interface ControlOptions {
   discovery: () => { advertising: boolean; name: string };
 }
 
+/** `new URL()` keeps the brackets on an IPv6 hostname, so both spellings. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
 const json = (res: ServerResponse, status: number, body: unknown) => {
   const text = JSON.stringify(body);
   res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(text) });
@@ -60,6 +63,32 @@ export function createControlServer(options: ControlOptions): Server {
     const host = String(req.headers.host ?? "").split(":")[0].toLowerCase();
     if (host && host !== "127.0.0.1" && host !== "localhost" && host !== "[::1]" && host !== "::1") {
       return json(res, 403, { error: "forbidden: loopback only" });
+    }
+
+    // The Host check above stops DNS rebinding, not CSRF. A POST from any page
+    // on the internet is a *simple* request — no preflight, `mode: "no-cors"`
+    // — and it arrives here with Host: 127.0.0.1 like any other. That page
+    // cannot read the reply, but it does not need to: opening a pairing window
+    // is the whole attack, and the code is then on screen for whoever is
+    // watching. Origin is the one header page script cannot forge, so it is
+    // where a browser somewhere else gets refused. The control page itself is
+    // served from this origin, so it passes; a native client sends no Origin
+    // at all and is unaffected.
+    const origin = req.headers.origin;
+    if (origin) {
+      let originHost = "";
+      try {
+        // An opaque origin — a sandboxed frame, a data: URL — arrives as the
+        // literal "null" and does not parse. That is not a pass: it is
+        // precisely the shape an attacker reaches for, so it falls through to
+        // the empty string and is refused with everything else foreign.
+        originHost = new URL(String(origin)).hostname.toLowerCase();
+      } catch {
+        /* unparseable — treat as foreign */
+      }
+      if (!LOOPBACK_HOSTS.has(originHost)) {
+        return json(res, 403, { error: "forbidden: cross-origin request" });
+      }
     }
 
     if (method === "GET" && (path === "/" || path === "/index.html")) {

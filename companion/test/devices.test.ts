@@ -1,7 +1,7 @@
 // Companion device registry contract. The three properties that matter:
 // a token is never recoverable from disk, a pairing code cannot be ground
 // down by guessing, and revoking a device actually revokes it.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -40,6 +40,38 @@ describe("DeviceRegistry", () => {
   it("survives a restart", () => {
     const { token } = pair(new DeviceRegistry());
     expect(new DeviceRegistry().authenticate(token)).not.toBeNull();
+  });
+
+  // A record written by an older build, or edited by hand, can be missing
+  // everything except the two fields that make it a device at all. Reading it
+  // back as-is puts "undefined" and "Last seen NaN" on the pairing page.
+  it("completes a record that is missing its labels", () => {
+    const registry = new DeviceRegistry();
+    const { token, device } = pair(registry);
+
+    const file = join(DATA_DIR, "devices.json");
+    const stored = JSON.parse(readFileSync(file, "utf8"));
+    delete stored.devices[0].name;
+    delete stored.devices[0].lastSeenAt;
+    delete stored.devices[0].createdAt;
+    writeFileSync(file, JSON.stringify(stored));
+
+    const reloaded = new DeviceRegistry();
+    const [listed] = reloaded.list();
+    expect(listed.id).toBe(device.id);
+    expect(listed.name).toBe("Companion");
+    expect(Number.isFinite(listed.lastSeenAt)).toBe(true);
+    expect(Number.isFinite(listed.createdAt)).toBe(true);
+    // and the token it was paired with still works
+    expect(reloaded.authenticate(token)?.id).toBe(device.id);
+  });
+
+  it("keeps token hashes out of reach of other accounts on the machine", () => {
+    pair(new DeviceRegistry());
+    // 0700 on the directory, 0600 on the file. A hash is an offline target
+    // for anyone who can read it, and this process is the only reader.
+    expect(statSync(DATA_DIR).mode & 0o777).toBe(0o700);
+    expect(statSync(join(DATA_DIR, "devices.json")).mode & 0o777).toBe(0o600);
   });
 
   it("refuses unknown, empty, and near-miss tokens", () => {
@@ -132,5 +164,16 @@ describe("bearerToken", () => {
     expect(bearerToken("omb_abc")).toBeUndefined();
     expect(bearerToken("Basic omb_abc")).toBeUndefined();
     expect(bearerToken(undefined)).toBeUndefined();
+  });
+
+  // RFC 7235 says the scheme is case-insensitive, and a client sending
+  // "bearer" is within its rights. This is the only parser in the sidecar,
+  // so a phone cannot get a 401 from one half disagreeing with the other.
+  it("matches the scheme however it is cased", () => {
+    expect(bearerToken("bearer omb_abc")).toBe("omb_abc");
+    expect(bearerToken("BEARER omb_abc")).toBe("omb_abc");
+    expect(bearerToken("BeArEr\tomb_abc")).toBe("omb_abc");
+    expect(bearerToken("Bearer ")).toBeUndefined();
+    expect(bearerToken("Beareromb_abc")).toBeUndefined();
   });
 });

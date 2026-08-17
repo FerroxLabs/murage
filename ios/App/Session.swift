@@ -98,6 +98,24 @@ final class Session: ObservableObject {
         streamTask = Task { [weak self] in await self?.run() }
     }
 
+    /// Pull-to-refresh: reopen the stream, and hold the control open until
+    /// the connection has actually settled one way or the other.
+    ///
+    /// `connect()` returns the moment the task is spawned, so a `refreshable`
+    /// that only calls it snaps the spinner shut before a single byte has
+    /// arrived — the gesture reads as "nothing happened", on precisely the
+    /// occasion it exists for. Waiting for `status` to leave `.connecting`
+    /// makes the spinner mean what it appears to mean; the deadline is there
+    /// so a network that never answers still gives the control back.
+    func refresh() async {
+        restartStream()
+        connect()
+        let deadline = Date().addingTimeInterval(10)
+        while status == .connecting, !Task.isCancelled, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 120_000_000)
+        }
+    }
+
     /// Ask the harness to include this bot's computer in the stream, for as
     /// long as something is showing it.
     ///
@@ -359,31 +377,58 @@ enum Chat: Identifiable, Hashable {
     }
 }
 
+/// A chat plus the two things a roster row shows that the record itself does
+/// not carry: the preview line, and when the thread last moved. Both come out
+/// of the same message — the last one in the transcript.
+struct ChatSummary: Identifiable, Hashable {
+    let chat: Chat
+    let preview: String
+    let lastActivity: Double
+    let pinned: Bool
+
+    var id: String { chat.id }
+}
+
 extension CompanionState {
     /// Everything worth showing in the chat list: pinned first, then unread,
     /// then most recently active. Hidden bots stay hidden.
-    var chats: [Chat] {
+    ///
+    /// The derived fields are computed once here rather than asked for as the
+    /// list is sorted and filtered. Each one walks a thread's messages to
+    /// reach the last of them, and a comparator is called O(n log n) times
+    /// while the search predicate runs over every chat on every keystroke —
+    /// so the same transcript was being traversed dozens of times per frame
+    /// to produce an answer that had not changed. One pass, then sort the
+    /// results.
+    var chatSummaries: [ChatSummary] {
         let bots = self.bots.filter { $0.hidden != true }.map(Chat.bot)
         let rooms = self.rooms.map(Chat.room)
-        return (bots + rooms).sorted { left, right in
-            let leftPinned = pinned(left), rightPinned = pinned(right)
-            if leftPinned != rightPinned { return leftPinned }
-            if left.unread != right.unread { return left.unread }
-            return lastActivity(left) > lastActivity(right)
-        }
+        return (bots + rooms)
+            .map { chat in
+                let last = transcript(forThread: chat.threadId).last
+                return ChatSummary(
+                    chat: chat,
+                    preview: Self.preview(of: last),
+                    lastActivity: last?.at ?? 0,
+                    pinned: Self.pinned(chat)
+                )
+            }
+            .sorted { left, right in
+                if left.pinned != right.pinned { return left.pinned }
+                if left.chat.unread != right.chat.unread { return left.chat.unread }
+                return left.lastActivity > right.lastActivity
+            }
     }
 
-    private func pinned(_ chat: Chat) -> Bool {
+    private static func pinned(_ chat: Chat) -> Bool {
         if case let .bot(bot) = chat { return bot.pinned ?? false }
         return false
     }
 
-    func lastActivity(_ chat: Chat) -> Double {
-        transcript(forThread: chat.threadId).last?.at ?? 0
-    }
-
-    func preview(_ chat: Chat) -> String {
-        guard let last = transcript(forThread: chat.threadId).last else { return "" }
+    /// The one line a roster row shows under the name, from whichever kind of
+    /// message landed last.
+    private static func preview(of last: Message?) -> String {
+        guard let last else { return "" }
         switch last.kind {
         case .text: return last.text ?? ""
         case .options: return last.card?.isPending == true ? "Waiting on you" : (last.card?.title ?? "")

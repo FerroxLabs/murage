@@ -13,6 +13,7 @@
 // serve. Nothing upstream has to change, or even know this exists.
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 
+import { bearerToken } from "./devices.ts";
 import { denyReason } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
@@ -20,7 +21,7 @@ export interface ProxyOptions {
   /** Where the harness is listening on loopback. */
   harnessPort: number;
   /** Does this bearer token belong to a paired device? */
-  authenticate: (token: string | null) => boolean;
+  authenticate: (token: string | undefined) => boolean;
   /** Redeem a pairing code. Handled here and never forwarded: the harness
    * has no such route and no idea devices exist — pairing is the sidecar's
    * own concern, and the one thing a device does before it has a token. */
@@ -59,11 +60,6 @@ const readJson = (req: IncomingMessage, limit = 64 * 1024): Promise<Record<strin
       }
     });
   });
-
-const bearer = (header: string | undefined): string | null => {
-  const value = (header ?? "").trim();
-  return value.toLowerCase().startsWith("bearer ") ? value.slice(7).trim() || null : null;
-};
 
 const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
   const text = JSON.stringify(body);
@@ -104,7 +100,7 @@ export function createProxyHandler(options: ProxyOptions) {
     const denial = denyReason({
       path,
       method,
-      authenticated: options.authenticate(bearer(req.headers.authorization)),
+      authenticated: options.authenticate(bearerToken(req.headers.authorization)),
     });
     if (denial) return sendJson(res, denial.status, { error: denial.error });
 
@@ -167,6 +163,16 @@ export function createProxyHandler(options: ProxyOptions) {
         if (!isJson(String(contentType ?? ""))) {
           // images and anything else: byte-for-byte, no parsing
           res.writeHead(harness.statusCode ?? 200, harness.headers);
+          // `pipe` does not carry a failure from source to destination. An
+          // upstream that dies part-way through an image therefore leaves the
+          // phone holding an open connection and a content-length that will
+          // never be satisfied — it waits for the rest forever, which reads
+          // as a frozen app rather than as a failed request. Dropping the
+          // socket is a failure the client can see and retry.
+          harness.on("error", () => res.destroy());
+          // and the mirror of it: a device that hangs up takes the upstream
+          // connection with it, exactly as on the stream branch.
+          res.on("close", () => harness.destroy());
           harness.pipe(res);
           return;
         }
@@ -200,9 +206,16 @@ export function createProxyHandler(options: ProxyOptions) {
       },
     );
 
-    upstream.on("error", () =>
-      sendJson(res, 502, { error: "OpenMausBot is not running on this computer" }),
-    );
+    // Upstream failures arrive here at two very different moments. Before the
+    // response is open, 502 is the right answer. Once it is open — the harness
+    // exits while a phone holds a stream — the headers are long gone, and
+    // writing them again throws ERR_HTTP_HEADERS_SENT out of an event handler
+    // with nothing to catch it, taking the whole sidecar down with the one
+    // dead connection. Dropping the socket is what a client can recover from.
+    upstream.on("error", () => {
+      if (res.headersSent || res.writableEnded) return void res.destroy();
+      sendJson(res, 502, { error: "OpenMausBot is not running on this computer" });
+    });
     req.pipe(upstream);
   };
 }

@@ -322,11 +322,12 @@ that nobody could *see* it: the panel printed `addresses[0]`, and the tailnet ad
 is usually not first.
 
 So the work is telling the two addresses apart and saying which is which.
-`tailscaleAddress()` in `server/remote.ts` recognises the CGNAT range RFC 6598 set
-aside — `100.64.0.0/10`, which is exactly why it never collides with a home network —
-and `refreshTailnetName()` shells out to the Tailscale CLI once at startup for
-`Self.DNSName`, the MagicDNS name. Both land in `RemoteState`, and the panel prefers
-the tailnet, listing the LAN address separately as the secondary thing it now is.
+`tailscaleAddress()` in `companion/src/listener.ts` recognises the CGNAT range RFC 6598
+set aside — `100.64.0.0/10`, which is exactly why it never collides with a home network
+— and `refreshTailnetName()` shells out to the Tailscale CLI once at startup for
+`Self.DNSName`, the MagicDNS name. Both land in the state the control page reads from
+`companionState()`, which prefers the tailnet, listing the LAN address separately as the
+secondary thing it now is.
 
 The name matters more than it looks. A phone reaching a tailnet over plain HTTP is on
 the wrong side of App Transport Security: `NSAllowsLocalNetworking` exempts the

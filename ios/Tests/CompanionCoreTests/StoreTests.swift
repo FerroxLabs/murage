@@ -316,7 +316,11 @@ final class ScreenTests: XCTestCase {
 
     func testBadBase64DecodesToNilRatherThanCrashing() {
         let good = ScreenFrame(png: "aGVsbG8=", mime: "image/png")
-        XCTAssertEqual(good.data.map { String(decoding: $0, as: UTF8.self) }, "hello")
+        // The failable initialiser rather than `String(decoding:as:)`: the
+        // latter substitutes replacement characters for anything invalid, so
+        // a decode that produced garbage would still assert equal to garbage.
+        // Here a wrong answer should be nil, and nil fails the test.
+        XCTAssertEqual(good.data.flatMap { String(bytes: $0, encoding: .utf8) }, "hello")
         // the view treats nil as "no frame yet", which is the right fallback
         XCTAssertNil(ScreenFrame(png: "not base64 at all!!", mime: "image/png").data)
     }

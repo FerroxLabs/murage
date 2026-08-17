@@ -90,13 +90,39 @@ enum MausSilhouette {
         14.73242483 -72.03125 -1.625 C-50.89854752 -24.96559677 -21.34867451 -18.24899383 0 0 Z
         """
 
-    /// Parse into a `Path` normalised to fill `rect`, preserving aspect.
+    /// The parsed silhouette, in its own coordinate space. Parsed once.
+    ///
+    /// This is a four-kilobyte string and a character-at-a-time parser, and
+    /// the shape it produces never changes — but a chat list is hundreds of
+    /// avatars, each redrawn on scroll, and running the parser inside `Canvas`
+    /// ran it for every one of them on every frame. `static let` is lazy and
+    /// evaluated exactly once, so what is left per draw is the affine
+    /// transform below, which is the only part that depends on the rect.
+    private static let parsed: Path = parse()
+
+    /// Its bounding box, cached alongside — `boundingRect` walks the path.
+    private static let parsedBounds: CGRect = parsed.boundingRect
+
+    /// The silhouette normalised to fill `rect`, preserving aspect.
     ///
     /// The desktop maps this through a `fit` transform into a 228.541-unit
     /// face box. That is not reproduced: normalising to the actual bounds is
     /// equivalent for a shape drawn on its own, and it does not go stale if
     /// the artwork's framing changes.
     static func path(in rect: CGRect) -> Path {
+        let bounds = parsedBounds
+        guard bounds.width > 0, bounds.height > 0 else { return parsed }
+        let scale = min(rect.width / bounds.width, rect.height / bounds.height)
+        return parsed.applying(
+            CGAffineTransform(translationX: -bounds.midX, y: -bounds.midY)
+                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+                .concatenating(CGAffineTransform(translationX: rect.midX, y: rect.midY))
+        )
+    }
+
+    /// The SVG path data, once, into a `Path`. Only `M`, `C` and `Z` appear in
+    /// the artwork, so only those are understood.
+    private static func parse() -> Path {
         var raw = Path()
         var numbers: [CGFloat] = []
         var command: Character?
@@ -150,15 +176,7 @@ enum MausSilhouette {
         }
         takeNumber()
         flush()
-
-        let bounds = raw.boundingRect
-        guard bounds.width > 0, bounds.height > 0 else { return raw }
-        let scale = min(rect.width / bounds.width, rect.height / bounds.height)
-        return raw.applying(
-            CGAffineTransform(translationX: -bounds.midX, y: -bounds.midY)
-                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
-                .concatenating(CGAffineTransform(translationX: rect.midX, y: rect.midY))
-        )
+        return raw
     }
 }
 

@@ -12,9 +12,10 @@
 // from the cursor, so the reconnect costs nothing but a round trip.
 import SwiftUI
 import CompanionCore
-#if canImport(UIKit)
+// Unconditional for the same reason as ChatView: `UIImage` is used below
+// without a guard, so a conditional import would only change which error a
+// non-UIKit build fails with.
 import UIKit
-#endif
 
 struct ComputerView: View {
     let bot: Bot

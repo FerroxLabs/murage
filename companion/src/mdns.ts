@@ -318,6 +318,29 @@ export function dnsLabel(text: string, fallback = "OpenMausBot"): string {
   return label || fallback;
 }
 
+/** Clamp to a byte budget without splitting a character.
+ *
+ * Both limits in DNS-SD are byte counts — 63 for a label, 255 for a TXT entry
+ * — and `String.prototype.slice` counts UTF-16 code units instead. Two hundred
+ * CJK characters are six hundred bytes, so a name measured the wrong way
+ * produces a record that is not truncated but malformed, and discovery stops
+ * working silently for exactly the people whose names are not Latin.
+ *
+ * Iterating the string yields whole code points, so an emoji or a surrogate
+ * pair is kept or dropped entire rather than cut in half. */
+export function clampBytes(text: string, limit: number): string {
+  if (Buffer.byteLength(text, "utf8") <= limit) return text;
+  let out = "";
+  let size = 0;
+  for (const character of text) {
+    const width = Buffer.byteLength(character, "utf8");
+    if (size + width > limit) break;
+    out += character;
+    size += width;
+  }
+  return out;
+}
+
 /** A host name nothing else on the network claims.
  *
  * Deliberately not `<hostname>.local`: on macOS the system responder owns
@@ -339,6 +362,49 @@ export function advertisableAddresses(): string[] {
     }
   }
   return out;
+}
+
+/** An IPv4 dotted quad as a 32-bit number, or null if it is not one. */
+function toIpv4(address: string): number | null {
+  // A udp4 socket can hand back the mapped form on some platforms.
+  const plain = address.replace(/^::ffff:/i, "").split("%")[0];
+  const parts = plain.split(".");
+  if (parts.length !== 4) return null;
+  let out = 0;
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return null;
+    const octet = Number(part);
+    if (octet > 255) return null;
+    out = out * 256 + octet;
+  }
+  return out >>> 0;
+}
+
+/**
+ * Is this source address on a network directly attached to this machine?
+ *
+ * RFC 6762 §5.5 is explicit that a multicast DNS responder answers link-local
+ * queries only, and it is not bookkeeping: a responder that replies to anything
+ * that can route to port 5353 is an off-link discovery service for whoever asks
+ * — it will name this computer, its addresses and its owner to a stranger — and
+ * a UDP reflector besides, since the reply goes wherever the source address
+ * says and that address is trivially forged. Neither is something a companion
+ * sidecar should be. Loopback passes, because the internal interface is as
+ * directly attached as it gets and the test rig speaks to itself.
+ */
+export function isOnLink(from: string, interfaces = networkInterfaces()): boolean {
+  const source = toIpv4(from);
+  if (source === null) return false;
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== "IPv4") continue;
+      const address = toIpv4(entry.address);
+      const mask = toIpv4(entry.netmask);
+      if (address === null || mask === null) continue;
+      if ((((source ^ address) & mask) >>> 0) === 0) return true;
+    }
+  }
+  return false;
 }
 
 // ── the responder ──────────────────────────────────────────────────────
@@ -476,6 +542,9 @@ export class MdnsResponder {
 
   private handle(buf: Buffer, from: string, fromPort: number) {
     if (!this.socket || !this.service) return;
+    // Before anything is decoded: a query that did not come from a network
+    // this machine is on has no business being answered (RFC 6762 §5.5).
+    if (!isOnLink(from)) return;
     const message = decodeMessage(buf);
     if (!message || message.response || !message.questions.length) return;
     const { answers, additionals } = answersFor(message, this.service);
