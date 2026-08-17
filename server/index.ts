@@ -993,6 +993,10 @@ async function startTurn(
       // the private bot workspace. A legacy task with an existing provider
       // session deliberately pins to null (the old home-folder behavior),
       // because moving a live session would break resume.
+      // A cloud run happens on the box, where a host folder means nothing:
+      // pin the task to the default so the header chip never shows the
+      // bot's folder for a task that runs elsewhere.
+      if (opts?.runOn === "cloud") store.pinTaskCwd(bot.id, threadId, undefined, { none: true });
       const pinnedCwd =
         privateWorkspace && opts?.runOn !== "cloud"
           ? store.pinTaskCwd(bot.id, threadId, privateWorkspace)

@@ -88,7 +88,8 @@ function WorkingFolder({ bot }: { bot: Bot }) {
           className="mt-3 flex items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            void save(draft ?? bot.cwd ?? "");
+            // an emptied field clears the folder — the server wants null
+            void save((draft ?? bot.cwd ?? "").trim() || null);
           }}
         >
           <input
