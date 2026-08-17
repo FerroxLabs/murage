@@ -39,7 +39,7 @@ import { isEffortLevel, type RuntimeEvent } from "./contracts.ts";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
 import { searchMessages } from "./message-db.ts";
-import { discardDelegations, drainDelegations, queueDelegation, type QueueResult } from "./delegations.ts";
+import { _loadPending, discardDelegations, drainDelegations, pendingThreads, queueDelegation, type QueueResult } from "./delegations.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { cancelPeerApprovalsFor, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
@@ -749,13 +749,10 @@ function finalizeDelegationWatch(
 // Run as a separate subscriber so the drain logic stays out of the main
 // fold (which has its own switch/case noise) and its approval + startTurn
 // calls never have to share locals with the fold's state machine.
-bus.subscribe((event: RuntimeEvent) => {
-  if (event.type !== "turn.completed") return;
-  // A turn that failed or was interrupted drops its queue rather than
-  // firing it later: the user who hit Stop does not expect the delegations
-  // that turn queued to run anyway, minutes later, on an unrelated turn.
-  if (!event.ok) return void discardDelegations(commsBus, event.threadId);
-  drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth, sourceThreadId, channel) => {
+/** How a drained delegation becomes a real turn on the target. Shared by
+ * the settle-time drain and the boot-time drain of what a previous process
+ * left queued. */
+const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
@@ -794,8 +791,17 @@ bus.subscribe((event: RuntimeEvent) => {
     }).catch((err) => {
       reportStartFailure(err);
     });
-  });
+};
+
+bus.subscribe((event: RuntimeEvent) => {
+  if (event.type !== "turn.completed") return;
+  // A turn that failed or was interrupted drops its queue rather than
+  // firing it later: the user who hit Stop does not expect the delegations
+  // that turn queued to run anyway, minutes later, on an unrelated turn.
+  if (!event.ok) return void discardDelegations(commsBus, event.threadId);
+  drainDelegations(commsBus, approvalBus, event.threadId, runDelegatedTurn);
 });
+
 
 // ── live screen: poll the bot's box while it works ────────────────────
 // Frames stream to clients as SSE {kind:'screen'} (the "Bot's screen"
@@ -1321,6 +1327,17 @@ const approvalBus: ApprovalBus = { store, broadcast };
 {
   const stale = dismissStalePeerCards(approvalBus);
   if (stale) console.log(`peer approvals: dismissed ${stale} card(s) left by a previous run`);
+}
+
+// Handoffs a previous process queued but never ran: the source turn is
+// dead (no turn survives a restart) so they would otherwise wait forever.
+// Run them now, through the same drain — target and approvePeerComms are
+// re-checked there as always; a source bot that no longer exists is skipped.
+_loadPending();
+{
+  const leftover = pendingThreads();
+  if (leftover.length) console.log(`delegations: ${leftover.length} thread(s) with queued handoffs from a previous run — draining`);
+  for (const threadId of leftover) drainDelegations(commsBus, approvalBus, threadId, runDelegatedTurn);
 }
 
 async function runGroupMemberTurn(
