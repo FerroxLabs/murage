@@ -111,10 +111,18 @@ const withHost = (port: number, host: string, path = "/api/health", headers: Rec
   });
 
 beforeAll(async () => {
-  // two in a row for the harness (itself, then its webhook receiver), one
-  // for the sidecar in front of it
-  HARNESS_PORT = await freePorts(2);
-  SIDECAR_PORT = await freePorts(1);
+  // Three in a row, from one call: the harness, its webhook receiver one
+  // above it, and the sidecar above that.
+  //
+  // One call rather than two, because two are not independent the way they
+  // look. Each verifies its ports by binding and then releases them for the
+  // real thing to take, so by the time a second call runs, the first call's
+  // ports are free again — and free is exactly what it goes looking for. It
+  // can hand back a port already spoken for, which is the collision this
+  // helper exists to rule out.
+  const base = await freePorts(3);
+  HARNESS_PORT = base;
+  SIDECAR_PORT = base + 2;
   HARNESS = `http://127.0.0.1:${HARNESS_PORT}`;
   SIDECAR = `http://127.0.0.1:${SIDECAR_PORT}`;
 
