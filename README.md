@@ -47,7 +47,8 @@ memory of its thread, model, computer, and apps) and rebuilds it open, local-fir
 already have:
 
 - **Bring your own agents.** Bots run on the `claude`, `codex`, and `grok` CLIs installed on your own machine
-  — your existing logins and subscriptions, no new accounts, no proxy in the middle.
+  — your existing logins and subscriptions, no new accounts, no proxy in the middle. Point any engine at a
+  custom CLI binary (a versioned build or wrapper) in **Settings → Engines**.
 - **Local first.** One small harness server on `127.0.0.1` owns every agent process. Transcripts, keys, and
   events live in `~/.openmausbot`, not a cloud.
 - **Agents with hands.** Each bot can get a real computer — a cloud Linux desktop it drives while you watch

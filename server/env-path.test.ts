@@ -7,7 +7,7 @@ import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { augmentedPath, resetPathCacheForTests } from "./env-path.ts";
+import { augmentedPath, resetPathCacheForTests, splitCliString } from "./env-path.ts";
 import { resolveCli } from "./procs.ts";
 
 const posixIt = it.skipIf(process.platform === "win32");
@@ -223,6 +223,56 @@ winOnly("resolveCli (Windows)", () => {
     expect(resolveCli("definitely-not-installed", ["-p"])).toEqual({
       command: "definitely-not-installed",
       args: ["-p"],
+    });
+  });
+});
+
+describe("splitCliString", () => {
+  it("splits wrapper command + fixed args, honoring quotes", () => {
+    expect(splitCliString("/usr/local/bin/ag claude agp")).toEqual(["/usr/local/bin/ag", "claude", "agp"]);
+    expect(splitCliString('"/opt/my tools/cli" --flag with space')).toEqual(["/opt/my tools/cli", "--flag", "with", "space"]);
+    expect(splitCliString("claude")).toEqual(["claude"]);
+    expect(splitCliString("  ")).toEqual([]);
+  });
+
+  it("strips quotes from a lone quoted path — the spaced-path case", () => {
+    // a user quoting a path with spaces pastes ONE token; the quotes must
+    // not survive into the spawn, or every turn dies ENOENT on a filename
+    // that literally contains quote characters
+    expect(splitCliString('"/opt/my tools/claude"')).toEqual(["/opt/my tools/claude"]);
+  });
+});
+
+describe("resolveCli with wrapper commands", () => {
+  posixIt("puts wrapper subcommands BEFORE invocation args", () => {
+    const resolved = resolveCli("/usr/local/bin/ag claude agp", ["--help"]);
+    expect(resolved.command).toBe("/usr/local/bin/ag");
+    expect(resolved.args).toEqual(["claude", "agp", "--help"]);
+  });
+
+  posixIt("strips quotes from a single-token quoted path", () => {
+    expect(resolveCli('"/opt/my tools/claude"', ["--help"])).toEqual({
+      command: "/opt/my tools/claude",
+      args: ["--help"],
+    });
+  });
+
+  posixIt("keeps an EXISTING unquoted spaced path whole — what the candidates list emits", () => {
+    const bin = join(homedir(), ".local", "bin");
+    mkdirSync(bin, { recursive: true });
+    // simulate "/Applications/My Tools/claude": a real file at a spaced path
+    const spacedDir = join(bin, "omb space dir");
+    mkdirSync(spacedDir, { recursive: true });
+    const spaced = join(spacedDir, "myclaude");
+    writeFileSync(spaced, "#!/bin/sh\n");
+    expect(resolveCli(spaced, ["--version"])).toEqual({
+      command: spaced,
+      args: ["--version"],
+    });
+    // a NONEXISTENT spaced string still splits (wrapper interpretation)
+    expect(resolveCli(join(spacedDir, "nope two words"), ["--version"])).toEqual({
+      command: join(bin, "omb"),
+      args: ["space", "dir/nope", "two", "words", "--version"],
     });
   });
 });

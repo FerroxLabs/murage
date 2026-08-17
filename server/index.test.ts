@@ -76,7 +76,10 @@ beforeAll(async () => {
         config: { user_id: body.user_id },
       }));
     }
-    const ok = req.headers.authorization === "Bearer box_good";
+    if (req.headers.authorization === "Bearer box_slow") {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    const ok = req.headers.authorization === "Bearer box_good" || req.headers.authorization === "Bearer box_slow";
     res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
     res.end(JSON.stringify(ok ? { ok: true, boxes: [] } : { ok: false, code: "unauthorized" }));
   });
@@ -828,5 +831,71 @@ describe("resumable event stream", () => {
         stream.close();
       }
     }
+  });
+});
+
+describe("instance CLI override API", () => {
+  it("round-trips a set, clear, and rejects bad input", async () => {
+    // ghost is the fixture's one shadow instance (unknown driver)
+    const set = await api("PATCH", "/api/instances/ghost", { cli: "/opt/ghost/wrapper sub" });
+    expect(set.status).toBe(200);
+    const setRow = set.body.instances.find((i: any) => i.instanceId === "ghost");
+    expect(setRow.cli).toBe("/opt/ghost/wrapper sub");
+
+    // persisted for real: the next fleet rebuild reads it back
+    const cleared = await api("PATCH", "/api/instances/ghost", { cli: "" });
+    expect(cleared.status).toBe(200);
+    const clearedRow = cleared.body.instances.find((i: any) => i.instanceId === "ghost");
+    expect(clearedRow.cli).toBeUndefined();
+
+    expect((await api("PATCH", "/api/instances/nope", { cli: "/x" })).status).toBe(404);
+    expect((await api("PATCH", "/api/instances/ghost", { cli: 42 })).status).toBe(400);
+    expect((await api("PATCH", "/api/instances/ghost", { cli: "/x\ny" })).status).toBe(400);
+  });
+
+  it("echoes a path-ish name back as the only cli candidate", async () => {
+    const res = await api("GET", "/api/cli-candidates?name=/opt/definitely/not/here");
+    expect(res.status).toBe(200);
+    expect(res.body.candidates).toEqual(["/opt/definitely/not/here"]);
+    expect((await api("GET", "/api/cli-candidates?name=")).body.candidates).toEqual([]);
+  });
+
+  it("reports a missing binary as a failed probe with install info", async () => {
+    const res = await api("POST", "/api/cli-test", { cli: "/no/such/binary-anywhere", driver: "claudeAgent" });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.message).toContain("isn't installed");
+    expect(res.body.install?.docsUrl).toBe("https://claude.com/claude-code");
+  });
+
+  it("probes the complete wrapper with fixed arguments and no inherited credentials", async () => {
+    const script = join(home, "cli-wrapper-probe.mjs");
+    writeFileSync(
+      script,
+      `if (process.argv.slice(2).join(" ") !== "fixed --version") process.exit(9);\nif (process.env.COMPOSIO_API_KEY) process.exit(8);\nconsole.log("wrapper-ok");\n`,
+    );
+    const cli = `${JSON.stringify(process.execPath)} ${JSON.stringify(script)} fixed`;
+    const res = await api("POST", "/api/cli-test", { cli });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, version: "wrapper-ok" });
+  });
+
+  it("reports excessive probe output without presenting install guidance", async () => {
+    const script = join(home, "cli-noisy-probe.mjs");
+    writeFileSync(script, `process.stdout.write("x".repeat(70 * 1024));\n`);
+    const cli = `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`;
+    const res = await api("POST", "/api/cli-test", { cli, driver: "claudeAgent" });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.message).toContain("more than 64 KiB");
+    expect(res.body.install).toBeUndefined();
+  });
+
+  it("rejects overlapping provider configuration writes", async () => {
+    const slowConfigWrite = api("PUT", "/api/config", { box: { token: "box_slow" } });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const overlapping = await api("PATCH", "/api/instances/ghost", { cli: "/tmp/ghost-overlap" });
+    expect(overlapping.status).toBe(409);
+    expect((await slowConfigWrite).status).toBe(200);
   });
 });
