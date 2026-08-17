@@ -40,6 +40,12 @@ export function needsSignIn(instance: InstanceInfo | undefined): boolean {
   return instance?.snapshot.state === "available" && instance.snapshot.authenticated === false;
 }
 
+/** True when this machine does not have the agent CLI — Custom inject
+ * cannot run until the user installs it. A missing cloud login is not this. */
+export function needsCli(instance: InstanceInfo | undefined): boolean {
+  return instance?.snapshot.state !== "available";
+}
+
 function CommandRow({
   command,
   trailing,
@@ -111,6 +117,7 @@ export function EngineSetup({
   instance,
   className,
   compact = false,
+  intent = "cloud",
 }: {
   instance: InstanceInfo;
   className?: string;
@@ -118,11 +125,13 @@ export function EngineSetup({
    * picker header already states the problem), docs link inline with the
    * actions, and the sign-in / Node caveats collapsed into one small line. */
   compact?: boolean;
+  /** `inject` is the Custom-pane path: install the CLI, skip cloud sign-in. */
+  intent?: "cloud" | "inject";
 }) {
   const install = instance.install;
   const command = installCommandFor(install);
   const signIn = install?.signInCommand;
-  const signInOnly = needsSignIn(instance);
+  const signInOnly = intent === "cloud" && needsSignIn(instance);
 
   // No install descriptor at all means this isn't something you install —
   // the Box cloud runner is configured with a token in settings, not a CLI.
@@ -148,7 +157,7 @@ export function EngineSetup({
       </a>
     ) : undefined;
     const hints: string[] = [];
-    if (!signInOnly && signIn) hints.push(`then \`${signIn}\` to sign in`);
+    if (intent === "cloud" && !signInOnly && signIn) hints.push(`then \`${signIn}\` to sign in`);
     if (!signInOnly && install.needsNode) hints.push("needs Node.js");
     const shown = signInOnly ? signIn : command;
     return (
@@ -188,8 +197,9 @@ export function EngineSetup({
           {command ? (
             <>
               <p>
-                {instance.displayName} isn&rsquo;t installed. Run this in a terminal
-                {signIn ? `, then \`${signIn}\` to sign in` : ""}.
+                {intent === "inject"
+                  ? `${instance.displayName} isn’t installed. Install the CLI first — then you can inject a local model into it.`
+                  : `${instance.displayName} isn’t installed. Run this in a terminal${signIn ? `, then \`${signIn}\` to sign in` : ""}.`}
               </p>
               <CommandRow command={command} />
               {install?.needsNode && (

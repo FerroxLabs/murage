@@ -4,6 +4,7 @@ import { MausAvatar } from "./Avatar";
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { EngineSetup } from "./EngineSetup";
+import { ProviderMark } from "./ProviderIcons";
 import type { InstanceInfo } from "@/state/store";
 
 // Three-step first-run onboarding: who you are (email), what's installed
@@ -17,12 +18,14 @@ function StatusRow({
   warn,
   title,
   detail,
+  mark,
   children,
 }: {
   ok: boolean;
   warn?: boolean;
   title: string;
   detail?: string;
+  mark?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -35,7 +38,10 @@ function StatusRow({
         {ok ? <Check size={14} /> : <AlertTriangle size={13} />}
       </span>
       <div className="min-w-0 flex-1">
-        <div className="text-[14px] font-medium text-ink">{title}</div>
+        <div className="flex items-center gap-2 text-[14px] font-medium text-ink">
+          {mark}
+          <span className="min-w-0 truncate">{title}</span>
+        </div>
         {detail && <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{detail}</div>}
         {children}
       </div>
@@ -48,13 +54,16 @@ function StatusRow({
  * a sentence; anything the user has to act on gets the shared setup UI, so
  * the instructions come from the driver and are correct for this platform. */
 interface EngineEntry {
-  instance: InstanceRow | undefined;
+  instance: InstanceRow;
   label: string;
   readyNote: string;
 }
 
-function engineReady(instance: InstanceRow | undefined): boolean {
-  return instance?.snapshot.state === "available" && instance.snapshot.authenticated !== false;
+function engineReady(instance: InstanceRow): boolean {
+  return (
+    instance.snapshot.state === "available" &&
+    (instance.access === "custom" || instance.snapshot.authenticated !== false)
+  );
 }
 
 function engineTitle({ instance, label }: EngineEntry): string {
@@ -68,9 +77,7 @@ function engineTitle({ instance, label }: EngineEntry): string {
 function ReadyTile(entry: EngineEntry) {
   return (
     <div className="flex items-start gap-2.5 rounded-xl bg-card p-3">
-      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-[#00c97222] text-[#38d591]">
-        <Check size={12} />
-      </span>
+      <ProviderMark driverKind={entry.instance.driverKind} size={17} />
       <div className="min-w-0">
         <div className="truncate text-[13.5px] font-medium text-ink">{engineTitle(entry)}</div>
         <div className="mt-0.5 text-[12px] leading-snug text-ink-secondary">{entry.readyNote}</div>
@@ -83,12 +90,13 @@ function ReadyTile(entry: EngineEntry) {
  * row: the command box and terminal button need the room. */
 function SetupRow(entry: EngineEntry) {
   return (
-    <StatusRow ok={false} warn title={engineTitle(entry)}>
-      {entry.instance ? (
-        <EngineSetup instance={entry.instance} className="mt-0.5" />
-      ) : (
-        <div className="mt-0.5 text-[12.5px] text-ink-secondary">Not configured on this machine.</div>
-      )}
+    <StatusRow
+      ok={false}
+      warn
+      title={engineTitle(entry)}
+      mark={<ProviderMark driverKind={entry.instance.driverKind} size={16} />}
+    >
+      <EngineSetup instance={entry.instance} className="mt-0.5" />
     </StatusRow>
   );
 }
@@ -156,14 +164,16 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     onDone();
   };
 
-  const byKind = (kind: string) => instances?.find((i) => i.driverKind === kind);
-  const engines: EngineEntry[] = [
-    { instance: byKind("claudeAgent"), label: "Claude Code", readyNote: "Installed and signed in — ready to power bots." },
-    { instance: byKind("codex"), label: "Codex", readyNote: "Installed — bots can run on Codex too." },
-    { instance: byKind("grokAgent"), label: "Grok Build", readyNote: "Installed and signed in — bots can run on Grok too." },
-    { instance: byKind("antigravityAgent"), label: "Antigravity", readyNote: "Installed — bots can run on Antigravity too." },
-    { instance: byKind("opencodeGo"), label: "OpenCode Go", readyNote: "Installed and configured." },
-  ];
+  const engines: EngineEntry[] = (instances ?? [])
+    .filter((instance) => instance.install)
+    .map((instance) => ({
+      instance,
+      label: instance.displayName,
+      readyNote:
+        instance.access === "custom"
+          ? "Installed — ready for a local model."
+          : "Installed — ready to power bots.",
+    }));
   const readyEngines = engines.filter((e) => engineReady(e.instance));
   const setupEngines = engines.filter((e) => !engineReady(e.instance));
 
