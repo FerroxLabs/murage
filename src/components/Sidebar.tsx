@@ -140,6 +140,7 @@ function UpdateButton() {
 }
 
 function preview(bot: Bot): string {
+  if (bot.activity === "waiting-on-you") return "Waiting for you…";
   if (bot.busy) return "Working…";
   // the visible branch's tail — bot.messages holds every fork, so its last
   // entry can belong to a version the user switched away from

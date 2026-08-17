@@ -58,12 +58,11 @@ export function queueDelegation(
   list.push(item);
   pendingDelegations.set(sourceThreadId, list);
   const label = `Delegated to @${target.name}${item.reason ? `: ${item.reason}` : ""}`;
-  const note = bus.store.appendMessage(sourceThreadId, {
+  bus.store.appendMessage(sourceThreadId, {
     role: "bot",
     kind: "activity",
     tool: { name: label },
   });
-  bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
   return "ok";
 }
 
@@ -94,12 +93,11 @@ export function drainDelegations(
     void processOne(bus, approvalBus, from, threadId, item, runTarget).catch((error) => {
       const why = error instanceof Error ? error.message : String(error);
       try {
-        const note = bus.store.appendMessage(threadId, {
+        bus.store.appendMessage(threadId, {
           role: "bot",
           kind: "activity",
           tool: { name: `error: delegation failed — ${why.slice(0, 120)}`, ok: false },
         });
-        bus.broadcast({ kind: "message", threadId, message: note });
       } catch (reportError) {
         console.error("delegation failed and could not be reported", reportError);
       }
@@ -115,12 +113,11 @@ export function discardDelegations(bus: CommsBus, threadId: string): void {
   pendingDelegations.delete(threadId);
   const from = bus.store.botByThread(threadId);
   if (!from) return;
-  const note = bus.store.appendMessage(threadId, {
+  bus.store.appendMessage(threadId, {
     role: "bot",
     kind: "activity",
     tool: { name: `${list.length} queued delegation${list.length > 1 ? "s" : ""} dropped — the turn did not finish`, ok: false },
   });
-  bus.broadcast({ kind: "message", threadId, message: note });
 }
 
 async function processOne(
@@ -140,21 +137,19 @@ async function processOne(
   let sender = from;
   let target = bus.store.bot(item.toBotId);
   if (!target) {
-    const note = bus.store.appendMessage(sourceThreadId, {
+    bus.store.appendMessage(sourceThreadId, {
       role: "bot",
       kind: "activity",
       tool: { name: `error: delegation to ${item.toBotId} failed — no such bot`, ok: false },
     });
-    bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
     return;
   }
   if (target.busy) {
-    const note = bus.store.appendMessage(sourceThreadId, {
+    bus.store.appendMessage(sourceThreadId, {
       role: "bot",
       kind: "activity",
       tool: { name: `Delegation to @${target.name} canceled — @${target.name} is busy`, ok: false },
     });
-    bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
     return;
   }
   if (sender.approvePeerComms) {
@@ -167,12 +162,11 @@ async function processOne(
       sourceThreadId,
     );
     if (verdict !== "allow") {
-      const note = bus.store.appendMessage(sourceThreadId, {
+      bus.store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `Delegation to @${target.name} denied by user`, ok: false },
       });
-      bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
       return;
     }
     // The approval could have been sitting for up to 15 minutes. Everything
@@ -183,12 +177,11 @@ async function processOne(
     const currentSender = bus.store.bot(from.id);
     if (!current || !currentSender || !bus.store.taskByThread(currentSender.id, sourceThreadId)) return;
     if (current.busy) {
-      const note = bus.store.appendMessage(sourceThreadId, {
+      bus.store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `Delegation to @${current.name} canceled — @${current.name} is busy`, ok: false },
       });
-      bus.broadcast({ kind: "message", threadId: sourceThreadId, message: note });
       return;
     }
     sender = currentSender;

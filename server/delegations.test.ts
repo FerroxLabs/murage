@@ -24,21 +24,23 @@ interface BusPair {
   commsBus: CommsBus;
   approvalBus: { store: Store; broadcast: (payload: unknown) => void };
   broadcasts: unknown[];
-  groupBroadcasts: string[];
 }
 
 function setupBuses(store: Store): BusPair {
   const broadcasts: unknown[] = [];
-  const groupBroadcasts: string[] = [];
   const broadcast = (payload: unknown) => {
     broadcasts.push(payload);
   };
-  const broadcastGroup = (id: string) => {
-    groupBroadcasts.push(id);
-  };
-  const commsBus: CommsBus = { store, broadcast, broadcastGroup };
+  // the store emits what it writes; the server turns those into frames.
+  // Mirror that here so assertions see what a client would.
+  store.onChange((change) => {
+    if (change.type === "message" || change.type === "message.patch") {
+      broadcasts.push({ kind: change.type, threadId: change.threadId, message: change.message });
+    }
+  });
+  const commsBus: CommsBus = { store, broadcast };
   const approvalBus = { store, broadcast };
-  return { commsBus, approvalBus, broadcasts, groupBroadcasts };
+  return { commsBus, approvalBus, broadcasts };
 }
 
 /** Poll until `predicate` returns a truthy value or `timeout` elapses.

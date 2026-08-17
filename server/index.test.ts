@@ -339,7 +339,10 @@ describe("harness HTTP API", () => {
       const importFrames = stream.frames.filter(
         (frame) => frame.kind === "bot" && importedBotIds.has(frame.bot?.id),
       );
-      expect(importFrames).toHaveLength(imported.body.bots.length);
+      // every imported bot is announced to other windows. The store emits
+      // on every write now, so a bot may produce more than one frame —
+      // the invariant is coverage, not an exact count.
+      for (const id of importedBotIds) expect(importFrames.some((frame) => frame.bot?.id === id)).toBe(true);
       expect(importFrames.every((frame) => frame.kind === "bot")).toBe(true);
       expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore);
 
