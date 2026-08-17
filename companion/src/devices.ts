@@ -15,6 +15,7 @@ import { join } from "node:path";
 
 import { DATA_DIR, ensureDataDir, writeFileAtomic } from "./state.ts";
 
+/** One paired phone, as it is written to disk. */
 export interface DeviceRecord {
   id: string;
   name: string;
@@ -79,34 +80,59 @@ export function cleanDeviceName(raw: unknown): string {
   return name || "Companion";
 }
 
+/** The paired fleet: who may reach the harness through the sidecar, and the
+ * one short-lived window in which a new phone may join it. Backed by a file,
+ * loaded once at construction and written on every change. */
 export class DeviceRegistry {
   private devices: DeviceRecord[] = [];
   private window: PairingWindow | null = null;
   private lastSeenWrites = new Map<string, number>();
 
+  /** Load the paired fleet, normalising as it goes.
+   *
+   * Only `id` and `tokenHash` decide whether a record is a device at all —
+   * without them it can neither be revoked nor authenticate. The rest is
+   * display, and a record missing it is not worth discarding a working phone
+   * over: what a half-written or hand-edited file used to produce was a UI
+   * saying "undefined", last seen "NaN min ago". Defaults are cheaper than
+   * either dropping the device or teaching every reader to doubt the type. */
   constructor() {
     try {
       const parsed = JSON.parse(readFileSync(DEVICES_FILE, "utf8"));
       if (Array.isArray(parsed?.devices)) {
-        this.devices = parsed.devices.filter(
-          (d: unknown): d is DeviceRecord =>
-            typeof (d as DeviceRecord)?.id === "string" && typeof (d as DeviceRecord)?.tokenHash === "string",
-        );
+        const now = Date.now();
+        this.devices = parsed.devices
+          .filter(
+            (d: unknown): d is Partial<DeviceRecord> & { id: string; tokenHash: string } =>
+              typeof (d as DeviceRecord)?.id === "string" &&
+              typeof (d as DeviceRecord)?.tokenHash === "string",
+          )
+          .map((d: Partial<DeviceRecord> & { id: string; tokenHash: string }): DeviceRecord => ({
+            id: d.id,
+            tokenHash: d.tokenHash,
+            name: cleanDeviceName(d.name),
+            createdAt: Number.isFinite(d.createdAt) ? (d.createdAt as number) : now,
+            lastSeenAt: Number.isFinite(d.lastSeenAt) ? (d.lastSeenAt as number) : now,
+          }));
       }
     } catch {
       /* first run, or a file we can't read — start with no paired devices */
     }
   }
 
+  /** Write the fleet to disk. Atomic, because a torn file reads as empty and
+   * would sign every phone out with no way to tell why. */
   private persist() {
     ensureDataDir();
     writeFileAtomic(DEVICES_FILE, JSON.stringify({ devices: this.devices }, null, 2));
   }
 
+  /** Every paired device, without the hash — this is what the page renders. */
   list(): PublicDevice[] {
     return this.devices.map(({ tokenHash, ...rest }) => rest);
   }
 
+  /** How many phones are paired, against MAX_DEVICES. */
   count(): number {
     return this.devices.length;
   }
@@ -118,6 +144,8 @@ export class DeviceRegistry {
     return this.window;
   }
 
+  /** Open a fresh window, replacing any that was already open. The code is
+   * from `randomInt`, not `Math.random` — it is a credential for two minutes. */
   openPairing(): PairingWindow {
     this.window = {
       code: String(randomInt(0, 1_000_000)).padStart(6, "0"),
@@ -138,7 +166,6 @@ export class DeviceRegistry {
   redeem(code: string, name: unknown): { device: PublicDevice; token: string } | { error: string } {
     const window = this.pairing();
     if (!window) return { error: "no pairing is in progress — open Companion settings on your computer" };
-    if (this.devices.length >= MAX_DEVICES) return { error: "too many paired devices — remove one first" };
     if (!sameCode(window.code, String(code ?? ""))) {
       window.attemptsLeft -= 1;
       // A burned window is the whole point: without this, six digits is a
@@ -149,6 +176,12 @@ export class DeviceRegistry {
       }
       return { error: "that code is not right" };
     }
+    // After the code, not before. Checked first, a full fleet answers every
+    // wrong guess with "too many paired devices" — which tells a guesser
+    // something about this machine, and costs them none of their five
+    // attempts. The window survives, so removing a phone and retyping the
+    // same code still works.
+    if (this.devices.length >= MAX_DEVICES) return { error: "too many paired devices — remove one first" };
     this.closePairing();
 
     const token = `omb_${randomBytes(32).toString("base64url")}`;
@@ -180,6 +213,8 @@ export class DeviceRegistry {
     return device;
   }
 
+  /** Take a phone's access away. False when there was no such device — a
+   * revoke that quietly matched nothing would read as success on the page. */
   revoke(id: string): boolean {
     const before = this.devices.length;
     this.devices = this.devices.filter((d) => d.id !== id);

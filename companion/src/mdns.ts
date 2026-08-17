@@ -25,6 +25,24 @@ const TTL_HOST = 120;
 const TTL_SERVICE = 4500;
 /** RFC 6762 §11 — multicast DNS must not be routed off the link. */
 const MULTICAST_TTL = 255;
+/** How long shutdown waits for the goodbye datagram to leave the socket. */
+const GOODBYE_FLUSH_MS = 250;
+
+/** True when a query came from somewhere mDNS is meant to serve: this
+ * machine, or an address on a local network.
+ *
+ * The responder binds udp4, so this is the whole address space it can hear
+ * from. Anything outside it reached the socket over the internet, which mDNS
+ * has no business answering — RFC 6762 §5.5 says a responder that answers
+ * such a query is a reflector, and §11 is why: the answer is larger than the
+ * question, so a spoofed source turns the socket into an amplifier. */
+const isLocalSource = (address: string): boolean =>
+  address === "127.0.0.1" ||
+  address.startsWith("10.") ||
+  address.startsWith("192.168.") ||
+  // link-local: DHCP failed, but the link is still the link
+  address.startsWith("169.254.") ||
+  /^172\.(1[6-9]|2\d|3[01])\./.test(address);
 
 export const TYPE = { A: 1, PTR: 12, TXT: 16, SRV: 33, ANY: 255 } as const;
 const CLASS_IN = 1;
@@ -132,6 +150,8 @@ export function decodeMessage(buf: Buffer): DnsMessage | null {
   }
 }
 
+/** One resource record on the wire. `ttlOverride` is how a goodbye is sent:
+ * the same records, TTL 0, meaning "forget what I told you". */
 function encodeRecord(record: ResourceRecord, ttlOverride?: number): Buffer {
   let rdata: Buffer;
   let ttl: number;
@@ -211,6 +231,8 @@ export function encodeResponse(
 
 // ── the service we advertise ───────────────────────────────────────────
 
+/** The service being advertised: what it is called, where it answers, and
+ * the addresses that resolve to this machine. */
 export interface ServiceInfo {
   /** human-readable instance name — what a picker on the phone shows */
   name: string;
@@ -227,6 +249,8 @@ export interface ServiceInfo {
 const recordKey = (record: ResourceRecord) =>
   `${record.name.toLowerCase()}|${record.type}|${JSON.stringify(record.data)}`;
 
+/** Records, each appearing once, minus any already in `exclude` — an answer
+ * repeated in the additional section is wasted bytes in a 1500-byte budget. */
 function dedupe(records: ResourceRecord[], exclude: ResourceRecord[] = []): ResourceRecord[] {
   const seen = new Set(exclude.map(recordKey));
   const out: ResourceRecord[] = [];
@@ -343,6 +367,8 @@ export function advertisableAddresses(): string[] {
 
 // ── the responder ──────────────────────────────────────────────────────
 
+/** Bind port and mode. Both exist for tests: the real thing is 5353,
+ * multicast, and has no reason to be anything else. */
 export interface ResponderOptions {
   /** Test rigs bind an ephemeral port and skip the group join; the packet
    * handling below is the same code either way. */
@@ -350,6 +376,9 @@ export interface ResponderOptions {
   multicast?: boolean;
 }
 
+/** A Bonjour responder, small enough to read: it announces one service, and
+ * answers questions about that service from the local link. No dependency,
+ * because a discovery nicety is not worth a supply chain. */
 export class MdnsResponder {
   private socket: Socket | null = null;
   private service: ServiceInfo | null = null;
@@ -362,6 +391,7 @@ export class MdnsResponder {
     this.multicast = options.multicast ?? true;
   }
 
+  /** Whether the socket is up. False is normal and not an error. */
   get advertising(): boolean {
     return this.socket !== null;
   }
@@ -450,11 +480,31 @@ export class MdnsResponder {
     this.service = null;
     if (!socket) return;
     if (service) {
-      try {
-        this.send(socket, encodeResponse(announcement(service), [], { ttl: 0 }));
-      } catch {
-        /* going away anyway */
-      }
+      // Wait for the datagram to actually leave. `send` is asynchronous and
+      // `close` does not flush a queued one, so firing the goodbye and
+      // closing in the same tick discards it — and the records it was meant
+      // to withdraw sit in every cache on the network for 75 minutes,
+      // pointing a phone at a computer that has stopped answering. Bounded,
+      // because shutdown must not hang on a network that is already gone.
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+        const timer = setTimeout(finish, GOODBYE_FLUSH_MS);
+        timer.unref?.();
+        try {
+          this.send(socket, encodeResponse(announcement(service), [], { ttl: 0 }), () => {
+            clearTimeout(timer);
+            finish();
+          });
+        } catch {
+          clearTimeout(timer);
+          finish();
+        }
+      });
     }
     await new Promise<void>((resolve) => {
       try {
@@ -465,6 +515,8 @@ export class MdnsResponder {
     });
   }
 
+  /** Say we are here, unprompted. Sent a few times, because the first packet
+   * is the one most likely to be lost (RFC 6762 §8.3). */
   private announce() {
     if (!this.socket || !this.service) return;
     try {
@@ -474,8 +526,15 @@ export class MdnsResponder {
     }
   }
 
+  /** Answer one query, if it is about us and came from somewhere local. */
   private handle(buf: Buffer, from: string, fromPort: number) {
     if (!this.socket || !this.service) return;
+    // RFC 6762 §5.5 and §11: a responder answers the local link. Answering
+    // anyone makes this socket a reflector — a spoofed source address turns
+    // a small query into a larger answer aimed wherever the attacker likes,
+    // and the answer is bigger than the question, which is the whole trick.
+    // Dropped before decoding, so a packet from off-link costs nothing.
+    if (!isLocalSource(from)) return;
     const message = decodeMessage(buf);
     if (!message || message.response || !message.questions.length) return;
     const { answers, additionals } = answersFor(message, this.service);
@@ -499,7 +558,20 @@ export class MdnsResponder {
     }
   }
 
-  private send(socket: Socket, packet: Buffer) {
-    socket.send(packet, this.port, this.multicast ? MDNS_ADDRESS : "127.0.0.1");
+  /** Multicast a packet to the group.
+   *
+   * Always to 5353, whatever port this responder is bound to: the destination
+   * is where mDNS listens, not where we happen to be. Using the bind port
+   * sent announcements to a port with nobody on it — and threw outright when
+   * that port was 0, which is what an ephemeral bind gives you.
+   *
+   * Unicast mode has no group to announce to, so there is nothing to send;
+   * it exists for tests, which ask directly and are answered in `handle`. */
+  private send(socket: Socket, packet: Buffer, done?: (error: Error | null) => void) {
+    if (!this.multicast) {
+      done?.(null);
+      return;
+    }
+    socket.send(packet, MDNS_PORT, MDNS_ADDRESS, done);
   }
 }

@@ -24,6 +24,8 @@ import { lanAddresses, refreshTailnetName, tailnetName, tailscaleAddress } from 
 import { advertisableAddresses, defaultHostName, dnsLabel, MdnsResponder, type ServiceInfo } from "./mdns.ts";
 import { createProxyHandler } from "./proxy.ts";
 
+/** A port from the environment, or the default. Anything that is not a whole
+ * number in range is the default — a typo'd port must not become port 0. */
 const num = (value: string | undefined, fallback: number): number => {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? parsed : fallback;
@@ -47,6 +49,7 @@ const HARNESS_PORTS = new Map([
   [WEBHOOK_PORT, "the harness's webhook receiver"],
 ]);
 
+/** A sentence naming what already owns this port, or null when nothing does. */
 const conflict = (name: string, port: number): string | null => {
   const owner = HARNESS_PORTS.get(port);
   return owner ? `${name} is set to port ${port}, which is ${owner}` : null;
@@ -64,8 +67,11 @@ const conflict = (name: string, port: number): string | null => {
  * label, and no part of pairing depends on it. */
 let cachedName = process.env.OMB_COMPANION_NAME?.trim() || "";
 
+/** What this computer is called on the phone. Never empty. */
 const machineName = (): string => cachedName || "OpenMausBot";
 
+/** Ask the harness whose computer this is, once, at startup. Every failure
+ * is survivable: the name is a label, and no part of pairing depends on it. */
 async function refreshMachineName(): Promise<void> {
   if (cachedName) return; // an explicit override is not ours to second-guess
   try {
@@ -84,6 +90,8 @@ async function refreshMachineName(): Promise<void> {
 const devices = new DeviceRegistry();
 const mdns = new MdnsResponder();
 
+/** This machine as a Bonjour record: one DNS label, the device port, and the
+ * addresses a phone could reach it on. */
 const service = (): ServiceInfo => ({
   // one DNS label: no dots, and inside the 63-byte limit
   name: dnsLabel(machineName()),
@@ -112,6 +120,8 @@ const control = createControlServer({
   discovery: () => ({ advertising: mdns.advertising, name: service().name }),
 });
 
+/** Bind a server, turning a bind failure into a sentence rather than a stack
+ * trace, and leaving a handler behind for the errors that come after. */
 const listen = (server: ReturnType<typeof createServer>, port: number, host: string): Promise<void> =>
   new Promise((resolve, reject) => {
     const onError = (error: NodeJS.ErrnoException) => {
@@ -144,6 +154,9 @@ const listen = (server: ReturnType<typeof createServer>, port: number, host: str
     server.listen(port, host);
   });
 
+/** Start the three-socket arrangement, in the order that makes a failure
+ * legible: refuse impossible ports, bind, learn this machine's name, then
+ * advertise and print where to point the phone. */
 async function main(): Promise<void> {
   const clash =
     conflict("OMB_COMPANION_PORT", COMPANION_PORT) ?? conflict("OMB_CONTROL_PORT", CONTROL_PORT);
@@ -199,6 +212,8 @@ async function main(): Promise<void> {
   }
 }
 
+/** Withdraw the Bonjour record, drop the sockets, exit. Stopping this process
+ * is the off switch, so it has to actually stop. */
 const shutdown = async (signal: string): Promise<void> => {
   console.log(`\n${signal} — stopping`);
   await mdns.stop().catch(() => {});

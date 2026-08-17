@@ -17,12 +17,43 @@ import { createProxyHandler } from "../src/proxy.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
-const HARNESS_PORT = 19600 + Math.floor(Math.random() * 3000);
-// +10, not +1: the harness opens its webhook receiver one port above itself,
-// and this file needs three consecutive free ports of its own.
-const SIDECAR_PORT = HARNESS_PORT + 10;
-const HARNESS = `http://127.0.0.1:${HARNESS_PORT}`;
-const SIDECAR = `http://127.0.0.1:${SIDECAR_PORT}`;
+
+/** Ports nothing is listening on, picked by the kernel rather than by dice.
+ *
+ * These were random in a 3000-wide range, which collides with whatever else
+ * the machine happens to be running — and the collision surfaces as this
+ * suite failing, which reads as a bug in the code under test rather than as
+ * bad luck. `span` reserves that many consecutive ports: booting the harness
+ * needs two, because it opens a webhook receiver one above itself. */
+const freePorts = async (span = 1): Promise<number> => {
+  const hold = (port: number): Promise<Server> =>
+    new Promise((resolve, reject) => {
+      const server = createServer();
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", () => resolve(server));
+    });
+
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const held: Server[] = [];
+    let base = 0;
+    try {
+      const first = await hold(0);
+      held.push(first);
+      base = (first.address() as { port: number }).port;
+      for (let i = 1; i < span; i++) held.push(await hold(base + i));
+    } catch {
+      base = 0; // a neighbour was taken — try somewhere else
+    }
+    for (const server of held) await new Promise<void>((r) => server.close(() => r()));
+    if (base) return base;
+  }
+  throw new Error(`could not find ${span} free consecutive ports`);
+};
+
+let HARNESS_PORT = 0;
+let SIDECAR_PORT = 0;
+let HARNESS = "";
+let SIDECAR = "";
 
 const TOKEN = "omb_test_token";
 let harness: ChildProcess;
@@ -68,6 +99,13 @@ const withHost = (port: number, host: string, path = "/api/health", headers: Rec
   });
 
 beforeAll(async () => {
+  // two in a row for the harness (itself, then its webhook receiver), one
+  // for the sidecar in front of it
+  HARNESS_PORT = await freePorts(2);
+  SIDECAR_PORT = await freePorts(1);
+  HARNESS = `http://127.0.0.1:${HARNESS_PORT}`;
+  SIDECAR = `http://127.0.0.1:${SIDECAR_PORT}`;
+
   home = mkdtempSync(join(tmpdir(), "companion-test-"));
   mkdirSync(join(home, ".openmausbot"), { recursive: true });
   writeFileSync(
@@ -334,6 +372,60 @@ describe("the sidecar in front of an unmodified harness", () => {
     }
   });
 
+  // A phone that walks out of range mid-download leaves the harness talking
+  // to nobody. The SSE path already hung up on the upstream; these two did
+  // not, so a large response kept being produced — and, on the JSON path,
+  // kept being buffered.
+  it("hangs up on the harness when the device disappears", async () => {
+    let upstreamClosed: () => void;
+    const closed = new Promise<void>((r) => (upstreamClosed = r));
+    const slow = createServer((_req, res) => {
+      res.on("error", () => {
+        /* the sidecar hanging up is the pass condition */
+      });
+      res.on("close", () => upstreamClosed());
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write('{"bots":[');
+      // and then keeps the response open, as a slow endpoint does
+    });
+    await new Promise<void>((r) => slow.listen(0, "127.0.0.1", r));
+    const slowPort = (slow.address() as { port: number }).port;
+    const relay = createServer(
+      createProxyHandler({
+        harnessPort: slowPort,
+        authenticate: () => true,
+        redeem: () => ({ error: "no" }),
+        serverName: () => "Test computer",
+      }),
+    );
+    await new Promise<void>((r) => relay.listen(0, "127.0.0.1", r));
+    const port = (relay.address() as { port: number }).port;
+    const abort = new AbortController();
+    try {
+      // Not awaited: a JSON response is buffered whole before any of it
+      // reaches the device, so this request has no headers to resolve until
+      // the stub ends — and the stub never ends. The disconnect under test
+      // is one that happens while the request is still in flight.
+      const pending = fetch(`http://127.0.0.1:${port}/api/bots`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+        signal: abort.signal,
+      }).catch(() => {
+        /* aborted on purpose */
+      });
+      await new Promise((r) => setTimeout(r, 250));
+      abort.abort();
+      // the upstream response closes because the sidecar dropped it, not
+      // because the stub finished — it never finishes
+      await closed;
+      await pending;
+    } finally {
+      abort.abort();
+      slow.closeAllConnections?.();
+      await new Promise<void>((r) => slow.close(() => r()));
+      await new Promise<void>((r) => relay.close(() => r()));
+    }
+  }, 20_000);
+
   // The scrubber holds a partial event until its terminator arrives, which is
   // correct and bounded by nothing. An upstream that opens a `data:` line and
   // never closes it would otherwise be a memory leak with a straight face.
@@ -394,8 +486,6 @@ describe("pairing, end to end", () => {
     const { createControlServer } = await import("../src/control.ts");
 
     const registry = new DeviceRegistry();
-    const port = SIDECAR_PORT + 1;
-    const controlPort = SIDECAR_PORT + 2;
     const paired = createServer(
       createProxyHandler({
         harnessPort: HARNESS_PORT,
@@ -404,13 +494,15 @@ describe("pairing, end to end", () => {
         serverName: () => "Ada's computer",
       }),
     );
+    await new Promise<void>((r) => paired.listen(0, "127.0.0.1", r));
+    const port = (paired.address() as { port: number }).port;
     const control = createControlServer({
       devices: registry,
       companionPort: port,
       discovery: () => ({ advertising: false, name: "OpenMausBot" }),
     });
-    await new Promise<void>((r) => paired.listen(port, "127.0.0.1", r));
-    await new Promise<void>((r) => control.listen(controlPort, "127.0.0.1", r));
+    await new Promise<void>((r) => control.listen(0, "127.0.0.1", r));
+    const controlPort = (control.address() as { port: number }).port;
     const base = `http://127.0.0.1:${port}`;
     const ctl = `http://127.0.0.1:${controlPort}`;
 
@@ -451,7 +543,11 @@ describe("pairing, end to end", () => {
         devices: Array<{ id: string; name: string }>;
       };
       expect(state.devices.map((d) => d.name)).toContain("Ada's iPhone");
-      const revoked = await fetch(`${ctl}/devices/${state.devices[0].id}`, { method: "DELETE" });
+      // By name, not by index: `devices[0]` is whichever record the registry
+      // happens to have loaded first, and revoking the wrong one would leave
+      // this test passing for the wrong reason.
+      const ada = state.devices.find((d) => d.name === "Ada's iPhone")!;
+      const revoked = await fetch(`${ctl}/devices/${ada.id}`, { method: "DELETE" });
       expect(revoked.status).toBe(200);
       expect((await fetch(`${base}/api/bots`, { headers: { authorization: `Bearer ${body.token}` } })).status).toBe(401);
     } finally {
@@ -474,6 +570,35 @@ describe("pairing, end to end", () => {
       // pairing and revocation are exactly what a phone must never reach
       expect(await withHost(port, "macbook.tail1234.ts.net:8801", "/state")).toBe(403);
       expect(await withHost(port, `127.0.0.1:${port}`, "/state")).toBe(200);
+    } finally {
+      await new Promise<void>((r) => control.close(() => r()));
+    }
+  });
+
+  // A browser handed `http://[::1]:8811` sends `Host: [::1]:8811`, and the
+  // colons in the literal are not the port separator. Splitting on the first
+  // one refuses the address the person was told to use.
+  it("understands an IPv6 loopback Host", async () => {
+    const { DeviceRegistry } = await import("../src/devices.ts");
+    const { createControlServer, hostOf } = await import("../src/control.ts");
+
+    expect(hostOf("[::1]:8811")).toBe("::1");
+    expect(hostOf("127.0.0.1:8811")).toBe("127.0.0.1");
+    expect(hostOf("localhost")).toBe("localhost");
+    // a malformed authority fails the allowlist rather than skipping it
+    expect(hostOf("[::1")).toBe("[::1");
+
+    const control = createControlServer({
+      devices: new DeviceRegistry(),
+      companionPort: 8800,
+      discovery: () => ({ advertising: false, name: "OpenMausBot" }),
+    });
+    await new Promise<void>((r) => control.listen(0, "127.0.0.1", r));
+    const port = (control.address() as { port: number }).port;
+    try {
+      expect(await withHost(port, `[::1]:${port}`, "/state")).toBe(200);
+      // and the bracket parsing did not open a door: a real name is still out
+      expect(await withHost(port, "[::1].evil.example", "/state")).toBe(403);
     } finally {
       await new Promise<void>((r) => control.close(() => r()));
     }

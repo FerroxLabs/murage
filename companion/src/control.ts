@@ -17,6 +17,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import type { DeviceRegistry } from "./devices.ts";
 import { lanAddresses, tailnetName, tailscaleAddress } from "./listener.ts";
 
+/** What the pairing page needs to render itself and act on what you click. */
 export interface ControlOptions {
   devices: DeviceRegistry;
   /** Where a phone connects — for display, and for the pairing instructions. */
@@ -25,12 +26,34 @@ export interface ControlOptions {
   discovery: () => { advertising: boolean; name: string };
 }
 
+/** The host out of a `Host` header, port removed.
+ *
+ * A bracketed IPv6 literal has colons of its own, so the obvious
+ * `split(":")[0]` turns `[::1]:8811` into `[` — which matches no allowlist,
+ * and refuses the loopback the browser was handed. A malformed authority
+ * comes back unchanged rather than empty, so it fails the check instead of
+ * skipping it. */
+export function hostOf(authority: string): string {
+  if (!authority.startsWith("[")) return authority.split(":")[0].toLowerCase();
+  const end = authority.indexOf("]");
+  // Only a port may follow the bracket. Without that check `[::1].evil.example`
+  // unwraps to `::1` and passes the loopback allowlist — the parser would be
+  // the hole rather than the fix.
+  const rest = end > 1 ? authority.slice(end + 1) : "";
+  const bracketed = end > 1 && (rest === "" || /^:\d+$/.test(rest));
+  return (bracketed ? authority.slice(1, end) : authority).toLowerCase();
+}
+
+/** Send a JSON body with its length, the only response shape this API has. */
 const json = (res: ServerResponse, status: number, body: unknown) => {
   const text = JSON.stringify(body);
   res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(text) });
   res.end(text);
 };
 
+/** Everything the page shows, in one object: where to connect, whether a
+ * pairing window is open, and which phones are paired. Recomputed per request
+ * rather than cached — addresses change when you join another network. */
 export function companionState(options: ControlOptions) {
   const addresses = lanAddresses();
   const tailscale = tailscaleAddress(addresses);
@@ -48,6 +71,9 @@ export function companionState(options: ControlOptions) {
   };
 }
 
+/** The loopback control plane: the page, its state, and the two writes —
+ * open a pairing window, revoke a device. Bound to 127.0.0.1 by the caller,
+ * and it refuses anything suggesting it was reached from anywhere else. */
 export function createControlServer(options: ControlOptions): Server {
   return createServer((req, res) => {
     const path = (req.url ?? "/").split("?")[0];
@@ -58,8 +84,8 @@ export function createControlServer(options: ControlOptions): Server {
     // here rests on a bind argument three files away, and the cost of being
     // wrong is the control plane.
     const authority = String(req.headers.host ?? "");
-    const host = authority.split(":")[0].toLowerCase();
-    if (host && host !== "127.0.0.1" && host !== "localhost" && host !== "[::1]" && host !== "::1") {
+    const host = hostOf(authority);
+    if (host && host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
       return json(res, 403, { error: "forbidden: loopback only" });
     }
 

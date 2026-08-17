@@ -24,6 +24,7 @@ export interface Denial {
   error: string;
 }
 
+/** One request, reduced to what the allowlist decides on. */
 export interface RouteRequest {
   path: string;
   method: string;
@@ -91,6 +92,10 @@ const EXPLAINED: ReadonlyArray<{ path: RegExp; error: string }> = [
   { path: /^\/api\/teams(\/|$)/, error: "teams are imported and exported on your computer" },
 ];
 
+/** Why this request may not go through, or null when it may.
+ *
+ * Default deny: the answer for anything not on the list is "no route", which
+ * is what keeps a stolen token from mapping the API. */
 export function denyReason({ path, method, authenticated }: RouteRequest): Denial | null {
   // Pairing is the one thing a device does before it has a credential.
   if (method === "POST" && path === "/api/pair") return null;

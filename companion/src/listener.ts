@@ -1,17 +1,15 @@
-// The companion listener — a second HTTP socket, off by default, that a
-// paired phone can reach. It runs the same request handler as the loopback
-// server; the only difference is the `remote` flag the handler gets, which
-// is what turns on authentication and turns off the routes a phone has no
-// business calling.
+// Where this computer can be reached, and what it is called there.
 //
-// Two listeners rather than one bind on 0.0.0.0, deliberately. A single
-// socket cannot tell "the desktop app on this machine" from "something else
-// on the coffee-shop wifi" — `req.socket.localAddress` is 127.0.0.1 for both
-// when a 0.0.0.0 listener is reached over loopback. Separate sockets make
-// the distinction structural instead of a guess, so the trusted path stays
-// exactly as trusted as it was before this file existed.
+// The addresses a phone might dial, the tailnet one told apart from the rest,
+// and the MagicDNS name read out of the Tailscale CLI. Nothing here binds
+// anything: the sidecar owns its own sockets in index.ts, and this file only
+// answers the question the pairing page has to print.
+//
+// It used to hold a `RemoteListener` as well — the socket the harness opened
+// for a phone back when the companion lived inside it. Moving out made it a
+// class with no callers, and a second implementation of a socket lifecycle
+// nobody runs is a thing that rots. index.ts owns the listeners now.
 import { execFile } from "node:child_process";
-import { createServer, type RequestListener, type Server } from "node:http";
 import { homedir, networkInterfaces } from "node:os";
 import { join } from "node:path";
 
@@ -57,6 +55,7 @@ export function tailscaleAddress(addresses: string[] = lanAddresses()): string |
  * subprocess, and nothing here is worth spawning one per request. */
 let cachedTailnetName: string | null = null;
 
+/** The cached MagicDNS name, or null until `refreshTailnetName` finds one. */
 export function tailnetName(): string | null {
   return cachedTailnetName;
 }
@@ -79,6 +78,9 @@ export function tailscaleCandidates(home = homedir()): string[] {
   ];
 }
 
+/** How long the whole CLI hunt may take, across every candidate path. */
+const TAILSCALE_BUDGET_MS = 5000;
+
 /** PATH with the usual package-manager locations added back, for the bare
  * `tailscale` attempt. Costs nothing when PATH was already complete. */
 const searchPath = (): string =>
@@ -97,12 +99,22 @@ const searchPath = (): string =>
 export async function refreshTailnetName(
   onAttempt?: (cli: string, outcome: string) => void,
 ): Promise<void> {
+  // A budget for the whole loop, not per probe. Seven candidates at five
+  // seconds each is thirty-five seconds of startup in the case where several
+  // hang — and they hang together, since the reason is usually the same one.
+  // Nothing here is load-bearing: the address works without a name.
+  const deadline = Date.now() + TAILSCALE_BUDGET_MS;
   for (const cli of tailscaleCandidates()) {
+    const left = deadline - Date.now();
+    if (left <= 0) {
+      onAttempt?.(cli, "skipped — out of time looking for the Tailscale CLI");
+      continue;
+    }
     const name = await new Promise<string | null>((resolve) => {
       execFile(
         cli,
         ["status", "--json"],
-        { timeout: 5000, env: { ...process.env, PATH: searchPath() } },
+        { timeout: Math.max(250, left), env: { ...process.env, PATH: searchPath() } },
         (error, stdout) => {
           if (error) {
             onAttempt?.(cli, error.message.split("\n")[0]);
@@ -127,111 +139,4 @@ export async function refreshTailnetName(
     }
   }
   cachedTailnetName = null;
-}
-
-export interface RemoteState {
-  enabled: boolean;
-  port: number;
-  addresses: string[];
-  /** The tailnet address, when this machine is on one. */
-  tailscale?: string;
-  /** Its MagicDNS name, when Tailscale will tell us. */
-  tailnetName?: string;
-  /** Why the listener is not up despite being enabled (e.g. port in use). */
-  error?: string;
-}
-
-export class RemoteListener {
-  private server: Server | null = null;
-  private lastError: string | undefined;
-  private readonly handler: RequestListener;
-  readonly port: number;
-
-  // Plain assignments, not constructor parameter properties: the harness
-  // runs straight off .ts through Node's strip-only type stripping, which
-  // rejects any TypeScript syntax that emits code.
-  constructor(handler: RequestListener, port: number) {
-    this.handler = handler;
-    this.port = port;
-  }
-
-  get running(): boolean {
-    return this.server !== null;
-  }
-
-  state(): RemoteState {
-    const addresses = this.running ? lanAddresses() : [];
-    const tailscale = tailscaleAddress(addresses);
-    const name = tailnetName();
-    return {
-      enabled: this.running,
-      port: this.port,
-      addresses,
-      ...(tailscale ? { tailscale } : {}),
-      ...(tailscale && name ? { tailnetName: name } : {}),
-      ...(this.lastError ? { error: this.lastError } : {}),
-    };
-  }
-
-  /** Bind 0.0.0.0:port. Resolves with the new state either way — a port
-   * conflict is a message the user can act on, never a crashed harness. */
-  async enable(): Promise<RemoteState> {
-    if (this.server) return this.state();
-    const server = createServer(this.handler);
-    this.lastError = undefined;
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const onError = (err: NodeJS.ErrnoException) => {
-          server.removeListener("listening", onListening);
-          reject(err);
-        };
-        const onListening = () => {
-          server.removeListener("error", onError);
-          resolve();
-        };
-        server.once("error", onError);
-        server.once("listening", onListening);
-        server.listen(this.port, "0.0.0.0");
-      });
-    } catch (e) {
-      const err = e as NodeJS.ErrnoException;
-      this.lastError =
-        err.code === "EADDRINUSE"
-          ? `port ${this.port} is already in use — close whatever is using it and try again`
-          : err.message;
-      try {
-        server.close();
-      } catch {
-        /* never bound */
-      }
-      return this.state();
-    }
-    // The bind handler was removed on `listening`, and a listening socket can
-    // still fail — EMFILE on accept, most plausibly, since a phone
-    // reconnecting an SSE stream in a loop is exactly how a process runs out
-    // of descriptors. Unhandled, that `error` is an uncaught exception inside
-    // the harness: one refused connection would take down the desktop app
-    // this listener is a feature of. Recorded instead, where `state()` shows
-    // it.
-    server.on("error", (error: NodeJS.ErrnoException) => {
-      this.lastError = error.message;
-    });
-    // A listener whose sockets keep the process alive would stop the harness
-    // from exiting on SIGTERM while a phone holds an SSE stream open.
-    server.unref();
-    this.server = server;
-    return this.state();
-  }
-
-  async disable(): Promise<RemoteState> {
-    const server = this.server;
-    this.server = null;
-    this.lastError = undefined;
-    if (!server) return this.state();
-    // close() waits for open connections, and an SSE stream never ends on
-    // its own — drop the sockets so "turn it off" means off, now.
-    server.closeAllConnections?.();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    return this.state();
-  }
 }

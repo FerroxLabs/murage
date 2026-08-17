@@ -10,6 +10,12 @@ import { afterAll } from "vitest";
 const home = mkdtempSync(join(tmpdir(), "omb-test-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+// The companion keeps its paired devices in its own directory, and resolves
+// it from homedir() the same way — so the redirect above already covers it.
+// Named explicitly all the same: the device tests delete this directory
+// wholesale, and "it is safe because of a line in another file" is not the
+// footing that delete should stand on.
+process.env.OMB_COMPANION_DIR = join(home, ".openmausbot-companion");
 
 afterAll(async () => {
   // Windows holds a directory that is a live process's cwd, and a

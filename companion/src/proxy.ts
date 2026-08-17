@@ -16,6 +16,7 @@ import { request as httpRequest, type IncomingMessage, type ServerResponse } fro
 import { denyReason } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
+/** What the forwarding handler needs from the process around it. */
 export interface ProxyOptions {
   /** Where the harness is listening on loopback. */
   harnessPort: number;
@@ -42,6 +43,11 @@ export interface ProxyOptions {
  * that deliberately never ends, and a timeout that could not tell the
  * difference would cut every live stream at thirty seconds. */
 const HEADERS_TIMEOUT_MS = 30_000;
+
+/** A JSON response has to be buffered whole before it can be scrubbed, so the
+ * buffer is the size of the response and nothing upstream promises that is
+ * small. Far above any real payload — it exists to have a ceiling at all. */
+const MAX_JSON_BODY_BYTES = 32 * 1024 * 1024;
 
 /** Read a JSON body, bounded. An unbounded read on an unauthenticated route
  * is a way to be memory-exhausted by anyone who can reach the port. */
@@ -71,11 +77,14 @@ const readJson = (req: IncomingMessage, limit = 64 * 1024): Promise<Record<strin
     });
   });
 
+/** The token out of an `Authorization: Bearer` header, or null. */
 const bearer = (header: string | undefined): string | null => {
   const value = (header ?? "").trim();
   return value.toLowerCase().startsWith("bearer ") ? value.slice(7).trim() || null : null;
 };
 
+/** Answer with JSON the sidecar wrote itself — a refusal, or a pairing
+ * result. Anything from the harness goes out through the proxy path instead. */
 const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
   const text = JSON.stringify(body);
   res.writeHead(status, {
@@ -100,6 +109,9 @@ const forwardHeaders = (req: IncomingMessage): Record<string, string> => {
   return out;
 };
 
+/** The device-facing handler: refuse a browser, check the allowlist, check
+ * the token, then replay the request to the harness over loopback and scrub
+ * what comes back. Pairing is the one route that stops here. */
 export function createProxyHandler(options: ProxyOptions) {
   return function handle(req: IncomingMessage, res: ServerResponse): void {
     const path = (req.url ?? "/").split("?")[0];
@@ -192,15 +204,36 @@ export function createProxyHandler(options: ProxyOptions) {
           return;
         }
 
-        if (!isJson(String(contentType ?? ""))) {
-          // images and anything else: byte-for-byte, no parsing
+        const encoding = String(harness.headers["content-encoding"] ?? "")
+          .trim()
+          .toLowerCase();
+        if (!isJson(String(contentType ?? "")) || (encoding && encoding !== "identity")) {
+          // images and anything else: byte-for-byte, no parsing.
+          //
+          // Encoded bodies come through here too. Scrubbing one would mean
+          // decompressing it, and the alternative the buffering branch would
+          // otherwise reach — decode as UTF-8, re-serialise, drop the
+          // content-encoding header — corrupts it silently. `forwardHeaders`
+          // never sends accept-encoding, so this is a guard rather than a
+          // path: if it ever fires, the body passes through unscrubbed and
+          // intact rather than scrubbed and broken.
           res.writeHead(harness.statusCode ?? 200, harness.headers);
           harness.pipe(res);
           return;
         }
 
         const chunks: Buffer[] = [];
-        harness.on("data", (chunk: Buffer) => chunks.push(chunk));
+        let size = 0;
+        harness.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > MAX_JSON_BODY_BYTES) {
+            harness.destroy();
+            if (res.headersSent) res.destroy();
+            else sendJson(res, 502, { error: "the response from OpenMausBot was too large" });
+            return;
+          }
+          chunks.push(chunk);
+        });
         harness.on("error", () => res.destroy());
         harness.on("end", () => {
           const body = Buffer.concat(chunks).toString("utf8");
@@ -227,6 +260,17 @@ export function createProxyHandler(options: ProxyOptions) {
         });
       },
     );
+
+    // A phone can go away at any point: before the harness has answered,
+    // while its own request body is still going up, or partway through a
+    // large response. Every one of those leaves the harness producing for
+    // nobody unless the upstream goes with it. Guarded on `writableEnded` so
+    // an ordinary finished response does not tear down a keep-alive socket
+    // on its way out.
+    res.on("close", () => {
+      if (!res.writableEnded) upstream.destroy();
+    });
+    req.on("error", () => upstream.destroy());
 
     // `http.request` has no deadline of its own for the headers phase: a
     // harness that accepts the connection and then says nothing holds the
