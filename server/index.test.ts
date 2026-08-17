@@ -294,6 +294,31 @@ describe("harness HTTP API", () => {
 
       const invalid = await api("POST", "/api/teams/import", { ...exported.body, version: 3 });
       expect(invalid.status).toBe(400);
+      expect((await api("POST", "/api/teams/import?mode=erase", exported.body)).status).toBe(400);
+
+      const beforeReplace = (await api("GET", "/api/bots")).body.bots.filter(
+        (bot: { hidden?: boolean }) => !bot.hidden,
+      );
+      const replaced = await api("POST", "/api/teams/import?mode=replace", exported.body);
+      expect(replaced.status).toBe(201);
+      expect(replaced.body.archived.map((bot: { id: string }) => bot.id).sort()).toEqual(
+        beforeReplace.map((bot: { id: string }) => bot.id).sort(),
+      );
+      expect(replaced.body.archivedBots.every((bot: { hidden?: boolean }) => bot.hidden)).toBe(true);
+      const afterReplace = (await api("GET", "/api/bots")).body.bots;
+      expect(afterReplace.filter((bot: { hidden?: boolean }) => !bot.hidden).map((bot: { id: string }) => bot.id).sort()).toEqual(
+        replaced.body.bots.map((bot: { id: string }) => bot.id).sort(),
+      );
+      expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore);
+
+      // Put the shared test harness back exactly as it was before exercising
+      // replace. This mirrors the UI's Undo action and preserves the seeded bot.
+      for (const bot of replaced.body.bots) await api("DELETE", `/api/bots/${bot.id}`);
+      for (const bot of replaced.body.archived.filter((item: { chiefOfStaff: boolean }) => !item.chiefOfStaff)) {
+        await api("PATCH", `/api/bots/${bot.id}`, { hidden: false });
+      }
+      const previousChief = replaced.body.archived.find((bot: { chiefOfStaff: boolean }) => bot.chiefOfStaff);
+      if (previousChief) await api("PATCH", `/api/bots/${previousChief.id}`, { hidden: false, chiefOfStaff: true });
 
       for (const bot of [first, second, hidden, ...imported.body.bots]) {
         expect((await api("DELETE", `/api/bots/${bot.id}`)).status).toBe(200);
