@@ -176,27 +176,60 @@ export function createProxyHandler(options: ProxyOptions) {
         harness.on("error", () => res.destroy());
         harness.on("end", () => {
           const body = Buffer.concat(chunks).toString("utf8");
-          let text = body;
+
+          // Two failures live here and they are not the same failure.
+          //
+          // A body that does not parse was never JSON — content-type lied,
+          // or the harness sent an empty 204. There is nothing to redact in
+          // bytes we cannot read as an object, so forwarding them verbatim
+          // is correct.
+          let parsed: unknown;
           try {
-            text = JSON.stringify(scrub(JSON.parse(body)));
+            parsed = JSON.parse(body);
           } catch {
-            /* not JSON after all — send what we were given */
+            parsed = undefined;
           }
-          const headers = { ...harness.headers };
-          // The body was re-serialised, so nothing the harness said about
-          // its framing survives. `transfer-encoding` matters most: leaving
-          // it alongside the content-length set below is a protocol
-          // violation, and Node's own parser rejects the response outright
-          // rather than tolerating it.
+          if (parsed === undefined) {
+            forward(body, harness.headers, harness.statusCode ?? 200);
+            return;
+          }
+
+          // A body that parses but will not scrub is the opposite case. We
+          // know it is structured, and we know `scrub` is the only thing
+          // keeping internal fields — resume cursors — off the wire to a
+          // device. Falling back to the raw body there, which is what a
+          // single try around parse-and-scrub did, sends exactly what the
+          // scrubber exists to withhold.
+          //
+          // Not hypothetical: `scrub` recurses, so a body nested a few
+          // thousand deep throws RangeError while JSON.parse handles it
+          // fine. See proxy-response.test.ts.
+          let text: string;
+          try {
+            text = JSON.stringify(scrub(parsed));
+          } catch {
+            sendJson(res, 502, { error: "the response could not be prepared for this device" });
+            return;
+          }
+          forward(text, harness.headers, harness.statusCode ?? 200);
+        });
+
+        /** Re-frame and send. The body was re-serialised, so nothing the
+         * harness said about its framing survives. `transfer-encoding`
+         * matters most: leaving it alongside the content-length set here is
+         * a protocol violation, and Node's own parser rejects the response
+         * outright rather than tolerating it. */
+        function forward(text: string, upstreamHeaders: IncomingMessage["headers"], status: number): void {
+          const headers = { ...upstreamHeaders };
           delete headers["content-length"];
           delete headers["content-encoding"];
           delete headers["transfer-encoding"];
-          res.writeHead(harness.statusCode ?? 200, {
+          res.writeHead(status, {
             ...headers,
             "content-length": Buffer.byteLength(text),
           });
           res.end(text);
-        });
+        }
       },
     );
 

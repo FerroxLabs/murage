@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // The sidecar, as one command.
 //
 //   node companion/src/index.ts
