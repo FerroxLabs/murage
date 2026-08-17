@@ -49,6 +49,7 @@ import { RoutineManager, type RoutineRunOn, type RoutineRunTrigger } from "./rou
 import { fetchGithubTeam, fetchLibraryTeam, fetchTeamCatalog } from "./team-library.ts";
 import { createTeamManifest, parseTeamManifest } from "./team-manifest.ts";
 import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./webhook-ingress.ts";
+import { memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
@@ -1226,7 +1227,12 @@ async function runGroupMemberTurn(
     });
     const timer = setTimeout(finish, 5 * 60_000);
     instance.adapter
-      .sendTurn({ threadId: group.threadId, text, system })
+      .sendTurn({
+        threadId: group.threadId,
+        text,
+        system,
+        ...memberTurnSelection(bot.modelSelection),
+      })
       .catch((err) => {
         const failure = store.appendMessage(group.threadId, {
           role: "bot",
