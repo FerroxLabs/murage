@@ -540,6 +540,8 @@ describe("pairing, end to end", () => {
       discovery: () => ({ advertising: false, name: "OpenMausBot" }),
     });
     await new Promise<void>((r) => control.listen(0, "127.0.0.1", r));
+    // SAFETY: address() is AddressInfo — an object with a port — for any
+    // IP server that is listening, which the awaited listen guarantees.
     const controlPort = (control.address() as { port: number }).port;
     const base = `http://127.0.0.1:${port}`;
     const ctl = `http://127.0.0.1:${controlPort}`;
@@ -549,6 +551,8 @@ describe("pairing, end to end", () => {
       expect((await fetch(`${base}/api/bots`)).status).toBe(401);
 
       // the person clicks "Start pairing" on the computer
+      // SAFETY: POST /pairing is this sidecar's own API and always answers
+      // with the window's code; the toMatch below fails if the shape drifts.
       const opened = (await (await fetch(`${ctl}/pairing`, { method: "POST" })).json()) as { code: string };
       expect(opened.code).toMatch(/^\d{6}$/);
 
@@ -567,6 +571,8 @@ describe("pairing, end to end", () => {
         body: JSON.stringify({ code: opened.code, deviceName: "Ada's iPhone" }),
       });
       expect(res.status).toBe(201);
+      // SAFETY: a 201 from /api/pair carries exactly this shape — the
+      // sidecar's own contract, pinned by the expects that follow.
       const body = (await res.json()) as { token: string; serverName: string };
       expect(body.serverName).toBe("Ada's computer");
       expect(body.token).toMatch(/^omb_/);
@@ -577,6 +583,8 @@ describe("pairing, end to end", () => {
       expect(await bots.text()).not.toContain("resumeCursors");
 
       // the computer can see the phone, and take it away again
+      // SAFETY: /state's shape is this sidecar's own API, asserted by the
+      // control-server tests above; a drifted shape fails the expects below.
       const state = (await (await fetch(`${ctl}/state`)).json()) as {
         devices: Array<{ id: string; name: string }>;
       };
@@ -603,6 +611,8 @@ describe("pairing, end to end", () => {
       discovery: () => ({ advertising: false, name: "OpenMausBot" }),
     });
     await new Promise<void>((r) => control.listen(0, "127.0.0.1", r));
+    // SAFETY: address() is AddressInfo — an object with a port — for any
+    // IP server that is listening, which the awaited listen guarantees.
     const port = (control.address() as { port: number }).port;
     try {
       // pairing and revocation are exactly what a phone must never reach
@@ -632,6 +642,8 @@ describe("pairing, end to end", () => {
       discovery: () => ({ advertising: false, name: "OpenMausBot" }),
     });
     await new Promise<void>((r) => control.listen(0, "127.0.0.1", r));
+    // SAFETY: address() is AddressInfo — an object with a port — for any
+    // IP server that is listening, which the awaited listen guarantees.
     const port = (control.address() as { port: number }).port;
     try {
       expect(await withHost(port, `[::1]:${port}`, "/state")).toBe(200);
@@ -664,6 +676,8 @@ describe("pairing, end to end", () => {
       discovery: () => ({ advertising: false, name: "OpenMausBot" }),
     });
     await new Promise<void>((r) => control.listen(0, "127.0.0.1", r));
+    // SAFETY: address() is AddressInfo — an object with a port — for any
+    // IP server that is listening, which the awaited listen guarantees.
     const port = (control.address() as { port: number }).port;
     const base = `http://127.0.0.1:${port}`;
     try {

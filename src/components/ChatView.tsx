@@ -35,12 +35,14 @@ import { OptionCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { ModelPicker } from "./ModelPicker";
+import { RenameTitle } from "./RenameTitle";
 import { TaskPicker } from "./TaskPicker";
 import { ReactionBar, ReactionChips } from "./Reactions";
 import { SpeakButton } from "./SpeakButton";
 import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
 import { webhookMessageView } from "@/lib/webhook-message";
+import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -529,12 +531,18 @@ const MessagesList = memo(function MessagesList({
   onSubmitEdit: (id: string, text: string) => void;
   onRegenerate: () => void;
 }) {
+  const { dispatch } = useStore();
   return (
     <>
       {messages.length === 0 && !bot.busy && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
           <MausAvatar color={bot.color} state="idle" size={64} motion="none" motionKey={0} />
-          <div className="text-[17px] font-semibold text-ink">{bot.name}</div>
+          <RenameTitle
+            value={bot.name}
+            onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
+            className="text-[17px] font-semibold text-ink"
+            inputClassName="rounded bg-inset px-1.5 py-0.5 text-center text-[17px] font-semibold"
+          />
           <div className="max-w-[360px] text-[14px] text-ink-secondary">
             {bot.description || "Send a message to start the conversation."}
           </div>
@@ -641,29 +649,41 @@ export function ChatView({ bot }: { bot: Bot }) {
   // false for a frame, and breaking there kills follow permanently
   // (upstream-verified failure). Scrolling back to the end re-arms it.
   const [follow, setFollow] = useState(true);
+  const followRef = useRef(true);
+  const previousScrollTop = useRef(0);
   const touchY = useRef(0);
 
-  useEffect(() => setFollow(true), [bot.id]);
+  const setBottomFollow = useCallback((next: boolean) => {
+    followRef.current = next;
+    setFollow(next);
+  }, []);
+
+  useEffect(() => setBottomFollow(true), [bot.id, setBottomFollow]);
   useEffect(() => {
-    if (follow) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    const el = scrollRef.current;
+    if (!el || !followRef.current) return;
+    el.scrollTo({ top: el.scrollHeight });
+    previousScrollTop.current = el.scrollTop;
   }, [bot.id, messages.length, streaming, reasoning, bot.busy, follow]);
 
   // keyboard is a scroll gesture too (upstream lesson): PageUp/Home break
   // follow like an upward wheel; the at-end onScroll check re-arms it
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "PageUp" || (e.key === "Home" && !(e.target instanceof HTMLTextAreaElement))) setFollow(false);
+      if (e.key === "PageUp" || (e.key === "Home" && !(e.target instanceof HTMLTextAreaElement))) {
+        setBottomFollow(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [setBottomFollow]);
 
   const atEnd = () => {
     const el = scrollRef.current;
-    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_FOLLOW_THRESHOLD;
   };
   const jumpToLatest = () => {
-    setFollow(true);
+    setBottomFollow(true);
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   };
 
@@ -687,27 +707,33 @@ export function ChatView({ bot }: { bot: Bot }) {
         )}
         style={drag}
       >
-        <button
-          onClick={() => dispatch({ type: "toggleSettings" })}
-          className="flex items-center gap-2.5 rounded-lg px-1.5 py-1 hover:bg-raised/50"
-          title="Bot settings"
-          style={noDrag}
-        >
-          <MausAvatar
-            color={bot.color}
-            state={stateForBot({ ...bot, messages })}
-            size={28}
-            motion={mascotMotion?.kind ?? "none"}
-            motionKey={mascotMotion?.nonce ?? 0}
+        <div className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1" style={noDrag}>
+          <button
+            onClick={() => dispatch({ type: "toggleSettings" })}
+            className="flex shrink-0 items-center rounded-lg p-0.5 hover:bg-raised/50"
+            title="Bot settings"
+          >
+            <MausAvatar
+              color={bot.color}
+              state={stateForBot({ ...bot, messages })}
+              size={28}
+              motion={mascotMotion?.kind ?? "none"}
+              motionKey={mascotMotion?.nonce ?? 0}
+            />
+          </button>
+          <RenameTitle
+            value={bot.name}
+            onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
+            className="truncate text-[15px] font-semibold text-ink"
+            inputClassName="max-w-[220px] rounded bg-inset px-1.5 py-0.5 text-[15px] font-semibold"
           />
-          <span className="text-[15px] font-semibold text-ink">{bot.name}</span>
           {bot.chiefOfStaff && (
             <span className="flex items-center gap-1 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent">
               <Crown size={11} /> Chief of Staff
             </span>
           )}
           {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
-        </button>
+        </div>
         <div className="flex items-center gap-2" style={noDrag}>
           {bot.busy && (
             <button
@@ -749,17 +775,27 @@ export function ChatView({ bot }: { bot: Bot }) {
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-5 [overflow-anchor:none]"
         onWheel={(e) => {
-          if (e.deltaY < 0) setFollow(false);
-          else if (atEnd()) setFollow(true);
+          if (e.deltaY < 0) setBottomFollow(false);
+          else if (atEnd()) setBottomFollow(true);
         }}
         onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
         onTouchMove={(e) => {
           const y = e.touches[0]?.clientY ?? 0;
-          if (y > touchY.current + 4) setFollow(false);
-          else if (atEnd()) setFollow(true);
+          if (y > touchY.current + 4) setBottomFollow(false);
+          else if (atEnd()) setBottomFollow(true);
         }}
         onScroll={() => {
-          if (!follow && atEnd()) setFollow(true);
+          const el = scrollRef.current;
+          if (!el) return;
+          const scrollTop = el.scrollTop;
+          const resume = shouldResumeBottomFollow({
+            following: followRef.current,
+            previousScrollTop: previousScrollTop.current,
+            scrollTop,
+            distanceFromBottom: el.scrollHeight - scrollTop - el.clientHeight,
+          });
+          previousScrollTop.current = scrollTop;
+          if (resume) setBottomFollow(true);
         }}
       >
         <div
