@@ -26,9 +26,22 @@ export function scrub<T>(value: T): T {
 }
 
 /** True when a body is worth parsing at all. Anything else passes through
- * untouched — an image endpoint must never be JSON.parsed. */
-export const isJson = (contentType: string | undefined): boolean =>
-  Boolean(contentType && contentType.split(";")[0].trim().toLowerCase() === "application/json");
+ * untouched — an image endpoint must never be JSON.parsed.
+ *
+ * The `+json` suffix counts. `application/problem+json` is JSON by every
+ * measure that matters here, and a scrubber that skips it is a scrubber with
+ * a hole in it: the harness only has to answer one error with RFC 9457 for
+ * `resumeCursors` to reach a phone unscrubbed. Structured suffixes are the
+ * registered way to say "this is JSON underneath" (RFC 6839), so honour it. */
+export const isJson = (contentType: string | undefined): boolean => {
+  const media = (contentType ?? "").split(";")[0].trim().toLowerCase();
+  return media === "application/json" || media.endsWith("+json");
+};
+
+/** How much of a single SSE event the scrubber will hold while waiting for
+ * its terminator. Generous — the largest real frame is a bot payload, orders
+ * of magnitude under this — because the number only exists to be a ceiling. */
+export const MAX_SSE_EVENT_BYTES = 1024 * 1024;
 
 /**
  * Rewrites an SSE byte stream, scrubbing each event's `data:` payload while
@@ -47,6 +60,13 @@ export const isJson = (contentType: string | undefined): boolean =>
  *
  * `id:` lines are preserved verbatim: they are the resume cursor, and
  * rewriting them would silently break `?since=`.
+ *
+ * Buffering to a frame boundary is bounded by the sender's good behaviour,
+ * which is not a bound. A stream that never sends `\n\n` grows `pending`
+ * forever, so the buffer has a ceiling and passing it throws: there is no
+ * safe way to flush half an event — emitting it unterminated corrupts the
+ * stream, emitting it unscrubbed defeats the point of this file. The caller
+ * drops the connection instead.
  */
 export function createSseScrubber(): (chunk: string) => string {
   let pending = "";
@@ -59,6 +79,9 @@ export function createSseScrubber(): (chunk: string) => string {
       const event = pending.slice(0, boundary);
       pending = pending.slice(boundary + 2);
       out += scrubEvent(event) + "\n\n";
+    }
+    if (pending.length > MAX_SSE_EVENT_BYTES) {
+      throw new Error(`SSE event exceeded ${MAX_SSE_EVENT_BYTES} bytes without a terminator`);
     }
     return out;
   };

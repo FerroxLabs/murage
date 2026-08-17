@@ -6,15 +6,38 @@
 // exact coupling this design exists to avoid. If the harness reorganises its
 // files tomorrow, nothing here notices.
 import { randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 /** OMB_COMPANION_DIR isolates a test rig from a real paired fleet. */
 export const DATA_DIR = process.env.OMB_COMPANION_DIR ?? join(homedir(), ".openmausbot-companion");
 
+/** The directory, owner-only.
+ *
+ * What lives here is the paired fleet: one record per phone, each holding a
+ * hash rather than a token. A hash is not a credential, so this is posture
+ * rather than a hole — but the default 0755 publishes to every other account
+ * on the machine which phones someone owns and when they last used them, and
+ * there is no reason for that to be readable. */
 export function ensureDataDir(): void {
-  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+  // mkdirSync's mode applies only to a directory it creates, and an install
+  // from before this line already has a 0755 one.
+  try {
+    chmodSync(DATA_DIR, 0o700);
+  } catch {
+    /* someone else's directory, or a filesystem with no such notion */
+  }
 }
 
 /**
@@ -31,7 +54,10 @@ export function writeFileAtomic(path: string, data: string): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | null = null;
   try {
-    fd = openSync(tmp, "w");
+    // 0600 on the temp file, so the mode is right from the moment it exists
+    // and survives the rename — a chmod after the fact leaves a window where
+    // the contents are already there and world-readable.
+    fd = openSync(tmp, "w", 0o600);
     writeFileSync(fd, data);
     fsyncSync(fd);
     closeSync(fd);

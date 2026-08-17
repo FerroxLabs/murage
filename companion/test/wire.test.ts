@@ -5,7 +5,7 @@
 // which version is checked out. That is what these pin.
 import { describe, expect, it } from "vitest";
 
-import { createSseScrubber, isJson, scrub } from "../src/wire.ts";
+import { createSseScrubber, isJson, MAX_SSE_EVENT_BYTES, scrub } from "../src/wire.ts";
 
 describe("scrub", () => {
   it("removes resumeCursors wherever it is nested", () => {
@@ -47,6 +47,17 @@ describe("isJson", () => {
     expect(isJson("text/event-stream")).toBe(false);
     expect(isJson(undefined)).toBe(false);
   });
+
+  // A structured suffix is the registered way of saying "JSON underneath",
+  // and the harness only has to answer one error as RFC 9457 for a body that
+  // skips scrubbing to reach a phone.
+  it("matches structured JSON suffixes too", () => {
+    expect(isJson("application/problem+json")).toBe(true);
+    expect(isJson("application/vnd.openmausbot.bot+json; charset=utf-8")).toBe(true);
+    expect(isJson("APPLICATION/PROBLEM+JSON")).toBe(true);
+    // and does not match something that merely ends in the letters
+    expect(isJson("text/notjson")).toBe(false);
+  });
 });
 
 describe("createSseScrubber", () => {
@@ -82,6 +93,22 @@ describe("createSseScrubber", () => {
     const scrubStream = createSseScrubber();
     expect(scrubStream(": keepalive\n\n")).toBe(": keepalive\n\n");
     expect(scrubStream("data: not json at all\n\n")).toBe("data: not json at all\n\n");
+  });
+
+  it("refuses to buffer an event that never terminates", () => {
+    // "Buffer to the frame boundary" is bounded only by the sender behaving.
+    // An upstream that never sends the blank line — broken, or hostile —
+    // otherwise grows this buffer for as long as the stream stays open.
+    const scrubStream = createSseScrubber();
+    const chunk = "x".repeat(256 * 1024);
+    let sent = 0;
+    expect(() => {
+      for (;;) {
+        scrubStream(chunk);
+        sent += chunk.length;
+        if (sent > MAX_SSE_EVENT_BYTES * 2) throw new Error("buffered without limit");
+      }
+    }).toThrow(/without a terminator/);
   });
 
   it("handles several events arriving in one chunk", () => {

@@ -206,6 +206,16 @@ export class RemoteListener {
       }
       return this.state();
     }
+    // The bind handler was removed on `listening`, and a listening socket can
+    // still fail — EMFILE on accept, most plausibly, since a phone
+    // reconnecting an SSE stream in a loop is exactly how a process runs out
+    // of descriptors. Unhandled, that `error` is an uncaught exception inside
+    // the harness: one refused connection would take down the desktop app
+    // this listener is a feature of. Recorded instead, where `state()` shows
+    // it.
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      this.lastError = error.message;
+    });
     // A listener whose sockets keep the process alive would stop the harness
     // from exiting on SIGTERM while a phone holds an SSE stream open.
     server.unref();

@@ -61,6 +61,21 @@ describe("port conflicts with the harness", () => {
     expect(err).toContain("webhook receiver");
   }, 20_000);
 
+  // The sidecar's own two ports. Left to bind order this is an EADDRINUSE
+  // naming a port the person can see nothing on — the something-else using
+  // it is this same process, one line earlier.
+  it("refuses to put the device port and the control port on one socket", async () => {
+    const { code, err } = await start({
+      OMB_PORT: "9100",
+      OMB_COMPANION_PORT: "9300",
+      OMB_CONTROL_PORT: "9300",
+    });
+    expect(code).toBe(1);
+    expect(err).toContain("OMB_COMPANION_PORT");
+    expect(err).toContain("OMB_CONTROL_PORT");
+    expect(err).toContain("9300");
+  }, 20_000);
+
   // An explicit OMB_WEBHOOK_PORT moves the receiver, which frees the port
   // above the harness. Refusing it anyway would be refusing a port nothing
   // is on.

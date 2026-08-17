@@ -295,6 +295,93 @@ describe("the sidecar in front of an unmodified harness", () => {
       await new Promise<void>((r) => orphan.close(() => r()));
     }
   });
+
+  // A harness that is *down* is the easy case — the connection is refused and
+  // the phone hears about it immediately. A harness that accepts the socket
+  // and then says nothing is the case with no natural end: `http.request` has
+  // no deadline for the headers phase, so without one the phone waits on a
+  // spinner until the person kills the app.
+  it("gives up on a harness that accepts a connection and then goes quiet", async () => {
+    const mute = createServer(() => {
+      /* accepted, and deliberately never answered */
+    });
+    await new Promise<void>((r) => mute.listen(0, "127.0.0.1", r));
+    const mutePort = (mute.address() as { port: number }).port;
+    const stalled = createServer(
+      createProxyHandler({
+        harnessPort: mutePort,
+        authenticate: () => true,
+        redeem: () => ({ error: "no" }),
+        serverName: () => "Test computer",
+        // the shipped value is 30s; the behaviour under test is the same one
+        headersTimeoutMs: 300,
+      }),
+    );
+    await new Promise<void>((r) => stalled.listen(0, "127.0.0.1", r));
+    const port = (stalled.address() as { port: number }).port;
+    try {
+      const started = Date.now();
+      const res = await fetch(`http://127.0.0.1:${port}/api/bots`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+      expect(res.status).toBe(504);
+      expect(((await res.json()) as { error: string }).error).toContain("did not respond");
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      mute.closeAllConnections?.();
+      await new Promise<void>((r) => mute.close(() => r()));
+      await new Promise<void>((r) => stalled.close(() => r()));
+    }
+  });
+
+  // The scrubber holds a partial event until its terminator arrives, which is
+  // correct and bounded by nothing. An upstream that opens a `data:` line and
+  // never closes it would otherwise be a memory leak with a straight face.
+  it("ends a stream whose event never terminates, rather than buffering it", async () => {
+    const TWO_MIB = 2 * 1024 * 1024;
+    const flood = createServer((_req, res) => {
+      res.on("error", () => {
+        /* the sidecar hangs up on us — that is the pass condition */
+      });
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: ");
+      const blob = "x".repeat(64 * 1024);
+      let sent = 0;
+      const pump = () => {
+        while (sent < TWO_MIB) {
+          sent += blob.length;
+          if (!res.write(blob)) return void res.once("drain", pump);
+        }
+      };
+      pump();
+    });
+    await new Promise<void>((r) => flood.listen(0, "127.0.0.1", r));
+    const floodPort = (flood.address() as { port: number }).port;
+    const relay = createServer(
+      createProxyHandler({
+        harnessPort: floodPort,
+        authenticate: () => true,
+        redeem: () => ({ error: "no" }),
+        serverName: () => "Test computer",
+      }),
+    );
+    await new Promise<void>((r) => relay.listen(0, "127.0.0.1", r));
+    const port = (relay.address() as { port: number }).port;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/events`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+      expect(res.status).toBe(200);
+      // Terminates, and forwards nothing: half an event cannot go out
+      // scrubbed, and must not go out unscrubbed.
+      const text = await res.text();
+      expect(text).toBe("");
+    } finally {
+      flood.closeAllConnections?.();
+      await new Promise<void>((r) => flood.close(() => r()));
+      await new Promise<void>((r) => relay.close(() => r()));
+    }
+  }, 20_000);
 });
 
 // The whole loop, with the real registry rather than a stub: open a pairing
@@ -387,6 +474,52 @@ describe("pairing, end to end", () => {
       // pairing and revocation are exactly what a phone must never reach
       expect(await withHost(port, "macbook.tail1234.ts.net:8801", "/state")).toBe(403);
       expect(await withHost(port, `127.0.0.1:${port}`, "/state")).toBe(200);
+    } finally {
+      await new Promise<void>((r) => control.close(() => r()));
+    }
+  });
+
+  // Loopback is not a boundary a browser respects: any page the person is
+  // reading can POST to 127.0.0.1 with a correct Host, unpreflighted, and
+  // CORS only stops it reading the answer. It does not need the answer —
+  // opening a pairing window and revoking a phone both land on the way in.
+  it("refuses a write from a page the person happened to be reading", async () => {
+    const { DeviceRegistry } = await import("../src/devices.ts");
+    const { createControlServer } = await import("../src/control.ts");
+    const registry = new DeviceRegistry();
+    const control = createControlServer({
+      devices: registry,
+      companionPort: 8800,
+      discovery: () => ({ advertising: false, name: "OpenMausBot" }),
+    });
+    await new Promise<void>((r) => control.listen(0, "127.0.0.1", r));
+    const port = (control.address() as { port: number }).port;
+    const base = `http://127.0.0.1:${port}`;
+    try {
+      const evil = await fetch(`${base}/pairing`, {
+        method: "POST",
+        headers: { origin: "https://evil.example" },
+      });
+      expect(evil.status).toBe(403);
+      // and no window opened on the way to being refused
+      expect(registry.pairing()).toBe(null);
+
+      // A same-origin write is the control page itself, and must still work:
+      // the browser sends Origin on any method that is not GET or HEAD, so a
+      // blanket refusal would break the one legitimate browser there is.
+      const ours = await fetch(`${base}/pairing`, {
+        method: "POST",
+        headers: { origin: base },
+      });
+      expect(ours.status).toBe(201);
+      expect(registry.pairing()).not.toBe(null);
+
+      // Revocation is the other write worth stealing.
+      const stolen = await fetch(`${base}/devices/whatever`, {
+        method: "DELETE",
+        headers: { origin: "https://evil.example" },
+      });
+      expect(stolen.status).toBe(403);
     } finally {
       await new Promise<void>((r) => control.close(() => r()));
     }

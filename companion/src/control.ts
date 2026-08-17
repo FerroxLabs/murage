@@ -57,9 +57,28 @@ export function createControlServer(options: ControlOptions): Server {
     // should be impossible. It is still worth refusing, because "impossible"
     // here rests on a bind argument three files away, and the cost of being
     // wrong is the control plane.
-    const host = String(req.headers.host ?? "").split(":")[0].toLowerCase();
+    const authority = String(req.headers.host ?? "");
+    const host = authority.split(":")[0].toLowerCase();
     if (host && host !== "127.0.0.1" && host !== "localhost" && host !== "[::1]" && host !== "::1") {
       return json(res, 403, { error: "forbidden: loopback only" });
+    }
+
+    // The Host check above stops DNS rebinding. It does not stop a page the
+    // user happens to be reading from posting here directly: 127.0.0.1 is a
+    // real address to a browser, a form POST or a simple fetch to it carries
+    // a perfectly correct Host, and neither is preflighted — so CORS never
+    // gets a say. That page cannot read the reply, but it does not need to.
+    // `POST /pairing` opens a pairing window, and `DELETE /devices/:id`
+    // revokes a phone; both do their damage on the way in.
+    //
+    // Origin is what separates the two callers. The page below is served from
+    // this server and its writes carry this server's origin, so matching
+    // against Host — already proven loopback — admits it and nothing else.
+    // Not a blanket refusal, which is what the device proxy can afford: there
+    // no legitimate client is a browser at all, and here exactly one is.
+    const origin = req.headers.origin;
+    if (origin && origin !== `http://${authority}`) {
+      return json(res, 403, { error: "forbidden: cross-origin request" });
     }
 
     if (method === "GET" && (path === "/" || path === "/index.html")) {

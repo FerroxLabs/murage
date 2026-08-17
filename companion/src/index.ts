@@ -130,6 +130,13 @@ const listen = (server: ReturnType<typeof createServer>, port: number, host: str
     };
     const onListening = () => {
       server.removeListener("error", onError);
+      // Bound is not safe. A listening socket still emits `error` — EMFILE on
+      // accept is the one that happens — and an `error` with no listener is
+      // an uncaught exception, which here means the sidecar dies and every
+      // paired phone loses the machine over one refused connection.
+      server.on("error", (error: NodeJS.ErrnoException) => {
+        console.warn(`port ${port}: ${error.message}`);
+      });
       resolve();
     };
     server.once("error", onError);
@@ -141,6 +148,20 @@ async function main(): Promise<void> {
   const clash =
     conflict("OMB_COMPANION_PORT", COMPANION_PORT) ?? conflict("OMB_CONTROL_PORT", CONTROL_PORT);
   if (clash) throw new Error(`${clash}. Pick another port.`);
+
+  // The sidecar's own two ports, for the same reason as the harness's: bound
+  // in order, the second one loses with a bare EADDRINUSE that reads as
+  // "something else is using it" when the something else is this process.
+  // Worth naming even though the hosts differ — 127.0.0.1 and 0.0.0.0 on one
+  // port collide, and if they somehow did not the control plane would be
+  // sharing a socket with the device port, which is the one thing the three
+  // sockets exist to prevent.
+  if (COMPANION_PORT === CONTROL_PORT) {
+    throw new Error(
+      `OMB_COMPANION_PORT and OMB_CONTROL_PORT are both port ${COMPANION_PORT}, and they cannot share one: ` +
+        `the first is open to your network and the second must never be. Pick another port.`,
+    );
+  }
 
   await listen(control, CONTROL_PORT, "127.0.0.1");
   await listen(companion, COMPANION_PORT, "0.0.0.0");

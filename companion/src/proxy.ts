@@ -30,7 +30,18 @@ export interface ProxyOptions {
   ) => { token: string; device: unknown } | { error: string };
   /** What the phone should call this computer in its connection list. */
   serverName: () => string;
+  /** How long the harness may take to produce response *headers*. Optional,
+   * and only ever set by tests — the default is the one that ships. */
+  headersTimeoutMs?: number;
 }
+
+/** The harness has this long to send a status line and headers.
+ *
+ * Headers only. Once they arrive the clock is off and the body may take as
+ * long as it likes, which is the whole point: an SSE stream is a response
+ * that deliberately never ends, and a timeout that could not tell the
+ * difference would cut every live stream at thirty seconds. */
+const HEADERS_TIMEOUT_MS = 30_000;
 
 /** Read a JSON body, bounded. An unbounded read on an unauthenticated route
  * is a way to be memory-exhausted by anyone who can reach the port. */
@@ -131,6 +142,7 @@ export function createProxyHandler(options: ProxyOptions) {
         headers: forwardHeaders(req),
       },
       (harness) => {
+        clearTimeout(headersDeadline);
         const contentType = harness.headers["content-type"];
         const isStream = String(contentType ?? "").includes("text/event-stream");
 
@@ -153,9 +165,25 @@ export function createProxyHandler(options: ProxyOptions) {
           const scrubStream = createSseScrubber();
           harness.setEncoding("utf8");
           harness.on("data", (chunk: string) => {
-            const rewritten = scrubStream(chunk);
-            if (rewritten) res.write(rewritten);
+            let rewritten: string;
+            try {
+              rewritten = scrubStream(chunk);
+            } catch {
+              // The buffer ceiling. Half an event cannot be forwarded safely,
+              // so the stream ends here rather than growing without bound.
+              harness.destroy();
+              res.end();
+              return;
+            }
+            if (!rewritten) return;
+            // A phone on a slow link reads slower than the harness writes,
+            // and the difference has to go somewhere. Ignoring what write()
+            // returns puts it in this process's memory, unbounded, for as
+            // long as the phone stays connected and behind. Pausing pushes it
+            // back to the harness, which is where the backlog belongs.
+            if (!res.write(rewritten)) harness.pause();
           });
+          res.on("drain", () => harness.resume());
           harness.on("end", () => res.end());
           harness.on("error", () => res.destroy());
           // A device that hangs up must take the upstream connection with
@@ -200,9 +228,33 @@ export function createProxyHandler(options: ProxyOptions) {
       },
     );
 
-    upstream.on("error", () =>
-      sendJson(res, 502, { error: "OpenMausBot is not running on this computer" }),
-    );
+    // `http.request` has no deadline of its own for the headers phase: a
+    // harness that accepts the connection and then says nothing holds the
+    // device's request open until one side gives up, which neither does.
+    let timedOut = false;
+    const headersDeadline = setTimeout(() => {
+      timedOut = true;
+      upstream.destroy(new Error("the harness sent no response headers"));
+    }, options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS);
+    headersDeadline.unref?.();
+
+    upstream.on("error", () => {
+      clearTimeout(headersDeadline);
+      // Headers already went out — a stream, or a piped body. There is no
+      // status code left to send, and writeHead here throws instead of
+      // reporting anything; dropping the socket is the only honest signal.
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      sendJson(
+        res,
+        timedOut ? 504 : 502,
+        timedOut
+          ? { error: "OpenMausBot did not respond" }
+          : { error: "OpenMausBot is not running on this computer" },
+      );
+    });
     req.pipe(upstream);
   };
 }
