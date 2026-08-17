@@ -39,7 +39,7 @@ import { isEffortLevel, type RuntimeEvent } from "./contracts.ts";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
 import { searchMessages } from "./message-db.ts";
-import { discardDelegations, drainDelegations, queueDelegation, type QueueResult } from "./delegations.ts";
+import { _loadPending, discardDelegations, drainDelegations, pendingThreads, queueDelegation, type QueueResult } from "./delegations.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { cancelPeerApprovalsFor, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
@@ -200,6 +200,42 @@ const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
   tasks: store.tasks(bot.id).map(wireTask),
 });
 
+// The store tells us what it wrote; this is the ONE place that turns those
+// into SSE frames. No mutation path can persist without emitting — the
+// property holds by construction, not by every call site remembering to
+// broadcast. Bot frames are the slim wire shape (no transcript); the few
+// endpoints whose callers need the transcript (task create/switch, imports)
+// still send their richer payload on top.
+store.onChange((change) => {
+  switch (change.type) {
+    case "message":
+      broadcast({ kind: "message", threadId: change.threadId, message: change.message });
+      break;
+    case "message.patch":
+      broadcast({ kind: "message.patch", threadId: change.threadId, message: change.message });
+      break;
+    case "thread":
+      broadcast({ kind: "thread", threadId: change.threadId, activeLeafId: change.activeLeafId });
+      break;
+    case "bot": {
+      const bot = store.bot(change.botId);
+      if (bot) broadcast({ kind: "bot", bot: wireBot(bot) });
+      break;
+    }
+    case "bot.deleted":
+      broadcast({ kind: "bot.deleted", botId: change.botId });
+      break;
+    case "group": {
+      const group = store.group(change.groupId);
+      if (group) broadcast({ kind: "group", group });
+      break;
+    }
+    case "group.deleted":
+      broadcast({ kind: "group.deleted", groupId: change.groupId });
+      break;
+  }
+});
+
 // ── message pages ──────────────────────────────────────────────────────
 // GET /api/bots hands back every bot with its entire transcript, which is
 // the right answer over loopback and the wrong one over a phone network:
@@ -341,12 +377,11 @@ const watchdog = new TurnWatchdog({
     const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
     void instance?.adapter.interruptTurn(turn.threadId).catch(() => {});
     const minutes = Math.round(TURN_STALL_MS / 60_000);
-    const note = store.appendMessage(turn.threadId, {
+    store.appendMessage(turn.threadId, {
       role: "bot",
       kind: "activity",
       tool: { name: `error: no activity for ${minutes} minutes — the turn was stopped`, ok: false },
     });
-    broadcast({ kind: "message", threadId: turn.threadId, message: note });
     finalizeDelegationWatch(turn.threadId, false, "", "Delegated turn stalled and was stopped");
     turnUsage.delete(turn.threadId);
     // ACP interruption settles within five seconds; other adapters settle
@@ -359,13 +394,11 @@ const watchdog = new TurnWatchdog({
       if (group && group.busyBotId === turn.botId && speaker?.botId === turn.botId) {
         groupSpeakers.delete(turn.threadId);
         store.patchGroup(group.id, { busyBotId: null, unread: true });
-        broadcastGroup(group.id);
       }
       const currentBot = store.bot(turn.botId);
       if (currentBot?.busy) {
         stopScreenPoller(currentBot.id);
-        store.patchBot(currentBot.id, { busy: false });
-        broadcast({ kind: "bot", bot: wireBot(store.bot(currentBot.id)!) });
+        store.setActivity(currentBot.id, "idle");
       }
     }, 6_000);
     release.unref?.();
@@ -467,7 +500,6 @@ bus.subscribe((event: RuntimeEvent) => {
 
   const pushMessage = (m: Omit<Message, "id" | "at">) => {
     const message = store.appendMessage(event.threadId, group && m.role === "bot" ? { ...m, from: speaker } : m);
-    broadcast({ kind: "message", threadId: event.threadId, message });
     return message;
   };
 
@@ -492,10 +524,9 @@ bus.subscribe((event: RuntimeEvent) => {
           // dropping it here would silently un-narrate every completed tool
           const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool;
           toolName = existing?.name ?? "tool";
-          const patched = store.patchMessage(event.threadId, messageId, {
+          store.patchMessage(event.threadId, messageId, {
             tool: { name: toolName, ok: event.ok, spoken: existing?.spoken },
           });
-          if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
           toolMessageByItem.delete(itemKey);
         }
         // the bot just acted ON ITS SCREEN — refresh the preview now. Only
@@ -597,19 +628,23 @@ bus.subscribe((event: RuntimeEvent) => {
       // this is the branch where a card actually reached a human. Anything
       // auto mode answered took the early return above and never buzzes.
       if (asker) {
+        // the bot is not working now — it is waiting on a person
+        if (asker.busy) store.setActivity(asker.id, "waiting-on-you");
         notify(buildNotification(permission ? "approval" : "question", asker, event.threadId, event.summary));
       }
       break;
     }
     case "request.resolved": {
+      // answered (by whoever): the turn is working again, unless it settled
+      const waiting = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
+      if (waiting?.activity === "waiting-on-you") store.setActivity(waiting.id, "working");
       const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
       if (messageId) {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
         if (existing?.card && !existing.card.answered) {
-          const patched = store.patchMessage(event.threadId, messageId, {
+          store.patchMessage(event.threadId, messageId, {
             card: { ...existing.card, answered: event.behavior, dismissed: event.source !== "user" },
           });
-          if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
         }
         if (event.requestId) askMessageByRequest.delete(`${event.threadId}:${event.requestId}`);
       }
@@ -621,6 +656,11 @@ bus.subscribe((event: RuntimeEvent) => {
         kind: "activity",
         tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup },
       });
+      // a setup error means the engine could not even start: the bot is
+      // dead until something changes, not merely idle. The next successful
+      // dispatch moves it to working; turn.completed (which follows a setup
+      // failure) is told to leave "dead" alone.
+      if (event.setup && bot) store.setActivity(bot.id, "dead");
       break;
     case "thread.token-usage.updated":
       // running totals for the turn in flight; folded into the task's
@@ -637,8 +677,9 @@ bus.subscribe((event: RuntimeEvent) => {
       // 1:1 task turns are tallied for now.
       if (bot && usage) store.addTaskUsage(bot.id, event.threadId, usage);
       if (bot) {
-        store.patchBot(bot.id, { busy: false, unread: true });
-        broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
+        // settled → idle; a setup failure already marked it dead, keep that
+        if (store.bot(bot.id)?.activity !== "dead") store.setActivity(bot.id, "idle");
+        store.patchBot(bot.id, { unread: true });
         notify(buildNotification("done", bot, event.threadId, reply));
         if (screenPollers.has(bot.id)) {
           // the last live frame becomes a settled inline screen message —
@@ -658,11 +699,10 @@ bus.subscribe((event: RuntimeEvent) => {
       if (speaker && group?.busyBotId === speaker.botId) {
         groupSpeakers.delete(event.threadId);
         store.patchGroup(group.id, { busyBotId: null, unread: true });
-        broadcastGroup(group.id);
         const speakingBot = store.bot(speaker.botId);
         if (speakingBot?.busy) {
-          store.patchBot(speakingBot.id, { busy: false, unread: true });
-          broadcast({ kind: "bot", bot: wireBot(store.bot(speakingBot.id)!) });
+          store.setActivity(speakingBot.id, "idle");
+          store.patchBot(speakingBot.id, { unread: true });
         }
       }
       // A delegated turn's terminal state belongs in the A⇄B channel:
@@ -709,13 +749,10 @@ function finalizeDelegationWatch(
 // Run as a separate subscriber so the drain logic stays out of the main
 // fold (which has its own switch/case noise) and its approval + startTurn
 // calls never have to share locals with the fold's state machine.
-bus.subscribe((event: RuntimeEvent) => {
-  if (event.type !== "turn.completed") return;
-  // A turn that failed or was interrupted drops its queue rather than
-  // firing it later: the user who hit Stop does not expect the delegations
-  // that turn queued to run anyway, minutes later, on an unrelated turn.
-  if (!event.ok) return void discardDelegations(commsBus, event.threadId);
-  drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth, sourceThreadId, channel) => {
+/** How a drained delegation becomes a real turn on the target. Shared by
+ * the settle-time drain and the boot-time drain of what a previous process
+ * left queued. */
+const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
@@ -738,12 +775,11 @@ bus.subscribe((event: RuntimeEvent) => {
       }
       const source = store.botByThread(sourceThreadId);
       if (!source) return;
-      const note = store.appendMessage(sourceThreadId, {
+      store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `error: delegation to @${bot?.name ?? toBotId} could not start — ${why.slice(0, 120)}`, ok: false },
       });
-      broadcast({ kind: "message", threadId: sourceThreadId, message: note });
     };
     return startTurn(toBotId, text, {
       commsDepth,
@@ -755,8 +791,17 @@ bus.subscribe((event: RuntimeEvent) => {
     }).catch((err) => {
       reportStartFailure(err);
     });
-  });
+};
+
+bus.subscribe((event: RuntimeEvent) => {
+  if (event.type !== "turn.completed") return;
+  // A turn that failed or was interrupted drops its queue rather than
+  // firing it later: the user who hit Stop does not expect the delegations
+  // that turn queued to run anyway, minutes later, on an unrelated turn.
+  if (!event.ok) return void discardDelegations(commsBus, event.threadId);
+  drainDelegations(commsBus, approvalBus, event.threadId, runDelegatedTurn);
 });
+
 
 // ── live screen: poll the bot's box while it works ────────────────────
 // Frames stream to clients as SSE {kind:'screen'} (the "Bot's screen"
@@ -926,7 +971,6 @@ async function startTurn(
   let userMessage = opts?.userMessage;
   if (!userMessage) {
     userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
-    broadcast({ kind: "message", threadId, message: userMessage });
   }
 
   // transcript for API-backed drivers: settled text turns on the ACTIVE
@@ -968,8 +1012,8 @@ async function startTurn(
   // busy flips immediately so the composer locks; the dispatch itself runs
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
-  store.patchBot(bot.id, { busy: true, unread: false });
-  broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
+  store.setActivity(bot.id, "working");
+  store.patchBot(bot.id, { unread: false });
   turnUsage.delete(threadId);
 
   void (async () => {
@@ -1176,14 +1220,12 @@ async function startTurn(
       watchdog.settle(threadId);
       turnUsage.delete(threadId);
       const message = e instanceof Error ? e.message : String(e);
-      const failure = store.appendMessage(threadId, {
+      store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
       });
-      broadcast({ kind: "message", threadId, message: failure });
-      store.patchBot(bot.id, { busy: false });
-      broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
+      store.setActivity(bot.id, "idle");
       opts?.onDispatchError?.(message);
     }
   })();
@@ -1268,15 +1310,11 @@ function serializeRoomContext(threadId: string, userName: string): string {
     .join("\n");
 }
 
-function broadcastGroup(groupId: string) {
-  const group = store.group(groupId);
-  if (group) broadcast({ kind: "group", group });
-}
 
 // comms bus: passed into the visibility helpers in comms-visibility.ts so
 // they can mirror messages + chips without re-deriving SSE plumbing. Same
 // shape every comms entry point uses (ask_bot, delegate_bot).
-const commsBus: CommsBus = { store, broadcast, broadcastGroup };
+const commsBus: CommsBus = { store, broadcast };
 
 // approval bus: peer-approval.ts only needs to push cards and broadcast
 // them — its pending map lives in the module so the two respond endpoints
@@ -1289,6 +1327,17 @@ const approvalBus: ApprovalBus = { store, broadcast };
 {
   const stale = dismissStalePeerCards(approvalBus);
   if (stale) console.log(`peer approvals: dismissed ${stale} card(s) left by a previous run`);
+}
+
+// Handoffs a previous process queued but never ran: the source turn is
+// dead (no turn survives a restart) so they would otherwise wait forever.
+// Run them now, through the same drain — target and approvePeerComms are
+// re-checked there as always; a source bot that no longer exists is skipped.
+_loadPending();
+{
+  const leftover = pendingThreads();
+  if (leftover.length) console.log(`delegations: ${leftover.length} thread(s) with queued handoffs from a previous run — draining`);
+  for (const threadId of leftover) drainDelegations(commsBus, approvalBus, threadId, runDelegatedTurn);
 }
 
 async function runGroupMemberTurn(
@@ -1306,13 +1355,12 @@ async function runGroupMemberTurn(
   const instance = registry.get(bot.modelSelection.instanceId);
   const userName = cfg.profile?.name?.trim() || "User";
   if (!instance) {
-    const failure = store.appendMessage(group.threadId, {
+    store.appendMessage(group.threadId, {
       role: "bot",
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
       tool: { name: `error: ${bot.name}'s model is unavailable`, ok: false },
     });
-    broadcast({ kind: "message", threadId: group.threadId, message: failure });
     return true;
   }
   // One turn per bot at a time, across BOTH engines. Without this a bot
@@ -1320,20 +1368,17 @@ async function runGroupMemberTurn(
   // processes, interleaved token spend, and an interrupt that only ever
   // reached one of them.
   if (bot.busy) {
-    const note = store.appendMessage(group.threadId, {
+    store.appendMessage(group.threadId, {
       role: "bot",
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
       tool: { name: `${bot.name} is busy in another conversation — skipped this round`, ok: false },
     });
-    broadcast({ kind: "message", threadId: group.threadId, message: note });
     return true;
   }
-  store.patchBot(bot.id, { busy: true });
-  broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
+  store.setActivity(bot.id, "working");
 
-  store.patchGroup(group.id, { busyBotId: bot.id });
-  broadcastGroup(group.id);
+  store.patchGroup(group.id, { busyBotId: bot.id }); // the store's change stream carries the frame
   groupSpeakers.set(group.threadId, { botId: bot.id, name: bot.name, color: bot.color });
 
   const roster = group.memberIds
@@ -1379,13 +1424,12 @@ async function runGroupMemberTurn(
     });
     const timer = setTimeout(() => {
       void instance.adapter.interruptTurn(group.threadId).catch(() => {});
-      const failure = store.appendMessage(group.threadId, {
+      store.appendMessage(group.threadId, {
         role: "bot",
         kind: "activity",
         from: { botId: bot.id, name: bot.name, color: bot.color },
         tool: { name: `${bot.name}'s room turn exceeded 5 minutes and was stopped`, ok: false },
       });
-      broadcast({ kind: "message", threadId: group.threadId, message: failure });
       finish("timed_out");
     }, 5 * 60_000);
     watchdog.watch(group.threadId, bot.id);
@@ -1398,13 +1442,12 @@ async function runGroupMemberTurn(
         ...memberTurnSelection(bot.modelSelection),
       })
       .catch((err) => {
-        const failure = store.appendMessage(group.threadId, {
+        store.appendMessage(group.threadId, {
           role: "bot",
           kind: "activity",
           from: { botId: bot.id, name: bot.name, color: bot.color },
           tool: { name: `error: ${err instanceof Error ? err.message.slice(0, 140) : "turn failed"}`, ok: false },
         });
-        broadcast({ kind: "message", threadId: group.threadId, message: failure });
         watchdog.settle(group.threadId);
         finish("dispatch_failed");
       });
@@ -1413,13 +1456,13 @@ async function runGroupMemberTurn(
   // produces turn.completed (or the stall watchdog's grace fallback runs).
   // Do not clear busy or start the next member on that same thread early.
   if (outcome === "timed_out") return false;
-  groupSpeakers.delete(group.threadId);
-  store.patchGroup(group.id, { busyBotId: null, unread: true });
-  broadcastGroup(group.id);
-  const after = store.bot(bot.id);
-  if (after?.busy) {
-    store.patchBot(bot.id, { busy: false });
-    broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
+  // turn.completed normally performs this cleanup. Only use the fallback
+  // when this invocation still owns the room; otherwise it would emit a
+  // duplicate group frame or clear a newer speaker's state.
+  if (store.group(group.id)?.busyBotId === bot.id) {
+    groupSpeakers.delete(group.threadId);
+    store.patchGroup(group.id, { busyBotId: null, unread: true });
+    if (store.bot(bot.id)?.busy) store.setActivity(bot.id, "idle");
   }
 
   // chained mentions: a member's reply can summon teammates — one hop only
@@ -1438,8 +1481,7 @@ async function runGroupMemberTurn(
 function startGroupTurn(groupId: string, text: string) {
   const group = store.group(groupId);
   if (!group) throw Object.assign(new Error("no such group"), { status: 404 });
-  const userMessage = store.appendMessage(group.threadId, { role: "user", kind: "text", text });
-  broadcast({ kind: "message", threadId: group.threadId, message: userMessage });
+  store.appendMessage(group.threadId, { role: "user", kind: "text", text });
 
   const members = group.memberIds
     .map((id) => store.bot(id))
@@ -1460,12 +1502,11 @@ function startGroupTurn(groupId: string, text: string) {
     const current = store.group(groupId);
     if (current?.busyBotId) {
       const owner = store.bot(current.busyBotId);
-      const note = store.appendMessage(current.threadId, {
+      store.appendMessage(current.threadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `${owner?.name ?? "A room member"} is still stopping — this message was not dispatched`, ok: false },
       });
-      broadcast({ kind: "message", threadId: current.threadId, message: note });
       return;
     }
     const spoken = new Set<string>();
@@ -1587,14 +1628,12 @@ async function reloadProviders() {
       "",
       "Delegated turn did not finish — provider settings changed",
     );
-    const note = store.appendMessage(b.threadId, {
+    store.appendMessage(b.threadId, {
       role: "bot",
       kind: "activity",
       tool: { name: "error: turn interrupted — provider settings changed", ok: false },
     });
-    broadcast({ kind: "message", threadId: b.threadId, message: note });
-    store.patchBot(b.id, { busy: false });
-    broadcast({ kind: "bot", bot: wireBot(store.bot(b.id)!) });
+    store.setActivity(b.id, "idle");
   }
 }
 
@@ -2091,7 +2130,6 @@ const server = createServer(async (req, res) => {
           ? body.name.trim()
           : `${store.bot(memberIds[0])!.name} & co.`;
       const group = store.createGroup(name, memberIds);
-      broadcast({ kind: "group", group });
       return json(res, 201, { group: { ...group, messages: [] } });
     }
     if (method === "POST" && path === "/api/teams/export") {
@@ -2232,7 +2270,6 @@ const server = createServer(async (req, res) => {
       }
       const group = store.patchGroup(m[1], patch);
       if (!group) return json(res, 404, { error: "no such room" });
-      broadcast({ kind: "group", group });
       return json(res, 200, { group });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)\/read$/);
@@ -2253,7 +2290,6 @@ const server = createServer(async (req, res) => {
           unlinkSync(join(dir, `${group.threadId}.ndjson`));
         } catch {}
       }
-      broadcast({ kind: "group.deleted", groupId: group.id });
       return json(res, 200, { ok: true });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)\/messages$/);
@@ -2282,7 +2318,6 @@ const server = createServer(async (req, res) => {
       if (!emoji) return json(res, 400, { error: "emoji required" });
       const patched = store.toggleReaction(m[1], m[2], emoji, typeof body.by === "string" ? body.by : "user");
       if (!patched) return json(res, 404, { error: "no such message" });
-      broadcast({ kind: "message.patch", threadId: m[1], message: patched });
       return json(res, 200, { message: patched });
     }
     if (method === "POST" && path === "/api/bots") {
@@ -2426,7 +2461,6 @@ const server = createServer(async (req, res) => {
       if (chiefChanges === null) return json(res, 404, { error: "no such bot" });
       const changed = new Map([[bot.id, store.bot(bot.id)!]]);
       for (const changedBot of chiefChanges) changed.set(changedBot.id, changedBot);
-      for (const changedBot of changed.values()) broadcast({ kind: "bot", bot: wireBot(changedBot) });
       return json(res, 200, { bot: wireBot(bot) });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
@@ -2449,7 +2483,6 @@ const server = createServer(async (req, res) => {
           unlinkSync(join(dir, `${bot.threadId}.ndjson`));
         } catch {}
       }
-      broadcast({ kind: "bot.deleted", botId: bot.id });
       return json(res, 200, { ok: true });
     }
 
@@ -2468,7 +2501,6 @@ const server = createServer(async (req, res) => {
           ...(body.dismissed !== undefined ? { dismissed: body.dismissed } : {}),
         },
       });
-      broadcast({ kind: "message.patch", threadId: bot.threadId, message: patched });
       return json(res, 200, { message: patched });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
@@ -2508,8 +2540,6 @@ const server = createServer(async (req, res) => {
       const message = store.branchMessage(bot.threadId, messageId, text);
       if (!message) return json(res, 404, { error: "no such message" });
       store.patchBot(bot.id, { rewound: true });
-      broadcast({ kind: "message", threadId: bot.threadId, message });
-      broadcast({ kind: "thread", threadId: bot.threadId, activeLeafId: message.id });
       await startTurn(bot.id, text, { userMessage: message });
       return json(res, 202, { ok: true });
     }
@@ -2525,7 +2555,6 @@ const server = createServer(async (req, res) => {
       if (!leaf) return json(res, 404, { error: "no such message" });
       // provider sessions still hold the other branch — next turn replays
       store.patchBot(bot.id, { rewound: true });
-      broadcast({ kind: "thread", threadId: bot.threadId, activeLeafId: leaf });
       return json(res, 200, { activeLeafId: leaf });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/respond$/);

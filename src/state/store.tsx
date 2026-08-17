@@ -115,6 +115,8 @@ export interface Bot {
   mascotExpression?: string | null;
   unread: boolean;
   busy?: boolean;
+  /** what the bot is doing, as the harness sees it; busy is derived from it */
+  activity?: "working" | "waiting-on-you" | "idle" | "no-signal" | "dead";
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "off";
