@@ -121,12 +121,14 @@ export async function refreshTailnetName(
           // polite signal would sit there past the deadline it was supposed
           // to be bounded by. SIGKILL is not a request.
           killSignal: "SIGKILL",
-          // `status --json` describes the whole tailnet, and the default cap
-          // is 1 MiB — a large enough tailnet fails the probe with ENOBUFS,
-          // which looks exactly like "Tailscale is not installed". Generous,
-          // and still a bound: the alternative is a subprocess deciding how
-          // much memory this process uses.
-          maxBuffer: 8 * 1024 * 1024,
+          // `status --json` describes every peer in the tailnet, and the
+          // default cap is 1 MiB — a large enough tailnet fails the probe with
+          // ENOBUFS, which the code below reads as "no MagicDNS name" and
+          // which looks from outside exactly like "Tailscale is not
+          // installed". That is a wrong answer rather than a missing one.
+          // Generous, and still a bound: the alternative is a subprocess
+          // deciding how much memory this process uses.
+          maxBuffer: 16 * 1024 * 1024,
           env: { ...process.env, PATH: searchPath() },
         },
         (error, stdout) => {

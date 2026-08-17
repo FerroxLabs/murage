@@ -18,6 +18,8 @@ import { createHash } from "node:crypto";
 import { createSocket, type Socket } from "node:dgram";
 import { hostname, networkInterfaces } from "node:os";
 
+import { lanAddresses } from "./listener.ts";
+
 const MDNS_ADDRESS = "224.0.0.251";
 const MDNS_PORT = 5353;
 /** RFC 6762 §10: host records are short-lived, service records are not. */
@@ -28,21 +30,53 @@ const MULTICAST_TTL = 255;
 /** How long shutdown waits for the goodbye datagram to leave the socket. */
 const GOODBYE_FLUSH_MS = 250;
 
-/** True when a query came from somewhere mDNS is meant to serve: this
- * machine, or an address on a local network.
+/** An IPv4 dotted quad as a 32-bit number, or null if it is not one. */
+function toIpv4(address: string): number | null {
+  // A udp4 socket can hand back the mapped form on some platforms.
+  const plain = address.replace(/^::ffff:/i, "").split("%")[0];
+  const parts = plain.split(".");
+  if (parts.length !== 4) return null;
+  let out = 0;
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return null;
+    const octet = Number(part);
+    if (octet > 255) return null;
+    out = out * 256 + octet;
+  }
+  return out >>> 0;
+}
+
+/**
+ * Is this source address on a network directly attached to this machine?
  *
- * The responder binds udp4, so this is the whole address space it can hear
- * from. Anything outside it reached the socket over the internet, which mDNS
- * has no business answering — RFC 6762 §5.5 says a responder that answers
- * such a query is a reflector, and §11 is why: the answer is larger than the
- * question, so a spoofed source turns the socket into an amplifier. */
-const isLocalSource = (address: string): boolean =>
-  address === "127.0.0.1" ||
-  address.startsWith("10.") ||
-  address.startsWith("192.168.") ||
-  // link-local: DHCP failed, but the link is still the link
-  address.startsWith("169.254.") ||
-  /^172\.(1[6-9]|2\d|3[01])\./.test(address);
+ * RFC 6762 §5.5 is explicit that a multicast DNS responder answers link-local
+ * queries only, and it is not bookkeeping: a responder that replies to
+ * anything that can route to port 5353 is an off-link discovery service for
+ * whoever asks — it will name this computer, its addresses and its owner to a
+ * stranger — and a UDP reflector besides, since §11's answer is larger than
+ * the question and goes wherever the source address says, which is trivially
+ * forged. Neither is something a companion sidecar should be.
+ *
+ * Derived from the interface table rather than from a list of private
+ * prefixes: the prefixes are a guess at which networks this machine is on,
+ * and the netmasks are the answer. Loopback passes, because the internal
+ * interface is as directly attached as it gets and the test rig speaks to
+ * itself.
+ */
+export function isOnLink(from: string, interfaces = networkInterfaces()): boolean {
+  const source = toIpv4(from);
+  if (source === null) return false;
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== "IPv4") continue;
+      const address = toIpv4(entry.address);
+      const mask = toIpv4(entry.netmask);
+      if (address === null || mask === null) continue;
+      if ((((source ^ address) & mask) >>> 0) === 0) return true;
+    }
+  }
+  return false;
+}
 
 export const TYPE = { A: 1, PTR: 12, TXT: 16, SRV: 33, ANY: 255 } as const;
 const CLASS_IN = 1;
@@ -342,6 +376,29 @@ export function dnsLabel(text: string, fallback = "OpenMausBot"): string {
   return label || fallback;
 }
 
+/** Clamp to a byte budget without splitting a character.
+ *
+ * Both limits in DNS-SD are byte counts — 63 for a label, 255 for a TXT entry
+ * — and `String.prototype.slice` counts UTF-16 code units instead. Two hundred
+ * CJK characters are six hundred bytes, so a name measured the wrong way
+ * produces a record that is not truncated but malformed, and discovery stops
+ * working silently for exactly the people whose names are not Latin.
+ *
+ * Iterating the string yields whole code points, so an emoji or a surrogate
+ * pair is kept or dropped entire rather than cut in half. */
+export function clampBytes(text: string, limit: number): string {
+  if (Buffer.byteLength(text, "utf8") <= limit) return text;
+  let out = "";
+  let size = 0;
+  for (const character of text) {
+    const width = Buffer.byteLength(character, "utf8");
+    if (size + width > limit) break;
+    out += character;
+    size += width;
+  }
+  return out;
+}
+
 /** A host name nothing else on the network claims.
  *
  * Deliberately not `<hostname>.local`: on macOS the system responder owns
@@ -352,17 +409,17 @@ export function defaultHostName(machine = hostname()): string {
   return `openmausbot-${digest}.local`;
 }
 
-/** Every IPv4 address worth publishing (same rule as the listener's). */
+/**
+ * Every IPv4 address worth publishing.
+ *
+ * This is `lanAddresses()` under a name that says why mDNS wants it. It used
+ * to be a second copy of the same filter, which is the kind of duplication
+ * that stays correct right up until one side learns about a new interface
+ * type and the other does not — and the failure then is a phone that
+ * discovers the computer but cannot reach it.
+ */
 export function advertisableAddresses(): string[] {
-  const out: string[] = [];
-  for (const entries of Object.values(networkInterfaces())) {
-    for (const entry of entries ?? []) {
-      if (entry.family !== "IPv4" || entry.internal) continue;
-      if (entry.address.startsWith("169.254.")) continue;
-      out.push(entry.address);
-    }
-  }
-  return out;
+  return lanAddresses();
 }
 
 // ── the responder ──────────────────────────────────────────────────────
@@ -534,7 +591,7 @@ export class MdnsResponder {
     // a small query into a larger answer aimed wherever the attacker likes,
     // and the answer is bigger than the question, which is the whole trick.
     // Dropped before decoding, so a packet from off-link costs nothing.
-    if (!isLocalSource(from)) return;
+    if (!isOnLink(from)) return;
     const message = decodeMessage(buf);
     if (!message || message.response || !message.questions.length) return;
     const { answers, additionals } = answersFor(message, this.service);

@@ -61,12 +61,19 @@ export const MAX_SSE_EVENT_BYTES = 1024 * 1024;
  * `id:` lines are preserved verbatim: they are the resume cursor, and
  * rewriting them would silently break `?since=`.
  *
+ * Both line endings are recognised. The spec allows CRLF, LF, or a bare CR as
+ * a line terminator, and a scrubber that knows only LF does not fail loudly
+ * against a CRLF producer — it buffers the whole stream waiting for a boundary
+ * that never comes, and the phone sits on "Connecting…" against a server that
+ * is streaming perfectly. Whichever ending an event arrived with is the one it
+ * leaves with; this rewrites payloads, not framing.
+ *
  * Buffering to a frame boundary is bounded by the sender's good behaviour,
- * which is not a bound. A stream that never sends `\n\n` grows `pending`
- * forever, so the buffer has a ceiling and passing it throws: there is no
- * safe way to flush half an event — emitting it unterminated corrupts the
- * stream, emitting it unscrubbed defeats the point of this file. The caller
- * drops the connection instead.
+ * which is not a bound. A stream that never sends a terminator in any of its
+ * spellings grows `pending` forever, so the buffer has a ceiling and passing
+ * it throws: there is no safe way to flush half an event — emitting it
+ * unterminated corrupts the stream, emitting it unscrubbed defeats the point
+ * of this file. The caller drops the connection instead.
  */
 export function createSseScrubber(): (chunk: string) => string {
   let pending = "";
@@ -74,11 +81,11 @@ export function createSseScrubber(): (chunk: string) => string {
     pending += chunk;
     let out = "";
     for (;;) {
-      const boundary = pending.indexOf("\n\n");
-      if (boundary < 0) break;
-      const event = pending.slice(0, boundary);
-      pending = pending.slice(boundary + 2);
-      out += scrubEvent(event) + "\n\n";
+      const boundary = nextBoundary(pending);
+      if (!boundary) break;
+      const event = pending.slice(0, boundary.index);
+      pending = pending.slice(boundary.index + boundary.terminator.length);
+      out += scrubEvent(event) + boundary.terminator;
     }
     if (pending.length > MAX_SSE_EVENT_BYTES) {
       throw new Error(`SSE event exceeded ${MAX_SSE_EVENT_BYTES} bytes without a terminator`);
@@ -87,10 +94,31 @@ export function createSseScrubber(): (chunk: string) => string {
   };
 }
 
+/** The first event terminator in `text`, whichever spelling it uses.
+ *
+ * A partial terminator at the end of a chunk — `…\r\n\r` — matches neither
+ * and stays buffered, which is the correct answer: the rest is one chunk
+ * away, and splitting an event across a scrub would corrupt it. */
+function nextBoundary(text: string): { index: number; terminator: string } | null {
+  let best: { index: number; terminator: string } | null = null;
+  for (const terminator of ["\n\n", "\r\n\r\n", "\r\r"]) {
+    const index = text.indexOf(terminator);
+    if (index < 0) continue;
+    // Earliest wins, and on a tie the longer terminator does: an LF-only match
+    // inside a CRLF pair would cut the event a byte short of its real end.
+    if (!best || index < best.index || (index === best.index && terminator.length > best.terminator.length)) {
+      best = { index, terminator };
+    }
+  }
+  return best;
+}
+
 /** One complete SSE event, `data:` payload scrubbed, everything else kept. */
 function scrubEvent(event: string): string {
+  // The ending this event arrived with is the one it leaves with.
+  const eol = event.includes("\r\n") ? "\r\n" : event.includes("\r") ? "\r" : "\n";
   return event
-    .split("\n")
+    .split(/\r\n|\r|\n/)
     .map((line) => {
       // `: keepalive` comments, `id:`, `event:`, `retry:` — not ours to touch
       if (!line.startsWith("data:")) return line;
@@ -104,5 +132,5 @@ function scrubEvent(event: string): string {
         return line;
       }
     })
-    .join("\n");
+    .join(eol);
 }

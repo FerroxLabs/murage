@@ -95,7 +95,9 @@ const EXPLAINED: ReadonlyArray<{ path: RegExp; error: string }> = [
 /** Why this request may not go through, or null when it may.
  *
  * Default deny: the answer for anything not on the list is "no route", which
- * is what keeps a stolen token from mapping the API. */
+ * is what keeps a stolen token from mapping the API. An allowlist rather than
+ * a blocklist is the property this whole module exists for, and the one that
+ * quietly stopped being true once before. */
 export function denyReason({ path, method, authenticated }: RouteRequest): Denial | null {
   // Pairing is the one thing a device does before it has a credential.
   if (method === "POST" && path === "/api/pair") return null;

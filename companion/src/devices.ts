@@ -48,6 +48,7 @@ export const MAX_DEVICES = 20;
 /** lastSeen is a UI nicety, not an audit log — don't write on every request. */
 const LAST_SEEN_WRITE_MS = 60_000;
 
+/** Hex digest. Tokens live on disk as one of these and never in the clear. */
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Constant-time compare of two hex digests of the same length. A plain ===
@@ -80,6 +81,26 @@ export function cleanDeviceName(raw: unknown): string {
   return name || "Companion";
 }
 
+/** A timestamp we are willing to render, or a stand-in. `0` and the negatives
+ * are as wrong as a missing field and read worse: they date a device to 1970
+ * in the UI, where "now" is at least true of when we learned of it. */
+const timestamp = (value: unknown, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+
+/** Complete a stored record, whatever shape the file had. `lastSeenAt` falls
+ * back to `createdAt` rather than to the clock: a device we have never heard
+ * from since pairing was last seen when it paired. */
+function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash: string }): DeviceRecord {
+  const createdAt = timestamp(record.createdAt, Date.now());
+  return {
+    id: record.id,
+    tokenHash: record.tokenHash,
+    name: cleanDeviceName(record.name),
+    createdAt,
+    lastSeenAt: timestamp(record.lastSeenAt, createdAt),
+  };
+}
+
 /** The paired fleet: who may reach the harness through the sidecar, and the
  * one short-lived window in which a new phone may join it. Backed by a file,
  * loaded once at construction and written on every change. */
@@ -100,20 +121,13 @@ export class DeviceRegistry {
     try {
       const parsed = JSON.parse(readFileSync(DEVICES_FILE, "utf8"));
       if (Array.isArray(parsed?.devices)) {
-        const now = Date.now();
         this.devices = parsed.devices
           .filter(
             (d: unknown): d is Partial<DeviceRecord> & { id: string; tokenHash: string } =>
               typeof (d as DeviceRecord)?.id === "string" &&
               typeof (d as DeviceRecord)?.tokenHash === "string",
           )
-          .map((d: Partial<DeviceRecord> & { id: string; tokenHash: string }): DeviceRecord => ({
-            id: d.id,
-            tokenHash: d.tokenHash,
-            name: cleanDeviceName(d.name),
-            createdAt: Number.isFinite(d.createdAt) ? (d.createdAt as number) : now,
-            lastSeenAt: Number.isFinite(d.lastSeenAt) ? (d.lastSeenAt as number) : now,
-          }));
+          .map(normalizeDevice);
       }
     } catch {
       /* first run, or a file we can't read — start with no paired devices */
@@ -193,7 +207,17 @@ export class DeviceRegistry {
       lastSeenAt: Date.now(),
     };
     this.devices.push(device);
-    this.persist();
+    // Unlike the lastSeenAt write below, this one must not be swallowed. A
+    // device that lives in memory but not on disk is paired until the next
+    // restart and then silently is not — the phone keeps a token that stops
+    // working for no reason it can show. Roll the registration back and say
+    // so, so the user retries now rather than discovering it days later.
+    try {
+      this.persist();
+    } catch (e) {
+      this.devices.pop();
+      return { error: `could not save the pairing: ${(e as Error).message}` };
+    }
     const { tokenHash, ...pub } = device;
     return { device: pub, token };
   }
@@ -208,7 +232,16 @@ export class DeviceRegistry {
     if (now - (this.lastSeenWrites.get(device.id) ?? 0) > LAST_SEEN_WRITE_MS) {
       device.lastSeenAt = now;
       this.lastSeenWrites.set(device.id, now);
-      this.persist();
+      // lastSeenAt decorates a row in a settings panel. A full disk or a
+      // read-only home is a reason for it to be stale, never a reason for an
+      // already-valid token to stop authenticating — which is what letting
+      // this throw would mean, on every request, for the one user least able
+      // to diagnose it.
+      try {
+        this.persist();
+      } catch {
+        /* the token is still good; the timestamp can wait */
+      }
     }
     return device;
   }
@@ -225,9 +258,20 @@ export class DeviceRegistry {
   }
 }
 
-/** Pull the bearer token out of an Authorization header. */
+/**
+ * Pull the bearer token out of an Authorization header.
+ *
+ * The scheme is matched case-insensitively because RFC 7235 §2.1 says it is:
+ * a client sending `bearer <token>` is within its rights. This used to
+ * require the exact casing while the proxy had a second, laxer parser of its
+ * own — so which of the two a request happened to meet decided whether it
+ * authenticated, and a phone got a 401 it could not explain. One function,
+ * used everywhere a token is read. A header with nothing after the scheme is
+ * `undefined` rather than the empty string, so no caller has to decide
+ * whether "" counts as a credential.
+ */
 export function bearerToken(header: string | undefined): string | undefined {
   if (!header) return undefined;
-  const match = /^Bearer (.+)$/.exec(header.trim());
-  return match ? match[1].trim() : undefined;
+  const match = /^Bearer[ \t]+(.+)$/i.exec(header.trim());
+  return match ? match[1].trim() || undefined : undefined;
 }

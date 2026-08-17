@@ -4,6 +4,9 @@
   "private": true,
   "description": "A sidecar that lets a paired phone reach an unmodified OpenMausBot harness",
   "type": "module",
+  "bin": {
+    "openmausbot-companion": "./src/index.ts"
+  },
   "engines": {
     "node": ">=24"
   },

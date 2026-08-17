@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // The sidecar, as one command.
 //
 //   node companion/src/index.ts
@@ -21,7 +22,14 @@ import { createServer } from "node:http";
 import { createControlServer } from "./control.ts";
 import { DeviceRegistry } from "./devices.ts";
 import { lanAddresses, refreshTailnetName, tailnetName, tailscaleAddress } from "./listener.ts";
-import { advertisableAddresses, defaultHostName, dnsLabel, MdnsResponder, type ServiceInfo } from "./mdns.ts";
+import {
+  advertisableAddresses,
+  clampBytes,
+  defaultHostName,
+  dnsLabel,
+  MdnsResponder,
+  type ServiceInfo,
+} from "./mdns.ts";
 import { createProxyHandler } from "./proxy.ts";
 
 /** A port from the environment, or the default. Anything that is not a whole
@@ -99,8 +107,10 @@ const service = (): ServiceInfo => ({
   port: COMPANION_PORT,
   host: defaultHostName(),
   addresses: advertisableAddresses(),
-  // TXT entries cap at 255 bytes, and this one is user-supplied
-  txt: ["v=1", `name=${machineName().slice(0, 200)}`],
+  // TXT entries cap at 255 bytes, and this one is user-supplied — measured in
+  // bytes, since that is the unit the wire format actually counts in, and
+  // `slice` counts UTF-16 code units.
+  txt: ["v=1", `name=${clampBytes(machineName(), 200)}`],
 });
 
 const companion = createServer(
@@ -108,7 +118,7 @@ const companion = createServer(
     harnessPort: HARNESS_PORT,
     // `authenticate` also stamps lastSeenAt, which is what makes the control
     // page able to say when a phone was last heard from.
-    authenticate: (token) => Boolean(devices.authenticate(token ?? undefined)),
+    authenticate: (token) => Boolean(devices.authenticate(token)),
     redeem: (code, deviceName) => devices.redeem(code, deviceName),
     serverName: machineName,
   }),
@@ -140,12 +150,16 @@ const listen = (server: ReturnType<typeof createServer>, port: number, host: str
     };
     const onListening = () => {
       server.removeListener("error", onError);
-      // Bound is not safe. A listening socket still emits `error` — EMFILE on
-      // accept is the one that happens — and an `error` with no listener is
-      // an uncaught exception, which here means the sidecar dies and every
-      // paired phone loses the machine over one refused connection.
+      // Bound is not safe, and removing the startup handler while leaving
+      // nothing in its place is how a running sidecar dies later. A listening
+      // socket still emits `error` — EMFILE on accept, or an interface
+      // disappearing under it — and an `error` with no listener is re-thrown
+      // as an uncaught exception, which here means the sidecar dies and every
+      // paired phone loses the machine over one refused connection. It is
+      // worth a line on stderr and nothing more: the other listener, and
+      // every connection on this one, carry on.
       server.on("error", (error: NodeJS.ErrnoException) => {
-        console.warn(`port ${port}: ${error.message}`);
+        console.warn(`companion: error on ${host}:${port} — ${error.message}`);
       });
       resolve();
     };

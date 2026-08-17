@@ -44,8 +44,34 @@ export function hostOf(authority: string): string {
   return (bracketed ? authority.slice(1, end) : authority).toLowerCase();
 }
 
-/** The only authorities this server answers to. */
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+/** The only authorities this server answers to. `[::1]` is in the set as
+ * well as `::1` because `new URL()` keeps the brackets on an IPv6 hostname
+ * where `hostOf` strips them, and both spellings mean loopback. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+/**
+ * Is this `Origin` one this server could plausibly have served itself?
+ *
+ * Absent counts as yes: a non-browser client — the desktop app, curl, the
+ * phone's own app — sends no Origin at all, and those are exactly the callers
+ * a CSRF check is not aimed at. Everything else must parse to a loopback
+ * hostname. An opaque origin, which is what a sandboxed iframe or a `file://`
+ * page sends, arrives as the literal string "null" and does not parse: that is
+ * not a pass, it is precisely the shape an attacker reaches for, so it fails
+ * with everything else foreign. Parsing rather than prefix-matching is what
+ * refuses `https://127.0.0.1.evil.example`, which is not loopback at all.
+ *
+ * This is the floor, not the whole rule — see the caller, which additionally
+ * requires the origin to be *this* server's, not merely some loopback one.
+ */
+export function originIsLoopback(origin: string | undefined): boolean {
+  if (!origin) return true;
+  try {
+    return LOOPBACK_HOSTS.has(new URL(origin).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
 
 /** Send a JSON body with its length, the only response shape this API has. */
 const json = (res: ServerResponse, status: number, body: unknown) => {
@@ -63,6 +89,10 @@ export function companionState(options: ControlOptions) {
   const name = tailnetName();
   const pairing = options.devices.pairing();
   return {
+    // Whoever starts this sidecar as a child process needs to be able to tell
+    // it apart from an unrelated one that got to the control port first. An
+    // answer on the port proves something is listening, not that it is ours.
+    pid: process.pid,
     port: options.companionPort,
     addresses,
     ...(tailscale ? { tailscale } : {}),
@@ -108,13 +138,20 @@ export function createControlServer(options: ControlOptions): Server {
     // `POST /pairing` opens a pairing window, and `DELETE /devices/:id`
     // revokes a phone; both do their damage on the way in.
     //
-    // Origin is what separates the two callers. The page below is served from
-    // this server and its writes carry this server's origin, so matching
-    // against Host — already proven loopback — admits it and nothing else.
-    // Not a blanket refusal, which is what the device proxy can afford: there
-    // no legitimate client is a browser at all, and here exactly one is.
+    // Origin is what separates the two callers, and it is the one header page
+    // script cannot forge. The page below is served from this server and its
+    // writes carry this server's origin, so an origin that both parses to
+    // loopback and matches Host — already proven loopback — admits it and
+    // nothing else: not a loopback page on some other port, not an opaque
+    // "null" origin, not a hostname that merely begins with `127.0.0.1`. Not a
+    // blanket refusal, which is what the device proxy can afford: there no
+    // legitimate client is a browser at all, and here exactly one is.
+    //
+    // Safe methods are checked too. Nothing legitimate reads this API
+    // cross-origin either, and a check that has to decide which methods
+    // change state is a check with a list to keep up to date.
     const origin = req.headers.origin;
-    if (origin && origin !== `http://${authority}`) {
+    if (origin && !(originIsLoopback(origin) && origin === `http://${authority}`)) {
       return json(res, 403, { error: "forbidden: cross-origin request" });
     }
 
@@ -180,8 +217,12 @@ function page(): string {
   <section id="devices"></section>
 </main>
 <script type="module">
+/** Shorthand for the handful of nodes this page updates. */
 const el = (id) => document.getElementById(id);
+/** Escape before interpolating. Device names are user-supplied and end up in
+ * innerHTML, which is the one place here that has to be airtight. */
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+/** A timestamp as "3 minutes ago", for the paired-device list. */
 const ago = (at) => {
   const s = Math.round((Date.now() - at) / 1000);
   if (s < 90) return "just now";
@@ -191,11 +232,13 @@ const ago = (at) => {
   return h < 24 ? h + " h ago" : Math.round(h / 24) + " d ago";
 };
 
+/** Call the control API and return the state it answers with. */
 async function api(path, method) {
   const res = await fetch(path, { method: method ?? "GET" });
   return res.json();
 }
 
+/** Redraw the whole page from one state object, listeners included. */
 function render(s) {
   // The tailnet name beats the address: iOS refuses plain HTTP to 100.64/10,
   // which is CGNAT space rather than one of the ranges its local-networking
@@ -249,9 +292,22 @@ function render(s) {
 }
 
 render(await api("/state"));
-// While a code is on screen it has to count down — and the same tick is what
-// notices the phone on the other end finishing the handshake.
-setInterval(async () => render(await api("/state")), 1000);
+// Two cadences, keyed to what the page is actually waiting for.
+//
+// While a code is on screen it has to count down, and the same tick is what
+// notices the phone on the other end finishing the handshake — one second.
+// With no pairing open there is nothing moving faster than the user, and a
+// fixed one-second poll is a request every second for as long as the tab
+// stays open, which on a page people leave sitting there is most of them.
+//
+// Self-scheduling rather than setInterval: a slow reply cannot stack up
+// another poll behind it.
+const poll = async () => {
+  const s = await api("/state");
+  render(s);
+  setTimeout(poll, s.pairing ? 1000 : 10000);
+};
+setTimeout(poll, 1000);
 </script>
 `;
 }

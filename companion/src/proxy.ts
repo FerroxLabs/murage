@@ -13,6 +13,7 @@
 // serve. Nothing upstream has to change, or even know this exists.
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 
+import { bearerToken } from "./devices.ts";
 import { denyReason } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
@@ -21,7 +22,7 @@ export interface ProxyOptions {
   /** Where the harness is listening on loopback. */
   harnessPort: number;
   /** Does this bearer token belong to a paired device? */
-  authenticate: (token: string | null) => boolean;
+  authenticate: (token: string | undefined) => boolean;
   /** Redeem a pairing code. Handled here and never forwarded: the harness
    * has no such route and no idea devices exist — pairing is the sidecar's
    * own concern, and the one thing a device does before it has a token. */
@@ -77,15 +78,21 @@ const readJson = (req: IncomingMessage, limit = 64 * 1024): Promise<Record<strin
     });
   });
 
-/** The token out of an `Authorization: Bearer` header, or null. */
-const bearer = (header: string | undefined): string | null => {
-  const value = (header ?? "").trim();
-  return value.toLowerCase().startsWith("bearer ") ? value.slice(7).trim() || null : null;
-};
-
 /** Answer with JSON the sidecar wrote itself — a refusal, or a pairing
- * result. Anything from the harness goes out through the proxy path instead. */
+ * result. Anything from the harness goes out through the proxy path instead.
+ *
+ * Unless the response has already begun. Once a byte is on the wire the
+ * status line is spent and `writeHead` throws ERR_HTTP_HEADERS_SENT, which
+ * on the failure paths — an upstream dying long after SSE headers were
+ * flushed — would be a second, fatal error raised inside an error handler
+ * with nothing to catch it. Dropping the socket is the only honest ending
+ * left there: the device sees a truncated response and reconnects, which is
+ * what it already does for any dropped connection. */
 const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
   const text = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json",
@@ -127,7 +134,11 @@ export function createProxyHandler(options: ProxyOptions) {
     const denial = denyReason({
       path,
       method,
-      authenticated: options.authenticate(bearer(req.headers.authorization)),
+      // `bearerToken` is the registry's own parser, imported rather than
+      // reimplemented: this file used to have a second one, and two parsers
+      // that disagree about what a credential looks like means the header a
+      // phone sends authenticates on one code path and not the other.
+      authenticated: options.authenticate(bearerToken(req.headers.authorization)),
     });
     if (denial) return sendJson(res, denial.status, { error: denial.error });
 
@@ -218,6 +229,12 @@ export function createProxyHandler(options: ProxyOptions) {
           // path: if it ever fires, the body passes through unscrubbed and
           // intact rather than scrubbed and broken.
           res.writeHead(harness.statusCode ?? 200, harness.headers);
+          // `pipe` does not carry a failure from source to destination. An
+          // upstream that dies part-way through an image would otherwise
+          // leave the phone holding an open connection and a content-length
+          // that will never be satisfied — it waits for the rest forever,
+          // which reads as a frozen app rather than as a failed request.
+          harness.on("error", () => res.destroy());
           harness.pipe(res);
           return;
         }
@@ -237,27 +254,55 @@ export function createProxyHandler(options: ProxyOptions) {
         harness.on("error", () => res.destroy());
         harness.on("end", () => {
           const body = Buffer.concat(chunks).toString("utf8");
-          let text = body;
+
+          // Two failures live here and they are not the same failure.
+          //
+          // A body that does not parse was never JSON — the content-type
+          // lied, or the harness sent an empty 204. There is nothing to
+          // redact in bytes that do not read as an object, so forwarding
+          // them verbatim is correct.
+          let parsed: unknown;
           try {
-            text = JSON.stringify(scrub(JSON.parse(body)));
+            parsed = JSON.parse(body);
           } catch {
-            /* not JSON after all — send what we were given */
+            forward(body, harness.headers, harness.statusCode ?? 200);
+            return;
           }
-          const headers = { ...harness.headers };
-          // The body was re-serialised, so nothing the harness said about
-          // its framing survives. `transfer-encoding` matters most: leaving
-          // it alongside the content-length set below is a protocol
-          // violation, and Node's own parser rejects the response outright
-          // rather than tolerating it.
+
+          // A body that parses but will not scrub is the opposite case. We
+          // know it is structured, and `scrub` is the only thing keeping the
+          // harness's internal fields — the resume cursors — off the wire to
+          // a device. Falling back to the raw body there, which is what one
+          // try around parse-and-scrub used to do, sends exactly what the
+          // scrubber exists to withhold. Not hypothetical: `scrub` recurses,
+          // so a body nested a few thousand deep throws RangeError where
+          // JSON.parse handles it fine.
+          let text: string;
+          try {
+            text = JSON.stringify(scrub(parsed));
+          } catch {
+            sendJson(res, 502, { error: "the response could not be prepared for this device" });
+            return;
+          }
+          forward(text, harness.headers, harness.statusCode ?? 200);
+        });
+
+        /** Re-frame and send. The body was re-serialised, so nothing the
+         * harness said about its framing survives. `transfer-encoding`
+         * matters most: leaving it alongside the content-length set here is
+         * a protocol violation, and Node's own parser rejects the response
+         * outright rather than tolerating it. */
+        function forward(text: string, upstreamHeaders: IncomingMessage["headers"], status: number): void {
+          const headers = { ...upstreamHeaders };
           delete headers["content-length"];
           delete headers["content-encoding"];
           delete headers["transfer-encoding"];
-          res.writeHead(harness.statusCode ?? 200, {
+          res.writeHead(status, {
             ...headers,
             "content-length": Buffer.byteLength(text),
           });
           res.end(text);
-        });
+        }
       },
     );
 
@@ -284,10 +329,13 @@ export function createProxyHandler(options: ProxyOptions) {
 
     upstream.on("error", () => {
       clearTimeout(headersDeadline);
-      // Headers already went out — a stream, or a piped body. There is no
-      // status code left to send, and writeHead here throws instead of
-      // reporting anything; dropping the socket is the only honest signal.
-      if (res.headersSent) {
+      // Headers already went out — a stream, or a piped body — or the
+      // response is finished and this is a socket dying afterwards. There is
+      // no status code left to send in either case, and writeHead here throws
+      // ERR_HTTP_HEADERS_SENT out of an event handler with nothing to catch
+      // it, taking the whole sidecar down over one dead connection. Dropping
+      // the socket is the only honest signal, and one a client recovers from.
+      if (res.headersSent || res.writableEnded) {
         res.destroy();
         return;
       }

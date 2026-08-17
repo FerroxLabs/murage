@@ -22,21 +22,27 @@ import { join } from "node:path";
 /** OMB_COMPANION_DIR isolates a test rig from a real paired fleet. */
 export const DATA_DIR = process.env.OMB_COMPANION_DIR ?? join(homedir(), ".openmausbot-companion");
 
-/** The directory, owner-only.
+/** 0700 on the directory, 0600 on the files it holds.
  *
  * What lives here is the paired fleet: one record per phone, each holding a
  * hash rather than a token. A hash is not a credential, so this is posture
- * rather than a hole — but the default 0755 publishes to every other account
- * on the machine which phones someone owns and when they last used them, and
- * there is no reason for that to be readable. */
+ * rather than a hole — but it is an offline target for anyone who can read
+ * it, and the default 0755/0644 publishes both it and which phones someone
+ * owns to every other account on the machine. This process is the only reader
+ * there has ever been. */
+const DIR_MODE = 0o700;
+export const FILE_MODE = 0o600;
+
 export function ensureDataDir(): void {
-  mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
-  // mkdirSync's mode applies only to a directory it creates, and an install
-  // from before this line already has a 0755 one.
+  mkdirSync(DATA_DIR, { recursive: true, mode: DIR_MODE });
+  // mkdirSync's mode applies only to a directory it creates — `recursive`
+  // leaves an existing one's mode alone — and an install from before this
+  // line already has a 0755 one, so it is tightened here rather than at
+  // creation.
   try {
-    chmodSync(DATA_DIR, 0o700);
+    chmodSync(DATA_DIR, DIR_MODE);
   } catch {
-    /* someone else's directory, or a filesystem with no such notion */
+    /* not ours to chmod, or a filesystem with no such notion — the write still works */
   }
 }
 
@@ -54,10 +60,11 @@ export function writeFileAtomic(path: string, data: string): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | null = null;
   try {
-    // 0600 on the temp file, so the mode is right from the moment it exists
-    // and survives the rename — a chmod after the fact leaves a window where
-    // the contents are already there and world-readable.
-    fd = openSync(tmp, "w", 0o600);
+    // The mode goes on at creation, not after: it is right from the moment
+    // the file exists and survives the rename, where a chmod after the fact
+    // leaves a window in which the contents are already there and readable
+    // for exactly as long as it takes someone to look.
+    fd = openSync(tmp, "w", FILE_MODE);
     writeFileSync(fd, data);
     fsyncSync(fd);
     closeSync(fd);

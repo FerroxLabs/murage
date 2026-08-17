@@ -16,7 +16,7 @@ to bind a second socket — means a patch to somebody else's request handler,
 carried across every release, and it is the patch that broke the first time
 upstream hardened its loopback gate.
 
-```
+```text
   phone ──LAN/tailnet──▶ companion :8810 ──loopback──▶ harness :8799
                           ▲                             ▲
                           │ token, allowlist,           │ unmodified,
@@ -32,6 +32,27 @@ upstream hardened its loopback gate.
 | **The allowlist** | Default deny, per method and path (`src/routes.ts`) — the list is every request the app makes, and nothing else. A route that appears in the harness later is closed to devices until someone adds it here on purpose. |
 | **Scrubbing** | `resumeCursors` — the harness's own provider session ids — never reach a device, whether or not the harness still sends them. |
 | **Discovery** | Bonjour, so a phone finds the computer by name instead of by typed address. |
+
+## Transport security
+
+The device port speaks plain HTTP, and the device token travels in a header on
+every request. Where that is safe depends on how the phone reaches the
+computer, and the two routes are not equivalent:
+
+- **Over a tailnet** — the recommended route, and the only one that works away
+  from home — every packet is inside WireGuard before it touches a network, so
+  the connection is encrypted and authenticated end to end despite the `http`
+  in the URL.
+- **Over a LAN** it is cleartext on that network. Trust it as far as you trust
+  everyone on the wifi: fine at home, not fine on a café or conference network.
+  Pair over the tailnet there instead.
+
+Turning on TLS is not a drop-in improvement. A certificate for a LAN address
+is one nothing can validate, so it would have to be pinned at pairing and
+re-pinned whenever the sidecar regenerated it — real machinery, whose benefit
+on the tailnet path is zero. Pinned TLS is what this would need before it could
+claim to protect the LAN path; until then the LAN path is documented as
+trusted-network-only rather than described as something it is not.
 
 ## What it deliberately does not do
 
@@ -54,7 +75,7 @@ pnpm companion
 
 It prints where to point the phone, and where you pair:
 
-```
+```text
 companion  http://0.0.0.0:8810  →  harness 127.0.0.1:8799
 pair here  http://127.0.0.1:8811
 on your phone, enter  macbook.tail1234.ts.net:8810
@@ -87,7 +108,7 @@ working with the explanation logged somewhere else entirely.
 
 ## Layout
 
-```
+```text
 src/index.ts    the entrypoint — three sockets, and the split between them
 src/proxy.ts    the forwarding handler; also owns /api/pair
 src/routes.ts   the allowlist — what a device may ask for
