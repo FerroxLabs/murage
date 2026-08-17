@@ -25,6 +25,7 @@ export interface ControlOptions {
   discovery: () => { advertising: boolean; name: string };
 }
 
+/** Answer with JSON and an accurate content-length. */
 const json = (res: ServerResponse, status: number, body: unknown) => {
   const text = JSON.stringify(body);
   res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(text) });
@@ -53,12 +54,17 @@ export function originIsLoopback(origin: string | undefined): boolean {
   return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]" || hostname === "::1";
 }
 
+/** Everything the pairing page and the desktop panel render, in one shape. */
 export function companionState(options: ControlOptions) {
   const addresses = lanAddresses();
   const tailscale = tailscaleAddress(addresses);
   const name = tailnetName();
   const pairing = options.devices.pairing();
   return {
+    // Whoever forked this sidecar needs to be able to tell it apart from an
+    // unrelated one that got to the control port first. An answer on the
+    // port proves something is listening, not that it is ours.
+    pid: process.pid,
     port: options.companionPort,
     addresses,
     ...(tailscale ? { tailscale } : {}),
@@ -70,6 +76,7 @@ export function companionState(options: ControlOptions) {
   };
 }
 
+/** The loopback control plane: the pairing page, and the API behind it. */
 export function createControlServer(options: ControlOptions): Server {
   return createServer((req, res) => {
     const path = (req.url ?? "/").split("?")[0];
@@ -165,8 +172,12 @@ function page(): string {
   <section id="devices"></section>
 </main>
 <script type="module">
+/** Shorthand for the handful of nodes this page updates. */
 const el = (id) => document.getElementById(id);
+/** Escape before interpolating. Device names are user-supplied and end up
+   * in innerHTML, which is the one place that has to be airtight here. */
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+/** A timestamp as "3 minutes ago", for the paired-device list. */
 const ago = (at) => {
   const s = Math.round((Date.now() - at) / 1000);
   if (s < 90) return "just now";
@@ -176,11 +187,13 @@ const ago = (at) => {
   return h < 24 ? h + " h ago" : Math.round(h / 24) + " d ago";
 };
 
+/** Call the control API and return the state it answers with. */
 async function api(path, method) {
   const res = await fetch(path, { method: method ?? "GET" });
   return res.json();
 }
 
+/** Redraw the whole page from one state object, listeners included. */
 function render(s) {
   // The tailnet name beats the address: iOS refuses plain HTTP to 100.64/10,
   // which is CGNAT space rather than one of the ranges its local-networking
@@ -234,9 +247,22 @@ function render(s) {
 }
 
 render(await api("/state"));
-// While a code is on screen it has to count down — and the same tick is what
-// notices the phone on the other end finishing the handshake.
-setInterval(async () => render(await api("/state")), 1000);
+// Two cadences, keyed to what the page is actually waiting for.
+//
+// While a code is on screen it has to count down, and the same tick is what
+// notices the phone finishing the handshake — one second. With no pairing
+// open there is nothing moving faster than the user, and a fixed one-second
+// poll is a request every second for as long as the tab stays open, which on
+// a page people leave sitting there is most of them.
+//
+// Self-scheduling rather than setInterval: a slow reply cannot stack up
+// another poll behind it.
+const poll = async () => {
+  const s = await api("/state");
+  render(s);
+  setTimeout(poll, s.pairing ? 1000 : 10000);
+};
+setTimeout(poll, 1000);
 </script>
 `;
 }

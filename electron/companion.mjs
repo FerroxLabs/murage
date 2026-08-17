@@ -51,6 +51,7 @@ async function control(method, urlPath) {
   return res.json();
 }
 
+/** Whether this process owns a running sidecar. */
 export function companionRunning() {
   return proc !== null;
 }
@@ -78,14 +79,18 @@ const serialize = (work) => {
   return next;
 };
 
+/** Fork the sidecar and wait for it to answer. Resolves with the panel's
+ * state either way — a failed start is a message, never a thrown error. */
 export function startCompanion(options) {
   return serialize(() => start(options));
 }
 
+/** Stop the sidecar and wait for it to actually be gone. */
 export function stopCompanion() {
   return serialize(() => stop());
 }
 
+/** startCompanion's body, run inside the transition queue. */
 async function start({ resourcesPath, harnessPort, log }) {
   if (proc) return companionState();
   lastError = null;
@@ -129,7 +134,21 @@ async function start({ resourcesPath, harnessPort, log }) {
       return companionState();
     }
     try {
-      await control("GET", "/state");
+      const state = await control("GET", "/state");
+      // An answer on the control port proves something is listening there,
+      // not that it is the child we just forked. A sidecar started by hand,
+      // or one left behind by a previous run, answers exactly the same and
+      // would be adopted as ours — after which the toggle drives a process
+      // it does not own and stopping it does nothing visible. Match the pid.
+      if (state?.pid !== undefined && child.pid !== undefined && state.pid !== child.pid) {
+        try {
+          child.kill();
+        } catch {
+          /* already gone */
+        }
+        lastError = `port ${CONTROL_PORT} is already serving another companion — stop it and try again`;
+        return companionState();
+      }
       proc = child;
       return companionState();
     } catch {
@@ -145,6 +164,7 @@ async function start({ resourcesPath, harnessPort, log }) {
   return companionState();
 }
 
+/** stopCompanion's body, run inside the transition queue. */
 async function stop() {
   const child = proc;
   proc = null;
@@ -155,6 +175,20 @@ async function stop() {
   } catch {
     /* already gone */
   }
+  // kill() asks. Returning before the process is actually gone means the
+  // next start races a sidecar still holding the port, and the user sees the
+  // toggle fail for a reason that has already stopped being true. Wait for
+  // the exit, bounded — a wedged child must not leave Settings stuck either.
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    child.once("exit", finish);
+    setTimeout(finish, 5_000).unref?.();
+  });
   return companionState();
 }
 
@@ -173,12 +207,14 @@ export async function companionState() {
   }
 }
 
+/** Open or close a pairing window on the running sidecar. */
 export async function companionPairing(open) {
   if (!proc) return companionState();
   await control(open ? "POST" : "DELETE", "/pairing").catch(() => {});
   return companionState();
 }
 
+/** Unpair one device. Ignores an id the renderer should not have sent. */
 export async function companionRevoke(deviceId) {
   if (!proc) return companionState();
   // the id came from the renderer, so it does not get to shape a path

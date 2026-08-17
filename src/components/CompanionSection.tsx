@@ -101,16 +101,27 @@ export function CompanionSection() {
     void load();
   }, [load]);
 
-  // While a code is on screen it has to count down — and the same tick is
-  // what notices the phone on the other end finishing the handshake.
+  // Two cadences, because the panel has two jobs.
+  //
+  // While a code is on screen it has to count down, and the same tick is what
+  // notices the phone on the other end finishing the handshake — one second.
+  // The rest of the time it still has to notice the sidecar going away, which
+  // it cannot do by sitting still: the process can exit on its own (port
+  // taken, crash, a stop from the standalone page) and nothing pushes that
+  // here. Polling only during pairing left the panel showing a companion that
+  // had not existed for hours. Ten seconds is cheap on loopback and well
+  // inside how long anyone looks at a settings pane before believing it.
+  const pairing = Boolean(state?.pairing);
   useEffect(() => {
-    if (!state?.pairing) return;
-    const timer = window.setInterval(() => {
-      setNow(Date.now());
-      void load();
-    }, 1000);
+    const timer = window.setInterval(
+      () => {
+        setNow(Date.now());
+        void load();
+      },
+      pairing ? 1_000 : 10_000,
+    );
     return () => window.clearInterval(timer);
-  }, [state?.pairing, load]);
+  }, [pairing, load]);
 
   if (!bridge()) {
     return (
