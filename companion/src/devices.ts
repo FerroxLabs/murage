@@ -175,7 +175,16 @@ export class DeviceRegistry {
     if (now - (this.lastSeenWrites.get(device.id) ?? 0) > LAST_SEEN_WRITE_MS) {
       device.lastSeenAt = now;
       this.lastSeenWrites.set(device.id, now);
-      this.persist();
+      // lastSeenAt decorates a row in a settings panel. A full disk or a
+      // read-only home is a reason for it to be stale, never a reason for an
+      // already-valid token to stop authenticating — which is what letting
+      // this throw would mean, on every request, for the one user least able
+      // to diagnose it.
+      try {
+        this.persist();
+      } catch {
+        /* the token is still good; the timestamp can wait */
+      }
     }
     return device;
   }

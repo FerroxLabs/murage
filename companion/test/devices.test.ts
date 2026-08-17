@@ -110,6 +110,28 @@ describe("DeviceRegistry", () => {
   });
 });
 
+describe("authenticate under a failing disk", () => {
+  it("still authenticates when the lastSeenAt write throws", () => {
+    const registry = new DeviceRegistry();
+    const { token, device } = pair(registry);
+
+    // A read-only home or a full disk. The write being attempted here is the
+    // "last seen" timestamp, which decorates a row in a settings panel — it
+    // must not be able to sign a working phone out, on every request, for
+    // the user least equipped to work out why.
+    let attempted = 0;
+    (registry as unknown as { persist: () => void }).persist = () => {
+      attempted++;
+      throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    };
+
+    expect(registry.authenticate(token)?.id).toBe(device.id);
+    expect(attempted).toBe(1);
+    // and again, so a throw cannot poison the path for later calls either
+    expect(registry.authenticate(token)?.id).toBe(device.id);
+  });
+});
+
 describe("cleanDeviceName", () => {
   it("clamps, trims, and strips control characters", () => {
     expect(cleanDeviceName("  Milind's iPhone  ")).toBe("Milind's iPhone");
