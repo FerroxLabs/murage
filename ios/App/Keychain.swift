@@ -58,7 +58,21 @@ enum Keychain {
         }
     }
 
-    static func token(for connectionId: String) -> String? {
+    /// The stored token: nil only when there genuinely is not one.
+    ///
+    /// The distinction between "no token" and "cannot read the token" matters
+    /// far more than it looks. `SecItemCopyMatching` answers
+    /// `errSecInteractionNotAllowed` while the keychain is unavailable — the
+    /// window after a reboot before the phone's first unlock, which is exactly
+    /// when iOS starts apps in the background. Folding that into nil made it
+    /// indistinguishable from "this phone was never paired", so the app
+    /// discarded a perfectly good connection and showed the pairing screen to
+    /// someone who had done nothing but restart their phone. Getting back in
+    /// means walking to the computer for a new code.
+    ///
+    /// So: `errSecItemNotFound` is the only nil. Everything else throws, and
+    /// the caller decides whether to wait or to give up.
+    static func token(for connectionId: String) throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -67,10 +81,15 @@ enum Keychain {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data
-        else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else { throw KeychainError(status: status) }
+        // An item that is present but unreadable is a corrupt store, not an
+        // absent pairing — say so rather than silently re-pairing.
+        guard let data = item as? Data, let token = String(data: data, encoding: .utf8) else {
+            throw KeychainError(status: errSecDecode)
+        }
+        return token
     }
 
     @discardableResult
@@ -90,5 +109,12 @@ struct KeychainError: LocalizedError {
     var errorDescription: String? {
         let detail = SecCopyErrorMessageString(status, nil) as String? ?? "status \(status)"
         return "Couldn't save the pairing securely: \(detail)"
+    }
+
+    /// The keychain is not available *yet* rather than not holding this token.
+    /// True in the window after a reboot before the first unlock, when the
+    /// right move is to wait rather than to treat the phone as unpaired.
+    var isLocked: Bool {
+        status == errSecInteractionNotAllowed
     }
 }

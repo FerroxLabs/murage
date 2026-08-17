@@ -80,11 +80,19 @@ const json = async (url, init) => {
   return { status: res.status, body: await res.json() };
 };
 
+/** The device token, once pairing has produced one. Everything the phone
+ * itself would ask for goes through the sidecar carrying this. */
+let deviceToken = "";
+const asDevice = (init = {}) => ({
+  ...init,
+  headers: { ...(init.headers ?? {}), authorization: `Bearer ${deviceToken}` },
+});
+
 /** Read the event stream until it has produced `wanted` frames, running
  * `while` alongside so there is something to capture. */
 async function captureFrames(wanted, during) {
   const controller = new AbortController();
-  const res = await fetch(`${HARNESS}/api/events`, { signal: controller.signal });
+  const res = await fetch(`${SIDECAR}/api/events`, asDevice({ signal: controller.signal }));
   const frames = [];
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -135,37 +143,15 @@ async function main() {
   });
   await waitFor(`${HARNESS}/api/health`, "harness", harness);
 
-  // ── a bot, and a few messages for it to have said ──────────────────────
-  const created = await json(`${HARNESS}/api/bots`, { method: "POST" });
-  const bot = created.body.bot;
-  if (!bot) throw new Error(`could not create a bot: ${JSON.stringify(created.body)}`);
-
-  console.log("capturing frames");
-  const frames = await captureFrames(4, async () => {
-    for (let i = 0; i < 3; i++) {
-      await fetch(`${HARNESS}/api/bots/${bot.id}/messages`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: `fixture message ${i}` }),
-      });
-      await sleep(120);
-    }
-  });
-  if (frames.length === 0) throw new Error("no frames arrived on /api/events");
-
-  console.log("writing:");
-  write("sse-frames", frames);
-  const hello = frames.find((f) => f.kind === "hello");
-  if (hello) write("sse-hello", hello);
-
-  // ── the shapes the app hydrates from ───────────────────────────────────
-  write("bots-full", (await json(`${HARNESS}/api/bots`)).body);
-  write("bots-paged", (await json(`${HARNESS}/api/bots?messages=2`)).body);
-  write("thread-page", (await json(`${HARNESS}/api/threads/${bot.threadId}/messages?limit=2`)).body);
-  write("config", (await json(`${HARNESS}/api/config`)).body);
-  write("instances", (await json(`${HARNESS}/api/instances`)).body);
-
-  // ── and the shapes only the sidecar produces ───────────────────────────
+  // ── the sidecar, up front, because it is what the phone talks to ───────
+  //
+  // Every client-facing fixture below is captured *through* here rather than
+  // from the harness directly. Capturing from the harness records a response
+  // no phone ever receives: the proxy is what strips `resumeCursors`, what
+  // rewrites the SSE frames on the way past, and what refuses the routes a
+  // device may not have. Fixtures taken upstream of all that test the wrong
+  // contract, and would keep passing through exactly the change they exist to
+  // catch. Direct harness calls are kept only for setup a phone cannot do.
   const sidecar = start("companion", [join(ROOT, "companion", "src", "index.ts")], {
     HOME: home,
     USERPROFILE: home,
@@ -177,6 +163,8 @@ async function main() {
   });
   await waitFor(`${CONTROL}/state`, "companion", sidecar);
 
+  // ── what an unpaired phone sees, captured before there is a token ──────
+  console.log("writing:");
   write("unauthorized", (await json(`${SIDECAR}/api/bots`)).body);
   write("pair-rejected", (await json(`${SIDECAR}/api/pair`, {
     method: "POST",
@@ -184,6 +172,7 @@ async function main() {
     body: JSON.stringify({ code: "000000", deviceName: "Ada's iPhone" }),
   })).body);
 
+  // ── pair, exactly as the phone does ────────────────────────────────────
   const { code } = (await json(`${CONTROL}/pairing`, { method: "POST" })).body;
   const paired = await json(`${SIDECAR}/api/pair`, {
     method: "POST",
@@ -191,16 +180,50 @@ async function main() {
     body: JSON.stringify({ code, deviceName: "Ada's iPhone" }),
   });
   if (!paired.body.token) throw new Error(`pairing failed: ${JSON.stringify(paired.body)}`);
+  deviceToken = paired.body.token;
   // The token is a live credential for as long as that registry exists.
   // It is thrown away with the temp directory below, but a fixture is a file
   // people copy, so it never gets written in the first place.
   write("pair-response", { ...paired.body, token: "omb_REDACTED" });
 
-  write("forbidden", (await json(`${SIDECAR}/api/config`, {
+  // ── a bot, and a few messages for it to have said ──────────────────────
+  const created = await json(`${SIDECAR}/api/bots`, asDevice({ method: "POST" }));
+  const bot = created.body.bot;
+  if (!bot) throw new Error(`could not create a bot: ${JSON.stringify(created.body)}`);
+
+  console.log("capturing frames");
+  const frames = await captureFrames(4, async () => {
+    for (let i = 0; i < 3; i++) {
+      await fetch(`${SIDECAR}/api/bots/${bot.id}/messages`, asDevice({
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: `fixture message ${i}` }),
+      }));
+      await sleep(120);
+    }
+  });
+  if (frames.length === 0) throw new Error("no frames arrived on /api/events");
+
+  write("sse-frames", frames);
+  const hello = frames.find((f) => f.kind === "hello");
+  if (hello) write("sse-hello", hello);
+
+  // ── the shapes the app hydrates from ───────────────────────────────────
+  write("bots-full", (await json(`${SIDECAR}/api/bots`, asDevice())).body);
+  write("bots-paged", (await json(`${SIDECAR}/api/bots?messages=2`, asDevice())).body);
+  write(
+    "thread-page",
+    (await json(`${SIDECAR}/api/threads/${bot.threadId}/messages?limit=2`, asDevice())).body,
+  );
+  write("config", (await json(`${SIDECAR}/api/config`, asDevice())).body);
+  write("instances", (await json(`${SIDECAR}/api/instances`, asDevice())).body);
+
+  // ── and the refusal a paired device still gets ─────────────────────────
+  write("forbidden", (await json(`${SIDECAR}/api/config`, asDevice({
     method: "PUT",
-    headers: { "content-type": "application/json", authorization: `Bearer ${paired.body.token}` },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({ xai: { apiKey: "not-a-real-key" } }),
-  })).body);
+  }))).body);
 
   console.log("\nnot captured: options-card.json — needs a real approval from a real turn");
 }

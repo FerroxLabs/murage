@@ -364,7 +364,13 @@ describe("pairing, end to end", () => {
         devices: Array<{ id: string; name: string }>;
       };
       expect(state.devices.map((d) => d.name)).toContain("Ada's iPhone");
-      const revoked = await fetch(`${ctl}/devices/${state.devices[0].id}`, { method: "DELETE" });
+      // By name, not by index. The registry reads the process-level DATA_DIR,
+      // and if anything else has ever paired into it, `devices[0]` is some
+      // other phone — the assertion above would still pass while the DELETE
+      // below revoked a device this test never created.
+      const paired = state.devices.find((d) => d.name === "Ada's iPhone");
+      expect(paired).toBeDefined();
+      const revoked = await fetch(`${ctl}/devices/${paired!.id}`, { method: "DELETE" });
       expect(revoked.status).toBe(200);
       expect((await fetch(`${base}/api/bots`, { headers: { authorization: `Bearer ${body.token}` } })).status).toBe(401);
     } finally {

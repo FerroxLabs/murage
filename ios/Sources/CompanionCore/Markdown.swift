@@ -46,7 +46,18 @@ public enum Markdown {
             paragraph.removeAll()
         }
 
-        var lines = source.components(separatedBy: .newlines)[...]
+        // Normalise the line endings before splitting, because
+        // `CharacterSet.newlines` contains \r and \n *separately* and
+        // `components(separatedBy:)` breaks on each of them: "a\r\nb" comes
+        // back as ["a", "", "b"], one phantom empty line per CRLF. That empty
+        // line is not cosmetic — it calls `flushParagraph`, so a paragraph
+        // written across several lines arrives as one paragraph per line, and
+        // a fenced block gains a blank line between every line of code. Tool
+        // output and pasted text reach chat bubbles with CRLF intact, so this
+        // is a path real messages take.
+        let normalised = source.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        var lines = normalised.components(separatedBy: "\n")[...]
         while let line = lines.first {
             lines = lines.dropFirst()
             let trimmed = line.trimmingCharacters(in: .whitespaces)

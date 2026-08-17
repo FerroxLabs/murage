@@ -41,6 +41,9 @@ final class Session: ObservableObject {
     /// panel can be pushed twice in a navigation stack, and the last one to
     /// close is the one that should turn screens back off.
     private var screenWatchers = 0
+    /// A saved connection exists, but its token could not be read yet. Keeps
+    /// "the keychain is locked" from being mistaken for "not paired".
+    private var restorePending = false
 
     private static let connectionKey = "companion.connection"
 
@@ -50,13 +53,42 @@ final class Session: ObservableObject {
         restore()
     }
 
+    /// Rebuild the last connection at launch.
+    ///
+    /// Three outcomes, and keeping them apart is the whole point. No saved
+    /// connection: stay unpaired. A saved connection whose token reads back:
+    /// connect. A saved connection whose token cannot be read *yet* — the
+    /// locked keychain before a phone's first unlock after reboot, which is
+    /// when iOS is most likely to have launched us in the background — hold
+    /// on to it and try again. Only the middle case is a real pairing, and
+    /// only the first should ever send someone back to the pairing screen.
     private func restore() {
+        restorePending = false
         guard let data = UserDefaults.standard.data(forKey: Self.connectionKey),
-              let saved = try? JSONDecoder().decode(Connection.self, from: data),
-              let token = Keychain.token(for: saved.id)
+              let saved = try? JSONDecoder().decode(Connection.self, from: data)
         else { return }
+
+        let stored: String?
+        do {
+            stored = try Keychain.token(for: saved.id)
+        } catch {
+            // Keep the connection and say why. `.offline` rather than
+            // `.unpaired` matters: the latter is what puts PairingView on
+            // screen, and asking for a new code is the one recovery that
+            // costs a walk to the computer.
+            connection = saved
+            restorePending = true
+            status = .offline(
+                (error as? KeychainError)?.isLocked == true
+                    ? "Unlock this phone to reach your computer."
+                    : error.localizedDescription
+            )
+            return
+        }
+        guard let stored else { return } // no token: genuinely not paired
+
         connection = saved
-        client = CompanionClient(connection: saved, token: token)
+        client = CompanionClient(connection: saved, token: stored)
         status = .connecting
     }
 
@@ -75,12 +107,16 @@ final class Session: ObservableObject {
         self.connection = stored
         self.client = CompanionClient(connection: stored, token: paired.token)
         self.state = CompanionState()
+        // A fresh pairing settles any restore that was still waiting on the
+        // keychain — the token is in hand, so there is nothing left to retry.
+        restorePending = false
         connect()
     }
 
     func signOut() {
         streamTask?.cancel()
         streamTask = nil
+        restorePending = false
         if let id = connection?.id { Keychain.remove(id) }
         UserDefaults.standard.removeObject(forKey: Self.connectionKey)
         connection = nil
@@ -93,6 +129,10 @@ final class Session: ObservableObject {
 
     /// Called when the app comes to the front, and once at launch.
     func connect() {
+        // A restore that found the keychain locked left `client` nil on
+        // purpose. Coming to the front is the moment worth retrying on: the
+        // app is on screen, so the phone is in someone's hand and unlocked.
+        if client == nil, restorePending { restore() }
         guard client != nil, streamTask == nil else { return }
         reconnectDelay = 0
         streamTask = Task { [weak self] in await self?.run() }

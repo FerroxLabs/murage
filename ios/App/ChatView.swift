@@ -338,6 +338,28 @@ struct CardView: View {
     @EnvironmentObject private var session: Session
     @State private var answering = false
 
+    /// The option this card offers that means "go ahead".
+    ///
+    /// Deliberately not the literal string "Allow". `options` is whatever the
+    /// harness sent, and it only falls back to ["Allow", "Deny"] when the
+    /// provider event named no choices of its own (`server/index.ts`) — a card
+    /// is free to say "Yes", "Approve", "Allow once". Answering with a string
+    /// the card never offered writes the grant and then hands the harness a
+    /// choice it can reject, so the bot stays stopped with nothing on screen
+    /// to explain it. The conventional label wins when it is present, which
+    /// keeps the ordinary permission card behaving exactly as before.
+    private var allowChoice: String? {
+        guard let options = message.card?.options else { return nil }
+        return options.first { $0.caseInsensitiveCompare("Allow") == .orderedSame }
+            ?? options.first { !Self.isRefusal($0) }
+    }
+
+    /// One definition of "the refusal", shared by the button tint and the
+    /// choice above so the two cannot drift apart.
+    private static func isRefusal(_ option: String) -> Bool {
+        option.caseInsensitiveCompare("Deny") == .orderedSame
+    }
+
     var body: some View {
         if let card = message.card {
             VStack(alignment: .leading, spacing: 12) {
@@ -367,20 +389,22 @@ struct CardView: View {
                                 }
                             }
                             .buttonStyle(.borderedProminent)
-                            .tint(option.lowercased() == "deny" ? Color.secondary : Color.accentColor)
+                            .tint(Self.isRefusal(option) ? Color.secondary : Color.accentColor)
                             .disabled(answering)
                         }
                     }
 
                     // The grant key comes from the card. The phone never
                     // derives its own, so it cannot permit something subtly
-                    // wider than the computer would have.
-                    if card.allowKey != nil, case let .bot(bot) = chat {
+                    // wider than the computer would have. The same goes for
+                    // the answer: it is one of the options the card offered,
+                    // never a string invented here.
+                    if card.allowKey != nil, let allow = allowChoice, case let .bot(bot) = chat {
                         Button("Always allow this tool") {
                             answering = true
                             Task {
                                 await session.alwaysAllow(bot: bot, card: card)
-                                await session.answer(threadId: chat.threadId, card: card, choice: "Allow")
+                                await session.answer(threadId: chat.threadId, card: card, choice: allow)
                                 answering = false
                             }
                         }

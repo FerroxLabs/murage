@@ -237,7 +237,7 @@ Native **SwiftUI, iOS 17+, zero third-party dependencies.** Reasons: SSE over
 Bonjour (`NWBrowser`), QR (`VisionKit`/`AVFoundation`), and notifications are all
 first-party; and a React Native shell would drag in a build system this repo doesn't have.
 
-```
+```text
 ios/OpenMausCompanion/
   Networking/   Endpoint.swift  SSEClient.swift  Pairing.swift  Discovery.swift
   Model/        Bot.swift  Group.swift  Message.swift  RuntimeEvent.swift   ← mirrors server/store.ts + server/contracts.ts
@@ -384,7 +384,7 @@ already trusts. The device's `Host` and `Origin` never travel, so the loopback
 gate is satisfied by construction. **The harness needs no changes and does not
 know the sidecar exists.**
 
-```
+```text
   phone ──LAN/tailnet──▶ companion :8810 ──loopback──▶ harness :8799
                           ▲                             ▲
                           │ token, allowlist,           │ unmodified,
@@ -455,9 +455,9 @@ git diff upstreaming/5-tailscale claude/open-mouse-ios-companion-mhzsdu -- serve
 |---|---|---|---|
 | 1 | ✅ **merged** as #123 | `claudeSignedIn` consults the Keychain on macOS (upstream has since rewritten it to ask the CLI, which is better) | **Nothing to do with the phone.** A live bug: every signed-in Mac reports as signed out |
 | 2 | ✅ **merged** as #124 | `seq` + `?since=` replay, paged hydration + image endpoint, the `notify` builder | **Wanted by the desktop app too** — today reconnect refetches the world, and the per-bot notifications toggle is a dead switch |
-| 3–5 | ~~`upstreaming/3-companion-listener`, `4-bonjour`, `5-tailscale`~~ | **Withdrawn.** Superseded by the sidecar — there is nothing left to upstream, because the harness is no longer patched. Built, green and pushed if ever wanted |
-| 6 | `upstreaming/6-resume-cursors` | The `resumeCursors` leak fix, standing alone — a real bug for every client, nothing to do with phones |
-| — | — | Layer 3: `ios/` — no longer needs upstream's agreement, since the sidecar needs nothing from them |
+| 3–5 | ~~`upstreaming/3-companion-listener`, `4-bonjour`, `5-tailscale`~~ | **Withdrawn.** Superseded by the sidecar. Built, green and pushed if ever wanted | **Moot** — nothing is being asked of upstream any more, because the harness is no longer patched |
+| 6 | `upstreaming/6-resume-cursors` | The `resumeCursors` leak fix, standing alone | **A real bug for every client**, nothing to do with phones — it stands on its own merits |
+| — | — | Layer 3: `ios/` | **None needed** — the sidecar asks nothing of upstream, so this no longer waits on their agreement |
 
 **The ordering is deliberate and differs from the obvious one.** PR 1 is a two-file
 bug fix with no connection to any of this; it goes first because it is the cheapest

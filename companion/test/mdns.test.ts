@@ -313,9 +313,16 @@ describe("MdnsResponder", () => {
     try {
       const noise = createSocket("udp4");
       await new Promise<void>((resolve) => noise.bind(0, "127.0.0.1", resolve));
-      for (const junk of [Buffer.alloc(0), Buffer.from("hello"), Buffer.alloc(600, 0xff)]) {
-        noise.send(junk, port, "127.0.0.1");
-      }
+      // `send` is asynchronous, so closing on the next line can beat the
+      // datagrams out of the socket — the responder then never sees the
+      // garbage and this passes without exercising the path it is named
+      // after. Wait for each send to be handed off before closing.
+      await Promise.all(
+        [Buffer.alloc(0), Buffer.from("hello"), Buffer.alloc(600, 0xff)].map(
+          (junk) =>
+            new Promise<void>((resolve) => noise.send(junk, port, "127.0.0.1", () => resolve())),
+        ),
+      );
       noise.close();
 
       // still answering afterwards is the assertion that matters

@@ -292,6 +292,15 @@ public struct CompanionClient: Sendable {
         if let cursor { query.append(URLQueryItem(name: "since", value: cursor)) }
         var streamRequest = try makeRequest("GET", "/api/events", query: query)
         streamRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        // `makeRequest` stamps every request with the 20 seconds that suit a
+        // call-and-answer API, and a per-request timeout *overrides* the
+        // session's `timeoutIntervalForRequest` rather than deferring to it —
+        // so the 90 seconds configured just above was never in effect here.
+        // The harness sends a keepalive comment every 25 seconds, which is
+        // already past 20: a stream with nothing to say would time out on its
+        // first quiet gap and reconnect, forever, looking like a flaky network
+        // rather than a number in the wrong place.
+        streamRequest.timeoutInterval = 90
         return eventStream(request: streamRequest, session: Self.streaming)
     }
 }
