@@ -100,7 +100,10 @@ const support: AcpSupport = {
 
   // -m is a global commander option and must precede the `acp` subcommand
   // (verified against 0.29.1).
-  spawnArgs: (_config, turn) => [...(turn.model ? ["-m", turn.model] : []), "acp"],
+  spawnArgs: (_config, turn) => {
+    const model = turn.model;
+    return [...(model ? ["-m", model] : []), "acp"];
+  },
 
   // Subscription CLI: a leaked Moonshot/Kimi API key must not flip billing
   // to pay-as-you-go inside the spawned agent (mirrors claude/grok).

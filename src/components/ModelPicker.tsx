@@ -132,17 +132,18 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
                   </div>
                   <div className="truncate text-[11px] text-ink-secondary">
                     {pane === "custom"
-                      ? "Models this agent already knows"
+                      ? "Inject a local model into this agent"
                       : (railInstance.snapshot.version ??
                         (railInstance.snapshot.state === "available"
                           ? "ready"
                           : (railInstance.snapshot.reason ?? "ready")))}
                   </div>
                 </div>
-                {/* Keep cloud sign-in guidance on the official pane, while
-                    leaving Custom reachable for locally configured models. */}
-                {(railInstance.snapshot.state !== "available" ||
-                  (pane === "main" && needsSignIn(railInstance))) && (
+                {/* Official-pane setup only. Custom is the inject list and
+                    must stay visible even when the cloud CLI is unsigned
+                    or the packaged app has not found it on PATH yet. */}
+                {pane === "main" &&
+                  (railInstance.snapshot.state !== "available" || needsSignIn(railInstance)) && (
                   <div className="shrink-0 border-b border-hairline/40 px-2 pb-2.5">
                     <EngineSetup instance={railInstance} />
                   </div>
@@ -159,8 +160,8 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
                     const current =
                       selection.instanceId === railInstance.instanceId && selection.model === option.id;
                     const disabled =
-                      railInstance.snapshot.state !== "available" ||
-                      (!option.custom && needsSignIn(railInstance));
+                      !option.custom &&
+                      (railInstance.snapshot.state !== "available" || needsSignIn(railInstance));
                     return (
                       <button
                         key={option.id}
@@ -200,7 +201,7 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
                         {rows.map(row)}
                         {pane === "custom" && custom.length === 0 && (
                           <div className="px-2 py-3 text-[13px] text-ink-secondary">
-                            No extra models on this machine yet
+                            Start oMLX, Ollama, Unsloth, LM Studio, or EXO — live models show up here
                           </div>
                         )}
                       </div>
