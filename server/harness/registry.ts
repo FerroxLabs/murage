@@ -169,6 +169,7 @@ export class ProviderRegistry {
           capabilities: {
             computerMcp: inst.adapter.capabilities.computerMcp === true,
             agentsMcp: inst.adapter.capabilities.agentsMcp === true,
+            composioMcp: inst.adapter.capabilities.composioMcp === true,
             effortLevels: inst.adapter.capabilities.effortLevels,
           },
           access: driver?.metadata.access ?? "subscription",

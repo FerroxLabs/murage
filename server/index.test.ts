@@ -204,6 +204,36 @@ describe("harness HTTP API", () => {
     expect(body.instances[0].snapshot.reason).toContain("not-a-real-driver");
   });
 
+  it("searches transcripts and exports a conversation", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    // every new bot opens with a seeded greeting — a known searchable string
+    const hits = await api("GET", "/api/search?q=nice%20to%20meet");
+    expect(hits.status).toBe(200);
+    const hit = hits.body.hits.find((h: { botId?: string }) => h.botId === bot.id);
+    expect(hit).toMatchObject({ botId: bot.id, threadId: bot.threadId, name: bot.name });
+    expect(hit.snippet.toLowerCase()).toContain("nice to meet");
+    expect((await api("GET", "/api/search?q=")).body.hits).toEqual([]);
+
+    const markdown = await fetch(`${BASE}/api/threads/${bot.threadId}/export`);
+    expect(markdown.status).toBe(200);
+    expect(markdown.headers.get("content-type")).toContain("text/markdown");
+    expect(markdown.headers.get("content-disposition")).toContain("attachment");
+    const text = await markdown.text();
+    expect(text).toContain("Nice to meet you");
+
+    const asJson = await api("GET", `/api/threads/${bot.threadId}/export?format=json`);
+    expect(asJson.status).toBe(200);
+    expect(asJson.body.messages.length).toBeGreaterThan(0);
+    expect(JSON.stringify(asJson.body)).not.toContain('"png"');
+    expect((await api("GET", `/api/threads/${bot.threadId}/export?format=pdf`)).status).toBe(400);
+    expect((await api("GET", "/api/threads/nope/export")).status).toBe(404);
+
+    // deleted conversations drop out of search rather than 404ing it
+    await api("DELETE", `/api/bots/${bot.id}`);
+    const after = await api("GET", "/api/search?q=nice%20to%20meet");
+    expect(after.body.hits.find((h: { botId?: string }) => h.botId === bot.id)).toBeUndefined();
+  });
+
   it("creates, patches, and deletes a bot", async () => {
     const created = await api("POST", "/api/bots");
     expect(created.status).toBe(201);
@@ -215,6 +245,22 @@ describe("harness HTTP API", () => {
 
     const missing = await api("PATCH", "/api/bots/does-not-exist", { name: "x" });
     expect(missing.status).toBe(404);
+
+    // persona fields are bounded at the write boundary — they reach system
+    // prompts (Chief roster, room rosters), so an unbounded PATCH is a
+    // token-burn and prompt-injection surface
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { name: "N".repeat(101) })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { name: "   " })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { title: "T".repeat(201) })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { description: "D".repeat(4001) })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { description: 7 })).status).toBe(400);
+
+    // the per-bot composio gate is a boolean, and it round-trips
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: "yes" })).status).toBe(400);
+    const gated = await api("PATCH", `/api/bots/${bot.id}`, { composio: false });
+    expect(gated.status).toBe(200);
+    expect(gated.body.bot.composio).toBe(false);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: true })).body.bot.composio).toBe(true);
 
     const deleted = await api("DELETE", `/api/bots/${bot.id}`);
     expect(deleted.status).toBe(200);
@@ -269,6 +315,11 @@ describe("harness HTTP API", () => {
       expect(imported.body.bots.map((bot: { name: string }) => bot.name)).toEqual(visibleNames);
       expect(imported.body.bots.every((bot: { id: string }) => ![first.id, second.id].includes(bot.id))).toBe(true);
       expect(imported.body.bots[0]).not.toHaveProperty("alwaysAllow");
+      // imported bots arrive quiet and without reach: no seeded greeting
+      // in their name, and no access to the workspace's connected apps
+      // until the user grants it per bot
+      expect(imported.body.bots.every((bot: { messages: unknown[] }) => bot.messages.length === 0)).toBe(true);
+      expect(imported.body.bots.every((bot: { composio?: boolean }) => bot.composio === false)).toBe(true);
       expect(imported.body).not.toHaveProperty("group");
 
       const lastImported = imported.body.bots.at(-1)!;
