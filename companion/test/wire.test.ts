@@ -111,10 +111,43 @@ describe("createSseScrubber", () => {
     }).toThrow(/without a terminator/);
   });
 
+  it("does not drop a large but well-formed event", () => {
+    // The cap must sit clear of anything real, or a big-but-legitimate frame
+    // would vanish and look exactly like a bug in the harness.
+    const big = JSON.stringify({ kind: "bot", blob: "y".repeat(200 * 1024) });
+    const out = createSseScrubber()(`data: ${big}\n\n`);
+    expect(out).toBe(`data: ${big}\n\n`);
+  });
+
   it("handles several events arriving in one chunk", () => {
     const out = createSseScrubber()(
       'id: a:1\ndata: {"a":1,"resumeCursors":{}}\n\nid: a:2\ndata: {"b":2}\n\n',
     );
     expect(out).toBe('id: a:1\ndata: {"a":1}\n\nid: a:2\ndata: {"b":2}\n\n');
+  });
+
+  // A CRLF producer is legal SSE, and an LF-only scrubber does not fail
+  // loudly against one — it buffers the whole stream waiting for a boundary
+  // that will never arrive, while both ends report a healthy connection.
+  it("terminates events that arrive with CRLF, and keeps them CRLF", () => {
+    const out = createSseScrubber()(
+      'id: a:1\r\ndata: {"a":1,"resumeCursors":{"g":"s"}}\r\n\r\n',
+    );
+    expect(out).toBe('id: a:1\r\ndata: {"a":1}\r\n\r\n');
+    expect(out).not.toContain("resumeCursors");
+  });
+
+  it("splits a CRLF stream across chunks without cutting an event short", () => {
+    const scrubStream = createSseScrubber();
+    // the chunk ends inside the terminator itself, which is the boundary a
+    // naive indexOf gets wrong
+    expect(scrubStream('id: a:1\r\ndata: {"a":1}\r\n\r')).toBe("");
+    expect(scrubStream('\nid: a:2\r\ndata: {"b":2}\r\n\r\n')).toBe(
+      'id: a:1\r\ndata: {"a":1}\r\n\r\nid: a:2\r\ndata: {"b":2}\r\n\r\n',
+    );
+  });
+
+  it("still handles a bare CR, which the spec also allows", () => {
+    expect(createSseScrubber()('data: {"a":1,"resumeCursors":{}}\r\r')).toBe('data: {"a":1}\r\r');
   });
 });

@@ -709,4 +709,47 @@ describe("pairing, end to end", () => {
       await new Promise<void>((r) => control.close(() => r()));
     }
   });
+
+  // The Host check above is not enough on its own. A page anywhere can POST
+  // to 127.0.0.1 without a preflight — it is a simple request — and it
+  // arrives with a loopback Host like everything else. It cannot read the
+  // reply, but opening a pairing window is already the damage: the code is
+  // then on screen for whoever asked for it.
+  it("refuses a cross-origin request even though its Host is loopback", async () => {
+    const { DeviceRegistry } = await import("../src/devices.ts");
+    const { createControlServer } = await import("../src/control.ts");
+    const registry = new DeviceRegistry();
+    const control = createControlServer({
+      devices: registry,
+      companionPort: 8800,
+      discovery: () => ({ advertising: false, name: "OpenMausBot" }),
+    });
+    await new Promise<void>((r) => control.listen(0, "127.0.0.1", r));
+    // SAFETY: address() is AddressInfo — an object with a port — for any
+    // IP server that is listening, which the awaited listen guarantees.
+    const port = (control.address() as { port: number }).port;
+    const host = `127.0.0.1:${port}`;
+    try {
+      for (const origin of ["https://evil.example", "http://127.0.0.1.evil.example", "null"]) {
+        expect(await withHost(port, host, "/state", { origin })).toBe(403);
+      }
+      // no pairing window was opened by any of that
+      expect(registry.pairing()).toBeNull();
+
+      // A loopback origin is not enough either, which is the rule that got
+      // stricter: `http://localhost:<port>` reaches the same socket by the
+      // same route, and is still some other program's page rather than the
+      // one this server serves. Only the exact authority the request was
+      // addressed to passes, because the alternative is putting a name
+      // resolver inside a CSRF check.
+      expect(await withHost(port, host, "/state", { origin: `http://localhost:${port}` })).toBe(403);
+
+      // the control page itself is same-origin, and a native client sends
+      // no Origin at all — both keep working
+      expect(await withHost(port, host, "/state", { origin: `http://${host}` })).toBe(200);
+      expect(await withHost(port, host, "/state")).toBe(200);
+    } finally {
+      await new Promise<void>((r) => control.close(() => r()));
+    }
+  });
 });

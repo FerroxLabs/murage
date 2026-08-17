@@ -1,12 +1,18 @@
 // Companion device registry contract. The three properties that matter:
 // a token is never recoverable from disk, a pairing code cannot be ground
 // down by guessing, and revoking a device actually revokes it.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "../src/state.ts";
-import { bearerToken, cleanDeviceName, DeviceRegistry, MAX_PAIRING_ATTEMPTS } from "../src/devices.ts";
+import {
+  bearerToken,
+  cleanDeviceName,
+  DeviceRegistry,
+  MAX_PAIRING_ATTEMPTS,
+  PAIRING_TTL_MS,
+} from "../src/devices.ts";
 
 const pair = (registry: DeviceRegistry, name = "iPhone") => {
   const { code } = registry.openPairing();
@@ -41,6 +47,47 @@ describe("DeviceRegistry", () => {
     const { token } = pair(new DeviceRegistry());
     expect(new DeviceRegistry().authenticate(token)).not.toBeNull();
   });
+
+  // A record written by an older build, or edited by hand, can be missing
+  // everything except the two fields that make it a device at all. Reading it
+  // back as-is puts "undefined" and "Last seen NaN" on the pairing page.
+  it("completes a record that is missing its labels", () => {
+    const registry = new DeviceRegistry();
+    const { token, device } = pair(registry);
+
+    const file = join(DATA_DIR, "devices.json");
+    const stored = JSON.parse(readFileSync(file, "utf8"));
+    delete stored.devices[0].name;
+    delete stored.devices[0].lastSeenAt;
+    delete stored.devices[0].createdAt;
+    writeFileSync(file, JSON.stringify(stored));
+
+    const reloaded = new DeviceRegistry();
+    const [listed] = reloaded.list();
+    expect(listed.id).toBe(device.id);
+    expect(listed.name).toBe("Companion");
+    expect(Number.isFinite(listed.lastSeenAt)).toBe(true);
+    expect(Number.isFinite(listed.createdAt)).toBe(true);
+    // and the token it was paired with still works
+    expect(reloaded.authenticate(token)?.id).toBe(device.id);
+  });
+
+  // POSIX only. Windows has no mode bits — `stat` reports a synthesised 0666
+  // for anything not marked read-only, and the mode arguments this asserts on
+  // are ignored when the file is created. Access there is an ACL question,
+  // and the data directory sits under the user's own profile, which is
+  // already not readable by other accounts. Skipped rather than loosened: an
+  // assertion that passes by measuring nothing is worse than no assertion.
+  it.skipIf(process.platform === "win32")(
+    "keeps token hashes out of reach of other accounts on the machine",
+    () => {
+      pair(new DeviceRegistry());
+      // 0700 on the directory, 0600 on the file. A hash is an offline target
+      // for anyone who can read it, and this process is the only reader.
+      expect(statSync(DATA_DIR).mode & 0o777).toBe(0o700);
+      expect(statSync(join(DATA_DIR, "devices.json")).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it("refuses unknown, empty, and near-miss tokens", () => {
     const registry = new DeviceRegistry();
@@ -80,12 +127,30 @@ describe("DeviceRegistry", () => {
   });
 
   it("refuses an expired window without a timer", () => {
-    const registry = new DeviceRegistry();
-    const window = registry.openPairing();
-    // reach in and age it, rather than sleeping for two minutes
-    window.expiresAt = Date.now() - 1;
-    expect(registry.pairing()).toBeNull();
-    expect(registry.redeem(window.code, "iPhone")).toMatchObject({ error: expect.stringContaining("no pairing") });
+    // Move the clock, not the object. Ageing the window returned by
+    // openPairing() only works while that object is the registry's own — the
+    // day it hands back a copy, the test would be asserting against something
+    // the registry never reads. The contract is "expiry is evaluated on read
+    // against the wall clock", so the clock is the thing to control.
+    vi.useFakeTimers();
+    try {
+      const registry = new DeviceRegistry();
+      const { code } = registry.openPairing();
+      expect(registry.pairing()).not.toBeNull();
+
+      // one tick short of the TTL: still live, so the assertion below is
+      // about expiry rather than about pairing being broken outright
+      vi.advanceTimersByTime(PAIRING_TTL_MS - 1);
+      expect(registry.pairing()).not.toBeNull();
+
+      vi.advanceTimersByTime(2);
+      expect(registry.pairing()).toBeNull();
+      expect(registry.redeem(code, "iPhone")).toMatchObject({
+        error: expect.stringContaining("no pairing"),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("revokes one device without touching the others", () => {
@@ -107,6 +172,60 @@ describe("DeviceRegistry", () => {
     pair(new DeviceRegistry());
     writeFileSync(join(DATA_DIR, "devices.json"), "{ not json");
     expect(new DeviceRegistry().count()).toBe(0);
+  });
+});
+
+describe("authenticate under a failing disk", () => {
+  it("still authenticates when the lastSeenAt write throws", () => {
+    const registry = new DeviceRegistry();
+    const { token, device } = pair(registry);
+
+    // A read-only home or a full disk. The write being attempted here is the
+    // "last seen" timestamp, which decorates a row in a settings panel — it
+    // must not be able to sign a working phone out, on every request, for
+    // the user least equipped to work out why.
+    let attempted = 0;
+    // SAFETY: `persist` is private, so the type has to be widened to reach
+    // it. Assigning on the instance shadows the prototype method for this
+    // registry only — the failing disk is simulated where the disk is used,
+    // rather than by mocking node:fs for the whole file.
+    (registry as unknown as { persist: () => void }).persist = () => {
+      attempted++;
+      throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    };
+
+    expect(registry.authenticate(token)?.id).toBe(device.id);
+    expect(attempted).toBe(1);
+    // and again, so a throw cannot poison the path for later calls either
+    expect(registry.authenticate(token)?.id).toBe(device.id);
+  });
+});
+
+describe("a pairing that cannot be saved", () => {
+  // Same throwaway state as the suite above — a registry built on a leftover
+  // devices.json would start with a device already in it.
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("is not left live in memory", () => {
+    const registry = new DeviceRegistry();
+    // SAFETY: as above — the private `persist` shadowed on this one instance,
+    // which is the only way to make the write fail without a filesystem that
+    // really is read-only.
+    (registry as unknown as { persist: () => void }).persist = () => {
+      throw new Error("EROFS: read-only file system");
+    };
+
+    const { code } = registry.openPairing();
+    const result = registry.redeem(code, "iPhone");
+
+    // A device kept in memory but never written is paired until the next
+    // restart and then silently is not — the phone holds a token that stops
+    // working with nothing to explain it. Fail the pairing instead.
+    expect("error" in result).toBe(true);
+    expect(registry.count()).toBe(0);
+    expect(registry.list()).toEqual([]);
   });
 });
 
@@ -132,5 +251,24 @@ describe("bearerToken", () => {
     expect(bearerToken("omb_abc")).toBeUndefined();
     expect(bearerToken("Basic omb_abc")).toBeUndefined();
     expect(bearerToken(undefined)).toBeUndefined();
+  });
+
+  // RFC 7235 says the scheme is case-insensitive, and a client sending
+  // "bearer" is within its rights. This is the only parser in the sidecar,
+  // so a phone cannot get a 401 from one half disagreeing with the other —
+  // which is exactly what happened while the proxy carried a second, laxer
+  // one of its own: the same header authenticated on one path and not the
+  // other, depending on which code it happened to meet.
+  it("matches the scheme however it is cased", () => {
+    expect(bearerToken("bearer omb_abc")).toBe("omb_abc");
+    expect(bearerToken("BEARER omb_abc")).toBe("omb_abc");
+    expect(bearerToken("BeArEr omb_abc")).toBe("omb_abc");
+    // a tab separates scheme from credential just as legally as a space
+    expect(bearerToken("BeArEr\tomb_abc")).toBe("omb_abc");
+    // still not a free-for-all: a scheme with nothing after it is not a
+    // credential, however much whitespace is standing in for one
+    expect(bearerToken("Bearer ")).toBeUndefined();
+    expect(bearerToken("Bearer   ")).toBeUndefined();
+    expect(bearerToken("Beareromb_abc")).toBeUndefined();
   });
 });

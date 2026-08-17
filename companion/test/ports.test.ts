@@ -20,11 +20,28 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ENTRY = join(HERE, "..", "src", "index.ts");
 
 /** Start the sidecar and collect how it died. Never reaches `listen` in any
- * case here — the check runs first, so nothing binds and nothing to clean. */
+ * case here — the check runs first, so nothing binds and nothing to clean.
+ *
+ * The home directory still has to travel, though. `DeviceRegistry` is built at
+ * module scope, before the port check runs, and it reads its device file from
+ * `homedir()`. Without HOME/USERPROFILE the child inherits nothing and falls
+ * back to the account running the suite, so this would quietly read whatever
+ * real paired fleet the developer has. The suite's own throwaway home is
+ * already on `process.env` — see server/testing/setup.ts — along with the
+ * OMB_COMPANION_DIR that pins the sidecar's own data directory inside it,
+ * which is carried for the same reason and is the one that actually decides
+ * where the child writes. */
 const start = (env: Record<string, string>): Promise<{ code: number | null; err: string }> =>
   new Promise((resolve) => {
     const child = spawn(process.execPath, [ENTRY], {
-      env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), ...env },
+      env: {
+        ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+        ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+        ...(process.env.USERPROFILE ? { USERPROFILE: process.env.USERPROFILE } : {}),
+        ...(process.env.OMB_COMPANION_DIR ? { OMB_COMPANION_DIR: process.env.OMB_COMPANION_DIR } : {}),
+        ...env,
+      },
       stdio: ["ignore", "ignore", "pipe"],
     });
     let err = "";
@@ -63,7 +80,9 @@ describe("port conflicts with the harness", () => {
 
   // The sidecar's own two ports. Left to bind order this is an EADDRINUSE
   // naming a port the person can see nothing on — the something-else using
-  // it is this same process, one line earlier.
+  // it is this same process, one line earlier — and the message blames
+  // "another copy of the companion", sending someone to hunt for a process
+  // that is not running.
   it("refuses to put the device port and the control port on one socket", async () => {
     const { code, err } = await start({
       OMB_PORT: "9100",
@@ -74,6 +93,8 @@ describe("port conflicts with the harness", () => {
     expect(err).toContain("OMB_COMPANION_PORT");
     expect(err).toContain("OMB_CONTROL_PORT");
     expect(err).toContain("9300");
+    // named by the check, not discovered by the second bind
+    expect(err).not.toContain("already in use");
   }, 20_000);
 
   // An explicit OMB_WEBHOOK_PORT moves the receiver, which frees the port
