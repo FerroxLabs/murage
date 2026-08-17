@@ -5,12 +5,13 @@
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { openSse } from "./testing/sse.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -119,22 +120,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   boxStub?.close();
-  child?.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    if (!child || child.exitCode !== null) return resolve();
-    child.on("close", () => resolve());
-    setTimeout(() => (child.kill("SIGKILL"), resolve()), 5_000).unref?.();
-  });
-  for (let attempt = 0; attempt < 8; attempt++) {
-    try {
-      rmSync(home, { recursive: true, force: true });
-      break;
-    } catch {
-      // Linux can still have the just-killed server holding the scratch dir.
-      if (attempt === 7) break;
-      await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
-    }
-  }
+  // Upstream fixed this same Linux scratch-cleanup flake with an inline
+  // retry loop; these helpers are that fix plus the cause — the retry AND
+  // an exit that is actually waited for before the delete begins.
+  await waitForExit(child, { signal: "SIGTERM" });
+  await removeTempDir(home);
 });
 
 describe("harness HTTP API", () => {

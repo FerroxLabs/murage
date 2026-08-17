@@ -2348,6 +2348,13 @@ const server = createServer(async (req, res) => {
       if (!group) return json(res, 404, { error: "no such room" });
       return json(res, 200, { group });
     }
+    m = path.match(/^\/api\/groups\/([\w-]+)\/read$/);
+    if (m && method === "POST") {
+      const group = store.patchGroup(m[1], { unread: false });
+      if (!group) return json(res, 404, { error: "no such room" });
+      broadcast({ kind: "group", group });
+      return json(res, 200, { group });
+    }
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
     if (m && method === "DELETE") {
       const group = store.group(m[1]);
@@ -2399,6 +2406,37 @@ const server = createServer(async (req, res) => {
           activeLeafId: store.activeLeaf(bot.threadId),
         },
       });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/read$/);
+    if (m && method === "POST") {
+      const bot = store.patchBot(m[1], { unread: false });
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const visible = wireBot(bot);
+      broadcast({ kind: "bot", bot: visible });
+      return json(res, 200, { bot: visible });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/always-allow$/);
+    if (m && method === "POST") {
+      const body = await readBody(req);
+      const allowKey = typeof body.allowKey === "string" ? body.allowKey : "";
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!allowKey) return json(res, 400, { error: "allowKey required" });
+      const pending = store.messagesFor(bot.threadId).some((message) =>
+        message.card?.requestId &&
+        !message.card.answered &&
+        message.card.dismissed !== true &&
+        message.card.allowKey === allowKey
+      );
+      if (!pending) {
+        return json(res, 409, { error: "that grant is not on a pending approval for this bot" });
+      }
+      const updated = store.patchBot(bot.id, {
+        alwaysAllow: [...new Set([...(bot.alwaysAllow ?? []), allowKey])].slice(0, 200),
+      })!;
+      const visible = wireBot(updated);
+      broadcast({ kind: "bot", bot: visible });
+      return json(res, 200, { bot: visible });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "PATCH") {

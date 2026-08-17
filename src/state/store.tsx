@@ -229,7 +229,13 @@ export interface InstanceInfo {
   cliCandidates?: string[];
 }
 
-export type AppSettingsSection = "general" | "connections" | "engines" | "voice" | "computer";
+export type AppSettingsSection =
+  | "general"
+  | "connections"
+  | "engines"
+  | "companion"
+  | "voice"
+  | "computer";
 
 interface AppState {
   bots: Bot[];
