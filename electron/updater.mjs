@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 
 let autoUpdater = null;
 let win = null;
-// status: idle | checking | available | downloading | downloaded | error
+// status: idle | checking | available | downloading | downloaded | installing | error
 let state = { status: "idle" };
 let updaterCoordinator = null;
 
@@ -33,9 +33,13 @@ export function registerUpdaterIpc() {
   ipcMain.handle("update:check", () => updaterCoordinator?.check(true));
   ipcMain.handle("update:download", () => updaterCoordinator?.download());
   ipcMain.handle("update:install", () => {
+    if (!autoUpdater) return;
+    // Tearing down the window and relaunching takes a beat; announce it so the
+    // button greys out instead of looking like the click was swallowed.
+    setState({ status: "installing" });
     // isSilent, isForceRunAfter — relaunch straight into the new version
     try {
-      autoUpdater?.quitAndInstall(true, true);
+      autoUpdater.quitAndInstall(true, true);
     } catch (e) {
       setState({ status: "error", message: String(e?.message ?? e) });
     }

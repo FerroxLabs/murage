@@ -5,7 +5,7 @@
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,8 +61,26 @@ beforeAll(async () => {
     JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver", displayName: "Ghost" } } }),
   );
 
-  boxStub = createServer((req, res) => {
-    const ok = req.headers.authorization === "Bearer box_good";
+  boxStub = createServer(async (req, res) => {
+    if (req.url?.startsWith("/api/v3.1/tool_router/session")) {
+      if (req.headers["x-api-key"] !== "ak_good") {
+        res.writeHead(401, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: { message: "invalid project key" } }));
+      }
+      let raw = "";
+      for await (const chunk of req) raw += chunk;
+      const body = raw ? JSON.parse(raw) : {};
+      res.writeHead(201, { "content-type": "application/json" });
+      return res.end(JSON.stringify({
+        session_id: "trs_config_test",
+        mcp: { type: "http", url: "https://app.composio.dev/tool_router/v3/trs_config_test/mcp" },
+        config: { user_id: body.user_id },
+      }));
+    }
+    if (req.headers.authorization === "Bearer box_slow") {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    const ok = req.headers.authorization === "Bearer box_good" || req.headers.authorization === "Bearer box_slow";
     res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
     res.end(JSON.stringify(ok ? { ok: true, boxes: [] } : { ok: false, code: "unauthorized" }));
   });
@@ -79,6 +97,7 @@ beforeAll(async () => {
       OMB_PORT: String(PORT),
       OMB_WEBHOOK_PORT: String(WEBHOOK_PORT),
       OMB_BOX_API: `http://127.0.0.1:${boxStubPort}`,
+      OMB_COMPOSIO_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
       OMB_STATIC_DIR: staticDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -445,6 +464,30 @@ describe("harness HTTP API", () => {
     expect(nothing.status).toBe(400);
   });
 
+  it("validates a Composio project key, creates a Session, and keeps externally stored secrets off disk", async () => {
+    const oldKey = await api("PUT", "/api/config", { composio: { apiKey: "old_key" } });
+    expect(oldKey.status).toBe(400);
+    expect(oldKey.body.error).toMatch(/start with ak_/i);
+
+    const rejected = await api("PUT", "/api/config", { composio: { apiKey: "ak_wrong" } });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatch(/invalid project key/i);
+
+    const saved = await api("PUT", "/api/config?secretStorage=external", { composio: { apiKey: "ak_good" } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.composio).toEqual({ configured: true });
+    expect(JSON.stringify(saved.body)).not.toContain("ak_good");
+
+    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    expect(disk.composio).toMatchObject({ apiKey: "", sessionId: "trs_config_test" });
+    expect(JSON.stringify(disk)).not.toContain("ak_good");
+
+    // A later ordinary setting save reloads config; the in-process secure-env
+    // override must keep Composio configured until the next app launch.
+    expect((await api("PUT", "/api/config", { profile: { name: "Grace" } })).status).toBe(200);
+    expect((await api("GET", "/api/config")).body.composio).toEqual({ configured: true });
+  });
+
   it.skipIf(process.platform === "win32")("stores the credentials file with owner-only permissions", () => {
     expect(statSync(join(home, ".openmausbot", "config.json")).mode & 0o777).toBe(0o600);
   });
@@ -784,5 +827,71 @@ describe("resumable event stream", () => {
         stream.close();
       }
     }
+  });
+});
+
+describe("instance CLI override API", () => {
+  it("round-trips a set, clear, and rejects bad input", async () => {
+    // ghost is the fixture's one shadow instance (unknown driver)
+    const set = await api("PATCH", "/api/instances/ghost", { cli: "/opt/ghost/wrapper sub" });
+    expect(set.status).toBe(200);
+    const setRow = set.body.instances.find((i: any) => i.instanceId === "ghost");
+    expect(setRow.cli).toBe("/opt/ghost/wrapper sub");
+
+    // persisted for real: the next fleet rebuild reads it back
+    const cleared = await api("PATCH", "/api/instances/ghost", { cli: "" });
+    expect(cleared.status).toBe(200);
+    const clearedRow = cleared.body.instances.find((i: any) => i.instanceId === "ghost");
+    expect(clearedRow.cli).toBeUndefined();
+
+    expect((await api("PATCH", "/api/instances/nope", { cli: "/x" })).status).toBe(404);
+    expect((await api("PATCH", "/api/instances/ghost", { cli: 42 })).status).toBe(400);
+    expect((await api("PATCH", "/api/instances/ghost", { cli: "/x\ny" })).status).toBe(400);
+  });
+
+  it("echoes a path-ish name back as the only cli candidate", async () => {
+    const res = await api("GET", "/api/cli-candidates?name=/opt/definitely/not/here");
+    expect(res.status).toBe(200);
+    expect(res.body.candidates).toEqual(["/opt/definitely/not/here"]);
+    expect((await api("GET", "/api/cli-candidates?name=")).body.candidates).toEqual([]);
+  });
+
+  it("reports a missing binary as a failed probe with install info", async () => {
+    const res = await api("POST", "/api/cli-test", { cli: "/no/such/binary-anywhere", driver: "claudeAgent" });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.message).toContain("isn't installed");
+    expect(res.body.install?.docsUrl).toBe("https://claude.com/claude-code");
+  });
+
+  it("probes the complete wrapper with fixed arguments and no inherited credentials", async () => {
+    const script = join(home, "cli-wrapper-probe.mjs");
+    writeFileSync(
+      script,
+      `if (process.argv.slice(2).join(" ") !== "fixed --version") process.exit(9);\nif (process.env.COMPOSIO_API_KEY) process.exit(8);\nconsole.log("wrapper-ok");\n`,
+    );
+    const cli = `${JSON.stringify(process.execPath)} ${JSON.stringify(script)} fixed`;
+    const res = await api("POST", "/api/cli-test", { cli });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, version: "wrapper-ok" });
+  });
+
+  it("reports excessive probe output without presenting install guidance", async () => {
+    const script = join(home, "cli-noisy-probe.mjs");
+    writeFileSync(script, `process.stdout.write("x".repeat(70 * 1024));\n`);
+    const cli = `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`;
+    const res = await api("POST", "/api/cli-test", { cli, driver: "claudeAgent" });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.message).toContain("more than 64 KiB");
+    expect(res.body.install).toBeUndefined();
+  });
+
+  it("rejects overlapping provider configuration writes", async () => {
+    const slowConfigWrite = api("PUT", "/api/config", { box: { token: "box_slow" } });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const overlapping = await api("PATCH", "/api/instances/ghost", { cli: "/tmp/ghost-overlap" });
+    expect(overlapping.status).toBe(409);
+    expect((await slowConfigWrite).status).toBe(200);
   });
 });

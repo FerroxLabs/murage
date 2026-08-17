@@ -47,12 +47,12 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   let recorder: EventRecorder;
   let scratch: string;
 
-  const create = async (mode?: string) => {
+  const create = async (mode?: string, environment: Record<string, string> = {}) => {
     if (mode) process.env.FAKE_CLAUDE_MODE = mode;
     instance = await ClaudeDriver.create({
       instanceId: "claude-test",
       displayName: "Claude Test",
-      environment: {},
+      environment,
       enabled: true,
       config: { cli: FAKE_CLI, permissionMode: "acceptEdits" },
     });
@@ -137,6 +137,24 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
   });
 
+  it("uses instance credentials when launching an injected local model", async () => {
+    await create(undefined, { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" });
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-local-model",
+      text: "hi",
+      model: "unsloth::local-model",
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("local-model");
+    expect(seen.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8888");
+    expect(seen.env.ANTHROPIC_AUTH_TOKEN).toBe("unsloth-secret");
+  });
+
   it("mounts the agents comms proxy as an MCP server and pre-allows its tools", async () => {
     await create();
     const dump = join(scratch, "dump.json");
@@ -197,18 +215,23 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.sendTurn({
       threadId: "t-composio",
       text: "hi",
-      integrations: { composio: { key: "ck_test" } },
+      integrations: {
+        composio: {
+          url: "https://app.composio.dev/tool_router/v3/trs_test/mcp",
+          headers: { "x-api-key": "ak_test" },
+        },
+      },
     });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.mcpConfig.mcpServers.composio).toMatchObject({
       type: "http",
-      url: "https://connect.composio.dev/mcp",
-      headers: { "x-consumer-api-key": "ck_test" },
+      url: "https://app.composio.dev/tool_router/v3/trs_test/mcp",
+      headers: { "x-api-key": "ak_test" },
     });
     // the user's Composio key must not be readable via `ps`
-    expect(JSON.stringify(seen.argv)).not.toContain("ck_test");
+    expect(JSON.stringify(seen.argv)).not.toContain("ak_test");
     expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1]).toContain("mcp__composio");
   });
 
@@ -223,7 +246,16 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-cleanup", text: "hi", integrations: { composio: { key: "ck_x" } } });
+    await instance.adapter.sendTurn({
+      threadId: "t-cleanup",
+      text: "hi",
+      integrations: {
+        composio: {
+          url: "https://app.composio.dev/tool_router/v3/trs_test/mcp",
+          headers: { "x-api-key": "ak_test" },
+        },
+      },
+    });
     await recorder.until((e) => e.type === "turn.completed");
 
     const configPath = (() => {

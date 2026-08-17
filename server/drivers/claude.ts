@@ -5,10 +5,10 @@
 // continues across turns via --resume <sessionId> (the resumeCursor).
 //
 // Integrations become MCP servers on the CLI:
-//   - Composio Connect (connected apps → tools) over streamable HTTP
+//   - Composio Sessions (connected apps → tools) over streamable HTTP
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
-import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -20,6 +20,7 @@ import { brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli 
 
 import type {
   DriverCreateInput,
+  ModelCatalog,
   ProviderDriver,
   ProviderInstance,
   ProviderSnapshot,
@@ -29,6 +30,7 @@ import type {
 } from "../contracts.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { newEventId, newId } from "../contracts.ts";
+import { applyClaudeInject, mergeLocalInject } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
 
 /** Whether `claude` has been signed in.
@@ -64,11 +66,15 @@ export function claudeSignedIn(
  * Keeping the probe and turn environments identical prevents setup from
  * claiming an API-key login that the turn itself would deliberately remove.
  */
-function claudeEnvironment(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
-  delete env.ANTHROPIC_API_KEY;
+function claudeEnvironment(
+  model?: string | null,
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...source, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
+  const applied = applyClaudeInject(env, model);
+  if (!applied.injected) delete env.ANTHROPIC_API_KEY;
   return env;
 }
 
@@ -80,7 +86,7 @@ export interface ClaudeConfig {
 }
 
 // model catalog ported from upstream packages/contracts/src/model.ts
-const MODELS = {
+export const STATIC_CLAUDE_MODELS: ModelCatalog = {
   default: "claude-sonnet-5",
   options: [
     { id: "claude-fable-5", label: "Claude Fable 5" },
@@ -89,6 +95,57 @@ const MODELS = {
     { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
   ],
 };
+
+const CLAUDE_MODEL_ID = /^[a-z0-9][a-z0-9._:/-]*$/i;
+
+function claudeConfigDir(env: Record<string, string | undefined>): string {
+  if (env.CLAUDE_CONFIG_DIR) return env.CLAUDE_CONFIG_DIR;
+  return join(env.HOME || env.USERPROFILE || homedir(), ".claude");
+}
+
+function extrasFromUnknown(value: unknown): Array<{ id: string; label: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === "string") {
+      return CLAUDE_MODEL_ID.test(item) ? [{ id: item, label: item }] : [];
+    }
+    if (!item || typeof item !== "object") return [];
+    const row = item as { id?: unknown; model?: unknown; slug?: unknown; name?: unknown; displayName?: unknown; label?: unknown };
+    const id = [row.id, row.model, row.slug].find((candidate): candidate is string => typeof candidate === "string");
+    if (!id || !CLAUDE_MODEL_ID.test(id)) return [];
+    const label = [row.name, row.displayName, row.label].find((candidate): candidate is string => typeof candidate === "string");
+    return [{ id, label: label || id }];
+  });
+}
+
+/** Extra ids from ~/.claude/settings.json. Official cloud rows stay untagged. */
+export function readClaudeModelCatalog(env: Record<string, string | undefined> = process.env) {
+  let settings: Record<string, unknown> = {};
+  try {
+    settings = JSON.parse(readFileSync(join(claudeConfigDir(env), "settings.json"), "utf8")) as Record<string, unknown>;
+  } catch {
+    return STATIC_CLAUDE_MODELS;
+  }
+
+  const extras = [
+    ...extrasFromUnknown(settings.availableModels),
+    ...extrasFromUnknown(settings.customModels),
+    ...extrasFromUnknown(settings.extraModels),
+  ];
+  const nestedEnv = settings.env && typeof settings.env === "object" ? (settings.env as Record<string, unknown>) : {};
+  const envModel = nestedEnv.ANTHROPIC_MODEL ?? env.ANTHROPIC_MODEL;
+  if (typeof envModel === "string") extras.push(...extrasFromUnknown([envModel]));
+  if (typeof settings.model === "string") extras.push(...extrasFromUnknown([settings.model]));
+
+  const options = STATIC_CLAUDE_MODELS.options.map((option) => ({ ...option }));
+  const seen = new Set(options.map((option) => option.id));
+  for (const extra of extras) {
+    if (seen.has(extra.id)) continue;
+    seen.add(extra.id);
+    options.push({ id: extra.id, label: extra.label, custom: true });
+  }
+  return { default: STATIC_CLAUDE_MODELS.default, options };
+}
 
 // proxy entry files live next to this one as .ts in dev (node type
 // stripping) and .js in the compiled dist-server the packaged app ships
@@ -257,12 +314,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     docsUrl: "https://claude.com/claude-code",
     signInCommand: "claude",
   },
-  models: MODELS,
+  models: STATIC_CLAUDE_MODELS,
   decodeConfig,
   defaultConfig: () => decodeConfig({}),
 
   async create(input: DriverCreateInput<ClaudeConfig>): Promise<ProviderInstance> {
     const { instanceId, config } = input;
+    const catalogEnv: Record<string, string | undefined> = { ...process.env, ...input.environment };
+    let models = STATIC_CLAUDE_MODELS;
+    const refreshModels = async () => {
+      try {
+        const resolved = await mergeLocalInject(readClaudeModelCatalog(catalogEnv), catalogEnv);
+        if (resolved.options.length) models = resolved;
+      } catch {
+        // Keep the last usable catalog when settings.json is unreadable.
+      }
+    };
+    await refreshModels();
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread; a second send while busy is a caller bug
     const active = new Map<string, { stop: () => void; turnId: string; broker?: ReturnType<typeof createPermissionBroker> }>();
@@ -297,7 +365,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       ];
       if (sessionId) args.push("--resume", sessionId);
       else args.push("--session-id", newSessionId!);
-      if (turn.model) args.push("--model", turn.model);
+      const turnEnvironment: NodeJS.ProcessEnv = { ...process.env, ...input.environment };
+      const injected = applyClaudeInject({ ...turnEnvironment }, turn.model);
+      if (injected.model) args.push("--model", injected.model);
       if (turn.effort) args.push("--effort", turn.effort);
       if (turn.system) args.push("--append-system-prompt", turn.system);
 
@@ -305,11 +375,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // acceptEdits run silently denies anything unlisted)
       const mcpServers: Record<string, unknown> = {};
       const allowed: string[] = [];
-      if (turn.integrations?.composio?.key) {
+      if (turn.integrations?.composio) {
         mcpServers.composio = {
           type: "http",
-          url: turn.integrations.composio.url || "https://connect.composio.dev/mcp",
-          headers: { "x-consumer-api-key": turn.integrations.composio.key },
+          url: turn.integrations.composio.url,
+          headers: turn.integrations.composio.headers,
         };
         allowed.push("mcp__composio");
       }
@@ -393,7 +463,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         args.push("--allowedTools", allowed.join(","));
       }
 
-      const env = claudeEnvironment();
+      const env = claudeEnvironment(turn.model, turnEnvironment);
 
       const child = spawnCli(config.cli, args, {
         cwd: turn.cwd ?? homedir(),
@@ -541,7 +611,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
-      const env = claudeEnvironment();
+      const env = claudeEnvironment(undefined, { ...process.env, ...input.environment });
       const version = await new Promise<string | null>((resolve) => {
         execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
           resolve(err ? null : stdout.trim()),
@@ -557,7 +627,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
       enabled: input.enabled,
-      models: MODELS,
+      get models() {
+        return models;
+      },
+      refreshModels,
       snapshot,
       adapter: {
         provider: DRIVER_KIND,
