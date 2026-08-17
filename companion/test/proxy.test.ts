@@ -7,12 +7,13 @@
 // through, and the harness's loopback gate rejecting a proxied request.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
 import { createProxyHandler } from "../src/proxy.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -117,20 +118,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await new Promise<void>((r) => (sidecar ? sidecar.close(() => r()) : r()));
   harness?.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    if (!harness || harness.exitCode !== null) return resolve();
-    harness.on("close", () => resolve());
-    // SIGKILL, then keep waiting for `close`. Resolving in the same tick as
-    // the signal — which is what this did — starts deleting the home
-    // directory out from under a process that has not died yet, and the
-    // delete is what fails. A loaded CI runner loses that race; a laptop
-    // wins it every time, which is why it reads as a phantom.
-    setTimeout(() => harness.kill("SIGKILL"), 5_000).unref?.();
-    // and a floor, so a process that somehow survives SIGKILL cannot hang
-    // the suite instead
-    setTimeout(resolve, 10_000).unref?.();
-  });
-  rmSync(home, { recursive: true, force: true });
+  await waitForExit(harness);
+  await removeTempDir(home);
 });
 
 describe("the sidecar in front of an unmodified harness", () => {
