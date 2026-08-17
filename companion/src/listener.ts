@@ -57,6 +57,7 @@ export function tailscaleAddress(addresses: string[] = lanAddresses()): string |
  * subprocess, and nothing here is worth spawning one per request. */
 let cachedTailnetName: string | null = null;
 
+/** The MagicDNS name for this machine, if a refresh has found one. */
 export function tailnetName(): string | null {
   return cachedTailnetName;
 }
@@ -145,6 +146,8 @@ export class RemoteListener {
   private server: Server | null = null;
   private lastError: string | undefined;
   private readonly handler: RequestListener;
+  /** Serialises enable/disable — see `transition`. */
+  private queue: Promise<unknown> = Promise.resolve();
   readonly port: number;
 
   // Plain assignments, not constructor parameter properties: the harness
@@ -159,6 +162,7 @@ export class RemoteListener {
     return this.server !== null;
   }
 
+  /** Everything a caller needs to render the listener's status. */
   state(): RemoteState {
     const addresses = this.running ? lanAddresses() : [];
     const tailscale = tailscaleAddress(addresses);
@@ -173,11 +177,42 @@ export class RemoteListener {
     };
   }
 
+  /**
+   * Run one lifecycle change at a time.
+   *
+   * `enable` checks `this.server` and then awaits a bind, so two overlapping
+   * calls both see null, both create a server, and both bind the same port.
+   * The winner is whichever assigns `this.server` last; the other is left
+   * bound, unreferenced and unclosable — a listener on the network that
+   * nothing can turn off short of ending the process. `disable` racing
+   * `enable` has the mirror problem: it clears a field the in-flight enable
+   * is about to set, and the port stays open with the state saying otherwise.
+   */
+  private transition<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(work, work);
+    this.queue = next.then(
+      () => {},
+      () => {},
+    );
+    return next;
+  }
+
   /** Bind 0.0.0.0:port. Resolves with the new state either way — a port
    * conflict is a message the user can act on, never a crashed harness. */
-  async enable(): Promise<RemoteState> {
+  enable(): Promise<RemoteState> {
+    return this.transition(() => this.enableNow());
+  }
+
+  private async enableNow(): Promise<RemoteState> {
     if (this.server) return this.state();
     const server = createServer(this.handler);
+    // A bare `once("error")` is spent the first time it fires. Anything the
+    // server emits afterwards — during the close below, or from a socket
+    // that fails after a successful bind — reaches a server with no error
+    // listener, and an unhandled 'error' event is an uncaught exception that
+    // takes the sidecar down. This one stays for the server's whole life;
+    // the bind-specific handler below is layered on top of it.
+    server.on("error", () => {});
     this.lastError = undefined;
     try {
       await new Promise<void>((resolve, reject) => {
@@ -213,7 +248,12 @@ export class RemoteListener {
     return this.state();
   }
 
-  async disable(): Promise<RemoteState> {
+  disable(): Promise<RemoteState> {
+    return this.transition(() => this.disableNow());
+  }
+
+  /** Close the listener and drop live sockets. See disable(). */
+  private async disableNow(): Promise<RemoteState> {
     const server = this.server;
     this.server = null;
     this.lastError = undefined;
