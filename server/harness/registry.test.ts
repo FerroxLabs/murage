@@ -28,6 +28,26 @@ describe("ProviderRegistry", () => {
     expect(registry.get("a")).not.toBeNull();
   });
 
+  it("reports cli as overridden only when the raw config sets it", async () => {
+    // Regression: override detection used to read the DECODED config, whose
+    // cli field is always filled in with the driver default — every instance
+    // then showed as "custom" though nothing was touched.
+    const fake = makeFakeDriver();
+    fake.driver.defaultConfig = () => ({ cli: "fakebin" });
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({
+      untouched: { driver: "fake", config: { other: true } },
+      overridden: { driver: "fake", config: { cli: "/opt/fake/custom-bin" } },
+      bare: { driver: "fake" },
+    });
+
+    const described = Object.fromEntries((await registry.describe()).map((d) => [d.instanceId, d]));
+    expect(described.untouched.cli).toBeUndefined();
+    expect(described.bare.cli).toBeUndefined();
+    expect(described.overridden.cli).toBe("/opt/fake/custom-bin");
+    expect(described.untouched.cliDefault).toBe("fakebin");
+  });
+
   it("keeps an unknown driver as an unavailable shadow instead of failing", async () => {
     const registry = new ProviderRegistry([makeFakeDriver().driver]);
     await registry.load({ mystery: { driver: "from-the-future", displayName: "Tomorrow" } });

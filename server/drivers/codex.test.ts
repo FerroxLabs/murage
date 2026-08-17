@@ -32,12 +32,14 @@ describe("CodexDriver turns (fake app-server)", () => {
   let recorder: EventRecorder;
   let scratch: string;
 
-  const create = async (opts: { mode?: string; fullAuto?: boolean } = {}) => {
+  const create = async (
+    opts: { mode?: string; fullAuto?: boolean; environment?: Record<string, string> } = {},
+  ) => {
     if (opts.mode) process.env.FAKE_CODEX_MODE = opts.mode;
     instance = await CodexDriver.create({
       instanceId: "codex-test",
       displayName: "Codex Test",
-      environment: {},
+      environment: opts.environment ?? {},
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: opts.fullAuto ?? false },
     });
@@ -68,6 +70,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       threadId: "t-happy",
       text: "list files",
       system: "You are Testy.",
+      model: "gpt-5.6-sol",
     });
     await recorder.until((e) => e.type === "turn.completed");
 
@@ -100,6 +103,41 @@ describe("CodexDriver turns (fake app-server)", () => {
     // persona rides in front of the prompt text — codex has no system slot
     const turnStart = seen.calls.at(-1);
     expect(turnStart.params.input[0].text).toBe("You are Testy.\n\nlist files");
+    const threadStart = seen.calls.find((c: { method: string }) => c.method === "thread/start");
+    expect(threadStart.params).toMatchObject({ model: "gpt-5.6-sol", modelProvider: "openai" });
+  });
+
+  it("uses the instance environment for the Codex process", async () => {
+    const codexHome = join(scratch, "custom-codex-home");
+    await create({ environment: { CODEX_HOME: codexHome } });
+    const dump = join(scratch, "environment.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-environment", text: "hi" });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    expect(JSON.parse(readFileSync(dump, "utf8")).env.CODEX_HOME).toBe(codexHome);
+  });
+
+  it("sends the local provider when the picker id is custom-encoded", async () => {
+    await create({ environment: { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" } });
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await instance.adapter.sendTurn({
+      threadId: "t-local",
+      text: "hi",
+      model: "unsloth::Qwen3.6-35B-A3B-bf16:qwen3-5-6-n-r-reasoning",
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+    const threadStart = JSON.parse(readFileSync(dump, "utf8")).calls.find((c: { method: string }) => c.method === "thread/start");
+    expect(threadStart.params).toMatchObject({
+      model: "Qwen3.6-35B-A3B-bf16:qwen3-5-6-n-r-reasoning",
+      modelProvider: "unsloth",
+    });
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv).toContain("model_providers.unsloth.base_url=\"http://127.0.0.1:8888/v1\"");
+    expect(JSON.stringify(seen.argv)).not.toContain("unsloth-secret");
+    expect(seen.env.OPENMAUSBOT_LOCAL_UNSLOTH_API_KEY).toBe("unsloth-secret");
   });
 
   it("streams agentMessage deltas without re-emitting the settled text", async () => {
@@ -196,6 +234,38 @@ describe("CodexDriver turns (fake app-server)", () => {
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false });
     expect(await instance.snapshot()).toMatchObject({ state: "unavailable" });
+  });
+
+  it("reports whether the installed Codex CLI is signed in", async () => {
+    await create();
+    await expect(instance.snapshot()).resolves.toMatchObject({
+      state: "available",
+      authenticated: true,
+    });
+
+    await instance.dispose();
+    recorder.stop();
+    await create({ mode: "logged-out" });
+    await expect(instance.snapshot()).resolves.toMatchObject({
+      state: "available",
+      authenticated: false,
+    });
+  });
+
+  it("marks a Codex 401 as setup so the UI offers sign-in instead of Retry", async () => {
+    await create({ mode: "unauthorized" });
+    await instance.adapter.sendTurn({ threadId: "t-unauthorized", text: "hi" });
+
+    const error = await recorder.until((event) => event.type === "runtime.error");
+    expect(error).toMatchObject({ setup: true });
+    await expect(recorder.until((event) => event.type === "turn.completed")).resolves.toMatchObject({
+      ok: false,
+      stopReason: "auth_required",
+    });
+  });
+
+  it("uses the explicit login command from the official Codex flow", () => {
+    expect(CodexDriver.install?.signInCommand).toBe("codex login");
   });
 
   it("declares the effort levels the app-server accepts", async () => {

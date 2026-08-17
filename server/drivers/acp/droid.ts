@@ -56,7 +56,7 @@ function readSettings(env: Record<string, string | undefined>): FactorySettings 
   return JSON.parse(readFileSync(join(home, ".factory", "settings.json"), "utf8")) as FactorySettings;
 }
 
-function resolveModels(env: Record<string, string | undefined>) {
+async function resolveModels(env: Record<string, string | undefined>) {
   let settings: FactorySettings;
   try {
     settings = readSettings(env);
@@ -65,7 +65,7 @@ function resolveModels(env: Record<string, string | undefined>) {
   }
 
   const custom = (settings.customModels ?? []).flatMap((m) =>
-    m.id ? [{ id: m.id, label: m.displayName || m.id }] : [],
+    m.id ? [{ id: m.id, label: m.displayName || m.id, custom: true as const }] : [],
   );
   const merged = [...custom, ...MODELS.options.filter((o) => !custom.some((c) => c.id === o.id))];
 
@@ -165,7 +165,7 @@ const support: AcpSupport = {
     // Pin the model for the same reason as the mode: with no set_model the
     // session runs whatever ~/.factory/settings.json selected, which can be a
     // `custom:` provider pointing at its own endpoint and key.
-    const modelId = turn.model || MODELS.default;
+    const modelId = turn.model ?? MODELS.default;
     await applySetting(request, "session/set_model", { sessionId, modelId }, `model "${modelId}"`);
   },
 

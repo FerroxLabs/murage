@@ -55,6 +55,11 @@ function UpdateButton() {
   const s = useUpdaterState();
   const [checkedAt, setCheckedAt] = useState(0);
   const updater = window.ogb?.updater;
+  const status = s?.status ?? "idle";
+  // download and install both round-trip through main before the status
+  // changes — spin on the click itself, and let the new status clear it
+  const [pending, setPending] = useState(false);
+  useEffect(() => setPending(false), [status]);
   // a check that found nothing lands back on idle — acknowledge it for 3s
   const upToDate = Boolean(checkedAt) && (!s || s.status === "idle") && Date.now() - checkedAt < 3000;
   useEffect(() => {
@@ -64,26 +69,36 @@ function UpdateButton() {
   }, [upToDate]);
   if (!updater) return null;
 
-  const status = s?.status ?? "idle";
-  const working = status === "checking" || status === "downloading";
+  const working =
+    pending || status === "checking" || status === "downloading" || status === "installing";
   const label =
     status === "available"
       ? `Version ${s?.version ?? ""} available — download`
       : status === "downloading"
-        ? `Downloading… ${Math.round(s?.percent ?? 0)}%`
+        ? s?.percent == null
+          ? "Starting download…"
+          : `Downloading… ${Math.round(s.percent)}%`
         : status === "downloaded"
           ? `Version ${s?.version ?? ""} ready — restart to update`
-          : status === "checking"
-            ? "Checking for updates…"
-            : upToDate
-              ? "You're up to date"
-              : "Check for updates";
+          : status === "installing"
+            ? "Restarting to update…"
+            : status === "checking"
+              ? "Checking for updates…"
+              : upToDate
+                ? "You're up to date"
+                : "Check for updates";
 
   return (
     <button
       onClick={() => {
-        if (status === "downloaded") return void updater.install();
-        if (status === "available") return void updater.download();
+        if (status === "downloaded") {
+          setPending(true);
+          return void updater.install();
+        }
+        if (status === "available") {
+          setPending(true);
+          return void updater.download();
+        }
         setCheckedAt(Date.now());
         void updater.check();
       }}

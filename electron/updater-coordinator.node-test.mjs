@@ -115,6 +115,23 @@ test("a manual request during a background check preserves user-visible errors",
   assert.deepEqual(getState(), { status: "error", message: "background request failed" });
 });
 
+test("download reports downloading before the first progress event", async () => {
+  const { updater, coordinator, getState, states } = harness();
+  const pending = deferred();
+  // a real transfer stays silent until bytes arrive; the button must not wait
+  updater.downloadUpdate = () => pending.promise;
+
+  const download = coordinator.download();
+  assert.deepEqual(getState(), { status: "downloading" });
+  assert.equal(states[0].status, "downloading");
+
+  updater.emit("download-progress", { percent: 12 });
+  assert.deepEqual(getState(), { status: "downloading", percent: 12 });
+
+  pending.resolve();
+  await download;
+});
+
 test("an active download state survives a later background check failure", async () => {
   const { updater, coordinator, getState } = harness();
   const downloadPending = deferred();

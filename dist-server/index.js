@@ -17,7 +17,7 @@ import { resetPathCache } from "./env-path.js";
 import { buildNotification } from "./notify.js";
 import { isEffortLevel } from "./contracts.js";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.js";
-import { getOrCreateChannel, mirrorExchange, mirrorReply } from "./comms-visibility.js";
+import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply } from "./comms-visibility.js";
 import { discardDelegations, drainDelegations, queueDelegation } from "./delegations.js";
 import { EventBus } from "./harness/bus.js";
 import { ProviderRegistry } from "./harness/registry.js";
@@ -530,12 +530,43 @@ bus.subscribe((event) => {
                     });
                 }
             }
+            // A delegated turn's terminal state belongs in the A⇄B channel:
+            // the request was mirrored there when the delegation drained, and a
+            // channel that only ever shows requests is half a record. Mirror the
+            // reply on success; mirror a failed/stopped terminal chip otherwise.
+            finalizeDelegationWatch(event.threadId, event.ok, reply);
             // group busy/unread settle in the group turn engine, which knows
             // whether more member turns are queued behind this one
             break;
         }
     }
 });
+// Delegated turns are fire-and-forget, so the drain cannot hand the
+// peer's reply back to the caller the way ask_bot does. This watch map
+// (target threadId → channel) lets the main fold mirror the delegated
+// turn's TERMINAL state into the A⇄B channel when it completes — the
+// channel stays the full record of the handoff, not just its request.
+const delegationWatch = new Map();
+/** Consume one delegated-turn watch and mirror exactly one terminal state.
+ * Some harness paths settle a busy bot without a provider turn.completed
+ * event, so they call this same finalizer explicitly. */
+function finalizeDelegationWatch(threadId, ok, reply = "", failureName = "Delegated turn did not finish") {
+    const watched = delegationWatch.get(threadId);
+    if (!watched)
+        return false;
+    delegationWatch.delete(threadId);
+    const target = store.bot(watched.toBotId);
+    const channel = watched.channelId ? store.group(watched.channelId) : undefined;
+    if (!target || !channel)
+        return true;
+    if (ok && reply.trim())
+        mirrorReply(commsBus, target, reply, channel);
+    else if (ok)
+        mirrorActivity(commsBus, target, channel, "Delegated turn completed", true);
+    else
+        mirrorActivity(commsBus, target, channel, failureName, false);
+    return true;
+}
 // Drain queued delegations for a source thread after its turn settles.
 // Run as a separate subscriber so the drain logic stays out of the main
 // fold (which has its own switch/case noise) and its approval + startTurn
@@ -548,17 +579,24 @@ bus.subscribe((event) => {
     // that turn queued to run anyway, minutes later, on an unrelated turn.
     if (!event.ok)
         return void discardDelegations(commsBus, event.threadId);
-    drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth, sourceThreadId) => {
+    drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth, sourceThreadId, channel) => {
         // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
         // unavailable provider. Unhandled, that rejection is fatal to the
         // harness (Node's default), which in the packaged app kills the server
         // child. Every delegation failure has to land as a chip instead.
-        return startTurn(toBotId, text, {
-            commsDepth,
-            unattended: isUnattended(store.botByThread(sourceThreadId)?.id),
-        }).catch((err) => {
+        const targetThreadId = store.bot(toBotId)?.threadId;
+        if (targetThreadId)
+            delegationWatch.set(targetThreadId, { channelId: channel?.id, toBotId });
+        let failureReported = false;
+        const reportStartFailure = (error) => {
+            if (failureReported)
+                return;
+            failureReported = true;
             const bot = store.bot(toBotId);
-            const why = err instanceof Error ? err.message : String(err);
+            const why = error instanceof Error ? error.message : String(error);
+            if (targetThreadId) {
+                finalizeDelegationWatch(targetThreadId, false, "", `Delegated turn could not start — ${why.slice(0, 120)}`);
+            }
             const source = store.botByThread(sourceThreadId);
             if (!source)
                 return;
@@ -568,6 +606,16 @@ bus.subscribe((event) => {
                 tool: { name: `error: delegation to @${bot?.name ?? toBotId} could not start — ${why.slice(0, 120)}`, ok: false },
             });
             broadcast({ kind: "message", threadId: sourceThreadId, message: note });
+        };
+        return startTurn(toBotId, text, {
+            commsDepth,
+            unattended: isUnattended(store.botByThread(sourceThreadId)?.id),
+            // startTurn schedules provider/integration setup after marking the bot
+            // busy. Those asynchronous setup failures do not emit turn.completed,
+            // so clear the watch and report them through this callback too.
+            onDispatchError: reportStartFailure,
+        }).catch((err) => {
+            reportStartFailure(err);
         });
     });
 });
@@ -733,8 +781,10 @@ async function startTurn(botId, text, opts) {
             // the user's connected apps, but only to a driver that can mount
             // them — a key in the config says the connections exist, not that
             // this engine can reach them
-            if (cfg.composio?.key && instance.adapter.capabilities.composioMcp === true) {
-                integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
+            if (cfg.composio?.apiKey && instance.adapter.capabilities.composioMcp === true) {
+                const connection = await composio.mcpIntegration(cfg);
+                if (connection)
+                    integrations.composio = connection;
             }
             // dweb is opt-in: without an explicit daemon URL, do not advertise
             // tools that would fail on every call or spawn an unnecessary proxy.
@@ -1127,7 +1177,9 @@ function startGroupTurn(groupId, text) {
 function configStatus() {
     return {
         xai: { configured: Boolean(cfg.xai?.key) },
-        composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
+        composio: {
+            configured: Boolean(cfg.composio?.apiKey),
+        },
         box: { configured: Boolean(cfg.box?.token) },
         opencodeGo: { configured: Boolean(cfg.opencodeGo?.apiKey) },
         // the chosen voice is a setting, not a secret; the key is reported the
@@ -1149,6 +1201,7 @@ async function reloadProviders() {
     // forever. Settle anything still marked busy.
     for (const b of store.bots.filter((b) => b.busy)) {
         stopScreenPoller(b.id);
+        finalizeDelegationWatch(b.threadId, false, "", "Delegated turn did not finish — provider settings changed");
         const note = store.appendMessage(b.threadId, {
             role: "bot",
             kind: "activity",
@@ -2124,6 +2177,19 @@ const server = createServer(async (req, res) => {
         }
         if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
             const body = await readBody(req);
+            const rawComposio = body.composio;
+            if (rawComposio !== undefined
+                && (rawComposio === null || typeof rawComposio !== "object" || Array.isArray(rawComposio))) {
+                return json(res, 400, { error: "composio must be an object" });
+            }
+            if (rawComposio) {
+                for (const field of ["apiKey"]) {
+                    if (Object.prototype.hasOwnProperty.call(rawComposio, field)
+                        && typeof rawComposio[field] !== "string") {
+                        return json(res, 400, { error: `composio.${field} must be a string` });
+                    }
+                }
+            }
             const rawOpenCode = body.opencodeGo;
             if (rawOpenCode !== undefined
                 && (rawOpenCode === null || typeof rawOpenCode !== "object" || Array.isArray(rawOpenCode))) {
@@ -2141,6 +2207,24 @@ const server = createServer(async (req, res) => {
             }
             if (!Object.keys(patch).length)
                 return json(res, 400, { error: "nothing to save" });
+            // A project key is useful only if it can create/reuse the Session that
+            // powers both the connections UI and the agent MCP. Validate it before
+            // persisting, and save the non-secret ids needed to reuse that Session.
+            const requestedComposioKey = patch.composio?.apiKey;
+            if (typeof requestedComposioKey === "string") {
+                if (requestedComposioKey.trim()) {
+                    try {
+                        const prepared = await composio.prepareProjectSession(requestedComposioKey, cfg.composio);
+                        patch.composio = { ...(patch.composio ?? {}), ...prepared };
+                    }
+                    catch (error) {
+                        return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+                    }
+                }
+                else {
+                    patch.composio = { ...(patch.composio ?? {}), apiKey: "", sessionId: "" };
+                }
+            }
             // check a box token against the provider before storing it: a
             // rejected token used to save happily and only surface as a 401 in
             // another panel later, with nothing the user could act on
@@ -2159,8 +2243,22 @@ const server = createServer(async (req, res) => {
                 if (!check.ok)
                     return json(res, 400, { error: check.message });
             }
-            saveConfig(patch);
-            Object.assign(cfg, loadConfig());
+            const externalSecretStorage = url.searchParams.get("secretStorage") === "external";
+            if (externalSecretStorage && patch.composio) {
+                // Electron stores the project key with OS-backed encryption. Persist
+                // only the non-secret Session ids here, while keeping the supplied
+                // key live in this process until the next launch injects it by env.
+                const composioPatch = patch.composio;
+                const { apiKey: _secret, ...metadata } = composioPatch;
+                saveConfig({ composio: { ...metadata, apiKey: "" } });
+                cfg.composio = { ...cfg.composio, ...composioPatch };
+                if (typeof composioPatch.apiKey === "string")
+                    process.env.COMPOSIO_API_KEY = composioPatch.apiKey;
+            }
+            else {
+                saveConfig(patch);
+                Object.assign(cfg, loadConfig());
+            }
             // provider keys change the fleet; a profile or voice edit must not
             // kill in-flight turns with a pointless reload — no driver reads
             // either, and picking a voice mid-turn should be free
@@ -2220,12 +2318,13 @@ const server = createServer(async (req, res) => {
         // ── connectors (Composio) ──
         if (method === "GET" && path === "/api/connectors/catalog") {
             const { cards, source } = await composio.listToolkits(cfg);
-            return json(res, 200, { configured: Boolean(cfg.composio?.key), source, cards });
+            return json(res, 200, { configured: Boolean(cfg.composio?.apiKey), source, cards });
         }
         if (method === "GET" && path === "/api/connectors") {
             const services = (url.searchParams.get("services") ?? "").split(",").filter(Boolean);
-            if (!cfg.composio?.key)
+            if (!cfg.composio?.apiKey) {
                 return json(res, 200, { configured: false, services: {} });
+            }
             const status = await composio.connectionStatus(cfg, services.length ? services : composio.CURATED_SLUGS);
             return json(res, 200, { configured: true, services: status });
         }
