@@ -55,7 +55,38 @@ export function companionRunning() {
   return proc !== null;
 }
 
-export async function startCompanion({ resourcesPath, harnessPort, log }) {
+// Every lifecycle transition runs to completion before the next one begins.
+//
+// Without this the guards below look sufficient and are not, because each one
+// is a check followed by an await. Three things go wrong, and all of them end
+// with the toggle and reality disagreeing: two concurrent starts both pass
+// `if (proc)` and fork two sidecars; a failed start overwrites the `proc` a
+// successful one just published; and a stop issued mid-startup finds `proc`
+// still null, so it kills nothing and the start it raced then publishes a
+// sidecar the user has already asked to shut down.
+let transition = Promise.resolve();
+
+/** Queue a lifecycle transition behind whatever is already in flight. */
+const serialize = (work) => {
+  const next = transition.then(work, work);
+  // The chain itself must never carry a rejection forward, or one failed
+  // transition would poison every transition after it.
+  transition = next.then(
+    () => {},
+    () => {},
+  );
+  return next;
+};
+
+export function startCompanion(options) {
+  return serialize(() => start(options));
+}
+
+export function stopCompanion() {
+  return serialize(() => stop());
+}
+
+async function start({ resourcesPath, harnessPort, log }) {
   if (proc) return companionState();
   lastError = null;
   const entry = entryPoint(resourcesPath);
@@ -114,7 +145,7 @@ export async function startCompanion({ resourcesPath, harnessPort, log }) {
   return companionState();
 }
 
-export async function stopCompanion() {
+async function stop() {
   const child = proc;
   proc = null;
   lastError = null;
