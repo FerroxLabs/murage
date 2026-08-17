@@ -114,7 +114,21 @@ export async function refreshTailnetName(
       execFile(
         cli,
         ["status", "--json"],
-        { timeout: Math.max(250, left), env: { ...process.env, PATH: searchPath() } },
+        {
+          timeout: Math.max(250, left),
+          // SIGTERM is a request, and the budget above is only worth as much
+          // as the thing that enforces it: a wedged CLI that ignores the
+          // polite signal would sit there past the deadline it was supposed
+          // to be bounded by. SIGKILL is not a request.
+          killSignal: "SIGKILL",
+          // `status --json` describes the whole tailnet, and the default cap
+          // is 1 MiB — a large enough tailnet fails the probe with ENOBUFS,
+          // which looks exactly like "Tailscale is not installed". Generous,
+          // and still a bound: the alternative is a subprocess deciding how
+          // much memory this process uses.
+          maxBuffer: 8 * 1024 * 1024,
+          env: { ...process.env, PATH: searchPath() },
+        },
         (error, stdout) => {
           if (error) {
             onAttempt?.(cli, error.message.split("\n")[0]);

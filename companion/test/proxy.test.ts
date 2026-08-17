@@ -629,6 +629,14 @@ describe("pairing, end to end", () => {
       expect(await withHost(port, `[::1]:${port}`, "/state")).toBe(200);
       // and the bracket parsing did not open a door: a real name is still out
       expect(await withHost(port, "[::1].evil.example", "/state")).toBe(403);
+
+      // An authority the parser cannot make sense of is refused, not waved
+      // through. Both of these are malformed — an IPv6 literal has to be
+      // bracketed, and a port needs a host in front of it — and both used to
+      // parse to the empty string, which the check then skipped.
+      expect(await withHost(port, "::1", "/state")).toBe(403);
+      expect(await withHost(port, ":8811", "/state")).toBe(403);
+      expect(await withHost(port, "[]:8811", "/state")).toBe(403);
     } finally {
       await new Promise<void>((r) => control.close(() => r()));
     }

@@ -44,6 +44,9 @@ export function hostOf(authority: string): string {
   return (bracketed ? authority.slice(1, end) : authority).toLowerCase();
 }
 
+/** The only authorities this server answers to. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+
 /** Send a JSON body with its length, the only response shape this API has. */
 const json = (res: ServerResponse, status: number, body: unknown) => {
   const text = JSON.stringify(body);
@@ -83,9 +86,17 @@ export function createControlServer(options: ControlOptions): Server {
     // should be impossible. It is still worth refusing, because "impossible"
     // here rests on a bind argument three files away, and the cost of being
     // wrong is the control plane.
+    // An *absent* Host is HTTP/1.0, which has nothing to check and predates
+    // the attack. A Host that is present is checked, and that includes one
+    // that parses to nothing: a bare `::1` or a lone `:8811` is not a valid
+    // authority, and the previous `host && …` guard waved both through for
+    // exactly the reason they should have been refused — the parser could
+    // make no sense of them, so it declined to have an opinion. Anything
+    // unrecognised is refused now, which is the only safe direction for a
+    // check whose job is to say no.
     const authority = String(req.headers.host ?? "");
     const host = hostOf(authority);
-    if (host && host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
+    if (authority && !LOOPBACK_HOSTS.has(host)) {
       return json(res, 403, { error: "forbidden: loopback only" });
     }
 
