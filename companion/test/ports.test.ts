@@ -20,11 +20,24 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ENTRY = join(HERE, "..", "src", "index.ts");
 
 /** Start the sidecar and collect how it died. Never reaches `listen` in any
- * case here — the check runs first, so nothing binds and nothing to clean. */
+ * case here — the check runs first, so nothing binds and nothing to clean.
+ *
+ * The home directory still has to travel, though. `DeviceRegistry` is built at
+ * module scope, before the port check runs, and it reads its device file from
+ * `homedir()`. Without HOME/USERPROFILE the child inherits nothing and falls
+ * back to the account running the suite, so this would quietly read whatever
+ * real paired fleet the developer has. The suite's own throwaway home is
+ * already on `process.env` — see server/testing/setup.ts. */
 const start = (env: Record<string, string>): Promise<{ code: number | null; err: string }> =>
   new Promise((resolve) => {
     const child = spawn(process.execPath, [ENTRY], {
-      env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), ...env },
+      env: {
+        ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+        ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+        ...(process.env.USERPROFILE ? { USERPROFILE: process.env.USERPROFILE } : {}),
+        ...env,
+      },
       stdio: ["ignore", "ignore", "pipe"],
     });
     let err = "";

@@ -310,11 +310,17 @@ describe("MdnsResponder", () => {
     const port = responder.address()!;
     try {
       const noise = createSocket("udp4");
+      // An unhandled 'error' on a dgram socket is an uncaught exception, and
+      // it would surface as this file failing somewhere else entirely.
+      noise.on("error", () => {});
       await new Promise<void>((resolve) => noise.bind(0, "127.0.0.1", resolve));
+      // Await each send. close() on a socket with datagrams still queued can
+      // drop them, and then the assertion below is testing that the responder
+      // survives garbage it was never actually sent.
       for (const junk of [Buffer.alloc(0), Buffer.from("hello"), Buffer.alloc(600, 0xff)]) {
-        noise.send(junk, port, "127.0.0.1");
+        await new Promise<void>((resolve) => noise.send(junk, port, "127.0.0.1", () => resolve()));
       }
-      noise.close();
+      await new Promise<void>((resolve) => noise.close(() => resolve()));
 
       // still answering afterwards is the assertion that matters
       const parsed = parseResponse(await askResponder(port, query(SERVICE_NAME, TYPE.PTR)));
