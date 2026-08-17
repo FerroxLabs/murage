@@ -5,13 +5,14 @@
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { openSse } from "./testing/sse.ts";
+import { stopAndClean } from "./testing/teardown.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -100,13 +101,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   boxStub?.close();
-  child?.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    if (!child || child.exitCode !== null) return resolve();
-    child.on("close", () => resolve());
-    setTimeout(() => (child.kill("SIGKILL"), resolve()), 5_000).unref?.();
-  });
-  rmSync(home, { recursive: true, force: true });
+  await stopAndClean(child, home);
 });
 
 describe("harness HTTP API", () => {
