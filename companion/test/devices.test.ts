@@ -66,13 +66,22 @@ describe("DeviceRegistry", () => {
     expect(reloaded.authenticate(token)?.id).toBe(device.id);
   });
 
-  it("keeps token hashes out of reach of other accounts on the machine", () => {
-    pair(new DeviceRegistry());
-    // 0700 on the directory, 0600 on the file. A hash is an offline target
-    // for anyone who can read it, and this process is the only reader.
-    expect(statSync(DATA_DIR).mode & 0o777).toBe(0o700);
-    expect(statSync(join(DATA_DIR, "devices.json")).mode & 0o777).toBe(0o600);
-  });
+  // POSIX only. Windows has no mode bits — `stat` reports a synthesised 0666
+  // for anything not marked read-only, and the mode arguments this asserts on
+  // are ignored when the file is created. Access there is an ACL question,
+  // and the data directory sits under the user's own profile, which is
+  // already not readable by other accounts. Skipped rather than loosened: an
+  // assertion that passes by measuring nothing is worse than no assertion.
+  it.skipIf(process.platform === "win32")(
+    "keeps token hashes out of reach of other accounts on the machine",
+    () => {
+      pair(new DeviceRegistry());
+      // 0700 on the directory, 0600 on the file. A hash is an offline target
+      // for anyone who can read it, and this process is the only reader.
+      expect(statSync(DATA_DIR).mode & 0o777).toBe(0o700);
+      expect(statSync(join(DATA_DIR, "devices.json")).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it("refuses unknown, empty, and near-miss tokens", () => {
     const registry = new DeviceRegistry();
