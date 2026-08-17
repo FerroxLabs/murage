@@ -9,6 +9,7 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { approvalKey, autoDecision } from "./auto-approve.ts";
+import { validateBotCwd } from "./bot-cwd.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
@@ -20,7 +21,16 @@ import {
   setupCommands,
   type LifecycleAction,
 } from "./container-computer.ts";
-import { ensureDirs, instanceConfigs, loadConfig, saveConfig, withInstanceCli, EVENTS_DIR, NATIVE_DIR, type AppConfig } from "./config.ts";
+import {
+  ensureDirs,
+  instanceConfigs,
+  loadConfig,
+  parseConfigPatch,
+  saveConfig,
+  withInstanceCli,
+  EVENTS_DIR,
+  NATIVE_DIR,
+} from "./config.ts";
 import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import { buildNotification, type Notification } from "./notify.ts";
@@ -46,8 +56,10 @@ import { readCuaConnection } from "./local-computer.ts";
 import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease } from "./local-vm-lease.ts";
 import { RoutineManager, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { fetchGithubTeam, fetchLibraryTeam, fetchTeamCatalog } from "./team-library.ts";
 import { createTeamManifest, parseTeamManifest } from "./team-manifest.ts";
 import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./webhook-ingress.ts";
+import { memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
@@ -658,7 +670,17 @@ bus.subscribe((event: RuntimeEvent) => {
 type Frame = { png: string; mime: string };
 const screenPollers = new Map<
   string,
-  { timer: ReturnType<typeof setInterval> | null; capture: () => Promise<void>; last: Frame | null }
+  {
+    timer: ReturnType<typeof setInterval> | null;
+    capture: () => Promise<void>;
+    last: Frame | null;
+    /** Did this turn actually reach for the screen? A bot that merely HAS
+     * a computer would otherwise end every reply — a one-word "yes"
+     * included — with the same picture of an idle desktop. The flag lives
+     * on the poller entry, which is created and dropped per turn, so it
+     * cannot leak into a later one. */
+    touched: boolean;
+  }
 >();
 
 /** The preview shares the box's single command endpoint with the agent's
@@ -668,7 +690,10 @@ const screenPollers = new Map<
 const SCREEN_POLL_MS = 6000;
 const SCREEN_MIN_GAP_MS = 3000;
 
-function startScreenPoller(botId: string, boxId?: string) {
+/** `screenIsTheWork` starts the turn already counting as screen usage: a
+ * boxAgent's whole session runs ON the box, so every tool it calls acts on
+ * that screen even though none of them is named like a computer tool. */
+function startScreenPoller(botId: string, boxId?: string, { screenIsTheWork = false } = {}) {
   if (screenPollers.has(botId) || !box.boxConfigured(cfg)) return;
   // One capture at a time, shared by the interval, the pokes, and the
   // turn-end grab: awaiting the in-flight promise (rather than dropping the
@@ -699,6 +724,7 @@ function startScreenPoller(botId: string, boxId?: string) {
       return current;
     },
     last: null as Frame | null,
+    touched: screenIsTheWork,
   };
   entry.timer = setInterval(() => void entry.capture(), SCREEN_POLL_MS);
   screenPollers.set(botId, entry);
@@ -709,7 +735,13 @@ function startScreenPoller(botId: string, boxId?: string) {
  * capture() — a tool-heavy turn used to fire one full REST chain per
  * completed tool, competing with the agent for the same endpoint. */
 function pokeScreenPoller(botId: string) {
-  void screenPollers.get(botId)?.capture();
+  const entry = screenPollers.get(botId);
+  if (!entry) return;
+  // the same signal, read twice: a completed computer tool is both the
+  // reason to refresh the preview NOW and the proof that this turn's
+  // final frame is worth settling into the transcript
+  entry.touched = true;
+  void entry.capture();
 }
 
 function stopScreenPoller(botId: string) {
@@ -721,12 +753,16 @@ function stopScreenPoller(botId: string) {
 
 /** Turn end: stop polling, then take ONE last fresh frame (awaiting any
  * in-flight poke first) so the settled screenshot shows the screen's actual
- * end state, not the previous action's. */
+ * end state, not the previous action's. A turn that never touched the
+ * screen settles nothing — and skips the capture, which is one less
+ * command on the box's single endpoint. Either way the poller is torn down
+ * here, so no per-turn state survives the turn. */
 async function finalScreenFrame(botId: string): Promise<Frame | null> {
   const entry = screenPollers.get(botId);
   if (!entry) return null;
   if (entry.timer) clearInterval(entry.timer);
   screenPollers.delete(botId);
+  if (!entry.touched) return null;
   await entry.capture();
   return entry.last;
 }
@@ -1006,10 +1042,19 @@ async function startTurn(
                 .join(" and ")} in their message — bring them in with ask_bot and fold their reply into your answer.`
             : ""),
         integrations,
+        // pinned per task on its first turn — see TaskRecord.cwd. A cloud
+        // run happens on the box, where a host folder means nothing.
+        cwd: opts?.runOn === "cloud" ? undefined : (store.pinTaskCwd(bot.id, threadId) ?? undefined),
       });
       // dispatched: the rewind is spent, and the old cursors are dead
       if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
-      if (previewBoxId) startScreenPoller(bot.id, previewBoxId);
+      // a turn can settle before dispatch returns, and a poller started
+      // after its own turn.completed would never be torn down — it would
+      // keep polling the box forever, carrying dead per-turn state. busy
+      // is flipped false in the fold, so it is the honest "still running".
+      if (previewBoxId && store.bot(bot.id)?.busy) {
+        startScreenPoller(bot.id, previewBoxId, { screenIsTheWork: instance.driverKind === "boxAgent" });
+      }
     } catch (e) {
       localVmLease.release(threadId);
       if (localVmActiveThread === threadId) localVmActiveThread = null;
@@ -1195,7 +1240,12 @@ async function runGroupMemberTurn(
     });
     const timer = setTimeout(finish, 5 * 60_000);
     instance.adapter
-      .sendTurn({ threadId: group.threadId, text, system })
+      .sendTurn({
+        threadId: group.threadId,
+        text,
+        system,
+        ...memberTurnSelection(bot.modelSelection),
+      })
       .catch((err) => {
         const failure = store.appendMessage(group.threadId, {
           role: "bot",
@@ -1807,16 +1857,15 @@ const server = createServer(async (req, res) => {
     }
     if (method === "POST" && path === "/api/teams/export") {
       const body = await readBody(req);
-      const name = typeof body.name === "string" ? body.name.trim() : "";
-      const rawMemberIds = Array.isArray(body.memberIds) ? body.memberIds : [];
-      if (!name) return json(res, 400, { error: "team name is required" });
-      if (rawMemberIds.length === 0) return json(res, 400, { error: "a team needs at least one bot" });
-      if (
-        rawMemberIds.some((id: unknown) => typeof id !== "string" || !store.bot(id)) ||
-        new Set(rawMemberIds).size !== rawMemberIds.length
-      ) {
-        return json(res, 400, { error: "team members are invalid" });
-      }
+      const profileName = cfg.profile?.name?.trim();
+      const name =
+        typeof body.name === "string" && body.name.trim()
+          ? body.name.trim()
+          : profileName
+            ? `${profileName}'s Team`
+            : "My OpenMaus Team";
+      const memberIds = store.bots.filter((bot) => !bot.hidden).map((bot) => bot.id);
+      if (memberIds.length === 0) return json(res, 400, { error: "Create a bot before exporting your team" });
       try {
         return json(
           res,
@@ -1824,15 +1873,41 @@ const server = createServer(async (req, res) => {
           createTeamManifest(
             {
               name,
-              memberIds: rawMemberIds as string[],
-              bulletin: "",
-              defaultResponder: { kind: "everyone" },
+              memberIds,
             },
             store.bots,
           ),
         );
       } catch (error) {
         return json(res, 400, { error: error instanceof Error ? error.message : "Team could not be exported" });
+      }
+    }
+    if (method === "GET" && path === "/api/team-library/catalog") {
+      try {
+        return json(res, 200, await fetchTeamCatalog());
+      } catch (error) {
+        return json(res, 502, { error: error instanceof Error ? error.message : "The team library is unavailable" });
+      }
+    }
+    m = path.match(/^\/api\/team-library\/teams\/([a-z0-9][a-z0-9-]*)$/);
+    if (m && method === "GET") {
+      try {
+        return json(res, 200, await fetchLibraryTeam(m[1]));
+      } catch (error) {
+        const status = (error as { status?: number }).status === 404 ? 404 : 502;
+        return json(res, status, { error: error instanceof Error ? error.message : "The team could not be loaded" });
+      }
+    }
+    if (method === "POST" && path === "/api/team-library/github") {
+      const body = await readBody(req);
+      if (typeof body.url !== "string" || !body.url.trim()) {
+        return json(res, 400, { error: "A GitHub URL is required" });
+      }
+      try {
+        return json(res, 200, await fetchGithubTeam(body.url));
+      } catch (error) {
+        const status = (error as { status?: number }).status === 404 ? 404 : 400;
+        return json(res, status, { error: error instanceof Error ? error.message : "The GitHub team could not be loaded" });
       }
     }
     if (method === "POST" && path === "/api/teams/import") {
@@ -1845,7 +1920,6 @@ const server = createServer(async (req, res) => {
       }
 
       const importedBots: ReturnType<typeof store.createBot>[] = [];
-      let importedGroupId: string | null = null;
       try {
         const selection = await defaultSelection();
         for (const member of manifest.team.members) {
@@ -1860,36 +1934,10 @@ const server = createServer(async (req, res) => {
             }),
           );
         }
-        const idByKey = new Map(
-          manifest.team.members.map((member, index) => [member.key, importedBots[index]!.id]),
-        );
-        const group = store.createGroup(
-          manifest.team.room.name,
-          importedBots.map((bot) => bot.id),
-        );
-        importedGroupId = group.id;
-        const responder = manifest.team.room.defaultResponder;
-        const defaultResponder: GroupDefaultResponder =
-          responder.kind === "member"
-            ? { kind: "member", botId: idByKey.get(responder.member)! }
-            : { kind: responder.kind };
-        const configuredGroup = store.patchGroup(group.id, {
-          bulletin: manifest.team.room.bulletin,
-          defaultResponder,
-        });
-        if (!configuredGroup) throw new Error("The imported room could not be configured");
-
         const publicBots = importedBots.map(publicBot);
-        // Other open windows need the new members before the room that
-        // references them. The importing window also folds the HTTP result.
         for (const bot of publicBots) broadcast({ kind: "bot", bot });
-        broadcast({ kind: "group", group: configuredGroup });
-        return json(res, 201, {
-          bots: publicBots,
-          group: { ...configuredGroup, messages: [] },
-        });
+        return json(res, 201, { bots: publicBots });
       } catch (error) {
-        if (importedGroupId) store.deleteGroup(importedGroupId);
         for (const bot of importedBots) store.deleteBot(bot.id);
         throw error;
       }
@@ -2022,6 +2070,11 @@ const server = createServer(async (req, res) => {
       }
       if (body.chiefOfStaff !== undefined && typeof body.chiefOfStaff !== "boolean") {
         return json(res, 400, { error: "chiefOfStaff must be true or false" });
+      }
+      if (body.cwd !== undefined) {
+        const checked = validateBotCwd(body.cwd);
+        if (!checked.ok) return json(res, 400, { error: checked.error });
+        patch.cwd = checked.cwd ?? undefined;
       }
       if (body.hidden === true && existing?.chiefOfStaff && body.chiefOfStaff !== false) {
         return json(res, 400, { error: "choose another Chief of Staff before hiding this bot" });
@@ -2395,41 +2448,7 @@ const server = createServer(async (req, res) => {
     }
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
-      const rawComposio = body.composio;
-      if (
-        rawComposio !== undefined
-        && (rawComposio === null || typeof rawComposio !== "object" || Array.isArray(rawComposio))
-      ) {
-        return json(res, 400, { error: "composio must be an object" });
-      }
-      if (rawComposio) {
-        for (const field of ["apiKey"] as const) {
-          if (
-            Object.prototype.hasOwnProperty.call(rawComposio, field)
-            && typeof (rawComposio as Record<string, unknown>)[field] !== "string"
-          ) {
-            return json(res, 400, { error: `composio.${field} must be a string` });
-          }
-        }
-      }
-      const rawOpenCode = body.opencodeGo;
-      if (
-        rawOpenCode !== undefined
-        && (rawOpenCode === null || typeof rawOpenCode !== "object" || Array.isArray(rawOpenCode))
-      ) {
-        return json(res, 400, { error: "opencodeGo must be an object" });
-      }
-      if (
-        rawOpenCode
-        && Object.prototype.hasOwnProperty.call(rawOpenCode, "apiKey")
-        && typeof (rawOpenCode as { apiKey?: unknown }).apiKey !== "string"
-      ) {
-        return json(res, 400, { error: "opencodeGo.apiKey must be a string" });
-      }
-      const patch: Record<string, object> = {};
-      for (const key of ["xai", "composio", "box", "opencodeGo", "tts", "profile"] as const) {
-        if (body[key] && typeof body[key] === "object") patch[key] = body[key];
-      }
+      const patch = parseConfigPatch(body);
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
       providerConfigBusy = true;
@@ -2437,32 +2456,32 @@ const server = createServer(async (req, res) => {
       // A project key is useful only if it can create/reuse the Session that
       // powers both the connections UI and the agent MCP. Validate it before
       // persisting, and save the non-secret ids needed to reuse that Session.
-      const requestedComposioKey = (patch.composio as { apiKey?: unknown } | undefined)?.apiKey;
-      if (typeof requestedComposioKey === "string") {
+      const requestedComposioKey = patch.composio?.apiKey;
+      if (requestedComposioKey !== undefined) {
         if (requestedComposioKey.trim()) {
           try {
             const prepared = await composio.prepareProjectSession(requestedComposioKey, cfg.composio);
-            patch.composio = { ...(patch.composio ?? {}), ...prepared };
+            patch.composio = { ...patch.composio, ...prepared };
           } catch (error) {
             return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
           }
         } else {
-          patch.composio = { ...(patch.composio ?? {}), apiKey: "", sessionId: "" };
+          patch.composio = { ...patch.composio, apiKey: "", sessionId: "" };
         }
       }
       // check a box token against the provider before storing it: a
       // rejected token used to save happily and only surface as a 401 in
       // another panel later, with nothing the user could act on
-      const newBoxToken = (patch.box as { token?: unknown } | undefined)?.token;
-      if (typeof newBoxToken === "string" && newBoxToken.trim()) {
+      const newBoxToken = patch.box?.token;
+      if (newBoxToken?.trim()) {
         const check = await box.verifyToken(newBoxToken.trim());
         if (!check.ok) return json(res, 400, { error: check.message });
       }
       // same rule for a voice key — and check it against the provider the
       // patch SELECTS, not the one already saved, or pasting a Cartesia key
       // while switching from ElevenLabs validates against the wrong service
-      const newTts = patch.tts as { key?: unknown } | undefined;
-      if (typeof newTts?.key === "string" && newTts.key.trim()) {
+      const newTts = patch.tts;
+      if (newTts?.key?.trim()) {
         const check = await tts.verifyKey(newTts.key.trim());
         if (!check.ok) return json(res, 400, { error: check.message });
       }
@@ -2471,11 +2490,11 @@ const server = createServer(async (req, res) => {
         // Electron stores the project key with OS-backed encryption. Persist
         // only the non-secret Session ids here, while keeping the supplied
         // key live in this process until the next launch injects it by env.
-        const composioPatch = patch.composio as NonNullable<AppConfig["composio"]>;
+        const composioPatch = patch.composio;
         const { apiKey: _secret, ...metadata } = composioPatch;
         saveConfig({ composio: { ...metadata, apiKey: "" } });
         cfg.composio = { ...cfg.composio, ...composioPatch };
-        if (typeof composioPatch.apiKey === "string") process.env.COMPOSIO_API_KEY = composioPatch.apiKey;
+        if (composioPatch.apiKey !== undefined) process.env.COMPOSIO_API_KEY = composioPatch.apiKey;
       } else {
         saveConfig(patch);
         Object.assign(cfg, loadConfig());

@@ -2,7 +2,7 @@
 // carry the personality; avatars inside the room stay still so a busy group
 // does not become a wall of competing motion. Plain messages go to the room's
 // default responder; @mentions override that routing.
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ChevronDown, Pin } from "lucide-react";
 import {
   useStore,
@@ -21,6 +21,7 @@ import { GroupCallButton, GroupCallOverlay } from "./GroupCallView";
 import { ReactionBar, ReactionChips } from "./Reactions";
 import { ApprovalCard } from "./ApprovalCard";
 import { cn } from "@/lib/cn";
+import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 
 function dayLabel(at: number): string {
   const d = new Date(at);
@@ -193,6 +194,8 @@ export function GroupView({ group }: { group: Group }) {
   const streaming = stream.streaming[group.threadId];
   const scrollRef = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
+  const followRef = useRef(true);
+  const previousScrollTop = useRef(0);
   const touchY = useRef(0);
   const [bulletinOpen, setBulletinOpen] = useState(false);
   const [bulletinDraft, setBulletinDraft] = useState(group.bulletin);
@@ -203,15 +206,23 @@ export function GroupView({ group }: { group: Group }) {
   );
   const speaker = members.find((b) => b.id === group.busyBotId);
 
-  useEffect(() => setFollow(true), [group.id]);
+  const setBottomFollow = useCallback((next: boolean) => {
+    followRef.current = next;
+    setFollow(next);
+  }, []);
+
+  useEffect(() => setBottomFollow(true), [group.id, setBottomFollow]);
   useEffect(() => setBulletinDraft(group.bulletin), [group.id, group.bulletin]);
   useEffect(() => {
-    if (follow) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    const el = scrollRef.current;
+    if (!el || !followRef.current) return;
+    el.scrollTo({ top: el.scrollHeight });
+    previousScrollTop.current = el.scrollTop;
   }, [group.id, group.messages.length, streaming, group.busyBotId, follow]);
 
   const atEnd = () => {
     const el = scrollRef.current;
-    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_FOLLOW_THRESHOLD;
   };
 
   const saveBulletin = () => {
@@ -305,17 +316,27 @@ export function GroupView({ group }: { group: Group }) {
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-5 [overflow-anchor:none]"
         onWheel={(e) => {
-          if (e.deltaY < 0) setFollow(false);
-          else if (atEnd()) setFollow(true);
+          if (e.deltaY < 0) setBottomFollow(false);
+          else if (atEnd()) setBottomFollow(true);
         }}
         onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
         onTouchMove={(e) => {
           const y = e.touches[0]?.clientY ?? 0;
-          if (y > touchY.current + 4) setFollow(false);
-          else if (atEnd()) setFollow(true);
+          if (y > touchY.current + 4) setBottomFollow(false);
+          else if (atEnd()) setBottomFollow(true);
         }}
         onScroll={() => {
-          if (!follow && atEnd()) setFollow(true);
+          const el = scrollRef.current;
+          if (!el) return;
+          const scrollTop = el.scrollTop;
+          const resume = shouldResumeBottomFollow({
+            following: followRef.current,
+            previousScrollTop: previousScrollTop.current,
+            scrollTop,
+            distanceFromBottom: el.scrollHeight - scrollTop - el.clientHeight,
+          });
+          previousScrollTop.current = scrollTop;
+          if (resume) setBottomFollow(true);
         }}
       >
         <div
@@ -370,7 +391,7 @@ export function GroupView({ group }: { group: Group }) {
       {!follow && (
         <button
           onClick={() => {
-            setFollow(true);
+            setBottomFollow(true);
             scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
           }}
           aria-label="Jump to latest messages"
