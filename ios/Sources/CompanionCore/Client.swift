@@ -1,10 +1,10 @@
 // The companion API client.
 //
 // Everything the phone can do to the harness, in one place. The rules it
-// encodes come from `remoteDenial()` in server/index.ts: a paired phone may
-// chat, answer approvals, and manage tasks and rooms — it may not touch
-// credentials, pairing, or the Local VM. Those routes are simply absent
-// here rather than present and failing at runtime.
+// encodes come from the default-deny policy in `companion/src/routes.ts`: a
+// paired phone may chat, answer approvals, and read rooms — it may not touch
+// credentials, pairing, or the Local VM. Those routes are simply absent here
+// rather than present and failing at runtime.
 import Foundation
 
 /// Where a companion connects, and with what. The token is *not* held here
@@ -20,8 +20,62 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     public init(id: String = UUID().uuidString, name: String, host: String, port: Int) {
         self.id = id
         self.name = name
-        self.host = host
+        self.host = Self.urlHost(host)
         self.port = port
+    }
+
+    /// The representation `URLComponents.host` accepts for a literal IPv6
+    /// address. It adds brackets exactly once and leaves DNS/IPv4 names alone.
+    /// A scope zone on a link-local address is intentionally retained;
+    /// URLComponents percent-encodes it when it builds the URL.
+    public static func urlHost(_ host: String) -> String {
+        let bare: String
+        if host.hasPrefix("["), host.hasSuffix("]") {
+            bare = String(host.dropFirst().dropLast())
+        } else {
+            bare = host
+        }
+        return bare.contains(":") ? "[\(bare)]" : bare
+    }
+
+    /// Parse a manually entered companion address. A bare IPv6 literal uses
+    /// the default port; an explicit IPv6 port must use `[address]:port`, the
+    /// same unambiguous form browsers and command-line tools use.
+    public static func parse(_ text: String, defaultPort: Int = 8810) -> Connection? {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["http://", "https://"] where trimmed.lowercased().hasPrefix(prefix) {
+            trimmed.removeFirst(prefix.count)
+            break
+        }
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard !trimmed.isEmpty else { return nil }
+
+        var host = trimmed
+        var port = defaultPort
+        if trimmed.hasPrefix("[") {
+            guard let close = trimmed.firstIndex(of: "]") else { return nil }
+            host = String(trimmed[trimmed.index(after: trimmed.startIndex)..<close])
+            let rest = trimmed[trimmed.index(after: close)...]
+            if !rest.isEmpty {
+                guard rest.hasPrefix(":"), let parsed = Int(rest.dropFirst()) else { return nil }
+                port = parsed
+            }
+        } else {
+            let colonCount = trimmed.reduce(into: 0) { count, character in
+                if character == ":" { count += 1 }
+            }
+            if colonCount == 1, let colon = trimmed.lastIndex(of: ":") {
+                host = String(trimmed[..<colon])
+                guard let parsed = Int(trimmed[trimmed.index(after: colon)...]) else { return nil }
+                port = parsed
+            }
+        }
+
+        guard !host.isEmpty,
+              !host.contains(where: { $0.isWhitespace || "/?#[]".contains($0) }),
+              (1...65535).contains(port)
+        else { return nil }
+        return Connection(name: host, host: host, port: port)
     }
 
     /// Plain HTTP, and that is a real limitation rather than an oversight.
@@ -51,7 +105,9 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     public var baseURL: URL? {
         var components = URLComponents()
         components.scheme = "http"
-        components.host = host
+        // Normalize here too so connections saved by older builds with an
+        // unbracketed IPv6 host remain usable after an update.
+        components.host = Self.urlHost(host)
         components.port = port
         return components.url
     }
@@ -239,8 +295,8 @@ public struct CompanionClient: Sendable {
 
     /// Remember a grant so the same tool stops asking. The harness decides
     /// the key and puts it on the card; the phone never derives its own.
-    public func alwaysAllow(botId: String, keys: [String]) async throws {
-        try await send(try makeRequest("PATCH", "/api/bots/\(botId)", body: ["alwaysAllow": keys]))
+    public func alwaysAllow(botId: String, key: String) async throws {
+        try await send(try makeRequest("POST", "/api/bots/\(botId)/always-allow", body: ["allowKey": key]))
     }
 
     public func interrupt(botId: String) async throws {
@@ -248,11 +304,11 @@ public struct CompanionClient: Sendable {
     }
 
     public func markRead(botId: String) async throws {
-        try await send(try makeRequest("PATCH", "/api/bots/\(botId)", body: ["unread": false]))
+        try await send(try makeRequest("POST", "/api/bots/\(botId)/read"))
     }
 
     public func markRead(roomId: String) async throws {
-        try await send(try makeRequest("PATCH", "/api/groups/\(roomId)", body: ["unread": false]))
+        try await send(try makeRequest("POST", "/api/groups/\(roomId)/read"))
     }
 
     // MARK: - Events

@@ -125,9 +125,9 @@ final class Discovery: ObservableObject {
     }
 
     /// `NWEndpoint.Host` prints IPv6 with its scope zone attached
-    /// ("fe80::1%en0"), which is not something URLComponents will take.
+    /// ("fe80::1%en0"). Keep that zone — link-local IPv6 needs it — and wrap
+    /// the literal in the form URLComponents accepts.
     static func plainHost(_ host: NWEndpoint.Host) -> String {
-        let text = "\(host)"
-        return text.split(separator: "%").first.map(String.init) ?? text
+        Connection.urlHost("\(host)")
     }
 }

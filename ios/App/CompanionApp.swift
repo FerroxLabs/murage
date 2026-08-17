@@ -15,10 +15,12 @@ struct CompanionApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(session)
+                .onAppear { session.connect() }
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
                     case .active: session.connect()
-                    case .background, .inactive: session.disconnect()
+                    case .background: session.disconnect()
+                    case .inactive: break
                     @unknown default: break
                     }
                 }

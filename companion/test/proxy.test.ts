@@ -247,6 +247,14 @@ describe("the sidecar in front of an unmodified harness", () => {
     expect((await device("GET", "/")).status).toBe(404);
     // but reading config is fine — it is booleans, not keys
     expect((await device("GET", "/api/config")).status).toBe(200);
+
+    // General-purpose PATCH routes can change execution policy, connected
+    // apps, working directories and computer targets. The phone gets narrow
+    // verbs instead, so a stolen device token cannot smuggle those fields.
+    const { body } = await device("GET", "/api/bots");
+    const botId = body.bots[0].id;
+    expect((await device("PATCH", `/api/bots/${botId}`, { body: { autoApprove: true } })).status).toBe(404);
+    expect((await device("PATCH", `/api/groups/not-a-room`, { body: { unread: false } })).status).toBe(404);
   });
 
   it("lets a device answer an approval, and manage its own chats", async () => {
@@ -265,13 +273,25 @@ describe("the sidecar in front of an unmodified harness", () => {
       ["POST", `/api/threads/${bot.threadId}/respond`, { requestId: "nope", behavior: "allow" }],
       ["POST", `/api/bots/${bot.id}/messages`, { text: "hello from a test" }],
       ["POST", `/api/bots/${bot.id}/interrupt`, undefined],
-      ["PATCH", `/api/bots/${bot.id}`, { unread: false }],
+      ["POST", `/api/bots/${bot.id}/read`, undefined],
     ] as const) {
       const res = await device(method, path, payload ? { body: payload } : {});
       // whatever the harness decides, the sidecar must not be the one saying no
       expect(res.status, `${method} ${path} was blocked by the sidecar`).not.toBe(403);
       expect(res.status, `${method} ${path} never reached the harness`).not.toBe(404);
     }
+  });
+
+  it("only remembers an always-allow key carried by a pending card", async () => {
+    const { body } = await device("GET", "/api/bots");
+    const bot = body.bots[0];
+    const attempt = await device("POST", `/api/bots/${bot.id}/always-allow`, {
+      body: { allowKey: "Bash" },
+    });
+    expect(attempt.status).toBe(409);
+
+    const refreshed = await device("GET", "/api/bots");
+    expect(refreshed.body.bots.find((candidate: any) => candidate.id === bot.id).alwaysAllow ?? []).not.toContain("Bash");
   });
 
   it("never passes the provider session cursors through", async () => {
@@ -333,7 +353,7 @@ describe("the sidecar in front of an unmodified harness", () => {
       // cursor. Rewriting the payload must not disturb it.
       const { body } = await device("GET", "/api/bots");
       const botId = body.bots[0].id;
-      await device("PATCH", `/api/bots/${botId}`, { body: { unread: true } });
+      await device("POST", `/api/bots/${botId}/read`);
 
       const frame = await nextEvent((e) => e.startsWith("id: "));
       expect(frame).not.toBeNull();

@@ -99,7 +99,8 @@ enum Keychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: connectionId,
         ]
-        return SecItemDelete(query as CFDictionary) == errSecSuccess
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 }
 
@@ -108,7 +109,7 @@ struct KeychainError: LocalizedError {
 
     var errorDescription: String? {
         let detail = SecCopyErrorMessageString(status, nil) as String? ?? "status \(status)"
-        return "Couldn't save the pairing securely: \(detail)"
+        return "Couldn't access the pairing securely: \(detail)"
     }
 
     /// The keychain is not available *yet* rather than not holding this token.

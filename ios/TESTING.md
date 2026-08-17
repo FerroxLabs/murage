@@ -1,7 +1,7 @@
 # Testing the companion locally
 
-All four stages have been run end to end on a Mac and an iPhone. Keep this as
-the runbook for the next person, the next machine, and anything Layer 4 adds.
+The automated stages have been run on a Mac and simulator, and the network
+stages on an iPhone. Keep this as the runbook for the next machine and release.
 
 Stages, cheapest signal first. Each one is worth completing before starting the
 next — a Swift compile error found in stage 1 costs a minute, the same error
@@ -14,7 +14,7 @@ way out when the network itself is the problem.
 |---|---|
 | 1 — core tests | a Mac with Xcode command line tools (`xcode-select --install`) |
 | 2 — desktop half | + Node 24+, pnpm, and one agent CLI (`claude`, `codex`, or `grok`) signed in |
-| 3 — app builds | + full Xcode |
+| 3 — simulator | + full Xcode and XcodeGen |
 | 4 — end to end | + an iPhone on the same Wi-Fi as the Mac |
 | 5 — off this network | + Tailscale on both, same account |
 
@@ -24,25 +24,15 @@ desktop app now ships.
 
 ---
 
-## Stage 0 — get the branch
+## Stage 0 — get the code
 
-The work is on `upstreaming/9-ios-app` in `mnthr7/OpenMausMobile`.
-
-Fresh clone:
-
-```sh
-git clone https://github.com/mnthr7/OpenMausMobile
-cd OpenMausMobile
-git checkout upstreaming/9-ios-app
-```
-
-Or, if you already have the repo:
+Use current `main` after the companion lands. While reviewing the feature PR,
+GitHub CLI can create the correct local branch:
 
 ```sh
-cd OpenMausMobile
-git fetch origin upstreaming/9-ios-app
-git checkout upstreaming/9-ios-app
-git pull origin upstreaming/9-ios-app
+git clone https://github.com/milind-soni/OpenMausBot
+cd OpenMausBot
+gh pr checkout 161        # omit after the PR is merged
 ```
 
 Sanity check — `ios/` and the companion sidecar should be present:
@@ -55,20 +45,17 @@ ls ios/Sources/CompanionCore companion/src/devices.ts companion/src/mdns.ts
 
 ## Stage 1 — the core compiles and its tests pass
 
-No Xcode, no simulator, no phone. This is the stage that finds the most and
-costs the least, because **none of the Swift has ever been compiled**.
+No full Xcode, simulator, or phone is required. This is the cheapest place to
+catch wire-model, parser, and state-fold regressions.
 
 ```sh
 cd ios
-swift build       # expect errors; they are the point
+swift build
 swift test
 ```
 
-Expect real errors. They should be small and local — a wrong label, a missing
-`@ViewBuilder`, an optional that needs unwrapping — because the shapes were
-written against real captured bytes rather than guessed. `Sources/` is the only
-thing `swift test` touches; `App/` is not in the package and is not compiled
-until stage 3.
+`Sources/` is the only product `swift test` builds; `App/` is compiled in
+stage 3.
 
 A trailing `Test run with 0 tests in 0 suites passed` is expected and not a
 problem: that is swift-testing finding none of its own tests, because these are
@@ -92,9 +79,9 @@ Prove the harness half works before a phone is in the picture.
 
 ```sh
 pnpm install
-pnpm dev:server           # 127.0.0.1:8799
+pnpm build:companion      # required once before the dev toggle can start it
 pnpm dev                  # 127.0.0.1:5199
-pnpm dev:desktop          # Electron
+pnpm dev:desktop          # Electron starts the harness
 ```
 
 In the app: **Settings → Companion**. Turn it on. You should see either
@@ -117,7 +104,7 @@ dns-sd -B _openmausbot._tcp                         # macOS: should list the ser
 
 This is the likeliest snag on macOS, and it is not a bug in the phone.
 
-- **Port 5353 is owned by mDNSResponder.** The harness asks for `SO_REUSEADDR`
+- **Port 5353 is owned by mDNSResponder.** The sidecar asks for `SO_REUSEADDR`
   and normally shares it fine, but if something else grabbed it exclusively the
   advertisement cannot start. `sudo lsof -i :5353` shows who.
 - **The firewall is prompting.** System Settings → Network → Firewall. Incoming
@@ -128,7 +115,7 @@ This is the likeliest snag on macOS, and it is not a bug in the phone.
 
 ---
 
-## Stage 3 — the app builds
+## Stage 3 — build and launch the simulator
 
 ```sh
 brew install xcodegen
@@ -136,6 +123,15 @@ cd ios && xcodegen generate && open OpenMausCompanion.xcodeproj
 ```
 
 Build for the simulator first — it is a faster loop for compile errors.
+The same gate can run without opening Xcode:
+
+```sh
+xcodebuild -project OpenMausCompanion.xcodeproj \
+  -scheme OpenMausCompanion \
+  -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  CODE_SIGNING_ALLOWED=NO build
+```
 
 **Re-run `xcodegen generate` whenever a pull adds a file to `App/`.** The
 generated project lists source files explicitly, so a new one is missing from
@@ -251,7 +247,7 @@ port — only the route to it is different.
 Not built yet, so not bugs:
 
 - **Nothing arrives while the app is closed.** No push until APNs.
-- **No voice, no routines.**
+- **No voice, routines, task management, or transcript search.**
 
 (Two entries that used to sit on this list have since shipped: replies stream
 token by token as the provider emits them, and each bot has a computer panel —
@@ -263,9 +259,8 @@ screen.)
 The two sides now say what they think is happening, and comparing them is
 usually the whole diagnosis:
 
-- **Harness log** (the `pnpm dev:server` terminal): `companion stream opened`
-  when a phone's event stream connects, and `companion stream closed` when it
-  goes. No "opened" line means the request never arrived.
+- **Desktop/server log:** the sidecar and harness record the stream opening and
+  closing. No opening entry means the request never arrived.
 - **Xcode console**, subsystem `com.openmausbot.companion`: `opening stream`,
   then `stream live, resumed=…`, then `hydrated N bots`. Whichever of those is
   missing is where it stopped.

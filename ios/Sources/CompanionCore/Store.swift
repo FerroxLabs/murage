@@ -19,7 +19,8 @@ public struct CompanionState: Sendable {
     public var hasMore: [String: Bool] = [:]
     /// The last frame we folded — what a reconnect resumes from.
     public var cursor: String?
-    /// Notifications that arrived while connected, newest last.
+    /// Notifications that arrived while connected, newest last. Kept as a
+    /// small recent window until the app has a real notification surface.
     public var notifications: [NotificationFrame] = []
     /// The reply being typed, per thread — cleared when it settles into a
     /// `Message`. Not persisted and not hydrated: it is what is happening
@@ -46,6 +47,23 @@ public struct CompanionState: Sendable {
         messages[threadId] ?? []
     }
 
+    /// The active branch of a bot conversation. Rooms and legacy linear
+    /// threads return their full transcript.
+    public func visibleTranscript(forThread threadId: String) -> [Message] {
+        let all = transcript(forThread: threadId)
+        guard let leafId = bot(forThread: threadId)?.activeLeafId else { return all }
+        let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
+        guard var current = byId[leafId] else { return all }
+        var visible: [Message] = []
+        var visited = Set<String>()
+        while visited.insert(current.id).inserted {
+            visible.append(current)
+            guard let parentId = current.parentId, let parent = byId[parentId] else { break }
+            current = parent
+        }
+        return visible.reversed()
+    }
+
     public func bot(_ id: String) -> Bot? {
         bots.first { $0.id == id }
     }
@@ -62,8 +80,9 @@ public struct CompanionState: Sendable {
     /// screen the whole companion exists for.
     public var pendingApprovals: [(threadId: String, message: Message)] {
         var out: [(threadId: String, message: Message)] = []
-        for (threadId, thread) in messages {
-            for message in thread where message.card?.isPending == true {
+        let activeThreads = bots.map(\.threadId) + rooms.map(\.threadId)
+        for threadId in activeThreads {
+            for message in visibleTranscript(forThread: threadId) where message.card?.isPending == true {
                 out.append((threadId: threadId, message: message))
             }
         }
@@ -109,13 +128,17 @@ public struct CompanionState: Sendable {
 
     public mutating func apply(_ frame: Frame) {
         switch frame {
-        case let .hello(cursor, _):
-            // The caller decides what to do about `resumed`; either way this
-            // is where we now are in the stream.
-            self.cursor = cursor
+        case .hello:
+            // A hello describes the server's latest position, not one this
+            // client has folded. Session commits it only after a cold
+            // hydration succeeds; resumed streams advance frame by frame.
+            break
 
         case let .message(threadId, message):
             append(message, to: threadId)
+            if let index = bots.firstIndex(where: { $0.threadId == threadId }) {
+                bots[index].activeLeafId = message.id
+            }
             // A settled reply supersedes whatever was streaming into it.
             // Without this the live bubble survives alongside the real one:
             // the tail renders below any card or chip that settled next, and
@@ -141,15 +164,28 @@ public struct CompanionState: Sendable {
             if let index = bots.firstIndex(where: { $0.threadId == threadId }) {
                 bots[index].activeLeafId = activeLeafId
             }
+            // A branch switch changes which in-flight tail is meaningful.
+            // Keeping the old branch's partial answer below the new leaf is
+            // indistinguishable from the bot replying on the wrong branch.
+            clearStream(threadId)
 
         case let .bot(bot):
-            // Frames carry the bot record without its transcript, so merge
-            // rather than replace: assigning would wipe the messages the
-            // hydrate put there.
+            // Ordinary frames omit messages and must preserve the transcript.
+            // Task switches deliberately include the new task's transcript;
+            // that is authoritative and must replace the previous context.
             if let index = bots.firstIndex(where: { $0.id == bot.id }) {
                 var merged = bot
-                merged.messages = bots[index].messages
-                merged.activeLeafId = bot.activeLeafId ?? bots[index].activeLeafId
+                let previous = bots[index]
+                if let replacement = bot.messages {
+                    messages[bot.threadId] = replacement
+                    hasMore[bot.threadId] = bot.hasMore ?? false
+                    merged.messages = replacement
+                    clearStream(previous.threadId)
+                    if previous.threadId != bot.threadId { clearStream(bot.threadId) }
+                } else {
+                    merged.messages = previous.messages
+                    merged.activeLeafId = bot.activeLeafId ?? previous.activeLeafId
+                }
                 bots[index] = merged
             } else {
                 bots.append(bot)
@@ -199,6 +235,9 @@ public struct CompanionState: Sendable {
 
         case let .notify(notification):
             notifications.append(notification)
+            if notifications.count > 100 {
+                notifications.removeFirst(notifications.count - 100)
+            }
 
         case let .runtime(event):
             apply(runtime: event)
@@ -271,6 +310,11 @@ public struct CompanionState: Sendable {
 }
 
 extension CompanionState {
+    /// Commit an authoritative cursor after a cold hydration succeeds.
+    public mutating func resetCursor(_ cursor: String) {
+        self.cursor = cursor
+    }
+
     /// Advance the cursor to a frame's sequence, keeping the stream id.
     ///
     /// The cursor is `<streamId>:<seq>` and opaque to us except for this:

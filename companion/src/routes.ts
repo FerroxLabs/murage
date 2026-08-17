@@ -51,13 +51,14 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // the fleet, and making a bot
   { method: "GET", path: /^\/api\/bots$/ },
   { method: "POST", path: /^\/api\/bots$/ },
-  { method: "PATCH", path: /^\/api\/bots\/[\w-]+$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/interrupt$/ },
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/read$/ },
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/always-allow$/ },
 
   // rooms
-  { method: "PATCH", path: /^\/api\/groups\/[\w-]+$/ },
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/messages$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/read$/ },
 
   // a transcript, its images, and answering an approval
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages$/ },

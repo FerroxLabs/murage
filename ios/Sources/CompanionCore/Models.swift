@@ -185,9 +185,30 @@ public struct Room: Codable, Hashable, Identifiable, Sendable {
 
 // MARK: - Responses
 
-public struct Fleet: Codable, Sendable {
+private struct Lossy<Element: Decodable>: Decodable {
+    let value: Element?
+
+    init(from decoder: Decoder) throws {
+        value = try? Element(from: decoder)
+    }
+}
+
+public struct Fleet: Decodable, Sendable {
     public var bots: [Bot]
     public var groups: [Room]
+
+    private enum CodingKeys: String, CodingKey { case bots, groups }
+
+    public init(bots: [Bot], groups: [Room]) {
+        self.bots = bots
+        self.groups = groups
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bots = try container.decodeIfPresent([Lossy<Bot>].self, forKey: .bots)?.compactMap(\.value) ?? []
+        groups = try container.decodeIfPresent([Lossy<Room>].self, forKey: .groups)?.compactMap(\.value) ?? []
+    }
 }
 
 public struct ThreadPage: Codable, Sendable {

@@ -56,7 +56,7 @@ struct ComputerView: View {
                     .foregroundStyle(current.busy == true ? Color.green : Color.secondary)
             }
         }
-        .task {
+        .onAppear {
             session.watchScreen(of: bot.id)
         }
         .onDisappear {

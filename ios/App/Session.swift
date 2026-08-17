@@ -36,6 +36,10 @@ final class Session: ObservableObject {
 
     private var client: CompanionClient?
     private var streamTask: Task<Void, Never>?
+    /// Identifies the task currently stored in `streamTask`. A cancelled task
+    /// can finish after its replacement starts; its cleanup must not clear
+    /// the replacement's handle.
+    private var streamGeneration = 0
     private var reconnectDelay: UInt64 = 0
     /// How many computer panels are open. A count rather than a flag: the
     /// panel can be pushed twice in a navigation stack, and the last one to
@@ -135,7 +139,14 @@ final class Session: ObservableObject {
         if client == nil, restorePending { restore() }
         guard client != nil, streamTask == nil else { return }
         reconnectDelay = 0
-        streamTask = Task { [weak self] in await self?.run() }
+        streamGeneration += 1
+        let generation = streamGeneration
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            await self.run()
+            guard self.streamGeneration == generation else { return }
+            self.streamTask = nil
+        }
     }
 
     /// Pull-to-refresh: reopen the stream, and hold the control open until
@@ -209,12 +220,17 @@ final class Session: ObservableObject {
                     if Task.isCancelled { return }
                     reconnectDelay = 0
 
-                    if case let .hello(_, resumed) = frame.frame {
+                    if case let .hello(cursor, resumed) = frame.frame {
                         log.info("stream live, resumed=\(resumed, privacy: .public)")
-                        state.apply(frame)
                         // false means the server could not replay the gap —
-                        // the one case that costs a full hydrate
-                        if !resumed { await hydrate() }
+                        // the one case that costs a full hydrate. Commit the
+                        // hello cursor only after that hydrate succeeds: if
+                        // the request dies halfway through replay/hydration,
+                        // reconnecting must still ask for the missing gap.
+                        if !resumed {
+                            try await hydrate()
+                            state.resetCursor(cursor)
+                        }
                         status = .live
                         continue
                     }
@@ -247,17 +263,11 @@ final class Session: ObservableObject {
         }
     }
 
-    private func hydrate() async {
+    private func hydrate() async throws {
         guard let client else { return }
-        do {
-            let fleet = try await client.fleet(messages: 50)
-            log.info("hydrated \(fleet.bots.count, privacy: .public) bots, \(fleet.groups.count, privacy: .public) rooms")
-            state.hydrate(fleet)
-        } catch let error as APIError where error.isUnauthorized {
-            status = .unauthorized
-        } catch {
-            status = .offline(error.localizedDescription)
-        }
+        let fleet = try await client.fleet(messages: 50)
+        log.info("hydrated \(fleet.bots.count, privacy: .public) bots, \(fleet.groups.count, privacy: .public) rooms")
+        state.hydrate(fleet)
     }
 
     // MARK: - Actions
@@ -298,8 +308,7 @@ final class Session: ObservableObject {
     /// about what was just permitted.
     func alwaysAllow(bot: Bot, card: OptionCard) async {
         guard let key = card.allowKey else { return }
-        let keys = Array(Set((bot.alwaysAllow ?? []) + [key]))
-        await perform { try await $0.alwaysAllow(botId: bot.id, keys: keys) }
+        await perform { try await $0.alwaysAllow(botId: bot.id, key: key) }
     }
 
     /// Make a new bot. The harness chooses its name, colour and greeting, so
@@ -374,6 +383,25 @@ enum Chat: Identifiable, Hashable {
         }
     }
 
+    static func == (left: Chat, right: Chat) -> Bool {
+        switch (left, right) {
+        case let (.bot(a), .bot(b)): return a.id == b.id
+        case let (.room(a), .room(b)): return a.id == b.id
+        default: return false
+        }
+    }
+
+    func hash(into hasher: inout Hasher) {
+        switch self {
+        case let .bot(bot):
+            hasher.combine(0)
+            hasher.combine(bot.id)
+        case let .room(room):
+            hasher.combine(1)
+            hasher.combine(room.id)
+        }
+    }
+
     var threadId: String {
         switch self {
         case let .bot(bot): return bot.threadId
@@ -445,7 +473,7 @@ extension CompanionState {
         let rooms = self.rooms.map(Chat.room)
         return (bots + rooms)
             .map { chat in
-                let last = transcript(forThread: chat.threadId).last
+                let last = visibleTranscript(forThread: chat.threadId).last
                 return ChatSummary(
                     chat: chat,
                     preview: Self.preview(of: last),

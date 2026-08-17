@@ -95,6 +95,51 @@ final class StoreTests: XCTestCase {
         XCTAssertNotNil(state.bot(bot.id)?.messages, "the merged bot keeps the transcript it had")
     }
 
+    func testATaskSwitchReplacesTheActiveTranscript() throws {
+        var state = try hydrated()
+        var bot = try XCTUnwrap(state.bots.first)
+        let previousThread = bot.threadId
+        state.apply(.message(threadId: previousThread, message: message("old-tail")))
+
+        bot.threadId = "another-task"
+        bot.messages = [message("new-root", text: "new task")]
+        bot.activeLeafId = "new-root"
+        state.apply(.bot(bot))
+
+        XCTAssertEqual(state.bot(bot.id)?.threadId, "another-task")
+        XCTAssertEqual(state.transcript(forThread: "another-task").map(\.id), ["new-root"])
+        XCTAssertFalse(state.transcript(forThread: "another-task").contains { $0.id == "old-tail" })
+    }
+
+    func testVisibleTranscriptFollowsTheActiveBranch() throws {
+        var state = try hydrated()
+        let bot = try XCTUnwrap(state.bots.first)
+        let root = message("root")
+        var first = message("first", at: 2)
+        first.parentId = root.id
+        var fork = message("fork", at: 3)
+        fork.parentId = root.id
+        var tail = message("tail", at: 4)
+        tail.parentId = fork.id
+        state.messages[bot.threadId] = [root, first, fork, tail]
+
+        state.apply(.thread(threadId: bot.threadId, activeLeafId: tail.id))
+        XCTAssertEqual(state.visibleTranscript(forThread: bot.threadId).map(\.id), ["root", "fork", "tail"])
+    }
+
+    func testMessageAppendMovesTheLeafAndBranchSwitchClearsLiveText() throws {
+        var state = try hydrated()
+        let bot = try XCTUnwrap(state.bots.first)
+        state.apply(.runtime(RuntimeEvent(
+            type: "content.delta", threadId: bot.threadId, delta: "old branch", streamKind: "assistant_text"
+        )))
+        state.apply(.thread(threadId: bot.threadId, activeLeafId: "other"))
+        XCTAssertNil(state.streaming[bot.threadId])
+
+        state.apply(.message(threadId: bot.threadId, message: message("latest")))
+        XCTAssertEqual(state.bot(bot.id)?.activeLeafId, "latest")
+    }
+
     func testDeletingABotTakesItsTranscriptWithIt() throws {
         var state = try hydrated()
         let bot = try XCTUnwrap(state.bots.first)
@@ -117,8 +162,10 @@ final class StoreTests: XCTestCase {
 
     // MARK: - Approvals
 
-    func testPendingApprovalsAreTheUnansweredOnesNewestFirst() {
-        var state = CompanionState()
+    func testPendingApprovalsAreTheUnansweredOnesNewestFirst() throws {
+        var state = try hydrated()
+        let firstThread = try XCTUnwrap(state.bots.first?.threadId)
+        let secondThread = try XCTUnwrap(state.rooms.first?.threadId)
         func card(_ id: String, at: Double, requestId: String?, answered: String? = nil) -> Message {
             var message = Message(id: id, role: .bot, kind: .options, at: at)
             message.card = OptionCard(
@@ -128,16 +175,16 @@ final class StoreTests: XCTestCase {
             )
             return message
         }
-        state.messages["t1"] = [
+        state.messages[firstThread] = [
             card("old", at: 1, requestId: "r1"),
             card("answered", at: 2, requestId: "r2", answered: "Allow"),
             card("history", at: 3, requestId: nil),
         ]
-        state.messages["t2"] = [card("new", at: 9, requestId: "r3")]
+        state.messages[secondThread] = [card("new", at: 9, requestId: "r3")]
 
         let pending = state.pendingApprovals
         XCTAssertEqual(pending.map(\.message.id), ["new", "old"])
-        XCTAssertEqual(pending.first?.threadId, "t2")
+        XCTAssertEqual(pending.first?.threadId, secondThread)
     }
 
     // MARK: - Cursor
@@ -145,6 +192,9 @@ final class StoreTests: XCTestCase {
     func testTheCursorFollowsTheStreamAndKeepsItsStreamId() {
         var state = CompanionState()
         state.apply(.hello(cursor: "abc12345:7", resumed: true))
+        XCTAssertNil(state.cursor, "hello is not committed before its replay or hydration")
+
+        state.resetCursor("abc12345:7")
         XCTAssertEqual(state.cursor, "abc12345:7")
 
         state.advance(to: 8)
@@ -179,6 +229,18 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(state.notifications.count, 2)
         XCTAssertTrue(state.notifications[0].isBlocking)
         XCTAssertFalse(state.notifications[1].isBlocking)
+    }
+
+    func testNotificationsKeepOnlyARecentWindow() {
+        var state = CompanionState()
+        for index in 0..<120 {
+            state.apply(.notify(NotificationFrame(
+                kind: "done", botId: "b1", botName: "Scout", threadId: "t1",
+                title: "Done \(index)", body: "body"
+            )))
+        }
+        XCTAssertEqual(state.notifications.count, 100)
+        XCTAssertEqual(state.notifications.first?.title, "Done 20")
     }
 
     // MARK: - Frames with nothing to fold

@@ -4,20 +4,20 @@ Your bots keep running on the laptop. This is the phone you watch them from,
 answer their approvals on, and send them the next thing.
 
 The laptop stays the only machine that owns agent processes, credentials,
-transcripts and computers. The phone owns nothing — it is a second client on the
-same harness the desktop app talks to, over the companion listener described in
+transcripts and computers. The phone owns nothing — it is a second client of the
+same harness the desktop app talks to, through the restricted sidecar described in
 [`docs/ios-companion.md`](../docs/ios-companion.md).
 
 ## Status
 
-Built, run, and verified on an iPhone against a real harness: Bonjour discovery,
-pairing, the roster, sending, and — the one that matters — an approval raised by
-a bot on the Mac, answered on the phone, with the bot carrying on.
+Built and verified against a real harness on both a simulator and an iPhone:
+Bonjour discovery, manual LAN and Tailscale pairing, the roster, paged chat,
+streaming replies, the computer view, and — the one that matters — an approval
+raised by a bot on the Mac, answered on the phone, with the bot carrying on.
 
-It was written in an environment with no Swift toolchain, so the first run on a
-Mac was also the first compile. Three bugs came out of that, all in the same few
-lines between "URLSession has bytes" and "the app has frames", and all invisible
-to the parser tests because the parser was never the thing that was wrong:
+The event stream deliberately reads raw bytes rather than
+`URLSession.AsyncBytes.lines`. Three easy-to-miss failure modes are covered by
+real `URLSession` tests:
 
 1. `timeoutInterval = .greatestFiniteMagnitude` — reads as "never time out",
    actually produces a request that opens and delivers nothing, because
@@ -29,9 +29,8 @@ to the parser tests because the parser was never the thing that was wrong:
    separator and therefore never reports the blank line that terminates an SSE
    event. Zero frames, no error, a healthy-looking connection at both ends.
 
-`EventStreamTests` exists to catch that class — it is the only test here that
-drives a real `URLSession`. [`TESTING.md`](TESTING.md) is the runbook, and its
-"If the phone sits on Connecting…" section is what actually isolated bug 3.
+`EventStreamTests` catches that class by driving a real `URLSession`.
+[`TESTING.md`](TESTING.md) is the end-to-end runbook.
 
 ## Layout
 
@@ -59,6 +58,8 @@ ios/
     PairingView.swift            find a computer, type the six digits
     ChatListView.swift           roster, with "waiting on you" pulled to the top
     ChatView.swift               transcript, approval cards, composer
+    ComputerView.swift           opt-in live view of a bot's computer
+    MarkdownText.swift           the supported Markdown presentation layer
     SettingsView.swift           status, and unpair
 ```
 
@@ -99,14 +100,16 @@ node scripts/capture-companion-fixtures.mjs   # from the repo root
 ```
 
 It boots a real harness against a throwaway home directory, drives the real
-pairing handshake over the real network socket, and writes down what came back.
+pairing handshake through the sidecar, and writes down what came back. The
+harness may use SQLite internally; the fixture records the public HTTP/SSE
+contract, which is the only storage surface the phone should know.
 Commit the diff — a change there is a change to the contract, and reviewing it
 is the point.
 
 ## What the phone may and may not do
 
-Enforced server-side by `remoteDenial()` in `server/index.ts`, and mirrored here
-by simply not having the methods:
+Enforced by the default-deny policy in `companion/src/routes.ts`, and mirrored
+here by simply not having the methods:
 
 | Allowed | Refused |
 |---|---|
@@ -116,17 +119,21 @@ by simply not having the methods:
 | Interrupt a bot, mark chats read | Reach `/api/internal/*` |
 | Fetch screen images on demand | Load the packaged desktop UI |
 
+Marking a chat read and remembering an approval use purpose-built server
+verbs. The sidecar does not expose the general bot or room `PATCH` routes,
+because those can also change execution policy, computers, connected apps, and
+working directories.
+
 Companion settings stay on the computer on purpose: losing the phone must not
 mean losing the ability to lock it out.
 
 ## Design notes
 
-- **Zero third-party dependencies.** SSE over `URLSession.bytes.lines` is a
-  page of code; Keychain, `NWBrowser` and notifications are all first-party.
+- **Zero third-party dependencies.** The raw-byte SSE reader, Keychain,
+  `NWBrowser`, and notifications are all first-party.
 - **Thin client.** The harness already folds provider events into settled
-  messages, so this listens to `message` / `message.patch` / `bot` and skips
-  `runtime` entirely. Token-by-token streaming is a later nicety, not a
-  prerequisite.
+  messages. The phone folds `message`, `message.patch`, and `bot` frames, plus
+  the small `runtime` delta subset needed to show a reply while it is typed.
 - **`screens=off`.** The harness would otherwise push a base64 desktop capture
   every few seconds to a device on cellular.
 - **Reconnect by cursor.** The stream is resumable: hold the `<streamId>:<seq>`
@@ -148,12 +155,13 @@ mean losing the ability to lock it out.
   which is the only thing that can insert the newline once Return is claimed.
   Software keyboards have no Shift+Return, so there `.onSubmit` sends.
 - **No affordance without a feature behind it.** The reference design this was
-  modelled on has a composer mic and a "+" for new chats; there is no dictation
-  here and creating bots belongs on the computer, so neither is drawn. Search
-  is real and filters the roster.
+  modelled on has a composer mic; there is no dictation here, so it is not
+  drawn. Search and the roster's "+" are real: the latter creates the same
+  basic bot the desktop endpoint creates, then opens it.
 
 ## Not in this version
 
-Foreground only, same network only. No push (the app must be open to hear
-anything), no Tailscale guidance yet, no token-by-token streaming, no computer
-panel, no voice. Those are phase 4 in the architecture doc.
+The app is foreground-only. There is no APNs delivery while it is closed, no
+voice/call mode, no task-management or SQLite transcript-search UI, and no
+hosted relay. Tailscale is supported through manual MagicDNS entry; it is not a
+dependency and OpenMausBot does not operate a cloud copy of local data.

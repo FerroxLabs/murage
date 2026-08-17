@@ -184,22 +184,9 @@ struct PairingView: View {
 
     /// "192.168.1.42:8810", or a bare host on the default companion port.
     static func parse(_ text: String) -> Connection? {
-        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        // people paste what they see, and what they see may be a URL
-        for prefix in ["http://", "https://"] where trimmed.hasPrefix(prefix) {
-            trimmed.removeFirst(prefix.count)
-        }
-        if trimmed.hasSuffix("/") { trimmed.removeLast() }
-        guard !trimmed.isEmpty else { return nil }
-
-        let parts = trimmed.split(separator: ":")
-        let host = String(parts[0])
-        guard !host.isEmpty, !host.contains("/") else { return nil }
         // 8810 is the companion's default. It is not 8800, which is the
         // harness's webhook receiver — a bare hostname sent there would get
         // a 404 from a server that is not this one.
-        let port = parts.count > 1 ? Int(parts[1]) : 8810
-        guard let port, (1...65535).contains(port) else { return nil }
-        return Connection(name: host, host: host, port: port)
+        Connection.parse(text)
     }
 }

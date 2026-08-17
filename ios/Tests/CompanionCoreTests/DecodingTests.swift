@@ -56,6 +56,24 @@ final class DecodingTests: XCTestCase {
         XCTAssertNil(fleet.bots.first?.hasMore)
     }
 
+    func testOneMalformedBotDoesNotHideTheRestOfTheFleet() throws {
+        let json = """
+        {
+          "bots": [
+            {"id":"broken","threadId":42},
+            {
+              "id":"good","threadId":"t1","name":"Scout","title":"","description":"",
+              "notifications":true,"color":"green","unread":false,
+              "modelSelection":{"instanceId":"i1","model":"m1"},"createdAt":1
+            }
+          ],
+          "groups": []
+        }
+        """
+        let fleet = try JSONDecoder().decode(Fleet.self, from: Data(json.utf8))
+        XCTAssertEqual(fleet.bots.map(\.id), ["good"])
+    }
+
     func testNeverDecodesProviderSessionCursors() throws {
         // resumeCursors is harness bookkeeping and must not be on the wire.
         // Asserted against the raw bytes, because a Swift type that simply
@@ -144,9 +162,13 @@ final class DecodingTests: XCTestCase {
 
     func testDecodesInstancesAndConfig() throws {
         let instances = try decode(InstanceList.self, "instances").instances
-        let ghost = try XCTUnwrap(instances.first)
-        XCTAssertFalse(ghost.snapshot.isAvailable)
-        XCTAssertNotNil(ghost.snapshot.reason)
+        // Availability is a property of the machine that captured the
+        // fixture, not of the wire contract. Pin the required identity and
+        // catalog shape without making a developer's installed CLIs decide
+        // whether this test passes.
+        let instance = try XCTUnwrap(instances.first)
+        XCTAssertFalse(instance.instanceId.isEmpty)
+        XCTAssertFalse(instance.driverKind.isEmpty)
 
         let config = try decode(ConfigStatus.self, "config")
         XCTAssertEqual(config.profile?.name, "Ada Lovelace")

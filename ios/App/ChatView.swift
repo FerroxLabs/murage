@@ -27,7 +27,7 @@ struct ChatView: View {
     static let liveBubbleId = "companion.live"
 
     private var messages: [Message] {
-        session.state.transcript(forThread: chat.threadId)
+        session.state.visibleTranscript(forThread: chat.threadId)
     }
 
     /// The live chat record, so busy/unread stay current as frames land.
@@ -40,6 +40,10 @@ struct ChatView: View {
     }
 
     var body: some View {
+        // Read the transcript once for this render. Pagination changes the
+        // array as a unit; repeatedly reaching through ObservableObject for
+        // every row only recomputes the same value.
+        let transcript = messages
         // A VStack with the composer as a sibling, rather than a scroll view
         // with `.safeAreaInset`. The inset version sized itself to its
         // content, so a short transcript left the composer floating in the
@@ -62,7 +66,7 @@ struct ChatView: View {
                                 // keep the reader where they were: after older
                                 // messages are prepended, sit back on the one
                                 // that used to be at the top
-                                let anchor = messages.first?.id
+                                let anchor = transcript.first?.id
                                 Task {
                                     await session.loadOlder(threadId: chat.threadId)
                                     if let anchor { proxy.scrollTo(anchor, anchor: .top) }
@@ -73,11 +77,11 @@ struct ChatView: View {
                             .padding(.vertical, 8)
                         }
 
-                        ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                        ForEach(Array(transcript.enumerated()), id: \.element.id) { index, message in
                             VStack(alignment: .leading, spacing: 12) {
                                 // a gap in time is worth marking; a timestamp
                                 // on every message is just noise
-                                if startsANewStretch(at: index) {
+                                if startsANewStretch(at: index, in: transcript) {
                                     Text(RelativeStamp.separator(message.date))
                                         .font(.system(size: 13))
                                         .foregroundStyle(Color.secondary)
@@ -113,8 +117,8 @@ struct ChatView: View {
                 // than the screen rests at the bottom, and opening a chat
                 // starts on the newest message rather than the oldest.
                 .defaultScrollAnchor(.bottom)
-                .onChange(of: messages.count) { _, _ in
-                    guard let last = messages.last else { return }
+                .onChange(of: transcript.last?.id) { _, _ in
+                    guard let last = transcript.last else { return }
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
                 // Follow the text as it arrives. Keyed on length rather than
@@ -180,11 +184,17 @@ struct ChatView: View {
             // opening a chat is what marks it read, exactly as on the desktop
             if current.unread { await session.markRead(current) }
         }
+        .onChange(of: current.unread) { _, unread in
+            // A message can arrive while this chat is already on screen. The
+            // initial task above will not run again, so clear that new unread
+            // bit here rather than leaving a badge on an open conversation.
+            if unread { Task { await session.markRead(current) } }
+        }
     }
 
     /// True when this message opens a fresh stretch of conversation — the
     /// first one, or one that follows a gap of half an hour or more.
-    private func startsANewStretch(at index: Int) -> Bool {
+    private func startsANewStretch(at index: Int, in messages: [Message]) -> Bool {
         guard index > 0 else { return true }
         return messages[index].at - messages[index - 1].at > 30 * 60 * 1000
     }
@@ -437,11 +447,11 @@ struct ScreenShot: View {
     let threadId: String
     let message: Message
     @EnvironmentObject private var session: Session
-    @State private var data: Data?
+    @State private var image: UIImage?
 
     var body: some View {
         Group {
-            if let data, let image = UIImage(data: data) {
+            if let image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
@@ -454,12 +464,16 @@ struct ScreenShot: View {
             }
         }
         .task {
-            guard data == nil else { return }
+            guard image == nil else { return }
+            let data: Data?
             if let inline = message.png, let decoded = Data(base64Encoded: inline) {
                 data = decoded
             } else if message.hasImage == true {
                 data = await session.image(threadId: threadId, messageId: message.id)
+            } else {
+                data = nil
             }
+            image = data.flatMap(UIImage.init(data:))
         }
     }
 }

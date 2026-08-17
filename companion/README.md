@@ -8,8 +8,10 @@ rejects any request whose `Host` is not loopback, defeating DNS rebinding.
 
 This is a separate process that sits in front of it. A paired device reaches
 *this*, over the LAN or a tailnet; this reaches the harness over loopback, as
-a request from the machine the harness already trusts. **The harness needs no
-changes and does not know this exists.**
+a request from the machine the harness already trusts. The harness keeps its
+loopback-only bind and gains only the paged/read/approval verbs the native
+client needs; pairing, device tokens, network exposure, and response scrubbing
+remain entirely in the sidecar.
 
 That is the entire point of the design. The alternative — teaching the harness
 to bind a second socket — means a patch to somebody else's request handler,
@@ -29,7 +31,7 @@ upstream hardened its loopback gate.
 |---|---|
 | **Pairing** | A six-digit code shown on the computer, valid two minutes, five attempts. Redeeming it returns a device token stored only as a SHA-256 digest. |
 | **Authorisation** | Every request needs that token. A rebinding page cannot obtain one. |
-| **The allowlist** | Default deny, per method and path (`src/routes.ts`) — the list is every request the app makes, and nothing else. A route that appears in the harness later is closed to devices until someone adds it here on purpose. |
+| **The allowlist** | Default deny, per method and path (`src/routes.ts`) — the list is every request the app makes, and nothing else. General bot/room PATCH routes stay closed; read state and approval grants use narrow verbs. A route that appears in the harness later is closed to devices until someone adds it here on purpose. |
 | **Scrubbing** | `resumeCursors` — the harness's own provider session ids — never reach a device, whether or not the harness still sends them. |
 | **Discovery** | Bonjour, so a phone finds the computer by name instead of by typed address. |
 
