@@ -45,7 +45,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
   const [saving, setSaving] = useState(false);
   const canPick = Boolean(window.ogb?.pickFolder);
   const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
-  const pinned = task?.cwd; // undefined = not yet, null = default, string = folder
+  const pinned = task?.cwd; // undefined = not yet, null = legacy home, string = folder
   const pinnedElsewhere = pinned !== undefined && (pinned ?? undefined) !== bot.cwd;
 
   const save = async (cwd: string | null) => {
@@ -72,7 +72,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
       {canPick ? (
         <div className="mt-3 flex items-center gap-2">
           <div className="min-w-0 flex-1 truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={bot.cwd}>
-            {bot.cwd ? shortPath(bot.cwd, home) : <span className="text-ink-secondary">Home folder</span>}
+            {bot.cwd ? shortPath(bot.cwd, home) : <span className="text-ink-secondary">Private bot workspace</span>}
           </div>
           <button onClick={() => void pick()} disabled={saving} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
             <FolderOpen size={14} /> Choose…
@@ -93,7 +93,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
         >
           <input
             className={cn(inputCls, "font-mono text-[12.5px]")}
-            placeholder="Home folder — or an absolute path"
+            placeholder="Private bot workspace — or an absolute path"
             value={draft ?? bot.cwd ?? ""}
             onChange={(e) => setDraft(e.target.value)}
           />
@@ -132,6 +132,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "voice"
         | "chiefOfStaff"
         | "approvePeerComms"
+        | "composio"
         | "modelSelection"
       >
     >,
@@ -140,6 +141,9 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
+  const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
+  const connectedAppsConfigured = state.config?.composio?.configured === true;
+  const connectedAppsEnabled = bot.composio !== false;
   const currentChief = state.bots.find((candidate) => candidate.chiefOfStaff);
 
   useEffect(() => {
@@ -343,6 +347,48 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 className={cn(
                   "absolute top-[3px] size-5 rounded-full bg-white transition-all",
                   bot.approvePeerComms ? "left-[21px]" : "left-[3px]",
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+            <div>
+              <div className="text-[15px] font-medium text-ink">Connected apps</div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                {!connectedAppsConfigured
+                  ? "Connect apps in App Settings before giving this bot access."
+                  : !canUseConnectedApps
+                    ? "This bot's current engine cannot use connected apps."
+                    : connectedAppsEnabled
+                      ? "Let this bot use your connected Gmail, Calendar, Slack, and other apps."
+                      : "Keep your connected apps unavailable to this bot."}
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={connectedAppsEnabled}
+              aria-label="Allow this bot to use connected apps"
+              disabled={
+                !connectedAppsEnabled && (!connectedAppsConfigured || !canUseConnectedApps)
+              }
+              onClick={() => patch({ composio: !connectedAppsEnabled })}
+              title={
+                !connectedAppsEnabled && !connectedAppsConfigured
+                  ? "Connect apps in App Settings first"
+                  : !connectedAppsEnabled && !canUseConnectedApps
+                    ? "This engine cannot use connected apps"
+                    : undefined
+              }
+              className={cn(
+                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                connectedAppsEnabled ? "bg-accent" : "bg-raised",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  connectedAppsEnabled ? "left-[21px]" : "left-[3px]",
                 )}
               />
             </button>

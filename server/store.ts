@@ -2,12 +2,14 @@
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
-import { readFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR } from "./config.ts";
+import * as mdb from "./message-db.ts";
+import { workspaceDir } from "./workspace.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
 
@@ -115,6 +117,10 @@ export interface TaskRecord {
   createdAt: number;
   /** provider-native continuation per instance, for THIS task only */
   resumeCursors: Record<string, unknown>;
+  /** cumulative token spend across this task's settled turns — providers
+   * report running totals per turn; the fold adds each turn's final total
+   * here when the turn completes. Informational, not billing. */
+  usage?: { input: number; output: number; turns: number };
   /** the folder this task's turns run in, pinned on its first turn from
    * the bot's `cwd` at that moment. Pinned, not read live: Claude keeps
    * sessions per project directory and Codex threads carry their cwd, so
@@ -181,6 +187,12 @@ export interface BotRecord {
    * delegate_bot). Off by default: a chief-of-staff-style bot is most
    * useful when it can coordinate without nagging. */
   approvePeerComms?: boolean;
+  /** Whether this bot may use the workspace's connected apps (Composio).
+   * Unset/true = allowed (the user configured the key deliberately);
+   * false = this bot never receives the connection. Imported team members
+   * start false — a shared persona must not reach the user's Gmail on
+   * turn one. */
+  composio?: boolean;
   busy?: boolean;
   createdAt: number;
 }
@@ -363,6 +375,17 @@ export class Store {
         },
       ];
     }
+    // Search reads SQLite directly, so migrate every known legacy transcript
+    // at startup rather than waiting until the user happens to open it. Only
+    // pending JSON files are touched; already-migrated threads stay lazy.
+    const knownThreads = new Set([
+      ...this.bots.flatMap((b) => [b.threadId, ...(b.tasks ?? []).map((task) => task.threadId)]),
+      ...this.groups.map((group) => group.threadId),
+    ]);
+    for (const threadId of knownThreads) {
+      const legacyFile = messagesFile(threadId);
+      if (existsSync(legacyFile)) mdb.readThread(threadId, legacyFile);
+    }
   }
 
   private saveBots() {
@@ -420,15 +443,23 @@ export class Store {
     return group;
   }
 
+  /** A thread's durable record: DB rows plus any legacy JSON leftovers. */
+  private deleteThreadRecord(threadId: string) {
+    this.threads.delete(threadId);
+    mdb.deleteThread(threadId);
+    for (const file of [messagesFile(threadId), `${messagesFile(threadId)}.imported`]) {
+      try {
+        unlinkSync(file);
+      } catch {}
+    }
+  }
+
   deleteGroup(id: string): boolean {
     const group = this.group(id);
     if (!group) return false;
     this.groups = this.groups.filter((g) => g.id !== id);
-    this.threads.delete(group.threadId);
     this.saveGroups();
-    try {
-      unlinkSync(messagesFile(group.threadId));
-    } catch {}
+    this.deleteThreadRecord(group.threadId);
     return true;
   }
 
@@ -445,18 +476,10 @@ export class Store {
   private thread(threadId: string): ThreadState {
     let t = this.threads.get(threadId);
     if (t) return t;
-    let messages: Message[] = [];
-    let activeLeafId: string | null = null;
-    try {
-      const raw = JSON.parse(readFileSync(messagesFile(threadId), "utf8"));
-      if (Array.isArray(raw)) messages = raw; // pre-branching flat file
-      else {
-        messages = raw.messages ?? [];
-        activeLeafId = raw.activeLeafId ?? null;
-      }
-    } catch {
-      /* fresh thread */
-    }
+    // SQLite is the source of truth; a thread with no rows imports its
+    // legacy messages-<threadId>.json once, inside readThread
+    const { messages, activeLeafId: storedLeaf } = mdb.readThread(threadId, messagesFile(threadId));
+    let activeLeafId = storedLeaf;
     // legacy rows carry no parentId — chain them in array order
     let prev: string | null = null;
     for (const m of messages) {
@@ -467,14 +490,6 @@ export class Store {
     t = { messages, activeLeafId };
     this.threads.set(threadId, t);
     return t;
-  }
-
-  private saveThread(threadId: string) {
-    const t = this.thread(threadId);
-    writeFileAtomic(
-      messagesFile(threadId),
-      JSON.stringify({ activeLeafId: t.activeLeafId, messages: t.messages }, null, 2),
-    );
   }
 
   messagesFor(threadId: string): Message[] {
@@ -503,24 +518,32 @@ export class Store {
     const full: Message = { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...message };
     t.messages.push(full);
     t.activeLeafId = full.id;
-    if (full.kind === "screen") this.pruneScreenFrames(t);
-    this.saveThread(threadId);
+    mdb.appendMessage(threadId, full);
+    if (full.kind === "screen") {
+      for (const pruned of this.pruneScreenFrames(t)) mdb.updateMessage(threadId, pruned);
+    }
     return full;
   }
 
-  /** Screen frames are ~100-500KB of base64 each and the whole thread file
-   * is rewritten on every append, so keeping every frame of a long
-   * computer session makes each later message slower than the last. The
-   * newest few keep their pixels; older ones stay in the transcript as
-   * placeholders. Mirrors the client's own frame cap. */
-  private pruneScreenFrames(t: { messages: Message[] }, keep = 4) {
+  /** Screen frames are ~100-500KB of base64 each; keeping every frame of a
+   * long computer session bloats the transcript for nothing the client
+   * would ever show. The newest few keep their pixels; older ones stay in
+   * the transcript as placeholders. Mirrors the client's own frame cap.
+   * Returns the messages whose pixels were dropped so the caller can
+   * persist exactly those. */
+  private pruneScreenFrames(t: { messages: Message[] }, keep = 4): Message[] {
+    const pruned: Message[] = [];
     let seen = 0;
     for (let i = t.messages.length - 1; i >= 0 && seen < t.messages.length; i--) {
       const m = t.messages[i];
       if (m.kind !== "screen" || !m.png) continue;
       seen += 1;
-      if (seen > keep) m.png = undefined;
+      if (seen > keep) {
+        m.png = undefined;
+        pruned.push(m);
+      }
     }
+    return pruned;
   }
 
   /** Fork the conversation: a new user message that replaces `sourceId`
@@ -539,7 +562,7 @@ export class Store {
     };
     t.messages.push(full);
     t.activeLeafId = full.id;
-    this.saveThread(threadId);
+    mdb.appendMessage(threadId, full);
     return full;
   }
 
@@ -555,7 +578,7 @@ export class Store {
       cur = children.reduce((a, b) => (b.at >= a.at ? b : a)).id;
     }
     t.activeLeafId = cur;
-    this.saveThread(threadId);
+    mdb.setActiveLeaf(threadId, cur);
     return cur;
   }
 
@@ -564,7 +587,7 @@ export class Store {
     const idx = t.messages.findIndex((m) => m.id === messageId);
     if (idx === -1) return null;
     t.messages[idx] = { ...t.messages[idx], ...patch, card: patch.card ?? t.messages[idx].card };
-    this.saveThread(threadId);
+    mdb.updateMessage(threadId, t.messages[idx]);
     return t.messages[idx];
   }
 
@@ -580,6 +603,11 @@ export class Store {
     profile: Partial<
       Pick<BotRecord, "name" | "title" | "description" | "color" | "mascotExpression" | "modelSelection">
     > = {},
+    opts: {
+      /** false = no greeting/onboarding seed. Imported bots must not open
+       * with a first-person greeting the user never asked for. */
+      seedMessages?: boolean;
+    } = {},
   ): BotRecord {
     const name = profile.name?.trim() || pickBotName(this.bots.map((b) => b.name));
     const bot: BotRecord = {
@@ -599,12 +627,14 @@ export class Store {
     bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {} }];
     this.bots.unshift(bot);
     this.saveBots();
-    this.appendMessage(bot.threadId, {
-      role: "bot",
-      kind: "text",
-      text: `Hey — I'm ${name}. Nice to meet you.`,
-    });
-    this.appendMessage(bot.threadId, { role: "bot", kind: "options", card: onboardingCard() });
+    if (opts.seedMessages !== false) {
+      this.appendMessage(bot.threadId, {
+        role: "bot",
+        kind: "text",
+        text: `Hey — I'm ${name}. Nice to meet you.`,
+      });
+      this.appendMessage(bot.threadId, { role: "bot", kind: "options", card: onboardingCard() });
+    }
     return bot;
   }
 
@@ -614,11 +644,13 @@ export class Store {
     this.bots = this.bots.filter((b) => b.id !== id);
     // every task's transcript goes with the bot, not just the open one
     for (const threadId of new Set([bot.threadId, ...(bot.tasks ?? []).map((t) => t.threadId)])) {
-      this.threads.delete(threadId);
-      try {
-        unlinkSync(messagesFile(threadId));
-      } catch {}
+      this.deleteThreadRecord(threadId);
     }
+    // the bot's workspace (files + memory) goes with it — same rule as its
+    // transcripts: deleting a bot deletes what it knew
+    try {
+      rmSync(workspaceDir(id), { recursive: true, force: true });
+    } catch {}
     this.saveBots();
     return true;
   }
@@ -669,12 +701,12 @@ export class Store {
    * current folder — unless the task already has a session (a thread from
    * before folders existed), which pins to the default so the folder can't
    * move under it. Returns the pinned value: a path, or null for default. */
-  pinTaskCwd(botId: string, threadId: string): string | null {
+  pinTaskCwd(botId: string, threadId: string, fallbackCwd?: string): string | null {
     const bot = this.bot(botId);
     const task = bot ? this.taskByThread(botId, threadId) : undefined;
     if (!bot || !task) return null;
     if (task.cwd === undefined) {
-      task.cwd = Object.keys(task.resumeCursors).length === 0 ? (bot.cwd ?? null) : null;
+      task.cwd = Object.keys(task.resumeCursors).length === 0 ? (bot.cwd ?? fallbackCwd ?? null) : null;
       this.saveBots();
     }
     return task.cwd;
@@ -738,6 +770,22 @@ export class Store {
     return task;
   }
 
+  /** Add one settled turn's final token totals to its task's tally. */
+  addTaskUsage(botId: string, threadId: string, usage: { input: number; output: number }): TaskRecord | null {
+    const task = this.taskByThread(botId, threadId);
+    if (!task) return null;
+    const prev = task.usage ?? { input: 0, output: 0, turns: 0 };
+    const input = Number.isFinite(usage.input) ? Math.max(0, Math.trunc(usage.input)) : 0;
+    const output = Number.isFinite(usage.output) ? Math.max(0, Math.trunc(usage.output)) : 0;
+    task.usage = {
+      input: prev.input + input,
+      output: prev.output + output,
+      turns: prev.turns + 1,
+    };
+    this.saveBots();
+    return task;
+  }
+
   /** Name a task after its first message, once. */
   titleTaskFromFirstMessage(botId: string, text: string, threadId?: string) {
     const task = threadId ? this.taskByThread(botId, threadId) : this.activeTask(botId);
@@ -752,10 +800,7 @@ export class Store {
     if (!bot || !bot.tasks || bot.tasks.length < 2) return null;
     if (!bot.tasks.some((t) => t.threadId === threadId)) return null;
     bot.tasks = bot.tasks.filter((t) => t.threadId !== threadId);
-    this.threads.delete(threadId);
-    try {
-      unlinkSync(messagesFile(threadId));
-    } catch {}
+    this.deleteThreadRecord(threadId);
     if (bot.threadId === threadId) {
       bot.threadId = bot.tasks[0]!.threadId;
       bot.resumeCursors = { ...bot.tasks[0]!.resumeCursors };
