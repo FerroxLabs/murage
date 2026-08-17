@@ -1,3 +1,4 @@
+import { parseJson, type JsonValue } from "./schema.ts";
 import { parseTeamManifest, type ParsedTeamManifest } from "./team-manifest.ts";
 
 export const TEAM_LIBRARY_REPOSITORY = "https://github.com/milind-soni/openmausbot-teams";
@@ -103,7 +104,7 @@ export function parseTeamCatalog(value: unknown): TeamCatalog {
   };
 }
 
-async function fetchJson(url: string, maxBytes: number, fetcher: Fetcher): Promise<unknown> {
+async function fetchJson(url: string, maxBytes: number, fetcher: Fetcher): Promise<JsonValue> {
   const response = await fetcher(url, {
     headers: { accept: "application/json, text/plain;q=0.9" },
     redirect: "error",
@@ -118,7 +119,7 @@ async function fetchJson(url: string, maxBytes: number, fetcher: Fetcher): Promi
   const raw = await response.text();
   if (Buffer.byteLength(raw) > maxBytes) throw new Error("The remote team file is too large");
   try {
-    return JSON.parse(raw);
+    return parseJson(raw);
   } catch {
     throw new Error("GitHub did not return valid JSON");
   }

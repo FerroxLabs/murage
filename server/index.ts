@@ -20,7 +20,16 @@ import {
   setupCommands,
   type LifecycleAction,
 } from "./container-computer.ts";
-import { ensureDirs, instanceConfigs, loadConfig, saveConfig, withInstanceCli, EVENTS_DIR, NATIVE_DIR, type AppConfig } from "./config.ts";
+import {
+  ensureDirs,
+  instanceConfigs,
+  loadConfig,
+  parseConfigPatch,
+  saveConfig,
+  withInstanceCli,
+  EVENTS_DIR,
+  NATIVE_DIR,
+} from "./config.ts";
 import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import { buildNotification, type Notification } from "./notify.ts";
@@ -2430,41 +2439,7 @@ const server = createServer(async (req, res) => {
     }
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
-      const rawComposio = body.composio;
-      if (
-        rawComposio !== undefined
-        && (rawComposio === null || typeof rawComposio !== "object" || Array.isArray(rawComposio))
-      ) {
-        return json(res, 400, { error: "composio must be an object" });
-      }
-      if (rawComposio) {
-        for (const field of ["apiKey"] as const) {
-          if (
-            Object.prototype.hasOwnProperty.call(rawComposio, field)
-            && typeof (rawComposio as Record<string, unknown>)[field] !== "string"
-          ) {
-            return json(res, 400, { error: `composio.${field} must be a string` });
-          }
-        }
-      }
-      const rawOpenCode = body.opencodeGo;
-      if (
-        rawOpenCode !== undefined
-        && (rawOpenCode === null || typeof rawOpenCode !== "object" || Array.isArray(rawOpenCode))
-      ) {
-        return json(res, 400, { error: "opencodeGo must be an object" });
-      }
-      if (
-        rawOpenCode
-        && Object.prototype.hasOwnProperty.call(rawOpenCode, "apiKey")
-        && typeof (rawOpenCode as { apiKey?: unknown }).apiKey !== "string"
-      ) {
-        return json(res, 400, { error: "opencodeGo.apiKey must be a string" });
-      }
-      const patch: Record<string, object> = {};
-      for (const key of ["xai", "composio", "box", "opencodeGo", "tts", "profile"] as const) {
-        if (body[key] && typeof body[key] === "object") patch[key] = body[key];
-      }
+      const patch = parseConfigPatch(body);
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
       providerConfigBusy = true;
@@ -2472,8 +2447,8 @@ const server = createServer(async (req, res) => {
       // A project key is useful only if it can create/reuse the Session that
       // powers both the connections UI and the agent MCP. Validate it before
       // persisting, and save the non-secret ids needed to reuse that Session.
-      const requestedComposioKey = (patch.composio as { apiKey?: unknown } | undefined)?.apiKey;
-      if (typeof requestedComposioKey === "string") {
+      const requestedComposioKey = patch.composio?.apiKey;
+      if (requestedComposioKey !== undefined) {
         if (requestedComposioKey.trim()) {
           try {
             const prepared = await composio.prepareProjectSession(requestedComposioKey, cfg.composio);
@@ -2488,16 +2463,16 @@ const server = createServer(async (req, res) => {
       // check a box token against the provider before storing it: a
       // rejected token used to save happily and only surface as a 401 in
       // another panel later, with nothing the user could act on
-      const newBoxToken = (patch.box as { token?: unknown } | undefined)?.token;
-      if (typeof newBoxToken === "string" && newBoxToken.trim()) {
+      const newBoxToken = patch.box?.token;
+      if (newBoxToken?.trim()) {
         const check = await box.verifyToken(newBoxToken.trim());
         if (!check.ok) return json(res, 400, { error: check.message });
       }
       // same rule for a voice key — and check it against the provider the
       // patch SELECTS, not the one already saved, or pasting a Cartesia key
       // while switching from ElevenLabs validates against the wrong service
-      const newTts = patch.tts as { key?: unknown } | undefined;
-      if (typeof newTts?.key === "string" && newTts.key.trim()) {
+      const newTts = patch.tts;
+      if (newTts?.key?.trim()) {
         const check = await tts.verifyKey(newTts.key.trim());
         if (!check.ok) return json(res, 400, { error: check.message });
       }
@@ -2506,11 +2481,11 @@ const server = createServer(async (req, res) => {
         // Electron stores the project key with OS-backed encryption. Persist
         // only the non-secret Session ids here, while keeping the supplied
         // key live in this process until the next launch injects it by env.
-        const composioPatch = patch.composio as NonNullable<AppConfig["composio"]>;
+        const composioPatch = patch.composio;
         const { apiKey: _secret, ...metadata } = composioPatch;
         saveConfig({ composio: { ...metadata, apiKey: "" } });
         cfg.composio = { ...cfg.composio, ...composioPatch };
-        if (typeof composioPatch.apiKey === "string") process.env.COMPOSIO_API_KEY = composioPatch.apiKey;
+        if (composioPatch.apiKey !== undefined) process.env.COMPOSIO_API_KEY = composioPatch.apiKey;
       } else {
         saveConfig(patch);
         Object.assign(cfg, loadConfig());

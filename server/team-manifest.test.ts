@@ -128,6 +128,37 @@ describe("team manifests", () => {
     ).toThrow("Unknown default responder");
   });
 
+  it("rejects duplicate member keys and malformed appearance data", () => {
+    const member = {
+      key: "analyst",
+      name: "Ada",
+      appearance: { color: "green" },
+    };
+    const room = {
+      name: "Research",
+      bulletin: "",
+      defaultResponder: { kind: "everyone" },
+    };
+    expect(() =>
+      parseTeamManifest({
+        format: "openmaus.team",
+        version: 1,
+        team: { name: "Research", members: [member, member], room },
+      }),
+    ).toThrow("Duplicate member key");
+    expect(() =>
+      parseTeamManifest({
+        format: "openmaus.team",
+        version: 1,
+        team: {
+          name: "Research",
+          members: [{ ...member, appearance: { color: 42 } }],
+          room,
+        },
+      }),
+    ).toThrow("appearance.color");
+  });
+
   it("refuses to export values that the importer would reject", () => {
     expect(() =>
       createTeamManifest(
