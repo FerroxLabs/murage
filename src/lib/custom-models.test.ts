@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { filterCustomModels, partitionCustomModels } from "./custom-models";
+import { filterCustomModels, partitionCustomModels, suggestedModels } from "./custom-models";
 
 const rows = [
   { id: "omlx::gemma-4-31b-it-bf16", label: "gemma-4-31b-it-bf16 (oMLX)", loaded: true },
@@ -36,5 +36,17 @@ describe("partitionCustomModels", () => {
       pinned: [],
       rest: [rows[1], rows[2]],
     });
+  });
+});
+
+describe("suggestedModels", () => {
+  it("pins the active and default models before filling from catalog order", () => {
+    const options = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id }));
+    expect(suggestedModels(options, "b", "f", 4).map((option) => option.id)).toEqual(["f", "b", "a", "c"]);
+  });
+
+  it("does not duplicate a current default", () => {
+    const options = ["a", "b", "c"].map((id) => ({ id }));
+    expect(suggestedModels(options, "b", "b", 3).map((option) => option.id)).toEqual(["b", "a", "c"]);
   });
 });

@@ -1,30 +1,19 @@
-// Setup UI for an engine that isn't ready — shared by onboarding, the model
-// picker, and the chat's "engine missing" card so all three say the same
-// thing from the same data.
-//
-// Everything here is driven by the driver-declared install descriptor
-// (server/contracts.ts EngineInstall), never by per-engine copy in the UI.
-// An engine with no command for this platform shows its docs link instead of
-// an instruction that cannot run there.
-//
-// Installing is only half the job: most CLIs then need an interactive
-// sign-in, which is why the terminal is the destination rather than a
-// background `npm install` the user never sees.
-import { useState, type ReactNode } from "react";
-import { Check, Copy, ExternalLink, TerminalSquare } from "lucide-react";
+// A focused setup card shared by onboarding, the model picker, and runtime
+// errors. The command has one inline copy action and one primary next step;
+// unusable model lists stay out of the way until the engine is ready.
+import { useState } from "react";
+import { Check, Copy, Download, ExternalLink, LogIn, TerminalSquare } from "lucide-react";
 import type { EngineInstall, InstanceInfo } from "@/state/store";
 import { cn } from "@/lib/cn";
 
 type Platform = "darwin" | "win32" | "linux";
 
 function hostPlatform(): Platform {
-  const p = window.ogb?.platform;
-  if (p === "darwin" || p === "win32" || p === "linux") return p;
-  // browser/dev shell — guess from the UA so the copy button still offers
-  // something sensible, since there's no bridge to ask
-  const ua = navigator.userAgent;
-  if (ua.includes("Mac")) return "darwin";
-  if (ua.includes("Win")) return "win32";
+  const platform = window.ogb?.platform;
+  if (platform === "darwin" || platform === "win32" || platform === "linux") return platform;
+  const userAgent = navigator.userAgent;
+  if (userAgent.includes("Mac")) return "darwin";
+  if (userAgent.includes("Win")) return "win32";
   return "linux";
 }
 
@@ -34,81 +23,84 @@ export function installCommandFor(install: EngineInstall | undefined): string | 
   return install?.command?.[hostPlatform()] ?? null;
 }
 
-/** True when the engine is installed but not yet signed in — the state that
- * looks ready in the picker but still can't answer a message. */
+/** Installed but missing the cloud account session. */
 export function needsSignIn(instance: InstanceInfo | undefined): boolean {
   return instance?.snapshot.state === "available" && instance.snapshot.authenticated === false;
 }
 
-/** True when this machine does not have the agent CLI — Custom inject
- * cannot run until the user installs it. A missing cloud login is not this. */
+/** The agent CLI itself is absent. Local-model injection needs the CLI but
+ * does not need its cloud account to be signed in. */
 export function needsCli(instance: InstanceInfo | undefined): boolean {
   return instance?.snapshot.state !== "available";
 }
 
-function CommandRow({
-  command,
-  trailing,
-  iconCopy = false,
-}: {
-  command: string;
-  trailing?: ReactNode;
-  /** Copy as an icon-only button — for rows where a text label would push
-   * the trailing content off the edge. */
-  iconCopy?: boolean;
-}) {
-  const [done, setDone] = useState<"copied" | "opened" | null>(null);
+function CommandRow({ command, actionLabel }: { command: string; actionLabel: string }) {
+  const [status, setStatus] = useState<"copied" | "opened" | null>(null);
   const canOpen = Boolean(window.ogb?.openInstallTerminal);
+
+  const settle = (next: "copied" | "opened") => {
+    setStatus(next);
+    window.setTimeout(() => setStatus(null), 2200);
+  };
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(command);
-      setDone("copied");
-      setTimeout(() => setDone(null), 2000);
+      settle("copied");
     } catch {
-      /* clipboard blocked — the command is on screen to select by hand */
+      // The command remains selectable when clipboard access is blocked.
     }
   };
 
   const openTerminal = async () => {
-    // the bridge copies to the clipboard too, so a failed launch still
-    // leaves the user able to paste
-    const ok = await window.ogb!.openInstallTerminal!(command);
-    setDone(ok ? "opened" : "copied");
-    setTimeout(() => setDone(null), 2500);
+    const opened = await window.ogb!.openInstallTerminal!(command);
+    settle(opened ? "opened" : "copied");
   };
 
   return (
-    <div className="mt-2 flex flex-col gap-1.5">
-      <code className="block overflow-x-auto whitespace-nowrap rounded-md bg-app px-2 py-1.5 font-mono text-[11.5px] leading-relaxed text-ink [scrollbar-width:none]">
-        {command}
-      </code>
-      <div className="flex items-center gap-1">
+    <div className="mt-3">
+      <div className="flex min-w-0 items-center gap-2 rounded-lg border border-hairline/50 bg-app px-2.5 py-2">
+        <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-secondary" title={command}>
+          {command}
+        </code>
         {canOpen && (
           <button
-            onClick={openTerminal}
-            title="Copies the command and opens a terminal"
-            className="flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-accent px-2 text-[11.5px] font-medium text-white hover:bg-accent-border"
+            type="button"
+            onClick={() => void copy()}
+            aria-label="Copy command"
+            title="Copy command"
+            className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11.5px] font-medium text-ink-secondary hover:bg-raised hover:text-ink"
           >
-            <TerminalSquare size={12} /> Open Terminal
+            {status === "copied" ? <Check size={12} className="text-success" /> : <Copy size={12} />}
+            {status === "copied" ? "Copied" : "Copy"}
           </button>
         )}
-        <button
-          onClick={copy}
-          title={iconCopy ? (done ? "Copied" : "Copy command") : undefined}
-          className={cn(
-            "flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md text-[11.5px]",
-            iconCopy && canOpen ? "w-6 justify-center" : "px-2",
-            canOpen
-              ? "text-ink-secondary hover:bg-raised hover:text-ink"
-              : "bg-raised font-medium text-ink hover:bg-raised-hover",
-          )}
-        >
-          {done ? <Check size={12} className="text-success" /> : <Copy size={12} />}
-          {(!iconCopy || !canOpen) && (done ? "Copied" : "Copy")}
-        </button>
-        {trailing && <span className="ml-auto flex items-center">{trailing}</span>}
       </div>
+
+      {canOpen ? (
+        <>
+          <button
+            type="button"
+            onClick={() => void openTerminal()}
+            className="mt-2 flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-3 py-2 text-[12.5px] font-semibold text-white hover:brightness-110"
+          >
+            {status === "opened" ? <Check size={14} /> : <TerminalSquare size={14} />}
+            {status === "opened" ? "Terminal opened" : actionLabel}
+          </button>
+          <p aria-live="polite" className="mt-1.5 text-center text-[11px] text-ink-secondary/70">
+            {status === "opened" ? "Paste the command and press Enter." : "The command is copied when Terminal opens."}
+          </p>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-raised px-3 py-2 text-[12.5px] font-semibold text-ink hover:bg-raised-hover"
+        >
+          {status === "copied" ? <Check size={14} className="text-success" /> : <Copy size={14} />}
+          {status === "copied" ? "Command copied" : "Copy command"}
+        </button>
+      )}
     </div>
   );
 }
@@ -116,116 +108,72 @@ function CommandRow({
 export function EngineSetup({
   instance,
   className,
-  compact = false,
   intent = "cloud",
 }: {
   instance: InstanceInfo;
   className?: string;
-  /** Tight variant for the model picker: no explanatory sentence (the
-   * picker header already states the problem), docs link inline with the
-   * actions, and the sign-in / Node caveats collapsed into one small line. */
-  compact?: boolean;
-  /** `inject` is the Custom-pane path: install the CLI, skip cloud sign-in. */
+  /** `inject` installs the CLI but deliberately skips cloud sign-in. */
   intent?: "cloud" | "inject";
 }) {
   const install = instance.install;
-  const command = installCommandFor(install);
-  const signIn = install?.signInCommand;
+  const installCommand = installCommandFor(install);
+  const signInCommand = install?.signInCommand;
   const signInOnly = intent === "cloud" && needsSignIn(instance);
+  const command = signInOnly ? signInCommand : installCommand;
+  const title = signInOnly ? `Sign in to ${instance.displayName}` : `Install ${instance.displayName}`;
+  const description = signInOnly
+    ? "Finish the account sign-in in Terminal. Reopen this menu afterward and we’ll check again."
+    : intent === "inject"
+      ? "Install the agent once, then you can run it with local models—no cloud sign-in required."
+      : `Install the command-line app once. Models will appear here as soon as it’s ready${signInCommand ? "; sign-in may follow" : ""}.`;
 
-  // No install descriptor at all means this isn't something you install —
-  // the Box cloud runner is configured with a token in settings, not a CLI.
-  // Claiming it "isn't installed" would send the user hunting for a package
-  // that doesn't exist, so defer to whatever the driver reported instead.
+  // Some engines are configured elsewhere (for example, a cloud computer
+  // token) and intentionally have no install descriptor.
   if (!install) {
     return (
-      <div className={cn("text-[12.5px] leading-relaxed text-ink-secondary", className)}>
-        {instance.snapshot.reason ?? "Not available on this machine."}
-      </div>
-    );
-  }
-
-  if (compact) {
-    const guide = install.docsUrl ? (
-      <a
-        href={install.docsUrl}
-        target="_blank"
-        rel="noreferrer"
-        className="flex items-center gap-1 whitespace-nowrap pl-1 pr-2 text-[11.5px] text-ink-secondary hover:text-ink"
-      >
-        Setup guide <ExternalLink size={11} />
-      </a>
-    ) : undefined;
-    const hints: string[] = [];
-    if (intent === "cloud" && !signInOnly && signIn) hints.push(`then \`${signIn}\` to sign in`);
-    if (!signInOnly && install.needsNode) hints.push("needs Node.js");
-    const shown = signInOnly ? signIn : command;
-    return (
-      <div className={cn("text-[12px] leading-relaxed text-ink-secondary", className)}>
-        {shown ? (
-          <CommandRow command={shown} trailing={guide} iconCopy />
-        ) : (
-          <div className="mt-2 flex items-center justify-between gap-2 pl-2">
-            <span className="text-[11.5px]">
-              {signInOnly
-                ? "Sign in through the provider, then reopen this menu."
-                : "No one-line installer for this platform."}
-            </span>
-            {guide}
-          </div>
-        )}
-        {hints.length > 0 && (
-          <p className="mt-1.5 px-2 text-[11px] text-ink-secondary/70">
-            {hints.join(" · ").replace(/^./, (c) => c.toUpperCase())}
-          </p>
-        )}
+      <div className={cn("rounded-xl border border-hairline/40 bg-raised/30 p-3", className)}>
+        <div className="text-[13px] font-semibold text-ink">{instance.displayName} isn’t ready</div>
+        <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
+          {instance.snapshot.reason ?? "This engine is not available on this machine."}
+        </p>
       </div>
     );
   }
 
   return (
-    <div className={cn("text-[12.5px] leading-relaxed text-ink-secondary", className)}>
-      {signInOnly ? (
-        <>
-          <p>
-            {instance.displayName} is installed but not signed in yet. Run this once, then come back.
-          </p>
-          {signIn && <CommandRow command={signIn} />}
-        </>
+    <div className={cn("rounded-xl border border-hairline/40 bg-raised/30 p-3", className)}>
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-inset text-ink-secondary">
+          {signInOnly ? <LogIn size={14} /> : <Download size={14} />}
+        </span>
+        <div className="min-w-0">
+          <div className="text-[13px] font-semibold text-ink">{title}</div>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{description}</p>
+        </div>
+      </div>
+
+      {command ? (
+        <CommandRow command={command} actionLabel={signInOnly ? "Open sign-in in Terminal" : "Open install in Terminal"} />
       ) : (
-        <>
-          {command ? (
-            <>
-              <p>
-                {intent === "inject"
-                  ? `${instance.displayName} isn’t installed. Install the CLI first — then you can inject a local model into it.`
-                  : `${instance.displayName} isn’t installed. Run this in a terminal${signIn ? `, then \`${signIn}\` to sign in` : ""}.`}
-              </p>
-              <CommandRow command={command} />
-              {install?.needsNode && (
-                <p className="mt-1.5 text-[11.5px] text-ink-secondary/70">
-                  Needs Node.js — install it first if <code className="font-mono">npm</code> isn&rsquo;t
-                  found.
-                </p>
-              )}
-            </>
-          ) : (
-            <p>
-              {instance.displayName} isn&rsquo;t installed, and has no one-line installer for this
-              platform.
-            </p>
-          )}
-        </>
+        <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">
+          There isn’t a one-line installer for this platform. Use the setup guide below.
+        </p>
       )}
 
-      {install?.docsUrl && (
+      {!signInOnly && install.needsNode && (
+        <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary/70">
+          Requires Node.js and <code className="font-mono">npm</code>.
+        </p>
+      )}
+
+      {install.docsUrl && (
         <a
           href={install.docsUrl}
           target="_blank"
           rel="noreferrer"
-          className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] text-accent hover:underline"
+          className="mt-2.5 inline-flex items-center gap-1.5 text-[12px] font-medium text-accent hover:underline"
         >
-          <ExternalLink size={12} /> Setup guide
+          <ExternalLink size={12} /> View setup guide
         </a>
       )}
     </div>
