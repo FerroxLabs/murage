@@ -208,9 +208,36 @@ async function main() {
   const hello = frames.find((f) => f.kind === "hello");
   if (hello) write("sse-hello", hello);
 
+  // ── a room, so the paged fleet has a group in it ───────────────────────
+  //
+  // Created directly on the harness: room creation is deliberately not on
+  // the sidecar's allowlist, so this is setup the phone cannot perform —
+  // like the harness boot itself. Everything after it goes back through the
+  // sidecar. Five messages, so a capture capped at three below has a page
+  // boundary to show: the decoding test pins messages == 3 and
+  // hasMore == true, and this is what makes those numbers deterministic
+  // rather than an accident of whichever harness the fixtures were last
+  // captured against.
+  const madeRoom = await json(`${HARNESS}/api/groups`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Fixtures", memberIds: [bot.id] }),
+  });
+  const room = madeRoom.body.group;
+  if (!room) throw new Error(`could not create a room: ${JSON.stringify(madeRoom.body)}`);
+  for (let i = 0; i < 5; i++) {
+    await fetch(`${SIDECAR}/api/groups/${room.id}/messages`, asDevice({
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: `room fixture message ${i}` }),
+    }));
+    await sleep(120);
+  }
+
   // ── the shapes the app hydrates from ───────────────────────────────────
+  // messages=3 pairs with the five room messages above; see the room comment.
   write("bots-full", (await json(`${SIDECAR}/api/bots`, asDevice())).body);
-  write("bots-paged", (await json(`${SIDECAR}/api/bots?messages=2`, asDevice())).body);
+  write("bots-paged", (await json(`${SIDECAR}/api/bots?messages=3`, asDevice())).body);
   write(
     "thread-page",
     (await json(`${SIDECAR}/api/threads/${bot.threadId}/messages?limit=2`, asDevice())).body,
