@@ -16,7 +16,9 @@
 // anything broken.
 import { createHash } from "node:crypto";
 import { createSocket, type Socket } from "node:dgram";
-import { hostname, networkInterfaces } from "node:os";
+import { hostname } from "node:os";
+
+import { lanAddresses } from "./listener.ts";
 
 const MDNS_ADDRESS = "224.0.0.251";
 const MDNS_PORT = 5353;
@@ -328,17 +330,17 @@ export function defaultHostName(machine = hostname()): string {
   return `openmausbot-${digest}.local`;
 }
 
-/** Every IPv4 address worth publishing (same rule as the listener's). */
+/**
+ * Every IPv4 address worth publishing.
+ *
+ * This is `lanAddresses()` under a name that says why mDNS wants it. It used
+ * to be a second copy of the same filter, which is the kind of duplication
+ * that stays correct right up until one side learns about a new interface
+ * type and the other does not — and the failure then is a phone that
+ * discovers the computer but cannot reach it.
+ */
 export function advertisableAddresses(): string[] {
-  const out: string[] = [];
-  for (const entries of Object.values(networkInterfaces())) {
-    for (const entry of entries ?? []) {
-      if (entry.family !== "IPv4" || entry.internal) continue;
-      if (entry.address.startsWith("169.254.")) continue;
-      out.push(entry.address);
-    }
-  }
-  return out;
+  return lanAddresses();
 }
 
 // ── the responder ──────────────────────────────────────────────────────
