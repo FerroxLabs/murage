@@ -155,4 +155,40 @@ describe("bearerToken", () => {
     expect(bearerToken("Basic omb_abc")).toBeUndefined();
     expect(bearerToken(undefined)).toBeUndefined();
   });
+
+  it("treats the scheme as case-insensitive, per RFC 7235", () => {
+    // The proxy's own parser always accepted these. This one did not, so a
+    // header authenticated or failed depending on which code path met it.
+    expect(bearerToken("bearer omb_abc")).toBe("omb_abc");
+    expect(bearerToken("BEARER omb_abc")).toBe("omb_abc");
+    expect(bearerToken("BeArEr omb_abc")).toBe("omb_abc");
+    // still not a free-for-all
+    expect(bearerToken("beareromb_abc")).toBeUndefined();
+    expect(bearerToken("Bearer   ")).toBeUndefined();
+  });
+});
+
+describe("a pairing that cannot be saved", () => {
+  // Same throwaway state as the suite above — a registry built on a leftover
+  // devices.json would start with a device already in it.
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  it("is not left live in memory", () => {
+    const registry = new DeviceRegistry();
+    (registry as unknown as { persist: () => void }).persist = () => {
+      throw new Error("EROFS: read-only file system");
+    };
+
+    const { code } = registry.openPairing();
+    const result = registry.redeem(code, "iPhone");
+
+    // A device kept in memory but never written is paired until the next
+    // restart and then silently is not — the phone holds a token that stops
+    // working with nothing to explain it. Fail the pairing instead.
+    expect("error" in result).toBe(true);
+    expect(registry.count()).toBe(0);
+    expect(registry.list()).toEqual([]);
+  });
 });

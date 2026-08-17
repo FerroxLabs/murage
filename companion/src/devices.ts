@@ -47,6 +47,7 @@ export const MAX_DEVICES = 20;
 /** lastSeen is a UI nicety, not an audit log — don't write on every request. */
 const LAST_SEEN_WRITE_MS = 60_000;
 
+/** Hex digest. Tokens live on disk as one of these and never in the clear. */
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Constant-time compare of two hex digests of the same length. A plain ===
@@ -98,15 +99,19 @@ export class DeviceRegistry {
     }
   }
 
+  /** Write the registry to disk, atomically. Throws — callers decide whether
+   * the failure is worth surfacing; see redeem() and authenticate(). */
   private persist() {
     ensureDataDir();
     writeFileAtomic(DEVICES_FILE, JSON.stringify({ devices: this.devices }, null, 2));
   }
 
+  /** Every paired device, minus the token digests. Safe for a UI. */
   list(): PublicDevice[] {
     return this.devices.map(({ tokenHash, ...rest }) => rest);
   }
 
+  /** How many devices are paired, for the MAX_DEVICES ceiling. */
   count(): number {
     return this.devices.length;
   }
@@ -118,6 +123,7 @@ export class DeviceRegistry {
     return this.window;
   }
 
+  /** Open a six-digit window, replacing any window already open. */
   openPairing(): PairingWindow {
     this.window = {
       code: String(randomInt(0, 1_000_000)).padStart(6, "0"),
@@ -127,6 +133,7 @@ export class DeviceRegistry {
     return this.window;
   }
 
+  /** Close the pairing window. Idempotent, and always safe to call. */
   closePairing() {
     this.window = null;
   }
@@ -160,7 +167,17 @@ export class DeviceRegistry {
       lastSeenAt: Date.now(),
     };
     this.devices.push(device);
-    this.persist();
+    // Unlike the lastSeenAt write, this one must not be swallowed. A device
+    // that lives in memory but not on disk is paired until the next restart
+    // and then silently is not — the phone keeps a token that stops working
+    // for no reason it can show. Roll the registration back and say so, so
+    // the user retries now rather than discovering it days later.
+    try {
+      this.persist();
+    } catch (e) {
+      this.devices.pop();
+      return { error: `could not save the pairing: ${(e as Error).message}` };
+    }
     const { tokenHash, ...pub } = device;
     return { device: pub, token };
   }
@@ -189,6 +206,8 @@ export class DeviceRegistry {
     return device;
   }
 
+  /** Forget a device. False when the id matched nothing, so a caller can
+   * answer 404 rather than pretending it removed something. */
   revoke(id: string): boolean {
     const before = this.devices.length;
     this.devices = this.devices.filter((d) => d.id !== id);
@@ -199,9 +218,17 @@ export class DeviceRegistry {
   }
 }
 
-/** Pull the bearer token out of an Authorization header. */
+/**
+ * Pull the bearer token out of an Authorization header.
+ *
+ * The scheme is matched case-insensitively because RFC 7235 §2.1 says it is
+ * case-insensitive, and a client that sends `bearer ` is not wrong. This used
+ * to require the exact casing, which meant the sidecar had two parsers that
+ * disagreed — the proxy's accepted `bearer `, this one did not — and which of
+ * them a request met decided whether it authenticated.
+ */
 export function bearerToken(header: string | undefined): string | undefined {
   if (!header) return undefined;
-  const match = /^Bearer (.+)$/.exec(header.trim());
-  return match ? match[1].trim() : undefined;
+  const match = /^Bearer[ \t]+(.+)$/i.exec(header.trim());
+  return match ? match[1].trim() || undefined : undefined;
 }
