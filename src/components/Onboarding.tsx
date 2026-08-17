@@ -96,7 +96,11 @@ function SetupRow(entry: EngineEntry) {
       title={engineTitle(entry)}
       mark={<ProviderMark driverKind={entry.instance.driverKind} size={16} />}
     >
-      <EngineSetup instance={entry.instance} className="mt-0.5" />
+      <EngineSetup
+        instance={entry.instance}
+        className="mt-0.5"
+        intent={entry.instance.access === "custom" ? "inject" : "cloud"}
+      />
     </StatusRow>
   );
 }
