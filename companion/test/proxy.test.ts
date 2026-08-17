@@ -18,13 +18,24 @@ import { createProxyHandler } from "../src/proxy.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
 
-/** Ports nothing is listening on, picked by the kernel rather than by dice.
+/** Ports nothing is listening on.
  *
- * These were random in a 3000-wide range, which collides with whatever else
- * the machine happens to be running — and the collision surfaces as this
- * suite failing, which reads as a bug in the code under test rather than as
- * bad luck. `span` reserves that many consecutive ports: booting the harness
- * needs two, because it opens a webhook receiver one above itself. */
+ * Two requirements here pull against each other. The port has to be
+ * *verified* free — picking at random and hoping fails whenever something
+ * else is on it, and the failure reads as a bug in the code under test rather
+ * than as bad luck. And it must not come from the operating system's own
+ * ephemeral range, because a port the kernel hands out is a port the kernel
+ * hands out again: anything opening an outbound socket between this probe
+ * closing and the harness binding can take it.
+ *
+ * `listen(0)` — the obvious way to ask for a free port — gives exactly the
+ * wrong half of that. It lands at 49152+ on macOS and Windows, which is that
+ * churn, and it turned a rare collision into a reliable one. Only Linux
+ * survived, its range starting higher up and quieter.
+ *
+ * So: candidates from a fixed range below every platform's dynamic range,
+ * each verified by binding it, retried when taken. `span` reserves that many
+ * consecutive ports — the harness opens a webhook receiver one above itself. */
 const freePorts = async (span = 1): Promise<number> => {
   const hold = (port: number): Promise<Server> =>
     new Promise((resolve, reject) => {
@@ -33,19 +44,20 @@ const freePorts = async (span = 1): Promise<number> => {
       server.listen(port, "127.0.0.1", () => resolve(server));
     });
 
-  for (let attempt = 0; attempt < 25; attempt++) {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const candidate = 20_000 + Math.floor(Math.random() * 9_000);
     const held: Server[] = [];
-    let base = 0;
-    try {
-      const first = await hold(0);
-      held.push(first);
-      base = (first.address() as { port: number }).port;
-      for (let i = 1; i < span; i++) held.push(await hold(base + i));
-    } catch {
-      base = 0; // a neighbour was taken — try somewhere else
+    let free = true;
+    for (let i = 0; i < span; i++) {
+      try {
+        held.push(await hold(candidate + i));
+      } catch {
+        free = false; // taken — somewhere else, then
+        break;
+      }
     }
     for (const server of held) await new Promise<void>((r) => server.close(() => r()));
-    if (base) return base;
+    if (free) return candidate;
   }
   throw new Error(`could not find ${span} free consecutive ports`);
 };
@@ -126,10 +138,16 @@ beforeAll(async () => {
   });
   harness.stderr!.on("data", (c) => (stderr += c));
 
-  const deadline = Date.now() + 25_000;
+  // Generous, because a cold Windows or macOS runner is much slower than a
+  // laptop at starting a Node process that strips types as it loads.
+  const deadline = Date.now() + 45_000;
   for (;;) {
     try {
-      if ((await fetch(`${HARNESS}/api/health`)).ok) break;
+      // With a deadline of its own. A bare fetch to a port where something
+      // accepts but never answers hangs forever, and the loop below never
+      // gets to notice its own deadline — which is how a boot failure ends up
+      // reported as "hook timed out" with nothing else to go on.
+      if ((await fetch(`${HARNESS}/api/health`, { signal: AbortSignal.timeout(2_000) })).ok) break;
     } catch {
       /* not up yet */
     }
@@ -149,8 +167,14 @@ beforeAll(async () => {
       serverName: () => "Test computer",
     }),
   );
-  await new Promise<void>((r) => sidecar.listen(SIDECAR_PORT, "127.0.0.1", r));
-}, 40_000);
+  // Not `listen(port, host, resolve)` alone: a bind failure emits `error` and
+  // never calls back, so the hook would sit there until the runner's timeout
+  // and report nothing about why.
+  await new Promise<void>((resolve, reject) => {
+    sidecar.once("error", reject);
+    sidecar.listen(SIDECAR_PORT, "127.0.0.1", () => resolve());
+  });
+}, 90_000);
 
 afterAll(async () => {
   await new Promise<void>((r) => (sidecar ? sidecar.close(() => r()) : r()));
