@@ -463,6 +463,28 @@ describe("harness HTTP API", () => {
     expect(res.body.message.card.answered).toBe(card.card.options[0]);
   });
 
+  it("validates approval decisions and reports a request that is no longer open", async () => {
+    const { body } = await api("GET", "/api/bots");
+    const bot = body.bots[0];
+
+    const invalid = await api("POST", `/api/bots/${bot.id}/respond`, {
+      requestId: "gone",
+      behavior: "approve-everything",
+    });
+    expect(invalid.status).toBe(400);
+
+    const unavailable = await api("POST", `/api/bots/${bot.id}/respond`, {
+      requestId: "gone",
+      behavior: "allow",
+    });
+    expect(unavailable.status).toBe(200);
+    expect(unavailable.body).toEqual({ ok: true, outcome: "unavailable" });
+
+    const reread = (await api("GET", "/api/bots")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id);
+    expect(reread.messages.at(-1).tool).toMatchObject({ ok: false });
+    expect(reread.messages.at(-1).tool.name).toContain("request is no longer open");
+  });
+
   it("rejects an empty message and explains an unavailable provider", async () => {
     const { body } = await api("GET", "/api/bots");
     const bot = body.bots[0];
