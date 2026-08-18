@@ -71,6 +71,9 @@ struct ChatView: View {
                     // A thread holds 50 messages until you ask for more, so
                     // there is nothing here worth being lazy about.
                     VStack(alignment: .leading, spacing: 6) {
+                        // room for the floating face when scrolled to the top
+                        Color.clear.frame(height: 72)
+
                         if session.state.hasMore[chat.threadId] == true {
                             Button("Load earlier messages") {
                                 // keep the reader where they were: after older
@@ -133,7 +136,11 @@ struct ChatView: View {
                 // what the glass is for. An inset rather than a content
                 // margin, because `.defaultScrollAnchor(.bottom)` anchored
                 // unreliably against a margin and opened chats mid-way.
-                .safeAreaInset(edge: .top, spacing: 0) { header }
+                // The blur is only the top strip — back, computer — the way
+                // a system bar is; the transcript starts on that line and
+                // scrolls under the face and name, which float over it.
+                .safeAreaInset(edge: .top, spacing: 0) { headerBar }
+                .overlay(alignment: .top) { headerFace }
                 // A conversation grows from the bottom: a transcript shorter
                 // than the screen rests at the bottom, and opening a chat
                 // starts on the newest message rather than the oldest.
@@ -200,10 +207,9 @@ struct ChatView: View {
 
     // MARK: - Header
 
-    /// Back on the left with the rest-of-app unread count, the bot's face and
-    /// name in the middle, its computer on the right. Floating glass over the
-    /// transcript, so the conversation runs underneath.
-    private var header: some View {
+    /// Back on the left with the rest-of-app unread count, the bot's
+    /// computer on the right — a blurred strip to the top edge.
+    private var headerBar: some View {
         HStack(alignment: .top) {
             Button { dismiss() } label: {
                 HStack(spacing: 4) {
@@ -229,38 +235,6 @@ struct ChatView: View {
 
             Spacer(minLength: 4)
 
-            VStack(spacing: 6) {
-                MausAvatar(color: current.color, size: 60, state: MausState.forChat(current, in: session.state))
-                Menu {
-                    chatActions
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(current.name)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.primary)
-                            .lineLimit(1)
-                        if !current.subtitle.isEmpty {
-                            Text(current.subtitle)
-                                .font(.system(size: 13))
-                                .foregroundStyle(Color.secondary)
-                                .lineLimit(1)
-                        }
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color.secondary)
-                    }
-                    .padding(.leading, 12)
-                    .padding(.trailing, 10)
-                    .frame(height: 32)
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .glassCapsule()
-            }
-            .padding(.top, -8)
-
-            Spacer(minLength: 4)
-
             if case .bot = current {
                 GlassButton(systemImage: "display", size: 44, weight: .medium) {
                     showingComputer = true
@@ -272,24 +246,55 @@ struct ChatView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)
-        .padding(.bottom, 10)
+        .padding(.bottom, 8)
         .background(
-            // A blur to the very top — status bar included — so the
-            // transcript is still there under the face, softened, the way a
-            // system bar behaves; only the bottom edge feathers out.
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .mask(
                     VStack(spacing: 0) {
                         Color.black
                         LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                            .frame(height: 28)
+                            .frame(height: 20)
                     }
                 )
-                .padding(.bottom, -28)
+                .padding(.bottom, -20)
                 .ignoresSafeArea(edges: .top)
                 .allowsHitTesting(false)
         )
+    }
+
+    /// The bot's face over its name pill, floating over the transcript
+    /// between the two buttons.
+    private var headerFace: some View {
+        VStack(spacing: 6) {
+            MausAvatar(color: current.color, size: 60, state: MausState.forChat(current, in: session.state))
+            Menu {
+                chatActions
+            } label: {
+                HStack(spacing: 6) {
+                    Text(current.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                    if !current.subtitle.isEmpty {
+                        Text(current.subtitle)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(1)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.secondary)
+                }
+                .padding(.leading, 12)
+                .padding(.trailing, 10)
+                .frame(height: 32)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .glassCapsule()
+        }
+        .padding(.top, -4)
     }
 
     /// Everything the name pill and the composer's + can do. One list, two
