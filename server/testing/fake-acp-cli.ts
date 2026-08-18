@@ -71,6 +71,7 @@ const dumpEnv = Object.fromEntries(
     "XAI_API_KEY",
     "BOX_TOKEN",
     "OMB_TTS_KEY",
+    "FACTORY_API_KEY",
     "UNSLOTH_STUDIO_AUTH_TOKEN",
     "CURSOR_API_KEY",
     "CURSOR_AUTH_TOKEN",
