@@ -8,6 +8,8 @@ import { isIP } from "node:net";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { z } from "zod";
+
 import { approvalKey, autoDecision } from "./auto-approve.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
 import * as box from "./box.ts";
@@ -34,12 +36,12 @@ import {
 import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import { buildNotification, type Notification } from "./notify.ts";
-import { isEffortLevel, type RuntimeEvent } from "./contracts.ts";
+import { isEffortLevel, type RequestOutcome, type RuntimeEvent } from "./contracts.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
 import { searchMessages } from "./message-db.ts";
-import { discardDelegations, drainDelegations, queueDelegation, type QueueResult } from "./delegations.ts";
+import { _loadPending, discardDelegations, drainDelegations, pendingThreads, queueDelegation, type QueueResult } from "./delegations.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { cancelPeerApprovalsFor, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
@@ -54,10 +56,20 @@ import {
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
-import { ensureWorkspace, memorySystemPrompt } from "./workspace.ts";
+import {
+  ensureWorkspace,
+  listMemoryTopics,
+  isMemoryTopicName,
+  memorySystemPrompt,
+  readMemoryFile,
+  readMemoryTopic,
+  writeMemoryFile,
+  MEMORY_FILE_MAX_BYTES,
+} from "./workspace.ts";
 import { readCuaConnection } from "./local-computer.ts";
 import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease } from "./local-vm-lease.ts";
+import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { RoutineManager, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { fetchGithubTeam, fetchLibraryTeam, fetchTeamCatalog } from "./team-library.ts";
 import { createTeamManifest, parseTeamManifest } from "./team-manifest.ts";
@@ -200,6 +212,42 @@ const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
   tasks: store.tasks(bot.id).map(wireTask),
 });
 
+// The store tells us what it wrote; this is the ONE place that turns those
+// into SSE frames. No mutation path can persist without emitting — the
+// property holds by construction, not by every call site remembering to
+// broadcast. Bot frames are the slim wire shape (no transcript); the few
+// endpoints whose callers need the transcript (task create/switch, imports)
+// still send their richer payload on top.
+store.onChange((change) => {
+  switch (change.type) {
+    case "message":
+      broadcast({ kind: "message", threadId: change.threadId, message: change.message });
+      break;
+    case "message.patch":
+      broadcast({ kind: "message.patch", threadId: change.threadId, message: change.message });
+      break;
+    case "thread":
+      broadcast({ kind: "thread", threadId: change.threadId, activeLeafId: change.activeLeafId });
+      break;
+    case "bot": {
+      const bot = store.bot(change.botId);
+      if (bot) broadcast({ kind: "bot", bot: wireBot(bot) });
+      break;
+    }
+    case "bot.deleted":
+      broadcast({ kind: "bot.deleted", botId: change.botId });
+      break;
+    case "group": {
+      const group = store.group(change.groupId);
+      if (group) broadcast({ kind: "group", group });
+      break;
+    }
+    case "group.deleted":
+      broadcast({ kind: "group.deleted", groupId: change.groupId });
+      break;
+  }
+});
+
 // ── message pages ──────────────────────────────────────────────────────
 // GET /api/bots hands back every bot with its entire transcript, which is
 // the right answer over loopback and the wrong one over a phone network:
@@ -305,6 +353,47 @@ function broadcast(payload: Record<string, unknown>) {
 // once can collide on a bare id and patch each other's messages.
 const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+
+/** Deliver a person's answer to the engine that asked, and tell the truth
+ * about what happened. `unavailable` — the turn ended, the ask timed out,
+ * the engine has no asks — is fail-closed: the action was never run. The
+ * card is settled and a chip says so, instead of the answer vanishing into
+ * a 500 while the card sits open forever. */
+async function answerRequest(
+  threadId: string,
+  instanceId: string,
+  requestId: string,
+  behavior: "allow" | "deny" | "answer",
+  message?: string,
+): Promise<RequestOutcome> {
+  const instance = registry.get(instanceId);
+  let outcome: RequestOutcome = "unavailable";
+  if (instance) {
+    try {
+      outcome = await instance.adapter.respondToRequest(threadId, requestId, { behavior, message });
+    } catch {
+      outcome = "unavailable";
+    }
+  }
+  if (outcome === "unavailable") {
+    const messageId = askMessageByRequest.get(`${threadId}:${requestId}`);
+    const existing = messageId ? store.messagesFor(threadId).find((m) => m.id === messageId) : undefined;
+    if (existing?.card && !existing.card.answered) {
+      store.patchMessage(threadId, existing.id, { card: { ...existing.card, answered: "unavailable", dismissed: true } });
+    }
+    if (messageId) askMessageByRequest.delete(`${threadId}:${requestId}`);
+    store.appendMessage(threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: "Couldn't deliver that answer — the request is no longer open, so the action was not run", ok: false },
+    });
+  }
+  return outcome;
+}
+
+function requestBehavior(value: unknown): "allow" | "deny" | "answer" | null {
+  return value === "allow" || value === "deny" || value === "answer" ? value : null;
+}
 // the last settled assistant text per thread, so a "finished" notification
 // can carry what the bot actually said
 const lastReply = new Map<string, string>();
@@ -326,6 +415,11 @@ const groupSpeakers = new Map<string, { botId: string; name: string; color: stri
 // into the task's tally when the turn settles.
 const turnUsage = new Map<string, { input: number; output: number }>();
 
+// Bounded per active turn. OpenHands uses a bounded recent-event scan for
+// the same class of stuck-loop detection; retaining an unlimited set of
+// unique arguments would let one pathological turn grow the server forever.
+const repeats = new RepeatDetector({ thresholds: [5, 10, 20], maxKeysPerThread: 256 });
+
 // ── stall watchdog ─────────────────────────────────────────────────────
 // ask_bot has a 4-minute ceiling and room turns a 5-minute one; the main
 // 1:1 path had none, so a wedged CLI left its bot busy forever. The
@@ -337,16 +431,16 @@ const watchdog = new TurnWatchdog({
   stallMs: TURN_STALL_MS,
   checkMs: 60_000,
   onStall: (turn) => {
+    repeats.settle(turn.threadId);
     const bot = store.bot(turn.botId);
     const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
     void instance?.adapter.interruptTurn(turn.threadId).catch(() => {});
     const minutes = Math.round(TURN_STALL_MS / 60_000);
-    const note = store.appendMessage(turn.threadId, {
+    store.appendMessage(turn.threadId, {
       role: "bot",
       kind: "activity",
       tool: { name: `error: no activity for ${minutes} minutes — the turn was stopped`, ok: false },
     });
-    broadcast({ kind: "message", threadId: turn.threadId, message: note });
     finalizeDelegationWatch(turn.threadId, false, "", "Delegated turn stalled and was stopped");
     turnUsage.delete(turn.threadId);
     // ACP interruption settles within five seconds; other adapters settle
@@ -359,13 +453,11 @@ const watchdog = new TurnWatchdog({
       if (group && group.busyBotId === turn.botId && speaker?.botId === turn.botId) {
         groupSpeakers.delete(turn.threadId);
         store.patchGroup(group.id, { busyBotId: null, unread: true });
-        broadcastGroup(group.id);
       }
       const currentBot = store.bot(turn.botId);
       if (currentBot?.busy) {
         stopScreenPoller(currentBot.id);
-        store.patchBot(currentBot.id, { busy: false });
-        broadcast({ kind: "bot", bot: wireBot(store.bot(currentBot.id)!) });
+        store.setActivity(currentBot.id, "idle");
       }
     }, 6_000);
     release.unref?.();
@@ -467,7 +559,6 @@ bus.subscribe((event: RuntimeEvent) => {
 
   const pushMessage = (m: Omit<Message, "id" | "at">) => {
     const message = store.appendMessage(event.threadId, group && m.role === "bot" ? { ...m, from: speaker } : m);
-    broadcast({ kind: "message", threadId: event.threadId, message });
     return message;
   };
 
@@ -492,10 +583,9 @@ bus.subscribe((event: RuntimeEvent) => {
           // dropping it here would silently un-narrate every completed tool
           const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool;
           toolName = existing?.name ?? "tool";
-          const patched = store.patchMessage(event.threadId, messageId, {
+          store.patchMessage(event.threadId, messageId, {
             tool: { name: toolName, ok: event.ok, spoken: existing?.spoken },
           });
-          if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
           toolMessageByItem.delete(itemKey);
         }
         // the bot just acted ON ITS SCREEN — refresh the preview now. Only
@@ -549,7 +639,8 @@ bus.subscribe((event: RuntimeEvent) => {
         void (async () => {
           try {
             if (!instance) throw new Error("provider unavailable");
-            await instance.adapter.respondToRequest(event.threadId, requestId, { behavior: "allow" });
+            const outcome = await instance.adapter.respondToRequest(event.threadId, requestId, { behavior: "allow" });
+            if (outcome === "unavailable") throw new Error("the ask is no longer open");
             pushMessage({
               role: "bot",
               kind: "activity",
@@ -597,19 +688,23 @@ bus.subscribe((event: RuntimeEvent) => {
       // this is the branch where a card actually reached a human. Anything
       // auto mode answered took the early return above and never buzzes.
       if (asker) {
+        // the bot is not working now — it is waiting on a person
+        if (asker.busy) store.setActivity(asker.id, "waiting-on-you");
         notify(buildNotification(permission ? "approval" : "question", asker, event.threadId, event.summary));
       }
       break;
     }
     case "request.resolved": {
+      // answered (by whoever): the turn is working again, unless it settled
+      const waiting = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
+      if (waiting?.activity === "waiting-on-you") store.setActivity(waiting.id, "working");
       const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
       if (messageId) {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
         if (existing?.card && !existing.card.answered) {
-          const patched = store.patchMessage(event.threadId, messageId, {
+          store.patchMessage(event.threadId, messageId, {
             card: { ...existing.card, answered: event.behavior, dismissed: event.source !== "user" },
           });
-          if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
         }
         if (event.requestId) askMessageByRequest.delete(`${event.threadId}:${event.requestId}`);
       }
@@ -621,6 +716,11 @@ bus.subscribe((event: RuntimeEvent) => {
         kind: "activity",
         tool: { name: `error: ${event.message.slice(0, 160)}`, ok: false, setup: event.setup },
       });
+      // a setup error means the engine could not even start: the bot is
+      // dead until something changes, not merely idle. The next successful
+      // dispatch moves it to working; turn.completed (which follows a setup
+      // failure) is told to leave "dead" alone.
+      if (event.setup && bot) store.setActivity(bot.id, "dead");
       break;
     case "thread.token-usage.updated":
       // running totals for the turn in flight; folded into the task's
@@ -636,8 +736,8 @@ bus.subscribe((event: RuntimeEvent) => {
       // tally is not the right home for a shared room's spend, so only
       // 1:1 task turns are tallied for now.
       if (bot) {
-        // bank what this turn spent before the bot broadcast below carries
-        // the task list to every window. The driver's own per-turn figure
+        // bank what this turn spent before the bot broadcast carries the
+        // task list to every window. The driver's own per-turn figure
         // (turn.completed.usage) is authoritative; a driver that only
         // streams the running indicator falls back to its last value.
         const tokens = event.usage ?? lastReported;
@@ -646,8 +746,9 @@ bus.subscribe((event: RuntimeEvent) => {
           output: tokens?.output,
           costUsd: event.cost ?? null,
         });
-        store.patchBot(bot.id, { busy: false, unread: true });
-        broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
+        // settled → idle; a setup failure already marked it dead, keep that
+        if (store.bot(bot.id)?.activity !== "dead") store.setActivity(bot.id, "idle");
+        store.patchBot(bot.id, { unread: true });
         notify(buildNotification("done", bot, event.threadId, reply));
         if (screenPollers.has(bot.id)) {
           // the last live frame becomes a settled inline screen message —
@@ -667,11 +768,10 @@ bus.subscribe((event: RuntimeEvent) => {
       if (speaker && group?.busyBotId === speaker.botId) {
         groupSpeakers.delete(event.threadId);
         store.patchGroup(group.id, { busyBotId: null, unread: true });
-        broadcastGroup(group.id);
         const speakingBot = store.bot(speaker.botId);
         if (speakingBot?.busy) {
-          store.patchBot(speakingBot.id, { busy: false, unread: true });
-          broadcast({ kind: "bot", bot: wireBot(store.bot(speakingBot.id)!) });
+          store.setActivity(speakingBot.id, "idle");
+          store.patchBot(speakingBot.id, { unread: true });
         }
       }
       // A delegated turn's terminal state belongs in the A⇄B channel:
@@ -714,17 +814,41 @@ function finalizeDelegationWatch(
   return true;
 }
 
+// A bot going in circles — the same call with the same arguments, over and
+// over in one turn — gets a chip at 5, 10 and 20 repeats. Observe and say
+// so; the human has Stop. Keyed on tool + arguments, so a bare tool name
+// (Claude's item.started carries only that) is never counted: five "Bash"
+// may be five different commands. Arguments come from ACP item titles and
+// from every permission ask's summary (the command being approved).
+bus.subscribe((event: RuntimeEvent) => {
+  if (event.type === "turn.completed" || event.type === "session.exited") return void repeats.settle(event.threadId);
+  let key: string | null = null;
+  if (event.type === "item.started" && event.itemType === "tool") {
+    // a title with more than a bare identifier is a call with arguments
+    // (ACP: "echo hi", "Read src/x.ts"); a bare "Bash" is not countable
+    const title = event.title ?? "";
+    if (/\s|\//.test(title.trim())) key = callKey("tool", title);
+  } else if (event.type === "request.opened" && event.requestType === "permission") key = callKey(event.tool, event.summary);
+  if (!key) return;
+  const { threshold } = repeats.record(event.threadId, key);
+  if (!threshold) return;
+  const [tool, ...rest] = key.split(":");
+  const args = rest.join(":");
+  store.appendMessage(event.threadId, {
+    role: "bot",
+    kind: "activity",
+    tool: { name: `Same call repeated ${threshold}× — ${tool}: ${args.slice(0, 80)}${args.length > 80 ? "…" : ""} — it may be stuck`, ok: false },
+  });
+});
+
 // Drain queued delegations for a source thread after its turn settles.
 // Run as a separate subscriber so the drain logic stays out of the main
 // fold (which has its own switch/case noise) and its approval + startTurn
 // calls never have to share locals with the fold's state machine.
-bus.subscribe((event: RuntimeEvent) => {
-  if (event.type !== "turn.completed") return;
-  // A turn that failed or was interrupted drops its queue rather than
-  // firing it later: the user who hit Stop does not expect the delegations
-  // that turn queued to run anyway, minutes later, on an unrelated turn.
-  if (!event.ok) return void discardDelegations(commsBus, event.threadId);
-  drainDelegations(commsBus, approvalBus, event.threadId, (toBotId, text, commsDepth, sourceThreadId, channel) => {
+/** How a drained delegation becomes a real turn on the target. Shared by
+ * the settle-time drain and the boot-time drain of what a previous process
+ * left queued. */
+const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
@@ -747,12 +871,11 @@ bus.subscribe((event: RuntimeEvent) => {
       }
       const source = store.botByThread(sourceThreadId);
       if (!source) return;
-      const note = store.appendMessage(sourceThreadId, {
+      store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `error: delegation to @${bot?.name ?? toBotId} could not start — ${why.slice(0, 120)}`, ok: false },
       });
-      broadcast({ kind: "message", threadId: sourceThreadId, message: note });
     };
     return startTurn(toBotId, text, {
       commsDepth,
@@ -764,8 +887,17 @@ bus.subscribe((event: RuntimeEvent) => {
     }).catch((err) => {
       reportStartFailure(err);
     });
-  });
+};
+
+bus.subscribe((event: RuntimeEvent) => {
+  if (event.type !== "turn.completed") return;
+  // A turn that failed or was interrupted drops its queue rather than
+  // firing it later: the user who hit Stop does not expect the delegations
+  // that turn queued to run anyway, minutes later, on an unrelated turn.
+  if (!event.ok) return void discardDelegations(commsBus, event.threadId);
+  drainDelegations(commsBus, approvalBus, event.threadId, runDelegatedTurn);
 });
+
 
 // ── live screen: poll the bot's box while it works ────────────────────
 // Frames stream to clients as SSE {kind:'screen'} (the "Bot's screen"
@@ -935,7 +1067,6 @@ async function startTurn(
   let userMessage = opts?.userMessage;
   if (!userMessage) {
     userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
-    broadcast({ kind: "message", threadId, message: userMessage });
   }
 
   // transcript for API-backed drivers: settled text turns on the ACTIVE
@@ -977,8 +1108,8 @@ async function startTurn(
   // busy flips immediately so the composer locks; the dispatch itself runs
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
-  store.patchBot(bot.id, { busy: true, unread: false });
-  broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
+  store.setActivity(bot.id, "working");
+  store.patchBot(bot.id, { unread: false });
   turnUsage.delete(threadId);
 
   void (async () => {
@@ -1002,6 +1133,10 @@ async function startTurn(
       // the private bot workspace. A legacy task with an existing provider
       // session deliberately pins to null (the old home-folder behavior),
       // because moving a live session would break resume.
+      // A cloud run happens on the box, where a host folder means nothing:
+      // pin the task to the default so the header chip never shows the
+      // bot's folder for a task that runs elsewhere.
+      if (opts?.runOn === "cloud") store.pinTaskCwd(bot.id, threadId, undefined, { none: true });
       const pinnedCwd =
         privateWorkspace && opts?.runOn !== "cloud"
           ? store.pinTaskCwd(bot.id, threadId, privateWorkspace)
@@ -1181,14 +1316,12 @@ async function startTurn(
       watchdog.settle(threadId);
       turnUsage.delete(threadId);
       const message = e instanceof Error ? e.message : String(e);
-      const failure = store.appendMessage(threadId, {
+      store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
       });
-      broadcast({ kind: "message", threadId, message: failure });
-      store.patchBot(bot.id, { busy: false });
-      broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
+      store.setActivity(bot.id, "idle");
       opts?.onDispatchError?.(message);
     }
   })();
@@ -1273,15 +1406,11 @@ function serializeRoomContext(threadId: string, userName: string): string {
     .join("\n");
 }
 
-function broadcastGroup(groupId: string) {
-  const group = store.group(groupId);
-  if (group) broadcast({ kind: "group", group });
-}
 
 // comms bus: passed into the visibility helpers in comms-visibility.ts so
 // they can mirror messages + chips without re-deriving SSE plumbing. Same
 // shape every comms entry point uses (ask_bot, delegate_bot).
-const commsBus: CommsBus = { store, broadcast, broadcastGroup };
+const commsBus: CommsBus = { store, broadcast };
 
 // approval bus: peer-approval.ts only needs to push cards and broadcast
 // them — its pending map lives in the module so the two respond endpoints
@@ -1294,6 +1423,17 @@ const approvalBus: ApprovalBus = { store, broadcast };
 {
   const stale = dismissStalePeerCards(approvalBus);
   if (stale) console.log(`peer approvals: dismissed ${stale} card(s) left by a previous run`);
+}
+
+// Handoffs a previous process queued but never ran: the source turn is
+// dead (no turn survives a restart) so they would otherwise wait forever.
+// Run them now, through the same drain — target and approvePeerComms are
+// re-checked there as always; a source bot that no longer exists is skipped.
+_loadPending();
+{
+  const leftover = pendingThreads();
+  if (leftover.length) console.log(`delegations: ${leftover.length} thread(s) with queued handoffs from a previous run — draining`);
+  for (const threadId of leftover) drainDelegations(commsBus, approvalBus, threadId, runDelegatedTurn);
 }
 
 async function runGroupMemberTurn(
@@ -1311,13 +1451,12 @@ async function runGroupMemberTurn(
   const instance = registry.get(bot.modelSelection.instanceId);
   const userName = cfg.profile?.name?.trim() || "User";
   if (!instance) {
-    const failure = store.appendMessage(group.threadId, {
+    store.appendMessage(group.threadId, {
       role: "bot",
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
       tool: { name: `error: ${bot.name}'s model is unavailable`, ok: false },
     });
-    broadcast({ kind: "message", threadId: group.threadId, message: failure });
     return true;
   }
   // One turn per bot at a time, across BOTH engines. Without this a bot
@@ -1325,20 +1464,17 @@ async function runGroupMemberTurn(
   // processes, interleaved token spend, and an interrupt that only ever
   // reached one of them.
   if (bot.busy) {
-    const note = store.appendMessage(group.threadId, {
+    store.appendMessage(group.threadId, {
       role: "bot",
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
       tool: { name: `${bot.name} is busy in another conversation — skipped this round`, ok: false },
     });
-    broadcast({ kind: "message", threadId: group.threadId, message: note });
     return true;
   }
-  store.patchBot(bot.id, { busy: true });
-  broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
+  store.setActivity(bot.id, "working");
 
-  store.patchGroup(group.id, { busyBotId: bot.id });
-  broadcastGroup(group.id);
+  store.patchGroup(group.id, { busyBotId: bot.id }); // the store's change stream carries the frame
   groupSpeakers.set(group.threadId, { botId: bot.id, name: bot.name, color: bot.color });
 
   const roster = group.memberIds
@@ -1384,13 +1520,12 @@ async function runGroupMemberTurn(
     });
     const timer = setTimeout(() => {
       void instance.adapter.interruptTurn(group.threadId).catch(() => {});
-      const failure = store.appendMessage(group.threadId, {
+      store.appendMessage(group.threadId, {
         role: "bot",
         kind: "activity",
         from: { botId: bot.id, name: bot.name, color: bot.color },
         tool: { name: `${bot.name}'s room turn exceeded 5 minutes and was stopped`, ok: false },
       });
-      broadcast({ kind: "message", threadId: group.threadId, message: failure });
       finish("timed_out");
     }, 5 * 60_000);
     watchdog.watch(group.threadId, bot.id);
@@ -1403,13 +1538,12 @@ async function runGroupMemberTurn(
         ...memberTurnSelection(bot.modelSelection),
       })
       .catch((err) => {
-        const failure = store.appendMessage(group.threadId, {
+        store.appendMessage(group.threadId, {
           role: "bot",
           kind: "activity",
           from: { botId: bot.id, name: bot.name, color: bot.color },
           tool: { name: `error: ${err instanceof Error ? err.message.slice(0, 140) : "turn failed"}`, ok: false },
         });
-        broadcast({ kind: "message", threadId: group.threadId, message: failure });
         watchdog.settle(group.threadId);
         finish("dispatch_failed");
       });
@@ -1418,13 +1552,13 @@ async function runGroupMemberTurn(
   // produces turn.completed (or the stall watchdog's grace fallback runs).
   // Do not clear busy or start the next member on that same thread early.
   if (outcome === "timed_out") return false;
-  groupSpeakers.delete(group.threadId);
-  store.patchGroup(group.id, { busyBotId: null, unread: true });
-  broadcastGroup(group.id);
-  const after = store.bot(bot.id);
-  if (after?.busy) {
-    store.patchBot(bot.id, { busy: false });
-    broadcast({ kind: "bot", bot: wireBot(store.bot(bot.id)!) });
+  // turn.completed normally performs this cleanup. Only use the fallback
+  // when this invocation still owns the room; otherwise it would emit a
+  // duplicate group frame or clear a newer speaker's state.
+  if (store.group(group.id)?.busyBotId === bot.id) {
+    groupSpeakers.delete(group.threadId);
+    store.patchGroup(group.id, { busyBotId: null, unread: true });
+    if (store.bot(bot.id)?.busy) store.setActivity(bot.id, "idle");
   }
 
   // chained mentions: a member's reply can summon teammates — one hop only
@@ -1443,8 +1577,7 @@ async function runGroupMemberTurn(
 function startGroupTurn(groupId: string, text: string) {
   const group = store.group(groupId);
   if (!group) throw Object.assign(new Error("no such group"), { status: 404 });
-  const userMessage = store.appendMessage(group.threadId, { role: "user", kind: "text", text });
-  broadcast({ kind: "message", threadId: group.threadId, message: userMessage });
+  store.appendMessage(group.threadId, { role: "user", kind: "text", text });
 
   const members = group.memberIds
     .map((id) => store.bot(id))
@@ -1465,12 +1598,11 @@ function startGroupTurn(groupId: string, text: string) {
     const current = store.group(groupId);
     if (current?.busyBotId) {
       const owner = store.bot(current.busyBotId);
-      const note = store.appendMessage(current.threadId, {
+      store.appendMessage(current.threadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `${owner?.name ?? "A room member"} is still stopping — this message was not dispatched`, ok: false },
       });
-      broadcast({ kind: "message", threadId: current.threadId, message: note });
       return;
     }
     const spoken = new Set<string>();
@@ -1592,14 +1724,12 @@ async function reloadProviders() {
       "",
       "Delegated turn did not finish — provider settings changed",
     );
-    const note = store.appendMessage(b.threadId, {
+    store.appendMessage(b.threadId, {
       role: "bot",
       kind: "activity",
       tool: { name: "error: turn interrupted — provider settings changed", ok: false },
     });
-    broadcast({ kind: "message", threadId: b.threadId, message: note });
-    store.patchBot(b.id, { busy: false });
-    broadcast({ kind: "bot", bot: wireBot(store.bot(b.id)!) });
+    store.setActivity(b.id, "idle");
   }
 }
 
@@ -2027,15 +2157,25 @@ const server = createServer(async (req, res) => {
       const q = url.searchParams.get("q") ?? "";
       const rawLimit = url.searchParams.get("limit");
       const limit = rawLimit ? Math.min(Math.max(Number(rawLimit) || 0, 1), 100) : 40;
+      // whether each hit sits on its thread's visible branch — a click on
+      // one that does not has to switch versions first (and only then)
+      const activePaths = new Map<string, Set<string>>();
+      const onActivePath = (threadId: string, messageId: string) => {
+        let ids = activePaths.get(threadId);
+        if (!ids) activePaths.set(threadId, (ids = new Set(store.activePath(threadId).map((m) => m.id))));
+        return ids.has(messageId);
+      };
       const hits = searchMessages(q, limit)
         .map((hit) => {
           const bot = store.botByThread(hit.threadId);
           const group = bot ? undefined : store.groupByThread(hit.threadId);
+          if (!bot && !group) return null;
+          const active = onActivePath(hit.threadId, hit.messageId);
           if (bot) {
             const task = store.taskByThread(bot.id, hit.threadId);
-            return { ...hit, botId: bot.id, name: bot.name, task: task?.title };
+            return { ...hit, botId: bot.id, name: bot.name, task: task?.title, onActivePath: active };
           }
-          if (group) return { ...hit, groupId: group.id, name: group.name };
+          if (group) return { ...hit, groupId: group.id, name: group.name, onActivePath: active };
           return null;
         })
         .filter((hit): hit is NonNullable<typeof hit> => hit !== null);
@@ -2096,7 +2236,6 @@ const server = createServer(async (req, res) => {
           ? body.name.trim()
           : `${store.bot(memberIds[0])!.name} & co.`;
       const group = store.createGroup(name, memberIds);
-      broadcast({ kind: "group", group });
       return json(res, 201, { group: { ...group, messages: [] } });
     }
     if (method === "POST" && path === "/api/teams/export") {
@@ -2237,6 +2376,12 @@ const server = createServer(async (req, res) => {
       }
       const group = store.patchGroup(m[1], patch);
       if (!group) return json(res, 404, { error: "no such room" });
+      return json(res, 200, { group });
+    }
+    m = path.match(/^\/api\/groups\/([\w-]+)\/read$/);
+    if (m && method === "POST") {
+      const group = store.patchGroup(m[1], { unread: false });
+      if (!group) return json(res, 404, { error: "no such room" });
       broadcast({ kind: "group", group });
       return json(res, 200, { group });
     }
@@ -2251,7 +2396,6 @@ const server = createServer(async (req, res) => {
           unlinkSync(join(dir, `${group.threadId}.ndjson`));
         } catch {}
       }
-      broadcast({ kind: "group.deleted", groupId: group.id });
       return json(res, 200, { ok: true });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)\/messages$/);
@@ -2280,7 +2424,6 @@ const server = createServer(async (req, res) => {
       if (!emoji) return json(res, 400, { error: "emoji required" });
       const patched = store.toggleReaction(m[1], m[2], emoji, typeof body.by === "string" ? body.by : "user");
       if (!patched) return json(res, 404, { error: "no such message" });
-      broadcast({ kind: "message.patch", threadId: m[1], message: patched });
       return json(res, 200, { message: patched });
     }
     if (method === "POST" && path === "/api/bots") {
@@ -2293,6 +2436,37 @@ const server = createServer(async (req, res) => {
           activeLeafId: store.activeLeaf(bot.threadId),
         },
       });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/read$/);
+    if (m && method === "POST") {
+      const bot = store.patchBot(m[1], { unread: false });
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const visible = wireBot(bot);
+      broadcast({ kind: "bot", bot: visible });
+      return json(res, 200, { bot: visible });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/always-allow$/);
+    if (m && method === "POST") {
+      const body = await readBody(req);
+      const allowKey = typeof body.allowKey === "string" ? body.allowKey : "";
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!allowKey) return json(res, 400, { error: "allowKey required" });
+      const pending = store.messagesFor(bot.threadId).some((message) =>
+        message.card?.requestId &&
+        !message.card.answered &&
+        message.card.dismissed !== true &&
+        message.card.allowKey === allowKey
+      );
+      if (!pending) {
+        return json(res, 409, { error: "that grant is not on a pending approval for this bot" });
+      }
+      const updated = store.patchBot(bot.id, {
+        alwaysAllow: [...new Set([...(bot.alwaysAllow ?? []), allowKey])].slice(0, 200),
+      })!;
+      const visible = wireBot(updated);
+      broadcast({ kind: "bot", bot: visible });
+      return json(res, 200, { bot: visible });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "PATCH") {
@@ -2393,7 +2567,6 @@ const server = createServer(async (req, res) => {
       if (chiefChanges === null) return json(res, 404, { error: "no such bot" });
       const changed = new Map([[bot.id, store.bot(bot.id)!]]);
       for (const changedBot of chiefChanges) changed.set(changedBot.id, changedBot);
-      for (const changedBot of changed.values()) broadcast({ kind: "bot", bot: wireBot(changedBot) });
       return json(res, 200, { bot: wireBot(bot) });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
@@ -2416,8 +2589,50 @@ const server = createServer(async (req, res) => {
           unlinkSync(join(dir, `${bot.threadId}.ndjson`));
         } catch {}
       }
-      broadcast({ kind: "bot.deleted", botId: bot.id });
       return json(res, 200, { ok: true });
+    }
+
+    // ── bot memory: MEMORY.md + memory/ topic files ─────────────────────
+    // The files already belong to the user (plain markdown in the bot's
+    // workspace); these routes only make them visible without a trip to
+    // the filesystem. Reads never create the workspace — a bot that has
+    // not run yet simply has nothing to show.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/memory$/);
+    if (m && method === "GET") {
+      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      return json(res, 200, { ...readMemoryFile(m[1]), topics: listMemoryTopics(m[1]) });
+    }
+    if (m && method === "PUT") {
+      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      const parsed = z.object({ text: z.string() }).safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "text must be a string" });
+      if (Buffer.byteLength(parsed.data.text, "utf8") > MEMORY_FILE_MAX_BYTES) {
+        return json(res, 400, {
+          error: `memory is capped at ${MEMORY_FILE_MAX_BYTES / 1024}KB — move longer notes into memory/<topic>.md files`,
+        });
+      }
+      writeMemoryFile(m[1], parsed.data.text);
+      // truncated echoes back so the editor can warn about the load budget
+      return json(res, 200, { ok: true, truncated: readMemoryFile(m[1]).truncated });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/memory\/topics\/([^/]+)$/);
+    if (m && method === "GET") {
+      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      // Decode before validating: a UI-sent name arrives percent-encoded
+      // ("my notes.md" → "my%20notes.md"), and an encoded traversal
+      // ("..%2F..") must be judged by what it decodes TO, not slip through
+      // as an opaque token. The name gate then rejects anything that is not
+      // a single plain-markdown path segment.
+      let name: string;
+      try {
+        name = decodeURIComponent(m[2]);
+      } catch {
+        return json(res, 400, { error: "invalid topic name" });
+      }
+      if (!isMemoryTopicName(name)) return json(res, 400, { error: "invalid topic name" });
+      const text = readMemoryTopic(m[1], name);
+      if (text === null) return json(res, 404, { error: "no such topic file" });
+      return json(res, 200, { name, text });
     }
 
     // onboarding/ask cards persist their answered/dismissed state
@@ -2435,7 +2650,6 @@ const server = createServer(async (req, res) => {
           ...(body.dismissed !== undefined ? { dismissed: body.dismissed } : {}),
         },
       });
-      broadcast({ kind: "message.patch", threadId: bot.threadId, message: patched });
       return json(res, 200, { message: patched });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
@@ -2475,8 +2689,6 @@ const server = createServer(async (req, res) => {
       const message = store.branchMessage(bot.threadId, messageId, text);
       if (!message) return json(res, 404, { error: "no such message" });
       store.patchBot(bot.id, { rewound: true });
-      broadcast({ kind: "message", threadId: bot.threadId, message });
-      broadcast({ kind: "thread", threadId: bot.threadId, activeLeafId: message.id });
       await startTurn(bot.id, text, { userMessage: message });
       return json(res, 202, { ok: true });
     }
@@ -2492,7 +2704,6 @@ const server = createServer(async (req, res) => {
       if (!leaf) return json(res, 404, { error: "no such message" });
       // provider sessions still hold the other branch — next turn replays
       store.patchBot(bot.id, { rewound: true });
-      broadcast({ kind: "thread", threadId: bot.threadId, activeLeafId: leaf });
       return json(res, 200, { activeLeafId: leaf });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/respond$/);
@@ -2500,19 +2711,16 @@ const server = createServer(async (req, res) => {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const body = await readBody(req);
+      const behavior = requestBehavior(body.behavior);
+      if (!behavior) return json(res, 400, { error: "behavior must be allow, deny, or answer" });
       // peer-approval intercept: harness-native cards carry a requestId
       // that lives in peer-approval's pending map. Resolve them here so
       // the provider adapter never sees a request it didn't raise.
-      if (resolvePeerComms(approvalBus, String(body.requestId), body.behavior)) {
-        return json(res, 200, { ok: true });
+      if (resolvePeerComms(approvalBus, String(body.requestId), behavior)) {
+        return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
       }
-      const instance = registry.get(bot.modelSelection.instanceId);
-      if (!instance) return json(res, 409, { error: "provider unavailable" });
-      await instance.adapter.respondToRequest(bot.threadId, String(body.requestId), {
-        behavior: body.behavior,
-        message: body.message,
-      });
-      return json(res, 200, { ok: true });
+      const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, String(body.requestId), behavior, body.message);
+      return json(res, 200, { ok: true, outcome });
     }
     // Answer by THREAD, so a request raised inside a room can be answered
     // too: a member's turn runs on the room's thread, and the bot that
@@ -2521,20 +2729,17 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const threadId = m[1];
       const body = await readBody(req);
+      const behavior = requestBehavior(body.behavior);
+      if (!behavior) return json(res, 400, { error: "behavior must be allow, deny, or answer" });
       const group = store.groupByThread(threadId);
       const owner = group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
       if (!owner) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
       // peer-approval intercept (see /api/bots/:id/respond above).
-      if (resolvePeerComms(approvalBus, String(body.requestId), body.behavior)) {
-        return json(res, 200, { ok: true });
+      if (resolvePeerComms(approvalBus, String(body.requestId), behavior)) {
+        return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
       }
-      const instance = registry.get(owner.modelSelection.instanceId);
-      if (!instance) return json(res, 409, { error: "provider unavailable" });
-      await instance.adapter.respondToRequest(threadId, String(body.requestId), {
-        behavior: body.behavior,
-        message: body.message,
-      });
-      return json(res, 200, { ok: true });
+      const outcome = await answerRequest(threadId, owner.modelSelection.instanceId, String(body.requestId), behavior, body.message);
+      return json(res, 200, { ok: true, outcome });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
     if (m && method === "POST") {

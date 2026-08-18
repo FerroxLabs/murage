@@ -1,4 +1,4 @@
-import { Component, memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -32,6 +32,7 @@ import {
 import { EngineSetup } from "./EngineSetup";
 import { MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
+import { showWorkingDots } from "@/lib/turn-tail";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
@@ -43,8 +44,16 @@ import { ReactionBar, ReactionChips } from "./Reactions";
 import { SpeakButton } from "./SpeakButton";
 import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
+import { useFocusMessage } from "@/lib/focus-message";
 import { webhookMessageView } from "@/lib/webhook-message";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
+import {
+  TRANSCRIPT_WINDOW_SIZE,
+  expandWindowStart,
+  focusWindowRange,
+  resolveTranscriptWindow,
+  tailWindowStart,
+} from "@/lib/transcript-window";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -593,7 +602,7 @@ const MessagesList = memo(function MessagesList({
         })();
         if (!row) return null;
         return (
-          <div key={m.id} className="contents">
+          <div key={m.id} className="contents" data-mid={m.id}>
             {newDay && <DaySeparator at={m.at} />}
             {row}
           </div>
@@ -615,6 +624,36 @@ export function ChatView({ bot }: { bot: Bot }) {
 
   // only the active branch is rendered; forks stay reachable via ‹ › nav
   const messages = useMemo(() => visibleMessages(bot), [bot]);
+
+  // Windowed transcript: only a tail of the thread mounts (screenshots make
+  // full threads DOM-heavy). The boundary is anchored per bot+task; a
+  // render-phase reset re-tails it on switch so the old thread's boundary
+  // never flashes into the new one. Everything derived below (lastBotTextId,
+  // lastUserMessage, working dots) stays computed from the FULL list.
+  const transcriptKey = `${bot.id}:${bot.threadId}`;
+  const [transcriptWindow, setTranscriptWindow] = useState<{
+    key: string;
+    start: number;
+    end: number | null;
+  }>(() => ({
+    key: transcriptKey,
+    start: tailWindowStart(messages.length),
+    end: null,
+  }));
+  if (transcriptWindow.key !== transcriptKey) {
+    setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(messages.length), end: null });
+  }
+  const {
+    visible: windowedMessages,
+    hiddenCount,
+    laterCount,
+    startIndex,
+    endIndex,
+  } = useMemo(
+    () => resolveTranscriptWindow(messages, transcriptWindow.start, TRANSCRIPT_WINDOW_SIZE, transcriptWindow.end),
+    [messages, transcriptWindow.start, transcriptWindow.end],
+  );
+
   const lastBotTextId = useMemo(
     () => [...messages].reverse().find((m) => m.role === "bot" && m.kind === "text")?.id,
     [messages],
@@ -661,12 +700,59 @@ export function ChatView({ bot }: { bot: Bot }) {
   }, []);
 
   useEffect(() => setBottomFollow(true), [bot.id, setBottomFollow]);
+
+  // A search result may be hundreds of rows before the mounted tail. Open a
+  // bounded window around it first; useFocusMessage then scrolls and flashes
+  // the row after React commits that window.
+  const appliedFocus = useRef<number | null>(null);
+  useEffect(() => {
+    const focus = state.focusMessage;
+    if (!focus || focus.consumed || focus.threadId !== bot.threadId || appliedFocus.current === focus.nonce) return;
+    const targetIndex = messages.findIndex((message) => message.id === focus.messageId);
+    if (targetIndex < 0) return;
+    appliedFocus.current = focus.nonce;
+    const range = focusWindowRange(messages.length, targetIndex);
+    setBottomFollow(false);
+    setTranscriptWindow({ key: transcriptKey, start: range.start, end: range.end });
+  }, [bot.threadId, messages, setBottomFollow, state.focusMessage, transcriptKey]);
+  useFocusMessage(bot.threadId, messages.length > 0);
+
+  // deps track the FULL messages.length, so expanding the window (which only
+  // changes windowedMessages) can never re-trigger this bottom scrollTo
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
   }, [bot.id, messages.length, streaming, reasoning, bot.busy, follow]);
+
+  // Expanding prepends rows: capture the height first, then after the commit
+  // shift scrollTop by the growth so the message under the cursor stays put
+  // (browser scroll anchoring is disabled on this container).
+  const preExpandHeight = useRef<number | null>(null);
+  const showEarlier = () => {
+    preExpandHeight.current = scrollRef.current?.scrollHeight ?? null;
+    // expanding means reading scrollback — never let a mid-expand stream
+    // event pin the viewport back to the bottom
+    setBottomFollow(false);
+    const start = expandWindowStart(startIndex);
+    setTranscriptWindow((w) => ({ ...w, start }));
+  };
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (preExpandHeight.current === null || !el) return;
+    el.scrollTop += el.scrollHeight - preExpandHeight.current;
+    preExpandHeight.current = null;
+    // keep the resume-follow heuristic from reading the restore as a
+    // downward user scroll
+    previousScrollTop.current = el.scrollTop;
+  }, [transcriptWindow.start]);
+
+  const showLater = () => {
+    setBottomFollow(false);
+    const nextEnd = Math.min(messages.length, endIndex + TRANSCRIPT_WINDOW_SIZE);
+    setTranscriptWindow((w) => ({ ...w, end: nextEnd >= messages.length ? null : nextEnd }));
+  };
 
   // keyboard is a scroll gesture too (upstream lesson): PageUp/Home break
   // follow like an upward wheel; the at-end onScroll check re-arms it
@@ -686,7 +772,10 @@ export function ChatView({ bot }: { bot: Bot }) {
   };
   const jumpToLatest = () => {
     setBottomFollow(true);
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(messages.length), end: null });
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    });
   };
 
   // on Windows the frameless window's min/max/close overlay sits at the
@@ -808,9 +897,19 @@ export function ChatView({ bot }: { bot: Bot }) {
           aria-live="polite"
           aria-label={`Conversation with ${bot.name}`}
         >
+          {hiddenCount > 0 && (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={showEarlier}
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+              >
+                Show earlier messages ({hiddenCount} more)
+              </button>
+            </div>
+          )}
           <MessagesList
             bot={bot}
-            messages={messages}
+            messages={windowedMessages}
             editingId={editingId}
             lastBotTextId={lastBotTextId}
             canRetryLast={!bot.busy && Boolean(lastUserMessage)}
@@ -820,6 +919,16 @@ export function ChatView({ bot }: { bot: Bot }) {
             onSubmitEdit={submitEdit}
             onRegenerate={regenerate}
           />
+          {laterCount > 0 && (
+            <div className="flex justify-center">
+              <button
+                onClick={showLater}
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+              >
+                Show later messages ({laterCount} more)
+              </button>
+            </div>
+          )}
           {provisioning && (
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary">
@@ -832,7 +941,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           {streaming ? (
             <StreamingBubble text={streaming} />
           ) : (
-            bot.busy && (
+            showWorkingDots(bot.busy, streaming, messages.at(-1)) && (
               <div className="flex justify-start">
                 <div className="flex items-center gap-2.5 rounded-2xl bg-raised px-4 py-3">
                   <span className="flex items-center gap-1.5">

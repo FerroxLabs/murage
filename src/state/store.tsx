@@ -126,6 +126,8 @@ export interface Bot {
   mascotExpression?: string | null;
   unread: boolean;
   busy?: boolean;
+  /** what the bot is doing, as the harness sees it; busy is derived from it */
+  activity?: "working" | "waiting-on-you" | "idle" | "no-signal" | "dead";
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "off";
@@ -237,9 +239,16 @@ export interface InstanceInfo {
   cliCandidates?: string[];
 }
 
-export type AppSettingsSection = "general" | "connections" | "engines" | "voice" | "computer" | "usage";
+export type AppSettingsSection =
+  | "general"
+  | "connections"
+  | "engines"
+  | "companion"
+  | "voice"
+  | "computer"
+  | "usage";
 
-interface AppState {
+export interface AppState {
   bots: Bot[];
   groups: Group[];
   instances: InstanceInfo[];
@@ -261,6 +270,9 @@ interface AppState {
   screens: Record<string, { png: string; mime: string }>;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
+  /** a search hit to scroll to once its thread is on screen; nonce lets the
+   * same message be focused twice in a row */
+  focusMessage: { threadId: string; messageId: string; nonce: number; consumed: boolean } | null;
   connected: boolean;
   error: string | null;
   mascotMotion: {
@@ -270,7 +282,7 @@ interface AppState {
   } | null;
 }
 
-type Action =
+export type Action =
   | { type: "hydrate"; bots: Bot[]; groups: Group[] }
   | { type: "showRoutines" }
   | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
@@ -341,6 +353,8 @@ type Action =
   | { type: "toggleSettings"; open?: boolean }
   | { type: "togglePlugins"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }
+  | { type: "focusMessage"; threadId: string; messageId: string }
+  | { type: "focusMessageConsumed"; nonce: number }
   | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection }
   | {
       type: "updateBot";
@@ -666,6 +680,19 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case "togglePlugins":
       return { ...state, pluginsOpen: action.open ?? !state.pluginsOpen };
+    case "focusMessage":
+      return {
+        ...state,
+        focusMessage: {
+          threadId: action.threadId,
+          messageId: action.messageId,
+          nonce: (state.focusMessage?.nonce ?? 0) + 1,
+          consumed: false,
+        },
+      };
+    case "focusMessageConsumed":
+      if (!state.focusMessage || state.focusMessage.nonce !== action.nonce) return state;
+      return { ...state, focusMessage: { ...state.focusMessage, consumed: true } };
     case "toggleComputer": {
       const open = action.open ?? !state.computerOpen;
       return {
@@ -797,6 +824,7 @@ const initialState: AppState = {
   appSettingsSection: "general",
   screens: {},
   provisioning: {},
+  focusMessage: null,
   connected: false,
   error: null,
   mascotMotion: null,
