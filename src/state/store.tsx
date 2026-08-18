@@ -49,6 +49,8 @@ export interface Message {
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
   tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
+  /** user messages sent into a running turn — the model saw it mid-turn */
+  steered?: boolean;
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
@@ -216,6 +218,8 @@ export interface InstanceInfo {
     agentsMcp?: boolean;
     composioMcp?: boolean;
     effortLevels?: readonly EffortLevel[];
+    /** the engine keeps a live session and takes a message mid-turn */
+    queueing?: boolean;
   };
   /** `custom` agents sit below the rail divider — no subscription catalog. */
   access?: "subscription" | "custom";

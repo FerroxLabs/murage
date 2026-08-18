@@ -48,6 +48,10 @@ export function Composer({
   // offers members plus @everyone; explicit mentions override the room's
   // configured default responder.
   const busy = group ? Boolean(group.busyBotId) : Boolean(bot?.busy);
+  // an engine with a live session takes a message INTO the running turn;
+  // for those the composer never locks — the server steers instead of 409
+  const canSteer =
+    !group && Boolean(bot) && state.instances.find((i) => i.instanceId === bot!.modelSelection.instanceId)?.capabilities?.queueing === true;
   // a pending approval blocks the prompt until it is answered
   const threadId = group?.threadId ?? bot?.threadId ?? "";
   // the VISIBLE branch only — an approval left on a branch you edited away
@@ -136,7 +140,7 @@ export function Composer({
   const send = () => {
     const t = composeMessage(text, attachments);
     if (!t) return;
-    if (busy) {
+    if (busy && !canSteer) {
       setQueued(t);
       setText("");
       setAttachments([]);
@@ -348,7 +352,9 @@ export function Composer({
               ? "Answer the approval above to continue"
               : recording
               ? "Listening…"
-              : busy
+              : busy && canSteer
+                ? `${busyName} is working — Enter sends this into the running turn`
+                : busy
                 ? `${busyName} is working — Enter queues your message`
                 : group
                   ? `Message ${group.name} — ${groupComposerHint(group, members ?? [])}`

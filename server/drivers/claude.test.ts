@@ -6,7 +6,7 @@
 // These used to be POSIX-only: the fake CLI is a shebang script Windows
 // cannot exec, and the broker is a unix socket. Both now go through
 // resolveCliSpawn / permissionSocketPath, so they run everywhere.
-import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -404,6 +404,81 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
     conn.end();
   });
+
+  // ── live session across turns (steer / follow-up / idle close) ────────
+
+  it("a message sent mid-turn is steered into the running turn, not a new one", async () => {
+    await create("slow");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-steer", text: "first" });
+    // the fake leaves a gap after the tool result — steer into it
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
+    expect(instance.adapter.capabilities.queueing).toBe(true);
+    await expect(instance.adapter.steer!("t-steer", "and also this")).resolves.toBe(true);
+    await recorder.until((e) => e.type === "turn.completed");
+    // one turn, one result; the reply carries the folded message
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text.startsWith("reply to:")) as { text: string };
+    expect(reply.text).toContain("steered: and also this");
+    expect(recorder.events.every((e) => e.turnId === turnId)).toBe(true);
+    // nothing running now: steer has nowhere to go
+    await expect(instance.adapter.steer!("t-steer", "late")).resolves.toBe(false);
+  });
+
+  it("the next turn on the same thread reuses the live process instead of spawning", async () => {
+    await create();
+    process.env.FAKE_CLAUDE_DUMP = join(scratch, "dump.json");
+    await instance.adapter.sendTurn({ threadId: "t-live", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const inits1 = recorder.events.filter((e) => e.type === "session.started").length;
+    // second turn: same contract, same session id → same process. The fake
+    // dumps argv only on its FIRST prompt, so a re-dump would mean a respawn.
+    const dumpBefore = readFileSync(join(scratch, "dump.json"), "utf8");
+    // the harness resumes with the id the CLI announced — pass that one
+    const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
+    const second = await instance.adapter.sendTurn({ threadId: "t-live", text: "two", resumeCursor: announced });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(readFileSync(join(scratch, "dump.json"), "utf8")).toBe(dumpBefore);
+    // and the CLI announced init again on the same process (the real one does)
+    expect(recorder.events.filter((e) => e.type === "session.started").length).toBeGreaterThan(inits1);
+    expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(2);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(2);
+  });
+
+  it("a changed spawn contract (another model) closes the live process and resumes in a new one", async () => {
+    await create();
+    process.env.FAKE_CLAUDE_DUMP = join(scratch, "dump.json");
+    await instance.adapter.sendTurn({ threadId: "t-switch", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed");
+    // a fresh process rewrites the dump; the fake ONLY dumps its first prompt
+    rmSync(join(scratch, "dump.json"));
+    const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
+    await instance.adapter.sendTurn({ threadId: "t-switch", text: "two", model: "claude-other", resumeCursor: announced });
+    await recorder.until((e) => e.type === "turn.completed" && recorder.events.filter((x) => x.type === "turn.completed").length === 2);
+    const dump = JSON.parse(readFileSync(join(scratch, "dump.json"), "utf8"));
+    expect(dump.argv).toContain("--resume");
+    expect(dump.argv).toContain("claude-other");
+  });
+
+  it("closes an idle session after the idle window", async () => {
+    process.env.OMB_CLAUDE_SESSION_IDLE_MS = "10000"; // the floor
+    try {
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-idle", text: "one" });
+      await recorder.until((e) => e.type === "turn.completed");
+      // the process is alive between turns…
+      await expect(instance.adapter.steer!("t-idle", "x")).resolves.toBe(false); // no running turn, but session exists
+      // …and after the idle window it is gone: the next turn spawns anew
+      // (observable as a fresh dump)
+      process.env.FAKE_CLAUDE_DUMP = join(scratch, "dump.json");
+      await new Promise((r) => setTimeout(r, 11_000));
+      const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
+      await instance.adapter.sendTurn({ threadId: "t-idle", text: "two", resumeCursor: announced });
+      await recorder.until((e) => e.type === "turn.completed" && recorder.events.filter((x) => x.type === "turn.completed").length === 2);
+      expect(JSON.parse(readFileSync(join(scratch, "dump.json"), "utf8")).argv).toContain("--resume");
+    } finally {
+      delete process.env.OMB_CLAUDE_SESSION_IDLE_MS;
+    }
+  }, 30_000);
 
   it("passes effort to the CLI, and omits the flag when unset", async () => {
     await create();

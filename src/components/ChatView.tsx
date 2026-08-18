@@ -351,6 +351,11 @@ function Bubble({
               >
                 {text}
               </div>
+              {message.steered && (
+                <div className="mt-1 text-[11px] text-ink-secondary/70" title="Sent while the bot was working — it saw this before its next step, inside the same turn.">
+                  sent mid-turn
+                </div>
+              )}
               {collapsible && (
                 <button onClick={() => setExpanded(true)} className="mt-1 text-[12.5px] text-ink-secondary hover:text-ink">
                   Show full message

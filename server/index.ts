@@ -2648,6 +2648,24 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
+      // A message during a running turn: engines that keep a live session
+      // (capabilities.queueing) take it INTO the turn — the model sees it
+      // before its next call, the way typing into Claude Code's own UI mid-
+      // task does. It lands in the transcript in order. Engines without
+      // that keep the 409 the composer already knows how to queue behind.
+      const busyBot = store.bot(m[1]);
+      if (busyBot?.busy && !busyBot.hidden) {
+        const instance = registry.get(busyBot.modelSelection.instanceId);
+        if (instance?.adapter.capabilities.queueing && instance.adapter.steer) {
+          const steered = await instance.adapter.steer(busyBot.threadId, text).catch(() => false);
+          if (steered) {
+            store.appendMessage(busyBot.threadId, { role: "user", kind: "text", text, steered: true });
+            return json(res, 202, { ok: true, steered: true });
+          }
+          // the turn settled between the busy check and the write — fall
+          // through and send it as the next turn instead
+        }
+      }
       await startTurn(m[1], text);
       return json(res, 202, { ok: true });
     }

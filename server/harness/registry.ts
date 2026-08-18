@@ -171,6 +171,7 @@ export class ProviderRegistry {
             agentsMcp: inst.adapter.capabilities.agentsMcp === true,
             composioMcp: inst.adapter.capabilities.composioMcp === true,
             effortLevels: inst.adapter.capabilities.effortLevels,
+            queueing: inst.adapter.capabilities.queueing === true,
           },
           access: driver?.metadata.access ?? "subscription",
           install: driver?.install,
