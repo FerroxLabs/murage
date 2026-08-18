@@ -230,7 +230,7 @@ struct ChatView: View {
             Spacer(minLength: 4)
 
             VStack(spacing: 6) {
-                MausAvatar(color: current.color, size: 60, motion: current.busy ? .working : .idle)
+                MausAvatar(color: current.color, size: 60, state: MausState.forChat(current, in: session.state))
                 Menu {
                     chatActions
                 } label: {
@@ -274,13 +274,19 @@ struct ChatView: View {
         .padding(.top, 4)
         .padding(.bottom, 10)
         .background(
-            // a soft fade so the top of a long transcript does not fight
-            // the face; the glass handles the rest
-            LinearGradient(
-                colors: [Color(uiColor: .systemBackground).opacity(0.92), .clear],
-                startPoint: .top, endPoint: .bottom
-            )
-            .padding(.bottom, -28)
+            // The bar is solid to the very top — status bar included — and
+            // only its bottom edge fades, so a transcript scrolls in under
+            // the face rather than showing through above it.
+            VStack(spacing: 0) {
+                Color(uiColor: .systemBackground)
+                LinearGradient(
+                    colors: [Color(uiColor: .systemBackground), .clear],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(height: 24)
+            }
+            .padding(.bottom, -24)
+            .ignoresSafeArea(edges: .top)
             .allowsHitTesting(false)
         )
     }

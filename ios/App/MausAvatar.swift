@@ -103,21 +103,39 @@ enum MausSilhouette {
     /// Its bounding box, cached alongside — `boundingRect` walks the path.
     private static let parsedBounds: CGRect = parsed.boundingRect
 
-    /// The silhouette normalised to fill `rect`, preserving aspect.
-    ///
-    /// The desktop maps this through a `fit` transform into a 228.541-unit
-    /// face box. That is not reproduced: normalising to the actual bounds is
-    /// equivalent for a shape drawn on its own, and it does not go stale if
-    /// the artwork's framing changes.
+    /// The silhouette in the desktop's face box: artwork → `translate(210,80)`
+    /// → `scale(0.593899)` → `translate(-56.5564,-37.6751)`, exactly the
+    /// transforms the desktop's SVG applies. Every face coordinate — the eye
+    /// anchor, the mouth — is expressed in this box, so this has to be the
+    /// same box or the face lands in the wrong place.
+    static let inFaceBox: Path = parsed.applying(
+        CGAffineTransform(translationX: 210, y: 80)
+            .concatenating(CGAffineTransform(scaleX: 0.593899, y: 0.593899))
+            .concatenating(CGAffineTransform(translationX: -56.5564, y: -37.6751))
+    )
+
+    /// Its bounds in the face box, for the gradient.
+    static let faceBoxBounds: CGRect = inFaceBox.boundingRect
+
+    /// The face box with the desktop's 15-unit margin around it (its viewBox
+    /// is `-15 -15 258.541 258.541`) — room for the body to bob and sway.
+    static let margin: CGFloat = 15
+
+    /// The transform that puts the margined face box into `rect`.
+    static func fit(_ rect: CGRect) -> CGAffineTransform {
+        let side = MausFaceData.faceBox + margin * 2
+        let k = min(rect.width, rect.height) / side
+        return CGAffineTransform(translationX: margin, y: margin)
+            .concatenating(CGAffineTransform(scaleX: k, y: k))
+            .concatenating(CGAffineTransform(
+                translationX: rect.minX + (rect.width - side * k) / 2,
+                y: rect.minY + (rect.height - side * k) / 2
+            ))
+    }
+
+    /// The silhouette normalised into `rect`, the same framing as the desktop.
     static func path(in rect: CGRect) -> Path {
-        let bounds = parsedBounds
-        guard bounds.width > 0, bounds.height > 0 else { return parsed }
-        let scale = min(rect.width / bounds.width, rect.height / bounds.height)
-        return parsed.applying(
-            CGAffineTransform(translationX: -bounds.midX, y: -bounds.midY)
-                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
-                .concatenating(CGAffineTransform(translationX: rect.midX, y: rect.midY))
-        )
+        inFaceBox.applying(fit(rect))
     }
 
     /// The SVG path data, once, into a `Path`. Only `M`, `C` and `Z` appear in
@@ -180,105 +198,288 @@ enum MausSilhouette {
     }
 }
 
-/// A bot, at whatever size the row needs — and alive, the way it is on the
-/// desktop: it breathes when idle, blinks now and then, and bobs when it is
-/// working. Same numbers as `CursorAvatar.tsx` (idle pulse 1.4 % over 3.6 s,
-/// blink every 6–14 s, working bob 2.5 face-units over 900 ms with a squash),
-/// so a bot looks equally alive on both screens. Honours Reduce Motion.
+/// A bot, at whatever size the row needs — and alive, exactly the way it is
+/// on the desktop. `MausFaceEngine` is a port of the frame loop in
+/// `MausMascotios/MausAvatar.tsx`: a state picks a pool of expressions and
+/// drifts through them on its cadence, a spring morphs the eyes and mouth
+/// between them, it blinks on its own rhythm, and the body bobs, sways,
+/// breathes or jitters per state. Same data, same numbers, same face.
 struct MausAvatar: View {
-    enum Motion { case still, idle, working }
-
     let color: String
     var size: CGFloat = 52
-    var motion: Motion = .idle
+    var state: MausState = .idle
+    /// Off draws the state's resting face, still. For lists of many.
+    var animated: Bool = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var blinking = false
-    @State private var breathe = false
-    @State private var bob = false
-
-    /// The desktop's face box; motion amounts are expressed in it.
-    private static let faceBox: CGFloat = 228.541
+    @State private var engine = MausFaceEngine()
 
     var body: some View {
-        let live = motion != .still && !reduceMotion
-        face
-            // idle: breathing. working: the bob, with the body squashing a
-            // little at the bottom of the arc.
-            .scaleEffect(
-                x: live && motion == .working ? (bob ? 1.06 : 1.0) : (live && breathe ? 1.014 : 1.0),
-                y: live && motion == .working ? (bob ? 0.94 : 1.0) : (live && breathe ? 1.014 : 1.0),
-                anchor: .bottom
-            )
-            .offset(y: live && motion == .working ? (bob ? 0 : -2.5 / Self.faceBox * size * 2) : 0)
-            .frame(width: size, height: size)
-            .accessibilityHidden(true)
-            .onAppear { start(live: live) }
-            .onChange(of: motion) { _, _ in start(live: motion != .still && !reduceMotion) }
-            .task(id: live) {
-                // Blink on the desktop's idle cadence, a shade quicker while
-                // working. One task per face; it ends with the view.
-                guard live else { return }
-                while !Task.isCancelled {
-                    let range: ClosedRange<Double> = motion == .working ? 3...7 : 6...14
-                    try? await Task.sleep(for: .seconds(Double.random(in: range)))
-                    guard !Task.isCancelled else { return }
-                    withAnimation(.easeIn(duration: 0.06)) { blinking = true }
-                    try? await Task.sleep(for: .milliseconds(110))
-                    withAnimation(.easeOut(duration: 0.08)) { blinking = false }
-                }
-            }
-    }
-
-    private func start(live: Bool) {
-        // Restart the loops from a known phase whenever the state changes.
-        breathe = false
-        bob = false
-        guard live else { return }
-        switch motion {
-        case .idle:
-            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) { breathe = true }
-        case .working:
-            withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) { bob = true }
-        case .still:
-            break
-        }
-    }
-
-    private var face: some View {
-        Canvas { context, canvasSize in
-            let rect = CGRect(origin: .zero, size: canvasSize)
-            let body = MausSilhouette.path(in: rect)
-            context.fill(body, with: .linearGradient(
-                Gradient(stops: MausPalette.gradientStops(color)),
-                startPoint: CGPoint(x: rect.maxX, y: rect.minY),
-                endPoint: CGPoint(x: rect.minX, y: rect.maxY)
-            ))
-
-            // Eyes, at the desktop's face anchor expressed as a fraction of
-            // the box: (93, 101) of 228.541. One neutral expression — the
-            // desktop cycles 25 of them, and at this size the difference
-            // between any two is a pixel.
-            let eyeWidth = canvasSize.width * 0.085
-            let eyeHeight = eyeWidth * (blinking ? 0.18 : 1.7)
-            let gap = eyeWidth * 1.9
-            let cx = rect.minX + canvasSize.width * 0.407
-            let cy = rect.minY + canvasSize.height * 0.442
-            for dx in [-gap / 2, gap / 2] {
-                let eye = Path(
-                    roundedRect: CGRect(
-                        x: cx + dx - eyeWidth / 2,
-                        y: cy - eyeHeight / 2,
-                        width: eyeWidth,
-                        height: eyeHeight
-                    ),
-                    cornerRadius: eyeWidth / 2
-                )
-                context.fill(eye, with: .color(.white))
+        let live = animated && !reduceMotion
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !live)) { timeline in
+            Canvas { context, canvasSize in
+                engine.setState(state, now: timeline.date)
+                if live { engine.step(now: timeline.date) }
+                engine.draw(in: &context, size: canvasSize, color: color, bodyMotion: live)
             }
         }
         .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
+}
+
+/// The face, frame by frame. One per drawn mascot; holds the morph in
+/// progress, the blink, and when the next expression or blink is due.
+final class MausFaceEngine {
+    private(set) var state: MausState = .idle
+    private var expression = 0
+    private var currentRings: [[CGPoint]] = [MausFaceData.ring(0, eye: 0), MausFaceData.ring(0, eye: 1)]
+    private var targetRings: [[CGPoint]] = [MausFaceData.ring(0, eye: 0), MausFaceData.ring(0, eye: 1)]
+    private var currentMouth = MausFaceData.mouth(0)
+    private var targetMouth = MausFaceData.mouth(0)
+    private var currentGaze = MausFaceData.gaze(0)
+    private var targetGaze = MausFaceData.gaze(0)
+    private var morph: CGFloat = 1
+    private var velocity: CGFloat = 0
+    private var blinkStart: Date?
+    private var nextExpressionAt: Date?
+    private var nextBlinkAt: Date?
+    private var stateStart = Date()
+    private var last: Date?
+    private var started = false
+
+    /// The desktop's `lookAround` default: how much of an expression's own
+    /// look-direction to keep.
+    private let lookAround: CGFloat = 0.35
+    /// Spring stiffness for the morph, the desktop's default.
+    private let spring: CGFloat = 7
+
+    func setState(_ new: MausState, now: Date) {
+        guard !started || new != state else { return }
+        started = true
+        state = new
+        stateStart = now
+        select(MausFaceData.pools[new]?.first ?? 0)
+        if last == nil { morph = 1; velocity = 0 } // first frame: rest on it, no morph in
+        nextExpressionAt = schedule(MausFaceData.expressionCadence[new], from: now)
+        nextBlinkAt = schedule(MausFaceData.blink[new], from: now)
+    }
+
+    private func schedule(_ range: (CGFloat, CGFloat)?, from now: Date) -> Date? {
+        guard let range else { return nil }
+        let ms = range.0 + CGFloat.random(in: 0...1) * (range.1 - range.0)
+        return now.addingTimeInterval(TimeInterval(ms / 1000))
+    }
+
+    private func select(_ index: Int) {
+        let i = ((index % MausFaceData.expressionCount) + MausFaceData.expressionCount) % MausFaceData.expressionCount
+        if i == expression && morph >= 1 { return }
+        currentRings = displayedRings()
+        currentMouth = displayedMouth()
+        currentGaze = displayedGaze()
+        targetRings = [MausFaceData.ring(i, eye: 0), MausFaceData.ring(i, eye: 1)]
+        targetMouth = MausFaceData.mouth(i)
+        targetGaze = MausFaceData.gaze(i)
+        expression = i
+        morph = 0
+        velocity = 0
+    }
+
+    func step(now: Date) {
+        let dt = CGFloat(min(now.timeIntervalSince(last ?? now), 0.1))
+        last = now
+        // the spring towards morph == 1
+        let f = spring
+        velocity += (-2 * f * velocity - f * f * (morph - 1)) * dt
+        morph += velocity * dt
+        if !morph.isFinite { morph = 1; velocity = 0 }
+
+        if let due = nextExpressionAt, now >= due {
+            let pool = MausFaceData.pools[state] ?? [0]
+            let alternatives = pool.filter { $0 != expression }
+            select(alternatives.randomElement() ?? pool[0])
+            nextExpressionAt = schedule(MausFaceData.expressionCadence[state], from: now)
+        }
+        if let due = nextBlinkAt, now >= due {
+            blinkStart = now
+            nextBlinkAt = schedule(MausFaceData.blink[state], from: now)
+        }
+    }
+
+    // MARK: - Drawing
+
+    func draw(in context: inout GraphicsContext, size: CGSize, color: String, bodyMotion: Bool) {
+        let rect = CGRect(origin: .zero, size: size)
+        context.concatenate(MausSilhouette.fit(rect))
+        if bodyMotion {
+            context.concatenate(bodyTransform(MausFaceData.motion[state] ?? MausBodyMotion(), elapsed: CGFloat(Date().timeIntervalSince(stateStart) * 1000)))
+        }
+
+        let body = MausSilhouette.inFaceBox
+        let bounds = MausSilhouette.faceBoxBounds
+        context.fill(body, with: .linearGradient(
+            Gradient(stops: MausPalette.gradientStops(color)),
+            startPoint: CGPoint(x: bounds.maxX, y: bounds.minY),
+            endPoint: CGPoint(x: bounds.minX, y: bounds.maxY)
+        ))
+
+        // The face is painted on the body: clipped to it, anchored in it.
+        context.clip(to: body)
+        let a = MausFaceData.anchor
+        context.translateBy(x: a.x, y: a.y)
+        context.scaleBy(x: a.scale, y: a.scale)
+        context.translateBy(x: -MausFaceData.faceCentre.x, y: -MausFaceData.faceCentre.y)
+
+        let gaze = displayedGaze()
+        let ox = gaze.x * lookAround, oy = gaze.y * lookAround
+        let rings = displayedRings().map { $0.map { CGPoint(x: $0.x + ox, y: $0.y + oy) } }
+        let blink = blinkScale(now: Date())
+
+        for ring in rings {
+            let c = Self.centre(ring)
+            var path = Path()
+            for (i, p) in ring.enumerated() {
+                // blink squashes the eye towards its own centre line
+                let q = CGPoint(x: p.x, y: c.y + (p.y - c.y) * blink)
+                if i == 0 { path.move(to: q) } else { path.addLine(to: q) }
+            }
+            path.closeSubpath()
+            context.fill(path, with: .color(.white))
+        }
+
+        let spec = displayedMouth()
+        let frame = Self.mouthFrame(rings, spec)
+        context.stroke(
+            Self.mouthPath(frame, spec),
+            with: .color(.white),
+            style: StrokeStyle(lineWidth: MausFaceData.mouthStroke, lineCap: .round)
+        )
+    }
+
+    /// The desktop's `bodyTransform`, in face-box units, elapsed in ms.
+    private func bodyTransform(_ m: MausBodyMotion, elapsed: CGFloat) -> CGAffineTransform {
+        let centre = MausFaceData.faceBox / 2
+        let ground = MausFaceData.faceBox
+        func wave(_ period: CGFloat, _ phase: CGFloat = 0) -> CGFloat { sin(elapsed / period * .pi * 2 + phase) }
+        var dx: CGFloat = 0, dy: CGFloat = 0
+        var rotation = m.tilt ?? 0
+        var scale: CGFloat = 1, sx: CGFloat = 1, sy: CGFloat = 1
+        if let (amplitude, period) = m.bob {
+            let p = wave(period)
+            dy -= amplitude * p
+            if let squash = m.squash {
+                let amount = squash * max(0, -p)
+                sy = 1 - amount * 0.5
+                sx = 1 + amount * 0.5
+            }
+        }
+        if let (radius, period) = m.circle {
+            dx += radius * wave(period)
+            dy += radius * wave(period, .pi / 2)
+        }
+        if let (degrees, period) = m.sway { rotation += degrees * wave(period) }
+        if let (fraction, period) = m.pulse { scale *= 1 + fraction * wave(period) }
+        if let (amplitude, period) = m.jitter {
+            dx += amplitude * wave(period)
+            dy += amplitude * wave(period * 0.63, 1.1)
+        }
+        if let (from, duration) = m.enter {
+            let t = elapsed / duration
+            scale *= t >= 1 ? 1 : from + (1 - from) * Self.easeOutBack(max(t, 0))
+        }
+        if let settle = m.settle {
+            let t = min(max(elapsed / 1400, 0), 1)
+            scale *= 1 + (settle - 1) * Self.easeInOut(t)
+        }
+        // SVG applies the list right-to-left: squash, then scale, then rotate,
+        // then translate. Build it in that order.
+        var t = CGAffineTransform.identity
+        if sx != 1 || sy != 1 {
+            t = t.concatenating(CGAffineTransform(translationX: -centre, y: -ground))
+                .concatenating(CGAffineTransform(scaleX: sx, y: sy))
+                .concatenating(CGAffineTransform(translationX: centre, y: ground))
+        }
+        if scale != 1 {
+            t = t.concatenating(CGAffineTransform(translationX: -centre, y: -centre))
+                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+                .concatenating(CGAffineTransform(translationX: centre, y: centre))
+        }
+        if rotation != 0 {
+            t = t.concatenating(CGAffineTransform(translationX: -centre, y: -centre))
+                .concatenating(CGAffineTransform(rotationAngle: rotation * .pi / 180))
+                .concatenating(CGAffineTransform(translationX: centre, y: centre))
+        }
+        if dx != 0 || dy != 0 { t = t.concatenating(CGAffineTransform(translationX: dx, y: dy)) }
+        return t
+    }
+
+    private func blinkScale(now: Date) -> CGFloat {
+        guard let start = blinkStart else { return 1 }
+        let t = CGFloat(now.timeIntervalSince(start)) / 0.320
+        if t >= 1 { blinkStart = nil; return 1 }
+        // fast close, slower open
+        return max(t < 0.42 ? 1 - t / 0.42 : (t - 0.42) / 0.58, 0.04)
+    }
+
+    private func displayedRings() -> [[CGPoint]] {
+        let m = min(max(morph, 0), 1)
+        return currentRings.enumerated().map { eye, ring in
+            ring.enumerated().map { i, p in
+                let q = targetRings[eye][i]
+                return CGPoint(x: p.x + (q.x - p.x) * m, y: p.y + (q.y - p.y) * m)
+            }
+        }
+    }
+    private func displayedMouth() -> [CGFloat] {
+        let m = min(max(morph, 0), 1)
+        return currentMouth.enumerated().map { i, v in v + (targetMouth[i] - v) * m }
+    }
+    private func displayedGaze() -> CGPoint {
+        let m = min(max(morph, 0), 1)
+        return CGPoint(x: currentGaze.x + (targetGaze.x - currentGaze.x) * m, y: currentGaze.y + (targetGaze.y - currentGaze.y) * m)
+    }
+
+    private static func centre(_ ring: [CGPoint]) -> CGPoint {
+        var x: CGFloat = 0, y: CGFloat = 0
+        for p in ring { x += p.x; y += p.y }
+        return CGPoint(x: x / CGFloat(ring.count), y: y / CGFloat(ring.count))
+    }
+
+    /// The mouth hangs off the eyes: centred under the pair, tilted with
+    /// them, pushed clear of whichever eye is tallest.
+    private static func mouthFrame(_ rings: [[CGPoint]], _ spec: [CGFloat]) -> (x: CGFloat, y: CGFloat, angle: CGFloat) {
+        let c0 = centre(rings[0]), c1 = centre(rings[1])
+        let theta = atan2(c1.y - c0.y, c1.x - c0.x)
+        var halfHeight: CGFloat = 0
+        for ring in rings {
+            var lo = CGFloat.infinity, hi = -CGFloat.infinity
+            for p in ring { lo = min(lo, p.y); hi = max(hi, p.y) }
+            halfHeight = max(halfHeight, (hi - lo) / 2)
+        }
+        let drop = halfHeight + spec[2]
+        return (
+            x: (c0.x + c1.x) / 2 - sin(theta) * drop,
+            y: (c0.y + c1.y) / 2 + cos(theta) * drop,
+            angle: theta + spec[3] * .pi / 180
+        )
+    }
+
+    private static func mouthPath(_ frame: (x: CGFloat, y: CGFloat, angle: CGFloat), _ spec: [CGFloat]) -> Path {
+        let ca = cos(frame.angle), sa = sin(frame.angle)
+        func at(_ lx: CGFloat, _ ly: CGFloat) -> CGPoint {
+            CGPoint(x: frame.x + lx * ca - ly * sa, y: frame.y + lx * sa + ly * ca)
+        }
+        var path = Path()
+        path.move(to: at(-spec[0], 0))
+        path.addQuadCurve(to: at(spec[0], 0), control: at(0, spec[1]))
+        return path
+    }
+
+    private static func easeOutBack(_ t: CGFloat) -> CGFloat {
+        let c: CGFloat = 1.7, u = t - 1
+        return 1 + (c + 1) * u * u * u + c * u * u
+    }
+    private static func easeInOut(_ t: CGFloat) -> CGFloat { t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t) }
 }
 
 /// The person, not a bot — the roster header and the settings row. A letter

@@ -73,6 +73,7 @@ struct ChatListView: View {
                                     chat: summary.chat,
                                     preview: summary.preview,
                                     at: summary.lastActivity,
+                                    state: MausState.forChat(summary.chat, in: session.state),
                                     waiting: waitingChats.contains(summary.chat.id),
                                     last: index == rows.count - 1
                                 )
@@ -327,11 +328,11 @@ struct GroupTile: View {
                     Circle().fill(Color.secondary.opacity(0.14))
                     let colors = memberColors(room)
                     if let first = colors.first {
-                        MausAvatar(color: first, size: 34, motion: .still)
+                        MausAvatar(color: first, size: 34, state: .happy, animated: false)
                             .offset(x: -9, y: -6)
                     }
                     if colors.count > 1 {
-                        MausAvatar(color: colors[1], size: 30, motion: .still)
+                        MausAvatar(color: colors[1], size: 30, state: .happy, animated: false)
                             .padding(2)
                             .background(Circle().fill(Color(uiColor: .systemBackground)))
                             .offset(x: 11, y: 9)
@@ -373,6 +374,7 @@ struct ChatRow: View {
     let chat: Chat
     let preview: String
     let at: Double
+    var state: MausState = .idle
     var waiting = false
     var last = false
 
@@ -390,7 +392,7 @@ struct ChatRow: View {
             .frame(maxHeight: .infinity)
 
             HStack(alignment: .top, spacing: 14) {
-                MausAvatar(color: chat.color, size: 52, motion: chat.busy ? .working : .idle)
+                MausAvatar(color: chat.color, size: 52, state: state)
                     .padding(.top, 12)
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -424,11 +426,11 @@ struct ChatRow: View {
                     }
 
                     HStack(alignment: .top, spacing: 8) {
+                        // one line for every bot, so the rows keep one rhythm
                         Text(preview.isEmpty ? " " : preview)
                             .font(.system(size: 15))
                             .foregroundStyle(Color.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
+                            .lineLimit(1)
 
                         Spacer(minLength: 0)
 
@@ -530,7 +532,7 @@ struct MascotStack: View {
     var body: some View {
         HStack(spacing: -overlap) {
             ForEach(Array(colors.enumerated()), id: \.offset) { _, color in
-                MausAvatar(color: color, size: size, motion: .still)
+                MausAvatar(color: color, size: size, state: .idle, animated: false)
                     .padding(2)
                     .background(Circle().fill(Color(uiColor: .systemBackground)))
             }
