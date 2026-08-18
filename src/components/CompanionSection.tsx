@@ -23,6 +23,7 @@ interface Device {
   name: string;
   createdAt: number;
   lastSeenAt: number;
+  cloudDesktopAccess: boolean;
 }
 
 interface CompanionState {
@@ -53,6 +54,7 @@ type Bridge = {
   start: () => Promise<CompanionState>;
   stop: () => Promise<CompanionState>;
   pairing: (open: boolean) => Promise<CompanionState>;
+  cloudDesktop: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
   revoke: (deviceId: string) => Promise<CompanionState>;
 };
 
@@ -289,7 +291,7 @@ export function CompanionSection() {
         title="Paired devices"
         subtitle={
           state.devices.length
-            ? "Removing a device signs it out immediately."
+            ? "Cloud desktop is full interactive access. Enable it only for a phone you trust; removing a device signs it out immediately."
             : "No phones are paired yet."
         }
       >
@@ -301,6 +303,19 @@ export function CompanionSection() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] text-ink">{device.name}</div>
                   <div className="text-[12px] text-ink-secondary">Last seen {relative(device.lastSeenAt)}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] text-ink-secondary">Cloud desktop</span>
+                  <button
+                    role="switch"
+                    aria-checked={device.cloudDesktopAccess}
+                    aria-label={`Cloud desktop access for ${device.name}`}
+                    disabled={busy}
+                    onClick={() => void act((c) => c.cloudDesktop(device.id, !device.cloudDesktopAccess))}
+                    className={cnSwitch(device.cloudDesktopAccess)}
+                  >
+                    <span className={cnKnob(device.cloudDesktopAccess)} />
+                  </button>
                 </div>
                 <button
                   disabled={busy}

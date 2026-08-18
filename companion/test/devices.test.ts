@@ -60,6 +60,7 @@ describe("DeviceRegistry", () => {
     delete stored.devices[0].name;
     delete stored.devices[0].lastSeenAt;
     delete stored.devices[0].createdAt;
+    delete stored.devices[0].cloudDesktopAccess;
     writeFileSync(file, JSON.stringify(stored));
 
     const reloaded = new DeviceRegistry();
@@ -68,6 +69,7 @@ describe("DeviceRegistry", () => {
     expect(listed.name).toBe("Companion");
     expect(Number.isFinite(listed.lastSeenAt)).toBe(true);
     expect(Number.isFinite(listed.createdAt)).toBe(true);
+    expect(listed.cloudDesktopAccess).toBe(false);
     // and the token it was paired with still works
     expect(reloaded.authenticate(token)?.id).toBe(device.id);
   });
@@ -124,6 +126,31 @@ describe("DeviceRegistry", () => {
     expect(registry.redeem(code, "iPhone")).toHaveProperty("token");
     expect(registry.redeem(code, "iPad")).toMatchObject({ error: expect.stringContaining("no pairing") });
     expect(registry.count()).toBe(1);
+  });
+
+  it("keeps cloud desktop access off until enabled for that device", () => {
+    const registry = new DeviceRegistry();
+    const { token, device } = pair(registry);
+
+    expect(device.cloudDesktopAccess).toBe(false);
+    expect(registry.authenticate(token)?.cloudDesktopAccess).toBe(false);
+    expect(registry.setCloudDesktopAccess(device.id, true)).toBe(true);
+    expect(registry.authenticate(token)?.cloudDesktopAccess).toBe(true);
+    expect(new DeviceRegistry().authenticate(token)?.cloudDesktopAccess).toBe(true);
+    expect(registry.setCloudDesktopAccess(device.id, false)).toBe(true);
+    expect(registry.authenticate(token)?.cloudDesktopAccess).toBe(false);
+    expect(registry.setCloudDesktopAccess("missing", true)).toBe(false);
+  });
+
+  it("rolls cloud desktop access back when it cannot be saved", () => {
+    const registry = new DeviceRegistry();
+    const { token, device } = pair(registry);
+    (registry as unknown as { persist: () => void }).persist = () => {
+      throw new Error("ENOSPC: no space left on device");
+    };
+
+    expect(() => registry.setCloudDesktopAccess(device.id, true)).toThrow("ENOSPC");
+    expect(registry.authenticate(token)?.cloudDesktopAccess).toBe(false);
   });
 
   it("uses a high-entropy QR credential and burns the manual fallback with it", () => {

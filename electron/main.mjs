@@ -150,6 +150,7 @@ const LOG_DIR = app.getPath("logs");
 let logStream = null;
 import {
   companionPairing,
+  companionCloudDesktopAccess,
   companionRevoke,
   companionState,
   startCompanion,
@@ -445,6 +446,9 @@ ipcMain.handle("companion:start", () =>
 );
 ipcMain.handle("companion:stop", () => stopCompanion());
 ipcMain.handle("companion:pairing", (_event, open) => companionPairing(Boolean(open)));
+ipcMain.handle("companion:cloud-desktop", (_event, deviceId, allowed) =>
+  companionCloudDesktopAccess(deviceId, Boolean(allowed)),
+);
 ipcMain.handle("companion:revoke", (_event, deviceId) => companionRevoke(deviceId));
 
 ipcMain.handle("desktop:capabilities", async () =>

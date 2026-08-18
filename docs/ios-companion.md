@@ -140,6 +140,8 @@ Allowed in the first release:
 
 - Read the fleet, rooms, instances, configuration status, and transcripts.
 - Fetch settled screen images and opt into live screen frames.
+- Request a fresh interactive cloud-desktop viewer only when the computer
+  owner has enabled that capability for this specific paired phone.
 - Send messages, interrupt bots, answer approvals/questions, and mark chats
   read.
 - Create a basic bot.
@@ -156,6 +158,8 @@ Intentionally refused:
 - Pairing, device revocation, or companion lifecycle control.
 - Local VM lifecycle, webhooks, connectors, routines, team import/export, and
   internal peer-agent routes.
+- Cloud computer provisioning, sleep, shell execution, and screenshot APIs.
+  The phone receives only the fresh `join` viewer URL, never the provider key.
 - New harness routes that have not been reviewed for phone access.
 
 ## Stream and state model
@@ -238,5 +242,5 @@ distribution scope:
 4. **Distribution:** signing, bundle ownership, privacy declarations,
    TestFlight, and App Store review material. Swift tests and an unsigned
    simulator build already run in the repository CI.
-5. **Optional expansion:** voice/call mode, richer computer interaction, or a
-   hosted relay. Each requires its own threat-model review.
+5. **Optional expansion:** voice/call mode, Local VM or host-computer
+   interaction, or a hosted relay. Each requires its own threat-model review.

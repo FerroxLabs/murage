@@ -381,6 +381,18 @@ final class Session: ObservableObject {
         await perform { try await $0.interrupt(botId: bot.id) }
     }
 
+    /// Ask for one fresh cloud viewer URL. Unlike ordinary actions this
+    /// returns the value to a browser sheet and never writes it to app state.
+    func cloudDesktop(for bot: Bot) async throws -> URL {
+        guard let client else { throw APIError.transport("This computer is offline.") }
+        do {
+            return try await client.cloudDesktop(botId: bot.id).url
+        } catch let error as APIError where error.isUnauthorized {
+            status = .unauthorized
+            throw error
+        }
+    }
+
     func markRead(_ chat: Chat) async {
         await perform(quietly: true) {
             switch chat {

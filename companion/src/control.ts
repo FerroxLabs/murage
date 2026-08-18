@@ -176,6 +176,17 @@ export function createControlServer(options: ControlOptions): Server {
       options.devices.closePairing();
       return json(res, 200, companionState(options));
     }
+    const cloudDesktop = path.match(/^\/devices\/([\w-]+)\/cloud-desktop$/);
+    if (cloudDesktop && (method === "POST" || method === "DELETE")) {
+      try {
+        if (!options.devices.setCloudDesktopAccess(cloudDesktop[1], method === "POST")) {
+          return json(res, 404, { error: "no such device" });
+        }
+      } catch {
+        return json(res, 500, { error: "could not save cloud desktop access" });
+      }
+      return json(res, 200, companionState(options));
+    }
     const revoke = path.match(/^\/devices\/([\w-]+)$/);
     if (revoke && method === "DELETE") {
       if (!options.devices.revoke(revoke[1])) return json(res, 404, { error: "no such device" });
@@ -279,7 +290,9 @@ function render(s) {
     (s.devices.length
       ? "<ul>" + s.devices.map((d) =>
           "<li><div class='grow'><div class=name>" + esc(d.name) + "</div>" +
-          "<div class=dim>Last seen " + ago(d.lastSeenAt) + "</div></div>" +
+          "<div class=dim>Last seen " + ago(d.lastSeenAt) + "</div>" +
+          "<button data-cloud='" + esc(d.id) + "' data-allowed='" + (d.cloudDesktopAccess ? "1" : "0") + "'>" +
+          (d.cloudDesktopAccess ? "Cloud desktop on" : "Allow cloud desktop") + "</button></div>" +
           "<button data-revoke='" + esc(d.id) + "'>Remove</button></li>").join("") + "</ul>"
       : "<p class=dim>No phones are paired yet.</p>");
 
@@ -287,6 +300,12 @@ function render(s) {
   el("cancel")?.addEventListener("click", async () => render(await api("/pairing", "DELETE")));
   for (const b of document.querySelectorAll("[data-revoke]")) {
     b.addEventListener("click", async () => render(await api("/devices/" + b.dataset.revoke, "DELETE")));
+  }
+  for (const b of document.querySelectorAll("[data-cloud]")) {
+    b.addEventListener("click", async () => render(await api(
+      "/devices/" + b.dataset.cloud + "/cloud-desktop",
+      b.dataset.allowed === "1" ? "DELETE" : "POST"
+    )));
   }
   if (s.pairing) {
     const tick = () => {

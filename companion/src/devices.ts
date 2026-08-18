@@ -23,6 +23,9 @@ export interface DeviceRecord {
   tokenHash: string;
   createdAt: number;
   lastSeenAt: number;
+  /** Full interactive access to a bot's cloud desktop. Deliberately off on
+   * every new and migrated device until the computer owner enables it. */
+  cloudDesktopAccess: boolean;
 }
 
 /** What the UI is allowed to see: a device without its secret. */
@@ -100,6 +103,7 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
     name: cleanDeviceName(record.name),
     createdAt,
     lastSeenAt: timestamp(record.lastSeenAt, createdAt),
+    cloudDesktopAccess: record.cloudDesktopAccess === true,
   };
 }
 
@@ -209,6 +213,7 @@ export class DeviceRegistry {
       tokenHash: sha256(token),
       createdAt: Date.now(),
       lastSeenAt: Date.now(),
+      cloudDesktopAccess: false,
     };
     this.devices.push(device);
     // Unlike the lastSeenAt write below, this one must not be swallowed. A
@@ -258,6 +263,23 @@ export class DeviceRegistry {
     if (this.devices.length === before) return false;
     this.lastSeenWrites.delete(id);
     this.persist();
+    return true;
+  }
+
+  /** Grant or remove the one capability that crosses from companion actions
+   * into full desktop control. This is per device so a watch-only phone does
+   * not inherit a different phone's permission. */
+  setCloudDesktopAccess(id: string, allowed: boolean): boolean {
+    const device = this.devices.find((candidate) => candidate.id === id);
+    if (!device) return false;
+    const previous = device.cloudDesktopAccess;
+    device.cloudDesktopAccess = allowed;
+    try {
+      this.persist();
+    } catch (error) {
+      device.cloudDesktopAccess = previous;
+      throw error;
+    }
     return true;
   }
 }

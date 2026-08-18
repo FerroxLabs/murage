@@ -167,7 +167,7 @@ beforeAll(async () => {
   sidecar = createServer(
     createProxyHandler({
       harnessPort: HARNESS_PORT,
-      authenticate: (t) => t === TOKEN,
+      authenticate: (t) => (t === TOKEN ? { cloudDesktopAccess: true } : null),
       redeem: (code, deviceName) =>
         code === "424242"
           ? { token: TOKEN, device: { id: "d1", name: String(deviceName) } }
@@ -368,7 +368,7 @@ describe("the sidecar in front of an unmodified harness", () => {
     const orphan = createServer(
       createProxyHandler({
         harnessPort: 1,
-        authenticate: () => true,
+        authenticate: () => ({ cloudDesktopAccess: true }),
         redeem: () => ({ error: "no" }),
         serverName: () => "Test computer",
       }),
@@ -400,7 +400,7 @@ describe("the sidecar in front of an unmodified harness", () => {
     const stalled = createServer(
       createProxyHandler({
         harnessPort: mutePort,
-        authenticate: () => true,
+        authenticate: () => ({ cloudDesktopAccess: true }),
         redeem: () => ({ error: "no" }),
         serverName: () => "Test computer",
         // the shipped value is 30s; the behaviour under test is the same one
@@ -451,7 +451,7 @@ describe("the sidecar in front of an unmodified harness", () => {
     const relay = createServer(
       createProxyHandler({
         harnessPort: slowPort,
-        authenticate: () => true,
+        authenticate: () => ({ cloudDesktopAccess: true }),
         redeem: () => ({ error: "no" }),
         serverName: () => "Test computer",
       }),
@@ -510,7 +510,7 @@ describe("the sidecar in front of an unmodified harness", () => {
     const relay = createServer(
       createProxyHandler({
         harnessPort: floodPort,
-        authenticate: () => true,
+        authenticate: () => ({ cloudDesktopAccess: true }),
         redeem: () => ({ error: "no" }),
         serverName: () => "Test computer",
       }),
@@ -548,7 +548,7 @@ describe("pairing, end to end", () => {
     const paired = createServer(
       createProxyHandler({
         harnessPort: HARNESS_PORT,
-        authenticate: (t) => Boolean(registry.authenticate(t ?? undefined)),
+        authenticate: (t) => registry.authenticate(t ?? undefined),
         redeem: (code, deviceName) => registry.redeem(code, deviceName),
         serverName: () => "Ada's computer",
       }),

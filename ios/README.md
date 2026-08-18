@@ -116,9 +116,10 @@ here by simply not having the methods:
 |---|---|
 | Read bots, rooms and transcripts | Write API keys (`PUT /api/config`) |
 | Send messages | Manage pairing or revoke devices |
-| **Answer approvals and questions** | Drive the Local VM |
+| **Answer approvals and questions** | Drive the Local VM or this computer |
 | Interrupt a bot, mark chats read | Reach `/api/internal/*` |
 | Fetch screen images on demand | Load the packaged desktop UI |
+| Open an explicitly enabled cloud desktop | Provision, sleep or run shell commands on cloud computers |
 
 Marking a chat read and remembering an approval use purpose-built server
 verbs. The sidecar does not expose the general bot or room `PATCH` routes,
@@ -127,6 +128,12 @@ working directories.
 
 Companion settings stay on the computer on purpose: losing the phone must not
 mean losing the ability to lock it out.
+
+Interactive cloud desktop access is additionally enabled per paired device and
+starts off. The phone asks the Mac to mint a fresh provider URL after an
+explicit warning, validates that it is HTTPS, opens it in an in-app Safari
+sheet, and never persists it. The Local VM's loopback-only noVNC listener and
+the host computer remain unreachable through the companion.
 
 ## Design notes
 

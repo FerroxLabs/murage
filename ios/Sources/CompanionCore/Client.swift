@@ -454,6 +454,17 @@ public struct CompanionClient: Sendable {
         try await send(try makeRequest("POST", "/api/bots/\(botId)/interrupt"))
     }
 
+    /// Mint a fresh interactive viewer for an existing cloud computer. The
+    /// response URL is a bearer credential: the caller presents it directly
+    /// and never stores it. The sidecar additionally requires this paired
+    /// device's cloud-desktop capability to be enabled on the Mac.
+    public func cloudDesktop(botId: String) async throws -> CloudDesktopSession {
+        try await send(
+            try makeRequest("POST", "/api/bots/\(botId)/computer/join"),
+            as: CloudDesktopSession.self
+        )
+    }
+
     public func markRead(botId: String) async throws {
         try await send(try makeRequest("POST", "/api/bots/\(botId)/read"))
     }

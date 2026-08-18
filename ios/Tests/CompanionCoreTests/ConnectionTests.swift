@@ -67,4 +67,19 @@ final class ConnectionTests: XCTestCase {
         XCTAssertNil(PairingInvite.parse(try XCTUnwrap(URL(string: "openmausbot://pair?address=host%2Fpath&code=123456"))))
         XCTAssertNil(PairingInvite.parse(try XCTUnwrap(URL(string: "openmausbot://pair?address=one.local&address=two.local&code=123456"))))
     }
+
+    func testAcceptsOnlyAnHTTPSCloudDesktopSession() throws {
+        let valid = Data(#"{"joinUrl":"https://desktop.example/session/fresh","state":"ready"}"#.utf8)
+        let session = try JSONDecoder().decode(CloudDesktopSession.self, from: valid)
+        XCTAssertEqual(session.url.absoluteString, "https://desktop.example/session/fresh")
+
+        for value in [
+            "http://desktop.example/session",
+            "javascript:alert(1)",
+            "not a URL"
+        ] {
+            let data = try JSONSerialization.data(withJSONObject: ["joinUrl": value])
+            XCTAssertThrowsError(try JSONDecoder().decode(CloudDesktopSession.self, from: data))
+        }
+    }
 }
