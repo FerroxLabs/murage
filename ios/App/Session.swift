@@ -60,6 +60,17 @@ final class Session: ObservableObject {
 
     init() {
         _ = NotificationCoordinator.shared
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-store-preview"),
+           let url = Bundle.main.url(forResource: "StorePreview", withExtension: "json"),
+           let data = try? Data(contentsOf: url),
+           let fleet = try? JSONDecoder().decode(Fleet.self, from: data) {
+            connection = Connection(name: "Preview Mac", host: "preview.tailnet.ts.net", port: 8810)
+            state.hydrate(fleet)
+            status = .live
+            return
+        }
+#endif
         restore()
         Task { await refreshNotificationAuthorization() }
     }
