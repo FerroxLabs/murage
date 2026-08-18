@@ -38,6 +38,8 @@ final class Session: ObservableObject {
     /// One exact message the next opened chat should reveal.
     @Published private(set) var focusedMessageId: String?
     @Published private(set) var notificationAuthorization: UNAuthorizationStatus = .notDetermined
+    /// A short-lived desktop handoff waiting for PairingView to present it.
+    @Published private(set) var pairingInvite: PairingInvite?
 
     private var client: CompanionClient?
     private var streamTask: Task<Void, Never>?
@@ -114,11 +116,15 @@ final class Session: ObservableObject {
         status = .connecting
     }
 
-    /// Redeem a pairing code. On success the token goes to the keychain and
-    /// the connection to defaults — deliberately apart, so the thing that
-    /// gets backed up is never the credential.
-    func pair(with connection: Connection, code: String, deviceName: String) async throws {
-        let paired = try await CompanionClient.pair(connection: connection, code: code, deviceName: deviceName)
+    /// Redeem a one-time pairing credential. On success the device token goes
+    /// to the keychain and the connection to defaults — deliberately apart,
+    /// so the thing that gets backed up is never the credential.
+    func pair(with connection: Connection, credential: String, deviceName: String) async throws {
+        let paired = try await CompanionClient.pair(
+            connection: connection,
+            credential: credential,
+            deviceName: deviceName
+        )
         // prefer the name the computer calls itself over the Bonjour label
         var stored = connection
         if !paired.serverName.isEmpty { stored.name = paired.serverName }
@@ -133,6 +139,22 @@ final class Session: ObservableObject {
         // keychain — the token is in hand, so there is nothing left to retry.
         restorePending = false
         connect()
+    }
+
+    func receivePairingURL(_ url: URL) {
+        guard status == .unpaired else {
+            actionError = "This phone is already paired. Unpair it in Settings before connecting it to another computer."
+            return
+        }
+        guard let invite = PairingInvite.parse(url) else {
+            actionError = "That pairing invitation is not valid. Start pairing again on your computer."
+            return
+        }
+        pairingInvite = invite
+    }
+
+    func consumePairingInvite() {
+        pairingInvite = nil
     }
 
     func signOut() {

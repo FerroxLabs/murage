@@ -11,7 +11,7 @@ same harness the desktop app talks to, through the restricted sidecar described 
 ## Status
 
 Built and verified against a real harness on both a simulator and an iPhone:
-Bonjour discovery, manual LAN and Tailscale pairing, the roster, paged chat,
+QR handoff, Bonjour discovery, manual LAN and Tailscale pairing, the roster, paged chat,
 streaming replies, the computer view, and — the one that matters — an approval
 raised by a bot on the Mac, answered on the phone, with the bot carrying on.
 
@@ -55,7 +55,8 @@ ios/
     Discovery.swift              NWBrowser for _openmausbot._tcp
     Keychain.swift               the device token
     MausAvatar.swift             the mascot face, in the desktop's palette
-    PairingView.swift            find a computer, type the six digits
+    PairingView.swift            QR handoff, discovery, address and code fallback
+    PairingScanner.swift         native QR camera, permission and recovery UI
     ChatListView.swift           roster, with "waiting on you" pulled to the top
     ChatView.swift               transcript, approval cards, composer
     ComputerView.swift           opt-in live view of a bot's computer
@@ -131,6 +132,10 @@ mean losing the ability to lock it out.
 
 - **Zero third-party dependencies.** The raw-byte SSE reader, Keychain,
   `NWBrowser`, and notifications are all first-party.
+- **QR scan confirms before connecting.** The QR carries a short-lived,
+  high-entropy credential rather than relying on the visible six-digit code.
+  The app validates the target, asks the user to confirm it, exchanges the
+  credential once, and persists only the resulting device token in Keychain.
 - **Thin client.** The harness already folds provider events into settled
   messages. The phone folds `message`, `message.patch`, and `bot` frames, plus
   the small `runtime` delta subset needed to show a reply while it is typed.
