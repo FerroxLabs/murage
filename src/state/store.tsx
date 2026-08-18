@@ -97,12 +97,20 @@ export interface Task {
   threadId: string;
   title: string;
   createdAt: number;
+  /** what this task has spent, banked once per settled turn */
+  usage?: TaskUsage;
   /** folder this task's turns run in, pinned on its first turn; null =
    * legacy home-folder session; absent = not pinned yet */
   cwd?: string | null;
-  /** cumulative token spend across this task's settled turns, as the
-   * server tallies it; absent until the first turn completes */
-  usage?: { input: number; output: number; turns: number };
+}
+
+export interface TaskUsage {
+  input: number;
+  output: number;
+  /** null until any turn reported a cost — most engines never do; records
+   * from builds before cost existed lack the field entirely */
+  costUsd: number | null;
+  turns: number;
 }
 
 export interface Bot {
@@ -209,6 +217,8 @@ export interface InstanceInfo {
     reason?: string;
     authenticated?: boolean;
     version?: string | null;
+    /** a reported cost on a subscription is notional; the UI says so */
+    billing?: "metered" | "subscription";
   };
   models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean }> };
   capabilities?: {
@@ -235,7 +245,8 @@ export type AppSettingsSection =
   | "engines"
   | "companion"
   | "voice"
-  | "computer";
+  | "computer"
+  | "usage";
 
 export interface AppState {
   bots: Bot[];

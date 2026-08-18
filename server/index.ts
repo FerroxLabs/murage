@@ -730,13 +730,22 @@ bus.subscribe((event: RuntimeEvent) => {
     case "turn.completed": {
       const reply = lastReply.get(event.threadId) ?? "";
       lastReply.delete(event.threadId);
-      const usage = turnUsage.get(event.threadId);
+      const lastReported = turnUsage.get(event.threadId);
       turnUsage.delete(event.threadId);
       // group turns run on the room's thread — the speaking bot's task
       // tally is not the right home for a shared room's spend, so only
       // 1:1 task turns are tallied for now.
-      if (bot && usage) store.addTaskUsage(bot.id, event.threadId, usage);
       if (bot) {
+        // bank what this turn spent before the bot broadcast carries the
+        // task list to every window. The driver's own per-turn figure
+        // (turn.completed.usage) is authoritative; a driver that only
+        // streams the running indicator falls back to its last value.
+        const tokens = event.usage ?? lastReported;
+        store.addTaskUsage(bot.id, event.threadId, {
+          input: tokens?.input,
+          output: tokens?.output,
+          costUsd: event.cost ?? null,
+        });
         // settled → idle; a setup failure already marked it dead, keep that
         if (store.bot(bot.id)?.activity !== "dead") store.setActivity(bot.id, "idle");
         store.patchBot(bot.id, { unread: true });
