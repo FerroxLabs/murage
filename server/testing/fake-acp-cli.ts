@@ -74,6 +74,12 @@ const dumpEnv = Object.fromEntries(
     "UNSLOTH_STUDIO_AUTH_TOKEN",
     "CURSOR_API_KEY",
     "CURSOR_AUTH_TOKEN",
+    "KIMI_MODEL_NAME",
+    "KIMI_MODEL_API_KEY",
+    "KIMI_MODEL_BASE_URL",
+    "KIMI_MODEL_PROVIDER_TYPE",
+    "KIMI_MODEL_DISPLAY_NAME",
+    "TEST_TURN_MODEL",
   ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]] as const)),
 );
 const dumpState: Record<string, unknown> = { argv, env: dumpEnv };
