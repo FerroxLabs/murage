@@ -1,55 +1,116 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
-  DATA_DIR,
   instanceConfigs,
-  loadConfig,
-  normalizeVpsConfig,
-  saveConfig,
+  isValidSshAlias,
+  parseConfigPatch,
+  parseStoredConfig,
   vpsSshAlias,
+  withInstanceCli,
   type AppConfig,
 } from "./config.ts";
 
-describe("VPS config", () => {
-  beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+describe("configuration boundaries", () => {
+  it("keeps supported stored settings and drops unrelated top-level data", () => {
+    expect(
+      parseStoredConfig({
+        profile: { name: "Ada", email: "ada@example.com" },
+        instances: { claude: { driver: "claudeAgent", config: { cli: "/opt/claude" } } },
+        unrelated: { secret: "not part of the config contract" },
+      }),
+    ).toEqual({
+      profile: { name: "Ada", email: "ada@example.com" },
+      instances: { claude: { driver: "claudeAgent", config: { cli: "/opt/claude" } } },
+    });
   });
 
-  it("keeps test data in the throwaway home", () => {
-    expect(process.env.OMB_DATA_DIR).toBeUndefined();
-    expect(DATA_DIR).toContain("omb-test-home-");
+  it("rejects malformed stored instances and API patches", () => {
+    expect(() => parseStoredConfig({ instances: { claude: { driver: 42 } } })).toThrow("instances.claude.driver");
+    expect(() => parseConfigPatch({ opencodeGo: { apiKey: 42 } })).toThrow("opencodeGo.apiKey");
+    expect(() => parseConfigPatch({ profile: [] })).toThrow("profile");
   });
 
-  it("accepts a simple SSH config alias and rejects command-shaped targets", () => {
-    expect(normalizeVpsConfig({ sshAlias: "production-vps" })).toEqual({ sshAlias: "production-vps" });
-    expect(() => normalizeVpsConfig({ sshAlias: "production-vps; touch /tmp/pwned" })).toThrow(/SSH config alias/);
-    expect(() => normalizeVpsConfig({ sshAlias: "ssh://production-vps" })).toThrow(/SSH config alias/);
-    expect(() => normalizeVpsConfig({ sshAlias: "user@production-vps" })).toThrow(/SSH config alias/);
+  it("accepts only a simple VPS SSH config alias and exposes no credentials", () => {
+    expect(isValidSshAlias("production-vps")).toBe(true);
+    expect(isValidSshAlias("prod; reboot")).toBe(false);
+    expect(() => parseConfigPatch({ vps: { sshAlias: "prod; reboot" } })).toThrow("vps.sshAlias");
+    expect(parseConfigPatch({ vps: { sshAlias: "production-vps" } })).toEqual({
+      vps: { sshAlias: "production-vps" },
+    });
+    expect(vpsSshAlias({ vps: { sshAlias: "production-vps" } })).toBe("production-vps");
+    expect(vpsSshAlias({ vps: { sshAlias: "-bad" } })).toBeNull();
+  });
+});
+
+describe("default fleet", () => {
+  it("ships Qwen and Hermes as custom-only engines", () => {
+    const map = instanceConfigs({});
+    expect(map.qwen).toEqual({ driver: "qwenAgent", environment: {} });
+    expect(map.hermes).toEqual({ driver: "hermesAgent", environment: {} });
   });
 
-  it("keeps old config data and persists only the non-secret alias", () => {
-    mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(
-      join(DATA_DIR, "config.json"),
-      JSON.stringify({ box: { token: "legacy-box-token" }, instances: { claude: { driver: "claudeAgent" } } }),
-    );
-
-    saveConfig({ vps: { sshAlias: "production-vps", privateKey: "must-not-persist" } as never });
-
-    const disk = JSON.parse(readFileSync(join(DATA_DIR, "config.json"), "utf8"));
-    expect(disk.box).toEqual({ token: "legacy-box-token" });
-    expect(disk.instances).toEqual({ claude: { driver: "claudeAgent" } });
-    expect(disk.vps).toEqual({ sshAlias: "production-vps" });
-    expect(JSON.stringify(disk)).not.toContain("must-not-persist");
-    expect(vpsSshAlias(loadConfig())).toBe("production-vps");
+  it("adds missing custom-only engines onto an existing product fleet", () => {
+    const map = instanceConfigs({ instances: { claude: { driver: "claudeAgent" } } });
+    expect(map.claude.driver).toBe("claudeAgent");
+    expect(map.qwen?.driver).toBe("qwenAgent");
+    expect(map.hermes?.driver).toBe("hermesAgent");
   });
 
-  it("supports clearing the optional VPS config", () => {
-    saveConfig({ vps: { sshAlias: "production-vps" } });
-    saveConfig({ vps: { sshAlias: "" } });
-    expect(vpsSshAlias(loadConfig())).toBeNull();
+  it("does not expand a one-off shadow fleet", () => {
+    const map = instanceConfigs({ instances: { ghost: { driver: "not-a-real-driver" } } });
+    expect(Object.keys(map)).toEqual(["ghost"]);
+  });
+});
+
+describe("Instance CLI override", () => {
+  it("sets, replaces, and clears config.cli on a default-fleet instance", () => {
+    const cfg: AppConfig = {};
+    const set = withInstanceCli(cfg, "claude", "/opt/claude-2.1/bin/claude");
+    expect(set.ok).toBe(true);
+    expect(set.config.instances!.claude.config).toEqual({ cli: "/opt/claude-2.1/bin/claude" });
+
+    const replaced = withInstanceCli(set.config, "claude", "~/bin/claude");
+    expect(replaced.config.instances!.claude.config).toEqual({ cli: "~/bin/claude" });
+
+    const cleared = withInstanceCli(replaced.config, "claude", "");
+    expect(cleared.config.instances!.claude.config).toBeUndefined();
+  });
+
+  it("preserves sibling config keys when clearing only cli", () => {
+    const cfg: AppConfig = {
+      instances: { claude: { driver: "claudeAgent", config: { cli: "/x/claude", permissionMode: "bypassPermissions" } } },
+    };
+    const cleared = withInstanceCli(cfg, "claude", "");
+    expect(cleared.config.instances!.claude.config).toEqual({ permissionMode: "bypassPermissions" });
+  });
+
+  it("leaves the original config untouched and rejects unknown instances", () => {
+    const cfg: AppConfig = { instances: { codex: { driver: "codex" } } };
+    const result = withInstanceCli(cfg, "codex", "/new/codex");
+    expect(result.config.instances!.codex.config).toEqual({ cli: "/new/codex" });
+    expect(cfg.instances!.codex.config).toBeUndefined();
+
+    expect(withInstanceCli(cfg, "nope", "/x").ok).toBe(false);
+  });
+
+  it("never persists the credential env instanceConfigs injects", () => {
+    // instanceConfigs() copies xai/box/opencodeGo keys into every entry's
+    // environment for the live fleet; withInstanceCli must strip them back
+    // out, or saving a CLI override would copy secrets into the instances
+    // section of config.json.
+    const cfg: AppConfig = {
+      xai: { key: "SECRET-XAI" },
+      box: { token: "SECRET-BOX" },
+    };
+    const set = withInstanceCli(cfg, "claude", "/opt/claude");
+    expect(set.ok).toBe(true);
+    for (const entry of Object.values(set.config.instances!)) {
+      expect(entry.environment ?? {}).toEqual({});
+    }
+    // user-authored env survives
+    const custom = { instances: { claude: { driver: "claudeAgent", environment: { MY_FLAG: "1" } } } };
+    const kept = withInstanceCli(custom, "claude", "/x");
+    expect(kept.config.instances!.claude.environment).toEqual({ MY_FLAG: "1" });
   });
 });
 

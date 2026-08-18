@@ -13,6 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
@@ -38,12 +39,24 @@ export interface OptionCardData {
   allowKey?: string;
 }
 
+export interface ConnectorCardData {
+  slug: string;
+  label: string;
+  description: string;
+  status: "required" | "authorizing" | "connected" | "failed";
+  resumeKey: string;
+  error?: string;
+  dismissed?: boolean;
+  resumed?: boolean;
+}
+
 export interface Message {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen";
+  kind: "text" | "options" | "activity" | "screen" | "connector";
   text?: string;
   card?: OptionCardData;
+  connector?: ConnectorCardData;
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
@@ -61,6 +74,10 @@ export interface Message {
   reactions?: Array<{ emoji: string; by: string }>;
   /** comm chips: "Messaged @X" linking to the bot⇄bot channel. */
   comm?: { groupId: string; withBotId: string; withName: string; withColor: MausColor };
+  /** sent while the bot was mid-turn; auto-sends when the turn settles.
+   * Rendered only while the bot is busy, so a flag stranded by a server
+   * restart never shows a promise nothing will keep. */
+  queued?: boolean;
 }
 
 export type GroupDefaultResponder =
@@ -81,12 +98,19 @@ export interface Group {
   /** auto-created bot⇄bot channel (ask_bot exchanges mirror here) */
   dm?: boolean;
   busyBotId?: string | null;
+  /** the room's shared desk — where member turns run their shell tools,
+   * overriding each member's own folder; absent = each member's own */
+  cwd?: string;
+  /** folder the room's turns actually run in, pinned on the first turn;
+   * null = each member's own default; absent = not pinned yet */
+  pinnedCwd?: string | null;
   messages: Message[];
 }
 
 export interface ModelSelection {
   instanceId: string;
   model: string;
+  effort?: EffortLevel;
 }
 
 /** One of a bot's separate contexts: its own thread, transcript and
@@ -95,6 +119,20 @@ export interface Task {
   threadId: string;
   title: string;
   createdAt: number;
+  /** what this task has spent, banked once per settled turn */
+  usage?: TaskUsage;
+  /** folder this task's turns run in, pinned on its first turn; null =
+   * legacy home-folder session; absent = not pinned yet */
+  cwd?: string | null;
+}
+
+export interface TaskUsage {
+  input: number;
+  output: number;
+  /** null until any turn reported a cost — most engines never do; records
+   * from builds before cost existed lack the field entirely */
+  costUsd: number | null;
+  turns: number;
 }
 
 export interface Bot {
@@ -110,11 +148,15 @@ export interface Bot {
   mascotExpression?: string | null;
   unread: boolean;
   busy?: boolean;
+  /** what the bot is doing, as the harness sees it; busy is derived from it */
+  activity?: "working" | "waiting-on-you" | "idle" | "no-signal" | "dead";
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "off";
-  /** Which cloud computer backs `computer: "cloud"`; absent = Box. */
-  cloudBackend?: "box" | "vps";
+  /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
+  cloudBackend?: CloudBackend;
+  /** where new tasks run their shell tools; absent = the private bot workspace */
+  cwd?: string;
   /** auto mode: the bot approves its own tool permissions */
   autoApprove?: boolean;
   /** tools this bot may always use without asking */
@@ -130,6 +172,9 @@ export interface Bot {
   /** When this bot wants to talk to another bot (ask_bot/delegate_bot),
    * pause and ask the user first. Off by default. */
   approvePeerComms?: boolean;
+  /** Whether this bot may use the workspace's connected apps. Unset means
+   * allowed for existing bots; imported bots start with this disabled. */
+  composio?: boolean;
   messages: Message[];
   /** leaf of the visible conversation branch (see visibleMessages) */
   activeLeafId?: string | null;
@@ -165,9 +210,9 @@ export function messageVersions(bot: Bot, message: Message): Message[] {
 /** GET /api/config — configured flags only; secrets are never echoed. */
 export interface ConfigStatus {
   xai?: { configured: boolean };
-  composio: { configured: boolean; apiKeyConfigured?: boolean };
+  composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
   box: { configured: boolean };
-  vps?: { configured: boolean; sshAlias: string };
+  vps: { configured: boolean; sshAlias: string };
   opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
@@ -197,15 +242,38 @@ export interface InstanceInfo {
     reason?: string;
     authenticated?: boolean;
     version?: string | null;
+    /** a reported cost on a subscription is notional; the UI says so */
+    billing?: "metered" | "subscription";
   };
-  models: { default: string; options: Array<{ id: string; label: string }> };
-  capabilities?: { computerMcp?: boolean; agentsMcp?: boolean };
+  models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean }> };
+  capabilities?: {
+    computerMcp?: boolean;
+    agentsMcp?: boolean;
+    composioMcp?: boolean;
+    effortLevels?: readonly EffortLevel[];
+  };
+  /** `custom` agents sit below the rail divider — no subscription catalog. */
+  access?: "subscription" | "custom";
   install?: EngineInstall;
+  /** Configured CLI path override — set ONLY when the user overrode it;
+   * absent means the driver default is in effect. */
+  cli?: string;
+  /** Driver's default binary name (e.g. "claude"). */
+  cliDefault?: string;
+  /** Absolute paths of every default binary found on PATH, PATH order. */
+  cliCandidates?: string[];
 }
 
-export type AppSettingsSection = "general" | "connections" | "voice" | "computer";
+export type AppSettingsSection =
+  | "general"
+  | "connections"
+  | "engines"
+  | "companion"
+  | "voice"
+  | "computer"
+  | "usage";
 
-interface AppState {
+export interface AppState {
   bots: Bot[];
   groups: Group[];
   instances: InstanceInfo[];
@@ -221,12 +289,17 @@ interface AppState {
   settingsOpen: boolean;
   pluginsOpen: boolean;
   computerOpen: boolean;
+  /** the per-thread event inspector (runtime stream + native protocol tee) */
+  inspectorOpen: boolean;
   appSettingsOpen: boolean;
   appSettingsSection: AppSettingsSection;
   /** latest live frame of a bot's computer, per botId */
   screens: Record<string, { png: string; mime: string }>;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
+  /** a search hit to scroll to once its thread is on screen; nonce lets the
+   * same message be focused twice in a row */
+  focusMessage: { threadId: string; messageId: string; nonce: number; consumed: boolean } | null;
   connected: boolean;
   error: string | null;
   mascotMotion: {
@@ -236,7 +309,9 @@ interface AppState {
   } | null;
 }
 
-type Action =
+type BotAnnouncement = Omit<Bot, "messages"> & { messages?: Message[] };
+
+export type Action =
   | { type: "hydrate"; bots: Bot[]; groups: Group[] }
   | { type: "showRoutines" }
   | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
@@ -295,7 +370,7 @@ type Action =
   | { type: "deleteBot"; botId: string }
   | { type: "duplicateBot"; botId: string }
   | { type: "markUnread"; botId: string }
-  | { type: "botPatched"; bot: Partial<Bot> & { id: string } }
+  | { type: "botPatched"; bot: BotAnnouncement }
   | { type: "messageAdded"; threadId: string; message: Message }
   | { type: "messagePatched"; threadId: string; message: Message }
   | { type: "screenFrame"; botId: string; png: string; mime: string }
@@ -307,6 +382,9 @@ type Action =
   | { type: "toggleSettings"; open?: boolean }
   | { type: "togglePlugins"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }
+  | { type: "toggleInspector"; open?: boolean }
+  | { type: "focusMessage"; threadId: string; messageId: string }
+  | { type: "focusMessageConsumed"; nonce: number }
   | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection }
   | {
       type: "updateBot";
@@ -317,10 +395,10 @@ type Action =
           | "name"
           | "title"
           | "description"
-          | "notifications"
-          | "computer"
-          | "cloudBackend"
-          | "color"
+           | "notifications"
+           | "computer"
+           | "cloudBackend"
+           | "color"
           | "mascotExpression"
           | "autoApprove"
           | "speakReplies"
@@ -329,6 +407,8 @@ type Action =
           | "hidden"
           | "chiefOfStaff"
           | "approvePeerComms"
+          | "composio"
+          | "modelSelection"
         >
       >;
     };
@@ -361,7 +441,7 @@ function patchCard(state: AppState, botId: string, messageId: string, patch: Par
   }));
 }
 
-function reducer(state: AppState, action: Action): AppState {
+export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "hydrate": {
       const known = (id: string) => action.bots.some((b) => b.id === id) || action.groups.some((g) => g.id === id);
@@ -375,6 +455,7 @@ function reducer(state: AppState, action: Action): AppState {
         activeView: "routines",
         settingsOpen: false,
         computerOpen: false,
+        inspectorOpen: false,
         appSettingsOpen: false,
         pluginsOpen: false,
       };
@@ -466,7 +547,9 @@ function reducer(state: AppState, action: Action): AppState {
     case "botAdded":
       return withMascotMotion({
         ...state,
-        bots: [action.bot, ...state.bots],
+        // An HTTP create/import response and its SSE broadcast can race. Fold
+        // both paths without ever showing the same bot twice.
+        bots: [action.bot, ...state.bots.filter((bot) => bot.id !== action.bot.id)],
         activeView: "chat",
         selectedId: action.bot.id,
       }, action.bot.id, "arrive");
@@ -480,12 +563,15 @@ function reducer(state: AppState, action: Action): AppState {
       return updateBot(withMascotMotion(state, action.botId, "surprise"), action.botId, (b) => ({ ...b, unread: true }));
     case "botPatched": {
       const before = state.bots.find((b) => b.id === action.bot.id);
-      // A bot event can announce a bot created by another app window (team
-      // import). Patch events for unknown partial records remain ignored.
+      // Bot frames are complete except for their transcript. An unknown one
+      // was created by another client (the phone, another app window, or a
+      // team import), so add it now; the following message frames will fill
+      // its greeting without waiting for a full-page hydration.
       if (!before) {
-        return Array.isArray(action.bot.messages)
-          ? { ...state, bots: [action.bot as Bot, ...state.bots] }
-          : state;
+        return {
+          ...state,
+          bots: [{ ...action.bot, messages: action.bot.messages ?? [] }, ...state.bots],
+        };
       }
       const kind =
         action.bot.unread && !before?.unread
@@ -504,7 +590,20 @@ function reducer(state: AppState, action: Action): AppState {
             ),
           }
         : animated;
-      return updateBot(next, action.bot.id, (b) => ({ ...b, ...action.bot, messages: b.messages }));
+      const switchedThread =
+        typeof action.bot.threadId === "string" && action.bot.threadId !== before.threadId;
+      return updateBot(next, action.bot.id, (b) => ({
+        ...b,
+        ...action.bot,
+        // Ordinary bot patches omit messages and must preserve the current
+        // transcript. A task switch is different: its full bot event carries
+        // the new transcript, which must replace the previous task before the
+        // webhook's streamed messages begin arriving.
+        messages:
+          switchedThread && Array.isArray(action.bot.messages)
+            ? action.bot.messages
+            : b.messages,
+      }));
     }
     case "messageAdded": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
@@ -611,17 +710,42 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         settingsOpen: open,
         computerOpen: open ? false : state.computerOpen,
+        inspectorOpen: open ? false : state.inspectorOpen,
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
     }
     case "togglePlugins":
       return { ...state, pluginsOpen: action.open ?? !state.pluginsOpen };
+    case "focusMessage":
+      return {
+        ...state,
+        focusMessage: {
+          threadId: action.threadId,
+          messageId: action.messageId,
+          nonce: (state.focusMessage?.nonce ?? 0) + 1,
+          consumed: false,
+        },
+      };
+    case "focusMessageConsumed":
+      if (!state.focusMessage || state.focusMessage.nonce !== action.nonce) return state;
+      return { ...state, focusMessage: { ...state.focusMessage, consumed: true } };
     case "toggleComputer": {
       const open = action.open ?? !state.computerOpen;
       return {
         ...state,
         computerOpen: open,
         settingsOpen: open ? false : state.settingsOpen,
+        inspectorOpen: open ? false : state.inspectorOpen,
+        appSettingsOpen: open ? false : state.appSettingsOpen,
+      };
+    }
+    case "toggleInspector": {
+      const open = action.open ?? !state.inspectorOpen;
+      return {
+        ...state,
+        inspectorOpen: open,
+        settingsOpen: open ? false : state.settingsOpen,
+        computerOpen: open ? false : state.computerOpen,
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
     }
@@ -633,6 +757,7 @@ function reducer(state: AppState, action: Action): AppState {
         appSettingsSection: action.section ?? state.appSettingsSection,
         settingsOpen: open ? false : state.settingsOpen,
         computerOpen: open ? false : state.computerOpen,
+        inspectorOpen: open ? false : state.inspectorOpen,
         pluginsOpen: open ? false : state.pluginsOpen,
       };
     }
@@ -728,7 +853,7 @@ function reducer(state: AppState, action: Action): AppState {
 /** Newest screen frames whose pixels stay in memory per thread. */
 const MAX_KEPT_SCREEN_FRAMES = 8;
 
-const initialState: AppState = {
+export const initialState: AppState = {
   bots: [],
   groups: [],
   instances: [],
@@ -743,10 +868,12 @@ const initialState: AppState = {
   settingsOpen: false,
   pluginsOpen: false,
   computerOpen: false,
+  inspectorOpen: false,
   appSettingsOpen: false,
   appSettingsSection: "general",
   screens: {},
   provisioning: {},
+  focusMessage: null,
   connected: false,
   error: null,
   mascotMotion: null,
@@ -974,9 +1101,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   title: source.title,
                   description: source.description,
                   notifications: source.notifications,
-                  modelSelection: source.modelSelection,
-                  ...(source.computer ? { computer: source.computer } : {}),
-                  ...(source.cloudBackend ? { cloudBackend: source.cloudBackend } : {}),
+                   modelSelection: source.modelSelection,
+                   ...(source.computer ? { computer: source.computer } : {}),
+                   ...(source.cloudBackend ? { cloudBackend: source.cloudBackend } : {}),
                 }),
               }).then(({ bot: patched }) =>
                 rawDispatch({ type: "botAdded", bot: { ...bot, ...patched, messages: bot.messages } }),
@@ -1079,7 +1206,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             patch,
             timer: setTimeout(() => {
               timers.delete(action.botId);
-              api(`/api/bots/${action.botId}`, { method: "PATCH", body: JSON.stringify(patch) }).catch(showError);
+              const requestPatch =
+                Object.prototype.hasOwnProperty.call(patch, "computer") && patch.computer === undefined
+                  ? { ...patch, computer: null }
+                  : patch;
+              api(`/api/bots/${action.botId}`, { method: "PATCH", body: JSON.stringify(requestPatch) }).catch(showError);
             }, 400),
           });
           break;
@@ -1187,7 +1318,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           clearStream(frame.threadId);
           break;
         case "bot": {
-          const bot = frame.bot as Partial<Bot> & { id: string };
+          const bot = frame.bot as BotAnnouncement;
           // reading the selected chat clears its badge immediately
           if (bot.unread && bot.id === stateRef.current.selectedId) {
             bot.unread = false;

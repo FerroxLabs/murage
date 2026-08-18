@@ -3,20 +3,26 @@
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { KeyRound, Monitor, User, Volume2, X } from "lucide-react";
+import { Coins, KeyRound, Monitor, Smartphone, Terminal, User, Volume2, X } from "lucide-react";
 import { useStore, type AppSettingsSection } from "@/state/store";
 import { ApiKeyRow, VpsConnection } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
+import { EnginesSettings } from "./EnginesSettings";
 import { LocalComputerSection } from "./LocalComputerSection";
+import { CompanionSection } from "./CompanionSection";
 import { Card } from "./SettingsPrimitives";
+import { UsageSection } from "./UsageSection";
 import { VoiceSettings } from "./VoiceSettings";
 import { cn } from "@/lib/cn";
 
 const SECTIONS: Array<{ id: AppSettingsSection; label: string; icon: typeof User }> = [
   { id: "general", label: "General", icon: User },
   { id: "connections", label: "Connections", icon: KeyRound },
+  { id: "engines", label: "Engines", icon: Terminal },
+  { id: "companion", label: "Companion", icon: Smartphone },
   { id: "computer", label: "Local VM", icon: Monitor },
   { id: "voice", label: "Voice", icon: Volume2 },
+  { id: "usage", label: "Usage", icon: Coins },
 ];
 
 /** Name + email, persisted to /api/config {profile} on blur. */
@@ -202,22 +208,41 @@ export function SettingsModal() {
 
             {section === "connections" && (
               <Card
-                title="Keys"
-                subtitle="Shared by all bots. Keys are stored locally and never shown again; the VPS entry is only an SSH config alias."
+                title="Connections"
+                subtitle="Connected apps work automatically in the installed app. Other optional service keys stay on this computer."
               >
                 <div className="flex flex-col gap-4">
-                  <ApiKeyRow section="composio" />
-                  <ApiKeyRow section="composioApi" />
+                  {state.config?.composio.mode === "managed" ? (
+                    <div className="rounded-lg border border-success/25 bg-success/10 px-3 py-2 text-[13px] text-success">
+                      Connected apps service is ready
+                    </div>
+                  ) : null}
                   <ApiKeyRow section="box" />
                   <VpsConnection />
                   <ApiKeyRow section="opencodeGo" />
+                  <details className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
+                    <summary className="cursor-pointer text-[13px] text-ink-secondary">Self-host connected apps</summary>
+                    <div className="mt-3">
+                      <ApiKeyRow section="composio" />
+                    </div>
+                  </details>
                 </div>
               </Card>
             )}
 
+            {section === "engines" && (
+              <Card title="Engine CLIs" subtitle="Which binary each engine runs. Saved as you go.">
+                <EnginesSettings />
+              </Card>
+            )}
+
+            {section === "companion" && <CompanionSection />}
+
             {section === "voice" && <VoiceSettings />}
 
             {section === "computer" && <LocalComputerSection />}
+
+            {section === "usage" && <UsageSection />}
           </div>
         </div>
       </div>

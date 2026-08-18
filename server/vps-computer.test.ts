@@ -6,6 +6,9 @@ import {
   BASE_IMAGE_LABEL,
   CUA_DRIVER_VERSION,
   DRIVER_LABEL,
+  DISPLAY,
+  IMAGE_LAYER_LABEL,
+  IMAGE_LAYER_VERSION,
   MANAGED_LABEL,
 } from "./container-computer.ts";
 import type { AppConfig } from "./config.ts";
@@ -105,9 +108,10 @@ function fixture({
       return {
         stdout: JSON.stringify([{
           Config: { Labels: state.imageLabelsMatch ? {
-            [MANAGED_LABEL]: "1",
-            [DRIVER_LABEL]: CUA_DRIVER_VERSION,
-            [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
+             [MANAGED_LABEL]: "1",
+             [DRIVER_LABEL]: CUA_DRIVER_VERSION,
+             [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
+             [IMAGE_LAYER_LABEL]: IMAGE_LAYER_VERSION,
           } : { [MANAGED_LABEL]: "0" } },
           Id: state.inspectedImageId,
         }]),
@@ -126,6 +130,7 @@ function fixture({
               [MANAGED_LABEL]: "1",
               [DRIVER_LABEL]: CUA_DRIVER_VERSION,
               [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
+              [IMAGE_LAYER_LABEL]: IMAGE_LAYER_VERSION,
             },
           },
            Id: containerId,
@@ -170,6 +175,10 @@ function fixture({
       if (args.includes("base64")) return { stdout: screenshotValid ? screenshot.toString("base64") : "not-an-image", stderr: "" };
       if (args.at(-1) === "--version") return { stdout: `cua-driver ${CUA_DRIVER_VERSION}\n`, stderr: "" };
       if (args.includes("status")) return { stdout: "running\n", stderr: "" };
+      if (args.includes("health_report")) {
+        return { stdout: JSON.stringify({ schema_version: "1", overall: "ok", checks: [] }), stderr: "" };
+      }
+      if (args.includes("get_desktop_state")) return { stdout: "{}\n", stderr: "" };
       return { stdout: "{}\n", stderr: "" };
     }
     if (command === "pull") return { stdout: "pulled\n", stderr: "" };
@@ -231,11 +240,15 @@ describe("VPS computer", () => {
     });
     expect(fake.calls[0]?.args).toEqual(["-H", "ssh://production-vps", "info", "--format", "{{.ServerVersion}}"]);
     const probes = fake.calls.filter(
-      ({ args }) => args[2] === "exec" && (args.at(-1) === "--version" || args.includes("status")),
+      ({ args }) =>
+        args[2] === "exec" &&
+        (args.at(-1) === "--version" || args.includes("status") || args.includes("health_report") || args.includes("get_desktop_state")),
     );
-    expect(probes).toHaveLength(2);
+    expect(probes).toHaveLength(4);
     expect(probes.every(({ args }) => args.includes(CONTAINER_ID))).toBe(true);
     expect(probes.every(({ args }) => !args.includes(fake.name))).toBe(true);
+    expect(probes.every(({ args }) => args.includes(`DISPLAY=${DISPLAY}`))).toBe(true);
+    expect(probes.every(({ args }) => args.includes("CUA_DRIVER_RS_TELEMETRY_ENABLED=0"))).toBe(true);
   });
 
   it("refuses host mounts, public ports, and unowned containers", async () => {
@@ -325,6 +338,7 @@ describe("VPS computer", () => {
     expect(run[run.indexOf("--cgroupns") + 1]).toBe("private");
     expect(run.at(-1)).toBe(IMAGE_ID);
     expect(run.join(" ")).toContain(`--label ${VPS_MANAGED_LABEL}=1`);
+    expect(run.join(" ")).toContain(`--label ${IMAGE_LAYER_LABEL}=${IMAGE_LAYER_VERSION}`);
     expect(run).not.toContain("--mount");
     expect(run).not.toContain("-p");
     expect(provision.calls.some(({ args }) => args[2] === "build")).toBe(true);
@@ -390,6 +404,8 @@ describe("VPS computer", () => {
       "DISPLAY=:1",
       "-e",
       "CUA_DRIVER_INSTALL_CHANNEL=python_package",
+      "-e",
+      "CUA_DRIVER_RS_TELEMETRY_ENABLED=0",
       vpsContainerName(BOT_ID),
       "/usr/local/libexec/openmausbot/cua-driver",
       "mcp",

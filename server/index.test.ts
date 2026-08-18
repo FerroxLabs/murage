@@ -5,12 +5,13 @@
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { openSse } from "./testing/sse.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -59,9 +60,54 @@ beforeAll(async () => {
     join(home, ".openmausbot", "config.json"),
     JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver", displayName: "Ghost" } } }),
   );
+  writeFileSync(
+    join(home, ".openmausbot", "groups.json"),
+    JSON.stringify([
+      {
+        id: "test-dm",
+        threadId: "test-dm-thread",
+        name: "Private channel",
+        memberIds: ["test-bot-a", "test-bot-b"],
+        defaultResponder: { kind: "mentions" },
+        bulletin: "",
+        unread: false,
+        createdAt: 1,
+        dm: true,
+      },
+      {
+        id: "test-pinned-room",
+        threadId: "test-pinned-room-thread",
+        name: "Pinned room",
+        memberIds: ["test-bot-a"],
+        defaultResponder: { kind: "member", botId: "test-bot-a" },
+        bulletin: "",
+        unread: false,
+        createdAt: 2,
+        pinnedCwd: null,
+      },
+    ]),
+  );
 
-  boxStub = createServer((req, res) => {
-    const ok = req.headers.authorization === "Bearer box_good";
+  boxStub = createServer(async (req, res) => {
+    if (req.url?.startsWith("/api/v3.1/tool_router/session")) {
+      if (req.headers["x-api-key"] !== "ak_good") {
+        res.writeHead(401, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: { message: "invalid project key" } }));
+      }
+      let raw = "";
+      for await (const chunk of req) raw += chunk;
+      const body = raw ? JSON.parse(raw) : {};
+      res.writeHead(201, { "content-type": "application/json" });
+      return res.end(JSON.stringify({
+        session_id: "trs_config_test",
+        mcp: { type: "http", url: "https://app.composio.dev/tool_router/v3/trs_config_test/mcp" },
+        config: { user_id: body.user_id },
+      }));
+    }
+    if (req.headers.authorization === "Bearer box_slow") {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    const ok = req.headers.authorization === "Bearer box_good" || req.headers.authorization === "Bearer box_slow";
     res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
     res.end(JSON.stringify(ok ? { ok: true, boxes: [] } : { ok: false, code: "unauthorized" }));
   });
@@ -78,6 +124,7 @@ beforeAll(async () => {
       OMB_PORT: String(PORT),
       OMB_WEBHOOK_PORT: String(WEBHOOK_PORT),
       OMB_BOX_API: `http://127.0.0.1:${boxStubPort}`,
+      OMB_COMPOSIO_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
       OMB_STATIC_DIR: staticDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -100,13 +147,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   boxStub?.close();
-  child?.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    if (!child || child.exitCode !== null) return resolve();
-    child.on("close", () => resolve());
-    setTimeout(() => (child.kill("SIGKILL"), resolve()), 5_000).unref?.();
-  });
-  rmSync(home, { recursive: true, force: true });
+  // Upstream fixed this same Linux scratch-cleanup flake with an inline
+  // retry loop; these helpers are that fix plus the cause — the retry AND
+  // an exit that is actually waited for before the delete begins.
+  await waitForExit(child, { signal: "SIGTERM" });
+  await removeTempDir(home);
 });
 
 describe("harness HTTP API", () => {
@@ -174,6 +219,24 @@ describe("harness HTTP API", () => {
     expect(body.bots[0].messages.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("keeps direct-message channels folderless at the API boundary", async () => {
+    const attempted = await api("PATCH", "/api/groups/test-dm", { cwd: home });
+    expect(attempted.status).toBe(400);
+    expect(attempted.body.error).toMatch(/direct-message.*working folder/i);
+    const state = await api("GET", "/api/bots");
+    expect(state.body.groups.find((group: { id: string }) => group.id === "test-dm")).not.toHaveProperty("cwd");
+    expect((await api("DELETE", "/api/groups/test-dm")).status).toBe(200);
+  });
+
+  it("rejects working-folder changes after a room has pinned its first turn", async () => {
+    const attempted = await api("PATCH", "/api/groups/test-pinned-room", { cwd: home });
+    expect(attempted.status).toBe(409);
+    expect(attempted.body.error).toMatch(/fixed after its first turn/i);
+    const state = await api("GET", "/api/bots");
+    expect(state.body.groups.find((group: { id: string }) => group.id === "test-pinned-room")).not.toHaveProperty("cwd");
+    expect((await api("DELETE", "/api/groups/test-pinned-room")).status).toBe(200);
+  });
+
   it("describes the configured fleet, shadows included", async () => {
     const { status, body } = await api("GET", "/api/instances");
     expect(status).toBe(200);
@@ -185,6 +248,43 @@ describe("harness HTTP API", () => {
       snapshot: { state: "unavailable" },
     });
     expect(body.instances[0].snapshot.reason).toContain("not-a-real-driver");
+  });
+
+  it("searches transcripts and exports a conversation", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    // every new bot opens with a seeded greeting — a known searchable string
+    const hits = await api("GET", "/api/search?q=nice%20to%20meet");
+    expect(hits.status).toBe(200);
+    const hit = hits.body.hits.find((h: { botId?: string }) => h.botId === bot.id);
+    expect(hit).toMatchObject({
+      botId: bot.id,
+      threadId: bot.threadId,
+      name: bot.name,
+      kind: "text",
+      onActivePath: true,
+    });
+    expect(hit.snippet.toLowerCase()).toContain("nice to meet");
+    expect(hit.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength).toLowerCase()).toBe("nice to meet");
+    expect((await api("GET", "/api/search?q=")).body.hits).toEqual([]);
+
+    const markdown = await fetch(`${BASE}/api/threads/${bot.threadId}/export`);
+    expect(markdown.status).toBe(200);
+    expect(markdown.headers.get("content-type")).toContain("text/markdown");
+    expect(markdown.headers.get("content-disposition")).toContain("attachment");
+    const text = await markdown.text();
+    expect(text).toContain("Nice to meet you");
+
+    const asJson = await api("GET", `/api/threads/${bot.threadId}/export?format=json`);
+    expect(asJson.status).toBe(200);
+    expect(asJson.body.messages.length).toBeGreaterThan(0);
+    expect(JSON.stringify(asJson.body)).not.toContain('"png"');
+    expect((await api("GET", `/api/threads/${bot.threadId}/export?format=pdf`)).status).toBe(400);
+    expect((await api("GET", "/api/threads/nope/export")).status).toBe(404);
+
+    // deleted conversations drop out of search rather than 404ing it
+    await api("DELETE", `/api/bots/${bot.id}`);
+    const after = await api("GET", "/api/search?q=nice%20to%20meet");
+    expect(after.body.hits.find((h: { botId?: string }) => h.botId === bot.id)).toBeUndefined();
   });
 
   it("creates, patches, and deletes a bot", async () => {
@@ -199,15 +299,32 @@ describe("harness HTTP API", () => {
     const missing = await api("PATCH", "/api/bots/does-not-exist", { name: "x" });
     expect(missing.status).toBe(404);
 
+    // persona fields are bounded at the write boundary — they reach system
+    // prompts (Chief roster, room rosters), so an unbounded PATCH is a
+    // token-burn and prompt-injection surface
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { name: "N".repeat(101) })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { name: "   " })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { title: "T".repeat(201) })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { description: "D".repeat(4001) })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { description: 7 })).status).toBe(400);
+
+    // the per-bot composio gate is a boolean, and it round-trips
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: "yes" })).status).toBe(400);
+    const gated = await api("PATCH", `/api/bots/${bot.id}`, { composio: false });
+    expect(gated.status).toBe(200);
+    expect(gated.body.bot.composio).toBe(false);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: true })).body.bot.composio).toBe(true);
+
     const deleted = await api("DELETE", `/api/bots/${bot.id}`);
     expect(deleted.status).toBe(200);
     const after = await api("GET", "/api/bots");
     expect(after.body.bots.find((b: { id: string }) => b.id === bot.id)).toBeUndefined();
   });
 
-  it("exports selected bots without a room and imports the team with fresh IDs", async () => {
+  it("exports every visible bot and imports the team without creating a room", async () => {
     const first = (await api("POST", "/api/bots")).body.bot;
     const second = (await api("POST", "/api/bots")).body.bot;
+    const hidden = (await api("POST", "/api/bots")).body.bot;
     await api("PATCH", `/api/bots/${first.id}`, {
       name: "Mira",
       title: "Project Lead",
@@ -223,72 +340,160 @@ describe("harness HTTP API", () => {
       description: "Finds evidence",
       color: "cyan",
     });
+    await api("PATCH", `/api/bots/${hidden.id}`, { name: "Archived", hidden: true });
 
-    const roomsBeforeSelectionExport = (await api("GET", "/api/bots")).body.groups.length;
-    const selectedExport = await api("POST", "/api/teams/export", {
-      name: "Field Team",
-      memberIds: [first.id, second.id],
-    });
-    expect(selectedExport.status).toBe(200);
-    expect(selectedExport.body).toMatchObject({
-      format: "openmaus.team",
-      version: 1,
-      team: {
-        name: "Field Team",
-        members: [
-          { key: "mira", name: "Mira", title: "Project Lead", appearance: { color: "purple" } },
-          { key: "scout", name: "Scout", title: "Researcher", appearance: { color: "cyan" } },
-        ],
-        room: {
-          name: "Field Team",
-          bulletin: "",
-          defaultResponder: { kind: "everyone" },
-        },
-      },
-    });
-    expect(JSON.stringify(selectedExport.body)).not.toMatch(/autoApprove|alwaysAllow|modelSelection|threadId/);
-    expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBeforeSelectionExport);
-    expect((await api("POST", "/api/teams/export", { name: "", memberIds: [first.id] })).status).toBe(400);
-    expect((await api("POST", "/api/teams/export", { name: "Empty", memberIds: [] })).status).toBe(400);
-    expect((await api("POST", "/api/teams/export", { name: "Missing", memberIds: ["no-such-bot"] })).status).toBe(400);
-
-    const importManifest = structuredClone(selectedExport.body);
-    importManifest.team.room = {
-      name: "Launch Crew",
-      bulletin: "Prepare the launch together",
-      defaultResponder: { kind: "member", member: "scout" },
-    };
+    const stateBefore = (await api("GET", "/api/bots")).body;
+    const roomsBefore = stateBefore.groups.length;
+    const visibleNames = stateBefore.bots
+      .filter((bot: { hidden?: boolean }) => !bot.hidden)
+      .map((bot: { name: string }) => bot.name);
+    const exported = await api("POST", "/api/teams/export", { name: "Field Team" });
+    expect(exported.status).toBe(200);
+    expect(exported.body).toMatchObject({ format: "openmaus.team", version: 2, team: { name: "Field Team" } });
+    expect(exported.body.team.members.map((member: { name: string }) => member.name)).toEqual(visibleNames);
+    expect(exported.body.team.members).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "mira", name: "Mira", title: "Project Lead", appearance: { color: "purple", mascotExpression: "focused" } }),
+      expect.objectContaining({ key: "scout", name: "Scout", title: "Researcher", appearance: { color: "cyan" } }),
+    ]));
+    expect(exported.body.team).not.toHaveProperty("room");
+    expect(JSON.stringify(exported.body)).not.toMatch(/Archived|autoApprove|alwaysAllow|modelSelection|threadId/);
+    expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore);
+    expect((await api("POST", "/api/teams/export", {})).body.team.name).toBe("My OpenMaus Team");
 
     const stream = await openSse(`${BASE}/api/events`);
     try {
       await stream.until((frame) => frame.kind === "hello");
-      const imported = await api("POST", "/api/teams/import", importManifest);
+      const imported = await api("POST", "/api/teams/import", exported.body);
       expect(imported.status).toBe(201);
-      expect(imported.body.bots.map((bot: { name: string }) => bot.name)).toEqual(["Mira", "Scout"]);
+      expect(imported.body.bots.map((bot: { name: string }) => bot.name)).toEqual(visibleNames);
       expect(imported.body.bots.every((bot: { id: string }) => ![first.id, second.id].includes(bot.id))).toBe(true);
       expect(imported.body.bots[0]).not.toHaveProperty("alwaysAllow");
-      expect(imported.body.group.memberIds).toEqual(imported.body.bots.map((bot: { id: string }) => bot.id));
-      expect(imported.body.group.defaultResponder).toEqual({ kind: "member", botId: imported.body.bots[1].id });
+      // imported bots arrive quiet and without reach: no seeded greeting
+      // in their name, and no access to the workspace's connected apps
+      // until the user grants it per bot
+      expect(imported.body.bots.every((bot: { messages: unknown[] }) => bot.messages.length === 0)).toBe(true);
+      expect(imported.body.bots.every((bot: { composio?: boolean }) => bot.composio === false)).toBe(true);
+      expect(imported.body).not.toHaveProperty("group");
 
-      await stream.until((frame) => frame.kind === "group" && frame.group?.id === imported.body.group.id);
+      const lastImported = imported.body.bots.at(-1)!;
+      await stream.until((frame) => frame.kind === "bot" && frame.bot?.id === lastImported.id);
       const importedBotIds = new Set(imported.body.bots.map((bot: { id: string }) => bot.id));
       const importFrames = stream.frames.filter(
-        (frame) =>
-          (frame.kind === "bot" && importedBotIds.has(frame.bot?.id)) ||
-          (frame.kind === "group" && frame.group?.id === imported.body.group.id),
+        (frame) => frame.kind === "bot" && importedBotIds.has(frame.bot?.id),
       );
-      expect(importFrames.map((frame) => frame.kind)).toEqual(["bot", "bot", "group"]);
+      // every imported bot is announced to other windows. The store emits
+      // on every write now, so a bot may produce more than one frame —
+      // the invariant is coverage, not an exact count.
+      for (const id of importedBotIds) expect(importFrames.some((frame) => frame.bot?.id === id)).toBe(true);
+      expect(importFrames.every((frame) => frame.kind === "bot")).toBe(true);
+      expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore);
 
-      const invalid = await api("POST", "/api/teams/import", { ...importManifest, version: 2 });
+      const invalid = await api("POST", "/api/teams/import", { ...exported.body, version: 3 });
       expect(invalid.status).toBe(400);
+      expect((await api("POST", "/api/teams/import?mode=erase", exported.body)).status).toBe(400);
 
-      expect((await api("DELETE", `/api/groups/${imported.body.group.id}`)).status).toBe(200);
-      for (const bot of [first, second, ...imported.body.bots]) {
+      const beforeReplace = (await api("GET", "/api/bots")).body.bots.filter(
+        (bot: { hidden?: boolean }) => !bot.hidden,
+      );
+      const replaced = await api("POST", "/api/teams/import?mode=replace", exported.body);
+      expect(replaced.status).toBe(201);
+      expect(replaced.body.archived.map((bot: { id: string }) => bot.id).sort()).toEqual(
+        beforeReplace.map((bot: { id: string }) => bot.id).sort(),
+      );
+      expect(replaced.body.archivedBots.every((bot: { hidden?: boolean }) => bot.hidden)).toBe(true);
+      const afterReplace = (await api("GET", "/api/bots")).body.bots;
+      expect(afterReplace.filter((bot: { hidden?: boolean }) => !bot.hidden).map((bot: { id: string }) => bot.id).sort()).toEqual(
+        replaced.body.bots.map((bot: { id: string }) => bot.id).sort(),
+      );
+      expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore);
+
+      // Put the shared test harness back exactly as it was before exercising
+      // replace. This mirrors the UI's Undo action and preserves the seeded bot.
+      for (const bot of replaced.body.bots) await api("DELETE", `/api/bots/${bot.id}`);
+      for (const bot of replaced.body.archived.filter((item: { chiefOfStaff: boolean }) => !item.chiefOfStaff)) {
+        await api("PATCH", `/api/bots/${bot.id}`, { hidden: false });
+      }
+      const previousChief = replaced.body.archived.find((bot: { chiefOfStaff: boolean }) => bot.chiefOfStaff);
+      if (previousChief) await api("PATCH", `/api/bots/${previousChief.id}`, { hidden: false, chiefOfStaff: true });
+
+      for (const bot of [first, second, hidden, ...imported.body.bots]) {
         expect((await api("DELETE", `/api/bots/${bot.id}`)).status).toBe(200);
       }
     } finally {
       stream.close();
     }
+  });
+
+  it("keeps the rest of a duplicate's fields when the source engine is offline", async () => {
+    // duplicateBot POSTs a blank bot, then PATCHes the source's whole
+    // modelSelection in one body beside its name, title and description.
+    // "ghost" is an unknown driver, so the registry resolves nothing and the
+    // level cannot be verified — which must not cost the copy everything
+    // else in the request.
+    const copy = (await api("POST", "/api/bots")).body.bot;
+
+    const patched = await api("PATCH", `/api/bots/${copy.id}`, {
+      name: "Reviewer copy",
+      title: "Reviewer",
+      description: "reads diffs",
+      modelSelection: { instanceId: "ghost", model: "ghost-1", effort: "xhigh" },
+    });
+
+    expect(patched.status).toBe(200);
+    expect(patched.body.bot).toMatchObject({
+      name: "Reviewer copy",
+      title: "Reviewer",
+      description: "reads diffs",
+      modelSelection: { instanceId: "ghost", model: "ghost-1", effort: "xhigh" },
+    });
+  });
+
+  it("rejects an unknown effort value even while the engine is offline", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const patched = await api("PATCH", `/api/bots/${bot.id}`, {
+      modelSelection: { instanceId: "ghost", model: "ghost-1", effort: "turbo" },
+    });
+
+    expect(patched.status).toBe(400);
+    expect(patched.body.error).toContain("not recognized");
+  });
+
+  it("leaves a bot with no effort level untouched", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    expect(bot.modelSelection.effort).toBeUndefined();
+
+    const renamed = await api("PATCH", `/api/bots/${bot.id}`, { name: "Plain" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.bot.modelSelection.effort).toBeUndefined();
+  });
+
+  // This fixture pins a single unknown driver, so no instance here ever
+  // resolves: these cover the gate's pass-through and the store's replace
+  // semantics, NOT the comparison against a live engine's declared list.
+  // That branch has no coverage at this layer, and manufacturing a live
+  // instance in this fixture would cost it its no-probe determinism.
+  it("round-trips an effort level and clears it when the key is dropped", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const selection = { instanceId: "ghost", model: "ghost-1" };
+
+    const set = await api("PATCH", `/api/bots/${bot.id}`, {
+      modelSelection: { ...selection, effort: "high" },
+    });
+    expect(set.status).toBe(200);
+    expect(set.body.bot.modelSelection.effort).toBe("high");
+
+    const reread = (await api("GET", "/api/bots")).body.bots.find((b: { id: string }) => b.id === bot.id);
+    expect(reread.modelSelection.effort).toBe("high");
+
+    // The panel's "Default" button spreads the selection with effort:
+    // undefined, and JSON.stringify drops the key — so clearing reaches the
+    // server as a modelSelection carrying no effort at all.
+    const cleared = await api("PATCH", `/api/bots/${bot.id}`, { modelSelection: selection });
+    expect(cleared.status).toBe(200);
+
+    const after = (await api("GET", "/api/bots")).body.bots.find((b: { id: string }) => b.id === bot.id);
+    expect(after.modelSelection).toEqual(selection);
+    expect(after.modelSelection.effort).toBeUndefined();
   });
 
   it("persists an answered onboarding card", async () => {
@@ -298,6 +503,28 @@ describe("harness HTTP API", () => {
     const res = await api("PATCH", `/api/bots/${bot.id}/cards/${card.id}`, { answered: card.card.options[0] });
     expect(res.status).toBe(200);
     expect(res.body.message.card.answered).toBe(card.card.options[0]);
+  });
+
+  it("validates approval decisions and reports a request that is no longer open", async () => {
+    const { body } = await api("GET", "/api/bots");
+    const bot = body.bots[0];
+
+    const invalid = await api("POST", `/api/bots/${bot.id}/respond`, {
+      requestId: "gone",
+      behavior: "approve-everything",
+    });
+    expect(invalid.status).toBe(400);
+
+    const unavailable = await api("POST", `/api/bots/${bot.id}/respond`, {
+      requestId: "gone",
+      behavior: "allow",
+    });
+    expect(unavailable.status).toBe(200);
+    expect(unavailable.body).toEqual({ ok: true, outcome: "unavailable" });
+
+    const reread = (await api("GET", "/api/bots")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id);
+    expect(reread.messages.at(-1).tool).toMatchObject({ ok: false });
+    expect(reread.messages.at(-1).tool.name).toContain("request is no longer open");
   });
 
   it("rejects an empty message and explains an unavailable provider", async () => {
@@ -393,13 +620,32 @@ describe("harness HTTP API", () => {
     const patched = await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps" });
     expect(patched.status).toBe(200);
     expect(patched.body.bot.cloudBackend).toBe("vps");
-    const csrf = await api("POST", `/api/bots/${bot.id}/computer/provision`);
-    expect(csrf.status).toBe(415);
-    const autoProvision = await api("POST", `/api/bots/${bot.id}/computer/provision`, {});
-    expect(autoProvision.status).toBe(409);
-    expect(autoProvision.body.error).toContain("Auto mode will not provision");
     const invalid = await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "daytona" });
     expect(invalid.status).toBe(400);
+  });
+
+  it("validates a Composio project key, creates a Session, and keeps externally stored secrets off disk", async () => {
+    const oldKey = await api("PUT", "/api/config", { composio: { apiKey: "old_key" } });
+    expect(oldKey.status).toBe(400);
+    expect(oldKey.body.error).toMatch(/start with ak_/i);
+
+    const rejected = await api("PUT", "/api/config", { composio: { apiKey: "ak_wrong" } });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatch(/invalid project key/i);
+
+    const saved = await api("PUT", "/api/config?secretStorage=external", { composio: { apiKey: "ak_good" } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.composio).toEqual({ configured: true, mode: "self-hosted" });
+    expect(JSON.stringify(saved.body)).not.toContain("ak_good");
+
+    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    expect(disk.composio).toMatchObject({ apiKey: "", sessionId: "trs_config_test" });
+    expect(JSON.stringify(disk)).not.toContain("ak_good");
+
+    // A later ordinary setting save reloads config; the in-process secure-env
+    // override must keep Composio configured until the next app launch.
+    expect((await api("PUT", "/api/config", { profile: { name: "Grace" } })).status).toBe(200);
+    expect((await api("GET", "/api/config")).body.composio).toEqual({ configured: true, mode: "self-hosted" });
   });
 
   it.skipIf(process.platform === "win32")("stores the credentials file with owner-only permissions", () => {
@@ -488,10 +734,180 @@ describe("harness HTTP API", () => {
     expect(array.body.error).toContain("opencodeGo");
   });
 
+  it("never hands a client the provider session cursors", async () => {
+    // resumeCursors is the harness's own bookkeeping. It reached clients for
+    // a long time as harmless noise; once a phone is a client it is provider
+    // session state leaving the machine, so nothing carrying a bot may have it.
+    const listed = await api("GET", "/api/bots");
+    for (const bot of listed.body.bots) {
+      expect(bot).not.toHaveProperty("resumeCursors");
+      for (const task of bot.tasks ?? []) expect(task).not.toHaveProperty("resumeCursors");
+    }
+
+    const created = await api("POST", "/api/bots");
+    const botId = created.body.bot.id;
+    try {
+      expect(created.body.bot).not.toHaveProperty("resumeCursors");
+      const patched = await api("PATCH", `/api/bots/${botId}`, { name: "Cursorless" });
+      expect(patched.body.bot).not.toHaveProperty("resumeCursors");
+
+      const task = await api("POST", `/api/bots/${botId}/tasks`, {});
+      expect(task.body.bot).not.toHaveProperty("resumeCursors");
+      for (const t of task.body.bot.tasks ?? []) expect(t).not.toHaveProperty("resumeCursors");
+      // the task alone, not just the bot it came attached to
+      expect(task.body.task).not.toHaveProperty("resumeCursors");
+      const renamed = await api("PATCH", `/api/bots/${botId}/tasks/${task.body.task.threadId}`, {
+        title: "Cursorless task",
+      });
+      expect(renamed.body.task).not.toHaveProperty("resumeCursors");
+
+      // and the same on the wire, not just in the HTTP responses
+      const stream = await openSse(`${BASE}/api/events`);
+      try {
+        await api("PATCH", `/api/bots/${botId}`, { unread: true });
+        const frame = await stream.until((f) => f.kind === "bot");
+        expect(frame.bot).not.toHaveProperty("resumeCursors");
+        expect(JSON.stringify(frame)).not.toContain("resumeCursors");
+      } finally {
+        stream.close();
+      }
+    } finally {
+      await api("DELETE", `/api/bots/${botId}`);
+    }
+  });
+
+  it("validates the event inspector limit at the HTTP boundary", async () => {
+    const bot = (await api("GET", "/api/bots")).body.bots[0];
+    for (const value of ["nope", "0", "-1", "1.5", "Infinity"]) {
+      const response = await api("GET", `/api/threads/${bot.threadId}/events?limit=${value}`);
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("positive whole number");
+    }
+    const ok = await api("GET", `/api/threads/${bot.threadId}/events?limit=1`);
+    expect(ok.status).toBe(200);
+    expect(Array.isArray(ok.body.entries)).toBe(true);
+    expect(ok.body.total).toEqual({ runtime: expect.any(Number), native: expect.any(Number) });
+  });
+
   it("404s unknown routes with the route in the error", async () => {
     const res = await api("GET", "/api/definitely-not-a-route");
     expect(res.status).toBe(404);
     expect(res.body.error).toContain("/api/definitely-not-a-route");
+  });
+});
+
+// The memory routes expose plain files in the bot's workspace. The
+// traversal cases matter more than the happy path here: a topic name in a
+// URL is hostile-adjacent input, and the only defensible answer to "../"
+// in any coat of encoding is a rejection before the filesystem is touched.
+describe("bot memory API", () => {
+  /** raw-path GET: fetch() normalizes "../" segments away client-side, and
+   * the traversal tests need the wire to carry exactly the bytes shown */
+  const rawGet = (rawPath: string): Promise<{ status: number; text: string }> =>
+    new Promise((resolve, reject) => {
+      const req = request({ hostname: "127.0.0.1", port: PORT, path: rawPath }, (res) => {
+        let text = "";
+        res.on("data", (c) => (text += c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+
+  const workspaceOf = (botId: string) => join(home, ".openmausbot", "workspaces", botId);
+
+  it("reads empty memory for a fresh bot and 404s a bot that does not exist", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      const fresh = await api("GET", `/api/bots/${bot.id}/memory`);
+      expect(fresh.status).toBe(200);
+      expect(fresh.body).toEqual({ text: "", truncated: false, topics: [] });
+      expect((await api("GET", "/api/bots/does-not-exist/memory")).status).toBe(404);
+    } finally {
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("round-trips a MEMORY.md edit and rejects non-string or oversized text", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      const saved = await api("PUT", `/api/bots/${bot.id}/memory`, { text: "# Memory\n- prefers pnpm\n" });
+      expect(saved.status).toBe(200);
+      expect(saved.body.truncated).toBe(false);
+      const read = await api("GET", `/api/bots/${bot.id}/memory`);
+      expect(read.body.text).toBe("# Memory\n- prefers pnpm\n");
+      // the write lands in the same file the bot's own tools read
+      expect(readFileSync(join(workspaceOf(bot.id), "MEMORY.md"), "utf8")).toContain("prefers pnpm");
+
+      expect((await api("PUT", `/api/bots/${bot.id}/memory`, { text: 7 })).status).toBe(400);
+      expect((await api("PUT", `/api/bots/${bot.id}/memory`, {})).status).toBe(400);
+      const big = await api("PUT", `/api/bots/${bot.id}/memory`, { text: "x".repeat(256 * 1024 + 1) });
+      expect(big.status).toBe(400);
+      expect(big.body.error).toContain("256KB");
+      // a rejected write must leave the file exactly as it was
+      expect((await api("GET", `/api/bots/${bot.id}/memory`)).body.text).toBe("# Memory\n- prefers pnpm\n");
+      expect((await api("PUT", "/api/bots/does-not-exist/memory", { text: "x" })).status).toBe(404);
+    } finally {
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("lists memory/ topic files and serves one by (possibly encoded) name", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      const memDir = join(workspaceOf(bot.id), "memory");
+      mkdirSync(memDir, { recursive: true });
+      writeFileSync(join(memDir, "deploys.md"), "- deploy = pnpm ship\n");
+      writeFileSync(join(memDir, "my notes.md"), "spaced");
+      writeFileSync(join(memDir, "notes.txt"), "not a topic");
+      const listed = await api("GET", `/api/bots/${bot.id}/memory`);
+      expect(listed.body.topics).toEqual([
+        { name: "deploys.md", bytes: 21 },
+        { name: "my notes.md", bytes: 6 },
+      ]);
+
+      const topic = await api("GET", `/api/bots/${bot.id}/memory/topics/deploys.md`);
+      expect(topic.status).toBe(200);
+      expect(topic.body).toEqual({ name: "deploys.md", text: "- deploy = pnpm ship\n" });
+      // a UI-sent name arrives percent-encoded and must resolve to the same file
+      expect((await api("GET", `/api/bots/${bot.id}/memory/topics/my%20notes.md`)).body.text).toBe("spaced");
+      expect((await api("GET", `/api/bots/${bot.id}/memory/topics/missing.md`)).status).toBe(404);
+      expect((await api("GET", "/api/bots/does-not-exist/memory/topics/deploys.md")).status).toBe(404);
+    } finally {
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("refuses every coat of path traversal without reading the target", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      // plant real files where a traversal would land, so a hole would show
+      // as leaked content and not depend on what happens to exist
+      mkdirSync(workspaceOf(bot.id), { recursive: true });
+      writeFileSync(join(workspaceOf(bot.id), "MEMORY.md"), "TOP-SECRET-MARKER memory");
+      writeFileSync(join(home, ".openmausbot", "secret.md"), "TOP-SECRET-MARKER sibling");
+
+      for (const name of [
+        "..%2F..%2Fsecret.md", // encoded slashes
+        "%2e%2e%2fsecret.md", // dots encoded too
+        "..%2FMEMORY.md", // one level up, inside the workspace
+        "..%5C..%5Csecret.md", // encoded backslashes (Windows separators)
+        "secret%00.md", // null byte
+      ]) {
+        const res = await rawGet(`/api/bots/${bot.id}/memory/topics/${name}`);
+        expect(res.status, name).toBe(400);
+        expect(res.text, name).not.toContain("TOP-SECRET");
+      }
+      // a raw ../ segment is normalized away by URL parsing before routing —
+      // it can only miss the route, never reach a file
+      const raw = await rawGet(`/api/bots/${bot.id}/memory/topics/../../secret.md`);
+      expect(raw.status).toBe(404);
+      expect(raw.text).not.toContain("TOP-SECRET");
+      // malformed percent-encoding is a clean 400, not a crash
+      expect((await rawGet(`/api/bots/${bot.id}/memory/topics/%zz.md`)).status).toBe(400);
+    } finally {
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
   });
 });
 
@@ -555,6 +971,19 @@ describe("message pages", () => {
     const top = await api("GET", `/api/threads/${full.threadId}/messages?limit=200`);
     expect(top.body.hasMore).toBe(false);
     expect(top.body.messages).toHaveLength(6);
+  });
+
+  it("returns a bounded transcript window around a search result", async () => {
+    const full = await seedRoom(9);
+    const target = full.messages[4];
+    const result = await api("GET", `/api/threads/${full.threadId}/messages?around=${target.id}&limit=5`);
+    expect(result.status).toBe(200);
+    expect(result.body.messages.map((message: { id: string }) => message.id)).toEqual(
+      full.messages.slice(2, 7).map((message: { id: string }) => message.id),
+    );
+    expect(result.body.hasMore).toBe(true);
+    expect((await api("GET", `/api/threads/${full.threadId}/messages?around=nope`)).status).toBe(404);
+    expect((await api("GET", `/api/threads/${full.threadId}/messages?around=${target.id}&before=${target.id}`)).status).toBe(400);
   });
 
   it("refuses a cursor or size it cannot page from", async () => {
@@ -699,5 +1128,71 @@ describe("resumable event stream", () => {
         stream.close();
       }
     }
+  });
+});
+
+describe("instance CLI override API", () => {
+  it("round-trips a set, clear, and rejects bad input", async () => {
+    // ghost is the fixture's one shadow instance (unknown driver)
+    const set = await api("PATCH", "/api/instances/ghost", { cli: "/opt/ghost/wrapper sub" });
+    expect(set.status).toBe(200);
+    const setRow = set.body.instances.find((i: any) => i.instanceId === "ghost");
+    expect(setRow.cli).toBe("/opt/ghost/wrapper sub");
+
+    // persisted for real: the next fleet rebuild reads it back
+    const cleared = await api("PATCH", "/api/instances/ghost", { cli: "" });
+    expect(cleared.status).toBe(200);
+    const clearedRow = cleared.body.instances.find((i: any) => i.instanceId === "ghost");
+    expect(clearedRow.cli).toBeUndefined();
+
+    expect((await api("PATCH", "/api/instances/nope", { cli: "/x" })).status).toBe(404);
+    expect((await api("PATCH", "/api/instances/ghost", { cli: 42 })).status).toBe(400);
+    expect((await api("PATCH", "/api/instances/ghost", { cli: "/x\ny" })).status).toBe(400);
+  });
+
+  it("echoes a path-ish name back as the only cli candidate", async () => {
+    const res = await api("GET", "/api/cli-candidates?name=/opt/definitely/not/here");
+    expect(res.status).toBe(200);
+    expect(res.body.candidates).toEqual(["/opt/definitely/not/here"]);
+    expect((await api("GET", "/api/cli-candidates?name=")).body.candidates).toEqual([]);
+  });
+
+  it("reports a missing binary as a failed probe with install info", async () => {
+    const res = await api("POST", "/api/cli-test", { cli: "/no/such/binary-anywhere", driver: "claudeAgent" });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.message).toContain("isn't installed");
+    expect(res.body.install?.docsUrl).toBe("https://claude.com/claude-code");
+  });
+
+  it("probes the complete wrapper with fixed arguments and no inherited credentials", async () => {
+    const script = join(home, "cli-wrapper-probe.mjs");
+    writeFileSync(
+      script,
+      `if (process.argv.slice(2).join(" ") !== "fixed --version") process.exit(9);\nif (process.env.COMPOSIO_API_KEY) process.exit(8);\nconsole.log("wrapper-ok");\n`,
+    );
+    const cli = `${JSON.stringify(process.execPath)} ${JSON.stringify(script)} fixed`;
+    const res = await api("POST", "/api/cli-test", { cli });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, version: "wrapper-ok" });
+  });
+
+  it("reports excessive probe output without presenting install guidance", async () => {
+    const script = join(home, "cli-noisy-probe.mjs");
+    writeFileSync(script, `process.stdout.write("x".repeat(70 * 1024));\n`);
+    const cli = `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`;
+    const res = await api("POST", "/api/cli-test", { cli, driver: "claudeAgent" });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.message).toContain("more than 64 KiB");
+    expect(res.body.install).toBeUndefined();
+  });
+
+  it("rejects overlapping provider configuration writes", async () => {
+    const slowConfigWrite = api("PUT", "/api/config", { box: { token: "box_slow" } });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const overlapping = await api("PATCH", "/api/instances/ghost", { cli: "/tmp/ghost-overlap" });
+    expect(overlapping.status).toBe(409);
+    expect((await slowConfigWrite).status).toBe(200);
   });
 });

@@ -1,9 +1,10 @@
 // OpenCode Go subscription/API product through the maintained OpenCode CLI's
 // ACP stdio interface. The generic protocol runtime lives in core.ts.
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 
@@ -49,10 +50,15 @@ export async function fetchOpenCodeGoModels(fetcher: typeof fetch = fetch): Prom
         .map((record) => record && typeof record === "object" ? (record as { id?: unknown }).id : undefined)
         .filter((id): id is string => typeof id === "string" && /^[a-z0-9][a-z0-9._-]*$/i.test(id));
       if (!ids.length) throw new Error("catalog contained no valid models");
-      const catalog = {
-        default: `opencode-go/${ids[0]}`,
-        options: ids.map((id) => ({ id: `opencode-go/${id}`, label: labelForModel(id) })),
-      } satisfies ModelCatalog;
+      const options = STATIC_MODELS.options.map((option) => ({ ...option }));
+      const seen = new Set(options.map((option) => option.id));
+      for (const id of ids) {
+        const full = `opencode-go/${id}`;
+        if (seen.has(full)) continue;
+        seen.add(full);
+        options.push({ id: full, label: labelForModel(id), custom: true });
+      }
+      const catalog = { default: STATIC_MODELS.default, options } satisfies ModelCatalog;
       lastSuccessfulCatalog = catalog;
       return catalog;
     } finally {
@@ -74,6 +80,72 @@ const stripForeignProviderKeys = (env: Record<string, string | undefined>) => {
     "MOONSHOT_API_KEY",
   ]) delete env[key];
 };
+
+function opencodeConfigDir(env: Record<string, string | undefined>): string {
+  const home = env.HOME || env.USERPROFILE || homedir();
+  return join(env.XDG_CONFIG_HOME || join(home, ".config"), "opencode");
+}
+
+/** Upsert an openai-compatible provider so OpenCode can select host/model. */
+export function ensureOpenCodeInjectModel(
+  modelId: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const inject = decodeInjectId(modelId);
+  if (!inject) return modelId;
+  const host = localHost(inject.host);
+  if (!host) return modelId;
+
+  const native = `${inject.host}/${inject.model}`;
+  const dir = opencodeConfigDir(env);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "opencode.json");
+  let config: Record<string, unknown> = { $schema: "https://opencode.ai/config.json" };
+  if (existsSync(path)) {
+    try {
+      config = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    } catch {
+      // Malformed user config — inject into a fresh object rather than fail the turn.
+    }
+  }
+  const providers =
+    config.provider && typeof config.provider === "object" && !Array.isArray(config.provider)
+      ? { ...(config.provider as Record<string, unknown>) }
+      : {};
+  const previous = providers[inject.host];
+  const existing =
+    previous && typeof previous === "object" && !Array.isArray(previous)
+      ? { ...(previous as Record<string, unknown>) }
+      : {
+          npm: "@ai-sdk/openai-compatible",
+          name: host.label,
+          options: {},
+          models: {},
+        };
+  const options =
+    existing.options && typeof existing.options === "object" && !Array.isArray(existing.options)
+      ? { ...(existing.options as Record<string, unknown>) }
+      : {};
+  options.baseURL = host.baseUrl;
+  if (!options.apiKey) options.apiKey = hostApiKey(host, env);
+  const models =
+    existing.models && typeof existing.models === "object" && !Array.isArray(existing.models)
+      ? { ...(existing.models as Record<string, unknown>) }
+      : {};
+  if (!models[inject.model]) {
+    models[inject.model] = { name: `${inject.model} (${host.label})` };
+  }
+  providers[inject.host] = {
+    ...existing,
+    npm: existing.npm || "@ai-sdk/openai-compatible",
+    name: existing.name || host.label,
+    options,
+    models,
+  };
+  config.provider = providers;
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  return native;
+}
 
 function storedAuthPath(env: Record<string, string | undefined>) {
   const home = env.HOME || env.USERPROFILE || homedir();
@@ -125,12 +197,13 @@ const support = (fetcher: typeof fetch): AcpSupport => ({
   spawnArgs: () => ["acp"],
   credentialEnv: ["OPENCODE_API_KEY"],
   selectModel: { configId: "model" },
+  resolveTurnModel: (model, env) => (model ? ensureOpenCodeInjectModel(model, env) : model),
   transformEnv: stripForeignProviderKeys,
   pickAuthMethod: () => null,
   authFailure: "continue",
   isAuthenticated: (env) => Boolean(env.OPENCODE_API_KEY) || hasStoredOpenCodeGoAuth(env),
   classifyError: classifyOpenCodeGoError,
-  resolveModels: () => fetchOpenCodeGoModels(fetcher),
+  resolveModels: async (environment) => mergeLocalInject(await fetchOpenCodeGoModels(fetcher), environment),
   buildPromptText: (turn) => turn.system ? `${turn.system}\n\n${turn.text}` : turn.text,
 });
 

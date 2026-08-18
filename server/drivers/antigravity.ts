@@ -11,15 +11,18 @@
 // approves everything. Real per-action approval cards are a future path via
 // native ACP (agy issue #31), which would reuse acp/core.ts like grok/gemini.
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { DATA_DIR } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
+import { injectedApiModel, mergeLocalInject } from "./local-inject.ts";
 
 import type { ChildProcess } from "node:child_process";
 import type {
   DriverCreateInput,
+  ModelCatalog,
   ProviderDriver,
   ProviderInstance,
   ProviderSnapshot,
@@ -38,7 +41,7 @@ export interface AntigravityConfig {
 }
 
 // model catalog from `agy models` (agy 1.1.12)
-const MODELS = {
+export const STATIC_ANTIGRAVITY_MODELS: ModelCatalog = {
   default: "gemini-3.1-pro-high",
   options: [
     { id: "gemini-3.1-pro-high", label: "Gemini 3.1 Pro (High)" },
@@ -51,6 +54,48 @@ const MODELS = {
     { id: "gpt-oss-120b-medium", label: "GPT-OSS 120B (Medium)" },
   ],
 };
+
+const AGY_MODEL_ID = /^[a-z0-9][a-z0-9._:/-]*$/i;
+
+function extrasFromUnknown(value: unknown): Array<{ id: string; label: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === "string") return AGY_MODEL_ID.test(item) ? [{ id: item, label: item }] : [];
+    if (!item || typeof item !== "object") return [];
+    const row = item as { id?: unknown; model?: unknown; name?: unknown; displayName?: unknown };
+    const id = typeof row.id === "string" ? row.id : typeof row.model === "string" ? row.model : "";
+    if (!AGY_MODEL_ID.test(id)) return [];
+    const label = typeof row.name === "string" ? row.name : typeof row.displayName === "string" ? row.displayName : id;
+    return [{ id, label }];
+  });
+}
+
+/** Extra ids from ~/.gemini/antigravity-cli/settings.json, if the user added any. */
+export function readAntigravityModelCatalog(env: Record<string, string | undefined> = process.env) {
+  const home = env.HOME || env.USERPROFILE || homedir();
+  let settings: Record<string, unknown> = {};
+  try {
+    settings = JSON.parse(
+      readFileSync(join(home, ".gemini", "antigravity-cli", "settings.json"), "utf8"),
+    ) as Record<string, unknown>;
+  } catch {
+    return STATIC_ANTIGRAVITY_MODELS;
+  }
+  const extras = [
+    ...extrasFromUnknown(settings.availableModels),
+    ...extrasFromUnknown(settings.customModels),
+    ...extrasFromUnknown(settings.extraModels),
+  ];
+  if (typeof settings.model === "string") extras.push(...extrasFromUnknown([settings.model]));
+  const options = STATIC_ANTIGRAVITY_MODELS.options.map((option) => ({ ...option }));
+  const seen = new Set(options.map((option) => option.id));
+  for (const extra of extras) {
+    if (seen.has(extra.id)) continue;
+    seen.add(extra.id);
+    options.push({ id: extra.id, label: extra.label, custom: true });
+  }
+  return { default: STATIC_ANTIGRAVITY_MODELS.default, options };
+}
 
 function decodeConfig(raw: unknown): AntigravityConfig {
   const o = (raw ?? {}) as Record<string, unknown>;
@@ -82,12 +127,23 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     },
     docsUrl: "https://github.com/google-antigravity/antigravity-cli#installation",
   },
-  models: MODELS,
+  models: STATIC_ANTIGRAVITY_MODELS,
   decodeConfig,
   defaultConfig: () => decodeConfig({}),
 
   async create(input: DriverCreateInput<AntigravityConfig>): Promise<ProviderInstance> {
     const { instanceId, config } = input;
+    const catalogEnv: Record<string, string | undefined> = { ...process.env, ...input.environment };
+    let models = STATIC_ANTIGRAVITY_MODELS;
+    const refreshModels = async () => {
+      try {
+        const resolved = await mergeLocalInject(readAntigravityModelCatalog(catalogEnv), catalogEnv);
+        if (resolved.options.length) models = resolved;
+      } catch {
+        // Keep the last usable catalog when settings.json is unreadable.
+      }
+    };
+    await refreshModels();
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread; a second send while busy is a caller bug
     const active = new Map<string, { stop: () => void; turnId: string }>();
@@ -153,12 +209,17 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // exiting, the bot would stay busy forever (agy's own --print-timeout 10m
       // is the only other net). Assigned just below; settle() always clears it.
       let watchdog: ReturnType<typeof setTimeout> | undefined;
-      const settle = (ok: boolean, stopReason: string | null, cost: number | null = null) => {
+      const settle = (
+        ok: boolean,
+        stopReason: string | null,
+        cost: number | null = null,
+        usage?: { input: number; output: number },
+      ) => {
         if (settled) return;
         settled = true;
         clearTimeout(watchdog);
         active.delete(threadId);
-        emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost });
+        emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}) });
       };
 
       // agy's print mode is argv-only, so a prompt beyond ARG_MAX would fail the
@@ -184,10 +245,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         config.fullAuto ? "--dangerously-skip-permissions" : "--mode",
       ];
       if (!config.fullAuto) args.push("accept-edits");
-      if (turn.model) args.push("--model", turn.model);
+      if (turn.model) args.push("--model", injectedApiModel(turn.model) ?? turn.model);
       if (resumeCursor) args.push("--conversation", resumeCursor);
 
-      const env: Record<string, string | undefined> = { ...process.env, PATH: augmentedPath() };
+      const env = { ...process.env, PATH: augmentedPath() };
 
       // spawnCli resolves npm .cmd shims / shebang scripts on Windows and
       // owns the process-group vs windowsHide difference (see procs.ts)
@@ -257,7 +318,19 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 output: payload.usage.output_tokens || 0,
               });
             }
-            settle(payload.status === "SUCCESS", payload.status ?? null, null);
+            // result.usage is the turn total (the per-step agent_response
+            // figures above are its parts, not additions to it)
+            settle(
+              payload.status === "SUCCESS",
+              payload.status ?? null,
+              null,
+              payload.usage
+                ? {
+                    input: (payload.usage.input_tokens || 0) + (payload.usage.cache_read_tokens || 0),
+                    output: payload.usage.output_tokens || 0,
+                  }
+                : undefined,
+            );
             break;
           }
         }
@@ -335,18 +408,17 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
       enabled: input.enabled,
-      models: MODELS,
+      get models() {
+        return models;
+      },
+      refreshModels,
       snapshot,
       adapter: {
         provider: DRIVER_KIND,
         capabilities: { sessionModelSwitch: "in-session" },
         sendTurn,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),
-        respondToRequest: async () => {
-          throw new Error(
-            "Antigravity has no interactive permission channel (run in fullAuto to auto-approve, or await the ACP v2)",
-          );
-        },
+        respondToRequest: async () => "unavailable" as const, // this engine has no asks to answer
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
           for (const { stop } of active.values()) stop();

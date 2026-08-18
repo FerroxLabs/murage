@@ -2,10 +2,7 @@
 // transport reaches the user's daemon and the official Cua MCP server stays
 // inside one managed container per bot.
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   BASE_IMAGE,
@@ -14,13 +11,17 @@ import {
   CUA_DRIVER_VERSION,
   CUA_EXECUTABLE,
   CUA_SOCKET,
+  DISPLAY,
   DRIVER_LABEL,
   IMAGE as CUA_IMAGE,
+  IMAGE_LAYER_LABEL,
+  IMAGE_LAYER_VERSION,
   MANAGED_LABEL,
   managedImageDockerfile,
 } from "./container-computer.ts";
 import { isValidSshAlias, vpsSshAlias, type AppConfig } from "./config.ts";
 import { augmentedPath } from "./env-path.ts";
+import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 
 export const VPS_IMAGE = CUA_IMAGE;
 export const VPS_MANAGED_LABEL = "com.openmausbot.vps";
@@ -62,6 +63,7 @@ export interface VpsComputerStatus {
   mounts: "none" | "unsafe" | "unknown";
   security: "hardened" | "unsafe" | "unknown";
   desktopReady: boolean;
+  desktop_error: string | null;
   ready: boolean;
   problem: string | null;
   image_ref: string;
@@ -169,6 +171,7 @@ function emptyStatus(botId: string, alias: string | null): VpsComputerStatus {
     mounts: "unknown",
     security: "unknown",
     desktopReady: false,
+    desktop_error: null,
     ready: false,
     problem: alias ? "Docker over SSH is not reachable" : "Configure a VPS SSH alias in App Settings → Connections",
     image_ref: VPS_IMAGE,
@@ -184,7 +187,8 @@ function imageLabelsMatch(labels: Record<string, string> | undefined): boolean {
   return (
     labels?.[MANAGED_LABEL] === "1" &&
     labels?.[DRIVER_LABEL] === CUA_DRIVER_VERSION &&
-    labels?.[BASE_IMAGE_LABEL] === BASE_IMAGE_DIGEST
+    labels?.[BASE_IMAGE_LABEL] === BASE_IMAGE_DIGEST &&
+    labels?.[IMAGE_LAYER_LABEL] === IMAGE_LAYER_VERSION
   );
 }
 
@@ -278,6 +282,7 @@ function statusProblem(status: VpsComputerStatus): string | null {
   if (status.mounts === "unsafe") return "The VPS container has host mounts; refusing to use it";
   if (status.security === "unsafe") return "The VPS container is missing OpenMausBot safety limits";
   if (status.container === "stopped") return "The OpenMausBot VPS container is stopped";
+  if (status.desktop_error) return `The VPS Cua desktop failed to start: ${status.desktop_error}`;
   if (!status.desktopReady) return "The VPS container started, but Cua Driver is not ready yet";
   return null;
 }
@@ -382,6 +387,7 @@ export async function vpsComputerStatus(
       status.mounts === "none" &&
       status.security === "hardened";
     if (canProbe && status.container_id) {
+      const readinessPath = "/tmp/openmausbot-vps-readiness.png";
       const exec = [
         "exec",
         "-u",
@@ -389,9 +395,11 @@ export async function vpsComputerStatus(
         "-e",
         "HOME=/home/cua",
         "-e",
-        "DISPLAY=:1",
+        `DISPLAY=${DISPLAY}`,
         "-e",
         "CUA_DRIVER_INSTALL_CHANNEL=python_package",
+        "-e",
+        "CUA_DRIVER_RS_TELEMETRY_ENABLED=0",
         status.container_id,
         CUA_EXECUTABLE,
       ];
@@ -399,9 +407,62 @@ export async function vpsComputerStatus(
         const version = await run([...exec, "--version"]);
         if (version.stdout.trim() !== `cua-driver ${CUA_DRIVER_VERSION}`) throw new Error("unexpected Cua Driver version");
         await run([...exec, "status", "--socket", CUA_SOCKET]);
+        const health = await run(
+          [...exec, "call", "health_report", "{}", "--socket", CUA_SOCKET],
+          15_000,
+        );
+        const report = JSON.parse(health.stdout) as {
+          schema_version?: string;
+          overall?: string;
+          checks?: unknown[];
+        };
+        if (
+          report.schema_version !== "1" ||
+          !Array.isArray(report.checks) ||
+          (report.overall !== "ok" && report.overall !== "degraded")
+        ) {
+          throw new Error(`Cua health report is ${report.overall ?? "invalid"}`);
+        }
+        await run(
+          [
+            ...exec,
+            "call",
+            "get_desktop_state",
+            "{}",
+            "--socket",
+            CUA_SOCKET,
+            "--screenshot-out-file",
+            readinessPath,
+          ],
+          20_000,
+        );
+        const captured = await run(
+          [
+            "exec",
+            "-u",
+            "cua",
+            "-e",
+            "HOME=/home/cua",
+            "-e",
+            `DISPLAY=${DISPLAY}`,
+            "-e",
+            "CUA_DRIVER_RS_TELEMETRY_ENABLED=0",
+            status.container_id,
+            "base64",
+            "-w0",
+            readinessPath,
+          ],
+          20_000,
+        );
+        if (!validImage(Buffer.from(captured.stdout.trim(), "base64"))) {
+          throw new Error("Cua Driver returned an incomplete VPS readiness screenshot");
+        }
         status.desktopReady = true;
-      } catch {
+      } catch (error) {
         status.desktopReady = false;
+        status.desktop_error = error instanceof Error ? error.message.slice(0, 320) : null;
+      } finally {
+        await run(["exec", "-u", "cua", status.container_id, "rm", "-f", readinessPath], 10_000).catch(() => {});
       }
     }
   } catch {
@@ -432,6 +493,8 @@ export function vpsContainerRunArgs(containerName: string, imageRef = VPS_IMAGE)
     `${DRIVER_LABEL}=${CUA_DRIVER_VERSION}`,
     "--label",
     `${BASE_IMAGE_LABEL}=${BASE_IMAGE_DIGEST}`,
+    "--label",
+    `${IMAGE_LAYER_LABEL}=${IMAGE_LAYER_VERSION}`,
     "--memory",
     "4g",
     "--memory-swap",
@@ -582,11 +645,6 @@ export async function reuseVps(
   return status.ready ? status : null;
 }
 
-function bridgePath(): string {
-  const ts = join(dirname(fileURLToPath(import.meta.url)), "vps-container-mcp.ts");
-  return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
-}
-
 export function vpsContainerMcpArgs(alias: string, containerName: string): string[] {
   if (!isValidSshAlias(alias) || (!CONTAINER_NAME.test(containerName) && !CONTAINER_ID.test(containerName))) {
     throw new Error("invalid VPS MCP connection");
@@ -599,9 +657,11 @@ export function vpsContainerMcpArgs(alias: string, containerName: string): strin
     "-e",
     "HOME=/home/cua",
     "-e",
-    "DISPLAY=:1",
+    `DISPLAY=${DISPLAY}`,
     "-e",
     "CUA_DRIVER_INSTALL_CHANNEL=python_package",
+    "-e",
+    "CUA_DRIVER_RS_TELEMETRY_ENABLED=0",
     containerName,
     CUA_EXECUTABLE,
     "mcp",
@@ -619,7 +679,7 @@ export function vpsComputerMcp(cfg: AppConfig, botId: string, containerRef?: str
   if (!alias) throw new Error("VPS is not configured — add an SSH config alias first");
   return {
     command: process.execPath,
-    args: [bridgePath(), alias, containerRef ?? vpsContainerName(botId)],
+    args: [SPAWNED_PROXIES.vpsContainerMcp, alias, containerRef ?? vpsContainerName(botId)],
     env: { ELECTRON_RUN_AS_NODE: "1" },
   };
 }
@@ -662,9 +722,11 @@ export async function vpsComputerScreenshot(
       "-e",
       "HOME=/home/cua",
       "-e",
-      "DISPLAY=:1",
+      `DISPLAY=${DISPLAY}`,
       "-e",
       "CUA_DRIVER_INSTALL_CHANNEL=python_package",
+      "-e",
+      "CUA_DRIVER_RS_TELEMETRY_ENABLED=0",
       containerRef,
       CUA_EXECUTABLE,
       "call",

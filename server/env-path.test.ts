@@ -5,10 +5,11 @@ import { execFile } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { augmentedPath, resetPathCacheForTests } from "./env-path.ts";
+import { augmentedPath, resetPathCache, resetPathCacheForTests, splitCliString } from "./env-path.ts";
 import { resolveCli } from "./procs.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 
 const posixIt = it.skipIf(process.platform === "win32");
 
@@ -50,6 +51,13 @@ describe("augmentedPath", () => {
     expect(v24).toBeLessThan(v9);
   });
 
+  posixIt("includes a user npm prefix at ~/.npm-global/bin", () => {
+    const npmGlobal = join(homedir(), ".npm-global", "bin");
+    mkdirSync(npmGlobal, { recursive: true });
+    resetPathCacheForTests();
+    expect(augmentedPath().split(delimiter)).toContain(npmGlobal);
+  });
+
   posixIt("makes a CLI in a known install dir spawnable despite a bare PATH", async () => {
     const bin = join(homedir(), ".local", "bin");
     mkdirSync(bin, { recursive: true });
@@ -68,6 +76,33 @@ describe("augmentedPath", () => {
       );
     });
     expect(stdout.trim()).toBe("found-me");
+  });
+
+  posixIt("keeps the last login-shell PATH available during a rescan", async () => {
+    const shell = join(homedir(), "fake-login-shell");
+    const rcOnlyBin = join(homedir(), "rc-only", "bin");
+    writeFileSync(shell, `#!/bin/sh\nprintf '__OMB_PATH__%s' '${rcOnlyBin}'\n`);
+    chmodSync(shell, 0o755);
+
+    const previousShell = process.env.SHELL;
+    const previousVitest = process.env.VITEST;
+    try {
+      process.env.SHELL = shell;
+      delete process.env.VITEST;
+      resetPathCacheForTests();
+
+      augmentedPath();
+      await vi.waitFor(() => expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin));
+
+      resetPathCache();
+      expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin);
+    } finally {
+      if (previousShell === undefined) delete process.env.SHELL;
+      else process.env.SHELL = previousShell;
+      if (previousVitest === undefined) delete process.env.VITEST;
+      else process.env.VITEST = previousVitest;
+      resetPathCacheForTests();
+    }
   });
 
   it("skips known dirs that do not exist", () => {
@@ -153,10 +188,12 @@ winOnly("resolveCli (Windows)", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "omb-shim-"));
   });
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.OMB_EXTRA_PATH;
     resetPathCacheForTests();
-    rmSync(dir, { recursive: true, force: true });
+    // These tests spawn the shims out of this directory; a just-exited one can
+    // still be holding it for a beat after the call returns.
+    await removeTempDir(dir);
   });
 
   it("parses an npm .cmd shim down to the .exe it wraps", () => {
@@ -223,6 +260,56 @@ winOnly("resolveCli (Windows)", () => {
     expect(resolveCli("definitely-not-installed", ["-p"])).toEqual({
       command: "definitely-not-installed",
       args: ["-p"],
+    });
+  });
+});
+
+describe("splitCliString", () => {
+  it("splits wrapper command + fixed args, honoring quotes", () => {
+    expect(splitCliString("/usr/local/bin/ag claude agp")).toEqual(["/usr/local/bin/ag", "claude", "agp"]);
+    expect(splitCliString('"/opt/my tools/cli" --flag with space')).toEqual(["/opt/my tools/cli", "--flag", "with", "space"]);
+    expect(splitCliString("claude")).toEqual(["claude"]);
+    expect(splitCliString("  ")).toEqual([]);
+  });
+
+  it("strips quotes from a lone quoted path — the spaced-path case", () => {
+    // a user quoting a path with spaces pastes ONE token; the quotes must
+    // not survive into the spawn, or every turn dies ENOENT on a filename
+    // that literally contains quote characters
+    expect(splitCliString('"/opt/my tools/claude"')).toEqual(["/opt/my tools/claude"]);
+  });
+});
+
+describe("resolveCli with wrapper commands", () => {
+  posixIt("puts wrapper subcommands BEFORE invocation args", () => {
+    const resolved = resolveCli("/usr/local/bin/ag claude agp", ["--help"]);
+    expect(resolved.command).toBe("/usr/local/bin/ag");
+    expect(resolved.args).toEqual(["claude", "agp", "--help"]);
+  });
+
+  posixIt("strips quotes from a single-token quoted path", () => {
+    expect(resolveCli('"/opt/my tools/claude"', ["--help"])).toEqual({
+      command: "/opt/my tools/claude",
+      args: ["--help"],
+    });
+  });
+
+  posixIt("keeps an EXISTING unquoted spaced path whole — what the candidates list emits", () => {
+    const bin = join(homedir(), ".local", "bin");
+    mkdirSync(bin, { recursive: true });
+    // simulate "/Applications/My Tools/claude": a real file at a spaced path
+    const spacedDir = join(bin, "omb space dir");
+    mkdirSync(spacedDir, { recursive: true });
+    const spaced = join(spacedDir, "myclaude");
+    writeFileSync(spaced, "#!/bin/sh\n");
+    expect(resolveCli(spaced, ["--version"])).toEqual({
+      command: spaced,
+      args: ["--version"],
+    });
+    // a NONEXISTENT spaced string still splits (wrapper interpretation)
+    expect(resolveCli(join(spacedDir, "nope two words"), ["--version"])).toEqual({
+      command: join(bin, "omb"),
+      args: ["space", "dir/nope", "two", "words", "--version"],
     });
   });
 });

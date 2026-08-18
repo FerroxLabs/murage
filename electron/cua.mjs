@@ -31,6 +31,8 @@ const STANDALONE_SOCKET = path.join(
   "Library/Caches/cua-driver/cua-driver.sock",
 );
 const HOST_BUNDLE_ID = "com.openmausbot.app";
+const CUA_ENV = { CUA_DRIVER_RS_TELEMETRY_ENABLED: "0" };
+process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED ??= "0";
 
 let embeddedHost = null; // EmbeddedCuaDriverHost | null
 const connectionStore = createCuaConnectionStore({
@@ -100,7 +102,7 @@ async function startEmbedded(binary) {
     socketPath: conn.socketPath,
     mcpCommand: binary,
     mcpArgs: ["mcp", "--embedded", "--socket", conn.socketPath],
-    mcpEnv: { CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID },
+    mcpEnv: { ...CUA_ENV, CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID },
   };
 }
 
@@ -133,7 +135,7 @@ export async function startCua() {
       socketPath: STANDALONE_SOCKET,
       mcpCommand: binary,
       mcpArgs: ["mcp"],
-      mcpEnv: {},
+      mcpEnv: { ...CUA_ENV },
     };
   } else {
     nextConnection = {
@@ -152,6 +154,7 @@ export function cuaPermissionsStatus() {
   const out = spawnSync(binary, ["permissions", "status", "--json"], {
     encoding: "utf8",
     timeout: 5000,
+    env: { ...process.env, ...CUA_ENV },
   });
   try {
     return { available: true, ...JSON.parse(out.stdout) };

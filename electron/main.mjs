@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, safeStorage, session, shell, systemPreferences, utilityProcess } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
+const DEFAULT_COMPOSIO_BROKER_URL = "https://openmausbot-composio.milindsoni201.workers.dev";
 let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 
@@ -29,6 +30,116 @@ if (process.platform === "linux") app.setDesktopName("com.openmausbot.app.deskto
 // our API shape, not just a 200).
 let serverProc = null;
 let serverReady = true;
+let secureCredentials = {};
+
+const CREDENTIALS_FILE = path.join(app.getPath("userData"), "credentials.bin");
+
+async function loadSecureCredentials() {
+  try {
+    if (!fs.existsSync(CREDENTIALS_FILE) || !(await safeStorage.isAsyncEncryptionAvailable())) return {};
+    const decrypted = await safeStorage.decryptStringAsync(fs.readFileSync(CREDENTIALS_FILE));
+    return JSON.parse(decrypted.result);
+  } catch (error) {
+    slog(`credential load failed: ${error?.message ?? error}`);
+    return {};
+  }
+}
+
+async function saveSecureCredentials(credentials) {
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) {
+    throw new Error("The operating-system credential store is unavailable");
+  }
+  fs.mkdirSync(path.dirname(CREDENTIALS_FILE), { recursive: true });
+  const encrypted = await safeStorage.encryptStringAsync(JSON.stringify(credentials));
+  const temporary = `${CREDENTIALS_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, encrypted, { mode: 0o600 });
+  fs.renameSync(temporary, CREDENTIALS_FILE);
+}
+
+async function secureComposioConfig() {
+  const dataDir = process.env.OMB_DATA_DIR || path.join(app.getPath("home"), ".openmausbot");
+  const configPath = path.join(dataDir, "config.json");
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    if (!config?.composio || typeof config.composio !== "object") return;
+    let changed = false;
+    const apiKey = config?.composio?.apiKey;
+    if (typeof apiKey === "string" && apiKey.trim().startsWith("ak_")) {
+      if (!secureCredentials.composioApiKey) {
+        secureCredentials.composioApiKey = apiKey.trim();
+        await saveSecureCredentials(secureCredentials);
+      }
+      config.composio.apiKey = "";
+      changed = true;
+    } else if (typeof apiKey === "string" && apiKey.trim()) {
+      config.composio.apiKey = "";
+      changed = true;
+    }
+    // These were the old Connect credential and endpoint. They are no longer
+    // read; remove them during the upgrade so an unused secret is not left in
+    // plaintext indefinitely.
+    for (const field of ["key", "url"]) {
+      if (Object.hasOwn(config.composio, field)) {
+        delete config.composio[field];
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    const temporary = `${configPath}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(config, null, 2), { mode: 0o600 });
+    fs.renameSync(temporary, configPath);
+  } catch (error) {
+    if (error?.code !== "ENOENT") slog(`credential migration failed: ${error?.message ?? error}`);
+  }
+}
+
+function composioBrokerUrl() {
+  const configured = process.env.OMB_COMPOSIO_BROKER_URL?.trim();
+  return configured || (app.isPackaged ? DEFAULT_COMPOSIO_BROKER_URL : "");
+}
+
+async function ensureManagedComposioCredentials() {
+  const brokerUrl = composioBrokerUrl();
+  if (!brokerUrl) return;
+  if (/^[0-9a-f]{64}$/.test(secureCredentials.composioBrokerToken ?? "")) {
+    try {
+      const check = await fetch(`${brokerUrl}/v1/me`, {
+        headers: { authorization: `Bearer ${secureCredentials.composioBrokerToken}` },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (check.ok) return;
+      // Only a definitive auth failure rotates the credential. A transient
+      // outage keeps the existing identity so reconnecting cannot strand
+      // the user's already-authorized accounts under a new installation.
+      if (check.status !== 401) return;
+      delete secureCredentials.composioBrokerToken;
+      delete secureCredentials.composioInstallationId;
+    } catch {
+      return;
+    }
+  }
+  try {
+    const response = await fetch(`${brokerUrl}/v1/installations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+    if (!/^[0-9a-f]{64}$/.test(body?.token ?? "") || typeof body?.installationId !== "string") {
+      throw new Error("the connected-apps service returned invalid credentials");
+    }
+    secureCredentials.composioBrokerToken = body.token;
+    secureCredentials.composioInstallationId = body.installationId;
+    await saveSecureCredentials(secureCredentials);
+    slog("connected-apps installation registered");
+  } catch (error) {
+    // Never block app startup on a hosted integration. A user running their
+    // own Composio project key still has the local fallback below.
+    slog(`connected-apps registration failed: ${error?.message ?? error}`);
+  }
+}
 
 // The packaged app has no terminal: everything about the server child's life
 // goes to server.log in the OS log dir (~/Library/Logs/OpenMausBot on macOS,
@@ -37,6 +148,17 @@ let serverReady = true;
 // parent's stdio leads nowhere and a failed boot is otherwise undiagnosable.
 const LOG_DIR = app.getPath("logs");
 let logStream = null;
+import {
+  companionEnabledAtRest,
+  companionPairing,
+  companionCloudDesktopAccess,
+  companionRevoke,
+  companionState,
+  rememberCompanionEnabled,
+  startCompanion,
+  stopCompanion,
+} from "./companion.mjs";
+
 function slog(line) {
   try {
     if (!logStream) {
@@ -58,6 +180,15 @@ async function startServerOn(port) {
       OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
       OMB_PORT: String(port),
       OMB_USER_DATA: app.getPath("userData"),
+      ...(secureCredentials.composioApiKey
+        ? { COMPOSIO_API_KEY: secureCredentials.composioApiKey }
+        : {}),
+      ...(composioBrokerUrl() && secureCredentials.composioBrokerToken
+        ? {
+            OMB_COMPOSIO_BROKER_URL: composioBrokerUrl(),
+            OMB_COMPOSIO_BROKER_TOKEN: secureCredentials.composioBrokerToken,
+          }
+        : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -230,6 +361,37 @@ ipcMain.handle("engine:open-terminal", async (_event, command) => {
   return openBlankTerminal();
 });
 
+// OAuth/connect links are returned asynchronously, after Chromium's direct
+// click gesture has ended. Opening them through window.open can therefore be
+// rejected as a popup before setWindowOpenHandler ever sees the URL. Keep the
+// renderer sandboxed and let the main process open only ordinary web links.
+// A bot's working folder: the native picker, so the path is real and the
+// user never types one. Returns null when they cancel.
+ipcMain.handle("desktop:pick-folder", async (event, current) => {
+  const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+  const result = await dialog.showOpenDialog(win, {
+    title: "Choose a working folder",
+    properties: ["openDirectory", "createDirectory"],
+    ...(typeof current === "string" && current ? { defaultPath: current } : {}),
+  });
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+});
+
+ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {
+  if (typeof rawUrl !== "string") throw new Error("A web address is required");
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error("That web address is invalid");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Only web links can be opened");
+  }
+  await shell.openExternal(url.toString());
+  return true;
+});
+
 ipcMain.handle("perm:status", () => ({
   mic:
     process.platform === "darwin"
@@ -276,6 +438,33 @@ ipcMain.handle("speech:finish", () => {
   if (process.platform === "darwin") finishSpeech();
 });
 
+// ── companion sidecar ──────────────────────────────────────────────────
+// The renderer gets these five and nothing else: it can turn the companion
+// on and off, look at it, open or cancel a pairing window, and remove a
+// device. It cannot reach the sidecar's control port itself.
+ipcMain.handle("companion:state", () => companionState());
+ipcMain.handle("companion:start", async () => {
+  const state = await startCompanion({
+    resourcesPath: process.resourcesPath,
+    harnessPort: SERVER_PORT,
+    log: slog,
+  });
+  // Remember only a start that worked: persisting the intent behind a failed
+  // one would greet every launch with the same error for a toggle the panel
+  // showed as off.
+  if (state.enabled && !state.error) rememberCompanionEnabled(true);
+  return state;
+});
+ipcMain.handle("companion:stop", () => {
+  rememberCompanionEnabled(false);
+  return stopCompanion();
+});
+ipcMain.handle("companion:pairing", (_event, open) => companionPairing(Boolean(open)));
+ipcMain.handle("companion:cloud-desktop", (_event, deviceId, allowed) =>
+  companionCloudDesktopAccess(deviceId, Boolean(allowed)),
+);
+ipcMain.handle("companion:revoke", (_event, deviceId) => companionRevoke(deviceId));
+
 ipcMain.handle("desktop:capabilities", async () =>
   desktopCapabilities({
     platform: process.platform,
@@ -285,8 +474,39 @@ ipcMain.handle("desktop:capabilities", async () =>
   }),
 );
 
+ipcMain.handle("credential:set", async (_event, name, value) => {
+  if (name !== "composioApiKey" || typeof value !== "string") {
+    throw new Error("Unsupported credential");
+  }
+  if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) {
+    throw new Error("The operating-system credential store is unavailable");
+  }
+  // In development the server is a separately launched process, so it cannot
+  // receive credentials from Electron at boot. Keep its established local
+  // config path there; production always uses the encrypted external store.
+  const secretStorage = app.isPackaged ? "?secretStorage=external" : "";
+  const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/config${secretStorage}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ composio: { apiKey: value.trim() } }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body?.error || `Could not save credential (HTTP ${response.status})`);
+  if (app.isPackaged) {
+    if (value.trim()) secureCredentials.composioApiKey = value.trim();
+    else delete secureCredentials.composioApiKey;
+    await saveSecureCredentials(secureCredentials);
+  }
+  return body;
+});
+
 app.whenReady().then(async () => {
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
+  if (app.isPackaged) {
+    secureCredentials = await loadSecureCredentials();
+    await secureComposioConfig();
+    await ensureManagedComposioCredentials();
+  }
   // getDisplayMedia in the renderer → this handler → ScreenCaptureKit, all
   // inside the app's own processes — the one capture path macOS reliably
   // attributes to the app (registers it in the Screen Recording pane and
@@ -315,6 +535,14 @@ app.whenReady().then(async () => {
         })
       : Promise.resolve({ mode: "unavailable", reason: "unsupported-platform" });
   if (app.isPackaged) serverReady = await startServerPackaged();
+  // The companion the user left on comes back without anyone finding the
+  // toggle again — one attempt, after the harness port is settled, with the
+  // exact options the IPC handler uses. A failure surfaces in companionState
+  // (the panel shows the error) rather than retrying; and it never delays
+  // the window.
+  if (serverReady && companionEnabledAtRest()) {
+    void startCompanion({ resourcesPath: process.resourcesPath, harnessPort: SERVER_PORT, log: slog });
+  }
   const win = createWindow();
   // in-app auto-update (packaged only) — checks GitHub releases, downloads on
   // the user's click, installs on "Restart to update"
@@ -339,6 +567,9 @@ app.on("before-quit", (e) => {
   try {
     serverProc?.kill();
   } catch {}
+  // the sidecar holds a socket that is reachable from off this machine —
+  // it should not outlive the window by even a moment
+  void stopCompanion();
   // a live dictation session runs its own helper child that holds the mic —
   // stop it here so quitting never orphans a recording process
   stopSpeech();

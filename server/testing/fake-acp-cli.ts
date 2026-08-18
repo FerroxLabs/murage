@@ -5,7 +5,7 @@
 // session/prompt, and streams session/update notifications for a scripted
 // turn. Failure modes mirror how real ACP agents misbehave:
 //
-//   FAKE_ACP_MODE   happy (default) | exit-early | hang | no-auth | auth-required | permission
+//   FAKE_ACP_MODE   happy (default) | empty-reply | exit-early | hang | no-auth | auth-required | permission
 //                   | no-session-config (reject session/set_mode + set_model
 //                     with -32601, i.e. an agent predating those methods)
 //                   | ask-peer (spawn the injected "agents" MCP server from
@@ -13,6 +13,11 @@
 //                     peer, and reply with what the peer said — the comms e2e)
 //                   | delegate-peer (same as ask-peer but uses delegate_bot —
 //                     returns immediately, the peer runs after our turn)
+//                   | echo-gated (reply by echoing the full prompt, and when
+//                     FAKE_ACP_GATE_FILE is set hold the turn open until that
+//                     file exists — a deterministic busy window for the
+//                     steer-queue e2e, with the echo pinning exactly what a
+//                     drained turn was sent)
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
 //   FAKE_ACP_MODELS      comma-separated model ids. Enables the opencode-shaped
@@ -27,7 +32,7 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 // opencode-shaped surface: the session carries its own model catalog and the
@@ -62,8 +67,10 @@ if (process.env.FAKE_ACP_DUMP) {
       "TEST_POLICY",
       "OPENCODE_API_KEY",
       "OPENAI_API_KEY",
+      "OPENROUTER_API_KEY",
       "ANTHROPIC_API_KEY",
       "XAI_API_KEY",
+      "UNSLOTH_STUDIO_AUTH_TOKEN",
     ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]] as const)),
   );
   writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: dumpEnv }, null, 2));
@@ -94,9 +101,9 @@ let agentsMcp: McpEntry | null = null;
 
 /** Minimal one-shot MCP stdio client: initialize, call each tool in
  * sequence, return the text of the last result. Dependency-free. */
-function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: string) => unknown }>): Promise<string> {
+function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: string) => object }>): Promise<string> {
   return new Promise((resolve, reject) => {
-    const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+    const env = { ...process.env };
     for (const { name, value } of entry.env ?? []) env[name] = value;
     const child = spawn(entry.command, entry.args ?? [], { env, stdio: ["pipe", "pipe", "inherit"] });
     child.on("error", reject);
@@ -200,6 +207,9 @@ function handle(msg: any) {
       }
       const servers: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
       agentsMcp = servers.find((s: any) => s?.name === "agents") ?? null;
+      if (process.env.FAKE_ACP_DUMP) {
+        writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(servers, null, 2));
+      }
       const opts = configOptions();
       result(msg.id, opts ? { sessionId: "fake-acp-session", configOptions: opts } : { sessionId: "fake-acp-session" });
       break;
@@ -290,6 +300,27 @@ function handle(msg: any) {
           });
         return;
       }
+      if (mode === "echo-gated") {
+        // echoing the WHOLE prompt (system + turn text) lets a test assert
+        // both what a drained turn was sent and what it was NOT sent (e.g.
+        // the webhook untrusted-data paragraph a steered turn must not get)
+        const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
+        const finish = () => {
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `echo: ${promptText}` } } } });
+          complete();
+        };
+        const gate = process.env.FAKE_ACP_GATE_FILE;
+        if (gate && !existsSync(gate)) {
+          const poll = setInterval(() => {
+            if (!existsSync(gate)) return;
+            clearInterval(poll);
+            finish();
+          }, 50);
+          return;
+        }
+        finish();
+        return;
+      }
       if (mode === "delegate-peer" && agentsMcp) {
         // async peer-handoff e2e: queue the delegation and return
         // immediately; the harness fires the peer's depth-1 turn after our
@@ -316,7 +347,7 @@ function handle(msg: any) {
           });
         return;
       }
-      playTurn();
+      if (mode !== "empty-reply") playTurn();
       if (mode === "permission") {
         // ask the client to approve a tool, then complete once answered
         pendingPermissionId = 9001;

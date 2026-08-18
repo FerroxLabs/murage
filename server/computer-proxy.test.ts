@@ -10,7 +10,7 @@
 //   4. computer_batch runs a whole sequence in one round trip,
 //   5. an unchanged screen is reported as text instead of resending the
 //      same pixels.
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,6 +63,17 @@ describe("computer proxy (fake box)", () => {
             ? JSON.stringify([
                 { id: "page-1", type: "page", title: " Example ", url: browserUrl },
               ])
+            : command.includes("openmausbot-cdp.mjs snapshot")
+              ? JSON.stringify({
+                  title: "Account",
+                  url: "https://user:password@example.com/form?token=secret#private",
+                  elements: [
+                    { ref: "b41", role: "textbox", name: "Email" },
+                    { ref: "b42", role: "button", name: "Continue" },
+                  ],
+                })
+              : command.includes("openmausbot-cdp.mjs click") || command.includes("openmausbot-cdp.mjs fill")
+                ? `GEOM 1920 1080\nHASH ${hash}\nSIZE ${size}\nB64 ${JPEG}\nSEM ok\n`
             : cropFails && /convert "\$f" -crop/.test(command)
               ? `GEOM 1920 1080\nHASH ${hash}\nCROP_FAILED\n`
               : /GEOM/.test(command)
@@ -123,7 +134,17 @@ describe("computer proxy (fake box)", () => {
     const res = await waitFor(2);
     const names = res.result.tools.map((t: any) => t.name);
     expect(names).toContain("computer_batch");
-    expect(names).toEqual(expect.arrayContaining(["browser_state", "wait_for_navigation", "observation_metrics"]));
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "browser_state",
+        "browser_snapshot",
+        "browser_click",
+        "browser_fill",
+        "computer_status",
+        "wait_for_navigation",
+        "observation_metrics",
+      ]),
+    );
     const click = res.result.tools.find((t: any) => t.name === "click");
     expect(click.description).toMatch(/return the resulting screen/i);
     const screenshot = res.result.tools.find((t: any) => t.name === "screenshot");
@@ -142,12 +163,17 @@ describe("computer proxy (fake box)", () => {
     // one command carried the click, the settle and the capture
     expect(commands.length - before).toBe(1);
     const command = commands.at(-1)!;
+    expect(command).toContain('exec env -i HOME="$HOME"');
+    if (process.platform !== "win32") expect(spawnSync("/bin/bash", ["-n", "-c", command]).status).toBe(0);
     expect(command).toMatch(/xdotool mousemove \$CX \$CY click 1/);
+    expect(command).toContain("/opt/ogb/cua-driver call click");
+    expect(command).toContain("CUA_DRIVER_RS_TELEMETRY_ENABLED=0");
     expect(command).toMatch(/getdisplaygeometry/); // scaling resolved box-side
     // scaling is conditional: a display narrower than the model's space is
     // captured at native size, so the coordinates must pass through as-is
     expect(command).toMatch(/if \[ "\$W" -gt 1280 \].*CX=\$\(\( 100 \* W \/ 1280 \)\).*else CX=100/);
     expect(command).toMatch(/scrot -o -q 75/); // JPEG, no unconditional convert
+    expect(command).toContain("call get_desktop_state");
     // ...and the model got pixels back with it, no second tool call
     const content = res.result.content;
     expect(content[0].type).toBe("text");
@@ -180,8 +206,20 @@ describe("computer proxy (fake box)", () => {
       params: { name: "type_text", arguments: { text: "hello" } },
     });
     const res = await waitFor(5);
-    expect(commands.at(-1)).toMatch(/xdotool type --delay 8 'hello'/);
+    expect(commands.at(-1)).toMatch(/xdotool type --clearmodifiers --delay 8 -- .*hello/);
     expect(res.result.content[1]).toMatchObject({ type: "image" });
+  });
+
+  it("types leading hyphens as text after clearing stuck modifiers", async () => {
+    hash = "bbbb2223";
+    rpc({
+      jsonrpc: "2.0",
+      id: 51,
+      method: "tools/call",
+      params: { name: "type_text", arguments: { text: "--safe" } },
+    });
+    await waitFor(51);
+    expect(commands.at(-1)).toMatch(/xdotool type --clearmodifiers --delay 8 -- .*--safe/);
   });
 
   it("runs a whole batch in one round trip with one frame at the end", async () => {
@@ -231,6 +269,41 @@ describe("computer proxy (fake box)", () => {
     const output = res.result.content[0].text;
     expect(output).toContain("https://example.com/path");
     expect(output).not.toMatch(/user|password|token|secret|private/);
+  });
+
+  it("uses fresh semantic browser refs without exposing URL secrets", async () => {
+    rpc({ jsonrpc: "2.0", id: 81, method: "tools/call", params: { name: "browser_snapshot", arguments: {} } });
+    const snapshot = await waitFor(81);
+    const snapshotText = snapshot.result.content[0].text;
+    expect(snapshotText).toContain("[b41] textbox: Email");
+    expect(snapshotText).toContain("https://example.com/form");
+    expect(snapshotText).not.toMatch(/user|password|token|secret|private/);
+
+    hash = "semantic-1";
+    const before = commands.length;
+    rpc({
+      jsonrpc: "2.0",
+      id: 82,
+      method: "tools/call",
+      params: { name: "browser_fill", arguments: { ref: "b41", text: "person@example.com" } },
+    });
+    const filled = await waitFor(82);
+    expect(commands.length - before).toBe(1);
+    expect(commands.at(-1)).toContain("openmausbot-cdp.mjs fill");
+    expect(commands.at(-1)).not.toContain("person@example.com");
+    expect(filled.result.content[0].text).toMatch(/trusted Chrome DevTools input/);
+
+    const staleBefore = commands.length;
+    rpc({
+      jsonrpc: "2.0",
+      id: 83,
+      method: "tools/call",
+      params: { name: "browser_click", arguments: { ref: "b42" } },
+    });
+    const stale = await waitFor(83);
+    expect(stale.result.isError).toBe(true);
+    expect(stale.result.content[0].text).toMatch(/stale/i);
+    expect(commands.length).toBe(staleBefore);
   });
 
   it("does not verify a different query or an invalid expected URL", async () => {
@@ -339,9 +412,16 @@ describe("computer proxy (fake box)", () => {
     const result = await waitFor(130);
     const issued = commands.slice(before);
     expect(issued).toHaveLength(2);
-    expect(issued[0]).toContain('mkdir -p "$HOME/.openmausbot/chrome-profile"');
-    expect(issued[0]).toContain('chmod 700 "$HOME/.openmausbot/chrome-profile"');
+    expect(issued[0]).toContain('profile="$HOME/.openmausbot/chrome-profile"');
+    expect(issued[0]).toContain('chmod 700 "$profile"');
+    expect(issued[0]).toContain('! cp -a -n "$browser_dir"/. "$profile"/');
+    expect(issued[0]).toContain('echo "failed to copy browser profile: $browser_dir" >&2');
+    expect(issued[0]).toContain('ln -s "$profile" "$browser_dir"');
+    expect(issued[0]).not.toContain("do;");
+    expect(issued[0]).not.toContain("then;");
     expect(issued[0]).toContain('--user-data-dir="$HOME/.openmausbot/chrome-profile"');
+    expect(issued[0]).toContain("--password-store=basic");
+    expect(issued[0]).toContain("--disable-session-crashed-bubble");
     expect(issued[0]).not.toContain("user:password@");
     expect(issued[0]).toContain("'https://example.com/requested?token=secret#fragment'");
     expect(result.result.content[0].text).toContain("https://example.com/landed");

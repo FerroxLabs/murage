@@ -68,7 +68,21 @@ export interface AutoApprover {
 /** Why this request may be answered without the human, or null to ask.
  * The returned string becomes the chip in the transcript, so an
  * auto-approved action is never invisible. */
-export function autoDecision(bot: AutoApprover, tool: string, summary: string): string | null {
+export function autoDecision(
+  bot: AutoApprover,
+  tool: string,
+  summary: string,
+  context?: {
+    /** the turn was started by an outside event, with nobody at the keyboard */
+    unattended?: boolean;
+  },
+): string | null {
+  // Auto mode is something a person switched on for turns they are present
+  // for. A webhook turn begins with nobody watching, on a payload someone
+  // else wrote, so it does not inherit that decision — the guard below is a
+  // pattern list its own comment calls "not a security boundary", and it
+  // must not stand in for a human at 3am.
+  if (context?.unattended) return null;
   // the guards come first, so an "always allow" can never widen into them
   if (looksDestructive(summary) || looksDestructive(tool)) return null;
   if (looksSensitive(summary)) return null;

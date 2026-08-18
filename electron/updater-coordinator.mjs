@@ -63,6 +63,11 @@ export function createUpdaterCoordinator(updater, setState) {
 
     const operation = { promise: null };
     downloadOperation = operation;
+    // Own the state before the request goes out: the first "download-progress"
+    // can be seconds away (connection setup, redirects), and until then the
+    // renderer would still show an untouched "Download" button. No percent yet
+    // — the UI reads a missing percent as "starting".
+    setState({ status: "downloading" });
     try {
       operation.promise = Promise.resolve(updater.downloadUpdate())
         .catch((error) => handleRejectedOperation(true, error))

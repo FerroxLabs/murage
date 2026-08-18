@@ -27,6 +27,7 @@ interface Status {
   container: "running" | "stopped" | "missing";
   network: "loopback" | "unsafe" | "unknown";
   security: "hardened" | "unsafe" | "unknown";
+  persistence: "durable" | "unsafe" | "unknown";
   desktopReady: boolean;
   ready: boolean;
   problem: string | null;
@@ -34,7 +35,10 @@ interface Status {
   base_image_ref: string;
   driver_version: string;
   container_name: string;
+  workspace_path: string;
+  workspace_guest_path: string;
   viewer_url: string;
+  idle_timeout_ms: number;
   commands: {
     install: string | null;
     runtimeStart: string | null;
@@ -149,10 +153,13 @@ export function LocalComputerSection() {
   };
 
   const act = async (action: Action) => {
-    if (action === "remove" && !window.confirm("Delete the Local VM and everything stored inside it?")) return;
+    if (
+      action === "remove" &&
+      !window.confirm("Delete the Local VM? Files and browser sign-ins in its durable workspace will remain.")
+    ) return;
     if (
       action === "recreate" &&
-      !window.confirm("Delete the existing Local VM and recreate it with the pinned image and safety limits? Anything stored inside it will be lost.")
+      !window.confirm("Replace the existing Local VM with the pinned image and safety limits? Files and browser sign-ins in its durable workspace will remain.")
     ) return;
     setPending(action);
     setError(null);
@@ -178,7 +185,12 @@ export function LocalComputerSection() {
   const existing = status?.container !== "missing";
   const needsRecreate = Boolean(
     existing &&
-      (!status?.imageMatches || !status?.managed || status?.network === "unsafe" || status?.security === "unsafe"),
+      (status?.container === "stopped" ||
+        !status?.imageMatches ||
+        !status?.managed ||
+        status?.network === "unsafe" ||
+        status?.security === "unsafe" ||
+        status?.persistence === "unsafe"),
   );
   const unavailable = !loading && !status;
   const host = status?.platform === "darwin" ? "Mac" : "computer";
@@ -187,7 +199,7 @@ export function LocalComputerSection() {
     <>
       <Card
         title="Local VM"
-        subtitle={`A shared Cua Linux sandbox on this ${host} for bots to browse and work in — free, disposable, and separate from your own screen and files.`}
+        subtitle={`A shared Cua Linux sandbox on this ${host} for bots to browse and work in — isolated, backed by one durable workspace, and automatically recycled after 8 hours without activity.`}
       >
         <div className="flex flex-wrap items-center gap-2">
           <span
@@ -295,7 +307,7 @@ export function LocalComputerSection() {
 
       <Card
         title="Safety and storage"
-        subtitle="Cua Driver operates only the VM's desktop. No host folders are mounted, and the password-protected viewer is available only on this machine. Docker and Podman runs are limited to 4 GB memory, 2 CPUs and 512 processes; all Linux capabilities are dropped except the two the desktop supervisor needs to switch to its unprivileged user. The VM can still reach the internet, and bots share it one at a time."
+        subtitle={`Cua Driver operates only the VM's desktop. Exactly one private host folder is mounted at ${status?.workspace_guest_path ?? "/home/cua/workspace"}; files and browser profiles there survive VM replacement, while everything elsewhere in the VM remains disposable. The password-protected viewer is available only on this machine. Docker and Podman runs are limited to 4 GB memory, 2 CPUs and 512 processes; all Linux capabilities are dropped except the two the desktop supervisor needs to switch to its unprivileged user. The VM can still reach the internet, and bots share it one at a time.`}
       >
         {existing && (
           <div className="flex flex-wrap gap-2">
@@ -310,7 +322,8 @@ export function LocalComputerSection() {
           </div>
         )}
         <div className="mt-3 break-all text-[11px] text-ink-secondary">
-          Cua Driver: {status?.driver_version ?? "0.19.3"} · Local image: {status?.image_ref ?? "not prepared"}
+          Durable workspace: {status?.workspace_path ?? "not created"} ·{" "}
+          Cua Driver: {status?.driver_version ?? "0.20.0"} · Local image: {status?.image_ref ?? "not prepared"}
           {status?.base_image_ref ? <> · Base: {status.base_image_ref}</> : null}
         </div>
       </Card>

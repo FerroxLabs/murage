@@ -5,7 +5,7 @@
 //
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CodexDriver } from "./codex.ts";
+import { removeTempDir } from "../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 
@@ -32,12 +33,14 @@ describe("CodexDriver turns (fake app-server)", () => {
   let recorder: EventRecorder;
   let scratch: string;
 
-  const create = async (opts: { mode?: string; fullAuto?: boolean } = {}) => {
+  const create = async (
+    opts: { mode?: string; fullAuto?: boolean; environment?: Record<string, string> } = {},
+  ) => {
     if (opts.mode) process.env.FAKE_CODEX_MODE = opts.mode;
     instance = await CodexDriver.create({
       instanceId: "codex-test",
       displayName: "Codex Test",
-      environment: {},
+      environment: opts.environment ?? {},
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: opts.fullAuto ?? false },
     });
@@ -55,7 +58,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     delete process.env.OPENAI_API_KEY;
     recorder?.stop();
     await instance?.dispose();
-    rmSync(scratch, { recursive: true, force: true });
+    await removeTempDir(scratch);
   });
 
   it("runs the handshake and normalizes a full turn", async () => {
@@ -68,6 +71,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       threadId: "t-happy",
       text: "list files",
       system: "You are Testy.",
+      model: "gpt-5.6-sol",
     });
     await recorder.until((e) => e.type === "turn.completed");
 
@@ -91,7 +95,9 @@ describe("CodexDriver turns (fake app-server)", () => {
       input: 7,
       output: 3,
     });
-    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
+    // codex reports the THREAD total; the driver turns it into this turn's
+    // figure so the harness never sums a running total
+    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true, usage: { input: 7, output: 3 } });
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.env.OPENAI_API_KEY).toBeUndefined();
@@ -100,6 +106,69 @@ describe("CodexDriver turns (fake app-server)", () => {
     // persona rides in front of the prompt text — codex has no system slot
     const turnStart = seen.calls.at(-1);
     expect(turnStart.params.input[0].text).toBe("You are Testy.\n\nlist files");
+    const threadStart = seen.calls.find((c: { method: string }) => c.method === "thread/start");
+    expect(threadStart.params).toMatchObject({ model: "gpt-5.6-sol", modelProvider: "openai" });
+  });
+
+  it("uses the instance environment for the Codex process", async () => {
+    const codexHome = join(scratch, "custom-codex-home");
+    await create({ environment: { CODEX_HOME: codexHome } });
+    const dump = join(scratch, "environment.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-environment", text: "hi" });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    expect(JSON.parse(readFileSync(dump, "utf8")).env.CODEX_HOME).toBe(codexHome);
+  });
+
+  it("mounts connected apps without placing credential values in argv", async () => {
+    await create();
+    const dump = join(scratch, "composio.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    expect(instance.adapter.capabilities.composioMcp).toBe(true);
+
+    await instance.adapter.sendTurn({
+      threadId: "t-composio",
+      text: "check mail",
+      integrations: {
+        composio: {
+          command: process.execPath,
+          args: ["/tmp/connector-proxy.js"],
+          env: {
+            OMB_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp",
+            OMB_COMMS_TOKEN: "per-boot-token",
+          },
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv.join(" ")).toContain("mcp_servers.openmausbot_connectors.command");
+    expect(seen.argv.join(" ")).toContain("OMB_COMMS_TOKEN");
+    expect(seen.argv.join(" ")).not.toContain("per-boot-token");
+    expect(seen.env.OMB_COMMS_TOKEN).toBe("per-boot-token");
+  });
+
+  it("sends the local provider when the picker id is custom-encoded", async () => {
+    await create({ environment: { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" } });
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await instance.adapter.sendTurn({
+      threadId: "t-local",
+      text: "hi",
+      model: "unsloth::Qwen3.6-35B-A3B-bf16:qwen3-5-6-n-r-reasoning",
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+    const threadStart = JSON.parse(readFileSync(dump, "utf8")).calls.find((c: { method: string }) => c.method === "thread/start");
+    expect(threadStart.params).toMatchObject({
+      model: "Qwen3.6-35B-A3B-bf16:qwen3-5-6-n-r-reasoning",
+      modelProvider: "unsloth",
+    });
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv).toContain("model_providers.unsloth.base_url=\"http://127.0.0.1:8888/v1\"");
+    expect(JSON.stringify(seen.argv)).not.toContain("unsloth-secret");
+    expect(seen.env.OPENMAUSBOT_LOCAL_UNSLOTH_API_KEY).toBe("unsloth-secret");
   });
 
   it("streams agentMessage deltas without re-emitting the settled text", async () => {
@@ -196,5 +265,70 @@ describe("CodexDriver turns (fake app-server)", () => {
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false });
     expect(await instance.snapshot()).toMatchObject({ state: "unavailable" });
+  });
+
+  it("reports whether the installed Codex CLI is signed in", async () => {
+    await create();
+    await expect(instance.snapshot()).resolves.toMatchObject({
+      state: "available",
+      authenticated: true,
+    });
+
+    await instance.dispose();
+    recorder.stop();
+    await create({ mode: "logged-out" });
+    await expect(instance.snapshot()).resolves.toMatchObject({
+      state: "available",
+      authenticated: false,
+    });
+  });
+
+  it("marks a Codex 401 as setup so the UI offers sign-in instead of Retry", async () => {
+    await create({ mode: "unauthorized" });
+    await instance.adapter.sendTurn({ threadId: "t-unauthorized", text: "hi" });
+
+    const error = await recorder.until((event) => event.type === "runtime.error");
+    expect(error).toMatchObject({ setup: true });
+    await expect(recorder.until((event) => event.type === "turn.completed")).resolves.toMatchObject({
+      ok: false,
+      stopReason: "auth_required",
+    });
+  });
+
+  it("uses the explicit login command from the official Codex flow", () => {
+    expect(CodexDriver.install?.signInCommand).toBe("codex login");
+  });
+
+  it("declares the effort levels the app-server accepts", async () => {
+    await create();
+    expect(instance.adapter.capabilities.effortLevels).toEqual([
+      "low", "medium", "high", "xhigh", "max",
+    ]);
+  });
+
+  it("sends effort on turn/start, and omits the key when unset", async () => {
+    await create();
+    const dump = join(scratch, "effort.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-effort", text: "hi", effort: "xhigh" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const turnStart = seen.calls.find((c: any) => c.method === "turn/start");
+    expect(turnStart.params.effort).toBe("xhigh");
+  });
+
+  it("sends no effort key when the turn has none", async () => {
+    await create();
+    const dump = join(scratch, "no-effort.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-no-effort", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const turnStart = seen.calls.find((c: any) => c.method === "turn/start");
+    expect(turnStart.params).not.toHaveProperty("effort");
   });
 });

@@ -55,7 +55,8 @@ if (argv[0] === "auth" && argv[1] === "status") {
 let stdin = "";
 process.stdin.on("data", (c) => (stdin += c));
 process.stdin.on("end", () => {
-  let prompt: unknown = null;
+  type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+  let prompt: JsonValue = null;
   try {
     prompt = JSON.parse(stdin.split("\n").find((l) => l.trim()) ?? "null");
   } catch {
@@ -120,6 +121,6 @@ process.stdin.on("end", () => {
     },
   });
   out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-1", is_error: false }] } });
-  out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0.01 });
+  out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0.01, usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 } });
   process.exit(0);
 });
