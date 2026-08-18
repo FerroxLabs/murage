@@ -55,12 +55,14 @@ body {
   outline-offset: 2px;
 }
 
-/* Chromium intentionally matches :focus-visible on text controls after a
-   pointer click too. Make that behavior explicit: every focused editor has
-   a clear inset ring, while retaining each control's own border radius. */
-:is(input, textarea, select):focus {
-  outline: 2px solid var(--color-focus);
-  outline-offset: -2px;
+/* Text fields already sit in a bordered card (the composer pill especially).
+   Chromium treats a pointer click as :focus-visible on inputs, so the
+   global ring above becomes a sharp blue rectangle inside the rounded
+   chrome. Fields keep their own focus:border-*; buttons still use the
+   :focus-visible ring. */
+:is(input, textarea, select):focus,
+:is(input, textarea, select):focus-visible {
+  outline: none;
 }
 
 ::selection {
