@@ -56,6 +56,7 @@ import {
 } from "./store.ts";
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
+import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 import {
   ensureWorkspace,
@@ -192,14 +193,14 @@ const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
 
-/** A bot as a client may see it: no provider session cursors.
+/** A bot as a client may see it: no provider session bookkeeping.
  *
  * `resumeCursors` is the harness's own bookkeeping — the native session id
  * to resume, per instance, per task. No client has ever used it, and a
  * paired phone has even less business holding provider session identifiers
  * than the desktop window did. Stripped here rather than at each call site
  * so a new broadcast cannot forget. */
-const wireTask = ({ resumeCursors, ...task }: TaskRecord) => task;
+const wireTask = ({ resumeCursors, lastInstanceId, ...task }: TaskRecord) => task;
 
 const wireBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
   const { resumeCursors, tasks, ...rest } = bot;
@@ -1131,18 +1132,21 @@ async function startTurn(
   // cleared only once the turn is actually dispatched — clearing it here
   // would cost the next attempt its history if this dispatch fails.
   const rewound = threadId === bot.threadId && Boolean(bot.rewound);
-  const turnText =
-    rewound && instance.driverKind !== "grok" && transcript.length
-      ? [
-          "[The user rewound this conversation (edited a message or switched to another version). Everything before this point was replaced by the following history:]",
-          "",
-          ...transcript.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`),
-          "",
-          "[Now reply to the user's latest message:]",
-          "",
-          text,
-        ].join("\n")
-      : text;
+  // A fresh engine — the user switched this bot's model mid-thread — has no
+  // current session here either, so it gets the same replay. Distinct from
+  // rewound: the OTHER instances' cursors are left alone (a rewind wipes
+  // them all), and "fresh" is decided by who ran the last turn, not by
+  // whether we hold a cursor — see engineIsFresh.
+  const fresh =
+    !rewound &&
+    engineIsFresh({ instanceId, lastInstanceId: task.lastInstanceId, resumeCursors: task.resumeCursors, transcript });
+  const { turnText, resume } = buildTurnContext({
+    text,
+    transcript,
+    rewound,
+    fresh,
+    replaysNatively: instance.driverKind === "grok",
+  });
 
   const persona = [
     `You are ${bot.name}, a personal bot in OpenMausBot.`,
@@ -1316,7 +1320,7 @@ async function startTurn(
         // a rewound thread never resumes the abandoned branch's session
         // the active task's own session — another task's cursor would
         // resume the wrong conversation and defeat the context bubble
-        resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
+        resumeCursor: resume ? task.resumeCursors[instanceId] : undefined,
         transcript,
         system:
           persona +
@@ -1350,6 +1354,8 @@ async function startTurn(
       });
       // dispatched: the rewind is spent, and the old cursors are dead
       if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
+      // and this engine now owns the thread's most recent turn
+      store.markTaskDispatched(bot.id, threadId, instanceId);
       // a turn can settle before dispatch returns, and a poller started
       // after its own turn.completed would never be torn down — it would
       // keep polling the box forever, carrying dead per-turn state. busy
