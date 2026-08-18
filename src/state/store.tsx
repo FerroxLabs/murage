@@ -294,6 +294,8 @@ export interface AppState {
   } | null;
 }
 
+type BotAnnouncement = Omit<Bot, "messages"> & { messages?: Message[] };
+
 export type Action =
   | { type: "hydrate"; bots: Bot[]; groups: Group[] }
   | { type: "showRoutines" }
@@ -353,7 +355,7 @@ export type Action =
   | { type: "deleteBot"; botId: string }
   | { type: "duplicateBot"; botId: string }
   | { type: "markUnread"; botId: string }
-  | { type: "botPatched"; bot: Partial<Bot> & { id: string } }
+  | { type: "botPatched"; bot: BotAnnouncement }
   | { type: "messageAdded"; threadId: string; message: Message }
   | { type: "messagePatched"; threadId: string; message: Message }
   | { type: "screenFrame"; botId: string; png: string; mime: string }
@@ -423,7 +425,7 @@ function patchCard(state: AppState, botId: string, messageId: string, patch: Par
   }));
 }
 
-function reducer(state: AppState, action: Action): AppState {
+export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "hydrate": {
       const known = (id: string) => action.bots.some((b) => b.id === id) || action.groups.some((g) => g.id === id);
@@ -545,12 +547,15 @@ function reducer(state: AppState, action: Action): AppState {
       return updateBot(withMascotMotion(state, action.botId, "surprise"), action.botId, (b) => ({ ...b, unread: true }));
     case "botPatched": {
       const before = state.bots.find((b) => b.id === action.bot.id);
-      // A bot event can announce a bot created by another app window (team
-      // import). Patch events for unknown partial records remain ignored.
+      // Bot frames are complete except for their transcript. An unknown one
+      // was created by another client (the phone, another app window, or a
+      // team import), so add it now; the following message frames will fill
+      // its greeting without waiting for a full-page hydration.
       if (!before) {
-        return Array.isArray(action.bot.messages)
-          ? { ...state, bots: [action.bot as Bot, ...state.bots] }
-          : state;
+        return {
+          ...state,
+          bots: [{ ...action.bot, messages: action.bot.messages ?? [] }, ...state.bots],
+        };
       }
       const kind =
         action.bot.unread && !before?.unread
@@ -832,7 +837,7 @@ function reducer(state: AppState, action: Action): AppState {
 /** Newest screen frames whose pixels stay in memory per thread. */
 const MAX_KEPT_SCREEN_FRAMES = 8;
 
-const initialState: AppState = {
+export const initialState: AppState = {
   bots: [],
   groups: [],
   instances: [],
@@ -1292,7 +1297,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           clearStream(frame.threadId);
           break;
         case "bot": {
-          const bot = frame.bot as Partial<Bot> & { id: string };
+          const bot = frame.bot as BotAnnouncement;
           // reading the selected chat clears its badge immediately
           if (bot.unread && bot.id === stateRef.current.selectedId) {
             bot.unread = false;
