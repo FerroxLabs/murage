@@ -756,6 +756,19 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("validates the event inspector limit at the HTTP boundary", async () => {
+    const bot = (await api("GET", "/api/bots")).body.bots[0];
+    for (const value of ["nope", "0", "-1", "1.5", "Infinity"]) {
+      const response = await api("GET", `/api/threads/${bot.threadId}/events?limit=${value}`);
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain("positive whole number");
+    }
+    const ok = await api("GET", `/api/threads/${bot.threadId}/events?limit=1`);
+    expect(ok.status).toBe(200);
+    expect(Array.isArray(ok.body.entries)).toBe(true);
+    expect(ok.body.total).toEqual({ runtime: expect.any(Number), native: expect.any(Number) });
+  });
+
   it("404s unknown routes with the route in the error", async () => {
     const res = await api("GET", "/api/definitely-not-a-route");
     expect(res.status).toBe(404);
