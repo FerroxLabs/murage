@@ -377,6 +377,21 @@ final class Session: ObservableObject {
         }
     }
 
+    /// Make a room from the phone. Same shape as `createBot`: fold it in
+    /// rather than wait for a broadcast, and hand it back so it can be opened.
+    @discardableResult
+    func createRoom(name: String?, memberIds: [String]) async -> Room? {
+        guard let client else { return nil }
+        do {
+            let room = try await client.createRoom(name: name, memberIds: memberIds)
+            state.apply(.room(room))
+            return room
+        } catch {
+            actionError = error.localizedDescription
+            return nil
+        }
+    }
+
     func interrupt(bot: Bot) async {
         await perform { try await $0.interrupt(botId: bot.id) }
     }
@@ -688,7 +703,11 @@ extension CompanionState {
         guard let last else { return "" }
         switch last.kind {
         case .text: return last.text ?? ""
-        case .options: return last.card?.isPending == true ? "Waiting on you" : (last.card?.title ?? "")
+        // a pending card's question is the preview; the roster row already
+        // says "waiting on you" beside it
+        case .options:
+            guard let card = last.card else { return "" }
+            return card.isPending && !card.subtitle.isEmpty ? card.subtitle : card.title
         case .activity: return last.tool?.name ?? ""
         case .screen: return "Screenshot"
         case .unknown: return last.text ?? ""

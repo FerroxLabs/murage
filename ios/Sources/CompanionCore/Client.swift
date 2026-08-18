@@ -385,6 +385,14 @@ public struct CompanionClient: Sendable {
         try await send(try makeRequest("POST", "/api/bots"), as: CreatedBot.self).bot
     }
 
+    /// Make a room. The harness names it after the first member when `name`
+    /// is empty, exactly as the desktop's dialog does.
+    public func createRoom(name: String?, memberIds: [String]) async throws -> Room {
+        var body: [String: Any] = ["memberIds": memberIds]
+        if let name, !name.trimmingCharacters(in: .whitespaces).isEmpty { body["name"] = name }
+        return try await send(try makeRequest("POST", "/api/groups", body: body), as: CreatedRoom.self).group
+    }
+
     public func send(text: String, toBot botId: String) async throws {
         try await send(try makeRequest("POST", "/api/bots/\(botId)/messages", body: ["text": text]))
     }
