@@ -78,7 +78,7 @@ private struct UpdateRow: View {
     var body: some View {
         Button(action: open) {
             HStack(alignment: .top, spacing: 12) {
-                MausAvatar(color: update.chat.color, size: 40)
+                MausAvatar(color: update.chat.color, size: 40, motion: update.kind == .working ? .working : .idle)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(update.chat.name)

@@ -327,11 +327,11 @@ struct GroupTile: View {
                     Circle().fill(Color.secondary.opacity(0.14))
                     let colors = memberColors(room)
                     if let first = colors.first {
-                        MausAvatar(color: first, size: 34)
+                        MausAvatar(color: first, size: 34, motion: .still)
                             .offset(x: -9, y: -6)
                     }
                     if colors.count > 1 {
-                        MausAvatar(color: colors[1], size: 30)
+                        MausAvatar(color: colors[1], size: 30, motion: .still)
                             .padding(2)
                             .background(Circle().fill(Color(uiColor: .systemBackground)))
                             .offset(x: 11, y: 9)
@@ -390,7 +390,7 @@ struct ChatRow: View {
             .frame(maxHeight: .infinity)
 
             HStack(alignment: .top, spacing: 14) {
-                MausAvatar(color: chat.color, size: 52)
+                MausAvatar(color: chat.color, size: 52, motion: chat.busy ? .working : .idle)
                     .padding(.top, 12)
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -530,7 +530,7 @@ struct MascotStack: View {
     var body: some View {
         HStack(spacing: -overlap) {
             ForEach(Array(colors.enumerated()), id: \.offset) { _, color in
-                MausAvatar(color: color, size: size)
+                MausAvatar(color: color, size: size, motion: .still)
                     .padding(2)
                     .background(Circle().fill(Color(uiColor: .systemBackground)))
             }

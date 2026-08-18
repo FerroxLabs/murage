@@ -30,9 +30,6 @@ struct ChatView: View {
     /// one per chat and it has no message id to borrow.
     static let liveBubbleId = "companion.live"
 
-    /// Room the transcript leaves under the floating header.
-    private static let headerClearance: CGFloat = 132
-
     private var messages: [Message] {
         session.state.visibleTranscript(forThread: chat.threadId)
     }
@@ -131,9 +128,12 @@ struct ChatView: View {
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                // the transcript starts below the floating header, and scrolls
-                // under it — that is what the glass is for
-                .contentMargins(.top, Self.headerClearance, for: .scrollContent)
+                // The header lives in the scroll view's top safe area: the
+                // transcript starts below it and scrolls under it — that is
+                // what the glass is for. An inset rather than a content
+                // margin, because `.defaultScrollAnchor(.bottom)` anchored
+                // unreliably against a margin and opened chats mid-way.
+                .safeAreaInset(edge: .top, spacing: 0) { header }
                 // A conversation grows from the bottom: a transcript shorter
                 // than the screen rests at the bottom, and opening a chat
                 // starts on the newest message rather than the oldest.
@@ -166,7 +166,6 @@ struct ChatView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .top) { header }
 
             composer
         }
@@ -231,7 +230,7 @@ struct ChatView: View {
             Spacer(minLength: 4)
 
             VStack(spacing: 6) {
-                MausAvatar(color: current.color, size: 60)
+                MausAvatar(color: current.color, size: 60, motion: current.busy ? .working : .idle)
                 Menu {
                     chatActions
                 } label: {
@@ -273,6 +272,7 @@ struct ChatView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)
+        .padding(.bottom, 10)
         .background(
             // a soft fade so the top of a long transcript does not fight
             // the face; the glass handles the rest
@@ -280,10 +280,8 @@ struct ChatView: View {
                 colors: [Color(uiColor: .systemBackground).opacity(0.92), .clear],
                 startPoint: .top, endPoint: .bottom
             )
-            .frame(height: 160)
-            .frame(maxWidth: .infinity, alignment: .top)
-            .allowsHitTesting(false),
-            alignment: .top
+            .padding(.bottom, -28)
+            .allowsHitTesting(false)
         )
     }
 
@@ -660,19 +658,10 @@ struct TextBubble: View {
         let mine = message.role == .user
         // rooms attribute each line to the member who said it
         let speaker = message.from
-        let color = speaker?.color ?? chat.color
-        HStack(alignment: .bottom, spacing: 8) {
-            if mine {
-                Spacer(minLength: 56)
-            } else {
-                // the face sits under the tail; a run of bubbles gets one face,
-                // on its last bubble, the way Messages does it
-                ZStack {
-                    if tailed { MausAvatar(color: color, size: 28) }
-                }
-                .frame(width: 28)
-                .padding(.bottom, tailed ? SpeechBubble.tailDrop() - 4 : 0)
-            }
+        // No face beside the bubble: the bot's face is in the header, and in
+        // a room the name line says who spoke. The bubble sits at the edge.
+        HStack(alignment: .bottom, spacing: 0) {
+            if mine { Spacer(minLength: 56) }
 
             VStack(alignment: .leading, spacing: 4) {
                 if let speaker, !mine {
@@ -764,9 +753,6 @@ struct CardView: View {
 
     var body: some View {
         if let card = message.card {
-            HStack(alignment: .top, spacing: 8) {
-            // indented like a bot bubble: the card is something the bot said
-            Color.clear.frame(width: 28)
             VStack(alignment: .leading, spacing: 10) {
                 if card.isPending {
                     Label("\(chat.name) is waiting on you", systemImage: "hand.raised.fill")
@@ -851,7 +837,6 @@ struct CardView: View {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .strokeBorder(card.isPending ? tint : .clear, lineWidth: 1.5)
             }
-            }
         }
     }
 }
@@ -913,9 +898,7 @@ struct StreamingBubble: View {
     var color: String = "blue"
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            MausAvatar(color: color, size: 28)
-                .padding(.bottom, SpeechBubble.tailDrop() - 4)
+        HStack(alignment: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 if let reasoning, !reasoning.isEmpty, text?.isEmpty != false {
                     // Quieter and smaller than an answer, because it is not

@@ -180,12 +180,72 @@ enum MausSilhouette {
     }
 }
 
-/// A bot, at whatever size the row needs.
+/// A bot, at whatever size the row needs — and alive, the way it is on the
+/// desktop: it breathes when idle, blinks now and then, and bobs when it is
+/// working. Same numbers as `CursorAvatar.tsx` (idle pulse 1.4 % over 3.6 s,
+/// blink every 6–14 s, working bob 2.5 face-units over 900 ms with a squash),
+/// so a bot looks equally alive on both screens. Honours Reduce Motion.
 struct MausAvatar: View {
+    enum Motion { case still, idle, working }
+
     let color: String
     var size: CGFloat = 52
+    var motion: Motion = .idle
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var blinking = false
+    @State private var breathe = false
+    @State private var bob = false
+
+    /// The desktop's face box; motion amounts are expressed in it.
+    private static let faceBox: CGFloat = 228.541
 
     var body: some View {
+        let live = motion != .still && !reduceMotion
+        face
+            // idle: breathing. working: the bob, with the body squashing a
+            // little at the bottom of the arc.
+            .scaleEffect(
+                x: live && motion == .working ? (bob ? 1.06 : 1.0) : (live && breathe ? 1.014 : 1.0),
+                y: live && motion == .working ? (bob ? 0.94 : 1.0) : (live && breathe ? 1.014 : 1.0),
+                anchor: .bottom
+            )
+            .offset(y: live && motion == .working ? (bob ? 0 : -2.5 / Self.faceBox * size * 2) : 0)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+            .onAppear { start(live: live) }
+            .onChange(of: motion) { _, _ in start(live: motion != .still && !reduceMotion) }
+            .task(id: live) {
+                // Blink on the desktop's idle cadence, a shade quicker while
+                // working. One task per face; it ends with the view.
+                guard live else { return }
+                while !Task.isCancelled {
+                    let range: ClosedRange<Double> = motion == .working ? 3...7 : 6...14
+                    try? await Task.sleep(for: .seconds(Double.random(in: range)))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeIn(duration: 0.06)) { blinking = true }
+                    try? await Task.sleep(for: .milliseconds(110))
+                    withAnimation(.easeOut(duration: 0.08)) { blinking = false }
+                }
+            }
+    }
+
+    private func start(live: Bool) {
+        // Restart the loops from a known phase whenever the state changes.
+        breathe = false
+        bob = false
+        guard live else { return }
+        switch motion {
+        case .idle:
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) { breathe = true }
+        case .working:
+            withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) { bob = true }
+        case .still:
+            break
+        }
+    }
+
+    private var face: some View {
         Canvas { context, canvasSize in
             let rect = CGRect(origin: .zero, size: canvasSize)
             let body = MausSilhouette.path(in: rect)
@@ -200,7 +260,7 @@ struct MausAvatar: View {
             // desktop cycles 25 of them, and at this size the difference
             // between any two is a pixel.
             let eyeWidth = canvasSize.width * 0.085
-            let eyeHeight = eyeWidth * 1.7
+            let eyeHeight = eyeWidth * (blinking ? 0.18 : 1.7)
             let gap = eyeWidth * 1.9
             let cx = rect.minX + canvasSize.width * 0.407
             let cy = rect.minY + canvasSize.height * 0.442
@@ -218,7 +278,6 @@ struct MausAvatar: View {
             }
         }
         .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 
