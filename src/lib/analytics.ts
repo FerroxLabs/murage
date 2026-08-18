@@ -9,10 +9,57 @@ import posthog from "posthog-js";
 
 const TOKEN = "phc_m2hP39w8y2gLPvHgDvSXAu6xcZ3agjf4ruL56rGcMZEe";
 
+// Analytics are on by default; Settings → General turns them off. The choice
+// lives in localStorage because it has to be readable BEFORE init() runs: an
+// opted-out install must never call posthog.init(), so no request — not even
+// the library's own — leaves the machine. Once running, opting out routes
+// through opt_out_capturing(), which also drops anything already queued.
+const OPT_OUT_KEY = "omb-analytics-opt-out";
+
 let ready = false;
 
+/** False once the user has opted out on this machine. */
+export function analyticsEnabled(): boolean {
+  try {
+    return localStorage.getItem(OPT_OUT_KEY) !== "1";
+  } catch {
+    return true; // storage unavailable → behave like a fresh install
+  }
+}
+
+/** What flipping the switch has to do, given the new setting and whether the
+ * client is already running. A plain function so the decision can be checked
+ * without standing up an analytics client to observe. */
+export type OptAction = "init" | "opt-in" | "opt-out" | "none";
+export function optAction(enabled: boolean, running: boolean): OptAction {
+  if (!enabled) return running ? "opt-out" : "none";
+  return running ? "opt-in" : "init";
+}
+
+/** Flip the setting and act on it immediately, in both directions. */
+export function setAnalyticsEnabled(enabled: boolean) {
+  try {
+    localStorage.setItem(OPT_OUT_KEY, enabled ? "0" : "1");
+  } catch {
+    /* a rejected write must not take the toggle down with it */
+  }
+  switch (optAction(enabled, ready)) {
+    case "opt-out":
+      posthog.opt_out_capturing(); // also drops whatever is still queued
+      break;
+    case "opt-in":
+      posthog.opt_in_capturing();
+      break;
+    case "init":
+      initAnalytics(); // first opt-in of a session that started opted out
+      break;
+    case "none":
+      break;
+  }
+}
+
 export function initAnalytics() {
-  if (ready) return;
+  if (ready || !analyticsEnabled()) return;
   posthog.init(TOKEN, {
     api_host: "https://us.i.posthog.com",
     autocapture: false, // never capture clicked-element text (conversation leak)
@@ -33,12 +80,16 @@ export function initAnalytics() {
 }
 
 export function track(event: string, props?: Record<string, unknown>) {
-  if (!ready) return;
+  if (!ready || !analyticsEnabled()) return;
   posthog.capture(event, props);
 }
 
+// Checked here as well as in track(): this is the one call that would send a
+// personal identifier, so it must not depend on opt_out_capturing() alone.
+// The address is still stored locally in the profile either way — opting out
+// stops it from being reported, not from being used.
 export function identifyEmail(email: string) {
-  if (!ready) return;
+  if (!ready || !analyticsEnabled()) return;
   posthog.identify(email, { email });
   posthog.capture("email_submitted");
 }
