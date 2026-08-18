@@ -22,6 +22,7 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var showingTasks = false
     @State private var showingComputer = false
+    @State private var showingPlus = false
     @State private var shareFile: ShareFile?
     @FocusState private var composerFocused: Bool
 
@@ -170,6 +171,7 @@ struct ChatView: View {
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .overlay(alignment: .bottom) { plusSheet }
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
         .navigationDestination(isPresented: $showingComputer) {
@@ -178,6 +180,10 @@ struct ChatView: View {
         .task {
             // opening a chat is what marks it read, exactly as on the desktop
             if current.unread { await session.markRead(current) }
+#if DEBUG
+            // `-open-plus`: the + sheet up, for the screenshot harness
+            if ProcessInfo.processInfo.arguments.contains("-open-plus") { showingPlus = true }
+#endif
         }
         .onChange(of: current.unread) { _, unread in
             // A message can arrive while this chat is already on screen. The
@@ -315,6 +321,107 @@ struct ChatView: View {
         }
     }
 
+    // MARK: - The + sheet
+
+    /// What the composer's + opens: a glass sheet of the things you can do
+    /// here, each with a line saying what it does. Rises above the composer;
+    /// tapping anywhere else, or the × the + became, puts it away.
+    @ViewBuilder
+    private var plusSheet: some View {
+        if showingPlus {
+            ZStack(alignment: .bottom) {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .onTapGesture { withAnimation(.snappy(duration: 0.28)) { showingPlus = false } }
+
+                VStack(spacing: 0) {
+                    ForEach(plusActions) { action in
+                        Button {
+                            withAnimation(.snappy(duration: 0.28)) { showingPlus = false }
+                            action.run()
+                        } label: {
+                            HStack(spacing: 16) {
+                                Image(systemName: action.systemImage)
+                                    .font(.system(size: 20, weight: .medium))
+                                    .foregroundStyle(action.destructive ? Color.red : Color.primary)
+                                    .frame(width: 44, height: 44)
+                                    .background(Circle().fill(Color.primary.opacity(0.10)))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(action.title)
+                                        .font(.system(size: 19, weight: .medium))
+                                        .foregroundStyle(action.destructive ? Color.red : Color.primary)
+                                    Text(action.subtitle)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(Color.secondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 18)
+                            .frame(height: 64)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(action.disabled)
+                        .opacity(action.disabled ? 0.45 : 1)
+                    }
+                }
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassSheet(cornerRadius: 30)
+                .padding(.leading, 12)
+                .padding(.trailing, 44)
+                .padding(.bottom, 70)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private struct PlusAction: Identifiable {
+        let id: String
+        let systemImage: String
+        let title: String
+        let subtitle: String
+        var destructive = false
+        var disabled = false
+        let run: () -> Void
+    }
+
+    private var plusActions: [PlusAction] {
+        var out: [PlusAction] = []
+        if case let .bot(bot) = current {
+            out.append(PlusAction(
+                id: "task", systemImage: "plus.square.on.square", title: "New task",
+                subtitle: "Start a fresh thread with \(bot.name)", disabled: bot.busy == true
+            ) { Task { await session.createTask(for: bot, title: nil) } })
+            out.append(PlusAction(
+                id: "tasks", systemImage: "square.stack", title: "Tasks",
+                subtitle: "Switch, rename or remove one"
+            ) { showingTasks = true })
+            out.append(PlusAction(
+                id: "computer", systemImage: "display", title: "Watch computer",
+                subtitle: "Live view of what \(bot.name) is doing"
+            ) { showingComputer = true })
+        }
+        out.append(PlusAction(
+            id: "share", systemImage: "doc.plaintext", title: "Share transcript",
+            subtitle: "This chat as Markdown"
+        ) {
+            Task {
+                if let url = await session.export(threadId: current.threadId, format: "markdown") {
+                    shareFile = ShareFile(url: url)
+                }
+            }
+        })
+        if current.busy, case let .bot(bot) = current {
+            out.append(PlusAction(
+                id: "stop", systemImage: "stop.fill", title: "Interrupt",
+                subtitle: "Stop the current turn", destructive: true
+            ) { Task { await session.interrupt(bot: bot) } })
+        }
+        return out
+    }
+
     /// True when this message opens a fresh stretch of conversation — the
     /// first one, or one that follows a gap of half an hour or more.
     private func startsANewStretch(at index: Int, in messages: [Message]) -> Bool {
@@ -351,18 +458,21 @@ struct ChatView: View {
     private var composer: some View {
         GlassGroup(spacing: 10) {
             HStack(alignment: .bottom, spacing: 10) {
-                Menu {
-                    chatActions
+                Button {
+                    composerFocused = false
+                    withAnimation(.snappy(duration: 0.28)) { showingPlus.toggle() }
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(Color.primary)
+                        .foregroundStyle(showingPlus ? Color(uiColor: .systemBackground) : Color.primary)
+                        .rotationEffect(.degrees(showingPlus ? 45 : 0))
                         .frame(width: 44, height: 44)
+                        .background(Circle().fill(showingPlus ? Color.primary : Color.clear))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .glassCapsule()
-                .accessibilityLabel("More")
+                .accessibilityLabel(showingPlus ? "Close" : "More")
 
                 HStack(alignment: .bottom, spacing: 6) {
                     TextField("Ask \(current.name)", text: $draft, axis: .vertical)
