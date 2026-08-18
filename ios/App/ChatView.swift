@@ -274,20 +274,21 @@ struct ChatView: View {
         .padding(.top, 4)
         .padding(.bottom, 10)
         .background(
-            // The bar is solid to the very top — status bar included — and
-            // only its bottom edge fades, so a transcript scrolls in under
-            // the face rather than showing through above it.
-            VStack(spacing: 0) {
-                Color(uiColor: .systemBackground)
-                LinearGradient(
-                    colors: [Color(uiColor: .systemBackground), .clear],
-                    startPoint: .top, endPoint: .bottom
+            // A blur to the very top — status bar included — so the
+            // transcript is still there under the face, softened, the way a
+            // system bar behaves; only the bottom edge feathers out.
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .mask(
+                    VStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: 28)
+                    }
                 )
-                .frame(height: 24)
-            }
-            .padding(.bottom, -24)
-            .ignoresSafeArea(edges: .top)
-            .allowsHitTesting(false)
+                .padding(.bottom, -28)
+                .ignoresSafeArea(edges: .top)
+                .allowsHitTesting(false)
         )
     }
 
