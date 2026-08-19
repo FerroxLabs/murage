@@ -30,6 +30,21 @@ describe("scrub", () => {
     });
   });
 
+  it("withholds the VPS host label but keeps the configured signal", () => {
+    // GET /api/config and the `config` SSE frame echo the VPS SSH alias — a
+    // label naming one of the user's servers. The phone renders
+    // configured-or-not, so that is all it may receive.
+    const status = {
+      box: { configured: false },
+      vps: { configured: true, sshAlias: "prod-vps" },
+    };
+    const cleaned = scrub(status);
+
+    expect(JSON.stringify(cleaned)).not.toContain("sshAlias");
+    expect(JSON.stringify(cleaned)).not.toContain("prod-vps");
+    expect(cleaned).toEqual({ box: { configured: false }, vps: { configured: true } });
+  });
+
   it("leaves values it does not own alone", () => {
     expect(scrub(null)).toBe(null);
     expect(scrub(42)).toBe(42);

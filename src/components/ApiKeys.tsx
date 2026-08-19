@@ -249,7 +249,17 @@ export function VpsConnection() {
         {configured && <span className="text-[11px] text-success">Connected</span>}
       </div>
       <div className="mb-1.5 text-[12px] leading-relaxed text-ink-secondary">
-        SSH config alias for the Linux VPS. OpenMausBot uses your normal SSH config and agent; it does not store keys or passwords.
+        SSH config alias for the Linux VPS. OpenMausBot uses your normal SSH config and agent; it does not store keys or passwords.{" "}
+        See the{" "}
+        <a
+          href="https://github.com/milind-soni/OpenMausBot/blob/main/docs/byo-vps.md"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-accent hover:underline"
+        >
+          setup guide
+        </a>{" "}
+        for the required SSH alias shape.
       </div>
       <div className="flex gap-2">
         <input

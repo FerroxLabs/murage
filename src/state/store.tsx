@@ -395,10 +395,10 @@ export type Action =
           | "name"
           | "title"
           | "description"
-           | "notifications"
-           | "computer"
-           | "cloudBackend"
-           | "color"
+          | "notifications"
+          | "computer"
+          | "cloudBackend"
+          | "color"
           | "mascotExpression"
           | "autoApprove"
           | "speakReplies"
@@ -1101,9 +1101,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   title: source.title,
                   description: source.description,
                   notifications: source.notifications,
-                   modelSelection: source.modelSelection,
-                   ...(source.computer ? { computer: source.computer } : {}),
-                   ...(source.cloudBackend ? { cloudBackend: source.cloudBackend } : {}),
+                  modelSelection: source.modelSelection,
+                  ...(source.computer ? { computer: source.computer } : {}),
+                  ...(source.cloudBackend ? { cloudBackend: source.cloudBackend } : {}),
                 }),
               }).then(({ bot: patched }) =>
                 rawDispatch({ type: "botAdded", bot: { ...bot, ...patched, messages: bot.messages } }),
@@ -1206,11 +1206,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             patch,
             timer: setTimeout(() => {
               timers.delete(action.botId);
-              const requestPatch =
-                Object.prototype.hasOwnProperty.call(patch, "computer") && patch.computer === undefined
-                  ? { ...patch, computer: null }
-                  : patch;
-              api(`/api/bots/${action.botId}`, { method: "PATCH", body: JSON.stringify(requestPatch) }).catch(showError);
+              api(`/api/bots/${action.botId}`, { method: "PATCH", body: JSON.stringify(patch) }).catch(showError);
             }, 400),
           });
           break;

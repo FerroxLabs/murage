@@ -56,6 +56,34 @@ final class DecodingTests: XCTestCase {
         XCTAssertNil(fleet.bots.first?.hasMore)
     }
 
+    func testDecodesTheCloudBackendAndItsAbsence() throws {
+        // The cloud-desktop button hides on cloudBackend == "vps", so both
+        // sides of that gate must decode: a harness that sends the field, and
+        // an older one that has never heard of it (nil keeps the button).
+        let json = """
+        {
+          "bots": [
+            {
+              "id":"b1","threadId":"t1","name":"Scout","title":"","description":"",
+              "notifications":true,"color":"green","unread":false,
+              "modelSelection":{"instanceId":"i1","model":"m1"},"createdAt":1,
+              "computer":"cloud","cloudBackend":"vps"
+            },
+            {
+              "id":"b2","threadId":"t2","name":"Rio","title":"","description":"",
+              "notifications":true,"color":"blue","unread":false,
+              "modelSelection":{"instanceId":"i1","model":"m1"},"createdAt":2,
+              "computer":"cloud"
+            }
+          ],
+          "groups": []
+        }
+        """
+        let fleet = try JSONDecoder().decode(Fleet.self, from: Data(json.utf8))
+        XCTAssertEqual(fleet.bots.first?.cloudBackend, "vps")
+        XCTAssertNil(fleet.bots.last?.cloudBackend)
+    }
+
     func testOneMalformedBotDoesNotHideTheRestOfTheFleet() throws {
         let json = """
         {
