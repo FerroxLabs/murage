@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
+import { createAndroidDeviceController } from "./android-device.mjs";
 import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
@@ -178,6 +179,8 @@ async function startServerOn(port) {
     env: {
       ...process.env,
       OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
+      OMB_RESOURCES_PATH: process.resourcesPath,
+      OMB_SKILLS_DIR: path.join(process.resourcesPath, "skills"),
       OMB_PORT: String(port),
       OMB_USER_DATA: app.getPath("userData"),
       ...(secureCredentials.composioApiKey
@@ -248,6 +251,7 @@ const ERROR_PAGE =
   );
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
+const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath });
 
 function createWindow() {
   const isMac = process.platform === "darwin";
@@ -523,6 +527,7 @@ app.whenReady().then(async () => {
     );
   }
   registerCuaIpc();
+  androidDevice.registerIpc(ipcMain);
   registerUpdaterIpc();
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on

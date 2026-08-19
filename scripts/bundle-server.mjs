@@ -34,6 +34,7 @@ const ENTRY_POINTS = [
   "connector-proxy.ts",
   "drivers/agents-proxy.ts",
   "drivers/dweb-proxy.ts",
+  "drivers/phone-proxy.ts",
 ];
 
 await build({
