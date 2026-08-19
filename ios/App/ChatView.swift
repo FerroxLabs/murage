@@ -154,8 +154,9 @@ struct ChatView: View {
                     // glides into its header slot when the island lets go.
                     let topInset = IslandGeometry.topInset
                     let hasIsland = IslandGeometry.hasIsland(topInset: topInset)
-                    let islandSide: CGFloat = 200
-                    let islandFaceCentre = IslandGeometry.top + islandSide / 2
+                    let islandSide: CGFloat = 220
+                    // centred in the part of the square the hardware island does not cover
+                    let islandFaceCentre = IslandGeometry.top + IslandGeometry.size.height + (islandSide - IslandGeometry.size.height) / 2
                     let headerFaceCentre = topInset + 26
                     let faceSize = 60 + 72 * facePhase
                     let faceCentre = headerFaceCentre + (islandFaceCentre - headerFaceCentre) * facePhase

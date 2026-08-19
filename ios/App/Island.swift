@@ -32,7 +32,7 @@ enum IslandGeometry {
 struct IslandShell<Content: View>: View {
     let expanded: Bool
     let hasIsland: Bool
-    var expandedSize = CGSize(width: 250, height: 300)
+    var expandedSize = CGSize(width: 250, height: 330)
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -87,11 +87,13 @@ struct NeedsYouIsland: View {
             IslandShell(expanded: expanded, hasIsland: hasIsland) {
                 if let shown {
                     VStack(spacing: 10) {
+                        // The hardware island covers the first 37pt of the
+                        // square; the face sits clear of it, centred.
                         Button { open(shown.chat) } label: {
                             MausAvatar(color: shown.chat.color, size: 120, state: MausState.forChat(shown.chat, in: session.state))
                         }
                         .buttonStyle(.plain)
-                        .padding(.top, 18)
+                        .padding(.top, IslandGeometry.size.height + 14)
 
                         VStack(spacing: 4) {
                             Label("\(shown.chat.name) needs you", systemImage: "hand.raised.fill")
