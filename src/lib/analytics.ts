@@ -18,12 +18,20 @@ const OPT_OUT_KEY = "omb-analytics-opt-out";
 
 let ready = false;
 
+// The choice as made in THIS process, which outranks storage. Without it a
+// rejected write silently loses an opt-out: the setter would swallow the
+// error, the next analyticsEnabled() would read nothing and answer true, and
+// a later initAnalytics() would start the client the user just switched off.
+// Storage is how the choice survives a restart, not where it lives.
+let choice: boolean | undefined;
+
 /** False once the user has opted out on this machine. */
 export function analyticsEnabled(): boolean {
+  if (choice !== undefined) return choice;
   try {
     return localStorage.getItem(OPT_OUT_KEY) !== "1";
   } catch {
-    return true; // storage unavailable → behave like a fresh install
+    return true; // storage unreadable → behave like a fresh install
   }
 }
 
@@ -38,10 +46,11 @@ export function optAction(enabled: boolean, running: boolean): OptAction {
 
 /** Flip the setting and act on it immediately, in both directions. */
 export function setAnalyticsEnabled(enabled: boolean) {
+  choice = enabled; // before persisting: the decision must not depend on it
   try {
     localStorage.setItem(OPT_OUT_KEY, enabled ? "0" : "1");
   } catch {
-    /* a rejected write must not take the toggle down with it */
+    /* it will not survive a restart, but it holds for this session */
   }
   switch (optAction(enabled, ready)) {
     case "opt-out":

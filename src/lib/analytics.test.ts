@@ -3,7 +3,7 @@
 // storage round-trip pins that the choice survives a restart.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { analyticsEnabled, initAnalytics, optAction, setAnalyticsEnabled } from "./analytics";
+import { analyticsEnabled, optAction, setAnalyticsEnabled } from "./analytics";
 
 // The suite runs on the node environment, which has no localStorage.
 const store = new Map<string, string>();
@@ -51,6 +51,30 @@ describe("the stored choice", () => {
     expect(analyticsEnabled()).toBe(true);
   });
 
+  it("holds an opt-out for the session even when the write is rejected", async () => {
+    // The failure this guards: the setter swallows the write error, the next
+    // read finds nothing and answers "enabled", and a later initAnalytics()
+    // starts the client the user just switched off.
+    vi.resetModules();
+    const fresh = await import("./analytics");
+    vi.stubGlobal("localStorage", {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("quota exceeded");
+      },
+    });
+
+    fresh.setAnalyticsEnabled(false);
+    expect(fresh.analyticsEnabled()).toBe(false);
+    fresh.initAnalytics();
+    expect(store.get("omb-installed")).toBeUndefined();
+
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    });
+  });
+
   it("treats unusable storage as a fresh install rather than failing", () => {
     vi.stubGlobal("localStorage", {
       getItem: () => {
@@ -70,12 +94,21 @@ describe("the stored choice", () => {
 });
 
 describe("initAnalytics while opted out", () => {
-  it("returns before touching the client or the install marker", () => {
-    // No client is stubbed here on purpose: if init() got past the guard it
-    // would reach the real posthog-js, and the missing marker proves it did
-    // not — opting back in later still counts the install.
-    setAnalyticsEnabled(false);
-    initAnalytics();
+  it("returns before touching the client or the install marker", async () => {
+    // A fresh module, so the module-scoped `ready` flag starts false: with a
+    // used module this test passes on `ready` alone and proves nothing about
+    // the opt-out. resetModules is not module mocking — nothing is replaced,
+    // the real module is simply loaded again.
+    vi.resetModules();
+    store.set("omb-analytics-opt-out", "1"); // as a previous session left it
+    const fresh = await import("./analytics");
+
+    expect(fresh.analyticsEnabled()).toBe(false);
+    fresh.initAnalytics();
+
+    // No client is stubbed on purpose: if init() got past the guard it would
+    // reach the real posthog-js and set this marker. Its absence is the
+    // proof — and it also means opting back in later still counts the install.
     expect(store.get("omb-installed")).toBeUndefined();
   });
 });
