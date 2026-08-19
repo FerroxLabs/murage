@@ -11,7 +11,9 @@
 // and falls back to a fresh thread/start.
 import { homedir } from "node:os";
 
+import { computerProxyEnv } from "../container-computer.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
 import type {
   DriverCreateInput,
@@ -49,6 +51,26 @@ const QUESTION_TIMEOUT_NOTE = "No answer was given — use your best judgment.";
 const DENY_TIMEOUT_NOTE =
   "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 
+type StdioMcpServer = { command: string; args: string[]; env: Record<string, string> };
+
+function mountMcpServer(
+  appServerArgs: string[],
+  env: Record<string, string | undefined>,
+  name: string,
+  server: StdioMcpServer,
+): void {
+  Object.assign(env, server.env);
+  const prefix = `mcp_servers.${name}`;
+  appServerArgs.push(
+    "-c", `${prefix}.command=${JSON.stringify(server.command)}`,
+    "-c", `${prefix}.args=${JSON.stringify(server.args)}`,
+    // Values stay in the child environment; argv contains names only so
+    // credentials never appear in process listings or diagnostics.
+    "-c", `${prefix}.env_vars=${JSON.stringify(Object.keys(server.env))}`,
+    "-c", `${prefix}.default_tools_approval_mode="auto"`,
+  );
+}
+
 export const CodexDriver: ProviderDriver<CodexConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Codex", supportsMultipleInstances: true },
@@ -84,7 +106,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     let models = STATIC_CODEX_MODELS;
     const refreshModels = async () => {
       try {
-        const resolved = await readCodexModelCatalog(catalogEnv);
+        const resolved = await readCodexModelCatalog(catalogEnv, fetch, config.cli);
         if (resolved.options.length) models = resolved;
       } catch {
         // Keep the last usable catalog when a local provider is down.
@@ -118,15 +140,23 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const env = childEnv();
       const appServerArgs = ["app-server", ...codexLocalProviderArgs(env, turn.model)];
       if (turn.integrations?.composio) {
-        const bridge = turn.integrations.composio;
-        Object.assign(env, bridge.env);
-        const prefix = "mcp_servers.openmausbot_connectors";
-        appServerArgs.push(
-          "-c", `${prefix}.command=${JSON.stringify(bridge.command)}`,
-          "-c", `${prefix}.args=${JSON.stringify(bridge.args)}`,
-          "-c", `${prefix}.env_vars=${JSON.stringify(Object.keys(bridge.env))}`,
-          "-c", `${prefix}.default_tools_approval_mode="auto"`,
-        );
+        mountMcpServer(appServerArgs, env, "openmausbot_connectors", turn.integrations.composio);
+      }
+      if (turn.integrations?.computer) {
+        const proxyEnv = computerProxyEnv(turn.integrations.computer);
+        mountMcpServer(appServerArgs, env, "computer", {
+          command: process.execPath,
+          args: [SPAWNED_PROXIES.computer],
+          env: {
+            ELECTRON_RUN_AS_NODE: "1",
+            OGB_BOX_ID: proxyEnv.OGB_BOX_ID ?? "",
+            OGB_BOX_TOKEN: proxyEnv.OGB_BOX_TOKEN ?? "",
+          },
+        });
+      } else if (turn.integrations?.localComputer) {
+        // The host daemon and isolated Local VM both arrive as a direct Cua
+        // Driver stdio MCP server. Codex sees the same computer tool surface.
+        mountMcpServer(appServerArgs, env, "computer", turn.integrations.localComputer);
       }
       if (turn.integrations?.phone) {
         const bridge = turn.integrations.phone;
@@ -500,6 +530,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         provider: DRIVER_KIND,
         capabilities: {
           sessionModelSwitch: "unsupported",
+          computerMcp: true,
           composioMcp: true,
           phoneMcp: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],
