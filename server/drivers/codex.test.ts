@@ -150,6 +150,40 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.env.OMB_COMMS_TOKEN).toBe("per-boot-token");
   });
 
+  it("mounts peer-agent comms without placing the comms token in argv", async () => {
+    await create();
+    const dump = join(scratch, "agents.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-agents",
+      text: "ask the researcher",
+      integrations: {
+        agents: {
+          command: process.execPath,
+          args: ["/tmp/agents-proxy.js"],
+          env: {
+            ELECTRON_RUN_AS_NODE: "1",
+            OMB_HARNESS_URL: "http://127.0.0.1:8799",
+            OMB_BOT_ID: "captain",
+            OMB_THREAD_ID: "t-agents",
+            OMB_COMMS_TOKEN: "peer-comms-secret",
+            OMB_TURN_DEPTH: "0",
+          },
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv.join(" ")).toContain("mcp_servers.agents.command");
+    expect(seen.argv.join(" ")).toContain("/tmp/agents-proxy.js");
+    expect(seen.argv.join(" ")).toContain("OMB_COMMS_TOKEN");
+    expect(seen.argv.join(" ")).not.toContain("peer-comms-secret");
+    expect(seen.env.OMB_COMMS_TOKEN).toBe("peer-comms-secret");
+    expect(instance.adapter.capabilities.agentsMcp).toBe(true);
+  });
+
   it("mounts the Local VM computer MCP server without placing credentials in argv", async () => {
     await create();
     const dump = join(scratch, "local-computer.json");

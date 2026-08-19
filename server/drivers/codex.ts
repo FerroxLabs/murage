@@ -142,6 +142,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       if (turn.integrations?.composio) {
         mountMcpServer(appServerArgs, env, "openmausbot_connectors", turn.integrations.composio);
       }
+      if (turn.integrations?.agents) {
+        mountMcpServer(appServerArgs, env, "agents", turn.integrations.agents);
+      }
       if (turn.integrations?.computer) {
         const proxyEnv = computerProxyEnv(turn.integrations.computer);
         mountMcpServer(appServerArgs, env, "computer", {
@@ -532,6 +535,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           sessionModelSwitch: "unsupported",
           computerMcp: true,
           composioMcp: true,
+          agentsMcp: true,
           phoneMcp: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],
         },
