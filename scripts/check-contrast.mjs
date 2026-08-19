@@ -13,9 +13,10 @@
 //     actually render (`bg-accent … text-white`), not the token against the
 //     page ground.
 //
-// The two pairs already below AA are listed in KNOWN below, so adopting this
-// check does not force a palette change in the same commit. Anything new
-// fails the run.
+// The three pairs already below AA are listed in KNOWN below with the ratio
+// they measure today, so adopting this check does not force a palette change
+// in the same commit. Anything new fails the run — and so does a known pair
+// that gets WORSE than its recorded floor.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,10 +24,15 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const css = readFileSync(join(root, "src/styles.css"), "utf8");
 
-/** Custom properties from @theme and :root, in cascade order. */
+/** Custom properties from @theme and :root, in cascade order.
+ *
+ * Comments are stripped first: a declaration left behind in a comment reads
+ * exactly like a live one, so a token that was removed but still mentioned
+ * would be measured at its stale value instead of reported as undefined. */
 function parseTokens(source) {
   const tokens = {};
-  for (const [, body] of source.matchAll(/(?:@theme|:root)[^{]*\{([^}]*)\}/g)) {
+  const live = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const [, body] of live.matchAll(/(?:@theme|:root)[^{]*\{([^}]*)\}/g)) {
     for (const [, name, value] of body.matchAll(/(--color-[\w-]+)\s*:\s*([^;]+);/g)) {
       tokens[name] = value.trim();
     }
@@ -111,11 +117,20 @@ const PAIRS = [
 // Darkening the one token fixes the buttons and hurts the links, so the fix
 // is a separate fill colour, not a nudge — a design call, which is why this
 // check only measures.
-const KNOWN = new Set([
-  "#ffffff on --color-accent",
-  "#ffffff on --color-danger",
-  "--color-accent on --color-card",
+// Each entry records the ratio the pair measures TODAY, not just its name.
+// A floor, not a licence: a carried pair that gets worse is a regression and
+// fails like anything else. Improve one past AA and the run says so, so the
+// line gets deleted rather than quietly protecting a pair that no longer
+// needs it.
+const KNOWN = new Map([
+  ["#ffffff on --color-accent", 3.65],
+  ["#ffffff on --color-danger", 3.1],
+  ["--color-accent on --color-card", 4.15],
 ]);
+
+// Rounding headroom: the floors above are quoted to two decimals, so a value
+// that is unchanged can measure a hair under its own printed figure.
+const DRIFT = 0.01;
 
 const tokens = parseTokens(css);
 const resolve = (name) => (name.startsWith("--") ? tokens[name] : name);
@@ -143,12 +158,31 @@ for (const [fg, bg, min, where] of PAIRS) {
   measured++;
   if (ratio >= min) continue;
 
-  const line = `${fg} on ${bg}: ${ratio.toFixed(2)}:1 (needs ${min}:1) — ${where}`;
-  if (KNOWN.has(`${fg} on ${bg}`)) {
-    carried.push(line);
-  } else {
+  const key = `${fg} on ${bg}`;
+  const line = `${key}: ${ratio.toFixed(2)}:1 (needs ${min}:1) — ${where}`;
+  const floor = KNOWN.get(key);
+  if (floor === undefined) {
     console.log(`✗ ${line}`);
     failed = true;
+  } else if (ratio < floor - DRIFT) {
+    console.log(`✗ ${line} — WORSE than the recorded ${floor.toFixed(2)}:1`);
+    failed = true;
+  } else {
+    carried.push(line);
+  }
+}
+
+// A known pair that now clears AA never reaches the block above, so say it
+// here — otherwise the entry sits in KNOWN forever, shielding a pair that no
+// longer needs shielding.
+for (const [key, floor] of KNOWN) {
+  const [fg, bg] = key.split(" on ");
+  const fgValue = resolve(fg);
+  const bgValue = resolve(bg);
+  if (!fgValue || !bgValue) continue;
+  const ratio = contrast(fgValue, bgValue);
+  if (ratio !== null && ratio >= 4.5) {
+    console.log(`✓ ${key} now measures ${ratio.toFixed(2)}:1 — remove it from KNOWN (floor was ${floor.toFixed(2)})`);
   }
 }
 
