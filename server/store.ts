@@ -10,7 +10,7 @@ import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR } from "./config.ts";
 import * as mdb from "./message-db.ts";
 import { workspaceDir } from "./workspace.ts";
-import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
+import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
 
@@ -50,12 +50,26 @@ export interface OptionCardData {
   allowKey?: string;
 }
 
+export interface ConnectorCardData {
+  /** Composio toolkit slug. It is validated server-side before every action. */
+  slug: string;
+  label: string;
+  description: string;
+  status: "required" | "authorizing" | "connected" | "failed";
+  /** Cards created by one agent request resume together after all connect. */
+  resumeKey: string;
+  error?: string;
+  dismissed?: boolean;
+  resumed?: boolean;
+}
+
 export interface Message {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen";
+  kind: "text" | "options" | "activity" | "screen" | "connector";
   text?: string;
   card?: OptionCardData;
+  connector?: ConnectorCardData;
   /** activity messages: tool name + outcome. `spoken` is the same chip as
    * a phrase a voice can read ("reading a file") — computed once here so
    * call mode never has to re-derive it from the raw tool name, and absent
@@ -173,6 +187,14 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
     if (typeof card.summary === "string") card.summary = redactSecretsInText(card.summary);
     out.card = card;
   }
+  if (out.connector) {
+    out.connector = {
+      ...out.connector,
+      label: redactSecretsInText(out.connector.label),
+      description: redactSecretsInText(out.connector.description),
+      error: out.connector.error ? redactSecretsInText(out.connector.error) : undefined,
+    };
+  }
   return out;
 }
 
@@ -224,6 +246,8 @@ export interface BotRecord {
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
   computer?: "cloud" | "vm" | "local" | "off";
+  /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
+  cloudBackend?: CloudBackend;
   /** where NEW tasks run their shell tools; each task pins its own copy
    * on its first turn (TaskRecord.cwd). Absent = the home folder. */
   cwd?: string;
@@ -402,6 +426,10 @@ export class Store {
       if (b.busy || (b.activity !== undefined && b.activity !== "idle")) botsMigrated = true;
       b.busy = false;
       b.activity = "idle";
+      if (b.cloudBackend !== undefined && b.cloudBackend !== "box" && b.cloudBackend !== "vps") {
+        delete b.cloudBackend;
+        botsMigrated = true;
+      }
     }
     for (const b of this.bots) {
       if (!b.chiefOfStaff) continue;

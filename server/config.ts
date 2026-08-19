@@ -11,6 +11,31 @@ import type { InstanceConfigMap } from "./contracts.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 
 const optionalText = z.string().optional();
+const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+
+export function isValidSshAlias(value: unknown): value is string {
+  return typeof value === "string" && SSH_ALIAS.test(value);
+}
+
+/** Keep the persisted VPS shape deliberately smaller than an SSH connection. */
+export function normalizeVpsConfig(raw: unknown): { sshAlias?: string } {
+  if (raw === undefined || raw === null) return {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("vps must be an object containing an SSH config alias");
+  }
+  const alias = (raw as Record<string, unknown>).sshAlias;
+  if (alias === undefined || alias === "") return {};
+  if (!isValidSshAlias(alias)) {
+    throw new Error("vps.sshAlias must be a simple SSH config alias (letters, numbers, dot, dash, or underscore)");
+  }
+  return { sshAlias: alias };
+}
+
+const vpsConfigSchema = z.object({
+  sshAlias: z.string().refine((value) => value === "" || isValidSshAlias(value), {
+    message: "must be a simple SSH config alias",
+  }).optional(),
+});
 const instanceConfigSchema = z.object({
   driver: z.string().min(1),
   displayName: optionalText,
@@ -26,6 +51,7 @@ const appConfigSchema = z.object({
    * are non-secret local identifiers used to reuse one Composio Session. */
   composio: z.object({ apiKey: optionalText, userId: optionalText, sessionId: optionalText }).optional(),
   box: z.object({ token: optionalText }).optional(),
+  vps: vpsConfigSchema.optional(),
   /** OpenCode Go key; persisted write-only and passed only to its child. */
   opencodeGo: z.object({ apiKey: optionalText }).optional(),
   /** Voice credentials and the selected voice id. */
@@ -41,6 +67,8 @@ export interface AppConfig {
   xai?: { key?: string; url?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
   box?: { token?: string };
+  /** A named host from the user's SSH config. Authentication stays with SSH. */
+  vps?: { sshAlias?: string };
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string; voice?: string };
   profile?: { name?: string; email?: string };
@@ -60,6 +88,10 @@ export function parseConfigPatch(value: JsonValue): ConfigPatch {
     throw Object.assign(new Error(schemaIssue(parsed.error, "Invalid configuration")), { status: 400 });
   }
   return parsed.data;
+}
+
+export function vpsSshAlias(cfg: AppConfig): string | null {
+  return isValidSshAlias(cfg.vps?.sshAlias) ? cfg.vps.sshAlias : null;
 }
 
 // OMB_DATA_DIR isolates test/soak rigs from the user's real fleet.
@@ -117,6 +149,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     Object.assign(merged, section);
     disk[key] = merged;
   }
+  if (checkedPatch.vps !== undefined) disk.vps = normalizeVpsConfig(checkedPatch.vps);
   if (checkedPatch.instances) {
     const currentInstances = jsonObjectSchema.safeParse(disk.instances);
     const diskInstances: JsonObject = currentInstances.success ? currentInstances.data : {};

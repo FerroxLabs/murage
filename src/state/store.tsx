@@ -13,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { EffortLevel } from "../../server/contracts.ts";
+import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
@@ -39,12 +39,24 @@ export interface OptionCardData {
   allowKey?: string;
 }
 
+export interface ConnectorCardData {
+  slug: string;
+  label: string;
+  description: string;
+  status: "required" | "authorizing" | "connected" | "failed";
+  resumeKey: string;
+  error?: string;
+  dismissed?: boolean;
+  resumed?: boolean;
+}
+
 export interface Message {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen";
+  kind: "text" | "options" | "activity" | "screen" | "connector";
   text?: string;
   card?: OptionCardData;
+  connector?: ConnectorCardData;
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
@@ -141,6 +153,8 @@ export interface Bot {
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "off";
+  /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
+  cloudBackend?: CloudBackend;
   /** where new tasks run their shell tools; absent = the private bot workspace */
   cwd?: string;
   /** auto mode: the bot approves its own tool permissions */
@@ -196,8 +210,9 @@ export function messageVersions(bot: Bot, message: Message): Message[] {
 /** GET /api/config — configured flags only; secrets are never echoed. */
 export interface ConfigStatus {
   xai?: { configured: boolean };
-  composio: { configured: boolean };
+  composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
   box: { configured: boolean };
+  vps: { configured: boolean; sshAlias: string };
   opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
@@ -382,6 +397,7 @@ export type Action =
           | "description"
           | "notifications"
           | "computer"
+          | "cloudBackend"
           | "color"
           | "mascotExpression"
           | "autoApprove"
@@ -1087,6 +1103,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   notifications: source.notifications,
                   modelSelection: source.modelSelection,
                   ...(source.computer ? { computer: source.computer } : {}),
+                  ...(source.cloudBackend ? { cloudBackend: source.cloudBackend } : {}),
                 }),
               }).then(({ bot: patched }) =>
                 rawDispatch({ type: "botAdded", bot: { ...bot, ...patched, messages: bot.messages } }),
@@ -1397,6 +1414,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               xai: frame.xai,
               composio: frame.composio,
               box: frame.box,
+              vps: frame.vps,
               tts: frame.tts,
               profile: frame.profile,
             },

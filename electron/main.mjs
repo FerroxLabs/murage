@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
+import { createAndroidDeviceController } from "./android-device.mjs";
 import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
@@ -14,6 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
+const DEFAULT_COMPOSIO_BROKER_URL = "https://openmausbot-composio.milindsoni201.workers.dev";
 let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 
@@ -92,6 +94,54 @@ async function secureComposioConfig() {
   }
 }
 
+function composioBrokerUrl() {
+  const configured = process.env.OMB_COMPOSIO_BROKER_URL?.trim();
+  return configured || (app.isPackaged ? DEFAULT_COMPOSIO_BROKER_URL : "");
+}
+
+async function ensureManagedComposioCredentials() {
+  const brokerUrl = composioBrokerUrl();
+  if (!brokerUrl) return;
+  if (/^[0-9a-f]{64}$/.test(secureCredentials.composioBrokerToken ?? "")) {
+    try {
+      const check = await fetch(`${brokerUrl}/v1/me`, {
+        headers: { authorization: `Bearer ${secureCredentials.composioBrokerToken}` },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (check.ok) return;
+      // Only a definitive auth failure rotates the credential. A transient
+      // outage keeps the existing identity so reconnecting cannot strand
+      // the user's already-authorized accounts under a new installation.
+      if (check.status !== 401) return;
+      delete secureCredentials.composioBrokerToken;
+      delete secureCredentials.composioInstallationId;
+    } catch {
+      return;
+    }
+  }
+  try {
+    const response = await fetch(`${brokerUrl}/v1/installations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+    if (!/^[0-9a-f]{64}$/.test(body?.token ?? "") || typeof body?.installationId !== "string") {
+      throw new Error("the connected-apps service returned invalid credentials");
+    }
+    secureCredentials.composioBrokerToken = body.token;
+    secureCredentials.composioInstallationId = body.installationId;
+    await saveSecureCredentials(secureCredentials);
+    slog("connected-apps installation registered");
+  } catch (error) {
+    // Never block app startup on a hosted integration. A user running their
+    // own Composio project key still has the local fallback below.
+    slog(`connected-apps registration failed: ${error?.message ?? error}`);
+  }
+}
+
 // The packaged app has no terminal: everything about the server child's life
 // goes to server.log in the OS log dir (~/Library/Logs/OpenMausBot on macOS,
 // Console.app-visible; %APPDATA%\OpenMausBot\logs on Windows), which is also
@@ -100,9 +150,12 @@ async function secureComposioConfig() {
 const LOG_DIR = app.getPath("logs");
 let logStream = null;
 import {
+  companionEnabledAtRest,
   companionPairing,
+  companionCloudDesktopAccess,
   companionRevoke,
   companionState,
+  rememberCompanionEnabled,
   startCompanion,
   stopCompanion,
 } from "./companion.mjs";
@@ -126,10 +179,18 @@ async function startServerOn(port) {
     env: {
       ...process.env,
       OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
+      OMB_RESOURCES_PATH: process.resourcesPath,
+      OMB_SKILLS_DIR: path.join(process.resourcesPath, "skills"),
       OMB_PORT: String(port),
       OMB_USER_DATA: app.getPath("userData"),
       ...(secureCredentials.composioApiKey
         ? { COMPOSIO_API_KEY: secureCredentials.composioApiKey }
+        : {}),
+      ...(composioBrokerUrl() && secureCredentials.composioBrokerToken
+        ? {
+            OMB_COMPOSIO_BROKER_URL: composioBrokerUrl(),
+            OMB_COMPOSIO_BROKER_TOKEN: secureCredentials.composioBrokerToken,
+          }
         : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -190,6 +251,7 @@ const ERROR_PAGE =
   );
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
+const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath });
 
 function createWindow() {
   const isMac = process.platform === "darwin";
@@ -385,11 +447,26 @@ ipcMain.handle("speech:finish", () => {
 // on and off, look at it, open or cancel a pairing window, and remove a
 // device. It cannot reach the sidecar's control port itself.
 ipcMain.handle("companion:state", () => companionState());
-ipcMain.handle("companion:start", () =>
-  startCompanion({ resourcesPath: process.resourcesPath, harnessPort: SERVER_PORT, log: slog }),
-);
-ipcMain.handle("companion:stop", () => stopCompanion());
+ipcMain.handle("companion:start", async () => {
+  const state = await startCompanion({
+    resourcesPath: process.resourcesPath,
+    harnessPort: SERVER_PORT,
+    log: slog,
+  });
+  // Remember only a start that worked: persisting the intent behind a failed
+  // one would greet every launch with the same error for a toggle the panel
+  // showed as off.
+  if (state.enabled && !state.error) rememberCompanionEnabled(true);
+  return state;
+});
+ipcMain.handle("companion:stop", () => {
+  rememberCompanionEnabled(false);
+  return stopCompanion();
+});
 ipcMain.handle("companion:pairing", (_event, open) => companionPairing(Boolean(open)));
+ipcMain.handle("companion:cloud-desktop", (_event, deviceId, allowed) =>
+  companionCloudDesktopAccess(deviceId, Boolean(allowed)),
+);
 ipcMain.handle("companion:revoke", (_event, deviceId) => companionRevoke(deviceId));
 
 ipcMain.handle("desktop:capabilities", async () =>
@@ -432,6 +509,7 @@ app.whenReady().then(async () => {
   if (app.isPackaged) {
     secureCredentials = await loadSecureCredentials();
     await secureComposioConfig();
+    await ensureManagedComposioCredentials();
   }
   // getDisplayMedia in the renderer → this handler → ScreenCaptureKit, all
   // inside the app's own processes — the one capture path macOS reliably
@@ -449,6 +527,7 @@ app.whenReady().then(async () => {
     );
   }
   registerCuaIpc();
+  androidDevice.registerIpc(ipcMain);
   registerUpdaterIpc();
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
@@ -461,6 +540,14 @@ app.whenReady().then(async () => {
         })
       : Promise.resolve({ mode: "unavailable", reason: "unsupported-platform" });
   if (app.isPackaged) serverReady = await startServerPackaged();
+  // The companion the user left on comes back without anyone finding the
+  // toggle again — one attempt, after the harness port is settled, with the
+  // exact options the IPC handler uses. A failure surfaces in companionState
+  // (the panel shows the error) rather than retrying; and it never delays
+  // the window.
+  if (serverReady && companionEnabledAtRest()) {
+    void startCompanion({ resourcesPath: process.resourcesPath, harnessPort: SERVER_PORT, log: slog });
+  }
   const win = createWindow();
   // in-app auto-update (packaged only) — checks GitHub releases, downloads on
   // the user's click, installs on "Restart to update"

@@ -1,7 +1,8 @@
 # Ubuntu Desktop
 
 OpenMausBot has an Ubuntu 24.04 LTS x86_64 desktop beta. The Electron package embeds the harness server, so
-installed builds do not require Node, pnpm, Swift, or a terminal at runtime.
+installed builds do not require Node, pnpm, Swift, or a terminal at runtime. For giving a bot the same kind
+of Linux desktop on your own server instead of this machine, see [byo-vps.md](byo-vps.md).
 
 ## What works
 

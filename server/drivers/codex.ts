@@ -116,8 +116,31 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const turnId = newId();
 
       const env = childEnv();
+      const appServerArgs = ["app-server", ...codexLocalProviderArgs(env, turn.model)];
+      if (turn.integrations?.composio) {
+        const bridge = turn.integrations.composio;
+        Object.assign(env, bridge.env);
+        const prefix = "mcp_servers.openmausbot_connectors";
+        appServerArgs.push(
+          "-c", `${prefix}.command=${JSON.stringify(bridge.command)}`,
+          "-c", `${prefix}.args=${JSON.stringify(bridge.args)}`,
+          "-c", `${prefix}.env_vars=${JSON.stringify(Object.keys(bridge.env))}`,
+          "-c", `${prefix}.default_tools_approval_mode="auto"`,
+        );
+      }
+      if (turn.integrations?.phone) {
+        const bridge = turn.integrations.phone;
+        Object.assign(env, bridge.env);
+        const prefix = "mcp_servers.openmausbot_phone";
+        appServerArgs.push(
+          "-c", `${prefix}.command=${JSON.stringify(bridge.command)}`,
+          "-c", `${prefix}.args=${JSON.stringify(bridge.args)}`,
+          "-c", `${prefix}.env_vars=${JSON.stringify(Object.keys(bridge.env))}`,
+          "-c", `${prefix}.default_tools_approval_mode="auto"`,
+        );
+      }
 
-      const child = spawnCli(config.cli, ["app-server", ...codexLocalProviderArgs(env, turn.model)], {
+      const child = spawnCli(config.cli, appServerArgs, {
         cwd: turn.cwd ?? homedir(),
         env,
         stdio: ["pipe", "pipe", "pipe"],
@@ -455,8 +478,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       });
       if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
       const authenticated = await new Promise<boolean>((resolve) => {
-        execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout) =>
-          resolve(!err && /logged in/i.test(stdout)),
+        execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
+          resolve(!err && /^logged in\b/im.test(`${stdout}\n${stderr ?? ""}`)),
         );
       });
       // childEnv drops OPENAI_API_KEY on purpose — turns run on the ChatGPT login
@@ -477,6 +500,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         provider: DRIVER_KIND,
         capabilities: {
           sessionModelSwitch: "unsupported",
+          composioMcp: true,
+          phoneMcp: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],
         },
         sendTurn,

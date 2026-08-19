@@ -9,6 +9,7 @@ export type DriverKind = string;
 export type InstanceId = string;
 export type ThreadId = string;
 export type TurnId = string;
+export type CloudBackend = "box" | "vps";
 
 export type ProviderErrorCode =
   | "missing_cli"
@@ -148,15 +149,20 @@ export interface SendTurnInput {
   system?: string;
   /** Per-bot integrations the driver may hand to the agent as tools. */
   integrations?: {
-    composio?: { url: string; headers: Record<string, string> };
+    /** A local stdio bridge owns the remote Composio transport. Keeping the
+     * bridge harness-controlled lets it turn connection requests into trusted
+     * chat cards consistently across provider CLIs. */
+    composio?: { command: string; args: string[]; env: Record<string, string> };
     /** Cloud computer, reached through OpenMausBot's REST-to-MCP adapter. */
     computer?: { kind?: "box"; boxId: string; token: string };
-    /** Direct stdio connection to a Cua Driver MCP server (host or sandbox). */
+    /** Direct stdio connection to a Cua Driver MCP server (host, sandbox, or VPS). */
     localComputer?: { command: string; args: string[]; env: Record<string, string> };
     /** Peer-agent comms: an MCP proxy (list_bots / ask_bot) that routes back
      * through the harness so this bot can message other bots. The harness
      * owns turns, permissions, and recursion limits; the proxy only forwards. */
     agents?: { command: string; args: string[]; env: Record<string, string> };
+    /** Physical Android phone tools over authorized USB debugging. */
+    phone?: { command: string; args: string[]; env: Record<string, string> };
     /** dweb network daemon: an MCP proxy exposing dweb status, repo, and
      * opencode model access as tools. url is the dweb HTTP base. */
     dweb?: { url: string };
@@ -185,6 +191,8 @@ export interface ProviderAdapter {
      * connected apps). Same rule again: a key in the config says the user
      * HAS those connections, not that this driver can reach them. */
     composioMcp?: boolean;
+    /** True when the driver can mount the first-party physical-phone MCP. */
+    phoneMcp?: boolean;
     /** Effort levels this driver can pass to its CLI, ascending. Absent =
      * the driver cannot set effort, so the app never offers the control —
      * same rule as computerMcp: never show a knob the driver cannot turn. */
