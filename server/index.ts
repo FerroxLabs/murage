@@ -1388,7 +1388,8 @@ async function startTurn(
           ? "You can work with the user's other bots through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
           : "";
 
-      if (computerKind === "vps") activeVpsThreads.set(bot.id, threadId);
+      // (activeVpsThreads was already claimed above, before the provision or
+      // reuse await, so the backend guards saw this turn the whole time.)
       watchdog.watch(threadId, bot.id);
       await instance.adapter.sendTurn({
         threadId,
@@ -1407,7 +1408,7 @@ async function startTurn(
             : computerKind === "box" && instance.driverKind !== "boxAgent"
             ? " You have your own cloud computer. In Chrome, prefer browser_snapshot with browser_click/browser_fill for semantic, trusted actions; use screenshot/click/type_text for visual or non-browser UI, open_url for navigation, and computer_exec for Linux tasks. Every action already returns the resulting screen, so don't follow it with screenshot; batch predictable pixel actions with computer_batch."
             : computerKind === "vps"
-              ? " You have your own self-hosted remote Linux computer through the official Cua tools. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and act carefully."
+              ? " You have your own self-hosted remote Linux computer through the official Cua tools. Its filesystem is disposable: everything on it is wiped whenever its container is recreated, so keep long-lived work somewhere durable — push it to a remote, or hand the results back in chat — instead of leaving it only on that computer. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and act carefully."
               : computerKind === "local"
               ? " You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
               : "") +
@@ -3527,30 +3528,36 @@ const server = createServer(async (req, res) => {
         ? json(res, 200, { backend: "vps", ...(await vps.vpsComputerStatus(cfg, bot.id)) })
         : json(res, 200, { backend: "box", ...(await box.boxStatus(cfg, bot.id)) });
     }
-    m = path.match(/^\/api\/bots\/([\w-]+)\/computer\/(provision|join|sleep|exec|screenshot)$/);
+    m = path.match(/^\/api\/bots\/([\w-]+)\/computer\/(provision|join|sleep|exec|screenshot|remove)$/);
     if (m && method === "POST") {
       const botId = m[1];
       const bot = store.bot(botId);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      // Requiring JSON makes every computer mutation a non-simple browser
+      // request (same reasoning as the Local VM lifecycle routes above): a
+      // hostile page cannot submit it with a form, and its cross-origin JSON
+      // request dies in the preflight this server never answers. Applied to
+      // both backends — the Box branch runs commands too.
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
       if (bot.cloudBackend === "vps") {
-        if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
-          return json(res, 415, { error: "content-type must be application/json" });
-        }
         if (m[2] === "join" || m[2] === "exec") {
           return json(res, 409, { error: "interactive VPS desktop access is not supported" });
         }
         if (m[2] === "provision" && bot.computer !== "cloud") {
           return json(res, 409, { error: "Auto mode will not provision a VPS; choose Cloud for this bot first" });
         }
-        if (m[2] === "sleep" && (bot.busy || activeVpsThreads.has(botId))) {
+        if ((m[2] === "sleep" || m[2] === "remove") && (bot.busy || activeVpsThreads.has(botId))) {
           return json(res, 409, { error: "the VPS computer is being used by this bot — interrupt the turn first" });
         }
         if (m[2] === "screenshot") return json(res, 200, await vps.vpsComputerScreenshot(cfg, botId));
-        return json(
-          res,
-          200,
-          await vps.vpsComputerAction(m[2] === "provision" ? "provision" : "stop", cfg, botId),
-        );
+        const action = m[2] === "provision" ? "provision" : m[2] === "remove" ? "remove" : "stop";
+        return json(res, 200, await vps.vpsComputerAction(action, cfg, botId));
+      }
+      if (m[2] === "remove") {
+        // Boxes sleep and wake; only the VPS backend has a container to remove.
+        return json(res, 409, { error: "the cloud Box backend has no container to remove — use sleep instead" });
       }
       switch (m[2]) {
         case "provision":

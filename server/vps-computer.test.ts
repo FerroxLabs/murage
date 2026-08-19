@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   BASE_IMAGE,
@@ -59,9 +59,10 @@ function fixture({
   capAdd = ["CAP_SETUID", "CAP_SETGID"],
   screenshotValid = true,
   screenshotCaptureFails = false,
+  desktopProbeFails = false,
   securityOpt = [],
   memory = 4 * 1024 * 1024 * 1024,
-  restartPolicyName = "no",
+  restartPolicyName = "unless-stopped",
   cgroupnsMode,
   imageLabelsMatch = true,
 }: {
@@ -84,6 +85,7 @@ function fixture({
   capAdd?: string[];
   screenshotValid?: boolean;
   screenshotCaptureFails?: boolean;
+  desktopProbeFails?: boolean;
   securityOpt?: string[];
   memory?: number;
   restartPolicyName?: string;
@@ -98,13 +100,14 @@ function fixture({
     return provisioningArgs.find((arg) => arg.startsWith(`${flag}=`))?.slice(flag.length + 1) ?? "";
   };
   const calls: Array<{ args: string[]; options?: { input?: string; timeoutMs?: number } }> = [];
-  const state = { image, container, running, imageLabelsMatch, inspectedImageId };
+  const state = { image, container, running, imageLabelsMatch, inspectedImageId, containerImageId };
   const runner: VpsCommandRunner = async (args, options) => {
     calls.push({ args, options });
     const command = args[2];
-    if (command === "info") return { stdout: "29\n", stderr: "" };
     if (command === "image") {
-      if (!state.image) throw new Error("missing image");
+      // The real daemon phrases a clean absence this way; anything else is
+      // read as a transport failure, exactly like production.
+      if (!state.image) throw new Error(`Error: No such image: ${VPS_IMAGE}`);
       return {
         stdout: JSON.stringify([{
           Config: { Labels: state.imageLabelsMatch ? {
@@ -119,7 +122,7 @@ function fixture({
       };
     }
     if (command === "inspect") {
-      if (!state.container) throw new Error("missing container");
+      if (!state.container) throw new Error(`Error: No such object: ${name}`);
       return {
         stdout: JSON.stringify([{
           Config: {
@@ -134,7 +137,7 @@ function fixture({
             },
           },
            Id: containerId,
-          Image: state.image ? containerImageId : "old-image-id",
+          Image: state.image ? state.containerImageId : "old-image-id",
           HostConfig: {
             Binds: mounts ? ["/host:/container"] : [],
             VolumesFrom: [],
@@ -171,9 +174,17 @@ function fixture({
       };
     }
     if (command === "exec") {
-      if (screenshotCaptureFails && args.includes("get_desktop_state")) throw new Error("capture failed");
+      // only the pixel-carrying screenshot call fails; the status path's
+      // plain get_desktop_state readiness probe keeps answering
+      if (screenshotCaptureFails && args.includes("--screenshot-out-file")) throw new Error("capture failed");
       if (args.includes("base64")) return { stdout: screenshotValid ? screenshot.toString("base64") : "not-an-image", stderr: "" };
-      if (args.at(-1) === "--version") return { stdout: `cua-driver ${CUA_DRIVER_VERSION}\n`, stderr: "" };
+      if (args.includes("tail")) {
+        return { stdout: "X display :1 did not become ready within 45 seconds\n", stderr: "" };
+      }
+      if (args.at(-1) === "--version") {
+        if (desktopProbeFails) throw new Error("driver unavailable");
+        return { stdout: `cua-driver ${CUA_DRIVER_VERSION}\n`, stderr: "" };
+      }
       if (args.includes("status")) return { stdout: "running\n", stderr: "" };
       if (args.includes("health_report")) {
         return { stdout: JSON.stringify({ schema_version: "1", overall: "ok", checks: [] }), stderr: "" };
@@ -192,6 +203,8 @@ function fixture({
     if (command === "run") {
       state.container = true;
       state.running = true;
+      // a fresh container is created FROM the image ref in the run argv
+      state.containerImageId = args.at(-1) ?? state.containerImageId;
       return { stdout: `${name}\n`, stderr: "" };
     }
     if (command === "start") {
@@ -199,6 +212,11 @@ function fixture({
       return { stdout: `${name}\n`, stderr: "" };
     }
     if (command === "stop") {
+      state.running = false;
+      return { stdout: `${name}\n`, stderr: "" };
+    }
+    if (command === "rm") {
+      state.container = false;
       state.running = false;
       return { stdout: `${name}\n`, stderr: "" };
     }
@@ -238,7 +256,10 @@ describe("VPS computer", () => {
       ready: true,
       problem: null,
     });
-    expect(fake.calls[0]?.args).toEqual(["-H", "ssh://production-vps", "info", "--format", "{{.ServerVersion}}"]);
+    // No standalone `docker info` round-trip: the image inspect doubles as
+    // the daemon probe, so a healthy status costs 2 docker calls + 4 execs.
+    expect(fake.calls[0]?.args).toEqual(["-H", "ssh://production-vps", "image", "inspect", VPS_IMAGE]);
+    expect(fake.calls.some(({ args }) => args[2] === "info")).toBe(false);
     const probes = fake.calls.filter(
       ({ args }) =>
         args[2] === "exec" &&
@@ -249,6 +270,11 @@ describe("VPS computer", () => {
     expect(probes.every(({ args }) => !args.includes(fake.name))).toBe(true);
     expect(probes.every(({ args }) => args.includes(`DISPLAY=${DISPLAY}`))).toBe(true);
     expect(probes.every(({ args }) => args.includes("CUA_DRIVER_RS_TELEMETRY_ENABLED=0"))).toBe(true);
+    // The status poll must never transfer pixels: readiness is the driver
+    // answering get_desktop_state, and pixel validation belongs to the
+    // screenshot path alone.
+    expect(fake.calls.some(({ args }) => args.includes("base64"))).toBe(false);
+    expect(fake.calls.some(({ args }) => args.includes("--screenshot-out-file"))).toBe(false);
   });
 
   it("refuses host mounts, public ports, and unowned containers", async () => {
@@ -304,6 +330,12 @@ describe("VPS computer", () => {
     expect(unsafeProfile.ready).toBe(false);
     expect(unsafeProfile.security).toBe("unsafe");
 
+    // the VPS container must survive an unwatched reboot: exactly
+    // unless-stopped, so a policy-less container is flagged for recreation
+    const noRestart = await vpsComputerStatus(CONFIG, BOT_ID, fixture({ restartPolicyName: "no" }).runner);
+    expect(noRestart.ready).toBe(false);
+    expect(noRestart.security).toBe("unsafe");
+
     const wrongImage = await vpsComputerStatus(CONFIG, BOT_ID, fixture({ containerImageId: "c".repeat(64) }).runner);
     expect(wrongImage.ready).toBe(false);
     expect(wrongImage.imageMatches).toBe(false);
@@ -339,6 +371,7 @@ describe("VPS computer", () => {
     expect(run.at(-1)).toBe(IMAGE_ID);
     expect(run.join(" ")).toContain(`--label ${VPS_MANAGED_LABEL}=1`);
     expect(run.join(" ")).toContain(`--label ${IMAGE_LAYER_LABEL}=${IMAGE_LAYER_VERSION}`);
+    expect(run.join(" ")).toContain("--restart unless-stopped");
     expect(run).not.toContain("--mount");
     expect(run).not.toContain("-p");
     expect(provision.calls.some(({ args }) => args[2] === "build")).toBe(true);
@@ -437,5 +470,121 @@ describe("VPS computer", () => {
 
   it("fails cleanly when no VPS alias is configured", async () => {
     await expect(vpsComputerAction("provision", {}, BOT_ID, fixture().runner)).rejects.toThrow(/not configured/);
+  });
+
+  it("attributes a transport failure to the link, never to a missing container", async () => {
+    const fake = fixture();
+    const flaky: VpsCommandRunner = async (args, options) => {
+      if (args[2] === "inspect") throw new Error("ssh: connect to host production-vps port 22: Connection timed out");
+      return fake.runner(args, options);
+    };
+    const status = await vpsComputerStatus(CONFIG, BOT_ID, flaky);
+    expect(status.daemonUp).toBe(false);
+    expect(status.ready).toBe(false);
+    expect(status.problem).toMatch(/Docker over SSH failed while checking the VPS/);
+
+    // and provision must refuse to `docker run --name <existing>` into the fog
+    await expect(vpsComputerAction("provision", CONFIG, BOT_ID, flaky)).rejects.toThrow(/Docker over SSH failed/);
+    expect(fake.calls.some(({ args }) => args[2] === "run")).toBe(false);
+
+    const imageFlaky: VpsCommandRunner = async (args, options) => {
+      if (args[2] === "image") throw new Error("kex_exchange_identification: read: Connection reset by peer");
+      return fake.runner(args, options);
+    };
+    const imageStatus = await vpsComputerStatus(CONFIG, BOT_ID, imageFlaky);
+    expect(imageStatus.daemonUp).toBe(false);
+    expect(imageStatus.problem).toMatch(/Docker over SSH failed while checking the VPS/);
+  });
+
+  it("removes a managed container even when its image is incompatible, then provisions fresh", async () => {
+    // an IMAGE_LAYER_VERSION bump leaves a running container that provision
+    // refuses to touch — remove is the in-app escape hatch
+    const stale = fixture({ containerImageId: `sha256:${"c".repeat(64)}` });
+    expect((await vpsComputerStatus(CONFIG, BOT_ID, stale.runner)).imageMatches).toBe(false);
+    await expect(vpsComputerAction("provision", CONFIG, BOT_ID, stale.runner)).rejects.toThrow(/incompatible|unsafe/);
+
+    const removed = await vpsComputerAction("remove", CONFIG, BOT_ID, stale.runner);
+    expect(removed.container).toBe("missing");
+    expect(stale.calls.some(({ args }) => args[2] === "rm" && args[3] === "-f" && args[4] === CONTAINER_ID)).toBe(true);
+
+    const rebuilt = await vpsComputerAction("provision", CONFIG, BOT_ID, stale.runner);
+    expect(rebuilt.ready).toBe(true);
+  });
+
+  it("never removes a container OpenMausBot did not create", async () => {
+    const unowned = fixture({ managed: false });
+    await expect(vpsComputerAction("remove", CONFIG, BOT_ID, unowned.runner)).rejects.toThrow(/did not create/);
+    expect(unowned.calls.some(({ args }) => args[2] === "rm")).toBe(false);
+
+    const absent = fixture({ container: false });
+    const afterMissing = await vpsComputerAction("remove", CONFIG, BOT_ID, absent.runner);
+    expect(afterMissing.container).toBe("missing");
+    expect(absent.calls.some(({ args }) => args[2] === "rm")).toBe(false);
+  });
+
+  it("surfaces the supervisor error log when the desktop probe fails", async () => {
+    const fake = fixture({ desktopProbeFails: true });
+    const status = await vpsComputerStatus(CONFIG, BOT_ID, fake.runner);
+    expect(status.desktopReady).toBe(false);
+    expect(status.desktop_error).toContain("did not become ready");
+    expect(status.problem).toContain("desktop failed to start");
+    expect(fake.calls.some(({ args }) => args[2] === "exec" && args.includes("tail"))).toBe(true);
+  });
+
+  it("waits for readiness with a cheap driver probe and backoff, not full re-inspections", async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = fixture({ container: false });
+      let driverProbes = 0;
+      const runner: VpsCommandRunner = async (args, options) => {
+        if (args[2] === "exec" && args.includes("status")) {
+          driverProbes += 1;
+          if (driverProbes < 4) throw new Error("driver not up yet");
+        }
+        return fake.runner(args, options);
+      };
+      const pending = vpsComputerAction("provision", CONFIG, BOT_ID, runner);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const status = await pending;
+      expect(status.ready).toBe(true);
+      // the expensive end of the pipeline ran exactly once — every retry in
+      // between was the single `cua-driver status` predicate
+      const desktopCalls = fake.calls.filter(({ args }) => args.includes("get_desktop_state"));
+      expect(desktopCalls).toHaveLength(1);
+      const healthCalls = fake.calls.filter(({ args }) => args.includes("health_report"));
+      expect(healthCalls).toHaveLength(1);
+      expect(driverProbes).toBeGreaterThanOrEqual(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails lifecycle calls fast instead of queueing behind a long provision", async () => {
+    vi.useFakeTimers();
+    try {
+      let releaseBuild!: () => void;
+      const buildGate = new Promise<void>((resolve) => {
+        releaseBuild = resolve;
+      });
+      const fake = fixture({ image: false, container: false });
+      const slowRunner: VpsCommandRunner = async (args, options) => {
+        if (args[2] === "build") await buildGate;
+        return fake.runner(args, options);
+      };
+      const first = vpsComputerAction("provision", CONFIG, BOT_ID, slowRunner);
+      // let the first action reach its (gated) docker build
+      await vi.advanceTimersByTimeAsync(0);
+      const second = vpsComputerAction("stop", CONFIG, BOT_ID, slowRunner);
+      const rejection = expect(second).rejects.toThrow(/being prepared/);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await rejection;
+
+      releaseBuild();
+      await vi.advanceTimersByTimeAsync(10_000);
+      const status = await first;
+      expect(status.ready).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

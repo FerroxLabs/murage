@@ -68,7 +68,8 @@ describe("default VPS command runner", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
 
-    await vi.advanceTimersByTimeAsync(1_000);
+    // the WAN-sized grace window: ssh + docker get 5s to tear down cleanly
+    await vi.advanceTimersByTimeAsync(5_000);
     await rejection;
     expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
   });
