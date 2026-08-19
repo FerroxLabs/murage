@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   instanceConfigs,
+  isValidSshAlias,
   parseConfigPatch,
   parseStoredConfig,
+  vpsSshAlias,
   withInstanceCli,
   type AppConfig,
 } from "./config.ts";
@@ -26,6 +28,17 @@ describe("configuration boundaries", () => {
     expect(() => parseStoredConfig({ instances: { claude: { driver: 42 } } })).toThrow("instances.claude.driver");
     expect(() => parseConfigPatch({ opencodeGo: { apiKey: 42 } })).toThrow("opencodeGo.apiKey");
     expect(() => parseConfigPatch({ profile: [] })).toThrow("profile");
+  });
+
+  it("accepts only a simple VPS SSH config alias and exposes no credentials", () => {
+    expect(isValidSshAlias("production-vps")).toBe(true);
+    expect(isValidSshAlias("prod; reboot")).toBe(false);
+    expect(() => parseConfigPatch({ vps: { sshAlias: "prod; reboot" } })).toThrow("vps.sshAlias");
+    expect(parseConfigPatch({ vps: { sshAlias: "production-vps" } })).toEqual({
+      vps: { sshAlias: "production-vps" },
+    });
+    expect(vpsSshAlias({ vps: { sshAlias: "production-vps" } })).toBe("production-vps");
+    expect(vpsSshAlias({ vps: { sshAlias: "-bad" } })).toBeNull();
   });
 });
 

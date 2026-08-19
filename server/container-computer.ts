@@ -59,6 +59,7 @@ const HOST_VIEWER_PORT = 6080;
 const MEMORY_BYTES = 4 * 1024 * 1024 * 1024;
 const NANO_CPUS = 2_000_000_000;
 const PIDS_LIMIT = 512;
+const SHM_BYTES = 512 * 1024 * 1024;
 
 const LINUX_WHEELS = {
   x86_64: {
@@ -239,7 +240,9 @@ function statusProblem(status: ContainerComputerStatus): string | null {
   return null;
 }
 
-function imageLabelsMatch(labels: Record<string, string> | undefined): boolean {
+/** Shared with the BYO-VPS backend (vps-computer.ts): both containers are
+ * built from the same pinned derivative, so image compatibility is one rule. */
+export function imageLabelsMatch(labels: Record<string, string> | undefined): boolean {
   return (
     labels?.[MANAGED_LABEL] === "1" &&
     labels?.[DRIVER_LABEL] === CUA_DRIVER_VERSION &&
@@ -289,10 +292,16 @@ function viewerUrl(password: string | null): string {
   return `${base}#${fragment.toString()}`;
 }
 
-function cuaExecArgs(args: string[], interactive = false): string[] {
+/** The one authoritative `exec … cua-driver` argv. Shared with the BYO-VPS
+ * backend and both MCP bridge entry points so the identity, env, and
+ * telemetry knobs can never drift between the Local VM and a VPS container. */
+export function cuaExecArgs(
+  args: string[],
+  options: { container?: string; interactive?: boolean } = {},
+): string[] {
   return [
     "exec",
-    ...(interactive ? ["-i"] : []),
+    ...(options.interactive ? ["-i"] : []),
     "-u",
     "cua",
     "-e",
@@ -303,7 +312,7 @@ function cuaExecArgs(args: string[], interactive = false): string[] {
     "CUA_DRIVER_INSTALL_CHANNEL=python_package",
     "-e",
     "CUA_DRIVER_RS_TELEMETRY_ENABLED=0",
-    CONTAINER,
+    options.container ?? CONTAINER,
     CUA_EXECUTABLE,
     ...args,
   ];
@@ -390,14 +399,8 @@ export async function containerComputerStatus(
     } else {
       const inspected = JSON.parse(stdout) as Array<{
         Config?: { Image?: string; Labels?: Record<string, string>; Env?: string[] };
-        HostConfig?: {
+        HostConfig?: DockerHardeningConfig & {
           PortBindings?: Record<string, Array<{ HostIp?: string }> | null>;
-          Memory?: number;
-          MemorySwap?: number;
-          NanoCpus?: number;
-          PidsLimit?: number | null;
-          CapDrop?: string[] | null;
-          CapAdd?: string[] | null;
         };
         Mounts?: Array<{
           Type?: string;
@@ -556,31 +559,71 @@ function appleWorkspaceMountIsSafe(
   );
 }
 
-function dockerSecurityIsHardened(
-  config:
-    | {
-        Memory?: number;
-        MemorySwap?: number;
-        NanoCpus?: number;
-        PidsLimit?: number | null;
-        CapDrop?: string[] | null;
-        CapAdd?: string[] | null;
-      }
-    | undefined,
+/** The Docker/Podman HostConfig surface the hardening check reads. */
+export interface DockerHardeningConfig {
+  Memory?: number;
+  MemorySwap?: number;
+  NanoCpus?: number;
+  PidsLimit?: number | null;
+  CapDrop?: string[] | null;
+  CapAdd?: string[] | null;
+  Privileged?: boolean;
+  PidMode?: string;
+  IpcMode?: string;
+  UTSMode?: string;
+  ShmSize?: number;
+  Devices?: unknown[] | null;
+  DeviceRequests?: unknown[] | null;
+  SecurityOpt?: string[] | null;
+  UsernsMode?: string;
+  CgroupnsMode?: string;
+  OomKillDisable?: boolean | null;
+  AutoRemove?: boolean;
+  RestartPolicy?: { Name?: string; MaximumRetryCount?: number };
+}
+
+/** One hardening contract for both managed containers (Local VM here, the
+ * BYO-VPS backend in vps-computer.ts): exact resource limits, no privilege,
+ * no host namespaces or devices, no disabled security profiles. The only
+ * knob the callers legitimately disagree on is the restart policy — the VPS
+ * container must survive a reboot nobody is watching ("unless-stopped"),
+ * while the Local VM must NOT auto-resume: its desktop leaves a stale X lock
+ * on stop, so a restarted container is a broken one. */
+export function dockerSecurityIsHardened(
+  config: DockerHardeningConfig | undefined,
+  options: { restartPolicy?: "no" | "unless-stopped" } = {},
 ): boolean {
   if (!config) return false;
   const capDrop = (config.CapDrop ?? []).map((cap) => cap.toLowerCase());
   const capAdd = (config.CapAdd ?? [])
     .map((cap) => cap.toLowerCase().replace(/^cap_/, ""))
     .sort();
+  const unsafeSecurityOption = (config.SecurityOpt ?? []).some((option) => /(?:^|=)(?:unconfined|disable)$/i.test(option));
+  const restartPolicy = config.RestartPolicy?.Name;
+  const restartPolicyOk =
+    options.restartPolicy === "unless-stopped"
+      ? restartPolicy === "unless-stopped"
+      : restartPolicy === undefined || restartPolicy === "" || restartPolicy === "no";
   return (
-    (config.Memory ?? 0) >= MEMORY_BYTES &&
+    config.Memory === MEMORY_BYTES &&
     (config.MemorySwap ?? 0) === MEMORY_BYTES &&
     (config.NanoCpus ?? 0) === NANO_CPUS &&
-    (config.PidsLimit ?? 0) > 0 &&
-    (config.PidsLimit ?? Infinity) <= PIDS_LIMIT &&
+    config.PidsLimit === PIDS_LIMIT &&
     capDrop.includes("all") &&
-    capAdd.join(",") === "setgid,setuid"
+    capAdd.join(",") === "setgid,setuid" &&
+    config.Privileged === false &&
+    !config.PidMode &&
+    config.IpcMode === "private" &&
+    !config.UTSMode &&
+    config.ShmSize === SHM_BYTES &&
+    (!config.Devices || config.Devices.length === 0) &&
+    (!config.DeviceRequests || config.DeviceRequests.length === 0) &&
+    !unsafeSecurityOption &&
+    !config.UsernsMode &&
+    config.CgroupnsMode === "private" &&
+    config.OomKillDisable !== true &&
+    config.AutoRemove !== true &&
+    restartPolicyOk
   );
 }
 
@@ -626,6 +669,14 @@ export function containerRunArgs(runtime: Runtime, password = "CHANGE_ME"): stri
       "2",
       "--pids-limit",
       String(PIDS_LIMIT),
+      // Pinned explicitly rather than trusting daemon defaults: the shared
+      // hardening check requires private IPC and cgroup namespaces, and a
+      // daemon configured with host-mode defaults would otherwise create a
+      // container its own acceptance check then rejects.
+      "--ipc",
+      "private",
+      "--cgroupns",
+      "private",
       "--cap-drop",
       "ALL",
       "--cap-add",
@@ -708,9 +759,11 @@ export async function containerComputerAction(
   return containerComputerStatus(runner, platform);
 }
 
-type ScreenshotCheck = { ok: boolean; mime: "image/png" | "image/jpeg" };
+export type ScreenshotCheck = { ok: boolean; mime: "image/png" | "image/jpeg" };
 
-function wholeScreenshot(bytes: Buffer): ScreenshotCheck {
+/** Shared with the BYO-VPS backend: a truncated base64 transfer must never
+ * become a "successful" preview frame on either transport. */
+export function wholeScreenshot(bytes: Buffer): ScreenshotCheck {
   if (bytes.length < 512) return { ok: false, mime: "image/png" };
   const png = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
   if (png) {

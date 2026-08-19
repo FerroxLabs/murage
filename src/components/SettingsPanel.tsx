@@ -8,6 +8,7 @@ import {
   MAUS_COLORS,
   MAUS_COLOR_NAMES,
 } from "@/lib/mascot";
+import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
@@ -327,6 +328,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "description"
         | "notifications"
         | "computer"
+        | "cloudBackend"
         | "color"
         | "mascotExpression"
         | "autoApprove"
@@ -344,6 +346,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
   const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
+  const canUseVps = engine?.capabilities?.computerMcp === true && engine.driverKind !== "boxAgent";
   const connectedAppsConfigured = state.config?.composio?.configured === true;
   const connectedAppsEnabled = bot.composio !== false;
   const currentChief = state.bots.find((candidate) => candidate.chiefOfStaff);
@@ -645,7 +648,12 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               Where this bot's computer runs{bot.computer ? "" : " (currently: auto)"}
             </div>
             <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
-              {(["cloud", "local", "off"] as const).map((mode, i) => (
+              {([
+                ["cloud", "Cloud"],
+                ["vm", "Local VM"],
+                ["local", "This computer"],
+                ["off", "Off"],
+              ] as const).map(([mode, label], i) => (
                 <button
                   key={mode}
                   onClick={() => patch({ computer: mode })}
@@ -657,10 +665,17 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                       : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
                   )}
                 >
-                  {mode}
+                  {label}
                 </button>
               ))}
             </div>
+            {(!bot.computer || bot.computer === "cloud") && (
+              <CloudBackendPicker
+                value={bot.cloudBackend ?? "box"}
+                vpsSupported={canUseVps}
+                onChange={(backend) => patch({ cloudBackend: backend })}
+              />
+            )}
           </div>
 
           <BotUsageCard bot={bot} />

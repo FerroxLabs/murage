@@ -604,6 +604,26 @@ describe("harness HTTP API", () => {
     expect(nothing.status).toBe(400);
   });
 
+  it("validates the non-secret VPS alias and keeps old bots on Box by default", async () => {
+    const before = await api("GET", "/api/bots");
+    const bot = before.body.bots[0];
+    expect(bot.cloudBackend).toBeUndefined();
+
+    const bad = await api("PUT", "/api/config", { vps: { sshAlias: "prod; reboot" } });
+    expect(bad.status).toBe(400);
+
+    const saved = await api("PUT", "/api/config", { vps: { sshAlias: "production-vps" } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.vps).toEqual({ configured: true, sshAlias: "production-vps" });
+    expect(JSON.stringify(saved.body)).not.toContain("privateKey");
+
+    const patched = await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps" });
+    expect(patched.status).toBe(200);
+    expect(patched.body.bot.cloudBackend).toBe("vps");
+    const invalid = await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "daytona" });
+    expect(invalid.status).toBe(400);
+  });
+
   it("validates a Composio project key, creates a Session, and keeps externally stored secrets off disk", async () => {
     const oldKey = await api("PUT", "/api/config", { composio: { apiKey: "old_key" } });
     expect(oldKey.status).toBe(400);

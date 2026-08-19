@@ -153,6 +153,10 @@ public struct Bot: Codable, Hashable, Identifiable, Sendable {
     public var autoApprove: Bool?
     public var alwaysAllow: [String]?
     public var computer: String?
+    /// Which cloud computer backs `computer == "cloud"`. Absent (older
+    /// harnesses included) means the hosted Box; "vps" means the user's own
+    /// server, which has no interactive desktop to offer a phone.
+    public var cloudBackend: String?
     public var speakReplies: Bool?
     public var voice: String?
     public var mascotExpression: String?

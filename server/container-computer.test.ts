@@ -88,6 +88,8 @@ function readyInspect(overrides: Record<string, unknown> = {}) {
       },
       State: { Running: true },
       Image: "sha256:managed-image-id",
+      // the full hardened HostConfig the stricter shared check now demands:
+      // unprivileged, private IPC/cgroup namespaces, pinned shm, no devices
       HostConfig: {
         Memory: 4 * 1024 * 1024 * 1024,
         MemorySwap: 4 * 1024 * 1024 * 1024,
@@ -95,6 +97,11 @@ function readyInspect(overrides: Record<string, unknown> = {}) {
         PidsLimit: 512,
         CapDrop: ["ALL"],
         CapAdd: ["CAP_SETUID", "CAP_SETGID"],
+        Privileged: false,
+        IpcMode: "private",
+        CgroupnsMode: "private",
+        ShmSize: 512 * 1024 * 1024,
+        RestartPolicy: { Name: "no", MaximumRetryCount: 0 },
         PortBindings: { "6901/tcp": [{ HostIp: "127.0.0.1" }] },
       },
       Mounts: [
@@ -195,6 +202,32 @@ describe("containerComputerStatus", () => {
     expect(status.container).toBe("running");
     expect(status.network).toBe("unsafe");
     expect(status.ready).toBe(false);
+  });
+
+  it("rejects a privileged or host-namespaced Local VM even with correct limits", async () => {
+    // pins the stricter shared hardening check: resource limits alone are
+    // not hardening — privilege and namespace escapes disqualify the VM too
+    const base = JSON.parse(readyInspect())[0].HostConfig;
+    for (const override of [
+      { Privileged: true },
+      { IpcMode: "host" },
+      { PidMode: "host" },
+      { CgroupnsMode: "host" },
+      { SecurityOpt: ["seccomp=unconfined"] },
+      { DeviceRequests: [{ Driver: "nvidia" }] },
+      { RestartPolicy: { Name: "always", MaximumRetryCount: 0 } },
+    ]) {
+      const fake = runner({
+        "/usr/bin/which docker": "docker\n",
+        "/usr/bin/which podman": new Error("missing"),
+        "docker info --format {{.ServerVersion}}": "29\n",
+        [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+        [`docker inspect ${CONTAINER}`]: readyInspect({ HostConfig: { ...base, ...override } }),
+      });
+      const status = await containerComputerStatus(fake.run, "linux");
+      expect(status.security, JSON.stringify(override)).toBe("unsafe");
+      expect(status.ready).toBe(false);
+    }
   });
 
   it("rejects missing or unexpected host mounts instead of exposing them to the bot", async () => {
@@ -479,6 +512,7 @@ describe("setupCommands", () => {
     const command = setupCommands("docker", "linux").run!;
     expect(command).toContain("--memory 4g --memory-swap 4g");
     expect(command).toContain("--cpus 2 --pids-limit 512");
+    expect(command).toContain("--ipc private --cgroupns private");
     expect(command).toContain("--cap-drop ALL --cap-add SETUID --cap-add SETGID");
     expect(command).toContain(`--label ${MANAGED_LABEL}=1`);
     expect(command).toContain(`--label ${DRIVER_LABEL}=${CUA_DRIVER_VERSION}`);

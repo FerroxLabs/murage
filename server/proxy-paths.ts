@@ -37,6 +37,7 @@ export const SPAWNED_PROXIES = {
   computer: resolveProxy("computer-proxy"),
   permission: resolveProxy("permission-proxy"),
   containerMcp: resolveProxy("container-mcp"),
+  vpsContainerMcp: resolveProxy("vps-container-mcp"),
   agents: resolveProxy("drivers/agents-proxy"),
   dweb: resolveProxy("drivers/dweb-proxy"),
   connectors: resolveProxy("connector-proxy"),

@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Coins, KeyRound, Monitor, Smartphone, Terminal, User, Volume2, X } from "lucide-react";
 import { useStore, type AppSettingsSection } from "@/state/store";
-import { ApiKeyRow } from "./ApiKeys";
+import { ApiKeyRow, VpsConnection } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
 import { LocalComputerSection } from "./LocalComputerSection";
@@ -218,6 +218,7 @@ export function SettingsModal() {
                     </div>
                   ) : null}
                   <ApiKeyRow section="box" />
+                  <VpsConnection />
                   <ApiKeyRow section="opencodeGo" />
                   <details className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
                     <summary className="cursor-pointer text-[13px] text-ink-secondary">Self-host connected apps</summary>
