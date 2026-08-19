@@ -334,10 +334,16 @@ final class Session: ObservableObject {
 
     func answer(threadId: String, card: OptionCard, choice: String) async {
         guard let requestId = card.requestId else { return }
+        await answer(threadId: threadId, requestId: requestId, choice: choice, isPermission: card.isPermission)
+    }
+
+    /// The same answer, from something that only has the ids — the Live
+    /// Activity's buttons.
+    func answer(threadId: String, requestId: String, choice: String, isPermission: Bool) async {
         await perform {
             // Permission cards answer allow/deny; a question answers with
             // the chosen text. The harness tells them apart by `behavior`.
-            if card.isPermission {
+            if isPermission {
                 try await $0.respond(
                     threadId: threadId,
                     requestId: requestId,

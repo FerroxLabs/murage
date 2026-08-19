@@ -228,6 +228,25 @@ struct MausAvatar: View {
     }
 }
 
+/// The resting face for a state, drawn once and still. For places the
+/// engine cannot run — a widget, a Live Activity — where the system renders
+/// a snapshot and the face can only change between updates.
+struct MausFaceStill: View {
+    let color: String
+    var state: MausState = .idle
+    var size: CGFloat = 52
+
+    var body: some View {
+        Canvas { context, canvasSize in
+            let engine = MausFaceEngine()
+            engine.setState(state, now: Date())
+            engine.draw(in: &context, size: canvasSize, color: color, bodyMotion: false)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
 /// The face, frame by frame. One per drawn mascot; holds the morph in
 /// progress, the blink, and when the next expression or blink is due.
 final class MausFaceEngine {

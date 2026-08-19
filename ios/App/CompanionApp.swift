@@ -10,12 +10,16 @@ import SwiftUI
 struct CompanionApp: App {
     @StateObject private var session = Session()
     @Environment(\.scenePhase) private var scenePhase
+    @State private var liveActivities = LiveActivityCoordinator()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(session)
-                .onAppear { session.connect() }
+                .onAppear {
+                    session.connect()
+                    liveActivities.attach(to: session)
+                }
                 .onOpenURL { session.receivePairingURL($0) }
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
