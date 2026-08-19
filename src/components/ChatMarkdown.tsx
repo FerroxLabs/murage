@@ -11,7 +11,6 @@ import { memo, useEffect, useState, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
-import { cn } from "@/lib/cn";
 
 // tiny highlight cache so revisiting a thread doesn't re-tokenize settled
 // blocks; keys are content-hashed and capped. Streamed partials may land here
@@ -117,21 +116,38 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
 // all keep the raw ~~text~~.
 function Spoiler({ children }: { children?: ReactNode }) {
   const [revealed, setRevealed] = useState(false);
+  if (!revealed) {
+    return (
+      <span className="relative mx-px inline-block rounded px-1 py-px">
+        <span
+          aria-hidden="true"
+          className="pointer-events-none select-none bg-raised text-transparent [&_*]:!text-transparent [&_a]:!no-underline"
+        >
+          {children}
+        </span>
+        <button
+          type="button"
+          aria-label="Reveal spoiler"
+          title="Reveal spoiler"
+          onClick={() => setRevealed(true)}
+          className="absolute inset-0 rounded bg-raised/90"
+        />
+      </span>
+    );
+  }
   return (
-    <button
-      type="button"
-      onClick={() => setRevealed((r) => !r)}
-      aria-pressed={revealed}
-      title={revealed ? "Hide spoiler" : "Reveal spoiler"}
-      className={cn(
-        "mx-px rounded px-1 py-px text-[13px] leading-relaxed transition-colors",
-        revealed
-          ? "border-0 bg-transparent text-ink underline decoration-dotted decoration-hairline underline-offset-2"
-          : "bg-raised text-transparent select-none [&_*]:!text-transparent [&_a]:!no-underline",
-      )}
-    >
+    <span className="mx-px inline rounded px-1 py-px text-[13px] leading-relaxed text-ink underline decoration-dotted decoration-hairline underline-offset-2">
       {children}
-    </button>
+      <button
+        type="button"
+        aria-label="Hide spoiler"
+        title="Hide spoiler"
+        onClick={() => setRevealed(false)}
+        className="ml-1 rounded px-0.5 text-[11px] text-ink-secondary hover:text-ink"
+      >
+        Hide
+      </button>
+    </span>
   );
 }
 
