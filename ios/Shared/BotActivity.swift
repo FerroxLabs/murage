@@ -22,6 +22,8 @@ struct BotActivityAttributes: ActivityAttributes {
         var options: [String]
         /// A permission card answers allow/deny; a question answers with text.
         var isPermission: Bool
+        /// When this kind began — the island's timer and ring count from it.
+        var since: Date
     }
 
     var botId: String

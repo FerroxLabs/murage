@@ -210,6 +210,8 @@ struct MausAvatar: View {
     var state: MausState = .idle
     /// Off draws the state's resting face, still. For lists of many.
     var animated: Bool = true
+    /// Comets orbiting the body — the island's "something is happening".
+    var comets: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var engine = MausFaceEngine()
@@ -220,7 +222,7 @@ struct MausAvatar: View {
             Canvas { context, canvasSize in
                 engine.setState(state, now: timeline.date)
                 if live { engine.step(now: timeline.date) }
-                engine.draw(in: &context, size: canvasSize, color: color, bodyMotion: live)
+                engine.draw(in: &context, size: canvasSize, color: color, bodyMotion: live, comets: comets, at: timeline.date)
             }
         }
         .frame(width: size, height: size)
@@ -235,12 +237,15 @@ struct MausFaceStill: View {
     let color: String
     var state: MausState = .idle
     var size: CGFloat = 52
+    var comets: Bool = false
+    /// The clock for the comets' phase; a different date is a different frame.
+    var at: Date = Date()
 
     var body: some View {
         Canvas { context, canvasSize in
             let engine = MausFaceEngine()
-            engine.setState(state, now: Date())
-            engine.draw(in: &context, size: canvasSize, color: color, bodyMotion: false)
+            engine.setState(state, now: Date(timeIntervalSinceReferenceDate: 0))
+            engine.draw(in: &context, size: canvasSize, color: color, bodyMotion: false, comets: comets, at: at)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -327,13 +332,184 @@ final class MausFaceEngine {
 
     // MARK: - Drawing
 
-    func draw(in context: inout GraphicsContext, size: CGSize, color: String, bodyMotion: Bool) {
+    // MARK: - Comets
+
+    /// Comets orbiting the body on tilted rings — the desktop's `trails`.
+    struct CometSpec {
+        let count: Int
+        /// ms for one orbit
+        let period: CGFloat
+        /// face units
+        let radius: CGFloat
+        /// half-width at the head
+        let width: CGFloat
+        /// how much of the orbit one comet covers, radians
+        let span: CGFloat
+        /// the body's resting scale while the rings are out, so they clear it
+        let bodyScale: CGFloat
+    }
+
+    static let cometTrails: [MausState: CometSpec] = [
+        .orbit: CometSpec(count: 6, period: 3000, radius: 105, width: 5, span: 2.5, bodyScale: 0.72),
+        .radar: CometSpec(count: 4, period: 2400, radius: 106, width: 4.5, span: 2.1, bodyScale: 0.72),
+        .progress: CometSpec(count: 5, period: 2000, radius: 104, width: 4.8, span: 2.3, bodyScale: 0.74),
+        .loading: CometSpec(count: 5, period: 2400, radius: 105, width: 5, span: 2.6, bodyScale: 0.72),
+        .uploading: CometSpec(count: 4, period: 1800, radius: 104, width: 4.8, span: 2.2, bodyScale: 0.74),
+    ]
+
+    /// One palette per comet: three neighbouring hues along its length. A flat
+    /// colour reads as wire; a hue that travels reads as something lit.
+    static let cometColors: [[Color]] = [
+        ["#A855F7", "#6366F1", "#38BDF8"], ["#22D3EE", "#34D399", "#A3E635"], ["#FB923C", "#F43F5E", "#D946EF"],
+        ["#818CF8", "#C084FC", "#F472B6"], ["#FACC15", "#FB923C", "#EC4899"], ["#34D399", "#22D3EE", "#60A5FA"],
+    ].map { $0.map { Color(hex: $0) } }
+
+    private struct CometSample { var x: CGFloat; var y: CGFloat; var h: CGFloat }
+    private struct CometPiece { let path: Path; let shading: GraphicsContext.Shading; let front: Bool }
+
+    private static func hash01(_ n: CGFloat) -> CGFloat {
+        let x = sin(n * 127.1 + 311.7) * 43758.5453
+        return x - floor(x)
+    }
+
+    /// The comets for this frame, each split at the horizon into pieces that
+    /// go behind the body or in front of it.
+    private func comets(_ spec: CometSpec, elapsed: CGFloat, centre: CGPoint, strength: CGFloat) -> [CometPiece] {
+        var out: [CometPiece] = []
+        let samples = 22
+        let span = min(spec.span, .pi - 0.05)
+        let near: CGFloat = 1.1 // swell at the near point of the ring — perspective, cheaply
+
+        for i in 0..<spec.count {
+            let seedA = Self.hash01(CGFloat(i + 3)), seedB = Self.hash01(CGFloat(i + 29)), seedC = Self.hash01(CGFloat(i + 71))
+            // every ring its own tip, roll and speed, or they stack into one hoop
+            let tilt = 0.3 + seedA * 0.66
+            let roll = seedB * 2 * .pi
+            let period = spec.period * (0.78 + seedC * 0.55)
+            let direction: CGFloat = i % 2 == 0 ? 1 : -1
+            let radius = spec.radius * strength * (0.94 + seedB * 0.12)
+            let head = direction * (elapsed / period) * 2 * .pi + seedA * 2 * .pi
+            let cosT = cos(tilt), sinT = sin(tilt), cosR = cos(roll), sinR = sin(roll)
+
+            var runs: [(samples: [CometSample], front: Bool)] = []
+            var run: [CometSample] = []
+            var side: CGFloat = 0
+            func keep(_ r: [CometSample]) -> Bool {
+                guard r.count >= 3 else { return false }
+                var length: CGFloat = 0
+                for k in 1..<r.count { length += hypot(r[k].x - r[k - 1].x, r[k].y - r[k - 1].y) }
+                return length > spec.width * 3.5
+            }
+            for sIndex in 0..<samples {
+                let k = CGFloat(sIndex) / CGFloat(samples - 1)
+                let angle = head - direction * span * k
+                let ox = cos(angle) * radius, oy = sin(angle) * radius
+                let ty = oy * cosT, z = oy * sinT
+                let n = 1 + (z / radius) * (near - 1)
+                let x = centre.x + (ox * cosR - ty * sinR) * n
+                let y = centre.y + (ox * sinR + ty * cosR) * n
+                // full at the head, a third by the tail — keeps it a comet, not a brush stroke
+                let h = spec.width * n * (1 - 0.68 * pow(k, 1.5)) * strength
+                let nowSide: CGFloat = z >= 0 ? 1 : -1
+                if nowSide != side {
+                    if keep(run) { runs.append((run, side > 0)) }
+                    run = run.isEmpty ? [] : [run[run.count - 1]]
+                    side = nowSide
+                }
+                run.append(CometSample(x: x, y: y, h: h))
+            }
+            if keep(run) { runs.append((run, side > 0)) }
+            guard let firstRun = runs.first, let lastRun = runs.last else { continue }
+
+            // one gradient across the whole comet, so a hue runs head to tail across a cut
+            let colors = Self.cometColors[i % Self.cometColors.count]
+            let shading = GraphicsContext.Shading.linearGradient(
+                Gradient(stops: [
+                    .init(color: colors[0], location: 0),
+                    .init(color: colors[1], location: 0.52),
+                    .init(color: colors[2].opacity(0.35), location: 1),
+                ]),
+                startPoint: CGPoint(x: firstRun.samples[0].x, y: firstRun.samples[0].y),
+                endPoint: CGPoint(x: lastRun.samples[lastRun.samples.count - 1].x, y: lastRun.samples[lastRun.samples.count - 1].y)
+            )
+            for (r, piece) in runs.enumerated() {
+                out.append(CometPiece(
+                    path: Self.cometPath(piece.samples, capHead: r == 0, capTail: r == runs.count - 1),
+                    shading: shading,
+                    front: piece.front
+                ))
+            }
+        }
+        return out
+    }
+
+    /// Head→tail samples to one filled, tapered outline with half-round caps
+    /// on the true ends — a comet is an outline, not a stroke.
+    private static func cometPath(_ s: [CometSample], capHead: Bool, capTail: Bool) -> Path {
+        let n = s.count
+        var path = Path()
+        guard n >= 2 else { return path }
+        var nx: [CGFloat] = [], ny: [CGFloat] = []
+        for i in 0..<n {
+            let a = s[max(i - 1, 0)], b = s[min(i + 1, n - 1)]
+            let tx = b.x - a.x, ty = b.y - a.y
+            let len = max(hypot(tx, ty), 0.0001)
+            nx.append(-ty / len); ny.append(tx / len)
+        }
+        func cap(_ i: Int, _ out: CGFloat) -> [CGPoint] {
+            let steps = 6
+            let x = s[i].x, y = s[i].y, h = s[i].h
+            let tx = ny[i], ty = -nx[i]
+            return (1..<steps).map { k in
+                let a = CGFloat(k) / CGFloat(steps) * .pi
+                let dn = out * cos(a), dt = out * sin(a)
+                return CGPoint(x: x + (nx[i] * dn + tx * dt) * h, y: y + (ny[i] * dn + ty * dt) * h)
+            }
+        }
+        var outline: [CGPoint] = [CGPoint(x: s[0].x - nx[0] * s[0].h, y: s[0].y - ny[0] * s[0].h)]
+        if capHead { outline += cap(0, -1) }
+        for i in 0..<n { outline.append(CGPoint(x: s[i].x + nx[i] * s[i].h, y: s[i].y + ny[i] * s[i].h)) }
+        if capTail { outline += cap(n - 1, 1) }
+        for i in stride(from: n - 1, to: 0, by: -1) { outline.append(CGPoint(x: s[i].x - nx[i] * s[i].h, y: s[i].y - ny[i] * s[i].h)) }
+        path.move(to: outline[0])
+        for p in outline.dropFirst() { path.addLine(to: p) }
+        path.closeSubpath()
+        return path
+    }
+
+    // MARK: - Drawing
+
+    /// `comets`: orbit the body with the `orbit` state's rings whatever the
+    /// face is doing — the island's "something is happening" — in addition to
+    /// the states that carry their own. `at` is the clock; pass a fixed date
+    /// for a still frame.
+    func draw(in context: inout GraphicsContext, size: CGSize, color: String, bodyMotion: Bool, comets: Bool = false, at now: Date = Date()) {
         let rect = CGRect(origin: .zero, size: size)
         context.concatenate(MausSilhouette.fit(rect))
-        if bodyMotion {
-            context.concatenate(bodyTransform(MausFaceData.motion[state] ?? MausBodyMotion(), elapsed: CGFloat(Date().timeIntervalSince(stateStart) * 1000)))
-        }
+        let elapsed = CGFloat(now.timeIntervalSince(stateStart) * 1000)
+        let spec = Self.cometTrails[state] ?? (comets ? Self.cometTrails[.orbit] : nil)
+        let centre = CGPoint(x: MausFaceData.faceBox / 2, y: MausFaceData.faceBox / 2)
 
+        let pieces = spec.map { self.comets($0, elapsed: elapsed, centre: centre, strength: 1) } ?? []
+        for piece in pieces where !piece.front { context.fill(piece.path, with: piece.shading) }
+
+        // The body, in its own pushed context so the rings are not under its
+        // transform. Comet states sit back a little, so the rings clear them.
+        var bodyContext = context
+        if let spec {
+            bodyContext.translateBy(x: centre.x, y: centre.y)
+            bodyContext.scaleBy(x: spec.bodyScale, y: spec.bodyScale)
+            bodyContext.translateBy(x: -centre.x, y: -centre.y)
+        }
+        if bodyMotion {
+            bodyContext.concatenate(bodyTransform(MausFaceData.motion[state] ?? MausBodyMotion(), elapsed: elapsed))
+        }
+        drawBody(in: &bodyContext, color: color, now: now)
+
+        for piece in pieces where piece.front { context.fill(piece.path, with: piece.shading) }
+    }
+
+    private func drawBody(in context: inout GraphicsContext, color: String, now: Date) {
         let body = MausSilhouette.inFaceBox
         let bounds = MausSilhouette.faceBoxBounds
         context.fill(body, with: .linearGradient(
@@ -352,7 +528,7 @@ final class MausFaceEngine {
         let gaze = displayedGaze()
         let ox = gaze.x * lookAround, oy = gaze.y * lookAround
         let rings = displayedRings().map { $0.map { CGPoint(x: $0.x + ox, y: $0.y + oy) } }
-        let blink = blinkScale(now: Date())
+        let blink = blinkScale(now: now)
 
         for ring in rings {
             let c = Self.centre(ring)

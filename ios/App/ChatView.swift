@@ -166,7 +166,7 @@ struct ChatView: View {
                                 Color.clear
                             }
                         }
-                        MausAvatar(color: current.color, size: faceSize, state: MausState.forChat(current, in: session.state))
+                        MausAvatar(color: current.color, size: faceSize, state: MausState.forChat(current, in: session.state), comets: islandExpanded)
                             .offset(y: faceCentre - faceSize / 2)
                             .allowsHitTesting(false)
                     }

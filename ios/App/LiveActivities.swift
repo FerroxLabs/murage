@@ -15,6 +15,8 @@ import CompanionCore
 final class LiveActivityCoordinator {
     private var cancellable: AnyCancellable?
     private var lastSent: [String: BotActivityAttributes.ContentState] = [:]
+    /// When each bot's current kind began, so an update does not reset the clock.
+    private var since: [String: (kind: String, at: Date)] = [:]
 
     func attach(to session: Session) {
         // Answer from the island: the intent runs in this process.
@@ -35,6 +37,8 @@ final class LiveActivityCoordinator {
             guard case let .bot(bot) = update.chat else { continue }
             wantedIds.insert(bot.id)
             let face = MausState.forBot(bot, last: state.visibleTranscript(forThread: bot.threadId).last)
+            let kind = update.kind == .needsYou ? "needsYou" : "working"
+            if since[bot.id]?.kind != kind { since[bot.id] = (kind, Date()) }
             let content = BotActivityAttributes.ContentState(
                 face: face.rawValue,
                 kind: update.kind == .needsYou ? "needsYou" : "working",
@@ -42,7 +46,8 @@ final class LiveActivityCoordinator {
                 line: update.line.isEmpty ? (update.card?.title ?? "") : update.line,
                 requestId: update.card?.isPending == true ? update.card?.requestId : nil,
                 options: update.card?.isPending == true ? (update.card?.options ?? []) : [],
-                isPermission: update.card?.isPermission ?? false
+                isPermission: update.card?.isPermission ?? false,
+                since: since[bot.id]?.at ?? Date()
             )
             if lastSent[bot.id] == content { continue }
             lastSent[bot.id] = content
@@ -58,6 +63,7 @@ final class LiveActivityCoordinator {
         // bots that went quiet: let the island go
         for activity in Activity<BotActivityAttributes>.activities where !wantedIds.contains(activity.attributes.botId) {
             lastSent.removeValue(forKey: activity.attributes.botId)
+            since.removeValue(forKey: activity.attributes.botId)
             Task { await activity.end(nil, dismissalPolicy: .immediate) }
         }
     }

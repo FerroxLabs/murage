@@ -22,8 +22,8 @@ struct BotActivityWidget: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    MausFaceStill(color: context.attributes.color, state: MausState(rawValue: context.state.face) ?? .idle, size: 64)
-                        .padding(.leading, 4)
+                    OrbitingFace(context: context, size: 68)
+                        .padding(.leading, 2)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -34,6 +34,10 @@ struct BotActivityWidget: Widget {
                             .font(.system(size: 13))
                             .foregroundStyle(.white.opacity(0.7))
                             .lineLimit(2)
+                        // the one clock iOS keeps ticking for us
+                        Text(timerInterval: context.state.since...context.state.since.addingTimeInterval(86_400), countsDown: false)
+                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.5))
                     }
                     .padding(.top, 2)
                 }
@@ -76,7 +80,7 @@ private struct LockScreenView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            MausFaceStill(color: context.attributes.color, state: MausState(rawValue: context.state.face) ?? .idle, size: 56)
+            OrbitingFace(context: context, size: 60)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     if context.state.kind == "needsYou" {
@@ -132,6 +136,28 @@ private struct AnswerButtons: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+}
+
+/// The face with comets around it and a rainbow ring filling up behind it.
+/// The system renders a snapshot, so the comets are a frame — a different
+/// one each update — and the ring is a timer-driven `ProgressView`, which is
+/// the one kind of motion iOS keeps animating in a Live Activity on its own.
+private struct OrbitingFace: View {
+    let context: ActivityViewContext<BotActivityAttributes>
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            ProgressView(timerInterval: context.state.since...context.state.since.addingTimeInterval(60), countsDown: false) { EmptyView() } currentValueLabel: { EmptyView() }
+                .progressViewStyle(.circular)
+                .tint(AngularGradient(colors: [
+                    Color(hex: "#A855F7"), Color(hex: "#38BDF8"), Color(hex: "#34D399"),
+                    Color(hex: "#FACC15"), Color(hex: "#FB923C"), Color(hex: "#F43F5E"), Color(hex: "#A855F7"),
+                ], center: .center))
+                .frame(width: size + 4, height: size + 4)
+            MausFaceStill(color: context.attributes.color, state: MausState(rawValue: context.state.face) ?? .idle, size: size, comets: true, at: Date())
         }
     }
 }
