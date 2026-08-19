@@ -28,6 +28,7 @@ struct ChatListView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
+            GeometryReader { geo in
             VStack(spacing: 0) {
                 header
                 StatusBanner()
@@ -101,6 +102,14 @@ struct ChatListView: View {
             // top-aligned: the roster fills downward from the header
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .overlay(alignment: .bottom) { bottomBar }
+            // a bot that stopped for you grows out of the island
+            .overlay(alignment: .top) {
+                NeedsYouIsland(
+                    update: session.state.updates.first { $0.kind == .needsYou },
+                    hasIsland: IslandGeometry.hasIsland(topInset: geo.safeAreaInsets.top)
+                ) { chat in path.append(chat) }
+            }
+            }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Chat.self) { ChatView(chat: $0) }
 #if DEBUG

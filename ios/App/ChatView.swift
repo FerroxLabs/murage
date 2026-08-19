@@ -19,12 +19,19 @@ struct ChatView: View {
     let chat: Chat
     @EnvironmentObject private var session: Session
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draft = ""
     @State private var showingTasks = false
     @State private var showingComputer = false
     @State private var showingPlus = false
     @State private var shareFile: ShareFile?
     @FocusState private var composerFocused: Bool
+    /// The opening beat: the island grows with the bot's face in it, then
+    /// shrinks away as the face settles into the header. `facePhase` is 1
+    /// with the face in the island, 0 with it home in the header.
+    @State private var islandExpanded = false
+    @State private var islandVisible = false
+    @State private var facePhase: CGFloat = 0
 
     /// The live bubble's scroll target. A constant because there is at most
     /// one per chat and it has no message id to borrow.
@@ -141,6 +148,41 @@ struct ChatView: View {
                 // scrolls under the face and name, which float over it.
                 .safeAreaInset(edge: .top, spacing: 0) { headerBar }
                 .overlay(alignment: .top) { headerFace }
+                .overlay(alignment: .top) {
+                    // One face, in one layer, measured from the screen's top
+                    // edge: it sits in the island while that is open and
+                    // glides into its header slot when the island lets go.
+                    let topInset = IslandGeometry.topInset
+                    let hasIsland = IslandGeometry.hasIsland(topInset: topInset)
+                    let islandSide: CGFloat = 200
+                    let islandFaceCentre = IslandGeometry.top + islandSide / 2
+                    let headerFaceCentre = topInset + 26
+                    let faceSize = 60 + 72 * facePhase
+                    let faceCentre = headerFaceCentre + (islandFaceCentre - headerFaceCentre) * facePhase
+                    ZStack(alignment: .top) {
+                        if islandVisible {
+                            IslandShell(expanded: islandExpanded, hasIsland: hasIsland, expandedSize: CGSize(width: islandSide, height: islandSide)) {
+                                Color.clear
+                            }
+                        }
+                        MausAvatar(color: current.color, size: faceSize, state: MausState.forChat(current, in: session.state))
+                            .offset(y: faceCentre - faceSize / 2)
+                            .allowsHitTesting(false)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .ignoresSafeArea(edges: .top)
+                }
+                .task {
+                    // grow, hold a beat, shrink — the face rides along
+                    guard !reduceMotion else { return }
+                    islandVisible = true
+                    try? await Task.sleep(for: .milliseconds(40))
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { islandExpanded = true; facePhase = 1 }
+                    try? await Task.sleep(for: .milliseconds(1000))
+                    withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) { islandExpanded = false; facePhase = 0 }
+                    try? await Task.sleep(for: .milliseconds(600))
+                    islandVisible = false
+                }
                 // A conversation grows from the bottom: a transcript shorter
                 // than the screen rests at the bottom, and opening a chat
                 // starts on the newest message rather than the oldest.
@@ -267,7 +309,11 @@ struct ChatView: View {
     /// between the two buttons.
     private var headerFace: some View {
         VStack(spacing: 6) {
-            MausAvatar(color: current.color, size: 60, state: MausState.forChat(current, in: session.state))
+            // Always here, following the island's face while that one is
+            // the source: when the island lets go, this one flies home.
+            // the face itself is drawn by the island layer above, so it can
+            // travel; this is its seat
+            Color.clear.frame(width: 60, height: 60)
             Menu {
                 chatActions
             } label: {
