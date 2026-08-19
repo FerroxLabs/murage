@@ -8,6 +8,7 @@ import {
   MAUS_COLORS,
   MAUS_COLOR_NAMES,
 } from "@/lib/mascot";
+import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
@@ -325,9 +326,9 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "name"
         | "title"
         | "description"
-         | "notifications"
-         | "computer"
-         | "cloudBackend"
+        | "notifications"
+        | "computer"
+        | "cloudBackend"
         | "color"
         | "mascotExpression"
         | "autoApprove"
@@ -648,7 +649,6 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             </div>
             <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
               {([
-                ["auto", "Auto"],
                 ["cloud", "Cloud"],
                 ["vm", "Local VM"],
                 ["local", "This computer"],
@@ -656,11 +656,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               ] as const).map(([mode, label], i) => (
                 <button
                   key={mode}
-                  onClick={() => patch({ computer: mode === "auto" ? undefined : mode })}
+                  onClick={() => patch({ computer: mode })}
                   className={cn(
                     "flex-1 py-1.5 text-[13px] capitalize",
                     i > 0 && "border-l border-hairline/40",
-                    (mode === "auto" ? bot.computer === undefined : bot.computer === mode)
+                    bot.computer === mode
                       ? "bg-raised text-ink"
                       : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
                   )}
@@ -670,34 +670,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               ))}
             </div>
             {(!bot.computer || bot.computer === "cloud") && (
-              <div className="mt-3 rounded-lg bg-inset p-3">
-                <div className="text-[12px] font-medium text-ink">Cloud backend</div>
-                <div className="mt-0.5 text-[11.5px] text-ink-secondary">
-                  {bot.cloudBackend === "vps"
-                    ? "Auto reuses a ready VPS container only. Choose Cloud to provision or start it."
-                    : "Box is the default hosted computer. Self-hosted VPS uses your SSH-configured Linux Docker host."}
-                </div>
-                <div className="mt-2 flex overflow-hidden rounded-lg border border-hairline/40">
-                  {(["box", "vps"] as const).map((backend, i) => (
-                    <button
-                      key={backend}
-                      disabled={backend === "vps" && !canUseVps}
-                      title={backend === "vps" && !canUseVps ? "Self-hosted VPS requires Claude or an ACP engine" : undefined}
-                      onClick={() => patch({ cloudBackend: backend })}
-                      className={cn(
-                        "flex-1 py-1.5 text-[12px]",
-                        i > 0 && "border-l border-hairline/40",
-                        backend === "vps" && !canUseVps && "cursor-not-allowed opacity-40",
-                        (bot.cloudBackend ?? "box") === backend
-                          ? "bg-raised text-ink"
-                          : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
-                      )}
-                    >
-                      {backend === "vps" ? "Self-hosted VPS" : "Box"}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <CloudBackendPicker
+                value={bot.cloudBackend ?? "box"}
+                vpsSupported={canUseVps}
+                onChange={(backend) => patch({ cloudBackend: backend })}
+              />
             )}
           </div>
 

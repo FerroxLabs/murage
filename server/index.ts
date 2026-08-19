@@ -2868,10 +2868,6 @@ const server = createServer(async (req, res) => {
       }
       const patch: Record<string, unknown> = {};
       for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "cloudBackend", "color", "mascotExpression", "pinned", "hidden", "speakReplies", "voice"] as const) {
-        if (key === "computer" && body.computer === null) {
-          patch.computer = undefined;
-          continue;
-        }
         if (body[key] !== undefined) patch[key] = body[key];
       }
       // per-bot gate on the workspace's connected apps (Composio)
@@ -2881,7 +2877,6 @@ const server = createServer(async (req, res) => {
       }
       if (
         body.computer !== undefined &&
-        body.computer !== null &&
         !["cloud", "vm", "local", "off"].includes(String(body.computer))
       ) {
         return json(res, 400, { error: "computer must be cloud, vm, local, or off" });
