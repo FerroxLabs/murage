@@ -178,6 +178,8 @@ final class Session: ObservableObject {
         // purpose. Coming to the front is the moment worth retrying on: the
         // app is on screen, so the phone is in someone's hand and unlocked.
         if client == nil, restorePending { restore() }
+        // back before the grace period ran out: keep the stream, drop the task
+        endLinger()
         guard client != nil, streamTask == nil else { return }
         reconnectDelay = 0
         streamGeneration += 1
@@ -243,6 +245,33 @@ final class Session: ObservableObject {
     func disconnect() {
         streamTask?.cancel()
         streamTask = nil
+        endLinger()
+    }
+
+    private var lingerTask: UIBackgroundTaskIdentifier = .invalid
+
+    /// Leaving the screen: keep the stream alive for the grace period iOS
+    /// allows (~30 s) rather than cutting it at once, so an approval that
+    /// lands right after you swipe home still reaches the Live Activity and
+    /// the island. After that, iOS suspends us anyway; disconnect cleanly so
+    /// the cursor is written down at a known point.
+    func linger() {
+        guard streamTask != nil, lingerTask == .invalid else { disconnect(); return }
+        lingerTask = UIApplication.shared.beginBackgroundTask(withName: "companion.linger") { [weak self] in
+            // time is up before our own timer — the system wants us gone now
+            self?.disconnect()
+        }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(25))
+            guard let self, self.lingerTask != .invalid else { return }
+            self.disconnect()
+        }
+    }
+
+    private func endLinger() {
+        guard lingerTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(lingerTask)
+        lingerTask = .invalid
     }
 
     private func run() async {

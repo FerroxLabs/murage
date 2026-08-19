@@ -50,13 +50,27 @@ final class LiveActivityCoordinator {
                 since: since[bot.id]?.at ?? Date()
             )
             if lastSent[bot.id] == content { continue }
-            lastSent[bot.id] = content
+            defer { lastSent[bot.id] = content }
 
+            // A bot stopping for you is worth an alert: the island pops open
+            // on its own and the lock screen lights up. Working is not.
+            let alert: AlertConfiguration? = update.kind == .needsYou
+                ? AlertConfiguration(
+                    title: LocalizedStringResource(stringLiteral: content.headline),
+                    body: LocalizedStringResource(stringLiteral: content.line),
+                    sound: .default
+                )
+                : nil
             if let activity = Activity<BotActivityAttributes>.activities.first(where: { $0.attributes.botId == bot.id }) {
-                Task { await activity.update(.init(state: content, staleDate: nil)) }
+                let newAsk = update.kind == .needsYou && lastSent[bot.id]?.requestId != content.requestId
+                Task { await activity.update(.init(state: content, staleDate: nil), alertConfiguration: newAsk ? alert : nil) }
             } else {
                 let attributes = BotActivityAttributes(botId: bot.id, threadId: bot.threadId, name: bot.name, color: bot.color)
                 _ = try? Activity.request(attributes: attributes, content: .init(state: content, staleDate: nil), pushType: nil)
+                // a fresh activity cannot alert on request; one immediate alerting update does it
+                if let alert, let activity = Activity<BotActivityAttributes>.activities.first(where: { $0.attributes.botId == bot.id }) {
+                    Task { await activity.update(.init(state: content, staleDate: nil), alertConfiguration: alert) }
+                }
             }
         }
 

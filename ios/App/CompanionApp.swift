@@ -26,7 +26,7 @@ struct CompanionApp: App {
                     case .active:
                         session.connect()
                         Task { await session.refreshNotificationAuthorization() }
-                    case .background: session.disconnect()
+                    case .background: session.linger()
                     case .inactive: break
                     @unknown default: break
                     }
