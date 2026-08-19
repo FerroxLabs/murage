@@ -11,6 +11,7 @@ import { memo, useEffect, useState, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
+import { cn } from "@/lib/cn";
 
 // tiny highlight cache so revisiting a thread doesn't re-tokenize settled
 // blocks; keys are content-hashed and capped. Streamed partials may land here
@@ -109,6 +110,31 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
   );
 }
 
+// Spoiler spans: GFM parses ~~text~~ to <del>; in bot messages that content
+// is usually a spoiler (answers, plot points, surprises), not a deletion —
+// hide it behind a tap-to-reveal chip instead of striking it through.
+// Display only: the stored markdown, exports, and the model's own context
+// all keep the raw ~~text~~.
+function Spoiler({ children }: { children?: ReactNode }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => setRevealed((r) => !r)}
+      aria-pressed={revealed}
+      title={revealed ? "Hide spoiler" : "Reveal spoiler"}
+      className={cn(
+        "mx-px rounded px-1 py-px text-[13px] leading-relaxed transition-colors",
+        revealed
+          ? "border-0 bg-transparent text-ink underline decoration-dotted decoration-hairline underline-offset-2"
+          : "bg-raised text-transparent select-none [&_*]:!text-transparent [&_a]:!no-underline",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 function ChatMarkdownComponent({ text, streaming = false }: { text: string; streaming?: boolean }) {
   return (
     <div className="chat-md min-w-0 [&>*+*]:mt-2">
@@ -197,6 +223,9 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
             return (
               <blockquote className="border-l-2 border-hairline pl-3 text-ink-secondary">{children}</blockquote>
             );
+          },
+          del({ children }: { children?: ReactNode }) {
+            return <Spoiler>{children}</Spoiler>;
           },
           hr() {
             return <hr className="border-hairline/40" />;
