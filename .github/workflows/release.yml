@@ -163,11 +163,9 @@ jobs:
           rm -f "release/OpenMausBot-$v-arm64.zip" "release/OpenMausBot-$v-x64.zip"
           ditto -c -k --sequesterRsrc --keepParent release/mac-arm64/OpenMausBot.app "release/OpenMausBot-$v-arm64.zip"
           ditto -c -k --sequesterRsrc --keepParent release/mac/OpenMausBot.app "release/OpenMausBot-$v-x64.zip"
-          AB=$(node -p "require('app-builder-bin').appBuilderPath")
-          for f in "release/OpenMausBot-$v-arm64.zip" "release/OpenMausBot-$v-x64.zip" \
-                   "release/OpenMausBot-$v-arm64.dmg" "release/OpenMausBot-$v-x64.dmg"; do
-            "$AB" blockmap -i "$f" -o "$f.blockmap" > /dev/null
-          done
+          node scripts/regenerate-blockmaps.mjs \
+            "release/OpenMausBot-$v-arm64.zip" "release/OpenMausBot-$v-x64.zip" \
+            "release/OpenMausBot-$v-arm64.dmg" "release/OpenMausBot-$v-x64.dmg"
           # refreshes every hash from the post-staple bytes and refuses to
           # finish unless the feed matches the files on disk
           node scripts/regenerate-mac-feed.mjs
