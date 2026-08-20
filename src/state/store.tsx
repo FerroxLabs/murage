@@ -105,6 +105,8 @@ export interface Group {
   /** folder the room's turns actually run in, pinned on the first turn;
    * null = each member's own default; absent = not pinned yet */
   pinnedCwd?: string | null;
+  /** the one message pinned to the top of this room's transcript */
+  pinnedMessageId?: string;
   messages: Message[];
 }
 
@@ -168,6 +170,8 @@ export interface Bot {
   voice?: string;
   pinned?: boolean;
   hidden?: boolean;
+  /** the one message pinned to the top of this bot's active thread */
+  pinnedMessageId?: string;
   /** The workspace's one primary coordinator. */
   chiefOfStaff?: boolean;
   /** When this bot wants to talk to another bot (ask_bot/delegate_bot),
@@ -365,7 +369,7 @@ export type Action =
   | {
       type: "patchGroup";
       groupId: string;
-      patch: Partial<Pick<Group, "name" | "bulletin" | "memberIds" | "defaultResponder">>;
+      patch: Partial<Pick<Group, "name" | "bulletin" | "memberIds" | "defaultResponder" | "pinnedMessageId">>;
     }
   | { type: "deleteGroup"; groupId: string }
   | { type: "toggleReaction"; threadId: string; messageId: string; emoji: string }
@@ -436,6 +440,7 @@ export type Action =
           | "voice"
           | "pinned"
           | "hidden"
+          | "pinnedMessageId"
           | "chiefOfStaff"
           | "approvePeerComms"
           | "composio"
