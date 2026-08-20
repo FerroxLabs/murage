@@ -69,21 +69,28 @@ function stripTomlLineComment(line: string): string {
   return line;
 }
 
-/** Decode a TOML basic-string escape at `text[i]` (`i` points at the `\\`). */
-function takeTomlBasicEscape(text: string, i: number): { value: string; next: number } {
+/** Decode a TOML basic-string escape at `text[i]` (`i` points at the `\\`).
+ *  Invalid / unknown / surrogate / out-of-range sequences return ok:false so
+ *  the heading is not canonicalized to a colliding alias. */
+function takeTomlBasicEscape(
+  text: string,
+  i: number,
+): { ok: true; value: string; next: number } | { ok: false } {
   const code = text[i + 1];
+  if (code === undefined) return { ok: false };
   if (code === "u") {
     const hex = text.slice(i + 2, i + 6);
-    if (/^[0-9a-fA-F]{4}$/.test(hex)) {
-      return { value: String.fromCharCode(parseInt(hex, 16)), next: i + 6 };
-    }
+    if (!/^[0-9a-fA-F]{4}$/.test(hex)) return { ok: false };
+    const point = parseInt(hex, 16);
+    if (point >= 0xd800 && point <= 0xdfff) return { ok: false };
+    return { ok: true, value: String.fromCharCode(point), next: i + 6 };
   }
   if (code === "U") {
     const hex = text.slice(i + 2, i + 10);
-    if (/^[0-9a-fA-F]{8}$/.test(hex)) {
-      const point = parseInt(hex, 16);
-      return { value: point <= 0x10ffff ? String.fromCodePoint(point) : "", next: i + 10 };
-    }
+    if (!/^[0-9a-fA-F]{8}$/.test(hex)) return { ok: false };
+    const point = parseInt(hex, 16);
+    if (point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff)) return { ok: false };
+    return { ok: true, value: String.fromCodePoint(point), next: i + 10 };
   }
   const named: Record<string, string> = {
     b: "\b",
@@ -94,7 +101,8 @@ function takeTomlBasicEscape(text: string, i: number): { value: string; next: nu
     '"': '"',
     "\\": "\\",
   };
-  return { value: named[code ?? ""] ?? code ?? "", next: i + 2 };
+  if (!(code in named)) return { ok: false };
+  return { ok: true, value: named[code]!, next: i + 2 };
 }
 
 /** Canonical `a.b.c` form of a `[table]` heading, quotes and comments removed. */
@@ -117,6 +125,7 @@ function canonicalizeTomlHeading(heading: string): string | null {
       while (i < inner.length && inner[i] !== q) {
         if (q === '"' && inner[i] === "\\") {
           const taken = takeTomlBasicEscape(inner, i);
+          if (!taken.ok) return null;
           value += taken.value;
           i = taken.next;
           continue;

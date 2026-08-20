@@ -34,8 +34,11 @@ export function MacLocalControl() {
 
   useEffect(() => {
     if (!awaitingGrant) return;
+    let used = false;
     const onFocus = () => {
+      if (used) return;
       if (document.visibilityState !== "visible") return;
+      used = true;
       setAwaitingGrant(false);
       void retry();
     };

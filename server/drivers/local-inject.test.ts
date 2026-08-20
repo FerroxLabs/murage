@@ -520,6 +520,24 @@ describe("ensureKimiInjectAlias", () => {
     expect(text).toContain("max_context_size = 262144");
   });
 
+  it("does not treat a malformed escape as a canonical alias", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-badesc-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      ['[models."omlx/GLM-\\q.2-fp8"]', 'provider = "omlx"', 'model = "nope"', ""].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text).toContain("GLM-\\q.2-fp8");
+    expect(text).toContain('model = "nope"');
+    expect(text.match(/\[models\./g)?.length).toBe(2);
+    expect(text).toContain('model = "GLM-5.2-fp8"');
+    expect(text).toContain('protocol = "openai"');
+  });
+
   it("treats whitespace around dotted heading keys as the same table", () => {
     const home = mkdtempSync(join(tmpdir(), "omb-kimi-dots-"));
     scratchDirs.push(home);
