@@ -424,6 +424,53 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("imports a team as a project: one room, on a folder", async () => {
+    // The manifest still describes only people. Room name and folder come
+    // from the CALLER, so a manifest fetched from the library cannot create
+    // structure in someone's workspace — the property v2 established by
+    // dropping its `room` block.
+    const seed = await api("POST", "/api/bots", { name: "Planner", title: "Lead", description: "Plans", color: "purple" });
+    const exported = await api("POST", "/api/teams/export", { name: "Client XY" });
+    expect(exported.body.team).not.toHaveProperty("room");
+
+    const roomsBefore = (await api("GET", "/api/bots")).body.groups.length;
+    const folder = mkdtempSync(join(tmpdir(), "omb-project-"));
+
+    const stream = await openSse(`${BASE}/api/events`);
+    try {
+      await stream.until((frame) => frame.kind === "hello");
+
+      // A folder that does not exist must not leave half a project behind.
+      const bogus = await api("POST", `/api/teams/import?mode=project&cwd=${encodeURIComponent(join(folder, "nope"))}`, exported.body);
+      expect(bogus.status).toBe(400);
+      expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore);
+
+      const created = await api("POST", `/api/teams/import?mode=project&cwd=${encodeURIComponent(folder)}`, exported.body);
+      expect(created.status).toBe(201);
+      expect(created.body.group).toMatchObject({ name: "Client XY", cwd: folder });
+      // the room is made of exactly the bots this import created
+      expect(created.body.group.memberIds.sort()).toEqual(created.body.bots.map((bot: { id: string }) => bot.id).sort());
+      // the folder is the room's WISH; the store pins it on the first turn
+      expect(created.body.group).not.toHaveProperty("pinnedCwd");
+      expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore + 1);
+      await stream.until((frame) => frame.kind === "group" && frame.group?.id === created.body.group.id);
+
+      // an explicit name wins over the team name, and the folder is optional
+      const named = await api("POST", "/api/teams/import?mode=project&room=Client%20XY%20-%20Ads", exported.body);
+      expect(named.body.group).toMatchObject({ name: "Client XY - Ads" });
+      expect(named.body.group.cwd).toBeUndefined();
+
+      for (const room of [created.body.group, named.body.group]) {
+        expect((await api("DELETE", `/api/groups/${room.id}`)).status).toBe(200);
+      }
+      for (const bot of [seed.body, ...created.body.bots, ...named.body.bots]) {
+        await api("DELETE", `/api/bots/${bot.id}`);
+      }
+    } finally {
+      stream.close();
+    }
+  });
+
   it("keeps the rest of a duplicate's fields when the source engine is offline", async () => {
     // duplicateBot POSTs a blank bot, then PATCHes the source's whole
     // modelSelection in one body beside its name, title and description.
