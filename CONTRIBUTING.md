@@ -41,6 +41,22 @@ pnpm package:linux # Ubuntu x64 .deb + AppImage; no Swift required
 
 For Ubuntu installation and real desktop checks, see [`docs/linux-desktop.md`](docs/linux-desktop.md).
 
+## Ubuntu release checklist
+
+Ubuntu release packages must come from the manual **Package Ubuntu** workflow on an exact release commit or tag,
+not from a developer workstation. The Ubuntu 24.04 runner builds and verifies both formats, launches the unpacked
+app and AppImage, exercises the bundled Cua lifecycle, and produces one release artifact containing:
+
+- the versioned `.deb` and AppImage;
+- stable `OpenMausBot-amd64.deb` and `OpenMausBot.AppImage` copies used by the latest-download links;
+- `SHA256SUMS-ubuntu-x64.txt` covering both versioned and stable names.
+
+Before publishing, confirm that `package.json` has the release version and dispatch the workflow against the same
+commit used for the other platforms. Attach all five Ubuntu files to the matching release in the separate
+[`openmausbot-releases`](https://github.com/milind-soni/openmausbot-releases) repository. Then verify the checksum
+file and install the `.deb` plus launch the AppImage in a clean Ubuntu 24.04 x86_64 GNOME environment. Never combine
+packages built from different commits under one version.
+
 ## Repo map
 
 | Path | What lives there |
