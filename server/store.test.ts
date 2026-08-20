@@ -110,6 +110,32 @@ describe("Store", () => {
     expect(messages.at(-1)).toMatchObject({ role: "user", text: "hi there" });
   });
 
+  it("normalizes persisted cloud backends without changing valid or absent values", () => {
+    const store = new Store(selection);
+    const box = store.createBot();
+    const vps = store.createBot();
+    const invalid = store.createBot();
+    const absent = store.createBot();
+    const raw: BotRecord[] = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    raw.find((bot) => bot.id === box.id)!.cloudBackend = "box";
+    raw.find((bot) => bot.id === vps.id)!.cloudBackend = "vps";
+    (raw.find((bot) => bot.id === invalid.id) as unknown as { cloudBackend: string }).cloudBackend = "daytona";
+    delete raw.find((bot) => bot.id === absent.id)!.cloudBackend;
+    writeFileSync(join(DATA_DIR, "bots.json"), JSON.stringify(raw));
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(box.id)?.cloudBackend).toBe("box");
+    expect(reloaded.bot(vps.id)?.cloudBackend).toBe("vps");
+    expect(reloaded.bot(invalid.id)?.cloudBackend).toBeUndefined();
+    expect(reloaded.bot(absent.id)?.cloudBackend).toBeUndefined();
+
+    const saved: BotRecord[] = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    expect(saved.find((bot) => bot.id === box.id)?.cloudBackend).toBe("box");
+    expect(saved.find((bot) => bot.id === vps.id)?.cloudBackend).toBe("vps");
+    expect(saved.find((bot) => bot.id === invalid.id)).not.toHaveProperty("cloudBackend");
+    expect(saved.find((bot) => bot.id === absent.id)).not.toHaveProperty("cloudBackend");
+  });
+
   it("migrates unambiguous legacy peer grants without guessing duplicate names", () => {
     const store = new Store(selection);
     const requester = store.createBot();

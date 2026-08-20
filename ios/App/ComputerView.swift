@@ -61,7 +61,10 @@ struct ComputerView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            if current.computer == "cloud" {
+            // A VPS-backed bot is "cloud" too, but the server refuses to mint
+            // an interactive desktop for it — no button beats a dead one. An
+            // older harness never sends cloudBackend, so nil keeps the button.
+            if current.computer == "cloud" && current.cloudBackend != "vps" {
                 VStack(spacing: 8) {
                     if let desktopError {
                         Text(desktopError)

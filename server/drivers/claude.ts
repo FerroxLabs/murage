@@ -8,12 +8,13 @@
 //   - Composio Sessions (connected apps → tools) over streamable HTTP
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 
-import { DATA_DIR } from "../config.ts";
+import { DATA_DIR, stripWorkspaceCredentialEnv } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
 import { brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 
@@ -73,6 +74,9 @@ function claudeEnvironment(
   const env: NodeJS.ProcessEnv = { ...source, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
+  // The harness process may hold workspace credentials (xai/box/voice keys,
+  // env-injected at boot); none of them are this CLI's to see.
+  stripWorkspaceCredentialEnv(env);
   const applied = applyClaudeInject(env, model);
   if (!applied.injected) delete env.ANTHROPIC_API_KEY;
   return env;
@@ -177,6 +181,7 @@ type AskResolutionSource = "user" | "timeout" | "system";
 const DENY_TIMEOUT_NOTE =
   "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 const QUESTION_TIMEOUT_NOTE = "OpenMausBot: nobody answered in time. Use your best judgment and continue.";
+const DUPLICATE_ASK_ID_NOTE = "OpenMausBot: duplicate ask id — skipping this request.";
 
 /** One human-readable line for an ask — what the card subtitle shows. */
 function askSummary(ask: Ask): string {
@@ -189,8 +194,18 @@ function askSummary(ask: Ask): string {
 }
 
 export function permissionSocketPath(threadId: string) {
-  const tag = threadId.replace(/[^\w-]/g, "").slice(0, 8);
-  return brokerSocketPath(DATA_DIR, tag);
+  // A readable prefix alone is not unique: ids that agree on their first
+  // characters ("t-perm-dup-1", "t-perm-dup-2") would share a socket. POSIX
+  // hides that — a new broker's listen replaces the socket FILE, so the name
+  // always points at the fresh server — but Windows named pipes live in a
+  // global namespace that is never unlinked, and a reused name races the
+  // previous broker's async teardown. Half the tag is a digest of the FULL
+  // id so distinct threads get distinct sockets; the tag stays at 8 chars
+  // total because the POSIX path already brushes the 104-byte sun_path
+  // limit under deep tmp home dirs.
+  const prefix = threadId.replace(/[^\w-]/g, "").slice(0, 4);
+  const digest = createHash("sha256").update(threadId).digest("hex").slice(0, 4);
+  return brokerSocketPath(DATA_DIR, `${prefix}${digest}`);
 }
 
 function createPermissionBroker(opts: {
@@ -224,6 +239,22 @@ function createPermissionBroker(opts: {
         }
         if (msg.t !== "ask") continue;
         const askId = String(msg.id ?? newId());
+        // `pending` is server-scoped, not per-connection: two asks with the
+        // same id — a buggy/adversarial client, never a legitimate retry
+        // (permission-proxy mints a fresh randomUUID per ask) — would
+        // otherwise let the second `pending.set` silently overwrite the
+        // first, orphaning it as an unanswerable card once the first
+        // resolves and deletes the shared key. Reject before either ask
+        // becomes visible to onAsk.
+        if (pending.has(askId)) {
+          // askId is client-controlled; JSON.stringify escapes newlines and
+          // control characters so it can't corrupt the log line or terminal.
+          console.error(`permission broker on ${opts.socketPath}: duplicate ask id ${JSON.stringify(askId)} — denying`);
+          try {
+            conn.write(JSON.stringify({ t: "answer", id: askId, behavior: "deny", message: DUPLICATE_ASK_ID_NOTE }) + "\n");
+          } catch {}
+          continue;
+        }
         const kind = msg.kind === "question" ? ("question" as const) : ("permission" as const);
         const ask: Ask = { id: askId, kind, tool: msg.tool ?? "tool", input: msg.input ?? {}, at: Date.now() };
         const finish = (behavior: AskBehavior, message: string | undefined, source: AskResolutionSource) => {
@@ -350,6 +381,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
+      if (controlsHost && config.permissionMode === "bypassPermissions") {
+        throw new Error("local computer control requires the interactive approval broker");
+      }
       const turnId = newId();
       const sessionId = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
       const newSessionId = sessionId ? null : newId();
@@ -388,11 +423,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         };
         allowed.push("mcp__computer");
       } else if (turn.integrations?.localComputer) {
-        // A direct Cua Driver MCP connection. This can be the Electron-owned
-        // host daemon or the isolated Local VM; the agent sees the same
-        // "computer" server either way.
-        mcpServers.computer = { ...turn.integrations.localComputer };
-        allowed.push("mcp__computer");
+        const local = turn.integrations.localComputer;
+        mcpServers.computer = {
+          command: local.command,
+          args: local.args,
+          env: local.env,
+        };
+        // The isolated Local VM preserves the established pre-allow behavior.
+        // Host tools always route through OpenMausBot's permission broker.
+        if (!controlsHost) allowed.push("mcp__computer");
       }
       // peer-agent comms (list_bots/ask_bot) — the harness builds the whole
       // spawn contract (command/args/env incl. the boot token) in
@@ -401,6 +440,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (turn.integrations?.agents) {
         mcpServers.agents = { ...turn.integrations.agents };
         allowed.push("mcp__agents");
+      }
+      if (turn.integrations?.phone) {
+        mcpServers.phone = { ...turn.integrations.phone };
+        allowed.push("mcp__phone");
       }
       // dweb network daemon (status / repo / opencode model access) via
       // server/drivers/dweb-proxy.ts — points at the configured dweb instance
@@ -431,6 +474,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               requestType: ask.kind,
               tool: ask.tool,
               summary: askSummary(ask),
+              approvalScope: controlsHost ? "local-computer" : undefined,
               choices: Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
             }),
           onResolve: (resolved) =>
@@ -440,6 +484,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               requestId: resolved.id,
               behavior: resolved.behavior,
               source: resolved.source,
+              approvalScope: controlsHost ? "local-computer" : undefined,
             }),
         });
         args.push("--permission-prompt-tool", "mcp__ogb__approve");
@@ -657,7 +702,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           agentsMcp: true,
           computerMcp: true,
           composioMcp: true,
+          phoneMcp: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],
+          localComputerMcp: config.permissionMode !== "bypassPermissions",
         },
         sendTurn,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),
@@ -684,7 +731,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           execCli(
             config.cli,
             ["-p", prompt, "--model", "claude-haiku-4-5", "--output-format", "text"],
-            { timeout: 60_000, env: { ...process.env, PATH: augmentedPath() } },
+            { timeout: 60_000, env: claudeEnvironment("claude-haiku-4-5") },
             (err, stdout) => (err ? reject(err) : resolve(stdout.trim())),
           );
         }),

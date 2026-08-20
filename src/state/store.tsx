@@ -13,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { EffortLevel } from "../../server/contracts.ts";
+import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
@@ -37,6 +37,7 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  approvalScope?: "local-computer";
 }
 
 export interface ConnectorCardData {
@@ -153,6 +154,8 @@ export interface Bot {
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "off";
+  /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
+  cloudBackend?: CloudBackend;
   /** where new tasks run their shell tools; absent = the private bot workspace */
   cwd?: string;
   /** auto mode: the bot approves its own tool permissions */
@@ -210,6 +213,7 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
   box: { configured: boolean };
+  vps: { configured: boolean; sshAlias: string };
   opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
@@ -248,6 +252,7 @@ export interface InstanceInfo {
     agentsMcp?: boolean;
     composioMcp?: boolean;
     effortLevels?: readonly EffortLevel[];
+    localComputerMcp?: boolean;
   };
   /** `custom` agents sit below the rail divider — no subscription catalog. */
   access?: "subscription" | "custom";
@@ -294,6 +299,10 @@ export interface AppState {
   screens: Record<string, { png: string; mime: string }>;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
+  /** who is driving each bot's computer: held = the person has the wheel
+   * (the bot's hands are refused server-side); helpReason = the bot's open
+   * plea for the person to take over */
+  computerControl: Record<string, { held: boolean; helpReason: string | null }>;
   /** a search hit to scroll to once its thread is on screen; nonce lets the
    * same message be focused twice in a row */
   focusMessage: { threadId: string; messageId: string; nonce: number; consumed: boolean } | null;
@@ -309,7 +318,12 @@ export interface AppState {
 type BotAnnouncement = Omit<Bot, "messages"> & { messages?: Message[] };
 
 export type Action =
-  | { type: "hydrate"; bots: Bot[]; groups: Group[] }
+  | {
+      type: "hydrate";
+      bots: Bot[];
+      groups: Group[];
+      computerControl: Record<string, { held: boolean; helpReason: string | null }>;
+    }
   | { type: "showRoutines" }
   | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
   | { type: "routinePatched"; routine: Routine }
@@ -372,6 +386,7 @@ export type Action =
   | { type: "messagePatched"; threadId: string; message: Message }
   | { type: "screenFrame"; botId: string; png: string; mime: string }
   | { type: "provisioning"; botId: string; on: boolean }
+  | { type: "computerControl"; botId: string; held: boolean; helpReason: string | null }
   | { type: "setModel"; botId: string; selection: ModelSelection }
   | { type: "interrupt"; botId: string }
   | { type: "connected"; value: boolean }
@@ -394,6 +409,7 @@ export type Action =
           | "description"
           | "notifications"
           | "computer"
+          | "cloudBackend"
           | "color"
           | "mascotExpression"
           | "autoApprove"
@@ -443,7 +459,13 @@ export function reducer(state: AppState, action: Action): AppState {
       const known = (id: string) => action.bots.some((b) => b.id === id) || action.groups.some((g) => g.id === id);
       const selectedId =
         state.selectedId && known(state.selectedId) ? state.selectedId : (action.bots[0]?.id ?? "");
-      return { ...state, bots: action.bots, groups: action.groups, selectedId };
+      return {
+        ...state,
+        bots: action.bots,
+        groups: action.groups,
+        computerControl: action.computerControl,
+        selectedId,
+      };
     }
     case "showRoutines":
       return {
@@ -688,6 +710,14 @@ export function reducer(state: AppState, action: Action): AppState {
         ...(action.on ? withMascotMotion(state, action.botId, "launch") : state),
         provisioning: { ...state.provisioning, [action.botId]: action.on },
       };
+    case "computerControl":
+      return {
+        ...state,
+        computerControl: {
+          ...state.computerControl,
+          [action.botId]: { held: action.held, helpReason: action.helpReason },
+        },
+      };
     case "setModel":
       return updateBot(state, action.botId, (b) => ({ ...b, modelSelection: action.selection }));
     case "connected":
@@ -772,7 +802,10 @@ export function reducer(state: AppState, action: Action): AppState {
             ),
           }
         : animated;
-      return updateBot(next, action.botId, (b) => ({ ...b, ...action.patch }));
+      return updateBot(next, action.botId, (b) => {
+        const merged = { ...b, ...action.patch };
+        return merged.computer === "local" ? { ...merged, autoApprove: false } : merged;
+      });
     }
     case "threadActive": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
@@ -869,6 +902,7 @@ export const initialState: AppState = {
   appSettingsSection: "general",
   screens: {},
   provisioning: {},
+  computerControl: {},
   focusMessage: null,
   connected: false,
   error: null,
@@ -1099,6 +1133,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   notifications: source.notifications,
                   modelSelection: source.modelSelection,
                   ...(source.computer ? { computer: source.computer } : {}),
+                  ...(source.cloudBackend ? { cloudBackend: source.cloudBackend } : {}),
                 }),
               }).then(({ bot: patched }) =>
                 rawDispatch({ type: "botAdded", bot: { ...bot, ...patched, messages: bot.messages } }),
@@ -1219,7 +1254,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const loadAll = () =>
       Promise.all([
         api("/api/bots")
-          .then(({ bots, groups }) => alive && rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }))
+          .then(({ bots, groups, computerControl }) =>
+            alive && rawDispatch({
+              type: "hydrate",
+              bots,
+              groups: groups ?? [],
+              computerControl: computerControl ?? {},
+            }))
           .catch(() => {}),
         api("/api/instances")
           .then(({ instances }) => alive && rawDispatch({ type: "instances", instances }))
@@ -1397,6 +1438,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "computer":
           rawDispatch({ type: "provisioning", botId: frame.botId, on: frame.state === "provisioning" });
           break;
+        case "computer-control":
+          rawDispatch({
+            type: "computerControl",
+            botId: frame.botId,
+            held: frame.held === true,
+            helpReason: typeof frame.helpReason === "string" ? frame.helpReason : null,
+          });
+          break;
         case "bot.deleted":
           rawDispatch({ type: "deleteBot", botId: frame.botId });
           break;
@@ -1409,6 +1458,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               xai: frame.xai,
               composio: frame.composio,
               box: frame.box,
+              vps: frame.vps,
               tts: frame.tts,
               profile: frame.profile,
             },

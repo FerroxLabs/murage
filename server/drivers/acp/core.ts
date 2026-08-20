@@ -15,6 +15,7 @@
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { homedir } from "node:os";
 
+import { WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
 
 import type {
@@ -170,7 +171,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           PATH: augmentedPath(),
         };
         const allowedCredentials = new Set(support.credentialEnv ?? []);
-        for (const key of PROVIDER_CREDENTIAL_ENV) {
+        // two lists, one rule: foreign PROVIDER keys must not flip a CLI's
+        // billing off its own login, and WORKSPACE credentials (box token,
+        // voice key, …) are the harness's secrets — riding along in
+        // `...process.env` is not a grant. A driver keeps only what its
+        // credentialEnv allowlist names.
+        for (const key of [...PROVIDER_CREDENTIAL_ENV, ...WORKSPACE_CREDENTIAL_ENV]) {
           if (!allowedCredentials.has(key)) delete env[key];
         }
         support.transformEnv?.(env, config);
@@ -254,6 +260,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       const sendTurn = async (turn: SendTurnInput) => {
         const { threadId } = turn;
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+        const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
+        if (controlsHost && config.fullAuto) {
+          throw new Error("local computer control requires interactive provider approvals");
+        }
         const turnId = newId();
         const cwd = turn.cwd ?? config.workspace ?? homedir();
         const env = childEnv();
@@ -370,6 +380,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               requestId,
               behavior: optionId && behavior === "allow" ? "allow" : "deny",
               source: optionId ? source : "system",
+              approvalScope: controlsHost ? "local-computer" : undefined,
             });
           };
           const timer = setTimeout(() => {
@@ -385,6 +396,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             requestType: "permission",
             tool,
             summary,
+            approvalScope: controlsHost ? "local-computer" : undefined,
           });
         };
 
@@ -590,6 +602,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   config,
                   turn: cliTurn,
                 });
+                // initialize's currentModelId is the CLI default (grok-4.6),
+                // not the model this turn asked for. After a successful pin,
+                // report the slug we set so the UI does not claim otherwise.
+                if (!selectedModel && cliTurn.model) selectedModel = cliTurn.model;
               }
             } catch (error) {
               // session.started is the only place the resume cursor is recorded,
@@ -675,6 +691,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             computerMcp: true,
             composioMcp: true,
             effortLevels: support.effortLevels,
+            localComputerMcp: !config.fullAuto,
           },
           sendTurn,
           interruptTurn: async (threadId) => active.get(threadId)?.interrupt(),

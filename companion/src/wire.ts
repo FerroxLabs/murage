@@ -10,14 +10,23 @@
 // point this becomes a no-op rather than a lie, which is the right way for a
 // sidecar to depend on someone else's API: assume nothing, and be correct
 // either way.
+//
+// `sshAlias` is the same story with a different payload: the harness's config
+// status echoes the self-hosted VPS alias — a label naming one of the user's
+// servers — inside `vps`, on both GET /api/config and the `config` SSE frame.
+// The phone only ever renders configured-or-not, so it gets exactly that:
+// `{configured: true}` survives, the host label does not.
 
-/** Recursively drop `resumeCursors`, wherever it appears. */
+/** Keys that are the harness's business, never a device's. */
+const WITHHELD_KEYS = new Set(["resumeCursors", "sshAlias"]);
+
+/** Recursively drop the withheld keys, wherever they appear. */
 export function scrub<T>(value: T): T {
   if (Array.isArray(value)) return value.map(scrub) as unknown as T;
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-      if (key === "resumeCursors") continue;
+      if (WITHHELD_KEYS.has(key)) continue;
       out[key] = scrub(inner);
     }
     return out as T;
