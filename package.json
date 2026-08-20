@@ -12,7 +12,7 @@
     "name": "Milind Soni",
     "email": "46266943+milind-soni@users.noreply.github.com"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "desktopName": "com.openmausbot.app.desktop",
   "type": "module",
   "main": "electron/main.mjs",

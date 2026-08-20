@@ -153,4 +153,5 @@ responses or events, no baking them into argv where another local process could 
 - [ ] macOS-only code is platform-gated; nothing breaks the packaged app
 - [ ] UI changes include before/after screenshots
 
-By contributing you agree your contributions are licensed under the [MIT License](LICENSE).
+By contributing you agree your contributions are licensed under the
+[Apache License, Version 2.0](LICENSE).

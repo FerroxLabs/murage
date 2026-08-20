@@ -293,7 +293,7 @@ small; adding a provider is one file in [`server/drivers/`](server/drivers/) plu
 
 ## License
 
-[MIT](LICENSE) © 2026 Milind Soni and contributors.
+[Apache License 2.0](LICENSE) © 2026 Milind Soni and OpenMausBot contributors.
 
 Packaged Cua Driver components retain their upstream MIT, SIL OFL 1.1, MPL-2.0, and other dependency terms;
 the corresponding notices, license texts, source locations, and SBOM are in
