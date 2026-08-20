@@ -32,10 +32,22 @@ try {
     writeFileSync(zip, Buffer.from(await response.arrayBuffer()));
     const extraction = join(temporary, "extracted");
     mkdirSync(extraction);
-    const command = process.platform === "win32" ? "tar" : "unzip";
-    const args = process.platform === "win32" ? ["-xf", zip, "-C", extraction] : ["-q", zip, "-d", extraction];
-    const result = spawnSync(command, args, { encoding: "utf8" });
-    if (result.status !== 0) throw new Error(`${command} failed: ${(result.stderr || result.stdout).trim()}`);
+    // git-bash ships GNU tar (cannot read .zip) but has unzip; a native
+    // Windows shell has tar (bsdtar, zip-capable) but no unzip. Try unzip
+    // first and fall back to tar so either environment extracts cleanly.
+    // git-bash's tar also treats a "C:" drive prefix in an absolute -C path
+    // as a remote host, so normalize Windows paths to MSYS/POSIX form.
+    const toMsys = (p) => p.replace(/\\/g, "/").replace(/^([A-Za-z]):/, "/$1");
+    const extractors = process.platform === "win32"
+      ? [["unzip", ["-q", zip, "-d", extraction]], ["tar", ["-xf", toMsys(zip), "-C", toMsys(extraction)]]]
+      : [["unzip", ["-q", zip, "-d", extraction]]];
+    let result;
+    for (const [command, args] of extractors) {
+      result = spawnSync(command, args, { encoding: "utf8" });
+      if (result.status === 0) break;
+      console.error(`${command} failed: ${(result.stderr || result.stdout).trim()} — trying next`);
+    }
+    if (result.status !== 0) throw new Error(`could not extract Android Platform Tools: ${(result.stderr || result.stdout).trim()}`);
     cpSync(join(extraction, "platform-tools"), staged, { recursive: true });
   }
 
