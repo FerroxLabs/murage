@@ -127,10 +127,12 @@ function tomlRowKey(row: string): string {
   return unquoteTomlKey(eq < 0 ? row : row.slice(0, eq));
 }
 
-/** Walk `text` and yield tables, skipping `[` inside strings (including multiline). */
+/** Walk `text` and yield `[table]` spans. `[[array]]` headings bound a table
+ *  but are not themselves patchable. `#` comments in `out` mode are skipped
+ *  so an apostrophe in a comment cannot open a phantom string. */
 function tomlTables(text: string): Array<{ name: string; headingStart: number; bodyStart: number; end: number }> {
   type Mode = "out" | "basic" | "literal" | "mlbasic" | "mllit";
-  const headings: Array<{ name: string; lineStart: number; lineEnd: number }> = [];
+  const headings: Array<{ name: string | null; patchable: boolean; lineStart: number; lineEnd: number }> = [];
   let mode: Mode = "out";
   let i = 0;
   const atLineStart = (idx: number) => idx === 0 || text[idx - 1] === "\n";
@@ -187,26 +189,42 @@ function tomlTables(text: string): Array<{ name: string; headingStart: number; b
       i += 1;
       continue;
     }
+    if (text[i] === "#") {
+      const nl = text.indexOf("\n", i);
+      i = nl < 0 ? text.length : nl + 1;
+      continue;
+    }
     if (atLineStart(i)) {
       let j = i;
       while (j < text.length && (text[j] === " " || text[j] === "\t")) j += 1;
       if (text[j] === "[") {
         const nl = text.indexOf("\n", j);
         const lineEnd = nl < 0 ? text.length : nl;
-        const name = canonicalizeTomlHeading(text.slice(j, lineEnd).replace(/\r$/, ""));
-        if (name) headings.push({ name, lineStart: i, lineEnd });
+        const raw = text.slice(j, lineEnd).replace(/\r$/, "");
+        const stripped = stripTomlLineComment(raw).trim();
+        const array = stripped.startsWith("[[");
+        const name = array
+          ? canonicalizeTomlHeading(`[${stripped.replace(/^\s*\[\[/, "").replace(/\]\]\s*$/, "")}]`)
+          : canonicalizeTomlHeading(raw);
+        headings.push({ name, patchable: !array && name !== null, lineStart: i, lineEnd });
         i = lineEnd + (nl < 0 ? 0 : 1);
         continue;
       }
     }
     i += 1;
   }
-  return headings.map((heading, index) => ({
-    name: heading.name,
-    headingStart: heading.lineStart,
-    bodyStart: heading.lineEnd + (text[heading.lineEnd] === "\n" ? 1 : 0),
-    end: index + 1 < headings.length ? headings[index + 1]!.lineStart : text.length,
-  }));
+  return headings
+    .map((heading, index) => ({
+      heading,
+      end: index + 1 < headings.length ? headings[index + 1]!.lineStart : text.length,
+    }))
+    .filter((entry) => entry.heading.patchable && entry.heading.name)
+    .map((entry) => ({
+      name: entry.heading.name!,
+      headingStart: entry.heading.lineStart,
+      bodyStart: entry.heading.lineEnd + (text[entry.heading.lineEnd] === "\n" ? 1 : 0),
+      end: entry.end,
+    }));
 }
 
 /** Keys assigned at line start in a table body, including `"quoted"` keys. */

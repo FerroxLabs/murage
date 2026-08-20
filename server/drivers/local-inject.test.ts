@@ -402,6 +402,53 @@ describe("ensureKimiInjectAlias", () => {
     expect(text).toContain('protocol = "openai"');
   });
 
+  it("does not hide a model table behind an apostrophe in a preceding comment", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-apos-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      [
+        "# user's setting",
+        '[models."omlx/GLM-5.2-fp8"]',
+        'provider = "omlx"',
+        'model = "GLM-5.2-fp8"',
+        "",
+      ].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text.match(/\[models\./g)?.length).toBe(1);
+    expect(text).toContain("# user's setting");
+    expect(text).toContain('protocol = "openai"');
+    expect(text).toContain("max_context_size = 262144");
+  });
+
+  it("stops a model table before a following array-of-tables heading", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-aot-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      [
+        '[models."omlx/GLM-5.2-fp8"]',
+        'provider = "omlx"',
+        'model = "GLM-5.2-fp8"',
+        "",
+        "[[hooks]]",
+        'event = "Stop"',
+        "",
+      ].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text.indexOf('protocol = "openai"')).toBeLessThan(text.indexOf("[[hooks]]"));
+    expect(text.indexOf("max_context_size = 262144")).toBeLessThan(text.indexOf("[[hooks]]"));
+    expect(text).toMatch(/\[\[hooks\]\]\s*event = "Stop"/);
+  });
+
   it("treats whitespace around dotted heading keys as the same table", () => {
     const home = mkdtempSync(join(tmpdir(), "omb-kimi-dots-"));
     scratchDirs.push(home);
