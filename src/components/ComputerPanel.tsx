@@ -434,10 +434,27 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const run = (kind: "join" | "sleep" | "provision") => {
     setPending(kind);
     setError(null);
+    // Pop-up blockers only allow windows opened synchronously inside the click,
+    // so pre-open the tab before the request and point it at the join URL once
+    // minted (same pattern as ConnectorCard); Electron keeps using openExternal.
+    let joinTab: Window | null = null;
+    if (kind === "join" && !window.ogb?.openExternal) {
+      joinTab = window.open("", "_blank");
+      if (joinTab) joinTab.opener = null;
+    }
     api(`/api/bots/${bot.id}/computer/${kind}`, { method: "POST" })
-      .then((result) => {
+      .then(async (result) => {
         // the join URL's stream token rotates — always freshly minted, never cached
-        if (kind === "join" && result.joinUrl) window.open(result.joinUrl, "_blank", "noopener");
+        if (kind === "join") {
+          if (!result.joinUrl) throw new Error("The computer did not return a join link");
+          if (joinTab) joinTab.location.replace(result.joinUrl);
+          else if (window.ogb?.openExternal) {
+            const opened = await window.ogb.openExternal(result.joinUrl);
+            if (!opened) throw new Error("OpenMausBot could not open the computer join link");
+          } else if (!window.open(result.joinUrl, "_blank", "noopener")) {
+            throw new Error("Your browser blocked the computer join tab");
+          }
+        }
         if (kind === "provision") {
           setBoxState(result.container ?? null);
           if (result.ready) setPhase("ready");
@@ -451,7 +468,10 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           if (cloudBackend === "vps") setPhase("vps-stopped");
         }
       })
-      .catch((e) => setError(e.message))
+      .catch((e) => {
+        joinTab?.close();
+        setError(e.message);
+      })
       .finally(() => setPending(null));
   };
 
