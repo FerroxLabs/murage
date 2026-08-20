@@ -32,6 +32,7 @@ declare global {
       message?: string;
       driverPath?: string;
       driverVersion?: string;
+      driverSource?: "bundled" | "environment" | "user-local" | "path";
       session?: "x11" | "wayland" | "headless" | "unknown";
       compositor?: "gnome-mutter";
     };
@@ -106,6 +107,7 @@ export interface LinuxLocalControlStatus {
   message?: string;
   driverPath?: string;
   driverVersion?: string;
+  driverSource?: "bundled" | "environment" | "user-local" | "path";
   session?: "x11" | "wayland" | "headless" | "unknown";
   compositor?: "gnome-mutter";
   warnings?: Array<{ label: string; status: string; message: string; detail?: string }>;

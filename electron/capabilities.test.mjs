@@ -109,7 +109,11 @@ describe("desktop capabilities", () => {
       session: "x11",
       enabled: true,
       status: "ready",
-      driver: { path: "/home/test/.local/bin/cua-driver", version: "0.19.3" },
+      driver: {
+        path: "/home/test/.local/bin/cua-driver",
+        version: "0.19.3",
+        source: "user-local",
+      },
     };
     expect(
       desktopCapabilities({
@@ -123,6 +127,7 @@ describe("desktop capabilities", () => {
       enabled: true,
       status: "ready",
       driverVersion: "0.19.3",
+      driverSource: "user-local",
     });
     expect(localComputerReady("linux", { ...connection, session: "wayland" })).toBe(false);
     expect(localComputerReady("linux", { ...connection, status: "starting" })).toBe(false);

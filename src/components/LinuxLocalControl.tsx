@@ -12,7 +12,8 @@ import {
 import { cn } from "@/lib/cn";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
-const INSTALL_URL = "https://cua.ai/docs/how-to-guides/driver/install";
+const LINUX_GUIDE_URL =
+  "https://github.com/milind-soni/OpenMausBot/blob/main/docs/linux-desktop.md#enable-local-control";
 
 export function LinuxLocalControl() {
   const { capabilities } = useDesktopCapabilities();
@@ -24,6 +25,7 @@ export function LinuxLocalControl() {
   const busy = pending !== null || local.status === "checking" || local.status === "starting";
   const ready = local.available;
   const wayland = capabilities.host.session === "wayland";
+  const bundledDriver = local.driverSource === "bundled";
 
   const run = async (action: "enable" | "disable" | "retry") => {
     if (!window.ogb?.localControl) return;
@@ -93,7 +95,7 @@ export function LinuxLocalControl() {
           </div>
           {local.driverPath && (
             <div className="mt-2 break-all font-mono text-[10px] text-ink-secondary/80" title={local.driverPath}>
-              {local.driverPath}
+              {bundledDriver ? "Bundled Cua Driver" : local.driverPath}
               {local.driverVersion ? ` · ${local.driverVersion}` : ""}
             </div>
           )}
@@ -141,10 +143,11 @@ export function LinuxLocalControl() {
 
       <button
         type="button"
-        onClick={() => window.open(INSTALL_URL, "_blank", "noopener,noreferrer")}
+        onClick={() => window.open(LINUX_GUIDE_URL, "_blank", "noopener,noreferrer")}
         className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-[11px] text-ink-secondary hover:bg-raised hover:text-ink"
       >
-        Installation and troubleshooting <ExternalLink size={11} />
+        {capabilities.host.packaged ? "Local control guide" : "Driver setup and troubleshooting"}{" "}
+        <ExternalLink size={11} />
       </button>
     </section>
   );

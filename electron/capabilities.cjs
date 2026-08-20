@@ -102,6 +102,9 @@ function desktopCapabilities({
   if (typeof localConnection?.driver?.version === "string") {
     localComputer.driverVersion = localConnection.driver.version;
   }
+  if (typeof localConnection?.driver?.source === "string") {
+    localComputer.driverSource = localConnection.driver.source;
+  }
   if (typeof localConnection?.session === "string") {
     localComputer.session = localConnection.session;
   }

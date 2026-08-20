@@ -12,6 +12,7 @@ const {
   cleanupStaleRuntimeDirectories,
   createLinuxCuaPreferenceStore,
   createLinuxCuaRuntime,
+  createUnavailableLinuxRuntime,
   probePrivateDaemon,
   validateDaemonMetadata,
   validateToolSurface,
@@ -189,6 +190,55 @@ afterEach(() => {
   }
 });
 
+describe("unavailable Linux CUA runtime", () => {
+  it("fails closed without rejecting any IPC-facing operation", async () => {
+    const persisted = [];
+    const changed = [];
+    const runtime = createUnavailableLinuxRuntime({
+      connectionStore: { persist: (connection) => persisted.push(connection) },
+      onChange: (connection) => changed.push(connection),
+      processId: 1234,
+    });
+
+    for (const operation of ["initialize", "enable", "retry", "disable", "shutdown"]) {
+      await expect(runtime[operation]()).resolves.toMatchObject({
+        mode: "unavailable",
+        status: "unavailable",
+        reasonCode: "bundled-driver-invalid",
+      });
+    }
+    expect(runtime.getStatus()).toEqual({
+      enabled: false,
+      status: "unavailable",
+      reasonCode: "bundled-driver-invalid",
+      message: "The bundled Cua Driver failed integrity validation.",
+      driverPath: undefined,
+      driverVersion: undefined,
+      driverSource: undefined,
+      session: undefined,
+      compositor: undefined,
+      warnings: [],
+    });
+    expect(persisted).toHaveLength(1);
+    expect(changed).toHaveLength(1);
+  });
+
+  it("still returns a typed status if persisting the failure is unavailable", () => {
+    const runtime = createUnavailableLinuxRuntime({
+      connectionStore: {
+        persist() {
+          throw new Error("read-only user data");
+        },
+      },
+    });
+    expect(runtime.getStatus()).toMatchObject({
+      enabled: false,
+      status: "unavailable",
+      reasonCode: "bundled-driver-invalid",
+    });
+  });
+});
+
 // Windows does not provide the POSIX executable and Unix-socket semantics this
 // lifecycle contract exercises. Canonical short temp paths keep it portable
 // across Linux and macOS.
@@ -229,6 +279,21 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
       status: "disabled",
       reasonCode: "opt-in-required",
     });
+  });
+
+  it("passes the exact packaged candidate and architecture into inspection", async () => {
+    const bundledDriverPath = "/opt/OpenMausBot/resources/cua-linux-x64/cua-driver";
+    const context = harness({
+      runtimeOptions: { bundledDriverPath, arch: "x64" },
+    });
+    await context.runtime.enable();
+    expect(context.inspect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        platform: "linux",
+        arch: "x64",
+        bundledDriverPath,
+      }),
+    );
   });
 
   it("publishes a retryable error when driver inspection throws", async () => {
@@ -286,6 +351,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
       driver: {
         path: context.binary,
         version: "0.19.3",
+        source: "environment",
         manifestSchema: "1",
         fileIdentity: validateDriverCandidate(context.binary).fileIdentity,
       },
