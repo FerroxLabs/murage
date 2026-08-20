@@ -84,6 +84,7 @@ import { memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { loadBundledSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
+import { shouldMountLocalComputer } from "./local-routing.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.OMB_WEBHOOK_PORT || PORT + 1);
@@ -670,6 +671,7 @@ bus.subscribe((event: RuntimeEvent) => {
       const settled = permission && asker && event.requestId
         ? autoDecision(asker, event.tool, event.summary, {
             unattended: isUnattended(asker.id),
+            scope: event.approvalScope,
           })
         : null;
       if (settled && asker && event.requestId) {
@@ -704,8 +706,14 @@ bus.subscribe((event: RuntimeEvent) => {
                 options: ["Allow", "Deny"],
                 requestId,
                 tool,
-                allowKey: approvalKey(tool, summary),
-                held: "Auto mode couldn't answer this one.",
+                allowKey: event.approvalScope
+                  ? undefined
+                  : approvalKey(tool, summary, event.approvalScope),
+                held:
+                  event.approvalScope === "local-computer"
+                    ? "Local computer actions always require your approval in this beta."
+                    : "Auto mode couldn't answer this one.",
+                approvalScope: event.approvalScope,
               },
             });
             askMessageByRequest.set(`${event.threadId}:${requestId}`, card.id);
@@ -717,16 +725,30 @@ bus.subscribe((event: RuntimeEvent) => {
         role: "bot",
         kind: "options",
         card: {
-          title: permission ? "Approval needed" : "Your bot has a question",
+          title:
+            permission && event.approvalScope === "local-computer"
+              ? "Local computer approval"
+              : permission
+                ? "Approval needed"
+                : "Your bot has a question",
           subtitle: event.summary,
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
           tool: permission ? event.tool : undefined,
           // the exact grant "always allow" would remember, decided here so
           // client and server can never derive it differently
-          allowKey: permission ? approvalKey(event.tool, event.summary) : undefined,
+          allowKey:
+            permission && !event.approvalScope
+              ? approvalKey(event.tool, event.summary, event.approvalScope)
+              : undefined,
           // in auto mode a card can only mean the guard stopped it — say so
-          held: permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
+          held:
+            permission && event.approvalScope === "local-computer"
+              ? "Local computer actions always require your approval in this beta."
+              : permission && asker?.autoApprove
+                ? "This looked destructive, so auto mode stopped to ask."
+                : undefined,
+          approvalScope: event.approvalScope,
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
@@ -1258,6 +1280,7 @@ async function startTurn(
       const cloudBackend = opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
       const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
+      const mountsLocalComputer = instance.adapter.capabilities.localComputerMcp === true;
       let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
       let computerKind: "box" | "vps" | "vm" | "local" | null = null;
 
@@ -1285,7 +1308,11 @@ async function startTurn(
         integrations.localComputer = containerComputerMcp(localVm.runtime);
         computerKind = "vm";
       } else if (wants === "local") {
-        if (!mountsComputerMcp) {
+        if (!shouldMountLocalComputer({
+          requested: "local",
+          hostPlatform: process.platform,
+          providerSupportsLocal: mountsLocalComputer,
+        })) {
           throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
         }
         const cua = readCuaConnection();
@@ -1358,7 +1385,16 @@ async function startTurn(
 
       // Auto-only host fallback. Electron owns cua-driver/TCC attribution;
       // the harness only reads its already-running connection descriptor.
-      if (!integrations.computer && !integrations.localComputer && wants === undefined && mountsComputerMcp) {
+      if (
+        !integrations.computer &&
+        !integrations.localComputer &&
+        wants === undefined &&
+        shouldMountLocalComputer({
+          requested: undefined,
+          hostPlatform: process.platform,
+          providerSupportsLocal: mountsLocalComputer,
+        })
+      ) {
         const cua = readCuaConnection();
         if (cua) {
           integrations.localComputer = cua;
@@ -2832,7 +2868,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "PATCH") {
       const body = await readBody(req);
-      const existing = store.bot(m[1]);
+      const existingBot = store.bot(m[1]);
       // Neither Codex (free-form string field) nor Grok (lazy, logs-only)
       // rejects an unknown effort level at their own boundary — this is the
       // only real gate, so it stays. But it fires only when the target
@@ -2851,7 +2887,7 @@ const server = createServer(async (req, res) => {
         if (!isEffortLevel(nextSelection.effort)) {
           return json(res, 400, { error: `effort "${String(nextSelection.effort)}" is not recognized` });
         }
-        const target = registry.get(nextSelection.instanceId ?? existing?.modelSelection.instanceId ?? "");
+        const target = registry.get(nextSelection.instanceId ?? existingBot?.modelSelection.instanceId ?? "");
         // typed as strings, not levels: this is the boundary that decides
         // whether the value *is* a level, so it must not assert that it is
         const allowed: readonly string[] = target?.adapter.capabilities.effortLevels ?? [];
@@ -2890,11 +2926,12 @@ const server = createServer(async (req, res) => {
       if (body.cloudBackend !== undefined && !["box", "vps"].includes(String(body.cloudBackend))) {
         return json(res, 400, { error: "cloudBackend must be box or vps" });
       }
+      const effectiveComputer = body.computer ?? existingBot?.computer;
       if (body.chiefOfStaff !== undefined && typeof body.chiefOfStaff !== "boolean") {
         return json(res, 400, { error: "chiefOfStaff must be true or false" });
       }
       if (body.cloudBackend !== undefined) {
-        const backendError = cloudBackendChangeError(Boolean(existing?.busy), activeVpsThreads.has(m[1]));
+        const backendError = cloudBackendChangeError(Boolean(existingBot?.busy), activeVpsThreads.has(m[1]));
         if (backendError) return json(res, 409, { error: backendError });
       }
       if (body.cwd !== undefined) {
@@ -2902,7 +2939,7 @@ const server = createServer(async (req, res) => {
         if (!checked.ok) return json(res, 400, { error: checked.error });
         patch.cwd = checked.cwd ?? undefined;
       }
-      if (body.hidden === true && existing?.chiefOfStaff && body.chiefOfStaff !== false) {
+      if (body.hidden === true && existingBot?.chiefOfStaff && body.chiefOfStaff !== false) {
         return json(res, 400, { error: "choose another Chief of Staff before hiding this bot" });
       }
       // the permission fields decide what runs unattended, so they are
@@ -2910,6 +2947,9 @@ const server = createServer(async (req, res) => {
       // still answer .includes() — with substring matches, not tool names
       if (body.autoApprove !== undefined) {
         if (typeof body.autoApprove !== "boolean") return json(res, 400, { error: "autoApprove must be true or false" });
+        if (body.autoApprove === true && effectiveComputer === "local") {
+          return json(res, 400, { error: "Auto mode is unavailable while this bot uses the local computer beta" });
+        }
         patch.autoApprove = body.autoApprove;
       }
       if (body.approvePeerComms !== undefined) {
@@ -2924,6 +2964,15 @@ const server = createServer(async (req, res) => {
         }
         patch.alwaysAllow = [...new Set(body.alwaysAllow as string[])].slice(0, 200);
       }
+      if (effectiveComputer === "local" && body.autoApprove === undefined && existingBot?.autoApprove) {
+        patch.autoApprove = false;
+      }
+      if (existingBot?.computer === "local" && body.computer !== undefined && body.computer !== "local") {
+        await registry
+          .get(existingBot.modelSelection.instanceId)
+          ?.adapter.interruptTurn(existingBot.threadId)
+          .catch(() => {});
+      }
       const bot = store.patchBot(m[1], patch);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const chiefChanges =
@@ -2936,6 +2985,21 @@ const server = createServer(async (req, res) => {
       const changed = new Map([[bot.id, store.bot(bot.id)!]]);
       for (const changedBot of chiefChanges) changed.set(changedBot.id, changedBot);
       return json(res, 200, { bot: wireBot(bot) });
+    }
+
+    if (method === "POST" && path === "/api/local-computer/interrupt") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await Promise.allSettled(
+        store.bots
+          .filter((bot) => bot.computer === "local")
+          .map((bot) =>
+            registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId),
+          )
+          .filter((turn): turn is Promise<void> => Boolean(turn)),
+      );
+      return json(res, 200, { ok: true });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "DELETE") {

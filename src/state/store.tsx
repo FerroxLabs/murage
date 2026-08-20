@@ -37,6 +37,7 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  approvalScope?: "local-computer";
 }
 
 export interface ConnectorCardData {
@@ -251,6 +252,7 @@ export interface InstanceInfo {
     agentsMcp?: boolean;
     composioMcp?: boolean;
     effortLevels?: readonly EffortLevel[];
+    localComputerMcp?: boolean;
   };
   /** `custom` agents sit below the rail divider — no subscription catalog. */
   access?: "subscription" | "custom";
@@ -776,7 +778,10 @@ export function reducer(state: AppState, action: Action): AppState {
             ),
           }
         : animated;
-      return updateBot(next, action.botId, (b) => ({ ...b, ...action.patch }));
+      return updateBot(next, action.botId, (b) => {
+        const merged = { ...b, ...action.patch };
+        return merged.computer === "local" ? { ...merged, autoApprove: false } : merged;
+      });
     }
     case "threadActive": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);

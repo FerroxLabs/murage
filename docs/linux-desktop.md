@@ -11,11 +11,16 @@ of Linux desktop on your own server instead of this machine, see [byo-vps.md](by
 - Chat, streaming turns, approvals, bot-to-bot communication, and local data storage.
 - Composio connected apps and Box cloud computers.
 - External documentation and OAuth links in the default browser.
+- An explicit, view-only local screen preview on GNOME Xorg and GNOME Wayland. The Wayland path uses the
+  native portal chooser and keeps the selected PipeWire stream open until the user stops sharing.
+- An explicit local-computer control beta on GNOME/Xorg and guarded GNOME/Wayland with user-installed Cua
+  Driver 0.19.3 and an approval-capable Claude or ACP provider.
 
-The first beta intentionally does **not** claim Linux dictation, local screen preview, or control of this
-computer. Those controls are unavailable in the UI and fail closed in the Electron and server layers. Use a
-Cloud box when a bot needs a computer. Xorg computer control, Wayland validation, bundled CUA, dictation, and
-ARM64 are follow-ups in [issue #29](https://github.com/milind-soni/OpenMausBot/issues/29).
+The local preview does **not** give the bot control of this computer by itself. Local control is a separate,
+off-by-default beta. Bundled CUA, Linux dictation, and ARM64 remain unavailable and fail closed; follow their
+progress in [issue #29](https://github.com/milind-soni/OpenMausBot/issues/29). Xorg is tracked in
+[issue #79](https://github.com/milind-soni/OpenMausBot/issues/79), and guarded GNOME/Wayland support in
+[issue #109](https://github.com/milind-soni/OpenMausBot/issues/109).
 
 ## Build packages
 
@@ -106,13 +111,124 @@ Restart OpenMausBot after installing or signing in to a CLI.
 
 ## Xorg and Wayland
 
-The baseline shell, chat, cloud computers, and connected apps work in both GNOME session types. OpenMausBot
-detects Wayland before XWayland when both `WAYLAND_DISPLAY` and `DISPLAY` exist, so future capture features do
-not accidentally bypass portal-mediated behavior.
+The shell, chat, cloud computers, connected apps, and preview-only capture work in both GNOME session types.
+The Wayland chooser/select/persistent-stream/cancel/end/retry lifecycle has been validated in a real Ubuntu
+24.04 GNOME Wayland session. OpenMausBot detects Wayland before XWayland when both `WAYLAND_DISPLAY` and
+`DISPLAY` exist, so capture cannot accidentally bypass portal-mediated behavior.
 
-Local computer control remains disabled on both session types in this beta. Future Xorg support will require a
-validated `cua-driver`; Wayland support will remain disabled until the exact GNOME/Mutter action surface has
-real capture, input, scaling, permission, and lifecycle evidence.
+Open the Computer panel and use the separate **Preview this computer** card. Capture never starts when the app
+or panel opens.
+
+- **Xorg:** **Start preview** captures the primary monitor directly.
+- **Wayland:** **Choose a screen** opens the GNOME portal chooser once. The selected stream stays open until
+  you press **Stop preview**, close the panel, end sharing from GNOME, or quit the app.
+
+Cancelling or ending Wayland sharing returns to a calm **Try again** state and never reopens the chooser
+automatically. OpenMausBot does not capture screen audio, remember the selected monitor after restart, or
+offer an **Open Settings** action on Linux.
+
+Local computer control is a separate opt-in. On Wayland, OpenMausBot recognizes only GNOME/Mutter and requires
+the certified Cua health report to pass AT-SPI, portal capture, and the portal/libei input backend with verified
+WinRects target activation. Other Wayland compositors remain unavailable. XWayland's `DISPLAY` never bypasses
+these checks.
+
+## Enable local control
+
+This beta deliberately uses a user-installed driver. OpenMausBot does not bundle, download, update, or stop a
+global Cua daemon. The certified contract is **Cua Driver 0.19.3**, manifest schema `1`, on Ubuntu 24.04 x64
+GNOME/Xorg or GNOME/Wayland. OpenMausBot owns a separate private daemon only after the user enables the beta.
+
+Install the exact x86_64 asset from the
+[official 0.19.3 release](https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.19.3).
+The upstream release does not currently provide a signature or GitHub artifact attestation for this asset, so
+OpenMausBot pins its published SHA-256 here and verifies it before extraction. Do not pipe a remote installer
+directly into a shell:
+
+```sh
+version="0.19.3"
+target="x86_64-unknown-linux-gnu"
+asset="cua-driver-rs-${version}-linux-x86_64-binary.tar.gz"
+release_url="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${version}"
+download_dir="$(mktemp -d)"
+
+curl --fail --location --proto '=https' --tlsv1.2 \
+  --output "$download_dir/$asset" "$release_url/$asset"
+printf '%s  %s\n' \
+  '3db9d4257d84bacaf7eb104d225f85613ce67edbb20d6eeb83c1384b6d8a5b10' \
+  "$download_dir/$asset" | sha256sum --check --strict
+
+release_dir="$HOME/.cua-driver/packages/releases/${version}-${target}"
+test ! -e "$release_dir" || { echo "Already exists: $release_dir" >&2; exit 1; }
+install -d -m 700 "$HOME/.local/bin" "$HOME/.cua-driver/packages/releases" "$release_dir"
+tar --extract --gzip --no-same-owner --no-same-permissions \
+  --file "$download_dir/$asset" --directory "$release_dir"
+chmod 700 "$release_dir/cua-driver" "$release_dir/wayland-helper/install.sh"
+ln -sfn "$release_dir" "$HOME/.cua-driver/packages/current"
+ln -sfn "$release_dir/cua-driver" "$HOME/.local/bin/cua-driver"
+printf 'Verified download directory: %s\n' "$download_dir"
+
+cua-driver --version
+cua-driver manifest --pretty
+cua-driver doctor --json
+```
+
+The verified archive remains in the printed temporary directory and may be removed after the checks complete.
+
+Confirm the version is `0.19.3`. OpenMausBot also rejects an executable or containing directory that another
+local user could replace. Ubuntu's normal user-private group layout is accepted after OpenMausBot verifies that
+the group belongs only to your account. On a shared or centrally managed group, the app may ask you to remove
+group write access from the exact user-owned install directories:
+
+```sh
+driver_path="$(readlink -f "$(command -v cua-driver)")"
+case "$driver_path" in
+  "$HOME"/.cua-driver/packages/releases/0.19.3-*/cua-driver) ;;
+  *) echo "Unexpected Cua Driver path: $driver_path" >&2; exit 1 ;;
+esac
+chmod go-w "$HOME/.local/bin" "$HOME/.cua-driver" "$HOME/.cua-driver/packages" \
+  "$HOME/.cua-driver/packages/releases" "$(dirname "$driver_path")"
+```
+
+For GNOME/Wayland, install the versioned helper shipped with that same verified Cua release:
+
+```sh
+~/.cua-driver/packages/releases/0.19.3-x86_64-unknown-linux-gnu/wayland-helper/install.sh
+```
+
+Sign out and back in once, then verify that GNOME loaded exactly the expected helper:
+
+```sh
+gnome-extensions info winrects@cua
+```
+
+The output must include `Version: 8`, `Enabled: Yes`, and `State: ACTIVE`. OpenMausBot never installs or enables
+this GNOME extension silently. The helper exposes window identity, geometry, capture, cursor, and verified target
+activation to Cua; foreground pointer or keyboard delivery remains scoped by GNOME's Remote Desktop portal and
+may ask for session consent.
+
+Then:
+
+1. Open a bot's **Computer** panel.
+2. In **Local control**, choose **Enable local control (Beta)** and review the warning.
+3. Wait until the card shows **Ready**, including the verified driver path and version.
+4. Select **This computer** for that bot. Enabling the global capability never assigns a bot automatically.
+
+Linux **Auto** never falls back to the user's desktop. **This computer** is available only when the current
+provider advertises an interactive approval channel. Claude `bypassPermissions`, ACP full-auto, Codex's current
+app-server adapter, non-GNOME/headless sessions, missing diagnostics, and stale/crashed runtimes fail closed.
+
+OpenMausBot starts one private embedded daemon with a private socket for its own app generation. It never touches
+Cua's default/global daemon. On GNOME/Wayland, the app also rechecks the prompt-free health contract while the
+runtime is active and revokes readiness if the helper or backend disappears. Disabling local control or quitting
+stops the owned daemon and active proxies.
+
+The driver uses Cua's `standard` permission mode. Cua routine actions are promptless at the driver layer, while
+OpenMausBot requires its own **Allow** or **Deny** decision before every local action. Bot Auto mode, persistent
+**Always allow** grants, and cloud-computer approvals cannot authorize the local desktop in this beta.
+
+Cua Driver has content-free telemetry and an update check enabled by default. OpenMausBot disables both for every
+Cua process it starts and does not change the user's persisted Cua preferences. Review or change those preferences
+with the [official telemetry documentation](https://cua.ai/docs/reference/cua-driver/telemetry).
 
 ## Validate a package change
 
@@ -122,13 +238,16 @@ pnpm test
 pnpm check:electron
 pnpm package:linux
 node scripts/verify-linux-package.mjs
-dbus-run-session -- xvfb-run -a node scripts/smoke-linux-package.mjs
+pnpm smoke:linux-package
 ```
 
-The verifier checks `.deb` metadata, desktop identity, resources, artifact permissions, and the absence of
-unsupported native binaries. The smoke test launches the unpacked production app without `--no-sandbox`,
-validates the renderer/preload capabilities and embedded health endpoint, then proves clean shutdown. It is not
-a substitute for manual testing on a real GNOME Xorg and Wayland desktop.
+The verifier checks `.deb` metadata, desktop identity, resources, artifact permissions, and that no Cua executable
+was bundled. The smoke test launches the unpacked production app without `--no-sandbox`, validates the
+renderer/preload and embedded health endpoint, then uses a fake user-installed driver to prove diagnostics,
+private-daemon readiness, crash invalidation, explicit retry, and clean shutdown in separate Xorg and simulated
+GNOME/Wayland contract lanes. The Wayland lane also requires the opt-in environment and certified health report.
+Its wrapper isolates the temporary D-Bus/AT-SPI runtime so it cannot replace the live desktop session's
+accessibility socket. It is not a substitute for real GNOME Xorg or GNOME Wayland action evidence.
 
 ## Troubleshooting
 
@@ -140,8 +259,43 @@ considered for automatic discovery.
 
 ### A bot needs computer tools
 
-Choose **Cloud box** in the Computer panel and add a Box token in App Settings. **This computer** is disabled on
-Linux until local CUA control is implemented and validated.
+Choose **Cloud box** and add a Box token in App Settings, or complete the local-control opt-in above on a supported
+GNOME session. A missing driver/helper, unsupported compositor or provider keeps **This computer** disabled with
+an explanation.
+
+### Local control is not ready
+
+Run the certified probes in a terminal launched inside the same GNOME session:
+
+```sh
+echo "$XDG_SESSION_TYPE"  # x11 or wayland
+cua-driver --version      # must be 0.19.3 for this beta
+cua-driver doctor --json
+```
+
+On Wayland, also run:
+
+```sh
+echo "$XDG_CURRENT_DESKTOP"  # must include GNOME
+gnome-extensions info winrects@cua
+CUA_DRIVER_RS_ENABLE_WAYLAND=1 cua-driver doctor --json
+```
+
+If the helper is installed but not `ACTIVE`, sign out and back in once. If the app reports a portal error, confirm
+that `xdg-desktop-portal` and `xdg-desktop-portal-gnome` are running in the user session. OpenMausBot's readiness
+probe never opens a consent prompt; GNOME may prompt when the first approved foreground input action starts.
+
+Repair any display, session bus, or AT-SPI diagnostic before choosing **Try again**. If the path shown in the app
+is unexpected, close OpenMausBot and launch it with an absolute `CUA_DRIVER_PATH`. An invalid explicit override
+fails without silently selecting another executable. For `unsafe-driver-permissions`, use the bounded
+permission-hardening commands in **Enable local control**; do not make the driver executable or its
+directories world-writable.
+
+### Screen preview does not start
+
+On Xorg, confirm the session has an active display with `echo "$XDG_SESSION_TYPE"`; it should print `x11`.
+On Wayland, confirm `xdg-desktop-portal` and the GNOME portal backend are running, then click **Try again** to
+open a new chooser. Cancelling or stopping sharing never causes an automatic second prompt.
 
 ### The AppImage does not start
 

@@ -63,7 +63,7 @@ jobs:
           sudo chmod 4755 release/linux-unpacked/chrome-sandbox
           test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
       - name: Launch packaged app and verify lifecycle
-        run: dbus-run-session -- xvfb-run -a node scripts/smoke-linux-package.mjs
+        run: pnpm smoke:linux-package
       - uses: actions/upload-artifact@v4
         if: always()
         with:
