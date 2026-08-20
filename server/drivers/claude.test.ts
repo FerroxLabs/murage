@@ -149,6 +149,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.FAKE_CLAUDE_MODE;
     delete process.env.FAKE_CLAUDE_DUMP;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.XAI_API_KEY;
+    delete process.env.COMPOSIO_API_KEY;
+    delete process.env.BOX_TOKEN;
+    delete process.env.OPENCODE_API_KEY;
+    delete process.env.OMB_TTS_KEY;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
@@ -205,6 +210,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
     process.env.ANTHROPIC_API_KEY = "sk-should-not-leak";
+    // workspace credentials the harness may hold (env-injected at boot by
+    // the desktop shell) must never ride into the CLI child
+    process.env.XAI_API_KEY = "xai-should-not-leak";
+    process.env.BOX_TOKEN = "box-should-not-leak";
+    process.env.OMB_TTS_KEY = "tts-should-not-leak";
 
     await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "the secret prompt", system: "You are Testy." });
     await recorder.until((e) => e.type === "turn.completed");
@@ -217,6 +227,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(seen.env.CLAUDECODE).toBeUndefined();
     expect(seen.env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    expect(seen.env.XAI_API_KEY).toBeUndefined();
+    expect(seen.env.BOX_TOKEN).toBeUndefined();
+    expect(seen.env.OMB_TTS_KEY).toBeUndefined();
   });
 
   it("uses instance credentials when launching an injected local model", async () => {
@@ -686,6 +699,19 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv).not.toContain("--effort");
+  });
+
+  it("strips workspace credentials from generateText helper children", async () => {
+    await create();
+    const dump = join(scratch, "generate-text-env.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const names = ["XAI_API_KEY", "COMPOSIO_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "OMB_TTS_KEY"] as const;
+    for (const name of names) process.env[name] = `${name}-must-not-leak`;
+
+    await instance.generateText?.("summarize safely");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    for (const name of names) expect(seen.env[name]).toBeUndefined();
   });
 
   it("declares the effort levels the CLI accepts", async () => {

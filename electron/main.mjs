@@ -8,6 +8,7 @@ import { createAndroidDeviceController } from "./android-device.mjs";
 import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
+import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import capabilitiesModule from "./capabilities.cjs";
 
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
@@ -95,6 +96,31 @@ async function secureComposioConfig() {
     if (!changed) return;
     const temporary = `${configPath}.${process.pid}.tmp`;
     fs.writeFileSync(temporary, JSON.stringify(config, null, 2), { mode: 0o600 });
+    fs.renameSync(temporary, configPath);
+  } catch (error) {
+    if (error?.code !== "ENOENT") slog(`credential migration failed: ${error?.message ?? error}`);
+  }
+}
+
+// The remaining workspace credentials (xai/box/voice/OpenCode Go keys) get
+// the same at-rest treatment as the Composio key above. New packaged-app
+// saves go straight through credential:set below; this boot-time sweep also
+// migrates plaintext left by older versions or direct development clients.
+// See workspace-credentials.mjs for the exact rules.
+async function secureWorkspaceConfig() {
+  const dataDir = process.env.OMB_DATA_DIR || path.join(app.getPath("home"), ".openmausbot");
+  const configPath = path.join(dataDir, "config.json");
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const migrated = migrateWorkspaceCredentials(config, secureCredentials);
+    // credentials.bin first: if the OS store cannot take the secrets, the
+    // plaintext stays put and the next boot retries — losing the only copy
+    // is the one unacceptable outcome
+    if (migrated.credentialsChanged) await saveSecureCredentials(migrated.credentials);
+    secureCredentials = migrated.credentials;
+    if (!migrated.configChanged) return;
+    const temporary = `${configPath}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(migrated.config, null, 2), { mode: 0o600 });
     fs.renameSync(temporary, configPath);
   } catch (error) {
     if (error?.code !== "ENOENT") slog(`credential migration failed: ${error?.message ?? error}`);
@@ -193,6 +219,10 @@ async function startServerOn(port) {
       ...(secureCredentials.composioApiKey
         ? { COMPOSIO_API_KEY: secureCredentials.composioApiKey }
         : {}),
+      // one env var per stored workspace secret (xai/box/voice/OpenCode Go);
+      // the server prefers these over config.json, whose plaintext fields
+      // the boot migration has deleted
+      ...workspaceCredentialEnv(secureCredentials),
       ...(composioBrokerUrl() && secureCredentials.composioBrokerToken
         ? {
             OMB_COMPOSIO_BROKER_URL: composioBrokerUrl(),
@@ -572,30 +602,54 @@ ipcMain.handle("desktop:capabilities", async () =>
   }),
 );
 
+const CREDENTIAL_PATCH = {
+  composioApiKey: (value) => ({ composio: { apiKey: value } }),
+  xaiApiKey: (value) => ({ xai: { key: value } }),
+  boxToken: (value) => ({ box: { token: value } }),
+  opencodeGoApiKey: (value) => ({ opencodeGo: { apiKey: value } }),
+  ttsKey: (value) => ({ tts: { key: value } }),
+};
+
 ipcMain.handle("credential:set", async (_event, name, value) => {
-  if (name !== "composioApiKey" || typeof value !== "string") {
+  const patchFor = CREDENTIAL_PATCH[name];
+  if (!patchFor || typeof value !== "string") {
     throw new Error("Unsupported credential");
   }
   if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) {
     throw new Error("The operating-system credential store is unavailable");
   }
-  // In development the server is a separately launched process, so it cannot
-  // receive credentials from Electron at boot. Keep its established local
-  // config path there; production always uses the encrypted external store.
-  const secretStorage = app.isPackaged ? "?secretStorage=external" : "";
-  const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/config${secretStorage}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ composio: { apiKey: value.trim() } }),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error || `Could not save credential (HTTP ${response.status})`);
+  const secret = value.trim();
+  const previousCredentials = secureCredentials;
   if (app.isPackaged) {
-    if (value.trim()) secureCredentials.composioApiKey = value.trim();
-    else delete secureCredentials.composioApiKey;
-    await saveSecureCredentials(secureCredentials);
+    const nextCredentials = { ...secureCredentials };
+    if (secret) nextCredentials[name] = secret;
+    else delete nextCredentials[name];
+    // Commit the encrypted value before the server makes it live. If
+    // validation or reload fails below, restore the previous store so the
+    // next launch cannot disagree with the response the user saw.
+    await saveSecureCredentials(nextCredentials);
+    secureCredentials = nextCredentials;
   }
-  return body;
+  try {
+    // In development the server is a separately launched process, so it
+    // cannot receive credentials from Electron at boot. Keep its established
+    // local config path there; production always uses the encrypted store.
+    const secretStorage = app.isPackaged ? "?secretStorage=external" : "";
+    const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/config${secretStorage}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patchFor(secret)),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `Could not save credential (HTTP ${response.status})`);
+    return body;
+  } catch (error) {
+    if (app.isPackaged) {
+      await saveSecureCredentials(previousCredentials);
+      secureCredentials = previousCredentials;
+    }
+    throw error;
+  }
 });
 
 async function broadcastDesktopCapabilities() {
@@ -622,6 +676,7 @@ app.whenReady().then(async () => {
   if (app.isPackaged) {
     secureCredentials = await loadSecureCredentials();
     await secureComposioConfig();
+    await secureWorkspaceConfig();
     await ensureManagedComposioCredentials();
   }
   // Display capture remains user-initiated. The renderer first sends a
