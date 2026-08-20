@@ -185,6 +185,11 @@ function tomlTables(text: string): Array<{ name: string; headingStart: number; b
       continue;
     }
     if (mode === "basic") {
+      if (text[i] === "\n") {
+        mode = "out";
+        i += 1;
+        continue;
+      }
       if (text[i] === "\\") {
         i += 2;
         continue;
@@ -194,6 +199,11 @@ function tomlTables(text: string): Array<{ name: string; headingStart: number; b
       continue;
     }
     if (mode === "literal") {
+      if (text[i] === "\n") {
+        mode = "out";
+        i += 1;
+        continue;
+      }
       if (text[i] === "'") mode = "out";
       i += 1;
       continue;

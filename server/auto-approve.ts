@@ -146,7 +146,8 @@ export function autoVerdict(
   }
   if (context?.scope === "local-computer" && !bot.autoApprove) {
     // Host control is not covered by a remembered always-allow grant.
-    // Auto mode can approve these after the user confirms a warning.
+    // After the Auto-on-this-computer warning, unclassified GUI actions
+    // (click/type) may auto-approve; destructive/sensitive still card.
     if (grant) return { approve: null, source: "local-computer-block", rule: grant.rule };
     if (destructive) return { approve: null, source: "destructive-guard", rule: destructive };
     if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };

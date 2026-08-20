@@ -168,15 +168,26 @@ async function startEmbedded(binary) {
     ].filter(Boolean).join(" and ");
     throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart OpenMausBot`);
   }
-  embeddedHost = new sdk.EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
-  const conn = await embeddedHost.start();
-  return {
-    mode: "embedded",
-    socketPath: conn.socketPath,
-    mcpCommand: binary,
-    mcpArgs: ["mcp", "--embedded", "--socket", conn.socketPath],
-    mcpEnv: { ...CUA_ENV, CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID },
-  };
+  const host = new sdk.EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
+  try {
+    const conn = await host.start();
+    embeddedHost = host;
+    return {
+      mode: "embedded",
+      socketPath: conn.socketPath,
+      mcpCommand: binary,
+      mcpArgs: ["mcp", "--embedded", "--socket", conn.socketPath],
+      mcpEnv: { ...CUA_ENV, CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID },
+    };
+  } catch (err) {
+    try {
+      await host.stop();
+    } catch {
+      // startup already failed; stop is best-effort before destroy
+    }
+    host.uniffiDestroy?.();
+    throw err;
+  }
 }
 
 export async function startCua() {

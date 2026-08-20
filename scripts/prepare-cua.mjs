@@ -107,10 +107,19 @@ if (!details.isFile() || (details.mode & 0o111) === 0) {
 // not on a user's Intel Mac); the SDK's dylib/.node are genuinely per-arch,
 // pulled from the two darwin native packages that pnpm installs because of
 // supportedArchitectures in package.json.
-const MAC_ARCHES = (process.env.OPENMAUSBOT_CUA_ARCHES ?? "arm64,x64")
+const DEFAULT_MAC_ARCHES = ["arm64", "x64"];
+const MAC_ARCHES = (process.env.OPENMAUSBOT_CUA_ARCHES ?? DEFAULT_MAC_ARCHES.join(","))
   .split(",")
   .map((arch) => arch.trim())
   .filter(Boolean);
+if (process.env.OPENMAUSBOT_CUA_ARCHES && process.env.OPENMAUSBOT_CUA_ARCHES_PARTIAL !== "1") {
+  const missing = DEFAULT_MAC_ARCHES.filter((arch) => !MAC_ARCHES.includes(arch));
+  if (missing.length) {
+    throw new Error(
+      `OPENMAUSBOT_CUA_ARCHES omits ${missing.join(", ")} but electron-builder packages both arm64 and x64. Set OPENMAUSBOT_CUA_ARCHES_PARTIAL=1 for a one-arch local stage.`,
+    );
+  }
+}
 
 const { stdout: archList } = await run("/usr/bin/lipo", ["-archs", binary]);
 for (const arch of MAC_ARCHES) {
