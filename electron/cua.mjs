@@ -83,6 +83,12 @@ export function setCuaStateListener(listener) {
   stateListener = typeof listener === "function" ? listener : () => {};
 }
 
+function persistAndNotify(next) {
+  const connection = connectionStore.persist(next);
+  stateListener(connection);
+  return connection;
+}
+
 export function resolveDriverBinary() {
   if (process.env.CUA_DRIVER_PATH) return process.env.CUA_DRIVER_PATH;
   if (app.isPackaged) {
@@ -124,6 +130,29 @@ async function loadEmbeddedSdk() {
   return import(pathToFileURL(path.join(process.resourcesPath, "cua-sdk", "cua-sdk.mjs")).href);
 }
 
+async function attachStandalone() {
+  const driver = fs.existsSync(INSTALLED_DRIVER) ? INSTALLED_DRIVER : null;
+  if (!driver) return null;
+  if (!(await socketAlive(STANDALONE_SOCKET))) {
+    // Launch CuaDriver.app through LaunchServices so Accessibility /
+    // Screen Recording stay on com.trycua.driver — the identity this
+    // machine already granted — instead of the freshly signed OpenMausBot.
+    spawnSync("open", ["-a", "CuaDriver"], { timeout: 8000 });
+    for (let i = 0; i < 25; i++) {
+      if (await socketAlive(STANDALONE_SOCKET)) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+  if (!(await socketAlive(STANDALONE_SOCKET))) return null;
+  return {
+    mode: "standalone",
+    socketPath: STANDALONE_SOCKET,
+    mcpCommand: driver,
+    mcpArgs: ["mcp"],
+    mcpEnv: { ...CUA_ENV },
+  };
+}
+
 async function startEmbedded(binary) {
   // Import from the staged Resources tree in production. The app intentionally
   // excludes general node_modules, so a bare package import only works in dev.
@@ -154,7 +183,7 @@ export async function startCua() {
   if (process.platform === "linux") return ensureLinuxRuntime().initialize();
   const binary = resolveDriverBinary();
   if (!binary) {
-    return connectionStore.persist({
+    return persistAndNotify({
       mode: "unavailable",
       reason: "cua-driver binary not found",
     });
@@ -168,10 +197,13 @@ export async function startCua() {
     try {
       nextConnection = await startEmbedded(binary);
     } catch (err) {
-      nextConnection = {
-        mode: "unavailable",
-        reason: `embedded host failed: ${err?.message ?? err}`,
-      };
+      nextConnection = await attachStandalone();
+      if (!nextConnection) {
+        nextConnection = {
+          mode: "unavailable",
+          reason: `embedded host failed: ${err?.message ?? err}`,
+        };
+      }
     }
   } else if (await socketAlive(STANDALONE_SOCKET)) {
     // Dev machine with CuaDriver.app's daemon already running.
@@ -190,7 +222,7 @@ export async function startCua() {
     };
   }
 
-  return connectionStore.persist(nextConnection);
+  return persistAndNotify(nextConnection);
 }
 
 export function cuaPermissionsStatus() {
@@ -227,7 +259,7 @@ export async function stopCua() {
     embeddedHost = null;
   }
   if (connectionStore.get()) {
-    connectionStore.persist({ mode: "unavailable", reason: "desktop-host-stopped" });
+    persistAndNotify({ mode: "unavailable", reason: "desktop-host-stopped" });
   }
 }
 
@@ -262,6 +294,27 @@ export function registerCuaIpc() {
     return ensureLinuxRuntime().getStatus();
   });
   ipcMain.handle("cua:linux-retry", async () => {
+    if (process.platform === "darwin") {
+      try {
+        await stopCua();
+        const connection = await startCua();
+        const ready = connection?.mode === "embedded" || connection?.mode === "standalone";
+        return {
+          enabled: ready,
+          status: ready ? "ready" : "error",
+          reasonCode: ready ? undefined : "permissions-required",
+          message: connection?.reason,
+        };
+      } catch (error) {
+        console.error("[cua] macOS retry failed:", error);
+        return {
+          enabled: false,
+          status: "error",
+          reasonCode: "permissions-required",
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
     if (process.platform !== "linux") {
       return { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" };
     }

@@ -542,6 +542,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         capabilities: {
           sessionModelSwitch: "unsupported",
           computerMcp: true,
+          localComputerMcp: true,
           composioMcp: true,
           agentsMcp: true,
           phoneMcp: true,

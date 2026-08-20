@@ -62,6 +62,23 @@ export function injectedApiModel(id: string | null | undefined): string | null {
   return decodeInjectId(id)?.model ?? null;
 }
 
+/**
+ * Map a picker / leftover API id onto a live `host::model` inject id.
+ * Claude Code's settings.model is the last slug it used (e.g.
+ * `orcarouter/Qwen3.8-27B-Uncensored-GGUF`) and is not host-encoded, so a
+ * Custom pick of that leftover would otherwise skip inject and demand /login.
+ */
+export function resolveInjectId(
+  modelId: string | null | undefined,
+  extras: readonly InjectedModel[],
+): string | null | undefined {
+  if (!modelId) return modelId;
+  if (decodeInjectId(modelId)) return modelId;
+  const matches = extras.filter((row) => row.id === modelId || row.model === modelId);
+  const match = matches.find((row) => row.loaded) ?? matches[0];
+  return match?.id ?? modelId;
+}
+
 /** Anthropic-compatible base (Claude Code wants this without a trailing /v1). */
 export function anthropicBaseUrl(host: LocalHost): string {
   return host.baseUrl.replace(/\/v1\/?$/, "");
@@ -317,7 +334,12 @@ export async function mergeLocalInject(
   if (vitest === "true" && probe !== "1") return catalog;
   const extras = await probeLocalInjects(env, fetchImpl);
   if (!extras.length) return catalog;
-  const options = catalog.options.map((option) => ({ ...option }));
+  const liveApiIds = new Set(extras.map((extra) => extra.model));
+  // A settings leftover that is just the API id of a live inject is not a
+  // second model — Custom should only offer the host:: row.
+  const options = catalog.options
+    .filter((option) => decodeInjectId(option.id) || !option.custom || !liveApiIds.has(option.id))
+    .map((option) => ({ ...option }));
   const seen = new Set(options.map((option) => option.id));
   for (const extra of extras) {
     const existing = options.find((option) => option.id === extra.id);

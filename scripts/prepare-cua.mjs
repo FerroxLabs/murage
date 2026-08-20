@@ -107,7 +107,10 @@ if (!details.isFile() || (details.mode & 0o111) === 0) {
 // not on a user's Intel Mac); the SDK's dylib/.node are genuinely per-arch,
 // pulled from the two darwin native packages that pnpm installs because of
 // supportedArchitectures in package.json.
-const MAC_ARCHES = ["arm64", "x64"];
+const MAC_ARCHES = (process.env.OPENMAUSBOT_CUA_ARCHES ?? "arm64,x64")
+  .split(",")
+  .map((arch) => arch.trim())
+  .filter(Boolean);
 
 const { stdout: archList } = await run("/usr/bin/lipo", ["-archs", binary]);
 for (const arch of MAC_ARCHES) {
