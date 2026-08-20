@@ -700,6 +700,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     conn.end();
     await instance.adapter.interruptTurn("t-perm-dup-4");
     await recorder.until((e) => e.type === "turn.completed");
+  });
+
   it("drops a late ask on an already-closed broker instead of a dead card (#211)", async () => {
     await create("hang");
     await instance.adapter.sendTurn({ threadId: "t-perm-late", text: "go" });
@@ -717,7 +719,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
 
     const opensBefore = recorder.events.filter((e) => e.type === "request.opened").length;
-    const reply = new Promise<{ id: string; behavior: string }>((resolve) => {
+    const reply = new Promise<{ id: string; behavior: string; message?: string }>((resolve) => {
       let buf = "";
       conn.on("data", (c) => {
         buf += c;
@@ -730,7 +732,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // A dead card is a request.opened with no way to ever answer it — assert
     // the late ask never becomes one, and the connection still gets a
     // definite reply rather than hanging forever.
-    expect(await reply).toMatchObject({ id: "ask-late", behavior: "deny" });
+    expect(await reply).toMatchObject({
+      id: "ask-late",
+      behavior: "deny",
+      message: "OpenMausBot: the turn ended",
+    });
     expect(recorder.events.filter((e) => e.type === "request.opened")).toHaveLength(opensBefore);
     await expect(instance.adapter.respondToRequest("t-perm-late", "ask-late", { behavior: "allow" })).resolves.toBe(
       "unavailable",
@@ -755,7 +761,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.interruptTurn("t-question-late");
     await recorder.until((e) => e.type === "turn.completed");
 
-    const reply = new Promise<{ id: string; behavior: string }>((resolve) => {
+    const opensBefore = recorder.events.filter((e) => e.type === "request.opened").length;
+    const reply = new Promise<{ id: string; behavior: string; message?: string }>((resolve) => {
       let buf = "";
       conn.on("data", (c) => {
         buf += c;
@@ -765,7 +772,15 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     });
     conn.write(JSON.stringify({ t: "ask", kind: "question", id: "q-late", tool: "ask_user", input: { question: "still there?" } }) + "\n");
 
-    expect(await reply).toMatchObject({ id: "q-late", behavior: "answer" });
+    expect(await reply).toMatchObject({
+      id: "q-late",
+      behavior: "answer",
+      message: "OpenMausBot: the turn is ending — wrap up.",
+    });
+    expect(recorder.events.filter((e) => e.type === "request.opened")).toHaveLength(opensBefore);
+    await expect(
+      instance.adapter.respondToRequest("t-question-late", "q-late", { behavior: "answer", message: "yes" }),
+    ).resolves.toBe("unavailable");
 
     conn.end();
   });

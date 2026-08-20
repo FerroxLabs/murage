@@ -256,6 +256,18 @@ function createPermissionBroker(opts: {
         }
         if (msg.t !== "ask") continue;
         const askId = String(msg.id ?? newId());
+        const kind = msg.kind === "question" ? ("question" as const) : ("permission" as const);
+        if (closed) {
+          // Closure is terminal and takes precedence over every active-turn
+          // rule, including duplicate-id rejection. Never register a pending
+          // entry or notify onAsk, but always answer an existing connection:
+          // permission-proxy.ts only resolves on an explicit answer (or a
+          // connection error/close), so a silent drop would hang the tool.
+          try {
+            conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
+          } catch {}
+          continue;
+        }
         // `pending` is server-scoped, not per-connection: two asks with the
         // same id — a buggy/adversarial client, never a legitimate retry
         // (permission-proxy mints a fresh randomUUID per ask) — would
@@ -269,17 +281,6 @@ function createPermissionBroker(opts: {
           console.error(`permission broker on ${opts.socketPath}: duplicate ask id ${JSON.stringify(askId)} — denying`);
           try {
             conn.write(JSON.stringify({ t: "answer", id: askId, behavior: "deny", message: DUPLICATE_ASK_ID_NOTE }) + "\n");
-          } catch {}
-          continue;
-        }
-        const kind = msg.kind === "question" ? ("question" as const) : ("permission" as const);
-        if (closed) {
-          // Never register a pending entry or notify onAsk for a closed
-          // broker — but always reply. permission-proxy.ts only resolves an
-          // ask on an explicit {t:"answer"} or its own connection error/close,
-          // so a silent drop here would hang that MCP tool call forever.
-          try {
-            conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
           } catch {}
           continue;
         }
@@ -550,13 +551,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       ) => {
         if (settled) return;
         settled = true;
+        // Closing first marks the broker terminal and resolves every current
+        // ask before anything else can observe the turn as gone. Existing
+        // socket connections remain answerable through the broker's closed
+        // branch while the CLI tree is being reaped.
+        broker?.close();
         // A one-shot `-p` process is expected to exit right after printing
         // `result`, but a backgrounded MCP grandchild can keep it (or itself)
         // alive — leaving a live process with a live broker connection that
         // can raise a permission ask nobody can ever answer (issue #211). A
         // no-op when the process already exited.
         killCliTree(child);
-        broker?.close();
         // the config file holds live credentials — it must not outlive the turn
         if (mcpConfigPath) {
           try {
