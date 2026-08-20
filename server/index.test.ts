@@ -75,6 +75,16 @@ beforeAll(async () => {
         dm: true,
       },
       {
+        id: "test-stranded-room",
+        threadId: "test-stranded-room-thread",
+        name: "Stranded room",
+        memberIds: ["test-bot-a"],
+        defaultResponder: { kind: "member", botId: "test-bot-a" },
+        bulletin: "",
+        unread: false,
+        createdAt: 3,
+      },
+      {
         id: "test-pinned-room",
         threadId: "test-pinned-room-thread",
         name: "Pinned room",
@@ -86,6 +96,33 @@ beforeAll(async () => {
         pinnedCwd: null,
       },
     ]),
+  );
+
+  // A room transcript carrying an approval that outlived its turn: the card
+  // is durable, but busyBotId is in-memory only and never survives a restart.
+  writeFileSync(
+    join(home, ".openmausbot", "messages-test-stranded-room-thread.json"),
+    JSON.stringify({
+      activeLeafId: "stranded-card",
+      messages: [
+        {
+          id: "stranded-card",
+          at: 3,
+          parentId: null,
+          role: "bot",
+          kind: "options",
+          card: {
+            title: "Approval needed",
+            subtitle: "rm -rf /tmp/scratch",
+            options: ["Allow", "Deny"],
+            requestId: "stranded-request",
+            tool: "Bash",
+            allowKey: "Bash:rm",
+          },
+          from: { botId: "test-bot-a", name: "Test bot A", color: "purple" },
+        },
+      ],
+    }),
   );
 
   boxStub = createServer(async (req, res) => {
@@ -525,6 +562,32 @@ describe("harness HTTP API", () => {
     const reread = (await api("GET", "/api/bots")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id);
     expect(reread.messages.at(-1).tool).toMatchObject({ ok: false });
     expect(reread.messages.at(-1).tool.name).toContain("request is no longer open");
+  });
+
+  it("answers a room approval whose turn is already over instead of stranding the room", async () => {
+    // busyBotId lives in memory only, so a card that outlives its turn (or the
+    // process) has no speaker. The room must still be answerable: a pending
+    // approval takes over the composer, so a dead end locks the room for good.
+    const answered = await api("POST", "/api/threads/test-stranded-room-thread/respond", {
+      requestId: "stranded-request",
+      behavior: "allow",
+    });
+    expect(answered.status).toBe(200);
+    expect(answered.body).toEqual({ ok: true, outcome: "unavailable" });
+
+    const room = (await api("GET", "/api/bots")).body.groups.find(
+      (group: { id: string }) => group.id === "test-stranded-room",
+    );
+    const card = room.messages.find((message: { id: string }) => message.id === "stranded-card").card;
+    expect(card.dismissed).toBe(true);
+    expect(card.answered).toBe("unavailable");
+
+    // a room with nothing pending still reports that plainly
+    const nothing = await api("POST", "/api/threads/test-pinned-room-thread/respond", {
+      requestId: "never-existed",
+      behavior: "allow",
+    });
+    expect(nothing.status).toBe(404);
   });
 
   it("rejects an empty message and explains an unavailable provider", async () => {

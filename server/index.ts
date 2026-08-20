@@ -414,8 +414,14 @@ async function answerRequest(
     }
   }
   if (outcome === "unavailable") {
+    // The in-flight map is memory-only. After a restart the card is still on
+    // the thread, so fall back to the request it carries — otherwise an
+    // unreachable approval is never closed and keeps owning the composer.
     const messageId = askMessageByRequest.get(`${threadId}:${requestId}`);
-    const existing = messageId ? store.messagesFor(threadId).find((m) => m.id === messageId) : undefined;
+    const thread = store.messagesFor(threadId);
+    const existing = messageId
+      ? thread.find((m) => m.id === messageId)
+      : thread.find((m) => m.card?.requestId === requestId);
     if (existing?.card && !existing.card.answered) {
       store.patchMessage(threadId, existing.id, { card: { ...existing.card, answered: "unavailable", dismissed: true } });
     }
@@ -3104,14 +3110,26 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const behavior = requestBehavior(body.behavior);
       if (!behavior) return json(res, 400, { error: "behavior must be allow, deny, or answer" });
-      const group = store.groupByThread(threadId);
-      const owner = group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
-      if (!owner) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
-      // peer-approval intercept (see /api/bots/:id/respond above).
-      if (resolvePeerComms(approvalBus, String(body.requestId), behavior)) {
+      const requestId = String(body.requestId);
+      // peer-approval intercept (see /api/bots/:id/respond above). A peer card
+      // belongs to the bus rather than to a speaker, so resolve it before we go
+      // looking for one — a room between turns has no speaker to find.
+      if (resolvePeerComms(approvalBus, requestId, behavior)) {
         return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
       }
-      const outcome = await answerRequest(threadId, owner.modelSelection.instanceId, String(body.requestId), behavior, body.message);
+      const group = store.groupByThread(threadId);
+      // busyBotId is in-memory only, so an approval that outlives its turn — or
+      // the process — leaves a durable card with no speaker behind it. Fall back
+      // to the member that raised it, and answer even when that member is gone:
+      // answerRequest closes an unreachable card, and a pending approval owns
+      // the composer, so a dead end here locks the room for good.
+      const pending = store.messagesFor(threadId).find((message) => message.card?.requestId === requestId);
+      const owner = group
+        ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) ??
+          (pending?.from ? store.bot(pending.from.botId) : undefined)
+        : store.botByThread(threadId);
+      if (!owner && !pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
+      const outcome = await answerRequest(threadId, owner?.modelSelection.instanceId ?? "", requestId, behavior, body.message);
       return json(res, 200, { ok: true, outcome });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
