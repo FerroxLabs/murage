@@ -3091,6 +3091,17 @@ const server = createServer(async (req, res) => {
         if (value.length > max) return json(res, 400, { error: `${field} must be at most ${max} characters` });
         if (field === "name" && !value.trim()) return json(res, 400, { error: "name must not be empty" });
       }
+      let section: string | undefined | null;
+      if (body.section !== undefined) {
+        if (body.section === null) section = null;
+        else if (typeof body.section !== "string") return json(res, 400, { error: "section must be a string" });
+        else {
+          const trimmed = body.section.trim();
+          if (!trimmed) section = null;
+          else if (trimmed.length > 60) return json(res, 400, { error: "section must be at most 60 characters" });
+          else section = trimmed;
+        }
+      }
       const patch: Record<string, unknown> = {};
       for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "cloudBackend", "color", "mascotExpression", "pinned", "hidden", "speakReplies", "voice"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
@@ -3104,6 +3115,7 @@ const server = createServer(async (req, res) => {
           patch.pinnedMessageId = body.pinnedMessageId;
         } else return json(res, 400, { error: "pinnedMessageId must be a message id" });
       }
+      if (section !== undefined) patch.section = section ?? undefined;
       // per-bot gate on the workspace's connected apps (Composio)
       if (body.composio !== undefined) {
         if (typeof body.composio !== "boolean") return json(res, 400, { error: "composio must be true or false" });

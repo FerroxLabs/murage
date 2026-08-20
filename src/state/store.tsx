@@ -170,6 +170,8 @@ export interface Bot {
   voice?: string;
   pinned?: boolean;
   hidden?: boolean;
+  /** Sidebar section this bot renders under; absent = unsectioned. */
+  section?: string;
   /** the one message pinned to the top of this bot's active thread */
   pinnedMessageId?: string;
   /** The workspace's one primary coordinator. */
@@ -440,6 +442,7 @@ export type Action =
           | "voice"
           | "pinned"
           | "hidden"
+          | "section"
           | "pinnedMessageId"
           | "chiefOfStaff"
           | "approvePeerComms"

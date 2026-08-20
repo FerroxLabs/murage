@@ -276,6 +276,8 @@ export interface BotRecord {
   rewound?: boolean;
   pinned?: boolean;
   hidden?: boolean;
+  /** Optional labeled divider used to organize this bot in the sidebar. */
+  section?: string;
   /** the one message pinned to the top of this bot's active thread; a pin
    * that no longer resolves (branch switched away, deleted) renders nothing */
   pinnedMessageId?: string;
