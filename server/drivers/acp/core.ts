@@ -68,6 +68,9 @@ export interface AcpSupport {
   resolveModels?(environment: Record<string, string | undefined>): ModelCatalog | Promise<ModelCatalog>;
   /** Native-protocol log label, e.g. "grok.acp". */
   nativeSource: string;
+  /** Whether models behind this ACP harness can consume a referenced image.
+   * Most coding agents can open local files; opt out for text-only agents. */
+  images?: boolean;
   /** Message shown when the CLI is present but not signed in. */
   loginNote: string;
   /** How a user installs this harness's CLI; surfaced by the setup UI. */
@@ -690,6 +693,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             agentsMcp: true,
             computerMcp: true,
             composioMcp: true,
+            images: support.images !== false,
             effortLevels: support.effortLevels,
             localComputerMcp: !config.fullAuto,
           },

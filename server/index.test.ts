@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { openSse } from "./testing/sse.ts";
+import { IMAGE_MAX_BYTES } from "./attachments.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -448,6 +449,51 @@ describe("harness HTTP API", () => {
     expect(deleted.status).toBe(200);
     const after = await api("GET", "/api/bots");
     expect(after.body.bots.find((b: { id: string }) => b.id === bot.id)).toBeUndefined();
+  });
+
+  it("saves, serves, and guards image attachments", async () => {
+    // a real 1x1 PNG so the bytes round-trip intact
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+
+    const wrongType = await fetch(`${BASE}/api/attachments`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "not an image",
+    });
+    expect(wrongType.status).toBe(400);
+
+    const saved = await fetch(`${BASE}/api/attachments`, {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: new Uint8Array(png),
+    });
+    expect(saved.status).toBe(201);
+    const { path: savedPath, mime, bytes } = (await saved.json()) as { path: string; mime: string; bytes: number };
+    expect(mime).toBe("image/png");
+    expect(bytes).toBe(png.byteLength);
+    expect(savedPath).toContain("attachments");
+
+    const name = savedPath.split(/[\\/]/).pop();
+    const served = await fetch(`${BASE}/api/attachments/${name}`);
+    expect(served.status).toBe(200);
+    expect(served.headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(await served.arrayBuffer()).equals(png)).toBe(true);
+
+    // the serving route is name-locked to the attachments dir
+    const traversal = await fetch(`${BASE}/api/attachments/..%2F..%2Fconfig.json`);
+    expect(traversal.status).toBe(404);
+    const unknown = await fetch(`${BASE}/api/attachments/00000000-0000-0000-0000-000000000000.png`);
+    expect(unknown.status).toBe(404);
+
+    const tooBig = await fetch(`${BASE}/api/attachments`, {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: Buffer.alloc(IMAGE_MAX_BYTES + 1),
+    });
+    expect(tooBig.status).toBe(413);
   });
 
   it("exports every visible bot and imports the team without creating a room", async () => {

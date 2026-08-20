@@ -276,6 +276,7 @@ export interface InstanceInfo {
     computerMcp?: boolean;
     agentsMcp?: boolean;
     composioMcp?: boolean;
+    images?: boolean;
     effortLevels?: readonly EffortLevel[];
     localComputerMcp?: boolean;
   };

@@ -183,6 +183,7 @@ export function ensureGrokInjectSlug(
 const support: AcpSupport = {
   driverKind: "grokAgent",
   displayName: "Grok",
+  images: false,
   models: STATIC_GROK_MODELS,
   resolveModels: (env) => mergeLocalInject(readGrokModelCatalog(env), env),
   // Grok's accepted levels vary by model and the CLI validates lazily — a

@@ -545,6 +545,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           composioMcp: true,
           agentsMcp: true,
           phoneMcp: true,
+          images: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],
         },
         sendTurn,
