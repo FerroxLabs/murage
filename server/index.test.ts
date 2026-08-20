@@ -5,7 +5,7 @@
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ import { openSse } from "./testing/sse.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
+const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const WEBHOOK_PORT = 39000 + Math.floor(Math.random() * 10_000);
@@ -27,6 +28,7 @@ let boxStub: Server;
 let boxStubPort = 0;
 let home: string;
 let staticDir: string;
+let fakeClaudeDump: string;
 let stderr = "";
 
 const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
@@ -51,6 +53,7 @@ const statusWithHeaders = (headers: Record<string, string>): Promise<number> =>
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "omb-api-test-"));
   staticDir = join(home, "static");
+  fakeClaudeDump = join(home, "fake-claude-dump.json");
   // a fleet of exactly one unknown driver: no CLI probes, no network
   mkdirSync(join(home, ".openmausbot"), { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
@@ -58,7 +61,12 @@ beforeAll(async () => {
   writeFileSync(join(staticDir, "assets", "smoke.css"), "body { color: white; }");
   writeFileSync(
     join(home, ".openmausbot", "config.json"),
-    JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver", displayName: "Ghost" } } }),
+    JSON.stringify({
+      instances: {
+        ghost: { driver: "not-a-real-driver", displayName: "Ghost" },
+        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
+      },
+    }),
   );
   writeFileSync(
     join(home, ".openmausbot", "groups.json"),
@@ -163,6 +171,8 @@ beforeAll(async () => {
       OMB_BOX_API: `http://127.0.0.1:${boxStubPort}`,
       OMB_COMPOSIO_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
       OMB_STATIC_DIR: staticDir,
+      FAKE_CLAUDE_MODE: "hang",
+      FAKE_CLAUDE_DUMP: fakeClaudeDump,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -277,14 +287,19 @@ describe("harness HTTP API", () => {
   it("describes the configured fleet, shadows included", async () => {
     const { status, body } = await api("GET", "/api/instances");
     expect(status).toBe(200);
-    expect(body.instances).toHaveLength(1);
-    expect(body.instances[0]).toMatchObject({
+    const ghost = body.instances.find((instance: { instanceId: string }) => instance.instanceId === "ghost");
+    expect(ghost).toMatchObject({
       instanceId: "ghost",
       driverKind: "not-a-real-driver",
       displayName: "Ghost",
       snapshot: { state: "unavailable" },
     });
-    expect(body.instances[0].snapshot.reason).toContain("not-a-real-driver");
+    expect(ghost.snapshot.reason).toContain("not-a-real-driver");
+    expect(body.instances).toContainEqual(expect.objectContaining({
+      instanceId: "claude",
+      driverKind: "claudeAgent",
+      displayName: "Fixture Claude",
+    }));
   });
 
   it("searches transcripts and exports a conversation", async () => {
@@ -830,6 +845,77 @@ describe("harness HTTP API", () => {
 
     const nothing = await api("PUT", "/api/config", {});
     expect(nothing.status).toBe(400);
+  });
+
+  it("validates and persists the global room turn timeout", async () => {
+    const before = await api("GET", "/api/config");
+    expect(before.status).toBe(200);
+    expect(before.body.rooms).toEqual({ turnTimeoutMinutes: 5 });
+
+    for (const turnTimeoutMinutes of [0, 1.5, 1441, "20", null]) {
+      const invalid = await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes } });
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.error).toContain("rooms.turnTimeoutMinutes");
+    }
+
+    const saved = await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 20 } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.rooms).toEqual({ turnTimeoutMinutes: 20 });
+
+    const after = await api("GET", "/api/config");
+    expect(after.body.rooms).toEqual({ turnTimeoutMinutes: 20 });
+
+    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    expect(disk.rooms).toEqual({ turnTimeoutMinutes: 20 });
+
+    await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
+  });
+
+  it("keeps an active turn alive when only the room timeout changes", async () => {
+    const created = await api("POST", "/api/bots", {});
+    const botId = created.body.bot.id;
+    const room = (await api("POST", "/api/groups", {
+      name: "Room timeout capture",
+      memberIds: [botId],
+    })).body.group;
+    try {
+      const selected = await api("PATCH", `/api/bots/${botId}`, {
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      });
+      expect(selected.status).toBe(200);
+
+      rmSync(fakeClaudeDump, { force: true });
+      const sent = await api("POST", `/api/groups/${room.id}/messages`, { text: "stay active" });
+      expect(sent.status).toBe(202);
+      await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
+
+      const before = (await api("GET", "/api/bots")).body;
+      expect(before.bots.find((bot: { id: string }) => bot.id === botId)?.busy).toBe(true);
+      expect(before.groups.find((group: { id: string }) => group.id === room.id)?.busyBotId).toBe(botId);
+
+      const saved = await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 20 } });
+      expect(saved.status).toBe(200);
+
+      const after = (await api("GET", "/api/bots")).body;
+      expect(after.bots.find((bot: { id: string }) => bot.id === botId)?.busy).toBe(true);
+      const activeRoom = after.groups.find((group: { id: string }) => group.id === room.id);
+      expect(activeRoom?.busyBotId).toBe(botId);
+      expect(activeRoom.messages.some((message: { tool?: { name?: string } }) =>
+        message.tool?.name?.includes("provider settings changed"),
+      )).toBe(false);
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots")).body;
+        return {
+          botBusy: state.bots.find((bot: { id: string }) => bot.id === botId)?.busy,
+          roomBusyBotId: state.groups.find((group: { id: string }) => group.id === room.id)?.busyBotId,
+        };
+      }, { timeout: 5_000 }).toEqual({ botBusy: false, roomBusyBotId: null });
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${botId}`);
+      await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
+    }
   });
 
   it("validates the non-secret VPS alias and keeps old bots on Box by default", async () => {

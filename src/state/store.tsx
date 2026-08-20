@@ -214,6 +214,7 @@ export interface ConfigStatus {
   composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
   box: { configured: boolean };
   vps: { configured: boolean; sshAlias: string };
+  rooms: { turnTimeoutMinutes: number };
   opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
@@ -221,6 +222,24 @@ export interface ConfigStatus {
   tts?: { configured: boolean; ready: boolean; voice: string };
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
+}
+
+export type ConfigStatusFrame = Pick<
+  ConfigStatus,
+  "xai" | "composio" | "box" | "vps" | "rooms" | "opencodeGo" | "tts" | "profile"
+>;
+
+export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
+  return {
+    xai: frame.xai,
+    composio: frame.composio,
+    box: frame.box,
+    vps: frame.vps,
+    rooms: frame.rooms,
+    opencodeGo: frame.opencodeGo,
+    tts: frame.tts,
+    profile: frame.profile,
+  };
 }
 
 /** How an engine gets installed — declared by its driver, mirrors
@@ -1454,14 +1473,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "config":
           rawDispatch({
             type: "configStatus",
-            config: {
-              xai: frame.xai,
-              composio: frame.composio,
-              box: frame.box,
-              vps: frame.vps,
-              tts: frame.tts,
-              profile: frame.profile,
-            },
+            config: configStatusFromFrame(frame),
           });
           api("/api/instances")
             .then(({ instances }) => rawDispatch({ type: "instances", instances }))
