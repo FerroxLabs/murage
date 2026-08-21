@@ -195,4 +195,52 @@ describe("bot patch queue", () => {
     expect(onError).not.toHaveBeenCalled();
     expect(queue.overlayFor("bot-1")).toEqual({});
   });
+
+  it("carries acknowledgeLocalAuto to the wire but never into a state overlay", async () => {
+    // The consent flag is the server's proof the local-auto warning dialog was
+    // shown (server/index.ts gate). Coalesced with other edits it must still
+    // reach the HTTP body — and must never fold back into renderer bot state.
+    const sent: BotUpdatePatch[] = [];
+    const overlays: BotUpdatePatch[] = [];
+    const queue = createBotPatchQueue({
+      send: async (_botId, patch) => {
+        sent.push(patch);
+        return bot();
+      },
+      reconcile: async () => bot(),
+      onAuthoritative: (_bot, overlay) => overlays.push(overlay),
+      onError: vi.fn(),
+    });
+
+    queue.enqueue("bot-1", { computer: "local", acknowledgeLocalAuto: true }, bot());
+    queue.enqueue("bot-1", { title: "Ops" }, bot());
+    expect(queue.overlayFor("bot-1")).toEqual({ computer: "local", title: "Ops" });
+    await vi.advanceTimersByTimeAsync(400);
+    await queue.flush("bot-1");
+
+    expect(sent).toEqual([{ computer: "local", acknowledgeLocalAuto: true, title: "Ops" }]);
+    for (const overlay of overlays) expect(overlay).not.toHaveProperty("acknowledgeLocalAuto");
+  });
+
+  it("revive undoes a dispose, so StrictMode's dev probe cannot kill saving", async () => {
+    // StrictMode mounts, runs the cleanup once against the same memoized
+    // queue, and mounts again. dispose → revive must leave a working queue.
+    const sent: BotUpdatePatch[] = [];
+    const queue = createBotPatchQueue({
+      send: async (_botId, patch) => {
+        sent.push(patch);
+        return bot();
+      },
+      reconcile: async () => bot(),
+      onAuthoritative: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    queue.dispose();
+    queue.revive();
+    queue.enqueue("bot-1", { title: "still saves" }, bot());
+    await vi.advanceTimersByTimeAsync(400);
+    await queue.flush("bot-1");
+    expect(sent).toEqual([{ title: "still saves" }]);
+  });
 });

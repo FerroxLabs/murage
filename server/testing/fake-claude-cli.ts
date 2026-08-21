@@ -4,19 +4,11 @@
 // scripted session. Failure modes are toggled by env var, mirroring how
 // the real thing misbehaves:
 //
-//   FAKE_CLAUDE_MODE   happy (default) | exit-early | hang | result-then-hang
-//                      | malformed | stream (partial-message text deltas
-//                        before the whole-message frame, plus subagent noise
-//                        to drop)
-//                      result-then-hang prints the same result as happy but
-//                      never exits — simulates a backgrounded grandchild that
-//                      outlives its turn (issue #211), for tests that must
-//                      confirm the process is actually gone, not just that
-//                      the driver emitted turn.completed.
-//   FAKE_CLAUDE_DUMP   path to write {pid, argv, env, prompt, mcpConfig} as
-//                      JSON, so the test can assert on argv shape, env
-//                      hygiene, and (for result-then-hang) poll this process
-//                      for liveness after the driver settles the turn.
+//   FAKE_CLAUDE_MODE   happy (default) | exit-early | hang | malformed
+//                      | stream (partial-message text deltas before the
+//                        whole-message frame, plus subagent noise to drop)
+//   FAKE_CLAUDE_DUMP   path to write {argv, env, prompt, mcpConfig} as JSON,
+//                      so the test can assert on argv shape and env hygiene.
 //                      mcpConfig is read back from the --mcp-config file the
 //                      way the real CLI reads it — the driver writes it to a
 //                      private temp file and deletes it when the turn settles,
@@ -66,25 +58,41 @@ if (argAfter("--output-format") === "text") {
   if (process.env.FAKE_CLAUDE_DUMP) {
     writeFileSync(
       process.env.FAKE_CLAUDE_DUMP,
-      JSON.stringify({ argv, env: process.env, prompt: argAfter("-p"), mcpConfig: null }, null, 2),
+      JSON.stringify({ pid: process.pid, argv, env: process.env, prompt: argAfter("-p"), mcpConfig: null }, null, 2),
     );
   }
   process.stdout.write("fake generated text\n");
   process.exit(0);
 }
 
-let stdin = "";
-process.stdin.on("data", (c) => (stdin += c));
-process.stdin.on("end", () => {
-  type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-  let prompt: JsonValue = null;
-  try {
-    prompt = JSON.parse(stdin.split("\n").find((l) => l.trim()) ?? "null");
-  } catch {
-    /* leave null — the test will see it */
-  }
+// Line-driven, like the real CLI under --input-format stream-json: each user
+// message starts a turn; a message that arrives WHILE a turn is playing is
+// folded into it (the real CLI delivers it before the next model call — the
+// harness calls that a steer); the process stays alive with stdin open and
+// exits only when stdin ends. `slow` leaves a gap between the tool result
+// and the reply so a test can steer into it.
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+const sessionId = argAfter("--resume") ?? argAfter("--session-id") ?? "fake-session";
+const model = argAfter("--model") ?? "claude-fake";
+let dumped = false;
+let turnRunning = false;
+let steered: string[] = [];
+let stdinEnded = false;
 
-  if (process.env.FAKE_CLAUDE_DUMP) {
+const promptText = (prompt: JsonValue): string => {
+  const m = prompt && typeof prompt === "object" && !Array.isArray(prompt) ? (prompt as { message?: { content?: unknown } }).message : undefined;
+  return typeof m?.content === "string" ? m.content : "";
+};
+
+const finishIfDone = () => {
+  if (stdinEnded && !turnRunning) process.exit(0);
+};
+
+const playTurn = (prompt: JsonValue) => {
+  turnRunning = true;
+  steered = [];
+  if (!dumped && process.env.FAKE_CLAUDE_DUMP) {
+    dumped = true;
     const configPath = argAfter("--mcp-config");
     let mcpConfig: unknown = null;
     if (configPath) {
@@ -94,20 +102,15 @@ process.stdin.on("end", () => {
         /* leave null — the test will see it */
       }
     }
-    writeFileSync(
-      process.env.FAKE_CLAUDE_DUMP,
-      JSON.stringify({ pid: process.pid, argv, env: process.env, prompt, mcpConfig }, null, 2),
-    );
+    writeFileSync(process.env.FAKE_CLAUDE_DUMP, JSON.stringify({ pid: process.pid, argv, env: process.env, prompt, mcpConfig }, null, 2));
   }
-
-  const sessionId = argAfter("--resume") ?? argAfter("--session-id") ?? "fake-session";
-  const model = argAfter("--model") ?? "claude-fake";
 
   if (mode === "exit-early") {
     process.stderr.write("fake-claude: simulated crash before result\n");
     process.exit(3);
   }
 
+  // the real CLI re-announces init on every turn of a live process
   out({ type: "system", subtype: "init", session_id: sessionId, model });
 
   if (mode === "hang") {
@@ -145,14 +148,45 @@ process.stdin.on("end", () => {
     },
   });
   out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-1", is_error: false }] } });
-  out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0.01, usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 } });
 
-  if (mode === "result-then-hang") {
-    // printed `result` but never exits — the process the driver's settle()
-    // must now forcibly reap
-    setInterval(() => {}, 1_000);
-    return;
+  const finish = () => {
+    out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0.01, usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 } });
+    turnRunning = false;
+    finishIfDone();
+  };
+  if (mode === "slow") {
+    // a gap a test can steer into; the closing reply carries anything that
+    // was folded in, the way the real CLI includes a mid-turn message in
+    // the same turn's next model call
+    setTimeout(() => {
+      const tail = steered.length ? ` + steered: ${steered.join(" | ")}` : "";
+      out({ type: "assistant", message: { content: [{ type: "text", text: `reply to: ${promptText(prompt)}${tail}` }] } });
+      finish();
+    }, 800);
+  } else {
+    finish();
   }
+};
 
-  process.exit(0);
+let buf = "";
+process.stdin.on("data", (c) => {
+  buf += c;
+  let nl;
+  while ((nl = buf.indexOf("\n")) !== -1) {
+    const line = buf.slice(0, nl);
+    buf = buf.slice(nl + 1);
+    if (!line.trim()) continue;
+    let prompt: JsonValue = null;
+    try {
+      prompt = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (turnRunning) steered.push(promptText(prompt));
+    else playTurn(prompt);
+  }
+});
+process.stdin.on("end", () => {
+  stdinEnded = true;
+  finishIfDone();
 });

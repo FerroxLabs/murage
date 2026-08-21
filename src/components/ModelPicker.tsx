@@ -10,6 +10,7 @@ import { ProviderMark } from "./ProviderIcons";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { cn } from "@/lib/cn";
+import { COMPACT_SQUARE } from "@/lib/compact-chip";
 
 type ModelOption = InstanceInfo["models"]["options"][number];
 const COMPACT_MODEL_COUNT = 5;
@@ -206,12 +207,23 @@ export function ModelPicker({ bot, className }: { bot: Bot; className?: string }
         }}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className="flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 py-1 pl-2 pr-2.5 text-[13px] text-ink hover:bg-raised"
+        className={cn(
+          "flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 py-1 pl-2 pr-2.5 text-[13px] text-ink hover:bg-raised",
+          // in a narrow chat header fold to a rounded square with just the
+          // provider mark; the model name rides the tooltip (a bot with no
+          // resolved engine keeps its label — the mark is what would hide it)
+          active && COMPACT_SQUARE,
+        )}
         title={active ? `${active.displayName} · ${modelLabel(active, selection.model)}` : selection.model}
       >
         {active && <ProviderMark driverKind={active.driverKind} size={14} />}
-        <span className="max-w-[160px] truncate">{modelLabel(active, selection.model)}</span>
-        <ChevronDown size={14} className={cn("text-ink-secondary transition-transform", open && "rotate-180")} />
+        <span className={cn("max-w-[160px] truncate", active && "@max-4xl/chathead:hidden")}>
+          {modelLabel(active, selection.model)}
+        </span>
+        <ChevronDown
+          size={14}
+          className={cn("text-ink-secondary transition-transform", open && "rotate-180", active && "@max-4xl/chathead:hidden")}
+        />
       </button>
 
       {open && (

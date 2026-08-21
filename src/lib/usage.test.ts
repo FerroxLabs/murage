@@ -16,6 +16,29 @@ describe("usage formatting", () => {
     expect(formatUsd(0.31)).toBe("$0.31");
   });
 
+  it("does not throw on missing usage fields from older bots.json", () => {
+    expect(formatUsd(undefined as unknown as number)).toBe("");
+    expect(formatTokens(undefined as unknown as number)).toBe("0");
+    expect(
+      usageChip({ input: 100, output: 20, turns: 1 } as { input: number; output: number; costUsd: null; turns: number }),
+    ).toBe("120 tok");
+  });
+
+  it("treats NaN and Infinity cost as missing", () => {
+    expect(formatUsd(Number.NaN)).toBe("");
+    expect(formatUsd(Number.POSITIVE_INFINITY)).toBe("");
+    expect(formatTokens(Number.NaN)).toBe("0");
+    expect(formatTokens(Number.POSITIVE_INFINITY)).toBe("0");
+    expect(usageChip({ input: 100, output: 20, costUsd: Number.NaN, turns: 1 })).toBe("120 tok");
+    expect(usageChip({ input: 100, output: 20, costUsd: Number.POSITIVE_INFINITY, turns: 1 })).toBe("120 tok");
+    expect(
+      sumUsage([
+        { input: 1, output: 1, costUsd: Number.NaN, turns: 1 },
+        { input: 2, output: 2, costUsd: 0.01, turns: 1 },
+      ]),
+    ).toEqual({ input: 3, output: 3, costUsd: 0.01, turns: 2 });
+  });
+
   it("builds the chip: tokens always, cost only when known, nothing when unused", () => {
     expect(usageChip({ input: 0, output: 0, costUsd: null, turns: 0 })).toBe("");
     expect(usageChip({ input: 10_000, output: 2_400, costUsd: null, turns: 3 })).toBe("12.4k tok");

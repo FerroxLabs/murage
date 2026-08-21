@@ -30,7 +30,13 @@ import type {
 } from "../contracts.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { newEventId, newId } from "../contracts.ts";
-import { applyClaudeInject, mergeLocalInject } from "./local-inject.ts";
+import {
+  applyClaudeInject,
+  decodeInjectId,
+  mergeLocalInject,
+  probeLocalInjects,
+  resolveInjectId,
+} from "./local-inject.ts";
 import { appendNative } from "./native.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -102,6 +108,19 @@ export const STATIC_CLAUDE_MODELS: ModelCatalog = {
 
 const CLAUDE_MODEL_ID = /^[a-z0-9][a-z0-9._:/-]*$/i;
 
+/** Rewrite a leftover API slug (`orcarouter/Qwen…`) to `host::model` when a
+ *  local host is serving it, so the turn injects instead of asking for /login.
+ *  Official cloud ids and already-encoded inject ids skip the probe. */
+async function resolveClaudeTurnModel(
+  model: string | null | undefined,
+  env: Record<string, string | undefined>,
+): Promise<string | null | undefined> {
+  if (!model || decodeInjectId(model) || STATIC_CLAUDE_MODELS.options.some((option) => option.id === model)) {
+    return model;
+  }
+  return resolveInjectId(model, await probeLocalInjects(env)) ?? model;
+}
+
 function claudeConfigDir(env: Record<string, string | undefined>): string {
   if (env.CLAUDE_CONFIG_DIR) return env.CLAUDE_CONFIG_DIR;
   return join(env.HOME || env.USERPROFILE || homedir(), ".claude");
@@ -122,7 +141,11 @@ function extrasFromUnknown(value: unknown): Array<{ id: string; label: string }>
   });
 }
 
-/** Extra ids from ~/.claude/settings.json. Official cloud rows stay untagged. */
+/** Extra ids from ~/.claude/settings.json. Official cloud rows stay untagged.
+ *  `model` is Claude Code's last-used slug, not a catalog — listing it as
+ *  Custom put a non-inject id in the picker and the turn then had no
+ *  ANTHROPIC_API_KEY ("Not logged in · Please run /login"). Live injects
+ *  come from mergeLocalInject. */
 export function readClaudeModelCatalog(env: Record<string, string | undefined> = process.env) {
   let settings: Record<string, unknown> = {};
   try {
@@ -139,7 +162,6 @@ export function readClaudeModelCatalog(env: Record<string, string | undefined> =
   const nestedEnv = settings.env && typeof settings.env === "object" ? (settings.env as Record<string, unknown>) : {};
   const envModel = nestedEnv.ANTHROPIC_MODEL ?? env.ANTHROPIC_MODEL;
   if (typeof envModel === "string") extras.push(...extrasFromUnknown([envModel]));
-  if (typeof settings.model === "string") extras.push(...extrasFromUnknown([settings.model]));
 
   const options = STATIC_CLAUDE_MODELS.options.map((option) => ({ ...option }));
   const seen = new Set(options.map((option) => option.id));
@@ -221,6 +243,7 @@ function createPermissionBroker(opts: {
   socketPath: string;
   onAsk: (ask: Ask) => void;
   onResolve: (resolved: Ask & { behavior: AskBehavior; source: AskResolutionSource }) => void;
+  isActive?: () => boolean;
   timeoutMs?: number;
 }) {
   const timeoutMs = opts.timeoutMs ?? 15 * 60_000;
@@ -263,6 +286,15 @@ function createPermissionBroker(opts: {
           // entry or notify onAsk, but always answer an existing connection:
           // permission-proxy.ts only resolves on an explicit answer (or a
           // connection error/close), so a silent drop would hang the tool.
+          try {
+            conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
+          } catch {}
+          continue;
+        }
+        // A retained Claude process keeps its proxy connection between
+        // turns. Late/background asks must still fail closed without opening
+        // a card for a turn that has already settled.
+        if (opts.isActive && !opts.isActive()) {
           try {
             conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
           } catch {}
@@ -313,6 +345,12 @@ function createPermissionBroker(opts: {
     console.error(`permission broker unavailable on ${opts.socketPath}: ${error.message}`);
   });
   server.listen(opts.socketPath);
+  const drain = () => {
+    for (const p of [...pending.values()]) {
+      const { behavior, message } = systemEndedReply(p.ask.kind);
+      p.finish(behavior, message, "system");
+    }
+  };
   return {
     answer(askId: string, behavior: AskBehavior, message?: string): boolean {
       const p = pending.get(askId);
@@ -321,12 +359,12 @@ function createPermissionBroker(opts: {
       p.finish(behavior, message, "user");
       return true;
     },
+    pause() {
+      drain();
+    },
     close() {
       closed = true;
-      for (const p of [...pending.values()]) {
-        const { behavior, message } = systemEndedReply(p.ask.kind);
-        p.finish(behavior, message, "system");
-      }
+      drain();
       try {
         server.close();
       } catch {}
@@ -396,6 +434,79 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     // one active turn per thread; a second send while busy is a caller bug
     const active = new Map<string, { stop: () => void; turnId: string; broker?: ReturnType<typeof createPermissionBroker> }>();
 
+    // One live CLI process per thread, kept across turns. Under
+    // --input-format stream-json the CLI settles a turn with `result` while
+    // stdin stays open, takes the next user message on the same stdin as a
+    // new turn, and folds a message that arrives MID-turn into the running
+    // one before its next model call (verified against 2.1.221 — that fold
+    // is what "steer" is). So a session is spawned once, reused while its
+    // spawn contract (args, MCP config, cwd, model) is unchanged, closed
+    // after SESSION_IDLE_MS of quiet, and resumed by --resume when needed.
+    interface Session {
+      child: ReturnType<typeof spawnCli>;
+      broker?: ReturnType<typeof createPermissionBroker>;
+      mcpConfigPath: string | null;
+      /** the spawn contract — a different one means a fresh process */
+      argsKey: string;
+      /** the CLI's session id from `init`, what --resume takes later */
+      sessionId: string | null;
+      /** the running turn, or null between turns */
+      turn: { turnId: string; settled: boolean; sawStreamDelta: boolean } | null;
+      idleTimer: ReturnType<typeof setTimeout> | null;
+      closing: boolean;
+      stderr: string;
+    }
+    const sessions = new Map<string, Session>();
+    const configuredIdleMinimum = Number(process.env.OMB_CLAUDE_SESSION_IDLE_MIN_MS);
+    const sessionIdleMinimum = Number.isFinite(configuredIdleMinimum) && configuredIdleMinimum > 0
+      ? configuredIdleMinimum
+      : 10_000;
+    const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, Number(process.env.OMB_CLAUDE_SESSION_IDLE_MS) || 10 * 60_000);
+
+    const closeSession = (threadId: string, why: string) => {
+      const s = sessions.get(threadId);
+      if (!s || s.closing) return;
+      s.closing = true;
+      if (s.idleTimer) clearTimeout(s.idleTimer);
+      // Broker ownership belongs to this session. Detach and close it now,
+      // before a replacement can bind the same per-thread socket; the old
+      // child's later close event must never unlink a new broker.
+      const broker = s.broker;
+      s.broker = undefined;
+      broker?.close();
+      appendNative(threadId, { dir: "out", source: "claude.session", msg: { close: why } });
+      // stdin EOF is the CLI's exit signal; give it a moment, then insist
+      try {
+        s.child.stdin.end();
+      } catch {}
+      const kill = setTimeout(() => {
+        if (s.child.exitCode === null) killCliTree(s.child);
+      }, 5_000);
+      kill.unref?.();
+    };
+    const armIdle = (threadId: string) => {
+      const s = sessions.get(threadId);
+      if (!s) return;
+      if (s.idleTimer) clearTimeout(s.idleTimer);
+      s.idleTimer = setTimeout(() => closeSession(threadId, "idle"), SESSION_IDLE_MS);
+      s.idleTimer.unref?.();
+    };
+    const writeUser = (s: Session, threadId: string, text: string): Promise<boolean> => {
+      const promptMsg = { type: "user", message: { role: "user", content: text } };
+      if (!s.child.stdin.writable || s.child.stdin.destroyed) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        try {
+          s.child.stdin.write(JSON.stringify(promptMsg) + "\n", (error) => {
+            if (error) return resolve(false);
+            appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: promptMsg });
+            resolve(true);
+          });
+        } catch {
+          resolve(false);
+        }
+      });
+    };
+
     const emit = (event: RuntimeEvent) => {
       for (const l of [...listeners]) l(event);
     };
@@ -428,10 +539,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         "--include-partial-messages",
         "--permission-mode", config.permissionMode === "auto" ? "acceptEdits" : config.permissionMode,
       ];
-      if (sessionId) args.push("--resume", sessionId);
-      else args.push("--session-id", newSessionId!);
       const turnEnvironment: NodeJS.ProcessEnv = { ...process.env, ...input.environment };
-      const injected = applyClaudeInject({ ...turnEnvironment }, turn.model);
+      const turnModel = await resolveClaudeTurnModel(turn.model, turnEnvironment);
+      const injected = applyClaudeInject({ ...turnEnvironment }, turnModel);
       if (injected.model) args.push("--model", injected.model);
       if (turn.effort) args.push("--effort", turn.effort);
       if (turn.system) args.push("--append-system-prompt", turn.system);
@@ -491,31 +601,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // an Allow/Deny card in chat, and the agent gets ask_user. Skipped in
       // bypassPermissions (fullAuto) — nothing would ever ask.
       let broker: ReturnType<typeof createPermissionBroker> | undefined;
+      let socketPath: string | null = null;
       if (config.permissionMode !== "bypassPermissions") {
-        const socketPath = permissionSocketPath(threadId);
-        broker = createPermissionBroker({
-          socketPath,
-          onAsk: (ask) =>
-            emit({
-              ...base(threadId, turnId),
-              type: "request.opened",
-              requestId: ask.id,
-              requestType: ask.kind,
-              tool: ask.tool,
-              summary: askSummary(ask),
-              approvalScope: controlsHost ? "local-computer" : undefined,
-              choices: Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
-            }),
-          onResolve: (resolved) =>
-            emit({
-              ...base(threadId, turnId),
-              type: "request.resolved",
-              requestId: resolved.id,
-              behavior: resolved.behavior,
-              source: resolved.source,
-              approvalScope: controlsHost ? "local-computer" : undefined,
-            }),
-        });
+        socketPath = permissionSocketPath(threadId);
         args.push("--permission-prompt-tool", "mcp__ogb__approve");
         mcpServers.ogb = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG } };
         allowed.push("mcp__ogb");
@@ -534,48 +622,122 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         args.push("--allowedTools", allowed.join(","));
       }
 
-      const env = claudeEnvironment(turn.model, turnEnvironment);
+      const env = claudeEnvironment(turnModel, turnEnvironment);
+      const cwd = turn.cwd ?? homedir();
+      // everything that shapes the process, minus session/turn specifics
+      // (the --mcp-config file is a fresh temp path each time; its CONTENT
+      // is what matters and mcpServers carries that)
+      const keyArgs = args.filter((a, i) => a !== "--mcp-config" && args[i - 1] !== "--mcp-config");
+      const argsKey = JSON.stringify({ args: keyArgs, mcpServers, cwd, model: injected.model ?? null, base: env.ANTHROPIC_BASE_URL ?? null });
+
+      // Reuse the live process when it is idle, unchanged, and is the session
+      // the harness wants resumed. Anything else: close it and spawn fresh
+      // (with --resume, so the conversation continues in the new process).
+      const live = sessions.get(threadId);
+      if (live && !live.turn && !live.closing && live.child.exitCode === null && live.argsKey === argsKey && (!sessionId || sessionId === live.sessionId)) {
+        if (live.idleTimer) clearTimeout(live.idleTimer);
+        live.turn = { turnId, settled: false, sawStreamDelta: false };
+        active.set(threadId, { stop: () => killCliTree(live.child), turnId, broker: live.broker });
+        emit({ ...base(threadId, turnId), type: "turn.started" });
+        const written = await writeUser(live, threadId, turn.text);
+        if (!written) {
+          active.delete(threadId);
+          live.turn = null;
+          closeSession(threadId, "stdin write failed");
+          throw new Error("claude session stdin is not writable");
+        }
+        // the MCP config was for the first spawn; nothing to clean here
+        if (mcpConfigPath) {
+          try {
+            rmSync(dirname(mcpConfigPath), { recursive: true, force: true });
+          } catch {}
+        }
+        return { turnId };
+      }
+      if (live) closeSession(threadId, "spawn contract changed");
+
+      // Only create a broker for a new process. A compatible retained process
+      // keeps its existing proxy connection and broker across turns.
+      if (socketPath) {
+        broker = createPermissionBroker({
+          socketPath,
+          isActive: () => Boolean(sessions.get(threadId)?.turn),
+          onAsk: (ask) => {
+            const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
+            emit({
+              ...base(threadId, eventTurnId),
+              type: "request.opened",
+              requestId: ask.id,
+              requestType: ask.kind,
+              tool: ask.tool,
+              summary: askSummary(ask),
+              approvalScope: controlsHost ? "local-computer" : undefined,
+              choices: Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
+            });
+          },
+          onResolve: (resolved) => {
+            const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
+            emit({
+              ...base(threadId, eventTurnId),
+              type: "request.resolved",
+              requestId: resolved.id,
+              behavior: resolved.behavior,
+              source: resolved.source,
+              approvalScope: controlsHost ? "local-computer" : undefined,
+            });
+          },
+        });
+      }
+      if (sessionId) args.push("--resume", sessionId);
+      else args.push("--session-id", newSessionId!);
 
       const child = spawnCli(config.cli, args, {
-        cwd: turn.cwd ?? homedir(),
+        cwd,
         env,
         stdio: ["pipe", "pipe", "pipe"],
       });
+      const session: Session = {
+        child,
+        broker,
+        mcpConfigPath,
+        argsKey,
+        sessionId: sessionId ?? newSessionId,
+        turn: { turnId, settled: false, sawStreamDelta: false },
+        idleTimer: null,
+        closing: false,
+        stderr: "",
+      };
+      sessions.set(threadId, session);
 
-      let settled = false;
+      // settles the TURN, not the process: the CLI stays for the next
+      // message until it has been quiet for SESSION_IDLE_MS
       const settle = (
         ok: boolean,
         stopReason: string | null,
         cost: number | null = null,
         usage?: { input: number; output: number },
       ) => {
-        if (settled) return;
-        settled = true;
-        // Closing first marks the broker terminal and resolves every current
-        // ask before anything else can observe the turn as gone. Existing
-        // socket connections remain answerable through the broker's closed
-        // branch while the CLI tree is being reaped.
-        broker?.close();
-        // A one-shot `-p` process is expected to exit right after printing
-        // `result`, but a backgrounded MCP grandchild can keep it (or itself)
-        // alive — leaving a live process with a live broker connection that
-        // can raise a permission ask nobody can ever answer (issue #211). A
-        // no-op when the process already exited.
-        killCliTree(child);
-        // the config file holds live credentials — it must not outlive the turn
-        if (mcpConfigPath) {
+        const t = session.turn;
+        if (!t || t.settled) return;
+        t.settled = true;
+        // Resolve any ask still open for this turn, but keep the broker
+        // listening for the next turn on the retained process. Between turns
+        // isActive() rejects late background asks without creating cards.
+        session.broker?.pause();
+        // the config file holds live credentials — the CLI read it at start;
+        // it must not sit on disk for the life of the session
+        if (session.mcpConfigPath) {
           try {
-            rmSync(dirname(mcpConfigPath), { recursive: true, force: true });
+            rmSync(dirname(session.mcpConfigPath), { recursive: true, force: true });
           } catch {}
+          session.mcpConfigPath = null;
         }
         active.delete(threadId);
-        emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}) });
+        session.turn = null;
+        emit({ ...base(threadId, t.turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}) });
+        if (session.child.exitCode === null && !session.closing) armIdle(threadId);
       };
-
-      // token streaming: true while --include-partial-messages is delivering
-      // text deltas for the current assistant message, so the whole-message
-      // frame that follows doesn't re-emit the same text as one big delta
-      let sawStreamDelta = false;
+      const currentTurnId = () => session.turn?.turnId ?? turnId;
 
       const handleLine = (line: string) => {
         let o: any;
@@ -588,9 +750,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         switch (o.type) {
           case "system":
             if (o.subtype === "init") {
-              emit({ ...base(threadId, turnId), type: "session.started", sessionId: o.session_id, model: o.model });
+              if (typeof o.session_id === "string") session.sessionId = o.session_id;
+              emit({ ...base(threadId, currentTurnId()), type: "session.started", sessionId: o.session_id, model: o.model });
             } else if (o.subtype === "thinking_tokens") {
-              emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: o.estimated_tokens });
+              emit({ ...base(threadId, currentTurnId()), type: "item.updated", itemType: "reasoning", tokens: o.estimated_tokens });
             }
             break;
           case "stream_event": {
@@ -601,10 +764,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             if (ev.type !== "content_block_delta") break;
             const d = ev.delta ?? {};
             if (d.type === "text_delta" && typeof d.text === "string" && d.text) {
-              sawStreamDelta = true;
-              emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: d.text });
+              if (session.turn) session.turn.sawStreamDelta = true;
+              emit({ ...base(threadId, currentTurnId()), type: "content.delta", streamKind: "assistant_text", delta: d.text });
             } else if (d.type === "thinking_delta" && typeof d.thinking === "string" && d.thinking) {
-              emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta: d.thinking });
+              emit({ ...base(threadId, currentTurnId()), type: "content.delta", streamKind: "reasoning_text", delta: d.thinking });
             }
             break;
           }
@@ -613,20 +776,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             const text = firstText(msg.content);
             if (text.trim()) {
               // fallback delta for CLIs/paths that never streamed the block
-              if (!sawStreamDelta) {
-                emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: text });
+              if (!session.turn?.sawStreamDelta) {
+                emit({ ...base(threadId, currentTurnId()), type: "content.delta", streamKind: "assistant_text", delta: text });
               }
-              sawStreamDelta = false;
-              emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
+              if (session.turn) session.turn.sawStreamDelta = false;
+              emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "assistant_text", text });
             }
             for (const b of Array.isArray(msg.content) ? msg.content : []) {
               if (b.type === "tool_use") {
-                emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", itemId: b.id, title: b.name });
+                emit({ ...base(threadId, currentTurnId()), type: "item.started", itemType: "tool", itemId: b.id, title: b.name });
               }
             }
             if (msg.usage) {
               emit({
-                ...base(threadId, turnId),
+                ...base(threadId, currentTurnId()),
                 type: "thread.token-usage.updated",
                 input: (msg.usage.input_tokens || 0) + (msg.usage.cache_read_input_tokens || 0),
                 output: msg.usage.output_tokens || 0,
@@ -637,7 +800,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           case "user":
             for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
               if (b.type === "tool_result") {
-                emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: b.tool_use_id, ok: !b.is_error });
+                emit({ ...base(threadId, currentTurnId()), type: "item.completed", itemType: "tool", itemId: b.tool_use_id, ok: !b.is_error });
               }
             }
             break;
@@ -674,39 +837,59 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
       });
 
-      let stderr = "";
       child.stderr.on("data", (c) => {
-        stderr += c;
-        if (stderr.length > 8192) stderr = stderr.slice(-8192);
+        session.stderr += c;
+        if (session.stderr.length > 8192) session.stderr = session.stderr.slice(-8192);
       });
 
       child.on("error", (e) => {
-        emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
+        emit({ ...base(threadId, currentTurnId()), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
         settle(false, "spawn_error");
       });
 
       child.on("close", (code) => {
-        if (!settled) {
+        // a turn still running when the process died is a failed turn; a
+        // process that exited between turns (idle close, contract change)
+        // is just a session ending
+        if (session.turn && !session.turn.settled) {
           emit({
-            ...base(threadId, turnId),
+            ...base(threadId, currentTurnId()),
             type: "runtime.error",
-            message: `claude exited ${code} before result${stderr ? `: ${stderr.trim().slice(-300)}` : ""}`,
+            message: `claude exited ${code} before result${session.stderr ? `: ${session.stderr.trim().slice(-300)}` : ""}`,
           });
           settle(false, "exit_before_result");
         }
+        if (session.idleTimer) clearTimeout(session.idleTimer);
+        session.broker?.close();
+        if (session.mcpConfigPath) {
+          try {
+            rmSync(dirname(session.mcpConfigPath), { recursive: true, force: true });
+          } catch {}
+        }
+        if (sessions.get(threadId) === session) sessions.delete(threadId);
       });
 
       const stop = () => killCliTree(child);
       active.set(threadId, { stop, turnId, broker });
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
-      // prompt over stdin as a stream-json message — never argv (ARG_MAX)
-      const promptMsg = { type: "user", message: { role: "user", content: turn.text } };
-      child.stdin.write(JSON.stringify(promptMsg) + "\n");
-      child.stdin.end();
-      appendNative(threadId, { dir: "out", source: "claude.sdk.message", msg: promptMsg });
+      // prompt over stdin as a stream-json message — never argv (ARG_MAX).
+      // stdin stays OPEN: that is what keeps the session alive for a
+      // mid-turn steer or the next turn; closeSession() ends it.
+      if (!(await writeUser(session, threadId, turn.text))) {
+        settle(false, "stdin_write_failed");
+        closeSession(threadId, "stdin write failed");
+      }
 
       return { turnId };
+    };
+
+    /** A user message into the running turn: the CLI delivers it before its
+     * next model call. False when nothing is running here to steer. */
+    const steer = async (threadId: string, text: string): Promise<boolean> => {
+      const s = sessions.get(threadId);
+      if (!s || !s.turn || s.turn.settled || s.closing || s.child.exitCode !== null) return false;
+      return writeUser(s, threadId, text);
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
@@ -744,14 +927,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           phoneMcp: true,
           images: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],
+          queueing: true,
           localComputerMcp: config.permissionMode !== "bypassPermissions",
         },
         sendTurn,
+        steer,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),
         respondToRequest: async (threadId, requestId, decision) => {
           // fail-closed by construction: no broker, or an ask that already
           // timed out / settled, is `unavailable` — the caller denies
-          const broker = active.get(threadId)?.broker;
+          const broker = sessions.get(threadId)?.broker ?? active.get(threadId)?.broker;
           if (!broker) return "unavailable";
           const behavior = decision.behavior === "answer" ? "answer" : decision.behavior;
           if (!broker.answer(requestId, behavior, decision.message)) return "unavailable";
@@ -760,6 +945,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
           for (const { stop } of active.values()) stop();
+          for (const threadId of [...sessions.keys()]) closeSession(threadId, "stopAll");
         },
         onEvent: (listener) => {
           listeners.add(listener);
@@ -777,6 +963,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }),
       dispose: async () => {
         for (const { stop } of active.values()) stop();
+        for (const threadId of [...sessions.keys()]) closeSession(threadId, "dispose");
         listeners.clear();
       },
     };

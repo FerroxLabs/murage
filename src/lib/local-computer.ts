@@ -4,10 +4,26 @@ export function instanceSupportsLocalComputer(
   instances: InstanceInfo[],
   bot: Pick<Bot, "modelSelection">,
 ): boolean {
-  return (
-    instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId)?.capabilities
-      ?.localComputerMcp === true
-  );
+  const capabilities = instances.find(
+    (instance) => instance.instanceId === bot.modelSelection.instanceId,
+  )?.capabilities;
+  return capabilities?.localComputerMcp === true || capabilities?.computerMcp === true;
+}
+
+/** Whether the Runs-on “This computer” control should be clickable.
+ *  macOS keeps the destination available even before CUA has a grant, so
+ *  the user can pick it and then approve Accessibility / Screen Recording
+ *  instead of finding a grayed-out button. */
+export function localComputerSelectable({
+  capabilities,
+  providerSupportsLocal,
+}: {
+  capabilities: DesktopCapabilities;
+  providerSupportsLocal: boolean;
+}): boolean {
+  if (!providerSupportsLocal) return false;
+  if (capabilities.localComputer.available) return true;
+  return capabilities.host.platform === "darwin";
 }
 
 export function localComputerDisabledReason({

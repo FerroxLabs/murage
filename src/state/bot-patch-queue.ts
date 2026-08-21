@@ -26,7 +26,13 @@ export type BotUpdatePatch = Partial<
     | "composio"
     | "modelSelection"
   >
->;
+> & {
+  /** Rides the PATCH body only: the server's proof that the local-auto
+   * warning dialog was shown (see server/index.ts's consent gate). It must
+   * reach the wire inside the coalesced body and must never fold into bot
+   * state — the queue strips it from every overlay it hands back. */
+  acknowledgeLocalAuto?: boolean;
+};
 
 interface BotPatchQueueEntry {
   botId: string;
@@ -57,10 +63,21 @@ export interface BotPatchQueue {
   flush: (botId: string) => Promise<void>;
   overlayFor: (botId: string) => BotUpdatePatch;
   cancel: (botId: string) => void;
+  /** Undo a dispose. Exists for React StrictMode, whose dev-mode mount probe
+   * runs the effect cleanup once against the SAME memoized queue — without
+   * this, dispose() would permanently disable saving in development. */
+  revive: () => void;
   dispose: () => void;
 }
 
 const hasFields = (patch: BotUpdatePatch): boolean => Object.keys(patch).length > 0;
+
+/** What may fold back into renderer bot state: everything except the consent
+ * flag, which is wire-only. One strip point covers both overlay paths. */
+const stateOverlay = (patch: BotUpdatePatch): BotUpdatePatch => {
+  const { acknowledgeLocalAuto: _ack, ...fields } = patch;
+  return fields;
+};
 
 /**
  * A per-bot mutation lane: edits debounce together, requests never overtake
@@ -91,7 +108,7 @@ export function createBotPatchQueue(options: BotPatchQueueOptions): BotPatchQueu
       const bot = await options.send(entry.botId, patch, controller.signal);
       if (disposed || entry.cancelled) return;
       entry.fallback = bot;
-      options.onAuthoritative(bot, entry.pending);
+      options.onAuthoritative(bot, stateOverlay(entry.pending));
     } catch (caught) {
       if (!disposed && !entry.cancelled) {
         // A rejected patch is no longer optimistic. Re-read before rolling back
@@ -108,7 +125,7 @@ export function createBotPatchQueue(options: BotPatchQueueOptions): BotPatchQueu
         // Deletion may cancel this lane while the re-read is in flight. Folding
         // that result back into state would resurrect the deleted bot.
         if (disposed || entry.cancelled) return;
-        if (bot) options.onAuthoritative(bot, entry.pending);
+        if (bot) options.onAuthoritative(bot, stateOverlay(entry.pending));
         options.onError(caught instanceof Error ? caught : new Error(String(caught)));
       }
     } finally {
@@ -164,7 +181,7 @@ export function createBotPatchQueue(options: BotPatchQueueOptions): BotPatchQueu
 
     overlayFor(botId) {
       const entry = entries.get(botId);
-      return entry ? { ...entry.inFlight, ...entry.pending } : {};
+      return entry ? stateOverlay({ ...entry.inFlight, ...entry.pending }) : {};
     },
 
     cancel(botId) {
@@ -175,6 +192,10 @@ export function createBotPatchQueue(options: BotPatchQueueOptions): BotPatchQueu
       entry.controller?.abort();
       entries.delete(botId);
       for (const resolve of entry.idleWaiters.splice(0)) resolve();
+    },
+
+    revive() {
+      disposed = false;
     },
 
     dispose() {

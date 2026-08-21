@@ -2,7 +2,7 @@
 // ~/.openmausbot/attachments so every CLI engine can open them by path —
 // the app never ships image bytes through the prompt itself.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, extname } from "node:path";
 import { DATA_DIR } from "./config.ts";
 
@@ -51,6 +51,17 @@ export function saveImage(bytes: Buffer, mime: string): SavedAttachment {
   const path = join(ATTACHMENTS_DIR, name);
   writeFileSync(path, bytes, { mode: 0o600, flag: "wx" });
   return { path, mime: mime.split(";")[0]!.trim().toLowerCase(), bytes: bytes.byteLength };
+}
+
+/** Existence check with the same name discipline as readAttachment, without
+ * reading up to 10MB of pixels just to learn the file is there. */
+export function attachmentExists(name: string): boolean {
+  if (!/^[A-Za-z0-9-]+\.(png|jpg|gif|webp)$/.test(name)) return false;
+  try {
+    return statSync(join(ATTACHMENTS_DIR, name)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /** Read an attachment back for serving. Only names that are exactly a bare

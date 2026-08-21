@@ -50,6 +50,10 @@ export function Composer({
   // offers members plus @everyone; explicit mentions override the room's
   // configured default responder.
   const busy = group ? Boolean(group.busyBotId) : Boolean(bot?.busy);
+  // an engine with a live session takes a message INTO the running turn;
+  // for those the composer never locks — the server steers instead of 409
+  const canSteer =
+    !group && Boolean(bot) && state.instances.find((i) => i.instanceId === bot!.modelSelection.instanceId)?.capabilities?.queueing === true;
   // a pending approval blocks the prompt until it is answered
   const threadId = group?.threadId ?? bot?.threadId ?? "";
   // the VISIBLE branch only — an approval left on a branch you edited away
@@ -397,6 +401,8 @@ export function Composer({
               ? "Answer the approval above to continue"
               : recording
               ? "Listening…"
+              : busy && canSteer
+                ? `${busyName} is working — Enter sends this into the running turn`
               : busy
                 ? group
                   ? `${busyName} is working — Enter queues your message`
@@ -439,14 +445,14 @@ export function Composer({
         {hasContent && (
           <button
             onClick={send}
-            aria-label={busy ? "Queue message" : "Send message"}
-            title={busy ? "Sends when the current turn finishes" : "Send"}
+            aria-label={busy && canSteer ? "Send into the running turn" : busy ? "Queue message" : "Send message"}
+            title={busy && canSteer ? "Send into the running turn" : busy ? "Sends when the current turn finishes" : "Send"}
             className={cn(
               "flex size-8 shrink-0 items-center justify-center rounded-full text-white",
-              busy ? "bg-raised text-ink-secondary hover:bg-raised-hover" : "bg-accent hover:brightness-110",
+              busy && !canSteer ? "bg-raised text-ink-secondary hover:bg-raised-hover" : "bg-accent hover:brightness-110",
             )}
           >
-            {busy ? <Clock size={15} /> : <ArrowUp size={17} />}
+            {busy && !canSteer ? <Clock size={15} /> : <ArrowUp size={17} />}
           </button>
         )}
         </div>
