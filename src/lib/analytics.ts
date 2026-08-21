@@ -76,6 +76,11 @@ export function initAnalytics() {
     person_profiles: "identified_only",
     persistence: "localStorage",
   });
+  // opt_out_capturing() persists in PostHog's own storage, so after
+  // opt-out → restart → opt-in the client would boot opted out and drop
+  // every capture below while the switch says on. Clear the stale flag
+  // before the first capture of the session.
+  if (posthog.has_opted_out_capturing()) posthog.opt_in_capturing();
   ready = true;
   const platform = navigator.userAgent.includes("Electron") ? "desktop" : "browser";
   // one-time install marker — app_first_open counts installs (the closest

@@ -1,19 +1,23 @@
 // The opt-out has one job that matters: an install that turned analytics off
 // must not talk to PostHog at all. optAction pins the decision, and the
 // storage round-trip pins that the choice survives a restart.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { analyticsEnabled, optAction, setAnalyticsEnabled } from "./analytics";
 
 // The suite runs on the node environment, which has no localStorage.
 const store = new Map<string, string>();
-vi.stubGlobal("localStorage", {
+const baseStorage = {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, v),
   removeItem: (k: string) => void store.delete(k),
-});
+};
+vi.stubGlobal("localStorage", baseStorage);
 
 beforeEach(() => store.clear());
+// Tests that swap in a throwing storage get the base one back even when an
+// assertion fails mid-test — an inline restore at the end would be skipped.
+afterEach(() => vi.stubGlobal("localStorage", baseStorage));
 
 describe("optAction", () => {
   it("initialises on the first opt-in of a session that started off", () => {
@@ -68,11 +72,6 @@ describe("the stored choice", () => {
     expect(fresh.analyticsEnabled()).toBe(false);
     fresh.initAnalytics();
     expect(store.get("omb-installed")).toBeUndefined();
-
-    vi.stubGlobal("localStorage", {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => void store.set(k, v),
-    });
   });
 
   it("treats unusable storage as a fresh install rather than failing", () => {
@@ -86,10 +85,6 @@ describe("the stored choice", () => {
     });
     expect(analyticsEnabled()).toBe(true);
     expect(() => setAnalyticsEnabled(false)).not.toThrow();
-    vi.stubGlobal("localStorage", {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => void store.set(k, v),
-    });
   });
 });
 
