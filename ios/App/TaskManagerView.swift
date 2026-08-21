@@ -17,7 +17,21 @@ struct TaskManagerView: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(tasks, id: \.threadId) { task in
+                Section {
+                    HStack(spacing: 12) {
+                        BotAvatarView(bot: current, size: 48, state: .idle, animated: false)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(current.name).font(.headline)
+                            Text(current.title.isEmpty ? "Agent tasks" : current.title)
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                } footer: {
+                    Text("A task is one conversation and result. Routines create fresh tasks on a schedule.")
+                }
+
+                Section("Tasks") {
+                    ForEach(tasks, id: \.threadId) { task in
                     Button {
                         Task {
                             await session.switchTask(task, for: current)
@@ -49,6 +63,7 @@ struct TaskManagerView: View {
                             Task { await session.deleteTask(task, for: current) }
                         } label: { Label("Delete", systemImage: "trash") }
                         .disabled(tasks.count <= 1 || current.busy == true)
+                    }
                     }
                 }
             }

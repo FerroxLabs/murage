@@ -1,8 +1,8 @@
-// What little the phone gets to configure.
+// Paired-device settings and safe workspace feature entry points.
 //
-// Almost nothing, on purpose: companion settings, API keys and pairing all
-// live on the computer, because losing the phone must not mean losing the
-// ability to lock it out. This is a status page with an unpair button.
+// Credentials, revocation, Local VM and execution policy still live only on
+// the computer. The phone can manage renderer-neutral routines without
+// widening that boundary.
 import SwiftUI
 import CompanionCore
 
@@ -41,6 +41,18 @@ struct SettingsView: View {
                 Text("Notifications")
             } footer: {
                 Text("Approvals and finished work appear while OpenMausMobile is connected, including frames replayed after a short background pause. Closed-app push needs the separate APNs relay release.")
+            }
+
+            Section {
+                NavigationLink {
+                    TasksRoutinesView()
+                } label: {
+                    Label("Tasks & Routines", systemImage: "calendar.badge.clock")
+                }
+            } header: {
+                Text("Workspace")
+            } footer: {
+                Text("Routine schedules are safe to manage here. Provider keys, webhook secrets, pairing, revocation, Local VM, and agent execution policy stay on your computer.")
             }
 
             Section {

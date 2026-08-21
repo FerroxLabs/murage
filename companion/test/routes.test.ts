@@ -63,6 +63,11 @@ describe("what the app may do", () => {
     ["GET", "/api/attachments/avatar-123.webp"],
     ["GET", "/api/tts/voices"],
     ["POST", "/api/tts/speak"],
+    ["GET", "/api/routines"],
+    ["POST", "/api/routines"],
+    ["PATCH", "/api/routines/routine_1"],
+    ["DELETE", "/api/routines/routine_1"],
+    ["POST", "/api/routines/routine_1/run"],
   ];
 
   for (const [method, path] of calls) {
@@ -82,13 +87,28 @@ describe("what it may not", () => {
       ["POST", "/api/webhooks/wh_1/rotate"],
       ["GET", "/api/connectors"],
       ["DELETE", "/api/connectors/gmail"],
-      ["GET", "/api/routines"],
       ["POST", "/api/teams/import"],
     ] as Array<[string, string]>) {
       const denial = ask(method, path);
       expect(denial?.status, `${method} ${path}`).toBe(403);
       expect(denial?.error, `${method} ${path}`).toMatch(/on your computer/);
     }
+  });
+
+  it("describes only refused routine operations as computer-only", () => {
+    for (const [method, path] of [
+      ["GET", "/api/routines/routine_1"],
+      ["PUT", "/api/routines/routine_1"],
+      ["POST", "/api/routines/routine_1/cancel"],
+    ] as Array<[string, string]>) {
+      const denial = ask(method, path);
+      expect(denial, `${method} ${path}`).toEqual({
+        status: 403,
+        error: "this routine operation is only available on your computer",
+      });
+    }
+    expect(ask("GET", "/api/routines")).toBeNull();
+    expect(ask("POST", "/api/routines/routine_1/run")).toBeNull();
   });
 
   it("denies the peer-agent endpoints exist at all", () => {
@@ -121,6 +141,7 @@ describe("what it may not", () => {
     expect(allowed("PATCH", "/api/bots/bot_123/profile/execution-policy")).toBe(false);
     expect(allowed("PUT", "/api/config")).toBe(false);
     expect(allowed("GET", "/api/attachments/../config.json")).toBe(false);
+    expect(allowed("POST", "/api/routine-runs/run_1/cancel")).toBe(false);
     expect(allowed("PATCH", "/api/groups/room-1")).toBe(false);
   });
 

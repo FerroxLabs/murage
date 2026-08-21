@@ -687,7 +687,7 @@ bus.subscribe((event: RuntimeEvent) => {
     if (localVmActiveThread === event.threadId) localVmActiveThread = null;
   }
   broadcast({ kind: "runtime", event });
-  routines?.handleRuntimeEvent(event);
+  const routineRun = routines?.handleRuntimeEvent(event) ?? null;
   const bot = store.botByThread(event.threadId);
   const group = bot ? undefined : store.groupByThread(event.threadId);
   if (!bot && !group) return;
@@ -951,7 +951,9 @@ bus.subscribe((event: RuntimeEvent) => {
         // settled → idle; a setup failure already marked it dead, keep that
         if (store.bot(bot.id)?.activity !== "dead") store.setActivity(bot.id, "idle");
         store.patchBot(bot.id, { unread: true });
-        notify(buildNotification("done", bot, event.threadId, reply));
+        if (routineRun?.status !== "failed") {
+          notify(buildNotification("done", bot, event.threadId, reply));
+        }
         if (screenPollers.has(bot.id)) {
           // the last live frame becomes a settled inline screen message —
           // the screenshot-in-chat moment. One fresh capture first, so the
@@ -1673,6 +1675,12 @@ routines = new RoutineManager({
         ? registry.get(bot.modelSelection.instanceId)
         : null;
     await instance?.adapter.interruptTurn(threadId);
+  },
+  onRunFailed: (run) => {
+    const bot = store.bot(run.botId);
+    if (!bot) return;
+    const detail = run.error ? `${run.routineName}: ${run.error}` : run.routineName;
+    notify(buildNotification("routine-failed", bot, run.threadId ?? bot.threadId, detail));
   },
 });
 routines.start();

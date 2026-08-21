@@ -68,6 +68,41 @@ final class DecodingTests: XCTestCase {
         XCTAssertEqual(newBot.speakReplies, true)
     }
 
+    func testFutureAvatarCropFallsBackWithoutDroppingTheBot() throws {
+        let fixture = String(decoding: try fixture("bot-avatar-profile"), as: UTF8.self)
+            .replacingOccurrences(of: #""avatarCrop":"rounded""#, with: #""avatarCrop":"hexagon""#)
+        let fleet = try JSONDecoder().decode(Fleet.self, from: Data(fixture.utf8))
+
+        XCTAssertEqual(fleet.bots.count, 1)
+        XCTAssertEqual(fleet.bots.first?.avatarCrop, .mascot)
+    }
+
+    func testFutureRoutineScheduleKindRemainsVisibleAsUnknown() throws {
+        let schedule = try JSONDecoder().decode(
+            RoutineSchedule.self,
+            from: Data(#"{"type":"weekly","time":"09:00","weekdays":[1]}"#.utf8)
+        )
+
+        XCTAssertEqual(schedule.type, .unknown)
+        XCTAssertEqual(schedule.time, "09:00")
+        XCTAssertEqual(schedule.weekdays, [1])
+    }
+
+    func testNotificationTargetRequiresBothExactIds() {
+        XCTAssertEqual(
+            NotificationTarget(payload: ["botId": "bot-1", "threadId": "detached-task-2"]),
+            NotificationTarget(botId: "bot-1", threadId: "detached-task-2")
+        )
+        XCTAssertNil(NotificationTarget(payload: ["botId": "bot-1"]))
+        XCTAssertNil(NotificationTarget(payload: ["threadId": "task-1"]))
+        XCTAssertNil(NotificationTarget(botId: " ", threadId: "task-1"))
+        guard let detached = NotificationTarget(botId: "bot-1", threadId: "task-2") else {
+            return XCTFail("valid notification target")
+        }
+        XCTAssertTrue(detached.requiresTaskSwitch(activeThreadId: "task-1"))
+        XCTAssertFalse(detached.requiresTaskSwitch(activeThreadId: "task-2"))
+    }
+
     func testDecodesTheCloudBackendAndItsAbsence() throws {
         // The cloud-desktop button hides on cloudBackend == "vps", so both
         // sides of that gate must decode: a harness that sends the field, and

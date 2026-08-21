@@ -1,6 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { configStatusFromFrame, initialState, reducer, type Bot, type Message } from "./store";
+import {
+  configStatusFromFrame,
+  initialState,
+  openNotificationTarget,
+  reducer,
+  type Bot,
+  type Message,
+} from "./store";
+
+describe("notification routing", () => {
+  it("selects the bot and switches to the notification's exact task", () => {
+    const dispatch = vi.fn();
+
+    openNotificationTarget(dispatch, { botId: "bot-1", threadId: "detached-thread" });
+
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+      { type: "select", id: "bot-1" },
+      { type: "switchTask", botId: "bot-1", threadId: "detached-thread" },
+    ]);
+  });
+});
 
 describe("config status frames", () => {
   it("keeps the room turn timeout with the existing config fields", () => {

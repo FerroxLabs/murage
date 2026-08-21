@@ -386,7 +386,7 @@ public struct ConfigStatus: Codable, Sendable {
     }
 }
 
-// MARK: - Agent profiles and voices
+// MARK: - Agent profiles, voices, routines, and notifications
 
 public struct BotProfilePatch: Encodable, Sendable {
     /// `nil` means "leave the field alone". Profile actions deliberately send
@@ -457,6 +457,163 @@ public struct Voice: Codable, Hashable, Identifiable, Sendable {
     public var description: String?
 }
 
+public struct RoutineSchedule: Codable, Hashable, Sendable {
+    public enum Kind: String, Codable, Sendable {
+        case once, daily
+        /// A schedule introduced by a newer desktop. It remains visible but
+        /// cannot be toggled or saved until the user chooses a supported kind.
+        case unknown
+
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Self(rawValue: raw) ?? .unknown
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
+    }
+    public var type: Kind
+    public var at: Double?
+    public var time: String?
+    public var weekdays: [Int]?
+
+    public static func once(at: Date) -> Self {
+        .init(type: .once, at: at.timeIntervalSince1970 * 1_000, time: nil, weekdays: nil)
+    }
+
+    public static func daily(time: String, weekdays: [Int]) -> Self {
+        .init(type: .daily, at: nil, time: time, weekdays: weekdays)
+    }
+}
+
+public struct Routine: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var prompt: String
+    public var botId: String
+    public var runOn: String
+    public var enabled: Bool
+    public var schedule: RoutineSchedule
+    public var durationMinutes: Int
+    public var nextRunAt: Double?
+    public var createdAt: Double
+    public var updatedAt: Double
+}
+
+public struct RoutineRun: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var routineId: String
+    public var routineName: String
+    public var prompt: String?
+    public var durationMinutes: Int?
+    public var botId: String
+    public var runOn: String
+    public var scheduledFor: Double
+    public var status: String
+    public var manual: Bool
+    public var triggerSource: String?
+    public var threadId: String?
+    public var startedAt: Double?
+    public var finishedAt: Double?
+    public var output: String?
+    public var error: String?
+    public var createdAt: Double
+    public var seenAt: Double?
+}
+
+public struct RoutineInput: Encodable, Sendable {
+    public var name: String
+    public var prompt: String
+    public var botId: String
+    public var runOn: String
+    public var enabled: Bool?
+    public var schedule: RoutineSchedule
+    public var durationMinutes: Int
+
+    public init(
+        name: String, prompt: String, botId: String, runOn: String = "maus",
+        enabled: Bool? = nil, schedule: RoutineSchedule, durationMinutes: Int = 30
+    ) {
+        self.name = name
+        self.prompt = prompt
+        self.botId = botId
+        self.runOn = runOn
+        self.enabled = enabled
+        self.schedule = schedule
+        self.durationMinutes = durationMinutes
+    }
+}
+
+public enum RoutineRunLocation: String, CaseIterable, Codable, Hashable, Sendable {
+    case maus
+    case cloud
+}
+
+/// Desktop-equivalent run-location availability, derived only from paired-safe
+/// status endpoints. Selecting Cloud VM requires both the host credential and
+/// an available Box agent. An existing cloud routine remains editable without
+/// silently changing where it runs if that VM is temporarily unavailable.
+public struct RoutineRunAvailability: Equatable, Sendable {
+    public var cloudConfigured: Bool
+    public var cloudInstanceAvailable: Bool
+
+    public init(config: ConfigStatus?, instances: [Instance]) {
+        cloudConfigured = config?.box?.configured == true
+        cloudInstanceAvailable = instances.contains {
+            $0.driverKind == "boxAgent" && $0.snapshot.isAvailable
+        }
+    }
+
+    public var cloudReady: Bool { cloudConfigured && cloudInstanceAvailable }
+
+    public func canSelect(_ location: RoutineRunLocation, preserving current: RoutineRunLocation) -> Bool {
+        location == .maus || cloudReady || current == .cloud
+    }
+}
+
+public extension Routine {
+    var runLocation: RoutineRunLocation {
+        RoutineRunLocation(rawValue: runOn) ?? .maus
+    }
+
+    /// Mirrors the desktop `canToggleRoutine` policy. A one-time routine has
+    /// no meaningful Resume action once its scheduled instant has passed.
+    func canToggle(at date: Date = Date()) -> Bool {
+        switch schedule.type {
+        case .daily:
+            true
+        case .once:
+            (schedule.at ?? -.infinity) > date.timeIntervalSince1970 * 1_000
+        case .unknown:
+            false
+        }
+    }
+}
+
+public struct NotificationTarget: Equatable, Sendable {
+    public let botId: String
+    public let threadId: String
+
+    public init?(botId: String?, threadId: String?) {
+        guard let botId, let threadId,
+              !botId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !threadId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        self.botId = botId
+        self.threadId = threadId
+    }
+
+    public init?(payload: [String: String]) {
+        self.init(botId: payload["botId"], threadId: payload["threadId"])
+    }
+
+    public func requiresTaskSwitch(activeThreadId: String) -> Bool {
+        threadId != activeThreadId
+    }
+}
+
 /// The harness's error body. Every non-2xx response carries one.
 public struct APIErrorBody: Codable, Sendable {
     public var error: String
@@ -518,3 +675,11 @@ struct GeneratedAvatarResponse: Codable, Sendable {
     var avatarUrl: String
     var bot: Bot
 }
+
+struct RoutinesResponse: Codable, Sendable {
+    var routines: [Routine]
+    var runs: [RoutineRun]
+}
+
+struct RoutineResponse: Codable, Sendable { var routine: Routine }
+struct RoutineRunResponse: Codable, Sendable { var run: RoutineRun }

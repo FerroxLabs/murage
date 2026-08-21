@@ -19,7 +19,7 @@ import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
-import { showNotification } from "@/lib/notify";
+import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 
@@ -437,6 +437,11 @@ export type Action =
       botId: string;
       patch: BotUpdatePatch;
     };
+
+export function openNotificationTarget(dispatch: (action: Action) => void, target: NotificationTarget) {
+  dispatch({ type: "select", id: target.botId });
+  dispatch({ type: "switchTask", botId: target.botId, threadId: target.threadId });
+}
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
   return { ...state, bots: state.bots.map((b) => (b.id === botId ? fn(b) : b)) };
@@ -1430,7 +1435,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // unread:false back. Opening a bot from its own notification and
           // watching the badge return on the next hydration is exactly the
           // bug that makes notifications feel broken.
-          showNotification(frame.notification, (botId) => dispatch({ type: "select", id: botId }));
+          showNotification(frame.notification, (target) => openNotificationTarget(dispatch, target));
           break;
         case "group.deleted":
           rawDispatch({ type: "groupDeleted", groupId: frame.groupId });

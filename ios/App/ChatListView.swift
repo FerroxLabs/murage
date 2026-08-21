@@ -112,6 +112,17 @@ struct ChatListView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Chat.self) { ChatView(chat: $0) }
+            .onChange(of: session.notificationChat) { _, chat in
+                guard let chat else { return }
+                path.append(chat)
+                session.consumeNotificationChat()
+            }
+            .task {
+                if let chat = session.notificationChat {
+                    path.append(chat)
+                    session.consumeNotificationChat()
+                }
+            }
 #if DEBUG
             // `-store-preview -open-first`: land on the first chat, for the
             // screenshot harness and for looking at the chat screen without

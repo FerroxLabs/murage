@@ -100,6 +100,14 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // workspace ElevenLabs key; the phone receives labels or audio only.
   { method: "GET", path: /^\/api\/tts\/voices$/ },
   { method: "POST", path: /^\/api\/tts\/speak$/ },
+
+  // Routines create ordinary tasks using an existing agent configuration.
+  // Webhook management remains explicitly denied below.
+  { method: "GET", path: /^\/api\/routines$/ },
+  { method: "POST", path: /^\/api\/routines$/ },
+  { method: "PATCH", path: /^\/api\/routines\/[\w-]+$/ },
+  { method: "DELETE", path: /^\/api\/routines\/[\w-]+$/ },
+  { method: "POST", path: /^\/api\/routines\/[\w-]+\/run$/ },
 ];
 
 /** Route families worth naming in the refusal.
@@ -125,7 +133,10 @@ const EXPLAINED: ReadonlyArray<{ path: RegExp; error: string }> = [
     error: "webhooks are set up on your computer",
   },
   { path: /^\/api\/connectors(\/|$)/, error: "connected apps are set up on your computer" },
-  { path: /^\/api\/routines(\/|$)/, error: "routines are set up on your computer" },
+  {
+    path: /^\/api\/routines(\/|$)/,
+    error: "this routine operation is only available on your computer",
+  },
   { path: /^\/api\/teams(\/|$)/, error: "teams are imported and exported on your computer" },
 ];
 
