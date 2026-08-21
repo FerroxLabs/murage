@@ -34,7 +34,7 @@ import {
   type Message,
 } from "@/state/store";
 import { EngineSetup } from "./EngineSetup";
-import { MausAvatar } from "./Avatar";
+import { BotAvatar, MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { ChatMarkdown } from "./ChatMarkdown";
@@ -606,7 +606,7 @@ const MessagesList = memo(function MessagesList({
     <>
       {messages.length === 0 && !bot.busy && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
-          <MausAvatar color={bot.color} state="idle" size={64} motion="none" motionKey={0} />
+          <BotAvatar bot={bot} state="idle" size={64} motion="none" motionKey={0} />
           <RenameTitle
             value={bot.name}
             onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
@@ -910,12 +910,13 @@ export function ChatView({ bot }: { bot: Bot }) {
       >
         <div className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1" style={noDrag}>
           <button
-            onClick={() => dispatch({ type: "toggleSettings" })}
-            className="flex shrink-0 items-center rounded-lg p-0.5 hover:bg-raised/50"
-            title="Bot settings"
+            onClick={() => dispatch({ type: "toggleSettings", open: true })}
+            className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-raised/50"
+            title="Open agent profile"
+            aria-label={`Open ${bot.name}'s profile`}
           >
-            <MausAvatar
-              color={bot.color}
+            <BotAvatar
+              bot={bot}
               state={stateForBot({ ...bot, messages })}
               size={28}
               motion={mascotMotion?.kind ?? "none"}
@@ -925,6 +926,8 @@ export function ChatView({ bot }: { bot: Bot }) {
           <RenameTitle
             value={bot.name}
             onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
+            onActivate={() => dispatch({ type: "toggleSettings", open: true })}
+            showEditButton
             className="truncate text-[15px] font-semibold text-ink"
             inputClassName="max-w-[220px] rounded bg-inset px-1.5 py-0.5 text-[15px] font-semibold"
           />

@@ -167,7 +167,9 @@ export class Speaker {
     });
     const body: TtsPrepareBody = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error ?? `the voice service returned ${res.status}`);
-    if (!body.ready) throw new Error("Add an ElevenLabs key and pick a voice in App Settings to turn on voice.");
+    if (!body.ready) {
+      throw new Error("Add the shared ElevenLabs key in an agent profile on this computer, then pick a voice for the agent.");
+    }
     return body.utterances ?? [];
   }
 

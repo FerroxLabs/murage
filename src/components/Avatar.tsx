@@ -20,6 +20,7 @@ import {
   type CursorAvatarHandle,
   type CursorSilhouette,
 } from "./CursorAvatar";
+import { botAvatarProfile, type BotAvatarCrop } from "../../shared/bot-avatar";
 
 /**
  * The pack's baked-in silhouette was exported with the body fill hardcoded
@@ -218,6 +219,57 @@ function MausAvatarComponent(
 }
 
 export const MausAvatar = memo(forwardRef(MausAvatarComponent));
+
+export type BotAvatarProps = Omit<MausAvatarProps, "color"> & {
+  bot: {
+    name?: string;
+    color: MausColor;
+    avatarUrl?: string | null;
+    avatarCrop?: BotAvatarCrop;
+  };
+};
+
+/**
+ * The one renderer for a bot's chosen profile image. Malformed persisted
+ * values and images that fail to load both fall back to the animated mascot,
+ * so an old/corrupt profile can never leave a broken-image icon in the app.
+ */
+export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarProps) {
+  const profile = botAvatarProfile(bot);
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => setImageFailed(false), [profile.avatarUrl]);
+
+  if (profile.avatarCrop === "mascot" || !profile.avatarUrl || imageFailed) {
+    return (
+      <MausAvatar
+        {...mascotProps}
+        color={bot.color}
+        size={size}
+        label={label ?? bot.name}
+      />
+    );
+  }
+
+  const radius =
+    profile.avatarCrop === "circle"
+      ? "50%"
+      : profile.avatarCrop === "rounded"
+        ? "22%"
+        : "0";
+  return (
+    <img
+      src={profile.avatarUrl}
+      alt={label ?? (bot.name ? `${bot.name} avatar` : "Bot avatar")}
+      width={size}
+      height={size}
+      draggable={false}
+      onError={() => setImageFailed(true)}
+      className="block shrink-0 bg-raised object-cover"
+      style={{ width: size, height: size, borderRadius: radius }}
+    />
+  );
+}
 
 export function InitialsAvatar({
   initials,

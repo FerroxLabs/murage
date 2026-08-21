@@ -16,6 +16,8 @@ import {
   Library,
   Loader2,
   Pencil,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pin,
   PinOff,
   Plus,
@@ -29,7 +31,7 @@ import {
 } from "lucide-react";
 import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
 
-import { MausAvatar, InitialsAvatar } from "./Avatar";
+import { BotAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
@@ -38,6 +40,11 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
 import { TeamLibraryPanel, type TeamImportResult } from "./TeamLibraryPanel";
 import { RenameTitle } from "./RenameTitle";
+import {
+  loadSidebarDensity,
+  saveSidebarDensity,
+  type SidebarDensity,
+} from "@/lib/sidebar-preferences";
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
 function profileInitials(profile?: { name?: string; email?: string }): string {
@@ -111,7 +118,7 @@ function UpdateButton() {
       disabled={working}
       title={label}
       aria-label={label}
-      className="relative rounded-md p-2 text-accent hover:bg-raised disabled:opacity-60"
+      className="relative flex size-10 items-center justify-center rounded-md text-accent hover:bg-raised disabled:opacity-60"
     >
       {working ? (
         <Loader2 size={18} className="animate-spin" />
@@ -160,22 +167,25 @@ function groupPreview(group: Group, bots: Bot[]): string {
 }
 
 /** Room avatar: 2–3 overlapping mauses in the same 56px slot a bot gets. */
-function StackedMauses({ members }: { members: Bot[] }) {
+function StackedMauses({ members, density }: { members: Bot[]; density: SidebarDensity }) {
+  const iconOnly = density === "icons";
+  const slotSize = iconOnly ? "size-12" : density === "compact" ? "size-10" : "size-14";
+  const singleSize = iconOnly ? 44 : density === "compact" ? 40 : 56;
   if (members.length <= 1) {
     const b = members[0];
     return (
-      <div className="flex size-14 shrink-0 items-center justify-center">
-        {b ? <MausAvatar color={b.color} state="happy" size={56} /> : <Users size={24} className="text-ink-secondary" />}
+      <div className={cn("flex shrink-0 items-center justify-center", slotSize)}>
+        {b ? <BotAvatar bot={b} state="happy" size={singleSize} /> : <Users size={24} className="text-ink-secondary" />}
       </div>
     );
   }
   const shown = members.slice(0, 3);
   const extra = members.length - shown.length;
   return (
-    <div className="flex size-14 shrink-0 items-center justify-center">
+    <div className={cn("flex shrink-0 items-center justify-center", slotSize)}>
       <div className="flex items-center -space-x-3">
         {shown.map((b) => (
-          <MausAvatar key={b.id} color={b.color} state="happy" size={30} />
+          <BotAvatar key={b.id} bot={b} state="happy" size={30} />
         ))}
         {extra > 0 && (
           <span className="z-10 flex size-[22px] items-center justify-center rounded-full border border-hairline/40 bg-raised text-[10px] font-medium text-ink-secondary">
@@ -187,7 +197,15 @@ function StackedMauses({ members }: { members: Bot[] }) {
   );
 }
 
-function GroupListItem({ group, onMenu }: { group: Group; onMenu: (menu: { groupId: string; x: number; y: number }) => void }) {
+function GroupListItem({
+  group,
+  density,
+  onMenu,
+}: {
+  group: Group;
+  density: SidebarDensity;
+  onMenu: (menu: { groupId: string; x: number; y: number }) => void;
+}) {
   const { state, dispatch } = useStore();
   const selected = state.activeView === "chat" && state.selectedId === group.id;
   const members = group.memberIds
@@ -202,12 +220,15 @@ function GroupListItem({ group, onMenu }: { group: Group; onMenu: (menu: { group
         onMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
       }}
       className={cn(
-        "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left",
+        "relative flex w-full items-center rounded-xl text-left",
+        density === "icons" ? "justify-center px-1 py-1.5" : density === "compact" ? "gap-2 px-2 py-1.5" : "gap-3 px-3 py-2.5",
         selected ? "bg-raised" : "hover:bg-raised/50",
       )}
+      title={density === "icons" ? group.name : undefined}
+      aria-label={density === "icons" ? group.name : undefined}
     >
-      <StackedMauses members={members} />
-      <div className="min-w-0 flex-1">
+      <StackedMauses members={members} density={density} />
+      <div className={cn("min-w-0 flex-1", density === "icons" && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
           <span className="truncate text-[15px] font-semibold text-ink">{group.name}</span>
           {selected && last && <span className="shrink-0 text-xs text-ink-secondary">{formatTime(last.at)}</span>}
@@ -217,6 +238,9 @@ function GroupListItem({ group, onMenu }: { group: Group; onMenu: (menu: { group
           {group.unread && <span className="size-2 shrink-0 rounded-full bg-accent" />}
         </div>
       </div>
+      {density === "icons" && group.unread && (
+        <span className="absolute bottom-1.5 right-1.5 size-2 rounded-full border border-panel bg-accent" />
+      )}
     </button>
   );
 }
@@ -233,7 +257,7 @@ function RoomContextMenu({
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest("[data-room-menu]")) onClose();
+      if (!(e.target instanceof Element) || !e.target.closest("[data-room-menu]")) onClose();
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("mousedown", onDown);
@@ -327,7 +351,7 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
               onClick={() => toggle(b.id)}
               className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-raised/50"
             >
-              <MausAvatar color={b.color} state="happy" size={28} />
+              <BotAvatar bot={b} state="happy" size={28} />
               <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{b.name}</span>
               <span
                 className={cn(
@@ -384,7 +408,7 @@ function SectionPicker({
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest("[data-section-picker]")) onClose();
+      if (!(e.target instanceof Element) || !e.target.closest("[data-section-picker]")) onClose();
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("mousedown", onDown);
@@ -498,7 +522,7 @@ function BotContextMenu({
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest("[data-bot-menu]")) onClose();
+      if (!(e.target instanceof Element) || !e.target.closest("[data-bot-menu]")) onClose();
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("mousedown", onDown);
@@ -611,11 +635,13 @@ function BotContextMenu({
 
 function BotListItem({
   bot,
+  density,
   onMenu,
   onArchive,
   archiveDisabled,
 }: {
   bot: Bot;
+  density: SidebarDensity;
   onMenu: (menu: MenuState) => void;
   onArchive: (bot: Bot) => void;
   archiveDisabled: boolean;
@@ -624,11 +650,21 @@ function BotListItem({
   const [renaming, setRenaming] = useState(false);
   const selected = state.activeView === "chat" && state.selectedId === bot.id;
   const mascotMotion = selected && state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
+  const iconOnly = density === "icons";
+  useEffect(() => {
+    if (iconOnly) setRenaming(false);
+  }, [iconOnly]);
+  const avatarSize = iconOnly ? 44 : density === "compact" ? 40 : 56;
   // the visible branch, so a version switch changes the row with the chat
   const visible = visibleMessages(bot);
   const last = visible.at(-1);
   const rowClass = cn(
-    "flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 pr-10 text-left",
+    "flex w-full items-center rounded-xl border text-left",
+    iconOnly
+      ? "justify-center px-1 py-1.5"
+      : density === "compact"
+        ? "gap-2 px-2 py-1.5 pr-12"
+        : "gap-3 px-3 py-2.5 pr-12",
     bot.chiefOfStaff
       ? selected
         ? "border-accent/40 bg-accent/15"
@@ -639,18 +675,19 @@ function BotListItem({
   );
   const body = (
     <>
-      <MausAvatar
-        color={bot.color}
+      <BotAvatar
+        bot={bot}
         state={stateForBot({ ...bot, messages: visible })}
-        size={56}
+        size={avatarSize}
         motion={mascotMotion?.kind ?? "none"}
         motionKey={mascotMotion?.nonce ?? 0}
       />
-      <div className="min-w-0 flex-1">
+      <div className={cn("min-w-0 flex-1", iconOnly && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold text-ink">
             {bot.pinned && <Pin size={12} className="shrink-0 text-ink-secondary" />}
             <RenameTitle
+              key={iconOnly ? "icons" : "expanded"}
               value={bot.name}
               onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
               onEditingChange={setRenaming}
@@ -697,10 +734,11 @@ function BotListItem({
   }
 
   return (
-    <div className="group relative">
+    <div className="group relative" title={iconOnly ? bot.name : undefined}>
       <div
         role="button"
         tabIndex={0}
+        aria-label={iconOnly ? bot.name : undefined}
         onClick={() => dispatch({ type: "select", id: bot.id })}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -713,7 +751,10 @@ function BotListItem({
       >
         {body}
       </div>
-      <button
+      {iconOnly && bot.unread && (
+        <span className="pointer-events-none absolute bottom-1.5 right-1.5 size-2 rounded-full border border-panel bg-accent" />
+      )}
+      {!iconOnly && <button
         type="button"
         disabled={archiveDisabled}
         onClick={() => onArchive(bot)}
@@ -725,10 +766,10 @@ function BotListItem({
               ? "Keep at least one active bot"
               : `Archive ${bot.name}`
         }
-        className="absolute right-2 top-2.5 flex size-7 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 disabled:cursor-default disabled:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100"
+        className="absolute right-1 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 disabled:cursor-default disabled:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100"
       >
         <Archive size={14} />
-      </button>
+      </button>}
     </div>
   );
 }
@@ -832,7 +873,7 @@ function ArchivedBotsPanel({
             <button
               onClick={onClose}
               disabled={restoringAll || Boolean(busyId)}
-              className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
+              className="flex size-10 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
               aria-label="Close archived bots"
             >
               <X size={21} />
@@ -844,7 +885,7 @@ function ArchivedBotsPanel({
           <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
             {bots.map((bot) => (
               <div key={bot.id} className="flex min-h-[82px] items-center gap-3 border-b border-hairline/35 px-1 py-3">
-                <MausAvatar color={bot.color} state="happy" size={42} />
+                <BotAvatar bot={bot} state="happy" size={42} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] font-medium text-ink">{bot.name}</div>
                   <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{bot.title || "Bot"}</div>
@@ -887,6 +928,30 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     restoreBot?: { id: string; name: string };
   } | null>(null);
   const [query, setQuery] = useState("");
+  const [density, setDensityState] = useState<SidebarDensity>(() => loadSidebarDensity());
+  const [lastExpandedDensity, setLastExpandedDensity] = useState<Exclude<SidebarDensity, "icons">>(() => {
+    const saved = loadSidebarDensity();
+    return saved === "icons" ? "comfortable" : saved;
+  });
+  const [densityOpen, setDensityOpen] = useState(false);
+
+  const setDensity = (next: SidebarDensity) => {
+    setDensityState(next);
+    if (next !== "icons") setLastExpandedDensity(next);
+    // Search is hidden in avatar-only mode. Keeping its value would silently
+    // filter bots, rooms, and message results with no visible way to clear it.
+    else setQuery("");
+    saveSidebarDensity(next);
+    setDensityOpen(false);
+  };
+
+  const toggleCollapsed = () => {
+    if (density === "icons") setDensity(lastExpandedDensity);
+    else {
+      setLastExpandedDensity(density);
+      setDensity("icons");
+    }
+  };
 
   // Esc closes the drawer, mirroring ApiKeys.tsx:75-85. Bound only while the
   // drawer is open — on mobile, exactly when a bot/room context menu or the
@@ -900,6 +965,15 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!densityOpen) return;
+    const closeDensityMenu = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDensityOpen(false);
+    };
+    window.addEventListener("keydown", closeDensityMenu);
+    return () => window.removeEventListener("keydown", closeDensityMenu);
+  }, [densityOpen]);
 
   useEffect(() => {
     if (!teamFeedback) return;
@@ -1005,6 +1079,16 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 
   const macInset = capabilities.windowChrome === "mac-inset";
   const browser = capabilities.host.label === "Browser";
+  // SAFETY: Electron's documented -webkit-app-region CSS property is not in
+  // React's CSSProperties type, but the renderer accepts it as an inline style.
+  const windowDragStyle = macInset
+    ? ({ WebkitAppRegion: "drag" } as React.CSSProperties)
+    : undefined;
+  // SAFETY: Same Electron-only CSS property as windowDragStyle; interactive
+  // buttons must explicitly opt out of the draggable title-bar region.
+  const windowNoDragStyle = macInset
+    ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties)
+    : undefined;
 
   const q = query.trim().toLowerCase();
 
@@ -1042,8 +1126,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 
   return (
     <aside
+      aria-label="Bots and navigation"
       className={cn(
-        "flex h-full w-[320px] shrink-0 flex-col border-r border-hairline/40 bg-panel",
+        "flex h-full shrink-0 flex-col border-r border-hairline/40 bg-panel transition-[width] duration-200",
+        density === "icons" ? "w-[80px]" : density === "compact" ? "w-[272px]" : "w-[320px]",
         // Below md only: the sidebar leaves the flow and slides in over the chat.
         // Scoped with max-md: rather than cancelled with md: on purpose — Tailwind
         // v4 emits the native `translate` property, and any value other than
@@ -1058,11 +1144,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     >
       {/* macOS owns inset traffic lights; Linux/Windows use native chrome. */}
       <div
-        className="flex items-center justify-between px-4 pt-3.5 pb-1"
-        style={macInset ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined}
+        className={cn("flex items-center pt-3.5 pb-1", density === "icons" ? "flex-col gap-1 px-2" : "justify-between px-4")}
+        style={windowDragStyle}
       >
         {macInset ? (
-          <div className="w-14" />
+          <div className={density === "icons" ? "h-5 w-full" : "w-14"} />
         ) : browser ? (
           <div className="flex items-center gap-2">
             <span className="size-3 rounded-full bg-[#ff5f57]" />
@@ -1071,13 +1157,63 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           </div>
         ) : <div />}
         <div
-          className="relative"
-          style={macInset ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}
+          className={cn("relative flex items-center", density === "icons" ? "flex-col gap-1" : "gap-1")}
+          style={windowNoDragStyle}
         >
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-label={density === "icons" ? "Expand sidebar" : "Collapse sidebar to avatars"}
+            className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
+            title={density === "icons" ? "Expand sidebar" : "Collapse to avatars"}
+          >
+            {density === "icons" ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
+          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setDensityOpen((value) => !value)}
+              aria-label="Choose sidebar density"
+              aria-expanded={densityOpen}
+              className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
+              title="Sidebar density"
+            >
+              <span aria-hidden="true" className="flex size-5 flex-col items-center justify-center gap-[3px]">
+                <span className="h-px w-3.5 rounded-full bg-current" />
+                <span className="h-px w-2.5 rounded-full bg-current" />
+                <span className="h-px w-3.5 rounded-full bg-current" />
+              </span>
+            </button>
+            {densityOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onMouseDown={() => setDensityOpen(false)} />
+                <div className={cn(
+                  "absolute top-full z-40 mt-1 w-40 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60",
+                  density === "icons" ? "left-0" : "right-0",
+                )}>
+                  {(["comfortable", "compact", "icons"] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setDensity(option)}
+                      className={cn(
+                        "flex w-full items-center justify-between px-3 py-2 text-left text-[13px] capitalize hover:bg-raised/70",
+                        density === option ? "text-accent" : "text-ink",
+                      )}
+                    >
+                      {option === "icons" ? "Avatars only" : option}
+                      {density === option && <Check size={14} />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           <button
             ref={importReturnRef}
             onClick={() => setPlusOpen((o) => !o)}
-            className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+            aria-label="New or share"
+            className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
             title="New or share"
           >
             <Plus size={20} strokeWidth={2} />
@@ -1085,7 +1221,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           {plusOpen && (
             <>
               <div className="fixed inset-0 z-30" onMouseDown={() => setPlusOpen(false)} />
-              <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60">
+              <div className={cn(
+                "absolute top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60",
+                density === "icons" ? "left-0" : "right-0",
+              )}>
                 <button
                   onClick={() => {
                     setPlusOpen(false);
@@ -1148,7 +1287,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       </div>
 
       {/* Search */}
-      <div className="px-3 pt-2 pb-3">
+      <div className={cn("pt-2 pb-3", density === "icons" ? "hidden" : "px-3")}>
         <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-2">
           <Search size={16} className="text-ink-secondary" />
           <input
@@ -1172,6 +1311,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <div className="mb-1.5">
               <BotListItem
                 bot={chiefBot}
+                density={density}
                 onMenu={setMenu}
                 onArchive={(bot) => void archiveBot(bot)}
                 archiveDisabled
@@ -1179,12 +1319,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             </div>
           )}
           {visibleGroups.map((g) => (
-            <GroupListItem key={g.id} group={g} onMenu={setRoomMenu} />
+            <GroupListItem key={g.id} group={g} density={density} onMenu={setRoomMenu} />
           ))}
           {visibleBots.map((b) => (
             <BotListItem
               key={b.id}
               bot={b}
+              density={density}
               onMenu={setMenu}
               onArchive={(bot) => void archiveBot(bot)}
               archiveDisabled={activeBotCount <= 1}
@@ -1192,13 +1333,14 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           ))}
           {sectionNames.map((name) => (
             <Fragment key={name}>
-              <SectionDivider name={name} />
+              {density !== "icons" && <SectionDivider name={name} />}
               {sectionedBots
                 .filter((b) => b.section === name)
                 .map((b) => (
                   <BotListItem
                     key={b.id}
                     bot={b}
+                    density={density}
                     onMenu={setMenu}
                     onArchive={(bot) => void archiveBot(bot)}
                     archiveDisabled={activeBotCount <= 1}
@@ -1211,45 +1353,52 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       </div>
 
       {/* Footer */}
-      <div className="px-3 pb-3 pt-2">
+      <div className={cn("pb-3 pt-2", density === "icons" ? "px-2" : "px-3")}>
         <button
           onClick={() => dispatch({ type: "showRoutines" })}
+          aria-label={density === "icons" ? "Tasks and routines" : undefined}
+          title={density === "icons" ? "Tasks and routines" : undefined}
           className={cn(
-            "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
+            "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
+            density === "icons" ? "justify-center px-2" : "gap-3 px-3",
             state.activeView === "routines" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
           )}
         >
           <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
-          <span className="flex-1 text-[14px]">Automations</span>
+          <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Tasks &amp; routines</span>
           {state.routineRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
             <span className="size-2 rounded-full bg-danger" />
           )}
         </button>
         <button
           onClick={() => dispatch({ type: "togglePlugins", open: true })}
-          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-raised/50"
+          className={cn("flex min-h-10 w-full items-center rounded-xl py-2 text-left hover:bg-raised/50", density === "icons" ? "justify-center px-2" : "gap-3 px-3")}
+          aria-label={density === "icons" ? "Connected apps" : undefined}
+          title={density === "icons" ? "Connected apps" : undefined}
         >
           <Puzzle size={20} className="text-ink-secondary" />
-          <span className="text-[14px] text-ink">Connected apps</span>
+          <span className={cn("text-[14px] text-ink", density === "icons" && "hidden")}>Connected apps</span>
         </button>
-        <div className="flex items-center">
+        <div className={cn("flex items-center", density === "icons" && "justify-center")}>
           <button
             onClick={() => dispatch({ type: "toggleAppSettings" })}
-            className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-raised/50"
+            className={cn("flex min-w-0 items-center rounded-xl py-2 text-left hover:bg-raised/50", density === "icons" ? "justify-center px-2" : "flex-1 gap-3 px-3")}
+            aria-label={density === "icons" ? "App settings" : undefined}
+            title={density === "icons" ? (state.config?.profile?.name?.trim() || "App settings") : undefined}
           >
             <InitialsAvatar initials={profileInitials(state.config?.profile)} size={28} />
-            <span className="truncate text-[14px] text-ink">
+            <span className={cn("truncate text-[14px] text-ink", density === "icons" && "hidden")}>
               {state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || "You"}
             </span>
           </button>
-          <UpdateButton />
-          <button
+          {density !== "icons" && <UpdateButton />}
+          {density !== "icons" && <button
             onClick={() => dispatch({ type: "toggleAppSettings" })}
-            className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink"
+            className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
             title="App settings"
           >
             <Settings size={18} />
-          </button>
+          </button>}
         </div>
       </div>
 

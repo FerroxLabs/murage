@@ -15,11 +15,13 @@ import {
 } from "react";
 import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { MausColor, MausMotion } from "@/lib/mascot";
+import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
 import { showNotification } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
+import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -151,6 +153,10 @@ export interface Bot {
   notifications: boolean;
   color: MausColor;
   mascotExpression?: string | null;
+  /** App-owned image attachment used for this bot's profile. */
+  avatarUrl?: string | null;
+  /** Mascot, or the crop applied to avatarUrl. */
+  avatarCrop?: BotAvatarCrop;
   unread: boolean;
   busy?: boolean;
   /** what the bot is doing, as the harness sees it; busy is derived from it */
@@ -229,13 +235,15 @@ export interface ConfigStatus {
    * a voice, which is what it takes to actually speak. The key itself is
    * never echoed back. */
   tts?: { configured: boolean; ready: boolean; voice: string };
+  /** Shared write-only credential for on-demand GPT Image avatars. */
+  imageGen?: { configured: boolean };
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
 }
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "profile"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -248,6 +256,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     localVm: frame.localVm,
     opencodeGo: frame.opencodeGo,
     tts: frame.tts,
+    imageGen: frame.imageGen,
     profile: frame.profile,
   };
 }
@@ -303,7 +312,6 @@ export type AppSettingsSection =
   | "connections"
   | "engines"
   | "companion"
-  | "voice"
   | "computer"
   | "usage";
 
@@ -347,7 +355,7 @@ export interface AppState {
   } | null;
 }
 
-type BotAnnouncement = Omit<Bot, "messages"> & { messages?: Message[] };
+export type BotAnnouncement = Omit<Bot, "messages"> & { messages?: Message[] };
 
 export type Action =
   | {
@@ -433,34 +441,7 @@ export type Action =
   | {
       type: "updateBot";
       botId: string;
-      patch: Partial<
-        Pick<
-          Bot,
-          | "name"
-          | "title"
-          | "description"
-          | "notifications"
-          | "computer"
-          | "cloudBackend"
-          | "color"
-          | "mascotExpression"
-          | "autoApprove"
-          | "speakReplies"
-          | "voice"
-          | "pinned"
-          | "hidden"
-          | "section"
-          | "pinnedMessageId"
-          | "chiefOfStaff"
-          | "approvePeerComms"
-          | "composio"
-          | "modelSelection"
-        >
-      > & {
-        // rides the PATCH body only: the server's proof that the local-auto
-        // warning dialog was shown. Never stored on the bot.
-        acknowledgeLocalAuto?: boolean;
-      };
+      patch: BotUpdatePatch;
     };
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
@@ -976,6 +957,8 @@ export function useStreaming() {
 const StoreContext = createContext<{
   state: AppState;
   dispatch: React.Dispatch<Action>;
+  /** Commit any debounced profile edits before an operation reads the bot. */
+  flushBotPatches: (botId: string) => Promise<void>;
   /** Re-fetch engine availability — after an install, without a restart. */
   refreshInstances: () => Promise<void>;
 } | null>(null);
@@ -1026,8 +1009,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  // debounced PATCH per bot for text-field edits (name/title/description)
-  const patchTimers = useRef(new Map<string, { timer: ReturnType<typeof setTimeout>; patch: Record<string, unknown> }>());
+  const botPatchQueue = useMemo(
+    () =>
+      createBotPatchQueue({
+        send: async (botId, patch, signal) => {
+          const result: { bot: BotAnnouncement } = await api(`/api/bots/${botId}`, {
+            method: "PATCH",
+            body: JSON.stringify(patch),
+            signal,
+          });
+          return result.bot;
+        },
+        reconcile: async (botId, signal) => {
+          const result: { bots: BotAnnouncement[] } = await api("/api/bots", { signal });
+          return result.bots.find((candidate) => candidate.id === botId) ?? null;
+        },
+        onAuthoritative: (bot, optimisticOverlay) => {
+          rawDispatch({ type: "botPatched", bot: { ...bot, ...optimisticOverlay } });
+        },
+        onError: (error) => {
+          rawDispatch({ type: "error", message: error.message });
+          setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+        },
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    // StrictMode's dev probe runs this cleanup once against the same memoized
+    // queue; revive undoes it so profile saves survive development mounts.
+    botPatchQueue.revive();
+    return () => botPatchQueue.dispose();
+  }, [botPatchQueue]);
 
   const dispatch = useMemo(() => {
     const showError = (e: unknown) => {
@@ -1044,6 +1057,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
 
     const wrapped: React.Dispatch<Action> = (action) => {
+      const botBeforeUpdate =
+        action.type === "updateBot"
+          ? stateRef.current.bots.find((candidate) => candidate.id === action.botId)
+          : undefined;
+      if (action.type === "deleteBot") botPatchQueue.cancel(action.botId);
       rawDispatch(action);
       switch (action.type) {
         case "createRoutine":
@@ -1158,19 +1176,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "duplicateBot": {
           const source = stateRef.current.bots.find((b) => b.id === action.botId);
           if (!source) break;
+          const duplicateProfile = {
+            name: `${source.name} copy`,
+            title: source.title,
+            description: source.description,
+            notifications: source.notifications,
+            modelSelection: source.modelSelection,
+            computer: source.computer,
+            cloudBackend: source.cloudBackend,
+            avatarUrl: source.avatarUrl,
+            avatarCrop: source.avatarCrop,
+          };
           api("/api/bots", { method: "POST" })
             .then(({ bot }) =>
               api(`/api/bots/${bot.id}`, {
                 method: "PATCH",
-                body: JSON.stringify({
-                  name: `${source.name} copy`,
-                  title: source.title,
-                  description: source.description,
-                  notifications: source.notifications,
-                  modelSelection: source.modelSelection,
-                  ...(source.computer ? { computer: source.computer } : {}),
-                  ...(source.cloudBackend ? { cloudBackend: source.cloudBackend } : {}),
-                }),
+                // JSON.stringify omits undefined optional fields while preserving
+                // an explicit null avatar clear, so duplication mirrors the source.
+                body: JSON.stringify(duplicateProfile),
               }).then(({ bot: patched }) =>
                 rawDispatch({ type: "botAdded", bot: { ...bot, ...patched, messages: bot.messages } }),
               ),
@@ -1264,17 +1287,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           api(`/api/groups/${action.groupId}/interrupt`, { method: "POST" }).catch(showError);
           break;
         case "updateBot": {
-          const timers = patchTimers.current;
-          const pending = timers.get(action.botId);
-          const patch = { ...pending?.patch, ...action.patch };
-          if (pending) clearTimeout(pending.timer);
-          timers.set(action.botId, {
-            patch,
-            timer: setTimeout(() => {
-              timers.delete(action.botId);
-              api(`/api/bots/${action.botId}`, { method: "PATCH", body: JSON.stringify(patch) }).catch(showError);
-            }, 400),
-          });
+          if (botBeforeUpdate) {
+            botPatchQueue.enqueue(action.botId, action.patch, botBeforeUpdate);
+          }
           break;
         }
         default:
@@ -1282,7 +1297,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     };
     return wrapped;
-  }, []);
+  }, [botPatchQueue]);
 
   // ── initial load + SSE fold ──────────────────────────────────────────
   useEffect(() => {
@@ -1396,7 +1411,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               body: JSON.stringify({ unread: false }),
             }).catch(() => {});
           }
-          rawDispatch({ type: "botPatched", bot });
+          rawDispatch({
+            type: "botPatched",
+            bot: { ...bot, ...botPatchQueue.overlayFor(bot.id) },
+          });
           break;
         }
         case "group": {
@@ -1483,6 +1501,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           });
           break;
         case "bot.deleted":
+          botPatchQueue.cancel(frame.botId);
           rawDispatch({ type: "deleteBot", botId: frame.botId });
           break;
         // a key changed and the fleet hot-reloaded — refresh the picker so
@@ -1550,7 +1569,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("focus", onFocus);
   }, [refreshInstances]);
 
-  const value = useMemo(() => ({ state, dispatch, refreshInstances }), [state, dispatch, refreshInstances]);
+  const flushBotPatches = useCallback(
+    (botId: string) => botPatchQueue.flush(botId),
+    [botPatchQueue],
+  );
+  const value = useMemo(
+    () => ({ state, dispatch, flushBotPatches, refreshInstances }),
+    [state, dispatch, flushBotPatches, refreshInstances],
+  );
   return (
     <StoreContext.Provider value={value}>
       <StreamContext.Provider value={stream}>{children}</StreamContext.Provider>
