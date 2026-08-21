@@ -36,7 +36,7 @@ export const BASE_IMAGE = `${BASE_IMAGE_REPOSITORY}@${BASE_IMAGE_DIGEST}`;
 // Image and container labels below remain the authoritative compatibility
 // check, not the mutable tag.
 export const IMAGE_REPOSITORY = "localhost/openmausbot/cua-local-vm";
-export const IMAGE_LAYER_VERSION = "3";
+export const IMAGE_LAYER_VERSION = "4";
 export const IMAGE_LAYER_LABEL = "com.openmausbot.image-layer";
 export const IMAGE = `${IMAGE_REPOSITORY}:driver-${CUA_DRIVER_VERSION}-v${IMAGE_LAYER_VERSION}`;
 export const CONTAINER = "openmausbot-computer";
@@ -134,7 +134,11 @@ RUN printf '%s\\n' \\
       'workspace=${VM_WORKSPACE_GUEST}' \\
       'profiles="$workspace/.browser-profiles"' \\
       'mkdir -p "$profiles/google-chrome" "$profiles/chromium" "$HOME/.config"' \\
-      'chmod 0700 "$workspace" "$profiles" "$profiles/google-chrome" "$profiles/chromium"' \\
+      'if ! chmod 0700 "$workspace" "$profiles" "$profiles/google-chrome" "$profiles/chromium" 2>/dev/null; then' \\
+      '  for directory in "$workspace" "$profiles" "$profiles/google-chrome" "$profiles/chromium"; do' \\
+      '    test -r "$directory" && test -w "$directory" && test -x "$directory"' \\
+      '  done' \\
+      'fi' \\
       'migrate_profile() {' \\
       '  name="$1"' \\
       '  source="$HOME/.config/$name"' \\
@@ -216,15 +220,25 @@ export async function containerRuntimeStatus(
   runner: CommandRunner = sh,
   platform: NodeJS.Platform = process.platform,
 ): Promise<ContainerRuntimeStatus> {
-  const candidates = RUNTIMES.filter((runtime) => runtime !== "container" || platform === "darwin");
+  // Podman is the supported Windows VM lane and owns the pinned managed image.
+  // Docker may also be installed and healthy on the same host, so the generic
+  // Docker-first order would silently select an empty, unrelated image store.
+  const candidates: Runtime[] = platform === "win32"
+    ? ["podman", "docker"]
+    : RUNTIMES.filter((runtime) => runtime !== "container" || platform === "darwin");
   const present = await Promise.all(candidates.map((runtime) => installed(runtime, runner, platform)));
   const available = candidates.filter((_, index) => present[index]);
   const healthy = await Promise.all(
     available.map(async (candidate) => {
       try {
+        const infoArgs = candidate === "container"
+          ? ["system", "status"]
+          : candidate === "podman"
+            ? ["info", "--format", "json"]
+            : ["info", "--format", "{{.ServerVersion}}"];
         await runner(
           candidate,
-          candidate === "container" ? ["system", "status"] : ["info", "--format", "{{.ServerVersion}}"],
+          infoArgs,
           10_000,
         );
         return true;
@@ -485,6 +499,8 @@ export async function containerComputerStatus(
           Destination?: string;
           RW?: boolean;
         }>;
+        EffectiveCaps?: string[];
+        BoundingCaps?: string[];
         State?: { Running?: boolean };
         Image?: string;
       }>;
@@ -498,8 +514,17 @@ export async function containerComputerStatus(
         status.image_id !== null &&
         normalizeImageId(detail?.Image) === status.image_id;
       status.managed = containerLabelsMatch(detail?.Config?.Labels, target);
-      status.persistence = dockerWorkspaceMountIsSafe(detail?.Mounts, platform, target.workspaceDir) ? "durable" : "unsafe";
-      status.security = dockerSecurityIsHardened(detail?.HostConfig) ? "hardened" : "unsafe";
+      status.persistence = dockerWorkspaceMountIsSafe(
+        detail?.Mounts,
+        platform,
+        target.workspaceDir,
+        status.runtime,
+      ) ? "durable" : "unsafe";
+      status.security = (
+        status.runtime === "podman"
+          ? podmanSecurityIsHardened(detail?.HostConfig, detail?.EffectiveCaps, detail?.BoundingCaps)
+          : dockerSecurityIsHardened(detail?.HostConfig)
+      ) ? "hardened" : "unsafe";
       status.viewer_url = viewerUrl(viewerPassword(detail?.Config?.Env), status.viewer_port);
     }
   } catch {
@@ -632,17 +657,33 @@ function sameWorkspaceSource(
   return platform === "win32" ? actual.toLowerCase() === expected.toLowerCase() : actual === expected;
 }
 
+/** Podman Machine exposes a Windows bind source through its WSL mount path.
+ * Accept only the exact drive/path translation; no parent or prefix match. */
+function samePodmanWindowsWorkspaceSource(source: string | undefined, expectedWorkspace: string): boolean {
+  if (!source) return false;
+  const match = expectedWorkspace.match(/^([A-Za-z]):[\\/](.+)$/);
+  if (!match) return false;
+  const expected = `/mnt/${match[1].toLowerCase()}/${match[2].replaceAll("\\", "/")}`;
+  const actual = source.replaceAll("\\", "/");
+  return actual.toLowerCase() === expected.toLowerCase();
+}
+
 function dockerWorkspaceMountIsSafe(
   mounts:
     | Array<{ Type?: string; Source?: string; Destination?: string; RW?: boolean }>
     | undefined,
   platform: NodeJS.Platform,
   expectedWorkspace: string,
+  runtime: Runtime = "docker",
 ): boolean {
+  const sourceMatches = sameWorkspaceSource(mounts?.[0]?.Source, platform, expectedWorkspace) ||
+    (runtime === "podman" &&
+      platform === "win32" &&
+      samePodmanWindowsWorkspaceSource(mounts?.[0]?.Source, expectedWorkspace));
   return Boolean(
     mounts?.length === 1 &&
       mounts[0]?.Type === "bind" &&
-      sameWorkspaceSource(mounts[0]?.Source, platform, expectedWorkspace) &&
+      sourceMatches &&
       mounts[0]?.Destination === VM_WORKSPACE_GUEST &&
       mounts[0]?.RW !== false,
   );
@@ -728,6 +769,32 @@ export function dockerSecurityIsHardened(
     config.AutoRemove !== true &&
     restartPolicyOk
   );
+}
+
+/** Podman normalizes HostConfig capability and namespace fields when it
+ * serializes inspect output. Validate its authoritative effective/bounding
+ * sets, then normalize only those known representation differences through
+ * the unchanged Docker hardening contract. */
+export function podmanSecurityIsHardened(
+  config: DockerHardeningConfig | undefined,
+  effectiveCaps: string[] | undefined,
+  boundingCaps: string[] | undefined,
+): boolean {
+  if (!config) return false;
+  const normalizeCaps = (caps: string[] | undefined) => (caps ?? [])
+    .map((cap) => cap.toLowerCase().replace(/^cap_/, ""))
+    .sort();
+  const exactCaps = "setgid,setuid";
+  if (normalizeCaps(effectiveCaps).join(",") !== exactCaps) return false;
+  if (normalizeCaps(boundingCaps).join(",") !== exactCaps) return false;
+  return dockerSecurityIsHardened({
+    ...config,
+    CapDrop: ["all"],
+    CapAdd: effectiveCaps,
+    PidMode: config.PidMode === "private" ? "" : config.PidMode,
+    UTSMode: config.UTSMode === "private" ? "" : config.UTSMode,
+    CgroupnsMode: config.CgroupnsMode || "private",
+  });
 }
 
 export function containerRunArgs(

@@ -22,11 +22,14 @@ import {
   containerComputerMcp,
   containerComputerScreenshot,
   containerComputerStatus,
+  containerRuntimeStatus,
   containerRunArgs,
   managedImageDockerfile,
   perBotLocalVmTarget,
+  podmanSecurityIsHardened,
   setupCommands,
   type CommandRunner,
+  type LocalVmTarget,
 } from "./container-computer.ts";
 
 function runner(responses: Record<string, string | Error>) {
@@ -133,6 +136,106 @@ function perBotReadyInspect(botId: string, viewerPort: number, targetLabel?: str
 }
 
 describe("containerComputerStatus", () => {
+  it("prefers the supported Podman image store when Docker is also healthy on Windows", async () => {
+    const fake = runner({
+      "where.exe podman": "C:\\Program Files\\RedHat\\Podman\\podman.exe\n",
+      "where.exe docker": "C:\\Program Files\\Docker\\docker.exe\n",
+      "podman info --format json": '{"host":{"arch":"amd64"}}\n',
+      "docker info --format {{.ServerVersion}}": "29.0.0\n",
+    });
+
+    const status = await containerRuntimeStatus(fake.run, "win32");
+
+    expect(status).toEqual({
+      runtime: "podman",
+      available: ["podman", "docker"],
+      daemonUp: true,
+    });
+  });
+
+  it("accepts exact Podman-on-Windows hardening and its WSL-translated durable mount", async () => {
+    const derived = perBotLocalVmTarget("bot-win");
+    const target: LocalVmTarget = {
+      ...derived,
+      workspaceDir: "C:\\Users\\light\\.openmausbot\\vm-homes\\win-target",
+    };
+    const detail = JSON.parse(perBotReadyInspect("bot-win", 41629))[0];
+    detail.Mounts[0].Source = "/mnt/c/Users/light/.openmausbot/vm-homes/win-target";
+    detail.HostConfig = {
+      ...detail.HostConfig,
+      CapDrop: ["CAP_CHOWN", "CAP_DAC_OVERRIDE"],
+      CapAdd: [],
+      PidMode: "private",
+      UTSMode: "private",
+      CgroupnsMode: null,
+    };
+    detail.EffectiveCaps = ["CAP_SETGID", "CAP_SETUID"];
+    detail.BoundingCaps = ["CAP_SETGID", "CAP_SETUID"];
+    const targetDriverExec =
+      `podman exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ` +
+      `-e CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${target.containerName} ${CUA_EXECUTABLE}`;
+    const fake = runner({
+      "where.exe podman": "C:\\Program Files\\RedHat\\Podman\\podman.exe\n",
+      "where.exe docker": new Error("missing"),
+      "podman info --format json": '{"host":{"arch":"amd64"}}\n',
+      [`podman image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`podman inspect ${target.containerName}`]: JSON.stringify([detail]),
+      [`${targetDriverExec} --version`]: `cua-driver ${CUA_DRIVER_VERSION}\n`,
+      [`${targetDriverExec} status --socket ${CUA_SOCKET}`]: "running\n",
+      [`${targetDriverExec} call health_report {} --socket ${CUA_SOCKET}`]: JSON.stringify({
+        schema_version: "1",
+        overall: "ok",
+        checks: [],
+      }),
+      [`${targetDriverExec} call get_desktop_state {} --socket ${CUA_SOCKET} --screenshot-out-file /tmp/openmausbot-readiness.png`]: "{}\n",
+      [`podman exec ${target.containerName} base64 -w0 /tmp/openmausbot-readiness.png`]: validPng.toString("base64"),
+    });
+
+    const status = await containerComputerStatus(fake.run, "win32", target);
+
+    expect(status).toMatchObject({
+      runtime: "podman",
+      security: "hardened",
+      persistence: "durable",
+      network: "loopback",
+      ready: true,
+    });
+  });
+
+  it("rejects extra effective or bounding capabilities in Podman inspect output", () => {
+    const config = {
+      Memory: 4 * 1024 * 1024 * 1024,
+      MemorySwap: 4 * 1024 * 1024 * 1024,
+      NanoCpus: 2_000_000_000,
+      PidsLimit: 512,
+      CapDrop: ["CAP_CHOWN"],
+      CapAdd: [],
+      Privileged: false,
+      PidMode: "private",
+      IpcMode: "private",
+      UTSMode: "private",
+      ShmSize: 512 * 1024 * 1024,
+      Devices: [],
+      DeviceRequests: null,
+      SecurityOpt: [],
+      UsernsMode: "",
+      CgroupnsMode: undefined,
+      OomKillDisable: false,
+      AutoRemove: false,
+      RestartPolicy: { Name: "no", MaximumRetryCount: 0 },
+    };
+    expect(podmanSecurityIsHardened(
+      config,
+      ["CAP_SETGID", "CAP_SETUID"],
+      ["CAP_SETGID", "CAP_SETUID"],
+    )).toBe(true);
+    expect(podmanSecurityIsHardened(
+      config,
+      ["CAP_NET_RAW", "CAP_SETGID", "CAP_SETUID"],
+      ["CAP_SETGID", "CAP_SETUID"],
+    )).toBe(false);
+  });
+
   it("keeps per-bot identities, workspaces, and ephemeral viewer ports separate", async () => {
     const target = perBotLocalVmTarget("bot-a");
     const targetDriverExec =
@@ -192,7 +295,7 @@ describe("containerComputerStatus", () => {
       "/usr/bin/which docker": "docker\n",
       "/usr/bin/which podman": "podman\n",
       "docker info --format {{.ServerVersion}}": new Error("daemon stopped"),
-      "podman info --format {{.ServerVersion}}": "5.0\n",
+      "podman info --format json": '{"host":{"arch":"amd64"}}\n',
       [`podman image inspect ${IMAGE}`]: preparedImageInspect(),
       [`podman inspect ${CONTAINER}`]: JSON.stringify([
         {
@@ -489,6 +592,8 @@ describe("Cua integration", () => {
     expect(dockerfile).toContain(`serve --socket ${CUA_SOCKET} --permission-mode standard`);
     expect(dockerfile).toContain("CUA_DRIVER_RS_TELEMETRY_ENABLED=0");
     expect(dockerfile).toContain("prepare-openmausbot-workspace.sh");
+    expect(dockerfile).toContain('if ! chmod 0700 "$workspace"');
+    expect(dockerfile).toContain('test -r "$directory" && test -w "$directory" && test -x "$directory"');
     expect(dockerfile).toContain("migrate_profile google-chrome");
     expect(dockerfile).toContain("migrate_profile chromium");
     expect(dockerfile).toContain("SingletonLock");
