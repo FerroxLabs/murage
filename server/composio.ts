@@ -185,11 +185,19 @@ function parseSessionResponse(session: SessionResponse): SessionResponse {
 }
 
 function supportsMultiAccount(session: SessionResponse): boolean {
-  const multi = session.config?.multi_account;
-  return multi?.enable === true
-    && multi.max_accounts_per_toolkit === MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit
-    && multi.require_explicit_selection === true;
+  // Only `enable` gates reuse. The cap and selection flags are what we ASK
+  // for at creation; if Composio clamps or omits them in the echo, recreating
+  // the Session would post the same config and get the same echo back — a
+  // strict equality check here can only manufacture a recreate-per-request
+  // loop, never fix anything.
+  return session.config?.multi_account?.enable === true;
 }
+
+/** Session ids this boot already tried to upgrade once. If the fresh Session
+ *  STILL doesn't echo multi-account, Composio isn't granting it — run with
+ *  what we have (single-account behavior) instead of recreating a Session and
+ *  rewriting config.json on every request. */
+const multiAccountUpgradeAttempted = new Set<string>();
 
 function inputError(message: string, status = 400) {
   return Object.assign(new Error(message), { status });
@@ -270,11 +278,14 @@ async function ensureProjectSession(cfg: AppConfig): Promise<SessionResponse> {
   if (!composio?.apiKey) throw new Error("No Composio project key configured");
   if (composio.sessionId) {
     const existing = await getProjectSession(composio.apiKey, composio.sessionId);
-    if (existing && supportsMultiAccount(existing)) return existing;
+    if (existing && (supportsMultiAccount(existing) || multiAccountUpgradeAttempted.has(existing.session_id))) {
+      return existing;
+    }
   }
   // A missing/deleted session is recreated and its non-secret identifiers are
   // persisted so an edited config/env setup does not recreate it every launch.
   const prepared = await prepareProjectSession(composio.apiKey, composio);
+  multiAccountUpgradeAttempted.add(prepared.sessionId);
   composio.userId = prepared.userId;
   composio.sessionId = prepared.sessionId;
   saveConfig({ composio: { userId: prepared.userId, sessionId: prepared.sessionId } });
@@ -540,7 +551,16 @@ export async function connectionStatus(cfg: AppConfig, slugs: string[]) {
     slugs.map((slug) => {
       const item = bySlug.get(slug.toLowerCase());
       const serviceAccounts = accountsBySlug.get(slug.toLowerCase()) ?? [];
-      const accountState = serviceStateFromAccounts(serviceAccounts);
+      // Mirror allServiceStates: a scoped key can be denied the raw account
+      // list while the Session still names its selected account. Synthesize
+      // that account here too, so a status poll never wipes the row the
+      // inventory paths render (merge replaces a slug's state wholesale).
+      const selected = item?.connected_account;
+      const selectedId = validAccountId(selected?.id) ? selected.id : undefined;
+      const withSelected = selectedId && !serviceAccounts.some((account) => account.id === selectedId)
+        ? [...serviceAccounts, { id: selectedId, status: selected?.status ?? "ACTIVE" }]
+        : serviceAccounts;
+      const accountState = serviceStateFromAccounts(withSelected);
       const state = item?.connected_account?.status
         ?? (item?.is_no_auth ? "ACTIVE" : accountState.status);
       return [slug, {
@@ -619,7 +639,10 @@ export async function authorizeService(cfg: AppConfig, slug: string, requestedAl
   const session = await ensureProjectSession(cfg);
   const userId = session.config?.user_id ?? cfg.composio.userId;
   if (!userId) throw new Error("Composio Session has no user ID");
-  const accounts = await listConnectedAccounts(cfg.composio.apiKey, userId, [slug]);
+  // A scoped key may be denied account listing — authorization must still
+  // work (it always did pre-multi-account), so the alias guardrails degrade
+  // to first-account behavior, the same fallback every inventory path takes.
+  const accounts = await listConnectedAccounts(cfg.composio.apiKey, userId, [slug]).catch(() => []);
   const serviceAccounts = accounts.filter((account) => account.toolkit?.slug?.toLowerCase() === slug.toLowerCase());
   const usableAccounts = serviceAccounts.filter((account) => /^(active|initiated|initializing|pending)$/i.test(account.status ?? ""));
   if (usableAccounts.length >= MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit) {

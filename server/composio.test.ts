@@ -226,6 +226,9 @@ describe.sequential("Composio Sessions", () => {
         accounts: [
           { id: "ca_github_personal", alias: "personal", status: "ACTIVE" },
           { id: "ca_github_work", alias: "work", status: "ACTIVE" },
+          // the Session-selected account is synthesized when the raw list
+          // omits it — same rule as the inventory path
+          { id: "ca_github", status: "ACTIVE" },
         ],
       },
       gmail: { connected: true, pending: false, status: "ACTIVE", accounts: [] },
@@ -338,7 +341,9 @@ describe.sequential("Composio Sessions", () => {
     malformedConnectedAccounts = true;
     try {
       await expect(connectionStatus(cfg, ["github", "slack"])).resolves.toEqual({
-        github: { connected: true, pending: false, status: "ACTIVE", accounts: [] },
+        // the malformed list degrades to [], but the Session still names its
+        // selected account — synthesized so a poll never wipes the row
+        github: { connected: true, pending: false, status: "ACTIVE", accounts: [{ id: "ca_github", status: "ACTIVE" }] },
         slack: { connected: false, pending: false, status: "not_connected", accounts: [] },
       });
     } finally {

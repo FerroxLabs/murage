@@ -90,6 +90,18 @@ describe("connected-app status races", () => {
       generations,
     );
     expect(preserved.gmail).toEqual({ connected: false, pending: true, status: "INITIATED" });
+
+    // The generation guard specifically: a connected entry WITH accounts is
+    // exactly what the clearing branch targets, so only the advanced
+    // generation can save it — a freshly-connected account must survive a
+    // stale /connected response racing the Connect click.
+    const racing = mergeCompleteConnectorStatus(
+      { gmail: { connected: true, accounts: [{ id: "ca_new", status: "ACTIVE" }] } },
+      {},
+      new Map([["gmail", 3]]),
+      generations,
+    );
+    expect(racing.gmail).toEqual({ connected: true, accounts: [{ id: "ca_new", status: "ACTIVE" }] });
   });
 
   it("names the exact account and limits disconnect confirmation to that account", () => {

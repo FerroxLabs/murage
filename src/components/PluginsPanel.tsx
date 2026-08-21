@@ -427,6 +427,10 @@ export function PluginsPanel() {
               const pending = serviceStatus?.pending;
               const failed = serviceStatus?.status && /^(expired|failed)$/i.test(serviceStatus.status);
               const accounts = serviceStatus?.accounts ?? [];
+              // connected with no accounts and nothing in flight = a no-auth
+              // toolkit: there is no OAuth to run, so "Connect" would mint a
+              // pointless authorize. It ships included.
+              const included = serviceStatus?.connected === true && !accounts.length && !pending && !failed;
               const addingAccount = aliasSlug === card.slug;
               const busy = busySlug === card.slug;
               return (
@@ -444,7 +448,7 @@ export function PluginsPanel() {
                     </div>
                     <button
                       type="button"
-                      disabled={!configured || busy}
+                      disabled={!configured || busy || included}
                       onClick={() => {
                         if (pending && pendingUrls[card.slug]) {
                           setError(null);
@@ -462,6 +466,8 @@ export function PluginsPanel() {
                         "Continue"
                       ) : accounts.length ? (
                         "Add account"
+                      ) : included ? (
+                        "Included"
                       ) : failed ? (
                         "Retry"
                       ) : (

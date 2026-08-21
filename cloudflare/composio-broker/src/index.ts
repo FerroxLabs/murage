@@ -90,7 +90,11 @@ const MULTI_ACCOUNT_CONFIG = {
   max_accounts_per_toolkit: 5,
   require_explicit_selection: true,
 } as const;
-const MAX_CONNECTED_ACCOUNT_PAGES = 100;
+// Workers on the free plan get 50 subrequests per request, and the connected
+// inventory runs two paginated sweeps back to back — 20 pages each keeps the
+// worst case at ~40 fetches with headroom for the session lookup. At 100
+// accounts per page nobody real is near the ceiling.
+const MAX_CONNECTED_ACCOUNT_PAGES = 20;
 const ACCOUNT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const printableAliasSchema = z.string().min(1).max(64).refine((value) => {
   for (const character of value) {
@@ -148,9 +152,10 @@ function parseSession(value: SessionWire): ComposioSession {
     url: url.toString(),
     headers,
     userId: config?.user_id,
-    multiAccountConfigured: multi?.enable === true
-      && multi?.max_accounts_per_toolkit === MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit
-      && multi?.require_explicit_selection === true,
+    // Only `enable` gates reuse: the cap and selection flags are requested at
+    // creation, and recreating a Session would post the same config and get
+    // the same echo back — strict equality here can only churn, never fix.
+    multiAccountConfigured: multi?.enable === true,
   };
 }
 
@@ -201,15 +206,25 @@ async function createSession(env: Env, userId: string) {
   return parseSession(sessionWireSchema.parse(await response.json()));
 }
 
+/** Session ids this isolate already tried to upgrade once. If the fresh
+ *  Session STILL doesn't echo multi-account, Composio isn't granting it —
+ *  serve single-account behavior instead of recreating a Session and writing
+ *  D1 on every request. */
+const multiAccountUpgradeAttempted = new Set<string>();
+
 async function ensureSession(installation: InstallationRow, env: Env, ctx: ExecutionContext) {
   if (!(await env.SESSION_LIMITER.limit({ key: installation.id })).success) {
     throw new Response(JSON.stringify({ error: "too many connected-app requests" }), { status: 429, headers: JSON_HEADERS });
   }
   let session = installation.session_id ? await getSession(env, installation.session_id) : null;
+  if (session && !session.multiAccountConfigured && multiAccountUpgradeAttempted.has(session.sessionId)) {
+    return session;
+  }
   if (!session?.multiAccountConfigured) {
     // Connected accounts are attached to this stable Composio user ID. A new
     // Session upgrades legacy installations without relinking OAuth grants.
     session = await createSession(env, installation.composio_user_id);
+    multiAccountUpgradeAttempted.add(session.sessionId);
     await env.DB.prepare("UPDATE installations SET session_id = ?, last_seen_at = ? WHERE id = ?")
       .bind(session.sessionId, Date.now(), installation.id)
       .run();
@@ -429,7 +444,7 @@ async function connectionStatus(url: URL, installation: InstallationRow, env: En
       env,
       `/tool_router/session/${encodeURIComponent(session.sessionId)}/toolkits?${new URLSearchParams({ limit: "50", toolkits: slugs.join(",") })}`,
     ),
-    listConnectedAccounts(env, installation.composio_user_id, slugs),
+    listConnectedAccounts(env, installation.composio_user_id, slugs).catch(() => []),
   ]);
   if (!response.ok) return json({ error: await upstreamError(response, "Connection status unavailable") }, 502);
   const body = toolkitPageSchema.parse(await response.json());
@@ -457,7 +472,9 @@ async function authorize(
   ctx: ExecutionContext,
 ) {
   const session = await ensureSession(installation, env, ctx);
-  const accounts = await listConnectedAccounts(env, installation.composio_user_id, [slug]);
+  // Listing can be denied to the broker's key scope; authorize must still
+  // work, with the alias guardrails degrading to first-account behavior.
+  const accounts = await listConnectedAccounts(env, installation.composio_user_id, [slug]).catch(() => []);
   const serviceAccounts = accounts.filter((account) => account.toolkit?.slug?.toLowerCase() === slug);
   const usableAccounts = serviceAccounts.filter((account) => /^(active|initiated|initializing|pending)$/i.test(account.status ?? ""));
   if (usableAccounts.length >= MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit) {
