@@ -15,7 +15,8 @@ import { cn } from "@/lib/cn";
 import { requestNotificationPermission } from "@/lib/notify";
 import { botUsage, costCaption, formatTokens, formatUsd, hasFiniteCost } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
-import { instanceSupportsLocalComputer, localComputerDisabledReason } from "@/lib/local-computer";
+import { instanceSupportsLocalComputer, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
+import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 
 function Field({
   label,
@@ -322,7 +323,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const [voicesLoading, setVoicesLoading] = useState(false);
   const { capabilities } = useDesktopCapabilities();
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
-  const localSelectable = capabilities.localComputer.available && providerSupportsLocal;
+  const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
+  const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "local" | null>(null);
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const patch = (
     p: Partial<
@@ -344,7 +346,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "composio"
         | "modelSelection"
       >
-    >,
+    > & { acknowledgeLocalAuto?: boolean },
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const activeState = stateForBot(bot);
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
@@ -373,6 +375,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   }, [state.config?.tts?.configured]);
 
   return (
+    <>
     <aside className="animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3">
@@ -663,9 +666,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                   key={mode}
                   disabled={mode === "local" && !localSelectable}
                   title={mode === "local" && !localSelectable ? localDisabledReason ?? undefined : undefined}
-                  onClick={() =>
-                    patch(mode === "local" ? { computer: mode, autoApprove: false } : { computer: mode })
-                  }
+                  onClick={() => {
+                    if (mode === bot.computer) return;
+                    if (mode === "local" && bot.autoApprove) setLocalAutoWarning("local");
+                    else patch({ computer: mode });
+                  }}
                   className={cn(
                     "flex-1 py-1.5 text-[13px] capitalize",
                     i > 0 && "border-l border-hairline/40",
@@ -699,7 +704,9 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               <div className="text-[15px] font-medium text-ink">Auto mode</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 {bot.computer === "local"
-                  ? "Local computer actions always require your approval in this beta."
+                  ? bot.autoApprove
+                    ? "Keeps going on this computer — you'll still be asked about anything destructive, and about questions it asks you."
+                    : "Approve each action on this computer yourself. Turn on to let this bot keep working without stopping to ask."
                   : bot.autoApprove
                   ? "Keeps going on its own — you'll still be asked about anything destructive, and about questions it asks you."
                   : "Approve each action yourself. Turn on to let this bot keep working without stopping to ask."}
@@ -709,11 +716,12 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               role="switch"
               aria-checked={Boolean(bot.autoApprove)}
               aria-label="Auto mode"
-              disabled={bot.computer === "local"}
-              onClick={() => patch({ autoApprove: !bot.autoApprove })}
+              onClick={() => {
+                if (!bot.autoApprove && bot.computer === "local") setLocalAutoWarning("auto");
+                else patch({ autoApprove: !bot.autoApprove });
+              }}
               className={cn(
                 "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
-                bot.computer === "local" && "cursor-not-allowed opacity-40",
                 bot.autoApprove ? "bg-accent" : "bg-raised",
               )}
             >
@@ -811,5 +819,15 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         </div>
       </div>
     </aside>
+    <LocalComputerAutoWarning
+      open={localAutoWarning !== null}
+      onCancel={() => setLocalAutoWarning(null)}
+      onConfirm={() => {
+        if (localAutoWarning === "auto") patch({ autoApprove: true, acknowledgeLocalAuto: true });
+        if (localAutoWarning === "local") patch({ computer: "local", acknowledgeLocalAuto: true });
+        setLocalAutoWarning(null);
+      }}
+    />
+    </>
   );
 }

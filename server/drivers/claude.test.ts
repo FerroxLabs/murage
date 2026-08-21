@@ -250,6 +250,36 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.ANTHROPIC_AUTH_TOKEN).toBe("unsloth-secret");
   });
 
+  it("injects a leftover API id when a local host is serving that model", async () => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL) => {
+      if (String(url).includes(":8888")) {
+        return new Response(JSON.stringify({ data: [{ id: "orcarouter/Qwen3.8-27B-Uncensored-GGUF" }] }), { status: 200 });
+      }
+      return new Response("nope", { status: 500 });
+    }) as typeof fetch;
+    try {
+      await create(undefined, { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" });
+      const dump = join(scratch, "dump-leftover.json");
+      process.env.FAKE_CLAUDE_DUMP = dump;
+
+      await instance.adapter.sendTurn({
+        threadId: "t-leftover-local",
+        text: "hi",
+        model: "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
+      });
+      await recorder.until((e) => e.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("orcarouter/Qwen3.8-27B-Uncensored-GGUF");
+      expect(seen.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8888");
+      expect(seen.env.ANTHROPIC_AUTH_TOKEN).toBe("unsloth-secret");
+      expect(seen.env.ANTHROPIC_API_KEY).toBe("unsloth-secret");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
   it("mounts the agents comms proxy as an MCP server and pre-allows its tools", async () => {
     await create();
     const dump = join(scratch, "dump.json");

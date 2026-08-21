@@ -832,10 +832,7 @@ bus.subscribe((event: RuntimeEvent) => {
                 allowKey: event.approvalScope
                   ? undefined
                   : approvalKey(tool, summary, event.approvalScope),
-                held:
-                  event.approvalScope === "local-computer"
-                    ? "Local computer actions always require your approval in this beta."
-                    : "Auto mode couldn't answer this one.",
+                held: "Auto mode couldn't answer this one.",
                 approvalScope: event.approvalScope,
               },
             });
@@ -877,11 +874,9 @@ bus.subscribe((event: RuntimeEvent) => {
               : undefined,
           // in auto mode a card can only mean the guard stopped it — say so
           held:
-            permission && event.approvalScope === "local-computer"
-              ? "Local computer actions always require your approval in this beta."
-              : permission && asker?.autoApprove
-                ? "This looked destructive, so auto mode stopped to ask."
-                : undefined,
+            permission && asker?.autoApprove
+              ? "This looked destructive, so auto mode stopped to ask."
+              : undefined,
           approvalScope: event.approvalScope,
         },
       });
@@ -3302,7 +3297,6 @@ const server = createServer(async (req, res) => {
       if (body.cloudBackend !== undefined && !["box", "vps"].includes(String(body.cloudBackend))) {
         return json(res, 400, { error: "cloudBackend must be box or vps" });
       }
-      const effectiveComputer = body.computer ?? existingBot?.computer;
       if (body.chiefOfStaff !== undefined && typeof body.chiefOfStaff !== "boolean") {
         return json(res, 400, { error: "chiefOfStaff must be true or false" });
       }
@@ -3323,10 +3317,21 @@ const server = createServer(async (req, res) => {
       // still answer .includes() — with substring matches, not tool names
       if (body.autoApprove !== undefined) {
         if (typeof body.autoApprove !== "boolean") return json(res, 400, { error: "autoApprove must be true or false" });
-        if (body.autoApprove === true && effectiveComputer === "local") {
-          return json(res, 400, { error: "Auto mode is unavailable while this bot uses the local computer beta" });
-        }
         patch.autoApprove = body.autoApprove;
+      }
+      // "Auto on this Mac" hands a bot the user's real session, so the grant
+      // must prove a human saw the warning. The desktop dialog is the only
+      // caller that sends acknowledgeLocalAuto; without it a PATCH that would
+      // create the combination — a bot curling the loopback API from a tool
+      // call, a script, a stale client — is refused. The renderer dialog
+      // alone is not a boundary; this check is.
+      const wantsComputer = body.computer !== undefined ? body.computer : existingBot?.computer;
+      const wantsAuto = body.autoApprove !== undefined ? body.autoApprove : existingBot?.autoApprove === true;
+      const alreadyGranted = existingBot?.computer === "local" && existingBot?.autoApprove === true;
+      if (wantsComputer === "local" && wantsAuto === true && !alreadyGranted && body.acknowledgeLocalAuto !== true) {
+        return json(res, 400, {
+          error: "Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)",
+        });
       }
       if (body.approvePeerComms !== undefined) {
         if (typeof body.approvePeerComms !== "boolean") {
@@ -3339,9 +3344,6 @@ const server = createServer(async (req, res) => {
           return json(res, 400, { error: "alwaysAllow must be a list of tool keys" });
         }
         patch.alwaysAllow = [...new Set(body.alwaysAllow as string[])].slice(0, 200);
-      }
-      if (effectiveComputer === "local" && body.autoApprove === undefined && existingBot?.autoApprove) {
-        patch.autoApprove = false;
       }
       if (existingBot?.computer === "local" && body.computer !== undefined && body.computer !== "local") {
         await registry

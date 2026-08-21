@@ -17,8 +17,12 @@ export function UsageSection() {
       return { bot, usage, billing: instance?.snapshot.billing };
     })
     .filter((r) => r.usage.turns > 0)
-    // money first, then volume
-    .sort((a, b) => (b.usage.costUsd ?? -1) - (a.usage.costUsd ?? -1) || b.usage.input + b.usage.output - (a.usage.input + a.usage.output));
+    // money first, then volume. Non-finite/missing costs sort last.
+    .sort((a, b) => {
+      const costOf = (value: number | null | undefined) =>
+        hasFiniteCost(value) ? value : Number.NEGATIVE_INFINITY;
+      return costOf(b.usage.costUsd) - costOf(a.usage.costUsd) || b.usage.input + b.usage.output - (a.usage.input + a.usage.output);
+    });
   const total = sumUsage(rows.map((r) => r.usage));
   const billings = new Set(rows.map((r) => r.billing));
 

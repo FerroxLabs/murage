@@ -28,11 +28,14 @@ import { RoutineEditor } from "./RoutinesPage";
 import { AndroidDevicePanel, useAndroidUsbDevices } from "./AndroidDevicePanel";
 import { LocalScreenPreview } from "./LocalScreenPreview";
 import { LinuxLocalControl } from "./LinuxLocalControl";
+import { MacLocalControl } from "./MacLocalControl";
+import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import {
   autoSelectsLocalComputer,
   instanceSupportsLocalComputer,
   linuxAutoDescription,
   localComputerDisabledReason,
+  localComputerSelectable,
 } from "@/lib/local-computer";
 
 async function api(path: string, init?: RequestInit): Promise<any> {
@@ -107,7 +110,8 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const localAvailable = capabilities.localComputer.available;
   const isLinux = capabilities.host.platform === "linux";
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
-  const localSelectable = localAvailable && providerSupportsLocal;
+  const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
+  const [localAutoWarning, setLocalAutoWarning] = useState(false);
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const [phase, setPhase] = useState<Phase>("checking");
   const [boxState, setBoxState] = useState<string | null>(null);
@@ -201,7 +205,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       if (!providerSupportsLocal) {
         setError("This model engine cannot control this computer. Choose Claude or an ACP engine.");
       }
-      setPhase(capabilitiesReady && localSelectable ? "local" : "local-unavailable");
+      setPhase(capabilitiesReady && localAvailable && providerSupportsLocal ? "local" : "local-unavailable");
       return;
     }
     if (bot.computer === "vm") {
@@ -635,6 +639,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   } satisfies Record<Exclude<Phase, "ready" | "local" | "vm">, string>;
 
   return (
+    <>
     <aside className="animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3">
@@ -922,6 +927,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
 
         <LocalScreenPreview />
         <LinuxLocalControl />
+        <MacLocalControl />
 
         {/* Computer source */}
           <div className="mt-4 rounded-xl bg-card p-4">
@@ -966,7 +972,11 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                 key={mode}
                 disabled={disabled}
                 title={unavailableTitle}
-                onClick={() => dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode } })}
+                onClick={() => {
+                  if (mode === bot.computer) return;
+                  if (mode === "local" && bot.autoApprove) setLocalAutoWarning(true);
+                  else dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode } });
+                }}
                 className={cn(
                   "flex-1 py-1.5 text-[13px]",
                   i > 0 && "border-l border-hairline/40",
@@ -1073,5 +1083,14 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         />
       )}
     </aside>
+    <LocalComputerAutoWarning
+      open={localAutoWarning}
+      onCancel={() => setLocalAutoWarning(false)}
+      onConfirm={() => {
+        dispatch({ type: "updateBot", botId: bot.id, patch: { computer: "local", acknowledgeLocalAuto: true } });
+        setLocalAutoWarning(false);
+      }}
+    />
+    </>
   );
 }

@@ -452,7 +452,11 @@ export type Action =
           | "composio"
           | "modelSelection"
         >
-      >;
+      > & {
+        // rides the PATCH body only: the server's proof that the local-auto
+        // warning dialog was shown. Never stored on the bot.
+        acknowledgeLocalAuto?: boolean;
+      };
     };
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
@@ -832,10 +836,8 @@ export function reducer(state: AppState, action: Action): AppState {
             ),
           }
         : animated;
-      return updateBot(next, action.botId, (b) => {
-        const merged = { ...b, ...action.patch };
-        return merged.computer === "local" ? { ...merged, autoApprove: false } : merged;
-      });
+      const { acknowledgeLocalAuto: _ack, ...botPatch } = action.patch;
+      return updateBot(next, action.botId, (b) => ({ ...b, ...botPatch }));
     }
     case "threadActive": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);

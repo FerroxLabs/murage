@@ -859,26 +859,45 @@ describe("harness HTTP API", () => {
     expect(after.modelSelection.effort).toBeUndefined();
   });
 
-  it("turns off bot Auto mode when local computer beta is selected", async () => {
+  it("grants Auto on this computer only through the warning acknowledgement", async () => {
     const created = await api("POST", "/api/bots");
     const bot = created.body.bot;
     expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).body.bot.autoApprove).toBe(
       true,
     );
-    const local = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
-    expect(local.body.bot).toMatchObject({ computer: "local", autoApprove: false });
-    const rejected = await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
-    expect(rejected.status).toBe(400);
-    expect(rejected.body.error).toContain("local computer beta");
 
-    const cloud = await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" });
-    expect(cloud.body.bot.computer).toBe("cloud");
-    const simultaneous = await api("PATCH", `/api/bots/${bot.id}`, {
-      computer: "local",
-      autoApprove: true,
-    });
-    expect(simultaneous.status).toBe(400);
-    expect(simultaneous.body.error).toContain("local computer beta");
+    // The important half: a blind PATCH — exactly what a bot curling the
+    // loopback API from a tool call would send — must be refused. The
+    // renderer's warning dialog is not a boundary; this 400 is.
+    const blind = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
+    expect(blind.status).toBe(400);
+    const oneShot = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local", autoApprove: true });
+    expect(oneShot.status).toBe(400);
+    const after = (await api("GET", "/api/bots")).body.bots.find((b: { id: string }) => b.id === bot.id);
+    expect(after.computer).not.toBe("local");
+
+    // The dialog's acknowledgement grants it, and the flag is not persisted.
+    const local = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local", acknowledgeLocalAuto: true });
+    expect(local.status).toBe(200);
+    expect(local.body.bot).toMatchObject({ computer: "local", autoApprove: true });
+    expect(local.body.bot.acknowledgeLocalAuto).toBeUndefined();
+
+    // Once granted, re-asserting auto and unrelated PATCHes need no re-ack.
+    const enabled = await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
+    expect(enabled.status).toBe(200);
+    expect(enabled.body.bot.autoApprove).toBe(true);
+
+    // The other direction needs the warning too: local first, then auto.
+    await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: false });
+    const autoBlind = await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
+    expect(autoBlind.status).toBe(400);
+    const autoAcked = await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, acknowledgeLocalAuto: true });
+    expect(autoAcked.status).toBe(200);
+
+    // Leaving local ends the grant; coming back needs the warning again.
+    await api("PATCH", `/api/bots/${bot.id}`, { computer: "off" });
+    const back = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
+    expect(back.status).toBe(400);
     await api("DELETE", `/api/bots/${bot.id}`);
   });
 
