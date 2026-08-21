@@ -116,6 +116,9 @@ export interface Group {
   pinnedMessageId?: string;
   /** sidebar section heading this room is filed under (shared with bots) */
   section?: string;
+  /** New user-created rooms remain in setup until Save or Skip. */
+  setupCompletedAt?: number | null;
+  setupSkippedAt?: number | null;
   messages: Message[];
 }
 
