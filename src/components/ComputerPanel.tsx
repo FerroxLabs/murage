@@ -56,6 +56,23 @@ type Phase =
   | "off"
   | "error";
 
+interface LocalVmStatus {
+  mode: "shared" | "per-bot";
+  max_instances: number;
+  image: boolean;
+  create_supported: boolean;
+  container: "running" | "stopped" | "missing";
+  imageMatches: boolean;
+  managed: boolean;
+  network: "loopback" | "unsafe" | "unknown";
+  security: "hardened" | "unsafe" | "unknown";
+  persistence: "durable" | "unsafe" | "unknown";
+  desktopReady: boolean;
+  ready: boolean;
+  problem: string | null;
+  viewer_url: string;
+}
+
 function routineScheduleLabel(routine: Routine) {
   if (routine.schedule.type === "once") {
     return new Date(routine.schedule.at).toLocaleString([], {
@@ -100,8 +117,11 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   // preview below is a periodic screenshot that swallows clicks — this URL is
   // the only way a person can actually drive the VM.
   const [vmViewerUrl, setVmViewerUrl] = useState<string | null>(null);
+  const [vmStatus, setVmStatus] = useState<LocalVmStatus | null>(null);
   const [localFrame, setLocalFrame] = useState<string | null>(null);
-  const [pending, setPending] = useState<"join" | "sleep" | "provision" | null>(null);
+  const [pending, setPending] = useState<
+    "join" | "sleep" | "provision" | "vm-create" | "vm-recreate" | "vm-delete" | null
+  >(null);
   const [controlPending, setControlPending] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +131,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const androidConnected = androidStatus.devices.length > 0;
   // bumped when a Box API key is saved inline, to re-run the spin-up flow
   const [retry, setRetry] = useState(0);
+  const vmReadinessAttempts = useRef(0);
   const selectedInstance = state.instances.find(
     (instance) => instance.instanceId === bot.modelSelection.instanceId,
   );
@@ -124,6 +145,9 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   useEffect(() => {
     if (!androidConnected && panelView === "android") setPanelView("computer");
   }, [androidConnected, panelView]);
+  useEffect(() => {
+    vmReadinessAttempts.current = 0;
+  }, [bot.id, bot.computer]);
   const vmSupported = Boolean(
     selectedInstance?.snapshot.state === "available" &&
       selectedInstance.capabilities?.computerMcp &&
@@ -165,6 +189,8 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     setPhase("checking");
     setPolledFrame(null);
     setVmFrame(null);
+    setVmViewerUrl(null);
+    setVmStatus(null);
     setLocalFrame(null);
     setError(null);
     if (bot.computer === "off") {
@@ -184,15 +210,40 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         setPhase("vm-unavailable");
         return;
       }
-      api("/api/local-computer")
-        .then((status) => {
+      let retryTimer: number | undefined;
+      api(`/api/bots/${bot.id}/local-computer`)
+        .then((rawStatus) => {
           if (!alive) return;
+          const status: LocalVmStatus = rawStatus;
+          setVmStatus(status);
           // parse at the boundary: our own status endpoint sends a string or nothing
           const viewerUrl = String(status.viewer_url ?? "");
           if (viewerUrl.startsWith("http")) setVmViewerUrl(viewerUrl);
-          if (status.ready) setPhase("vm");
+          if (status.ready) {
+            vmReadinessAttempts.current = 0;
+            setPhase("vm");
+          } else if (
+            status.container === "running" &&
+            status.imageMatches &&
+            status.managed &&
+            status.network === "loopback" &&
+            status.security === "hardened" &&
+            status.persistence === "durable" &&
+            !status.desktopReady &&
+            vmReadinessAttempts.current < 15
+          ) {
+            vmReadinessAttempts.current += 1;
+            setError(null);
+            setPhase("checking");
+            retryTimer = window.setTimeout(() => setRetry((n) => n + 1), 2000);
+          }
           else {
-            setError(`${status.problem ?? "The Local VM is not ready"}. Open App Settings → Local VM.`);
+            const canCreateHere =
+              status.mode === "per-bot" &&
+              status.container === "missing" &&
+              status.image &&
+              status.create_supported;
+            setError(canCreateHere ? null : `${status.problem ?? "The Local VM is not ready"}. Open App Settings → Local VM.`);
             setPhase("vm-unavailable");
           }
         })
@@ -203,6 +254,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         });
       return () => {
         alive = false;
+        if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       };
     }
     if (bot.computer === "cloud" && !cloudSupported) {
@@ -352,7 +404,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       if (vmInFlight.current) return;
       vmInFlight.current = true;
       try {
-        const { image } = await api("/api/local-computer/screenshot", { method: "POST" });
+        const { image } = await api(`/api/bots/${bot.id}/local-computer/screenshot`, { method: "POST" });
         if (alive && typeof image === "string") setVmFrame(image);
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e));
@@ -366,7 +418,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [phase, viewerOpen]);
+  }, [phase, bot.id, viewerOpen]);
 
   // local preview: frames from the Electron main process. The FIRST capture
   // attempt is what makes macOS show the Screen Recording prompt (there is
@@ -521,6 +573,46 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       .finally(() => setPending(null));
   };
 
+  const runVmAction = async (action: "vm-create" | "vm-recreate" | "vm-delete") => {
+    if (
+      (action === "vm-recreate" || action === "vm-delete") &&
+      !window.confirm(
+        action === "vm-delete"
+          ? `Delete ${bot.name}'s Local VM? Its private durable workspace will remain.`
+          : `Replace ${bot.name}'s Local VM? Its private durable workspace will remain.`,
+      )
+    ) return;
+    setPending(action);
+    setError(null);
+    setVmStatus(null);
+    vmReadinessAttempts.current = 0;
+    try {
+      if (action !== "vm-create") {
+        await api(`/api/bots/${bot.id}/local-computer/remove`, {
+          method: "POST",
+          body: "{}",
+        });
+      }
+      if (action !== "vm-delete") {
+        const status: LocalVmStatus = await api(`/api/bots/${bot.id}/local-computer/run`, {
+          method: "POST",
+          body: "{}",
+        });
+        setVmStatus(status);
+        setPhase(status.ready ? "vm" : "checking");
+      } else {
+        setVmStatus((current) => current ? { ...current, container: "missing", ready: false } : current);
+        setPhase("vm-unavailable");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPhase("vm-unavailable");
+    } finally {
+      setPending(null);
+      setRetry((n) => n + 1);
+    }
+  };
+
   const openVmSettings = () => {
     window.sessionStorage.setItem("openmausbot.settings.section", "computer");
     dispatch({ type: "toggleAppSettings", open: true });
@@ -639,12 +731,25 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                 </button>
               )}
               {phase === "vm-unavailable" && (
-                <button
-                  onClick={openVmSettings}
-                  className="mt-1 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
-                >
-                  Open Local VM setup
-                </button>
+                vmStatus?.mode === "per-bot" && vmStatus.image && vmStatus.create_supported ? (
+                  <button
+                    onClick={() => void runVmAction(vmStatus.container === "missing" ? "vm-create" : "vm-recreate")}
+                    disabled={pending !== null}
+                    className="mt-1 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-50"
+                  >
+                    {(pending === "vm-create" || pending === "vm-recreate") && (
+                      <Loader2 size={13} className="mr-1.5 inline animate-spin" />
+                    )}
+                    {vmStatus.container === "missing" ? `Create ${bot.name}'s VM` : `Replace ${bot.name}'s VM`}
+                  </button>
+                ) : (
+                  <button
+                    onClick={openVmSettings}
+                    className="mt-1 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
+                  >
+                    Open Local VM setup
+                  </button>
+                )
               )}
               {(phase === "vps-unconfigured" || phase === "vps-stopped") && (
                 <button
@@ -762,6 +867,17 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           >
             {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Hand size={14} />}
             Take control
+          </button>
+        )}
+        {phase === "vm" && vmStatus?.mode === "per-bot" && (
+          <button
+            onClick={() => void runVmAction("vm-delete")}
+            disabled={pending !== null || bot.busy}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-danger/30 py-2 text-[13px] text-danger hover:bg-danger/10 disabled:opacity-50"
+            title={bot.busy ? "Stop this bot's turn before deleting its VM" : `Delete ${bot.name}'s Local VM`}
+          >
+            {pending === "vm-delete" ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
+            Delete this bot's VM
           </button>
         )}
         {/* Cloud-only actions */}
