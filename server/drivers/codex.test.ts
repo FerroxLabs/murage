@@ -124,6 +124,27 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(threadStart.params).toMatchObject({ model: "gpt-5.6-sol", modelProvider: "openai" });
   });
 
+  it("keeps the full command when a Windows interpreter prefix is long", async () => {
+    await create({ mode: "windows-command" });
+    await instance.adapter.sendTurn({ threadId: "t-windows-command", text: "read notes" });
+
+    const command = [
+      "\"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"",
+      "-Command",
+      `\"Get-Content -Raw -LiteralPath 'C:\\Users\\Ada\\workspaces\\${"very-long-folder\\".repeat(8)}NOTES.md'\"`,
+    ].join(" ");
+    expect(command.length).toBeGreaterThan(200);
+    const opened = await recorder.until((event) => event.type === "request.opened");
+    expect(recorder.events.find((event) => event.type === "item.started")).toMatchObject({
+      type: "item.started",
+      title: command,
+    });
+    expect(opened).toMatchObject({ requestType: "permission", summary: command });
+
+    await instance.adapter.respondToRequest("t-windows-command", opened.requestId!, { behavior: "allow" });
+    await recorder.until((event) => event.type === "turn.completed");
+  });
+
   it("uses the instance environment for the Codex process", async () => {
     const codexHome = join(scratch, "custom-codex-home");
     await create({ environment: { CODEX_HOME: codexHome } });

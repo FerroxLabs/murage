@@ -13,6 +13,7 @@ import {
   IMAGE_LAYER_LABEL,
   IMAGE_LAYER_VERSION,
   MANAGED_LABEL,
+  TARGET_LABEL,
   VM_WORKSPACE_DIR,
   VM_WORKSPACE_GUEST,
   WORKSPACE_LABEL,
@@ -21,9 +22,14 @@ import {
   containerComputerMcp,
   containerComputerScreenshot,
   containerComputerStatus,
+  containerRuntimeStatus,
+  containerRunArgs,
   managedImageDockerfile,
+  perBotLocalVmTarget,
+  podmanSecurityIsHardened,
   setupCommands,
   type CommandRunner,
+  type LocalVmTarget,
 } from "./container-computer.ts";
 
 function runner(responses: Record<string, string | Error>) {
@@ -117,13 +123,179 @@ function readyInspect(overrides: Record<string, unknown> = {}) {
   ]);
 }
 
+function perBotReadyInspect(botId: string, viewerPort: number, targetLabel?: string) {
+  const target = perBotLocalVmTarget(botId);
+  const detail = JSON.parse(readyInspect())[0];
+  detail.Config.Labels[TARGET_LABEL] = targetLabel ?? target.label;
+  detail.Mounts[0].Source = target.workspaceDir;
+  detail.HostConfig.PortBindings["6901/tcp"][0].HostPort = String(viewerPort);
+  detail.NetworkSettings = {
+    Ports: { "6901/tcp": [{ HostIp: "127.0.0.1", HostPort: String(viewerPort) }] },
+  };
+  return JSON.stringify([detail]);
+}
+
 describe("containerComputerStatus", () => {
+  it("prefers the supported Podman image store when Docker is also healthy on Windows", async () => {
+    const fake = runner({
+      "where.exe podman": "C:\\Program Files\\RedHat\\Podman\\podman.exe\n",
+      "where.exe docker": "C:\\Program Files\\Docker\\docker.exe\n",
+      "podman info --format json": '{"host":{"arch":"amd64"}}\n',
+      "docker info --format {{.ServerVersion}}": "29.0.0\n",
+    });
+
+    const status = await containerRuntimeStatus(fake.run, "win32");
+
+    expect(status).toEqual({
+      runtime: "podman",
+      available: ["podman", "docker"],
+      daemonUp: true,
+    });
+  });
+
+  it("accepts exact Podman-on-Windows hardening and its WSL-translated durable mount", async () => {
+    const derived = perBotLocalVmTarget("bot-win");
+    const target: LocalVmTarget = {
+      ...derived,
+      workspaceDir: "C:\\Users\\light\\.openmausbot\\vm-homes\\win-target",
+    };
+    const detail = JSON.parse(perBotReadyInspect("bot-win", 41629))[0];
+    detail.Mounts[0].Source = "/mnt/c/Users/light/.openmausbot/vm-homes/win-target";
+    detail.HostConfig = {
+      ...detail.HostConfig,
+      CapDrop: ["CAP_CHOWN", "CAP_DAC_OVERRIDE"],
+      CapAdd: [],
+      PidMode: "private",
+      UTSMode: "private",
+      CgroupnsMode: null,
+    };
+    detail.EffectiveCaps = ["CAP_SETGID", "CAP_SETUID"];
+    detail.BoundingCaps = ["CAP_SETGID", "CAP_SETUID"];
+    const targetDriverExec =
+      `podman exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ` +
+      `-e CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${target.containerName} ${CUA_EXECUTABLE}`;
+    const fake = runner({
+      "where.exe podman": "C:\\Program Files\\RedHat\\Podman\\podman.exe\n",
+      "where.exe docker": new Error("missing"),
+      "podman info --format json": '{"host":{"arch":"amd64"}}\n',
+      [`podman image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`podman inspect ${target.containerName}`]: JSON.stringify([detail]),
+      [`${targetDriverExec} --version`]: `cua-driver ${CUA_DRIVER_VERSION}\n`,
+      [`${targetDriverExec} status --socket ${CUA_SOCKET}`]: "running\n",
+      [`${targetDriverExec} call health_report {} --socket ${CUA_SOCKET}`]: JSON.stringify({
+        schema_version: "1",
+        overall: "ok",
+        checks: [],
+      }),
+      [`${targetDriverExec} call get_desktop_state {} --socket ${CUA_SOCKET} --screenshot-out-file /tmp/openmausbot-readiness.png`]: "{}\n",
+      [`podman exec ${target.containerName} base64 -w0 /tmp/openmausbot-readiness.png`]: validPng.toString("base64"),
+    });
+
+    const status = await containerComputerStatus(fake.run, "win32", target);
+
+    expect(status).toMatchObject({
+      runtime: "podman",
+      security: "hardened",
+      persistence: "durable",
+      network: "loopback",
+      ready: true,
+    });
+  });
+
+  it("rejects extra effective or bounding capabilities in Podman inspect output", () => {
+    const config = {
+      Memory: 4 * 1024 * 1024 * 1024,
+      MemorySwap: 4 * 1024 * 1024 * 1024,
+      NanoCpus: 2_000_000_000,
+      PidsLimit: 512,
+      CapDrop: ["CAP_CHOWN"],
+      CapAdd: [],
+      Privileged: false,
+      PidMode: "private",
+      IpcMode: "private",
+      UTSMode: "private",
+      ShmSize: 512 * 1024 * 1024,
+      Devices: [],
+      DeviceRequests: null,
+      SecurityOpt: [],
+      UsernsMode: "",
+      CgroupnsMode: undefined,
+      OomKillDisable: false,
+      AutoRemove: false,
+      RestartPolicy: { Name: "no", MaximumRetryCount: 0 },
+    };
+    expect(podmanSecurityIsHardened(
+      config,
+      ["CAP_SETGID", "CAP_SETUID"],
+      ["CAP_SETGID", "CAP_SETUID"],
+    )).toBe(true);
+    expect(podmanSecurityIsHardened(
+      config,
+      ["CAP_NET_RAW", "CAP_SETGID", "CAP_SETUID"],
+      ["CAP_SETGID", "CAP_SETUID"],
+    )).toBe(false);
+  });
+
+  it("keeps per-bot identities, workspaces, and ephemeral viewer ports separate", async () => {
+    const target = perBotLocalVmTarget("bot-a");
+    const targetDriverExec =
+      `docker exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ` +
+      `-e CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${target.containerName} ${CUA_EXECUTABLE}`;
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${target.containerName}`]: perBotReadyInspect("bot-a", 49152),
+      [`${targetDriverExec} --version`]: `cua-driver ${CUA_DRIVER_VERSION}\n`,
+      [`${targetDriverExec} status --socket ${CUA_SOCKET}`]: "running\n",
+      [`${targetDriverExec} call health_report {} --socket ${CUA_SOCKET}`]: JSON.stringify({
+        schema_version: "1",
+        overall: "ok",
+        checks: [],
+      }),
+      [`${targetDriverExec} call get_desktop_state {} --socket ${CUA_SOCKET} --screenshot-out-file /tmp/openmausbot-readiness.png`]: "{}\n",
+      [`docker exec ${target.containerName} base64 -w0 /tmp/openmausbot-readiness.png`]: validPng.toString("base64"),
+    });
+
+    const status = await containerComputerStatus(fake.run, "linux", target);
+
+    expect(status).toMatchObject({
+      container_name: target.containerName,
+      target_key: target.key,
+      workspace_path: target.workspaceDir,
+      viewer_port: 49152,
+      managed: true,
+      persistence: "durable",
+      ready: true,
+    });
+    expect(status.viewer_url).toContain("http://127.0.0.1:49152/vnc.html");
+  });
+
+  it("refuses a per-bot container carrying another target's label", async () => {
+    const target = perBotLocalVmTarget("bot-a");
+    const other = perBotLocalVmTarget("bot-b");
+    const fake = runner({
+      "/usr/bin/which docker": "docker\n",
+      "/usr/bin/which podman": new Error("missing"),
+      "docker info --format {{.ServerVersion}}": "29\n",
+      [`docker image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`docker inspect ${target.containerName}`]: perBotReadyInspect("bot-a", 49152, other.label),
+    });
+
+    const status = await containerComputerStatus(fake.run, "linux", target);
+
+    expect(status.managed).toBe(false);
+    expect(status.ready).toBe(false);
+    expect(status.problem).toContain("not created by OpenMausBot");
+  });
+
   it("prefers a running runtime over an earlier installed but stopped one", async () => {
     const fake = runner({
       "/usr/bin/which docker": "docker\n",
       "/usr/bin/which podman": "podman\n",
       "docker info --format {{.ServerVersion}}": new Error("daemon stopped"),
-      "podman info --format {{.ServerVersion}}": "5.0\n",
+      "podman info --format json": '{"host":{"arch":"amd64"}}\n',
       [`podman image inspect ${IMAGE}`]: preparedImageInspect(),
       [`podman inspect ${CONTAINER}`]: JSON.stringify([
         {
@@ -420,6 +592,8 @@ describe("Cua integration", () => {
     expect(dockerfile).toContain(`serve --socket ${CUA_SOCKET} --permission-mode standard`);
     expect(dockerfile).toContain("CUA_DRIVER_RS_TELEMETRY_ENABLED=0");
     expect(dockerfile).toContain("prepare-openmausbot-workspace.sh");
+    expect(dockerfile).toContain('if ! chmod 0700 "$workspace"');
+    expect(dockerfile).toContain('test -r "$directory" && test -w "$directory" && test -x "$directory"');
     expect(dockerfile).toContain("migrate_profile google-chrome");
     expect(dockerfile).toContain("migrate_profile chromium");
     expect(dockerfile).toContain("SingletonLock");
@@ -457,6 +631,23 @@ describe("Cua integration", () => {
 });
 
 describe("containerComputerAction", () => {
+  it("fails closed instead of giving Apple container an invalid dynamic-port spec", async () => {
+    const target = perBotLocalVmTarget("bot-a");
+    const fake = runner({
+      "/usr/bin/which docker": new Error("missing"),
+      "/usr/bin/which podman": new Error("missing"),
+      "/usr/bin/which container": "container\n",
+      "container system status": "running\n",
+      [`container image inspect ${IMAGE}`]: preparedImageInspect(),
+      [`container inspect ${target.containerName}`]: new Error("missing container"),
+    });
+
+    await expect(containerComputerAction("run", fake.run, "darwin", target)).rejects.toThrow(
+      "require Docker or Podman",
+    );
+    expect(fake.calls.some((call) => call.startsWith("container run "))).toBe(false);
+  });
+
   it("does not create a VM before its managed image is prepared", async () => {
     const fake = runner({
       "/usr/bin/which docker": "docker\n",
@@ -487,6 +678,30 @@ describe("containerComputerAction", () => {
 });
 
 describe("setupCommands", () => {
+  it("derives opaque, distinct per-bot container and workspace identities", () => {
+    const a = perBotLocalVmTarget("bot-a");
+    const b = perBotLocalVmTarget("bot-b");
+
+    expect(a).toEqual(perBotLocalVmTarget("bot-a"));
+    expect(a.key).not.toBe(b.key);
+    expect(a.containerName).not.toBe(b.containerName);
+    expect(a.workspaceDir).not.toBe(b.workspaceDir);
+    expect(a.containerName).not.toContain("bot-a");
+    expect(a.workspaceDir).not.toContain("bot-a");
+  });
+
+  it("asks Docker for an ephemeral loopback viewer port for each per-bot VM", () => {
+    const target = perBotLocalVmTarget("bot-a");
+    const args = containerRunArgs("docker", "secret", target);
+    const command = ["docker", ...args].join(" ");
+
+    expect(command).toContain(`--name ${target.containerName}`);
+    expect(command).toContain(`--label ${TARGET_LABEL}=${target.label}`);
+    expect(command).toContain(`source=${target.workspaceDir},target=${VM_WORKSPACE_GUEST}`);
+    expect(command).toContain("-p 127.0.0.1::6901");
+    expect(command).not.toContain("127.0.0.1:6080:6901");
+  });
+
   it("does not invent Docker commands when no runtime was detected", () => {
     const commands = setupCommands(null, "darwin");
     expect(commands.pull).toBeNull();

@@ -1084,6 +1084,41 @@ describe("harness HTTP API", () => {
     await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
   });
 
+  it("keeps shared Local VM mode by default and resolves isolated targets per bot when enabled", async () => {
+    const first = (await api("POST", "/api/bots")).body.bot;
+    const second = (await api("POST", "/api/bots")).body.bot;
+    const before = await api("GET", "/api/config");
+    expect(before.body.localVm).toEqual({ mode: "shared", maxInstances: 2 });
+
+    const shared = await api("GET", `/api/bots/${first.id}/local-computer`);
+    expect(shared.status).toBe(200);
+    expect(shared.body).toMatchObject({ mode: "shared", target_key: "shared" });
+
+    const saved = await api("PATCH", "/api/config", {
+      localVm: { mode: "per-bot", maxInstances: 3 },
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.localVm).toEqual({ mode: "per-bot", maxInstances: 3 });
+
+    const [firstStatus, secondStatus] = await Promise.all([
+      api("GET", `/api/bots/${first.id}/local-computer`),
+      api("GET", `/api/bots/${second.id}/local-computer`),
+    ]);
+    expect(firstStatus.body).toMatchObject({ mode: "per-bot", max_instances: 3 });
+    expect(secondStatus.body).toMatchObject({ mode: "per-bot", max_instances: 3 });
+    expect(firstStatus.body.target_key).not.toBe(secondStatus.body.target_key);
+    expect(firstStatus.body.container_name).not.toBe(secondStatus.body.container_name);
+    expect(firstStatus.body.workspace_path).not.toBe(secondStatus.body.workspace_path);
+
+    const invalid = await api("PATCH", "/api/config", { localVm: { maxInstances: 5 } });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toContain("localVm.maxInstances");
+
+    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    expect(disk.localVm).toEqual({ mode: "per-bot", maxInstances: 3 });
+    await api("PATCH", "/api/config", { localVm: { mode: "shared", maxInstances: 2 } });
+  });
+
   it("keeps an active turn alive when only the room timeout changes", async () => {
     const created = await api("POST", "/api/bots", {});
     const botId = created.body.bot.id;
