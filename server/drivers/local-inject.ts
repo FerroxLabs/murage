@@ -38,6 +38,32 @@ export interface InjectedModel {
   label: string;
   /** In VRAM / running on the host right now — Custom pins these first. */
   loaded?: boolean;
+  /** the host's own word on the model's context window (Ollama reports it
+   * for running models in /api/ps) — sizes the model-facing rebuild instead
+   * of guessing from the name */
+  contextWindow?: number;
+}
+
+/** Ollama's /api/ps lists running models with their context_length; a
+ * small model's real window matters more than a big one's — an 8k model
+ * guessed at 32k gets a rebuild it cannot hold. */
+export function contextWindowsFromPs(extra: unknown): Map<string, number> {
+  const out = new Map<string, number>();
+  const rec = extra && typeof extra === "object" ? (extra as { models?: unknown }) : null;
+  if (!rec || !Array.isArray(rec.models)) return out;
+  for (const m of rec.models) {
+    if (!m || typeof m !== "object") continue;
+    const row = m as { name?: unknown; model?: unknown; context_length?: unknown };
+    const id = typeof row.model === "string" ? row.model : typeof row.name === "string" ? row.name : null;
+    const ctx = typeof row.context_length === "number" && Number.isFinite(row.context_length) && row.context_length > 0 ? row.context_length : null;
+    if (id && ctx) {
+      out.set(id, ctx);
+      const baseId = id.split(":")[0]!;
+      const current = out.get(baseId);
+      out.set(baseId, current === undefined ? ctx : Math.min(current, ctx));
+    }
+  }
+  return out;
 }
 
 export function encodeInjectId(host: string, model: string): string {
@@ -306,17 +332,20 @@ export async function probeLocalInjects(
       const extraIds = extra ? idsFromModelsPayload(extra) : [];
       const loaded = loadedIdsFromPayloads(host, catalog ?? extra, extra);
       const ids = [...new Set([...catalogIds, ...extraIds, ...loaded])];
-      return { host, ids, loaded };
+      const windows = contextWindowsFromPs(extra);
+      return { host, ids, loaded, windows };
     }),
   );
-  for (const { host, ids, loaded } of pages) {
+  for (const { host, ids, loaded, windows } of pages) {
     for (const model of ids) {
+      const contextWindow = windows.get(model);
       found.push({
         id: encodeInjectId(host.id, model),
         host: host.id,
         model,
         label: `${model} (${host.label})`,
         loaded: loaded.has(model),
+        ...(contextWindow ? { contextWindow } : {}),
       });
     }
   }
@@ -345,10 +374,17 @@ export async function mergeLocalInject(
     const existing = options.find((option) => option.id === extra.id);
     if (existing) {
       if (extra.loaded) existing.loaded = true;
+      if (extra.contextWindow) existing.contextWindow = extra.contextWindow;
       continue;
     }
     seen.add(extra.id);
-    options.push({ id: extra.id, label: extra.label, custom: true, ...(extra.loaded ? { loaded: true } : {}) });
+    options.push({
+      id: extra.id,
+      label: extra.label,
+      custom: true,
+      ...(extra.loaded ? { loaded: true } : {}),
+      ...(extra.contextWindow ? { contextWindow: extra.contextWindow } : {}),
+    });
   }
   return { default: catalog.default, options };
 }

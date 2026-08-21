@@ -21,6 +21,7 @@ import {
   codexLocalProviderArgs,
   decodeInjectId,
   encodeInjectId,
+  contextWindowsFromPs,
   loadedIdsFromPayloads,
   LOCAL_HOSTS,
   mergeLocalInject,
@@ -44,6 +45,31 @@ describe("inject ids", () => {
   it("rejects official cloud slugs", () => {
     expect(decodeInjectId("claude-sonnet-5")).toBeNull();
     expect(decodeInjectId("gpt-5.6-sol")).toBeNull();
+  });
+});
+
+describe("contextWindowsFromPs", () => {
+  it("reads Ollama's per-model context_length from /api/ps, keyed by full and base id", () => {
+    const windows = contextWindowsFromPs({
+      models: [
+        { name: "qwen3:8b", model: "qwen3:8b", context_length: 40960 },
+        { name: "llama3.2:1b", model: "llama3.2:1b", context_length: 8192 },
+        { name: "llama3.2:70b", model: "llama3.2:70b", context_length: 131072 },
+        { name: "no-ctx:1b", model: "no-ctx:1b" },
+        { name: "bad:1b", model: "bad:1b", context_length: -1 },
+      ],
+    });
+    expect(windows.get("qwen3:8b")).toBe(40960);
+    expect(windows.get("qwen3")).toBe(40960);
+    expect(windows.get("llama3.2:1b")).toBe(8192);
+    expect(windows.get("llama3.2:70b")).toBe(131072);
+    expect(windows.get("llama3.2")).toBe(8192);
+    expect(windows.has("no-ctx:1b")).toBe(false);
+    expect(windows.has("bad:1b")).toBe(false);
+  });
+  it("tolerates payloads that are not a ps listing", () => {
+    expect(contextWindowsFromPs(null).size).toBe(0);
+    expect(contextWindowsFromPs({ data: [] }).size).toBe(0);
   });
 });
 

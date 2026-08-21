@@ -3489,11 +3489,19 @@ const server = createServer(async (req, res) => {
       if (!text) return json(res, 400, { error: "text required" });
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      // A busy bot no longer refuses the message: it lands in the thread
-      // now (marked queued) and auto-sends when the turn settles — see the
-      // steer-queue drain above. Synchronous from the busy check to the
-      // queue insert, so a settle can't slip between them and strand it.
+      // Claude can accept the message inside its live turn. If the write
+      // loses a race with turn settlement, or the engine cannot steer, the
+      // existing server-side queue records it atomically for the next turn.
       if (bot.busy) {
+        const instance = registry.get(bot.modelSelection.instanceId);
+        if (instance?.adapter.capabilities.queueing && instance.adapter.steer) {
+          const steered = await instance.adapter.steer(bot.threadId, text).catch(() => false);
+          if (steered) {
+            clearUnattended(bot.id);
+            store.appendMessage(bot.threadId, { role: "user", kind: "text", text, steered: true });
+            return json(res, 202, { ok: true, steered: true });
+          }
+        }
         const message = queueSteeredMessage(store, bot, text);
         return json(res, 202, { ok: true, queued: true, messageId: message.id });
       }
