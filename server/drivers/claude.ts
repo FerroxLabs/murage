@@ -14,7 +14,7 @@ import { createServer as createNetServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 
-import { DATA_DIR } from "../config.ts";
+import { DATA_DIR, stripWorkspaceCredentialEnv } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
 import { brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 
@@ -74,6 +74,9 @@ function claudeEnvironment(
   const env: NodeJS.ProcessEnv = { ...source, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
+  // The harness process may hold workspace credentials (xai/box/voice keys,
+  // env-injected at boot); none of them are this CLI's to see.
+  stripWorkspaceCredentialEnv(env);
   const applied = applyClaudeInject(env, model);
   if (!applied.injected) delete env.ANTHROPIC_API_KEY;
   return env;
@@ -180,6 +183,15 @@ const DENY_TIMEOUT_NOTE =
 const QUESTION_TIMEOUT_NOTE = "OpenMausBot: nobody answered in time. Use your best judgment and continue.";
 const DUPLICATE_ASK_ID_NOTE = "OpenMausBot: duplicate ask id — skipping this request.";
 
+/** The system-source reply for an ask that outlives the turn — used both to
+ * drain in-flight `pending` asks on close() and to answer one that arrives
+ * on an already-closed broker (see the `closed` branch below). */
+function systemEndedReply(kind: Ask["kind"]): { behavior: AskBehavior; message: string } {
+  return kind === "question"
+    ? { behavior: "answer", message: "OpenMausBot: the turn is ending — wrap up." }
+    : { behavior: "deny", message: "OpenMausBot: the turn ended" };
+}
+
 /** One human-readable line for an ask — what the card subtitle shows. */
 function askSummary(ask: Ask): string {
   const input = ask.input ?? {};
@@ -216,6 +228,14 @@ function createPermissionBroker(opts: {
     string,
     { ask: Ask; finish: (behavior: AskBehavior, message: string | undefined, source: AskResolutionSource) => void }
   >();
+  // server.close() only stops accepting NEW connections — it does not touch
+  // a connection that's already open. A still-alive child's MCP proxy can
+  // keep sending asks on such a connection after the turn has ended, and
+  // this handler stays fully wired to it. Without this flag those asks would
+  // become new `pending` entries and `request.opened` cards for a turn the
+  // driver already forgot (`active.delete(threadId)` already ran), which can
+  // never be answered — the "zombie card" in issue #211.
+  let closed = false;
   try {
     unlinkSync(opts.socketPath);
   } catch {}
@@ -236,6 +256,18 @@ function createPermissionBroker(opts: {
         }
         if (msg.t !== "ask") continue;
         const askId = String(msg.id ?? newId());
+        const kind = msg.kind === "question" ? ("question" as const) : ("permission" as const);
+        if (closed) {
+          // Closure is terminal and takes precedence over every active-turn
+          // rule, including duplicate-id rejection. Never register a pending
+          // entry or notify onAsk, but always answer an existing connection:
+          // permission-proxy.ts only resolves on an explicit answer (or a
+          // connection error/close), so a silent drop would hang the tool.
+          try {
+            conn.write(JSON.stringify({ t: "answer", id: askId, ...systemEndedReply(kind) }) + "\n");
+          } catch {}
+          continue;
+        }
         // `pending` is server-scoped, not per-connection: two asks with the
         // same id — a buggy/adversarial client, never a legitimate retry
         // (permission-proxy mints a fresh randomUUID per ask) — would
@@ -252,7 +284,6 @@ function createPermissionBroker(opts: {
           } catch {}
           continue;
         }
-        const kind = msg.kind === "question" ? ("question" as const) : ("permission" as const);
         const ask: Ask = { id: askId, kind, tool: msg.tool ?? "tool", input: msg.input ?? {}, at: Date.now() };
         const finish = (behavior: AskBehavior, message: string | undefined, source: AskResolutionSource) => {
           if (!pending.delete(askId)) return;
@@ -291,9 +322,10 @@ function createPermissionBroker(opts: {
       return true;
     },
     close() {
+      closed = true;
       for (const p of [...pending.values()]) {
-        if (p.ask.kind === "question") p.finish("answer", "OpenMausBot: the turn is ending — wrap up.", "system");
-        else p.finish("deny", "OpenMausBot: the turn ended", "system");
+        const { behavior, message } = systemEndedReply(p.ask.kind);
+        p.finish(behavior, message, "system");
       }
       try {
         server.close();
@@ -378,6 +410,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
+      if (controlsHost && config.permissionMode === "bypassPermissions") {
+        throw new Error("local computer control requires the interactive approval broker");
+      }
       const turnId = newId();
       const sessionId = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
       const newSessionId = sessionId ? null : newId();
@@ -416,11 +452,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         };
         allowed.push("mcp__computer");
       } else if (turn.integrations?.localComputer) {
-        // A direct Cua Driver MCP connection. This can be the Electron-owned
-        // host daemon or the isolated Local VM; the agent sees the same
-        // "computer" server either way.
-        mcpServers.computer = { ...turn.integrations.localComputer };
-        allowed.push("mcp__computer");
+        const local = turn.integrations.localComputer;
+        mcpServers.computer = {
+          command: local.command,
+          args: local.args,
+          env: local.env,
+        };
+        // The isolated Local VM preserves the established pre-allow behavior.
+        // Host tools always route through OpenMausBot's permission broker.
+        if (!controlsHost) allowed.push("mcp__computer");
       }
       // peer-agent comms (list_bots/ask_bot) — the harness builds the whole
       // spawn contract (command/args/env incl. the boot token) in
@@ -463,6 +503,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               requestType: ask.kind,
               tool: ask.tool,
               summary: askSummary(ask),
+              approvalScope: controlsHost ? "local-computer" : undefined,
               choices: Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
             }),
           onResolve: (resolved) =>
@@ -472,6 +513,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               requestId: resolved.id,
               behavior: resolved.behavior,
               source: resolved.source,
+              approvalScope: controlsHost ? "local-computer" : undefined,
             }),
         });
         args.push("--permission-prompt-tool", "mcp__ogb__approve");
@@ -509,7 +551,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       ) => {
         if (settled) return;
         settled = true;
+        // Closing first marks the broker terminal and resolves every current
+        // ask before anything else can observe the turn as gone. Existing
+        // socket connections remain answerable through the broker's closed
+        // branch while the CLI tree is being reaped.
         broker?.close();
+        // A one-shot `-p` process is expected to exit right after printing
+        // `result`, but a backgrounded MCP grandchild can keep it (or itself)
+        // alive — leaving a live process with a live broker connection that
+        // can raise a permission ask nobody can ever answer (issue #211). A
+        // no-op when the process already exited.
+        killCliTree(child);
         // the config file holds live credentials — it must not outlive the turn
         if (mcpConfigPath) {
           try {
@@ -690,7 +742,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           computerMcp: true,
           composioMcp: true,
           phoneMcp: true,
+          images: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],
+          localComputerMcp: config.permissionMode !== "bypassPermissions",
         },
         sendTurn,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),
@@ -717,7 +771,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           execCli(
             config.cli,
             ["-p", prompt, "--model", "claude-haiku-4-5", "--output-format", "text"],
-            { timeout: 60_000, env: { ...process.env, PATH: augmentedPath() } },
+            { timeout: 60_000, env: claudeEnvironment("claude-haiku-4-5") },
             (err, stdout) => (err ? reject(err) : resolve(stdout.trim())),
           );
         }),

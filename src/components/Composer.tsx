@@ -8,12 +8,14 @@ import { MausAvatar } from "./Avatar";
 import { ComposerAttachments } from "./ComposerAttachments";
 import {
   composeMessage,
+  imageAttachmentFromFile,
+  isImageFile,
   isLongPaste,
   pasteAttachment,
   type Attachment,
 } from "@/lib/composer-attachments";
 import { normalizeState } from "@/lib/mascot";
-import { groupComposerHint } from "@/lib/group-routing";
+import { groupComposerHint, roomRespondersForComposer } from "@/lib/group-routing";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
@@ -83,6 +85,21 @@ export function Composer({
   // what was typed before the mic went on — partials append after it
   const baseText = useRef("");
 
+  // image paste is offered only when every bot that will actually answer
+  // can open one. sendGroup routes to mentions, else the room default —
+  // `members.some` would let a mixed room send <attached-image> to Grok.
+  const botSupportsImages = (candidate?: Bot) =>
+    Boolean(
+      candidate &&
+        state.instances.find((i) => i.instanceId === candidate.modelSelection.instanceId)?.capabilities?.images,
+    );
+  const imageTargetsSupport = (message: string) => {
+    if (!group) return botSupportsImages(bot);
+    const responders = roomRespondersForComposer(message, members ?? [], group);
+    return responders.length > 0 && responders.every(botSupportsImages);
+  };
+  const engineSupportsImages = imageTargetsSupport(text);
+
   // ── @mention picker (tag another bot; the agent reaches it via ask_bot) ──
   const mention = mentionQueryAt(text, caret);
   const candidates = useMemo(() => {
@@ -136,6 +153,10 @@ export function Composer({
   // a chip on its own is a message: the send control has to appear for it
   const hasContent = Boolean(text.trim()) || attachments.length > 0;
   const send = () => {
+    if (attachments.some((attachment) => attachment.kind === "image") && !imageTargetsSupport(text)) {
+      dispatch({ type: "error", message: "The selected responder does not support image attachments." });
+      return;
+    }
     const t = composeMessage(text, attachments);
     if (!t) return;
     if (busy && group) {
@@ -156,11 +177,16 @@ export function Composer({
   };
   useEffect(() => {
     if (!busy && queued && group) {
+      if (queued.includes("<attached-image ") && !imageTargetsSupport(queued)) {
+        dispatch({ type: "error", message: "The selected responder does not support image attachments." });
+        setQueued(null);
+        return;
+      }
       dispatch({ type: "sendGroup", groupId: group.id, text: queued });
       track("message_sent", { room: true, queued: true });
       setQueued(null);
     }
-  }, [busy, queued, group, dispatch]);
+  }, [busy, queued, group, members, state.instances, dispatch]);
 
   // native dictation: partials stream into the input while the Swift
   // helper runs; the final transcript stays in the box, ready to edit/send
@@ -283,6 +309,7 @@ export function Composer({
           items={attachments}
           onAdd={addAttachments}
           onRemove={removeAttachment}
+          allowImages={engineSupportsImages}
         />
         <div className="flex items-end gap-2 rounded-3xl border border-hairline/40 bg-raised/60 py-2 pl-3 pr-2">
         <textarea
@@ -295,6 +322,27 @@ export function Composer({
             setDismissedAt(null);
           }}
           onPaste={(e) => {
+            // an image from the clipboard becomes an uploaded attachment —
+            // but only for engines that can open one; a grok bot politely
+            // refuses instead of receiving a path it cannot read
+            const imageFiles = Array.from(e.clipboardData.files).filter(isImageFile);
+            if (imageFiles.length && engineSupportsImages) {
+              e.preventDefault();
+              void (async () => {
+                for (const file of imageFiles) {
+                  try {
+                    const attachment = await imageAttachmentFromFile(file);
+                    if (attachment) setAttachments((prev) => [...prev, attachment]);
+                  } catch (err) {
+                    dispatch({
+                      type: "error",
+                      message: err instanceof Error ? err.message : "image upload failed",
+                    });
+                  }
+                }
+              })();
+              return;
+            }
             // a wall of text becomes a chip instead of burying the input
             const pasted = e.clipboardData.getData("text/plain");
             if (!isLongPaste(pasted)) return;

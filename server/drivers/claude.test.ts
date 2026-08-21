@@ -93,6 +93,33 @@ describe("ClaudeDriver.decodeConfig", () => {
     // it, Windows pipes for these two threads would collide and race
     expect(permissionSocketPath("t-perm-dup-1")).not.toBe(permissionSocketPath("t-perm-dup-2"));
   });
+
+  it("does not advertise or accept local CUA in bypassPermissions mode", async () => {
+    const bypass = await ClaudeDriver.create({
+      instanceId: "claude-bypass",
+      displayName: "Claude Bypass",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, permissionMode: "bypassPermissions" },
+    });
+    expect(bypass.adapter.capabilities.localComputerMcp).toBe(false);
+    await expect(
+      bypass.adapter.sendTurn({
+        threadId: "t-bypass-local",
+        text: "click",
+        integrations: {
+          localComputer: {
+            command: "/cua-driver",
+            args: ["mcp"],
+            env: {},
+            platform: "linux",
+            scope: "local-computer",
+          },
+        },
+      }),
+    ).rejects.toThrow(/interactive approval broker/);
+    await bypass.dispose();
+  });
 });
 
 describe("ClaudeDriver turns (fake CLI)", () => {
@@ -122,6 +149,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.FAKE_CLAUDE_MODE;
     delete process.env.FAKE_CLAUDE_DUMP;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.XAI_API_KEY;
+    delete process.env.COMPOSIO_API_KEY;
+    delete process.env.BOX_TOKEN;
+    delete process.env.OPENCODE_API_KEY;
+    delete process.env.OMB_TTS_KEY;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
@@ -178,6 +210,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
     process.env.ANTHROPIC_API_KEY = "sk-should-not-leak";
+    // workspace credentials the harness may hold (env-injected at boot by
+    // the desktop shell) must never ride into the CLI child
+    process.env.XAI_API_KEY = "xai-should-not-leak";
+    process.env.BOX_TOKEN = "box-should-not-leak";
+    process.env.OMB_TTS_KEY = "tts-should-not-leak";
 
     await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "the secret prompt", system: "You are Testy." });
     await recorder.until((e) => e.type === "turn.completed");
@@ -190,6 +227,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(seen.env.CLAUDECODE).toBeUndefined();
     expect(seen.env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    expect(seen.env.XAI_API_KEY).toBeUndefined();
+    expect(seen.env.BOX_TOKEN).toBeUndefined();
+    expect(seen.env.OMB_TTS_KEY).toBeUndefined();
   });
 
   it("uses instance credentials when launching an injected local model", async () => {
@@ -324,6 +364,37 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(existsSync(dirname(configPath))).toBe(false);
   });
 
+  it("mounts local CUA without pre-allowing its computer namespace", async () => {
+    await create();
+    const dump = join(scratch, "local-dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await instance.adapter.sendTurn({
+      threadId: "t-local",
+      text: "inspect the desktop",
+      integrations: {
+        localComputer: {
+          command: "/opt/cua driver/cua-driver",
+          args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
+          env: { CUA_DRIVER_EMBEDDED: "1" },
+          platform: "linux",
+          generation: "generation-1",
+          scope: "local-computer",
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpConfig.mcpServers.computer).toEqual({
+      command: "/opt/cua driver/cua-driver",
+      args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
+      env: { CUA_DRIVER_EMBEDDED: "1" },
+    });
+    const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
+    expect(allowed).not.toContain("mcp__computer");
+    expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
+  });
+
   it("resumes with --resume when a cursor exists and reports that session id", async () => {
     await create();
     const dump = join(scratch, "dump.json");
@@ -356,6 +427,33 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
   });
+
+  it("kills a child that prints result but never exits on its own (#211)", async () => {
+    await create("result-then-hang");
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-lingering", text: "go" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+
+    const { pid } = JSON.parse(readFileSync(dump, "utf8"));
+    expect(typeof pid).toBe("number");
+
+    const alive = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const deadline = Date.now() + 5_000;
+    while (alive() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(alive()).toBe(false);
+  }, 10_000);
 
   it("an exit before result becomes runtime.error + failed turn", async () => {
     await create("exit-early");
@@ -393,7 +491,19 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("brokers a permission ask into request.opened and answers over the socket", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: "t-perm-abc", text: "go" });
+    await instance.adapter.sendTurn({
+      threadId: "t-perm-abc",
+      text: "go",
+      integrations: {
+        localComputer: {
+          command: "/cua-driver",
+          args: ["mcp"],
+          env: {},
+          platform: "linux",
+          scope: "local-computer",
+        },
+      },
+    });
     await recorder.until((e) => e.type === "session.started");
 
     // connect as the MCP proxy would and raise an ask — unix socket on
@@ -419,13 +529,18 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       tool: "Bash",
       summary: "rm -rf scratch",
       requestId: "ask-1",
+      approvalScope: "local-computer",
     });
 
     // the outcome names exactly what was granted: this action, once
     await expect(instance.adapter.respondToRequest("t-perm-abc", "ask-1", { behavior: "allow" })).resolves.toBe("allowed-once");
     expect(await answered).toMatchObject({ behavior: "allow" });
     const resolved = await recorder.until((e) => e.type === "request.resolved");
-    expect(resolved).toMatchObject({ behavior: "allow", source: "user" });
+    expect(resolved).toMatchObject({
+      behavior: "allow",
+      source: "user",
+      approvalScope: "local-computer",
+    });
 
     conn.end();
     await instance.adapter.interruptTurn("t-perm-abc");
@@ -587,6 +702,89 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
   });
 
+  it("drops a late ask on an already-closed broker instead of a dead card (#211)", async () => {
+    await create("hang");
+    await instance.adapter.sendTurn({ threadId: "t-perm-late", text: "go" });
+    await recorder.until((e) => e.type === "session.started");
+
+    // Same connection stays open across the turn ending — the exact
+    // condition that let a still-alive child raise an unanswerable card.
+    const conn = connect(permissionSocketPath("t-perm-late"));
+    await new Promise<void>((resolve, reject) => {
+      conn.on("connect", resolve);
+      conn.on("error", reject);
+    });
+
+    await instance.adapter.interruptTurn("t-perm-late");
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const opensBefore = recorder.events.filter((e) => e.type === "request.opened").length;
+    const reply = new Promise<{ id: string; behavior: string; message?: string }>((resolve) => {
+      let buf = "";
+      conn.on("data", (c) => {
+        buf += c;
+        const nl = buf.indexOf("\n");
+        if (nl !== -1) resolve(JSON.parse(buf.slice(0, nl)));
+      });
+    });
+    conn.write(JSON.stringify({ t: "ask", id: "ask-late", tool: "Bash", input: { command: "rm -rf /" } }) + "\n");
+
+    // A dead card is a request.opened with no way to ever answer it — assert
+    // the late ask never becomes one, and the connection still gets a
+    // definite reply rather than hanging forever.
+    expect(await reply).toMatchObject({
+      id: "ask-late",
+      behavior: "deny",
+      message: "OpenMausBot: the turn ended",
+    });
+    expect(recorder.events.filter((e) => e.type === "request.opened")).toHaveLength(opensBefore);
+    await expect(instance.adapter.respondToRequest("t-perm-late", "ask-late", { behavior: "allow" })).resolves.toBe(
+      "unavailable",
+    );
+
+    conn.end();
+  });
+
+  it("drops a late question on an already-closed broker with an answer, not a deny (#211)", async () => {
+    // systemEndedReply(kind) branches on "question" vs "permission" — cover
+    // the question arm too, since the deny arm above doesn't exercise it.
+    await create("hang");
+    await instance.adapter.sendTurn({ threadId: "t-question-late", text: "go" });
+    await recorder.until((e) => e.type === "session.started");
+
+    const conn = connect(permissionSocketPath("t-question-late"));
+    await new Promise<void>((resolve, reject) => {
+      conn.on("connect", resolve);
+      conn.on("error", reject);
+    });
+
+    await instance.adapter.interruptTurn("t-question-late");
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const opensBefore = recorder.events.filter((e) => e.type === "request.opened").length;
+    const reply = new Promise<{ id: string; behavior: string; message?: string }>((resolve) => {
+      let buf = "";
+      conn.on("data", (c) => {
+        buf += c;
+        const nl = buf.indexOf("\n");
+        if (nl !== -1) resolve(JSON.parse(buf.slice(0, nl)));
+      });
+    });
+    conn.write(JSON.stringify({ t: "ask", kind: "question", id: "q-late", tool: "ask_user", input: { question: "still there?" } }) + "\n");
+
+    expect(await reply).toMatchObject({
+      id: "q-late",
+      behavior: "answer",
+      message: "OpenMausBot: the turn is ending — wrap up.",
+    });
+    expect(recorder.events.filter((e) => e.type === "request.opened")).toHaveLength(opensBefore);
+    await expect(
+      instance.adapter.respondToRequest("t-question-late", "q-late", { behavior: "answer", message: "yes" }),
+    ).resolves.toBe("unavailable");
+
+    conn.end();
+  });
+
   it("passes effort to the CLI, and omits the flag when unset", async () => {
     await create();
     const dump = join(scratch, "effort.json");
@@ -611,6 +809,19 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv).not.toContain("--effort");
+  });
+
+  it("strips workspace credentials from generateText helper children", async () => {
+    await create();
+    const dump = join(scratch, "generate-text-env.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const names = ["XAI_API_KEY", "COMPOSIO_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "OMB_TTS_KEY"] as const;
+    for (const name of names) process.env[name] = `${name}-must-not-leak`;
+
+    await instance.generateText?.("summarize safely");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    for (const name of names) expect(seen.env[name]).toBeUndefined();
   });
 
   it("declares the effort levels the CLI accepts", async () => {
