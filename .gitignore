@@ -19,3 +19,4 @@ release
 .dev.vars.*
 cloudflare/composio-broker/worker-configuration.d.ts
 .claude/worktrees/
+.vercel/
