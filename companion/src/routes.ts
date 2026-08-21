@@ -70,6 +70,10 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "PATCH", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "DELETE", path: /^\/api\/bots\/[\w-]+\/tasks\/[\w-]+$/ },
+  // Paired-safe profile subset. The harness route itself rejects fields
+  // outside identity, avatar, notifications, and voice preferences.
+  { method: "PATCH", path: /^\/api\/bots\/[\w-]+\/profile$/ },
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/avatar\/generate$/ },
   // Full cloud desktop access. The route is narrow and the proxy applies a
   // second, per-device capability check before it reaches the harness.
   CLOUD_DESKTOP_JOIN_ROUTE,
@@ -86,6 +90,16 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },
   { method: "GET", path: /^\/api\/search$/ },
+
+  // App-owned profile images. Upload is image-only and capped at 10 MB by
+  // the harness; GET is a single bare generated filename, never a path.
+  { method: "POST", path: /^\/api\/attachments$/ },
+  { method: "GET", path: /^\/api\/attachments\/[\w-]+\.(?:png|jpe?g|gif|webp)$/i },
+
+  // Renderer-neutral voice operations. Neither route reads or writes the
+  // workspace ElevenLabs key; the phone receives labels or audio only.
+  { method: "GET", path: /^\/api\/tts\/voices$/ },
+  { method: "POST", path: /^\/api\/tts\/speak$/ },
 ];
 
 /** Route families worth naming in the refusal.

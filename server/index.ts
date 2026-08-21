@@ -8,11 +8,19 @@ import { isIP } from "node:net";
 import { extname, join } from "node:path";
 
 import { z } from "zod";
+import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
 
 import { approvalKey, autoVerdict } from "./auto-approve.ts";
 import { appendDecision, readDecisions } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
 import { extensionForMime, IMAGE_MAX_BYTES, readAttachment, saveImage, type SavedAttachment } from "./attachments.ts";
+import {
+  avatarGenerationRequestSchema,
+  avatarGenerationStateMatches,
+  generateAvatarImage,
+  snapshotAvatarGenerationState,
+} from "./avatar-image.ts";
+import { parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomTurnStallRegistry, roomTurnTimeoutMessage, scheduleRoomTurnTimeout } from "./room-turn-timeout.ts";
 import * as box from "./box.ts";
@@ -252,7 +260,17 @@ const wireTask = ({ resumeCursors, lastInstanceId, ...task }: TaskRecord) => tas
 
 const wireBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
   const { resumeCursors, tasks, ...rest } = bot;
-  return { ...rest, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
+  return { ...rest, avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
+};
+
+/** Profile URLs are app-owned references, not merely strings with a trusted
+ * prefix. Resolve them before persistence so every accepted avatar can be
+ * fetched immediately and a deleted/guessed attachment id cannot become a
+ * dangling profile reference. */
+const storedAvatarExists = (avatarUrl: string): boolean => {
+  const name = avatarUrl.slice("/api/attachments/".length);
+  const attachment = readAttachment(name);
+  return Boolean(attachment && extensionForMime(attachment.mime));
 };
 
 const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
@@ -2113,6 +2131,7 @@ function cliProbeEnvironment(): NodeJS.ProcessEnv {
     "COMPOSIO_API_KEY",
     "OMB_COMPOSIO_BROKER_TOKEN",
     "OMB_TTS_KEY",
+    "OMB_OPENAI_IMAGE_KEY",
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
   ]) {
@@ -2140,6 +2159,7 @@ function configStatus() {
     // the chosen voice is a setting, not a secret; the key is reported the
     // same configured-or-not way as every other credential
     tts: tts.describeVoice(cfg),
+    imageGen: { configured: Boolean(cfg.imageGen?.key) },
     // not a secret — the sidebar shows it
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
     rooms: { turnTimeoutMinutes: roomTurnTimeoutMinutes(cfg) },
@@ -3107,6 +3127,54 @@ const server = createServer(async (req, res) => {
         },
       });
     }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/avatar\/generate$/);
+    if (m && method === "POST") {
+      const existing = store.bot(m[1]);
+      if (!existing) return json(res, 404, { error: "no such bot" });
+      // Generation is slow and both desktop and companion clients may edit or
+      // delete this bot while it is in flight. Snapshot the two fields this
+      // request owns before the first await so a late result cannot win.
+      const initialAvatar = snapshotAvatarGenerationState(existing);
+      const parsed = avatarGenerationRequestSchema.safeParse(await readBody(req));
+      if (!parsed.success) {
+        return json(res, 400, { error: `prompt must be at most 400 characters` });
+      }
+      const generated = await generateAvatarImage(cfg.imageGen?.key ?? "", existing, parsed.data.prompt);
+      const current = store.bot(existing.id);
+      if (!current) return json(res, 404, { error: "no such bot" });
+      if (!avatarGenerationStateMatches(initialAvatar, current)) {
+        return json(res, 409, { error: "avatar changed while generation was in progress" });
+      }
+      const saved = saveImage(generated.bytes, generated.mime);
+      const avatarUrl = botAvatarUrlFromStoredPath(saved.path);
+      if (!avatarUrl) throw Object.assign(new Error("Could not store the generated avatar"), { status: 500 });
+      const avatarCrop = initialAvatar.avatarCrop && initialAvatar.avatarCrop !== "mascot"
+        ? initialAvatar.avatarCrop
+        : "circle";
+      const bot = store.patchBot(current.id, { avatarUrl, avatarCrop });
+      if (!bot) {
+        // There are no awaits between the refreshed lookup and this patch, but
+        // keep the attachment invariant explicit if the store ever changes.
+        try { unlinkSync(saved.path); } catch {}
+        return json(res, 404, { error: "no such bot" });
+      }
+      const visible = wireBot(bot);
+      broadcast({ kind: "bot", bot: visible });
+      return json(res, 201, { avatarUrl, bot: visible });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/profile$/);
+    if (m && method === "PATCH") {
+      const parsed = parseBotProfilePatch(await readBody(req), true);
+      if (!parsed.ok) return json(res, 400, { error: parsed.error });
+      if (parsed.patch.avatarUrl && !storedAvatarExists(parsed.patch.avatarUrl)) {
+        return json(res, 400, { error: "avatarUrl must reference an existing stored image" });
+      }
+      const bot = store.patchBot(m[1], parsed.patch);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const visible = wireBot(bot);
+      broadcast({ kind: "bot", bot: visible });
+      return json(res, 200, { bot: visible });
+    }
     m = path.match(/^\/api\/bots\/([\w-]+)\/read$/);
     if (m && method === "POST") {
       const bot = store.patchBot(m[1], { unread: false });
@@ -3170,17 +3238,16 @@ const server = createServer(async (req, res) => {
           });
         }
       }
-      // Persona fields reach system prompts (this bot's own, the Chief of
-      // Staff roster, room rosters) — bound them at the only write boundary
-      // rather than trusting every prompt-assembly site to defend itself.
-      // Caps match the team-manifest import limits.
-      for (const [field, max] of [["name", 100], ["title", 200], ["description", 4000]] as const) {
-        const value = body[field];
-        if (value === undefined) continue;
-        if (typeof value !== "string") return json(res, 400, { error: `${field} must be a string` });
-        if (value.length > max) return json(res, 400, { error: `${field} must be at most ${max} characters` });
-        if (field === "name" && !value.trim()) return json(res, 400, { error: "name must not be empty" });
+      // Persona/profile fields reach prompts and paired clients. Both this
+      // broad desktop endpoint and the paired-safe profile endpoint pass
+      // through the same validation and clear-value normalization.
+      const profile = parseBotProfilePatch(body);
+      if (!profile.ok) return json(res, 400, { error: profile.error });
+      if (profile.patch.avatarUrl && !storedAvatarExists(profile.patch.avatarUrl)) {
+        return json(res, 400, { error: "avatarUrl must reference an existing stored image" });
       }
+      const patch: Record<string, unknown> = {};
+      Object.assign(patch, profile.patch);
       let section: string | undefined | null;
       if (body.section !== undefined) {
         if (body.section === null) section = null;
@@ -3192,8 +3259,7 @@ const server = createServer(async (req, res) => {
           else section = trimmed;
         }
       }
-      const patch: Record<string, unknown> = {};
-      for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "cloudBackend", "color", "mascotExpression", "pinned", "hidden", "speakReplies", "voice"] as const) {
+      for (const key of ["modelSelection", "unread", "computer", "cloudBackend", "color", "mascotExpression", "pinned", "hidden"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       // one pinned message per thread; null/"" clears. The id is not
@@ -3783,6 +3849,7 @@ const server = createServer(async (req, res) => {
         if (persisted.box?.token !== undefined) persisted.box.token = "";
         if (persisted.opencodeGo?.apiKey !== undefined) persisted.opencodeGo.apiKey = "";
         if (persisted.tts?.key !== undefined) persisted.tts.key = "";
+        if (persisted.imageGen?.key !== undefined) persisted.imageGen.key = "";
         saveConfig(persisted);
         syncCredentialEnv(patch);
         Object.assign(cfg, loadConfig());
@@ -3798,7 +3865,7 @@ const server = createServer(async (req, res) => {
       // changes do not rebuild it: no driver reads them, and they should not
       // interrupt in-flight turns.
       const reloadKeys = Object.keys(patch).filter(
-        (key) => key !== "profile" && key !== "tts" && key !== "vps" && key !== "rooms",
+        (key) => key !== "profile" && key !== "tts" && key !== "imageGen" && key !== "vps" && key !== "rooms",
       );
       if (reloadKeys.length > 0) await reloadProviders();
       const status = configStatus();

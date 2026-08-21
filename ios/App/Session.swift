@@ -60,6 +60,20 @@ final class Session: ObservableObject {
     /// panel can be pushed twice in a navigation stack, and the last one to
     /// close is the one that should turn screens back off.
     private var screenWatchers = 0
+    /// Authenticated avatar bytes shared by roster, header, group and task
+    /// surfaces. Both entry count and byte cost are bounded because one valid
+    /// uploaded image may be 10 MB.
+    private let avatarCache: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.countLimit = 64
+        cache.totalCostLimit = 32 * 1_024 * 1_024
+        return cache
+    }()
+    /// Concurrent first renders share one download. The id prevents an old
+    /// request finishing after sign-out from removing a newer pairing's task
+    /// for the same attachment path.
+    private var avatarFetches: [String: (id: UUID, task: Task<Data?, Never>)] = [:]
+    private var avatarCacheGeneration = 0
     /// A saved connection exists, but its token could not be read yet. Keeps
     /// "the keychain is locked" from being mistaken for "not paired".
     private var restorePending = false
@@ -187,6 +201,7 @@ final class Session: ObservableObject {
         token = nil
         rotation = CandidateRotation(hosts: [])
         state = CompanionState()
+        resetAvatarCache()
         NotificationCoordinator.shared.setBadge(0)
         status = .unpaired
     }
@@ -614,6 +629,97 @@ final class Session: ObservableObject {
         catch { actionError = error.localizedDescription }
     }
 
+    // MARK: - Agent profile
+
+    func updateProfile(_ patch: BotProfilePatch, for bot: Bot) async -> Bot? {
+        guard let client else { return nil }
+        do {
+            let updated = try await client.updateProfile(botId: bot.id, patch: patch)
+            guard !Task.isCancelled else { return nil }
+            state.apply(.bot(updated))
+            return updated
+        } catch {
+            if !Task.isCancelled { actionError = error.localizedDescription }
+            return nil
+        }
+    }
+
+    func uploadAvatar(_ data: Data, mime: String, for bot: Bot, crop: AvatarCrop) async -> Bot? {
+        guard let client else { return nil }
+        do {
+            let avatarUrl = try await client.uploadAvatar(data: data, mime: mime)
+            guard !Task.isCancelled else { return nil }
+            let current = state.bot(bot.id) ?? bot
+            return await updateProfile(
+                BotProfilePatch(avatarUrl: .set(avatarUrl), avatarCrop: crop),
+                for: current
+            )
+        } catch {
+            if !Task.isCancelled { actionError = error.localizedDescription }
+            return nil
+        }
+    }
+
+    func generateAvatar(prompt: String, for bot: Bot) async -> Bot? {
+        guard let client else { return nil }
+        do {
+            let updated = try await client.generateAvatar(botId: bot.id, prompt: prompt)
+            guard !Task.isCancelled else { return nil }
+            state.apply(.bot(updated))
+            return updated
+        } catch {
+            if !Task.isCancelled { actionError = error.localizedDescription }
+            return nil
+        }
+    }
+
+    func avatarData(for bot: Bot) async -> Data? {
+        guard let path = bot.avatarUrl, let client else { return nil }
+        let key = path as NSString
+        if let cached = avatarCache.object(forKey: key) { return cached as Data }
+        let generation = avatarCacheGeneration
+        let fetch: (id: UUID, task: Task<Data?, Never>)
+        if let pending = avatarFetches[path] {
+            fetch = pending
+        } else {
+            let pending = (
+                id: UUID(),
+                task: Task<Data?, Never> { try? await client.avatar(path: path) }
+            )
+            avatarFetches[path] = pending
+            fetch = pending
+        }
+        let data = await fetch.task.value
+        if avatarFetches[path]?.id == fetch.id { avatarFetches.removeValue(forKey: path) }
+        guard !Task.isCancelled, generation == avatarCacheGeneration, let data else { return nil }
+        avatarCache.setObject(data as NSData, forKey: key, cost: data.count)
+        return data
+    }
+
+    private func resetAvatarCache() {
+        avatarCacheGeneration += 1
+        for fetch in avatarFetches.values { fetch.task.cancel() }
+        avatarFetches.removeAll()
+        avatarCache.removeAllObjects()
+    }
+
+    func voiceOptions() async -> [Voice] {
+        guard let client else { return [] }
+        do { return try await client.voices() }
+        catch { actionError = error.localizedDescription; return [] }
+    }
+
+    func previewVoice(_ voiceId: String, for bot: Bot) async -> Data? {
+        guard let client else { return nil }
+        do { return try await client.previewVoice(text: "Hello, I'm \(bot.name).", voiceId: voiceId) }
+        catch { actionError = error.localizedDescription; return nil }
+    }
+
+    func configStatus() async -> ConfigStatus? {
+        guard let client else { return nil }
+        return try? await client.config()
+    }
+
     func react(to message: Message, in threadId: String, emoji: String) async {
         guard let client else { return }
         do {
@@ -731,6 +837,11 @@ enum Chat: Identifiable, Hashable {
         case let .bot(bot): return bot.name
         case let .room(room): return room.name
         }
+    }
+
+    var isBot: Bool {
+        if case .bot = self { return true }
+        return false
     }
 
     var subtitle: String {

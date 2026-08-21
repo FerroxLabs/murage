@@ -41,6 +41,19 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
   return { status: res.status, body: await res.json() };
 };
 
+const uploadAvatar = async (mime = "image/png"): Promise<string> => {
+  const response = await fetch(`${BASE}/api/attachments`, {
+    method: "POST",
+    headers: { "content-type": mime },
+    body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+  });
+  expect(response.status).toBe(201);
+  const saved = (await response.json()) as { path: string };
+  const name = saved.path.replaceAll("\\", "/").split("/").pop();
+  if (!name) throw new Error("attachment response did not include a filename");
+  return `/api/attachments/${name}`;
+};
+
 const statusWithHeaders = (headers: Record<string, string>): Promise<number> =>
   new Promise((resolve, reject) => {
     const req = request({ hostname: "127.0.0.1", port: PORT, path: "/api/health", headers }, (res) => {
@@ -494,6 +507,94 @@ describe("harness HTTP API", () => {
       body: Buffer.alloc(IMAGE_MAX_BYTES + 1),
     });
     expect(tooBig.status).toBe(413);
+  });
+
+  it("persists only app-owned bot avatars and supported crop shapes", async () => {
+    const created = await api("POST", "/api/bots");
+    const bot = created.body.bot;
+    const avatarUrl = await uploadAvatar("image/webp");
+
+    const saved = await api("PATCH", `/api/bots/${bot.id}`, { avatarUrl, avatarCrop: "rounded" });
+    expect(saved.status).toBe(200);
+    expect(saved.body.bot).toMatchObject({ avatarUrl, avatarCrop: "rounded" });
+
+    expect((await api("PATCH", `/api/bots/${bot.id}`, {
+      avatarUrl: "https://tracker.example/avatar.png",
+    })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, {
+      avatarUrl: "/api/attachments/123e4567-e89b-12d3-a456-426614174000.webp",
+    })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { avatarCrop: "hexagon" })).status).toBe(400);
+
+    const cleared = await api("PATCH", `/api/bots/${bot.id}`, { avatarUrl: null, avatarCrop: "mascot" });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.bot.avatarUrl).toBeNull();
+    expect(cleared.body.bot.avatarCrop).toBe("mascot");
+  });
+
+  it("limits paired profile writes to validated profile fields and broadcasts the result", async () => {
+    const created = await api("POST", "/api/bots");
+    const bot = created.body.bot;
+    const avatarUrl = await uploadAvatar();
+    const stream = await openSse(`${BASE}/api/events`);
+    try {
+      await stream.until((frame) => frame.kind === "hello");
+      const saved = await api("PATCH", `/api/bots/${bot.id}/profile`, {
+        name: "Paired Profile",
+        title: "Mobile-safe agent",
+        description: "Only profile data crosses this boundary.",
+        notifications: false,
+        avatarUrl,
+        avatarCrop: "circle",
+        voice: "voice_fixture",
+        speakReplies: true,
+      });
+      expect(saved.status).toBe(200);
+      expect(saved.body.bot).toMatchObject({
+        name: "Paired Profile",
+        title: "Mobile-safe agent",
+        description: "Only profile data crosses this boundary.",
+        notifications: false,
+        avatarUrl,
+        avatarCrop: "circle",
+        voice: "voice_fixture",
+        speakReplies: true,
+      });
+      const frame = await stream.until(
+        (candidate) => candidate.kind === "bot" && candidate.bot?.id === bot.id,
+      );
+      expect(frame.bot).toMatchObject({ id: bot.id, avatarUrl, avatarCrop: "circle" });
+
+      for (const invalid of [
+        { color: "red" },
+        { avatarUrl: "https://tracker.example/avatar.png" },
+        { avatarUrl: "/api/attachments/123e4567-e89b-12d3-a456-426614174000.png" },
+        { avatarCrop: "hexagon" },
+        { name: 42 },
+        { notifications: "yes" },
+        { voice: null },
+        { speakReplies: 1 },
+      ]) {
+        expect((await api("PATCH", `/api/bots/${bot.id}/profile`, invalid)).status).toBe(400);
+      }
+
+      const cleared = await api("PATCH", `/api/bots/${bot.id}/profile`, {
+        avatarUrl: null,
+        avatarCrop: "mascot",
+        voice: "",
+        speakReplies: false,
+      });
+      expect(cleared.status).toBe(200);
+      expect(cleared.body.bot).toMatchObject({
+        avatarUrl: null,
+        avatarCrop: "mascot",
+        voice: "",
+        speakReplies: false,
+      });
+    } finally {
+      stream.close();
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
   });
 
   it("exports every visible bot and imports the team without creating a room", async () => {
@@ -1239,6 +1340,21 @@ describe("harness HTTP API", () => {
     const after = await api("GET", "/api/config");
     expect(after.body.opencodeGo).toEqual({ configured: true });
     expect(JSON.stringify(after.body)).not.toContain("opencode-secret");
+  });
+
+  it("stores the avatar image key as configured-only status", async () => {
+    try {
+      const put = await api("PUT", "/api/config", { imageGen: { key: "sk-image-secret" } });
+      expect(put.status).toBe(200);
+      expect(put.body.imageGen).toEqual({ configured: true });
+      expect(JSON.stringify(put.body)).not.toContain("sk-image-secret");
+
+      const after = await api("GET", "/api/config");
+      expect(after.body.imageGen).toEqual({ configured: true });
+      expect(JSON.stringify(after.body)).not.toContain("sk-image-secret");
+    } finally {
+      await api("PUT", "/api/config", { imageGen: { key: "" } });
+    }
   });
 
   it("rejects a non-string OpenCode Go API key", async () => {

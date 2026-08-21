@@ -143,6 +143,11 @@ public struct Bot: Codable, Hashable, Identifiable, Sendable {
     public var description: String
     public var notifications: Bool
     public var color: String
+    /// An app-owned `/api/attachments/:name` URL. The URL is intentionally
+    /// relative so every paired device fetches it from its own computer.
+    public var avatarUrl: String?
+    /// `mascot` ignores `avatarUrl`; the other values describe the image mask.
+    public var avatarCrop: AvatarCrop?
     public var unread: Bool
     public var modelSelection: ModelSelection
     public var createdAt: Double
@@ -165,6 +170,23 @@ public struct Bot: Codable, Hashable, Identifiable, Sendable {
     public var activeLeafId: String?
     /// Paged responses only: there is more transcript above what you got.
     public var hasMore: Bool?
+}
+
+public enum AvatarCrop: String, Codable, CaseIterable, Hashable, Sendable {
+    case mascot, circle, rounded, square
+
+    /// The desktop may gain crop modes before this app updates. Falling back
+    /// keeps the complete bot/fleet payload decodable and guarantees a safe,
+    /// deterministic identity image instead of dropping the agent.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: raw) ?? .mascot
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 public struct GroupResponder: Codable, Hashable, Sendable {
@@ -343,7 +365,96 @@ public struct ConfigStatus: Codable, Sendable {
     public var composio: ConfigFlag?
     public var box: ConfigFlag?
     public var tts: ConfigFlag?
+    public var imageGen: ConfigFlag?
     public var profile: Profile?
+
+    /// Whether the shared synthesis credential exists on the paired
+    /// computer. The credential itself never appears in this response.
+    public var isTTSConfigured: Bool {
+        tts?.configured == true || tts?.apiKeyConfigured == true
+    }
+
+    /// An empty voice means there is no workspace fallback. Clients must not
+    /// present that state as a usable "Workspace default" choice.
+    public var hasWorkspaceDefaultVoice: Bool {
+        !(tts?.voice?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    public func canSpeak(agentVoice: String?) -> Bool {
+        let hasAgentVoice = !(agentVoice?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        return isTTSConfigured && (hasAgentVoice || hasWorkspaceDefaultVoice)
+    }
+}
+
+// MARK: - Agent profiles and voices
+
+public struct BotProfilePatch: Encodable, Sendable {
+    /// `nil` means "leave the field alone". Profile actions deliberately send
+    /// only the fields they own so an avatar upload cannot overwrite identity
+    /// or voice values that changed on another client while the sheet was open.
+    public var name: String?
+    public var title: String?
+    public var description: String?
+    public var notifications: Bool?
+    public var avatarUrl: AvatarURL?
+    public var avatarCrop: AvatarCrop?
+    public var voice: String?
+    public var speakReplies: Bool?
+
+    /// `avatarUrl` needs three wire states: omitted, a stored path, or JSON
+    /// null to clear. A nested optional would technically represent that, but
+    /// makes call sites easy to get wrong (`nil` is ambiguous at a glance).
+    public enum AvatarURL: Equatable, Sendable {
+        case set(String)
+        case clear
+    }
+
+    public init(
+        name: String? = nil,
+        title: String? = nil,
+        description: String? = nil,
+        notifications: Bool? = nil,
+        avatarUrl: AvatarURL? = nil,
+        avatarCrop: AvatarCrop? = nil,
+        voice: String? = nil,
+        speakReplies: Bool? = nil
+    ) {
+        self.name = name
+        self.title = title
+        self.description = description
+        self.notifications = notifications
+        self.avatarUrl = avatarUrl
+        self.avatarCrop = avatarCrop
+        self.voice = voice
+        self.speakReplies = speakReplies
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, title, description, notifications, avatarUrl, avatarCrop, voice, speakReplies
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encodeIfPresent(name, forKey: .name)
+        try values.encodeIfPresent(title, forKey: .title)
+        try values.encodeIfPresent(description, forKey: .description)
+        try values.encodeIfPresent(notifications, forKey: .notifications)
+        if let avatarUrl {
+            switch avatarUrl {
+            case let .set(path): try values.encode(path, forKey: .avatarUrl)
+            case .clear: try values.encodeNil(forKey: .avatarUrl)
+            }
+        }
+        try values.encodeIfPresent(avatarCrop, forKey: .avatarCrop)
+        try values.encodeIfPresent(voice, forKey: .voice)
+        try values.encodeIfPresent(speakReplies, forKey: .speakReplies)
+    }
+}
+
+public struct Voice: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var label: String
+    public var description: String?
 }
 
 /// The harness's error body. Every non-2xx response carries one.
@@ -389,5 +500,21 @@ struct ActiveBranchResponse: Codable, Sendable {
 }
 
 struct BotResponse: Codable, Sendable {
+    var bot: Bot
+}
+
+struct VoiceListResponse: Codable, Sendable {
+    var voices: [Voice]
+    var error: String?
+}
+
+struct AttachmentResponse: Codable, Sendable {
+    var path: String
+    var mime: String
+    var bytes: Int
+}
+
+struct GeneratedAvatarResponse: Codable, Sendable {
+    var avatarUrl: String
     var bot: Bot
 }

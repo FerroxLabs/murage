@@ -269,6 +269,20 @@ public struct CompanionClient: Sendable {
         return request
     }
 
+    /// Encodable request bodies are used for contracts where omitted and null
+    /// have different meanings. JSONSerialization cannot preserve that type
+    /// distinction without rebuilding the object by hand at every call site.
+    private func makeRequest<Body: Encodable>(
+        _ method: String,
+        _ path: String,
+        encodedBody body: Body
+    ) throws -> URLRequest {
+        var request = try makeRequest(method, path)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        return request
+    }
+
     @discardableResult
     private func send<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> T {
         let (data, response) = try await perform(request)
@@ -403,6 +417,38 @@ public struct CompanionClient: Sendable {
         return data
     }
 
+    /// Fetch an app-owned avatar with the paired-device bearer token. Custom
+    /// avatars never go through `AsyncImage`, which cannot attach that token.
+    public func avatar(path: String) async throws -> Data {
+        guard Self.validAvatarPath(path) else { throw APIError.badURL }
+        let request = try makeRequest("GET", path)
+        let (data, response) = try await perform(request)
+        try Self.check(response, data)
+        return data
+    }
+
+    private static func validAvatarPath(_ path: String) -> Bool {
+        let prefix = "/api/attachments/"
+        guard path.hasPrefix(prefix) else { return false }
+        let name = path.dropFirst(prefix.count)
+        guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return false }
+        let stem = name[..<dot]
+        let ext = name[name.index(after: dot)...]
+        // Match shared/bot-avatar.ts rather than trusting URL normalization:
+        // one bare ASCII filename, one extension separator, and no dot segment.
+        let validStem = !stem.isEmpty && stem.utf8.allSatisfy { byte in
+            (48...57).contains(byte)
+                || (65...90).contains(byte)
+                || (97...122).contains(byte)
+                || byte == 45
+        }
+        return validStem && ["png", "jpg", "gif", "webp"].contains(String(ext))
+    }
+
+    public func voices() async throws -> [Voice] {
+        try await send(try makeRequest("GET", "/api/tts/voices"), as: VoiceListResponse.self).voices
+    }
+
     // MARK: - Doing
 
     /// Make a new bot. The harness picks its name, colour and greeting — the
@@ -410,6 +456,55 @@ public struct CompanionClient: Sendable {
     /// from one created on the desktop.
     public func createBot() async throws -> Bot {
         try await send(try makeRequest("POST", "/api/bots"), as: CreatedBot.self).bot
+    }
+
+    /// The paired-device profile contract is deliberately narrower than the
+    /// desktop's general bot PATCH. No execution policy or provider secret can
+    /// be reached through this request.
+    public func updateProfile(botId: String, patch: BotProfilePatch) async throws -> Bot {
+        return try await send(
+            try makeRequest("PATCH", "/api/bots/\(botId)/profile", encodedBody: patch),
+            as: BotResponse.self
+        ).bot
+    }
+
+    public func uploadAvatar(data: Data, mime: String) async throws -> String {
+        let allowed = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        guard allowed.contains(mime), data.count <= 10 * 1_024 * 1_024 else {
+            throw APIError.transport("Choose a PNG, JPEG, GIF, or WebP image up to 10 MB.")
+        }
+        var request = try makeRequest("POST", "/api/attachments")
+        request.setValue(mime, forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        let saved = try await send(request, as: AttachmentResponse.self)
+        let name = URL(fileURLWithPath: saved.path).lastPathComponent
+        guard !name.isEmpty, !name.contains("/") else { throw APIError.transport("The uploaded image could not be used.") }
+        return "/api/attachments/\(name)"
+    }
+
+    public func generateAvatar(botId: String, prompt: String) async throws -> Bot {
+        var request = try makeRequest(
+            "POST", "/api/bots/\(botId)/avatar/generate",
+            body: ["prompt": String(prompt.prefix(400))]
+        )
+        // The server gives its image provider 120 seconds. Leave room for the
+        // server to return its bounded timeout error instead of replacing it
+        // with the client's normal 20-second transport timeout.
+        request.timeoutInterval = 150
+        return try await send(
+            request,
+            as: GeneratedAvatarResponse.self
+        ).bot
+    }
+
+    public func previewVoice(text: String, voiceId: String) async throws -> Data {
+        let request = try makeRequest(
+            "POST", "/api/tts/speak",
+            body: ["text": String(text.prefix(500)), "voiceId": voiceId]
+        )
+        let (data, response) = try await perform(request)
+        try Self.check(response, data)
+        return data
     }
 
     /// Make a room. The harness names it after the first member when `name`

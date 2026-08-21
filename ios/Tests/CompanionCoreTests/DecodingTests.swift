@@ -56,6 +56,18 @@ final class DecodingTests: XCTestCase {
         XCTAssertNil(fleet.bots.first?.hasMore)
     }
 
+    func testOldAndNewAvatarProfilesDecodeTogether() throws {
+        let oldBot = try XCTUnwrap(decode(Fleet.self, "bots-full").bots.first)
+        XCTAssertNil(oldBot.avatarUrl)
+        XCTAssertNil(oldBot.avatarCrop)
+
+        let newBot = try XCTUnwrap(decode(Fleet.self, "bot-avatar-profile").bots.first)
+        XCTAssertEqual(newBot.avatarUrl, "/api/attachments/123e4567-e89b-12d3-a456-426614174000.webp")
+        XCTAssertEqual(newBot.avatarCrop, .rounded)
+        XCTAssertEqual(newBot.voice, "voice-1")
+        XCTAssertEqual(newBot.speakReplies, true)
+    }
+
     func testDecodesTheCloudBackendAndItsAbsence() throws {
         // The cloud-desktop button hides on cloudBackend == "vps", so both
         // sides of that gate must decode: a harness that sends the field, and
