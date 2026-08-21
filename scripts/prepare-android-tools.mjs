@@ -32,22 +32,25 @@ try {
     writeFileSync(zip, Buffer.from(await response.arrayBuffer()));
     const extraction = join(temporary, "extracted");
     mkdirSync(extraction);
-    // git-bash ships GNU tar (cannot read .zip) but has unzip; a native
-    // Windows shell has tar (bsdtar, zip-capable) but no unzip. Try unzip
-    // first and fall back to tar so either environment extracts cleanly.
-    // git-bash's tar also treats a "C:" drive prefix in an absolute -C path
-    // as a remote host, so normalize Windows paths to MSYS/POSIX form.
-    const toMsys = (p) => p.replace(/\\/g, "/").replace(/^([A-Za-z]):/, "/$1");
+    // A bare "tar" is Windows' bundled bsdtar (zip-capable) in cmd/PowerShell
+    // but git-bash puts GNU tar (cannot read .zip) ahead of it on PATH, so
+    // name the System32 binary absolutely — it extracts zips and understands
+    // C:\ paths from any shell. unzip is the fallback for the rare Windows
+    // without System32 tar, and the norm everywhere else.
+    const systemTar = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
     const extractors = process.platform === "win32"
-      ? [["unzip", ["-q", zip, "-d", extraction]], ["tar", ["-xf", toMsys(zip), "-C", toMsys(extraction)]]]
+      ? [[systemTar, ["-xf", zip, "-C", extraction]], ["unzip", ["-q", zip, "-d", extraction]]]
       : [["unzip", ["-q", zip, "-d", extraction]]];
+    // spawnSync leaves stdout/stderr undefined when the binary itself is
+    // missing (ENOENT) — report result.error instead of crashing on .trim().
+    const describeFailure = (r) => r.error?.message ?? (`${r.stderr || r.stdout || ""}`.trim() || `exit status ${r.status}`);
     let result;
     for (const [command, args] of extractors) {
       result = spawnSync(command, args, { encoding: "utf8" });
       if (result.status === 0) break;
-      console.error(`${command} failed: ${(result.stderr || result.stdout).trim()} — trying next`);
+      console.error(`${command} failed: ${describeFailure(result)} — trying next`);
     }
-    if (result.status !== 0) throw new Error(`could not extract Android Platform Tools: ${(result.stderr || result.stdout).trim()}`);
+    if (result.status !== 0) throw new Error(`could not extract Android Platform Tools: ${describeFailure(result)}`);
     cpSync(join(extraction, "platform-tools"), staged, { recursive: true });
   }
 
