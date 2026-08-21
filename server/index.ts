@@ -2904,8 +2904,23 @@ const server = createServer(async (req, res) => {
       // touches only hidden/chiefOfStaff on their own bots — nothing in the
       // file decides what gets archived or how.
       const importMode = url.searchParams.get("mode") ?? "add";
-      if (importMode !== "add" && importMode !== "replace") {
-        return json(res, 400, { error: "Team import mode must be add or replace" });
+      if (importMode !== "add" && importMode !== "replace" && importMode !== "project") {
+        return json(res, 400, { error: "Team import mode must be add, replace, or project" });
+      }
+      // `project` adds the team AND opens a room for it on a folder. The room
+      // is described by the CALLER, never by the manifest: a manifest is a
+      // list of people, and one fetched from the library must not be able to
+      // create structure in someone's workspace (which is why v2 dropped its
+      // `room` block). Naming it here keeps that property while letting a
+      // local caller set up a project in one step.
+      let projectCwd: string | null = null;
+      if (importMode === "project") {
+        const requested = url.searchParams.get("cwd");
+        if (requested !== null) {
+          const validated = validateBotCwd(requested);
+          if (!validated.ok) return json(res, 400, { error: validated.error });
+          projectCwd = validated.cwd;
+        }
       }
       const body = await readBody(req);
       let manifest;
@@ -2931,6 +2946,7 @@ const server = createServer(async (req, res) => {
       // hidden, not gone, and Undo must never surface two bots wearing the
       // same name.
       const takenNames = new Set(store.bots.map((bot) => bot.name.trim().toLowerCase()));
+      let group;
       try {
         const selection = await defaultSelection();
         for (const member of manifest.team.members) {
@@ -2955,8 +2971,26 @@ const server = createServer(async (req, res) => {
         const publicBots = importedBots.map(publicBot);
         for (const bot of archivedBots) broadcast({ kind: "bot", bot });
         for (const bot of publicBots) broadcast({ kind: "bot", bot });
-        return json(res, 201, { bots: publicBots, archivedBots, archived });
+
+        // The room is created last, so a failure anywhere above leaves no
+        // half-built project behind — the catch below deletes the bots and
+        // there is no room pointing at them.
+        if (importMode === "project" && importedBots.length > 0) {
+          const roomName = url.searchParams.get("room")?.trim() || manifest.team.name;
+          group = store.createGroup(roomName, importedBots.map((bot) => bot.id));
+          if (projectCwd) {
+            // `cwd` is the folder the room WANTS; the store pins it on the
+            // first turn (pinGroupCwd). Setting the pin here would decide it
+            // before anyone has worked, which is the store's call, not ours.
+            group = store.patchGroup(group.id, { cwd: projectCwd }) ?? group;
+          }
+          broadcast({ kind: "group", group });
+        }
+        return json(res, 201, { bots: publicBots, archivedBots, archived, group });
       } catch (error) {
+        // A room of deleted members must not survive either — patchGroup can
+        // throw (disk) after createGroup already saved.
+        if (group) store.deleteGroup(group.id);
         for (const bot of importedBots) store.deleteBot(bot.id);
         throw error;
       }

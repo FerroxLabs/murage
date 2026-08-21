@@ -198,6 +198,24 @@ export function stripWorkspaceCredentialEnv(env: Record<string, string | undefin
   for (const key of WORKSPACE_CREDENTIAL_ENV) delete env[key];
 }
 
+/** Env names a provider CLI might read as its own billing identity. A spawned
+ * engine keeps only what its driver explicitly allows: a foreign key riding
+ * along in `...process.env` must not flip a subscription CLI onto
+ * pay-as-you-go billing the user never granted. */
+export const PROVIDER_CREDENTIAL_ENV = [
+  "ANTHROPIC_API_KEY",
+  "FACTORY_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "KIMI_API_KEY",
+  "MOONSHOT_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENCODE_API_KEY",
+  "XAI_API_KEY",
+  "CURSOR_API_KEY",
+  "CURSOR_AUTH_TOKEN",
+] as const;
+
 /** Merge a partial config into ~/.openmausbot/config.json (secrets never
  * echoed back — callers report configured-or-not booleans only). */
 export function saveConfig(patch: Partial<AppConfig>): void {
@@ -330,10 +348,12 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     computer: { driver: "boxAgent" },
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
+    pi: { driver: "piAgent" },
   };
   const CUSTOM_ONLY = {
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
+    pi: { driver: "piAgent" },
   } as const;
   // New default-fleet engines that existing product configs would otherwise
   // never see. Custom-only engines stay in CUSTOM_ONLY so a one-off test map
