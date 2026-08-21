@@ -17,7 +17,6 @@
 // `get_available_models` and every entry is flagged `custom` because pi is a
 // custom-only (BYOK) engine — the model picker's Local pane only lists
 // `custom` options for custom-only engines.
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
@@ -107,6 +106,7 @@ export async function fetchPiModels(
   return new Promise((resolve) => {
     let buf = "";
     let done = false;
+    const fallbackDefault = readPiDefaultModel(env);
     const finish = (catalog: ModelCatalog) => {
       if (done) return;
       done = true;
@@ -127,7 +127,7 @@ export async function fetchPiModels(
         const line = buf.slice(0, nl);
         buf = buf.slice(nl + 1);
         if (!line.trim()) continue;
-        const parsed = parsePiCatalog(line + "\n", readPiDefaultModel(env));
+        const parsed = parsePiCatalog(line + "\n", fallbackDefault);
         if (parsed.options.length || line.includes('"get_available_models"')) {
           clearTimeout(timer);
           finish(parsed);
@@ -252,7 +252,14 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       let buf = "";
       let assistantText = "";
       // resolve one-shot RPC responses (new_session / switch_session / set_model)
-      const responseWaiters = new Map<string, (data: unknown) => void>();
+      const responseWaiters = new Map<string, { resolve: (data: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
+      const rejectWaiters = (err: Error) => {
+        for (const waiter of responseWaiters.values()) {
+          clearTimeout(waiter.timer);
+          waiter.reject(err);
+        }
+        responseWaiters.clear();
+      };
       const awaitResponse = (command: string, timeoutMs = 20_000) =>
         new Promise<unknown>((resolve, reject) => {
           const timer = setTimeout(() => {
@@ -260,11 +267,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             reject(new Error(`pi ${command} timed out`));
           }, timeoutMs);
           timer.unref?.();
-          responseWaiters.set(command, (data) => {
-            clearTimeout(timer);
-            resolve(data);
-          });
+          responseWaiters.set(command, { resolve, reject, timer });
         });
+      child.stdin.on("error", () => rejectWaiters(new Error("pi stdin closed")));
       const send = (obj: Record<string, unknown>) => {
         appendNative(threadId, { dir: "out", source: "pi.rpc", msg: obj });
         child.stdin.write(JSON.stringify(obj) + "\n");
@@ -283,6 +288,16 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           stopReason: stopReason ?? (ok ? "end_turn" : "failed"),
           ...(usage ? { usage: { input: usage.input ?? 0, output: usage.output ?? 0 } } : {}),
         });
+        try {
+          child.stdin.end();
+        } catch {
+          /* already closed */
+        }
+        try {
+          killCliTree(child);
+        } catch {
+          /* already gone */
+        }
         active.delete(threadId);
       };
 
@@ -305,8 +320,12 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         appendNative(threadId, { dir: "in", source: "pi.rpc", msg: evt });
         switch (evt.type) {
           case "response": {
-            if (evt.success && evt.command && responseWaiters.has(evt.command)) {
-              responseWaiters.get(evt.command)!(evt.data);
+            if (evt.command && responseWaiters.has(evt.command)) {
+              const waiter = responseWaiters.get(evt.command)!;
+              responseWaiters.delete(evt.command);
+              clearTimeout(waiter.timer);
+              if (evt.success) waiter.resolve(evt.data);
+              else waiter.reject(new Error(`pi ${evt.command} failed`));
             }
             return;
           }
@@ -395,11 +414,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       });
       child.on("error", (err) => {
         const fail = describeSpawnFailure(err as NodeJS.ErrnoException, config.cli);
+        rejectWaiters(new Error(fail.message));
         emit({ ...base(threadId, turnId), type: "runtime.error", message: fail.message, setup: fail.setup });
         settle(false);
       });
       child.on("close", () => {
         // a clean close without a terminal event is a failed turn, never a hang
+        rejectWaiters(new Error("pi process exited before replying"));
         settle(false);
       });
 
@@ -432,32 +453,36 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       if (typeof turn.model === "string" && turn.model.includes("/")) {
         const [provider, ...rest] = turn.model.split("/");
         try {
+          const modelPromise = awaitResponse("set_model");
           send({ type: "set_model", provider, modelId: rest.join("/") });
-          await awaitResponse("set_model");
+          await modelPromise;
         } catch {
           /* keep going on the default model */
         }
       }
 
       const message = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
-      send({ type: "prompt", message });
+      try {
+        send({ type: "prompt", message });
+      } catch {
+        settle(false);
+      }
 
       return { turnId };
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       const version = await new Promise<string | null>((resolve) => {
-        const child = spawn(config.cli, ["--version"], {
+        const child = spawnCli(config.cli, ["--version"], {
           stdio: ["ignore", "pipe", "pipe"],
           env: piEnvironment({ ...process.env, ...input.environment }),
-          windowsHide: true,
         });
         let out = "";
         child.stdout?.setEncoding("utf8");
         child.stdout?.on("data", (c: string) => (out += c));
         const timer = setTimeout(() => {
           try {
-            child.kill();
+            killCliTree(child);
           } catch {
             /* ignore */
           }

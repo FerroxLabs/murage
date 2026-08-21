@@ -35,10 +35,8 @@ if (process.env.FAKE_PI_DUMP) {
       process.env.FAKE_PI_DUMP,
       JSON.stringify({
         argv,
-        env: Object.fromEntries(
-          ["PATH", "HOME", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "BOX_TOKEN"].flatMap((k) =>
-            process.env[k] === undefined ? [] : [[k, process.env[k]]],
-          ),
+        envConfigured: ["PATH", "HOME", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "BOX_TOKEN"].filter(
+          (k) => process.env[k] !== undefined,
         ),
       }) + "\n",
     );

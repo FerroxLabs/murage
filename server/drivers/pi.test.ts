@@ -5,7 +5,7 @@
 //
 // The fake CLI is a shebang script Windows cannot exec directly; spawnCli
 // resolves it to `node <script>`, so these run everywhere.
-import { chmodSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -111,11 +111,11 @@ describe("PiDriver turns (fake CLI)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
 
-  const create = async (mode?: string) => {
+  const create = async (mode?: string, environment: Record<string, string> = {}) => {
     instance = await PiDriver.create({
       instanceId: "pi-test",
       displayName: "pi Test",
-      environment: mode ? { FAKE_PI_MODE: mode } : {},
+      environment: { ...environment, ...(mode ? { FAKE_PI_MODE: mode } : {}) },
       enabled: true,
       config: { cli: FAKE_CLI },
     });
@@ -163,6 +163,56 @@ describe("PiDriver turns (fake CLI)", () => {
     const done = recorder.events.at(-1)!;
     expect(done).toMatchObject({ type: "turn.completed", ok: true, stopReason: "end_turn", usage: { input: 12, output: 3 } });
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
+  });
+
+  it("resumes a prior pi session using the sessionFile resume cursor", async () => {
+    await create();
+    const first = await instance.adapter.sendTurn({ threadId: "t-resume", text: "first" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const firstSession = recorder.events.find((e) => e.type === "session.started" && e.turnId === first.turnId) as
+      | { sessionId: string }
+      | undefined;
+    expect(firstSession?.sessionId).toMatch(/\/fake\/pi-session-\d+\.json/);
+
+    const second = await instance.adapter.sendTurn({
+      threadId: "t-resume",
+      text: "second",
+      resumeCursor: firstSession!.sessionId,
+    });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    const secondSession = recorder.events.find((e) => e.type === "session.started" && e.turnId === second.turnId) as
+      | { sessionId: string }
+      | undefined;
+    expect(secondSession?.sessionId).toBe(firstSession?.sessionId);
+  });
+
+  it("fails promptly when the pi process exits before replying", async () => {
+    await create("exit-early");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-exit", text: "hi" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ ok: false, stopReason: "failed" });
+    expect(instance.adapter.hasSession("t-exit")).toBe(false);
+  });
+
+  it("records argv and only configured environment names in FAKE_PI_DUMP", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omb-pi-dump-"));
+    const dump = join(dir, "dump.jsonl");
+    await create(undefined, {
+      FAKE_PI_DUMP: dump,
+      ANTHROPIC_API_KEY: "anthropic-secret-value",
+      OPENAI_API_KEY: "openai-secret-value",
+    });
+    await instance.dispose();
+
+    const rows = readFileSync(dump, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { argv: string[]; envConfigured: string[] });
+    expect(rows.some((row) => row.argv.join(" ") === "--mode rpc --no-session")).toBe(true);
+    expect(rows.some((row) => row.envConfigured.includes("ANTHROPIC_API_KEY"))).toBe(true);
+    expect(rows.some((row) => row.envConfigured.includes("OPENAI_API_KEY"))).toBe(true);
+    expect(JSON.stringify(rows)).not.toContain("anthropic-secret-value");
+    expect(JSON.stringify(rows)).not.toContain("openai-secret-value");
   });
 
   it("rides the toolUse auto-continue and only settles on the final end_turn", async () => {
