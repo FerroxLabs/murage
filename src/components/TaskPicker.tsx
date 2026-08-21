@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, Trash2 } from "lucide-react";
 import { useStore, formatTime, type Bot, type Task } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { COMPACT_BUBBLE } from "@/lib/compact-chip";
 import { formatTokens } from "@/lib/format-tokens";
 
 /** Quiet per-task token tally — input+output combined, because one honest
@@ -57,9 +58,13 @@ export function TaskPicker({ bot }: { bot: Bot }) {
         onClick={() => dispatch({ type: "newTask", botId: bot.id })}
         disabled={bot.busy}
         title={bot.busy ? "Let this turn finish first" : "New task — a fresh context on this bot"}
-        className="flex items-center gap-1 rounded-full border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
+        className={cn(
+          "flex items-center gap-1 rounded-full border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40",
+          COMPACT_BUBBLE,
+        )}
       >
-        <Plus size={12} /> Task
+        <Plus size={12} className="@max-4xl/chathead:size-[14px]" />
+        <span className="@max-4xl/chathead:hidden">Task</span>
       </button>
     );
   }
@@ -84,11 +89,15 @@ export function TaskPicker({ bot }: { bot: Bot }) {
       <button
         onClick={() => setOpen((o) => !o)}
         title={switchTitle}
-        className="flex max-w-[220px] items-center gap-1.5 rounded-full border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+        className={cn(
+          "flex max-w-[220px] items-center gap-1.5 rounded-full border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink",
+          COMPACT_BUBBLE,
+        )}
       >
-        <span className="truncate">{current?.title ?? "Task"}</span>
-        <span className="shrink-0 tabular-nums opacity-60">{tasks.length}</span>
-        <ChevronDown size={12} className="shrink-0" />
+        <span className="truncate @max-4xl/chathead:hidden">{current?.title ?? "Task"}</span>
+        {/* folded: just the count in the bubble — the title rides the tooltip */}
+        <span className="shrink-0 tabular-nums opacity-60 @max-4xl/chathead:opacity-100">{tasks.length}</span>
+        <ChevronDown size={12} className="shrink-0 @max-4xl/chathead:hidden" />
       </button>
 
       {open && (

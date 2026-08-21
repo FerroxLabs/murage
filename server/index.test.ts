@@ -960,26 +960,45 @@ describe("harness HTTP API", () => {
     expect(after.modelSelection.effort).toBeUndefined();
   });
 
-  it("turns off bot Auto mode when local computer beta is selected", async () => {
+  it("grants Auto on this computer only through the warning acknowledgement", async () => {
     const created = await api("POST", "/api/bots");
     const bot = created.body.bot;
     expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).body.bot.autoApprove).toBe(
       true,
     );
-    const local = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
-    expect(local.body.bot).toMatchObject({ computer: "local", autoApprove: false });
-    const rejected = await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
-    expect(rejected.status).toBe(400);
-    expect(rejected.body.error).toContain("local computer beta");
 
-    const cloud = await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" });
-    expect(cloud.body.bot.computer).toBe("cloud");
-    const simultaneous = await api("PATCH", `/api/bots/${bot.id}`, {
-      computer: "local",
-      autoApprove: true,
-    });
-    expect(simultaneous.status).toBe(400);
-    expect(simultaneous.body.error).toContain("local computer beta");
+    // The important half: a blind PATCH — exactly what a bot curling the
+    // loopback API from a tool call would send — must be refused. The
+    // renderer's warning dialog is not a boundary; this 400 is.
+    const blind = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
+    expect(blind.status).toBe(400);
+    const oneShot = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local", autoApprove: true });
+    expect(oneShot.status).toBe(400);
+    const after = (await api("GET", "/api/bots")).body.bots.find((b: { id: string }) => b.id === bot.id);
+    expect(after.computer).not.toBe("local");
+
+    // The dialog's acknowledgement grants it, and the flag is not persisted.
+    const local = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local", acknowledgeLocalAuto: true });
+    expect(local.status).toBe(200);
+    expect(local.body.bot).toMatchObject({ computer: "local", autoApprove: true });
+    expect(local.body.bot.acknowledgeLocalAuto).toBeUndefined();
+
+    // Once granted, re-asserting auto and unrelated PATCHes need no re-ack.
+    const enabled = await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
+    expect(enabled.status).toBe(200);
+    expect(enabled.body.bot.autoApprove).toBe(true);
+
+    // The other direction needs the warning too: local first, then auto.
+    await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: false });
+    const autoBlind = await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true });
+    expect(autoBlind.status).toBe(400);
+    const autoAcked = await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, acknowledgeLocalAuto: true });
+    expect(autoAcked.status).toBe(200);
+
+    // Leaving local ends the grant; coming back needs the warning again.
+    await api("PATCH", `/api/bots/${bot.id}`, { computer: "off" });
+    const back = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
+    expect(back.status).toBe(400);
     await api("DELETE", `/api/bots/${bot.id}`);
   });
 
@@ -1164,6 +1183,41 @@ describe("harness HTTP API", () => {
     expect(disk.rooms).toEqual({ turnTimeoutMinutes: 20 });
 
     await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
+  });
+
+  it("keeps shared Local VM mode by default and resolves isolated targets per bot when enabled", async () => {
+    const first = (await api("POST", "/api/bots")).body.bot;
+    const second = (await api("POST", "/api/bots")).body.bot;
+    const before = await api("GET", "/api/config");
+    expect(before.body.localVm).toEqual({ mode: "shared", maxInstances: 2 });
+
+    const shared = await api("GET", `/api/bots/${first.id}/local-computer`);
+    expect(shared.status).toBe(200);
+    expect(shared.body).toMatchObject({ mode: "shared", target_key: "shared" });
+
+    const saved = await api("PATCH", "/api/config", {
+      localVm: { mode: "per-bot", maxInstances: 3 },
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.localVm).toEqual({ mode: "per-bot", maxInstances: 3 });
+
+    const [firstStatus, secondStatus] = await Promise.all([
+      api("GET", `/api/bots/${first.id}/local-computer`),
+      api("GET", `/api/bots/${second.id}/local-computer`),
+    ]);
+    expect(firstStatus.body).toMatchObject({ mode: "per-bot", max_instances: 3 });
+    expect(secondStatus.body).toMatchObject({ mode: "per-bot", max_instances: 3 });
+    expect(firstStatus.body.target_key).not.toBe(secondStatus.body.target_key);
+    expect(firstStatus.body.container_name).not.toBe(secondStatus.body.container_name);
+    expect(firstStatus.body.workspace_path).not.toBe(secondStatus.body.workspace_path);
+
+    const invalid = await api("PATCH", "/api/config", { localVm: { maxInstances: 5 } });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toContain("localVm.maxInstances");
+
+    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    expect(disk.localVm).toEqual({ mode: "per-bot", maxInstances: 3 });
+    await api("PATCH", "/api/config", { localVm: { mode: "shared", maxInstances: 2 } });
   });
 
   it("keeps an active turn alive when only the room timeout changes", async () => {

@@ -241,6 +241,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
 
       // server→client approval request → canonical request.opened
+      // Host-scope tagging mirrors claude.ts: when this turn mounts the real
+      // Mac (not a VM), every card carries approvalScope so the harness's
+      // local-computer-block backstop applies to remembered always-allows.
+      const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
       const handleServerRequest = (msg: any) => {
         const method = msg.method as string;
         const params = msg.params ?? {};
@@ -258,7 +262,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const requestId = newId();
         const summary =
           typeof params.command === "string"
-            ? params.command.slice(0, 200)
+            ? params.command
             : Array.isArray(params.questions)
               ? params.questions.map((q: any) => q.question ?? q.header).filter(Boolean).join(" · ")
               : typeof params.reason === "string"
@@ -299,6 +303,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           tool,
           summary,
           choices,
+          approvalScope: controlsHost ? "local-computer" : undefined,
         });
       };
 
@@ -325,7 +330,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             const item = p.item ?? {};
             const title =
               item.type === "commandExecution"
-                ? String(item.command ?? "shell").slice(0, 80)
+                ? String(item.command ?? "shell")
                 : item.type === "fileChange"
                   ? "edit"
                   : item.type === "mcpToolCall"
@@ -347,7 +352,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 state.sawStreamDelta = false;
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: item.text });
               }
-            } else if (["commandExecution", "fileChange", "mcpToolCall"].includes(item.type)) {
+            } else if (["commandExecution", "fileChange", "mcpToolCall", "webSearch"].includes(item.type)) {
               emit({
                 ...base(threadId, turnId),
                 type: "item.completed",
@@ -542,6 +547,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         capabilities: {
           sessionModelSwitch: "unsupported",
           computerMcp: true,
+          localComputerMcp: true,
           composioMcp: true,
           agentsMcp: true,
           phoneMcp: true,

@@ -144,11 +144,10 @@ export function autoVerdict(
     if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };
     return { approve: null, source: "no-grant" };
   }
-  if (context?.scope === "local-computer") {
-    // The user's active desktop is never delegated to bot auto mode or a
-    // remembered cloud/tool grant in the Linux beta. Same attribution rule
-    // as the unattended block: a guard that would have carded anyway keeps
-    // its own name, the block is the story only when it changed the outcome.
+  if (context?.scope === "local-computer" && !bot.autoApprove) {
+    // Host control is not covered by a remembered always-allow grant.
+    // After the Auto-on-this-computer warning, unclassified GUI actions
+    // (click/type) may auto-approve; destructive/sensitive still card.
     if (grant) return { approve: null, source: "local-computer-block", rule: grant.rule };
     if (destructive) return { approve: null, source: "destructive-guard", rule: destructive };
     if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };

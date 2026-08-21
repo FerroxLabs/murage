@@ -62,6 +62,8 @@ export interface Message {
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
   tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
+  /** user messages sent into a running turn — the model saw it mid-turn */
+  steered?: boolean;
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
@@ -221,6 +223,7 @@ export interface ConfigStatus {
   box: { configured: boolean };
   vps: { configured: boolean; sshAlias: string };
   rooms: { turnTimeoutMinutes: number };
+  localVm: { mode: "shared" | "per-bot"; maxInstances: number };
   opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
@@ -232,7 +235,7 @@ export interface ConfigStatus {
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "opencodeGo" | "tts" | "profile"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "profile"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -242,6 +245,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     box: frame.box,
     vps: frame.vps,
     rooms: frame.rooms,
+    localVm: frame.localVm,
     opencodeGo: frame.opencodeGo,
     tts: frame.tts,
     profile: frame.profile,
@@ -278,6 +282,8 @@ export interface InstanceInfo {
     composioMcp?: boolean;
     images?: boolean;
     effortLevels?: readonly EffortLevel[];
+    /** the engine keeps a live session and takes a message mid-turn */
+    queueing?: boolean;
     localComputerMcp?: boolean;
   };
   /** `custom` agents sit below the rail divider — no subscription catalog. */
@@ -450,7 +456,11 @@ export type Action =
           | "composio"
           | "modelSelection"
         >
-      >;
+      > & {
+        // rides the PATCH body only: the server's proof that the local-auto
+        // warning dialog was shown. Never stored on the bot.
+        acknowledgeLocalAuto?: boolean;
+      };
     };
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
@@ -830,10 +840,8 @@ export function reducer(state: AppState, action: Action): AppState {
             ),
           }
         : animated;
-      return updateBot(next, action.botId, (b) => {
-        const merged = { ...b, ...action.patch };
-        return merged.computer === "local" ? { ...merged, autoApprove: false } : merged;
-      });
+      const { acknowledgeLocalAuto: _ack, ...botPatch } = action.patch;
+      return updateBot(next, action.botId, (b) => ({ ...b, ...botPatch }));
     }
     case "threadActive": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);

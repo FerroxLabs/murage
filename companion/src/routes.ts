@@ -100,6 +100,14 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // workspace ElevenLabs key; the phone receives labels or audio only.
   { method: "GET", path: /^\/api\/tts\/voices$/ },
   { method: "POST", path: /^\/api\/tts\/speak$/ },
+
+  // Multi-account Composio management exposes opaque ids and aliases only.
+  // Revocation stays on the Mac: the account DELETE route is deliberately
+  // absent — a paired phone can see and add accounts, never remove one.
+  { method: "GET", path: /^\/api\/connectors\/catalog$/ },
+  { method: "GET", path: /^\/api\/connectors\/connected$/ },
+  { method: "GET", path: /^\/api\/connectors$/ },
+  { method: "POST", path: /^\/api\/connectors\/[\w-]+\/authorize$/ },
 ];
 
 /** Route families worth naming in the refusal.
