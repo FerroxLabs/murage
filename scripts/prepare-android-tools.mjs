@@ -32,10 +32,25 @@ try {
     writeFileSync(zip, Buffer.from(await response.arrayBuffer()));
     const extraction = join(temporary, "extracted");
     mkdirSync(extraction);
-    const command = process.platform === "win32" ? "tar" : "unzip";
-    const args = process.platform === "win32" ? ["-xf", zip, "-C", extraction] : ["-q", zip, "-d", extraction];
-    const result = spawnSync(command, args, { encoding: "utf8" });
-    if (result.status !== 0) throw new Error(`${command} failed: ${(result.stderr || result.stdout).trim()}`);
+    // A bare "tar" is Windows' bundled bsdtar (zip-capable) in cmd/PowerShell
+    // but git-bash puts GNU tar (cannot read .zip) ahead of it on PATH, so
+    // name the System32 binary absolutely — it extracts zips and understands
+    // C:\ paths from any shell. unzip is the fallback for the rare Windows
+    // without System32 tar, and the norm everywhere else.
+    const systemTar = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+    const extractors = process.platform === "win32"
+      ? [[systemTar, ["-xf", zip, "-C", extraction]], ["unzip", ["-q", zip, "-d", extraction]]]
+      : [["unzip", ["-q", zip, "-d", extraction]]];
+    // spawnSync leaves stdout/stderr undefined when the binary itself is
+    // missing (ENOENT) — report result.error instead of crashing on .trim().
+    const describeFailure = (r) => r.error?.message ?? (`${r.stderr || r.stdout || ""}`.trim() || `exit status ${r.status}`);
+    let result;
+    for (const [command, args] of extractors) {
+      result = spawnSync(command, args, { encoding: "utf8" });
+      if (result.status === 0) break;
+      console.error(`${command} failed: ${describeFailure(result)} — trying next`);
+    }
+    if (result.status !== 0) throw new Error(`could not extract Android Platform Tools: ${describeFailure(result)}`);
     cpSync(join(extraction, "platform-tools"), staged, { recursive: true });
   }
 
