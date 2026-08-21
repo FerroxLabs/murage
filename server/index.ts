@@ -3237,6 +3237,20 @@ const server = createServer(async (req, res) => {
         if (typeof body.autoApprove !== "boolean") return json(res, 400, { error: "autoApprove must be true or false" });
         patch.autoApprove = body.autoApprove;
       }
+      // "Auto on this Mac" hands a bot the user's real session, so the grant
+      // must prove a human saw the warning. The desktop dialog is the only
+      // caller that sends acknowledgeLocalAuto; without it a PATCH that would
+      // create the combination — a bot curling the loopback API from a tool
+      // call, a script, a stale client — is refused. The renderer dialog
+      // alone is not a boundary; this check is.
+      const wantsComputer = body.computer !== undefined ? body.computer : existingBot?.computer;
+      const wantsAuto = body.autoApprove !== undefined ? body.autoApprove : existingBot?.autoApprove === true;
+      const alreadyGranted = existingBot?.computer === "local" && existingBot?.autoApprove === true;
+      if (wantsComputer === "local" && wantsAuto === true && !alreadyGranted && body.acknowledgeLocalAuto !== true) {
+        return json(res, 400, {
+          error: "Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)",
+        });
+      }
       if (body.approvePeerComms !== undefined) {
         if (typeof body.approvePeerComms !== "boolean") {
           return json(res, 400, { error: "approvePeerComms must be true or false" });

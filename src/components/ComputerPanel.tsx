@@ -971,7 +971,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       open={localAutoWarning}
       onCancel={() => setLocalAutoWarning(false)}
       onConfirm={() => {
-        dispatch({ type: "updateBot", botId: bot.id, patch: { computer: "local" } });
+        dispatch({ type: "updateBot", botId: bot.id, patch: { computer: "local", acknowledgeLocalAuto: true } });
         setLocalAutoWarning(false);
       }}
     />

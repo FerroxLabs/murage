@@ -346,7 +346,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "composio"
         | "modelSelection"
       >
-    >,
+    > & { acknowledgeLocalAuto?: boolean },
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const activeState = stateForBot(bot);
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
@@ -823,8 +823,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
       open={localAutoWarning !== null}
       onCancel={() => setLocalAutoWarning(null)}
       onConfirm={() => {
-        if (localAutoWarning === "auto") patch({ autoApprove: true });
-        if (localAutoWarning === "local") patch({ computer: "local" });
+        if (localAutoWarning === "auto") patch({ autoApprove: true, acknowledgeLocalAuto: true });
+        if (localAutoWarning === "local") patch({ computer: "local", acknowledgeLocalAuto: true });
         setLocalAutoWarning(null);
       }}
     />

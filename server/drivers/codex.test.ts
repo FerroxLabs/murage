@@ -328,6 +328,37 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ decision: "approved" });
   });
 
+  it("stamps approvalScope on cards only when the turn controls this Mac", async () => {
+    await create({ mode: "approval" });
+
+    // host-mounted: every card carries the scope that keeps the harness's
+    // local-computer-block backstop in force for remembered always-allows
+    await instance.adapter.sendTurn({
+      threadId: "t-host-scope",
+      text: "clean up",
+      integrations: {
+        localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "darwin", scope: "local-computer" },
+      },
+    });
+    const host = await recorder.until((e) => e.type === "request.opened");
+    expect(host).toMatchObject({ approvalScope: "local-computer" });
+    await instance.adapter.respondToRequest("t-host-scope", host.requestId!, { behavior: "allow" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    // a Local VM mount is not the host: no scope stamped
+    await instance.adapter.sendTurn({
+      threadId: "t-vm-scope",
+      text: "clean up",
+      integrations: {
+        localComputer: { command: process.execPath, args: ["/tmp/container-mcp.js"], env: {} },
+      },
+    });
+    const vm = await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-vm-scope");
+    expect((vm as { approvalScope?: string }).approvalScope).toBeUndefined();
+    await instance.adapter.respondToRequest("t-vm-scope", vm.requestId!, { behavior: "allow" });
+    await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-vm-scope");
+  });
+
   it("auto-approves commands in fullAuto without opening a request", async () => {
     await create({ mode: "approval", fullAuto: true });
     const dump = join(scratch, "dump.json");
