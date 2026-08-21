@@ -39,17 +39,299 @@ function credentialsPath(env: Record<string, string | undefined>) {
   return join(kimiDataRoot(env), "credentials", "kimi-code.json");
 }
 
+/** Quote a TOML string value. */
 function quoteToml(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/** Quote a TOML key when it is not a bare identifier. */
 function quoteTomlKey(key: string): string {
   if (/^[A-Za-z0-9_-]+$/.test(key)) return key;
   return quoteToml(key);
 }
 
+/** Strip a `#` comment that is not inside a quoted string. */
+function stripTomlLineComment(line: string): string {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]!;
+    if (quote) {
+      if (quote === '"' && c === "\\") {
+        i += 1;
+        continue;
+      }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "#") return line.slice(0, i);
+    if (c === '"' || c === "'") quote = c;
+  }
+  return line;
+}
+
+/** Decode a TOML basic-string escape at `text[i]` (`i` points at the `\\`). */
+function takeTomlBasicEscape(text: string, i: number): { value: string; next: number } {
+  const code = text[i + 1];
+  if (code === "u") {
+    const hex = text.slice(i + 2, i + 6);
+    if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+      return { value: String.fromCharCode(parseInt(hex, 16)), next: i + 6 };
+    }
+  }
+  if (code === "U") {
+    const hex = text.slice(i + 2, i + 10);
+    if (/^[0-9a-fA-F]{8}$/.test(hex)) {
+      const point = parseInt(hex, 16);
+      return { value: point <= 0x10ffff ? String.fromCodePoint(point) : "", next: i + 10 };
+    }
+  }
+  const named: Record<string, string> = {
+    b: "\b",
+    t: "\t",
+    n: "\n",
+    f: "\f",
+    r: "\r",
+    '"': '"',
+    "\\": "\\",
+  };
+  return { value: named[code ?? ""] ?? code ?? "", next: i + 2 };
+}
+
+/** Canonical `a.b.c` form of a `[table]` heading, quotes and comments removed. */
+function canonicalizeTomlHeading(heading: string): string | null {
+  const trimmed = stripTomlLineComment(heading).trim();
+  const match = trimmed.match(/^\[([^[\]]+)\]$/);
+  if (!match) return null;
+  const parts: string[] = [];
+  const inner = match[1]!;
+  let i = 0;
+  const skipSep = () => {
+    while (i < inner.length && (inner[i] === "." || inner[i] === " " || inner[i] === "\t")) i += 1;
+  };
+  skipSep();
+  while (i < inner.length) {
+    const q = inner[i];
+    if (q === '"' || q === "'") {
+      i += 1;
+      let value = "";
+      while (i < inner.length && inner[i] !== q) {
+        if (q === '"' && inner[i] === "\\") {
+          const taken = takeTomlBasicEscape(inner, i);
+          value += taken.value;
+          i = taken.next;
+          continue;
+        }
+        value += inner[i];
+        i += 1;
+      }
+      if (inner[i] === q) i += 1;
+      parts.push(value);
+      skipSep();
+      continue;
+    }
+    let value = "";
+    while (i < inner.length && inner[i] !== ".") {
+      value += inner[i];
+      i += 1;
+    }
+    const part = value.trim();
+    if (part) parts.push(part);
+    skipSep();
+  }
+  return parts.length ? parts.join(".") : null;
+}
+
+/** Unwrap `"key"` / `'key'` so a quoted assignment matches the bare name. */
+function unquoteTomlKey(raw: string): string {
+  const key = raw.trim();
+  if (key.length >= 2 && ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'")))) {
+    return key.slice(1, -1);
+  }
+  return key;
+}
+
+/** Bare key on the left of `key = value`. */
+function tomlRowKey(row: string): string {
+  const eq = row.indexOf("=");
+  return unquoteTomlKey(eq < 0 ? row : row.slice(0, eq));
+}
+
+/** Walk `text` and yield `[table]` spans. `[[array]]` headings bound a table
+ *  but are not themselves patchable. `#` comments in `out` mode are skipped
+ *  so an apostrophe in a comment cannot open a phantom string. */
+function tomlTables(text: string): Array<{ name: string; headingStart: number; bodyStart: number; end: number }> {
+  type Mode = "out" | "basic" | "literal" | "mlbasic" | "mllit";
+  const headings: Array<{ name: string | null; patchable: boolean; lineStart: number; lineEnd: number }> = [];
+  let mode: Mode = "out";
+  let i = 0;
+  const atLineStart = (idx: number) => idx === 0 || text[idx - 1] === "\n";
+  while (i < text.length) {
+    if (mode === "mlbasic") {
+      if (text.startsWith('"""', i)) {
+        mode = "out";
+        i += 3;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+    if (mode === "mllit") {
+      if (text.startsWith("'''", i)) {
+        mode = "out";
+        i += 3;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+    if (mode === "basic") {
+      if (text[i] === "\\") {
+        i += 2;
+        continue;
+      }
+      if (text[i] === '"') mode = "out";
+      i += 1;
+      continue;
+    }
+    if (mode === "literal") {
+      if (text[i] === "'") mode = "out";
+      i += 1;
+      continue;
+    }
+    if (text.startsWith('"""', i)) {
+      mode = "mlbasic";
+      i += 3;
+      continue;
+    }
+    if (text.startsWith("'''", i)) {
+      mode = "mllit";
+      i += 3;
+      continue;
+    }
+    if (text[i] === '"') {
+      mode = "basic";
+      i += 1;
+      continue;
+    }
+    if (text[i] === "'") {
+      mode = "literal";
+      i += 1;
+      continue;
+    }
+    if (text[i] === "#") {
+      const nl = text.indexOf("\n", i);
+      i = nl < 0 ? text.length : nl + 1;
+      continue;
+    }
+    if (atLineStart(i)) {
+      let j = i;
+      while (j < text.length && (text[j] === " " || text[j] === "\t")) j += 1;
+      if (text[j] === "[") {
+        const nl = text.indexOf("\n", j);
+        const lineEnd = nl < 0 ? text.length : nl;
+        const raw = text.slice(j, lineEnd).replace(/\r$/, "");
+        const stripped = stripTomlLineComment(raw).trim();
+        const array = stripped.startsWith("[[");
+        const name = array
+          ? canonicalizeTomlHeading(`[${stripped.replace(/^\s*\[\[/, "").replace(/\]\]\s*$/, "")}]`)
+          : canonicalizeTomlHeading(raw);
+        headings.push({ name, patchable: !array && name !== null, lineStart: i, lineEnd });
+        i = lineEnd + (nl < 0 ? 0 : 1);
+        continue;
+      }
+    }
+    i += 1;
+  }
+  return headings
+    .map((heading, index) => ({
+      heading,
+      end: index + 1 < headings.length ? headings[index + 1]!.lineStart : text.length,
+    }))
+    .filter((entry) => entry.heading.patchable && entry.heading.name)
+    .map((entry) => ({
+      name: entry.heading.name!,
+      headingStart: entry.heading.lineStart,
+      bodyStart: entry.heading.lineEnd + (text[entry.heading.lineEnd] === "\n" ? 1 : 0),
+      end: entry.end,
+    }));
+}
+
+/** Keys assigned at line start in a table body, including `"quoted"` keys. */
+function tomlKeys(block: string): Set<string> {
+  const keys = new Set<string>();
+  type Mode = "out" | "basic" | "literal" | "mlbasic" | "mllit";
+  let mode: Mode = "out";
+  let lineStart = 0;
+  let lineStartMode: Mode = "out";
+  const take = (end: number) => {
+    if (lineStartMode !== "out") return;
+    const line = stripTomlLineComment(block.slice(lineStart, end));
+    const eq = line.indexOf("=");
+    if (eq > 0) keys.add(unquoteTomlKey(line.slice(0, eq)));
+  };
+  for (let i = 0; i < block.length; i++) {
+    if (mode === "mlbasic") {
+      if (block.startsWith('"""', i)) {
+        mode = "out";
+        i += 2;
+      }
+    } else if (mode === "mllit") {
+      if (block.startsWith("'''", i)) {
+        mode = "out";
+        i += 2;
+      }
+    } else if (mode === "basic") {
+      if (block[i] === "\\") i += 1;
+      else if (block[i] === '"') mode = "out";
+    } else if (mode === "literal") {
+      if (block[i] === "'") mode = "out";
+    } else if (block[i] === "#") {
+      const nl = block.indexOf("\n", i);
+      i = nl < 0 ? block.length : nl;
+      if (nl < 0) break;
+    } else if (block.startsWith('"""', i)) {
+      mode = "mlbasic";
+      i += 2;
+    } else if (block.startsWith("'''", i)) {
+      mode = "mllit";
+      i += 2;
+    } else if (block[i] === '"') {
+      mode = "basic";
+    } else if (block[i] === "'") {
+      mode = "literal";
+    }
+    if (i < block.length && block[i] === "\n") {
+      take(i);
+      lineStart = i + 1;
+      if (mode === "basic" || mode === "literal") mode = "out";
+      lineStartMode = mode;
+    }
+  }
+  take(block.length);
+  return keys;
+}
+
+/** Whether `text` already has this table, ignoring quotes and trailing comments. */
 function hasTomlTable(text: string, heading: string): boolean {
-  return text.split(/\r?\n/).some((line) => line.trim() === heading);
+  const name = canonicalizeTomlHeading(heading);
+  return name !== null && tomlTables(text).some((table) => table.name === name);
+}
+
+/** Insert missing keys into an existing table. Does not overwrite set values. */
+function patchTomlTable(text: string, heading: string, rows: string[]): string {
+  const name = canonicalizeTomlHeading(heading);
+  if (!name) return text;
+  const table = tomlTables(text).find((entry) => entry.name === name);
+  if (!table) return text;
+  const keys = tomlKeys(text.slice(table.bodyStart, table.end));
+  const missing = rows.filter((row) => !keys.has(tomlRowKey(row)));
+  if (!missing.length) return text;
+  let insertAt = table.end;
+  while (insertAt > table.bodyStart && (text[insertAt - 1] === "\n" || text[insertAt - 1] === "\r")) insertAt -= 1;
+  const before = text.slice(0, insertAt);
+  const after = text.slice(insertAt);
+  const pad = before.endsWith("\n") || before.length === 0 ? "" : "\n";
+  return `${before}${pad}${missing.join("\n")}${after.startsWith("\n") ? "" : "\n"}${after}`;
 }
 
 /** Write [providers.host] + [models."host/alias"] so `kimi -m` hits the local host. */
@@ -72,6 +354,7 @@ export function ensureKimiInjectAlias(
   } catch {
     text = "";
   }
+  const original = text;
 
   const providerHeading = `[providers.${inject.host}]`;
   const modelHeading = `[models.${quoteTomlKey(alias)}]`;
@@ -87,16 +370,67 @@ export function ensureKimiInjectAlias(
       ].join("\n"),
     );
   }
-  if (!hasTomlTable(text, modelHeading)) {
+  // Kimi 0.36+ refuses openai_legacy as a wire protocol; ACP then
+  // skips default-model binding and falls through to OAuth. Patch
+  // aliases written before those keys existed; do not overwrite a
+  // user's protocol or context size.
+  if (hasTomlTable(text, modelHeading)) {
+    text = patchTomlTable(text, modelHeading, [`protocol = "openai"`, `max_context_size = 262144`]);
+  } else {
     blocks.push(
-      [modelHeading, `provider = ${quoteToml(inject.host)}`, `model = ${quoteToml(inject.model)}`, ""].join("\n"),
+      [
+        modelHeading,
+        `provider = ${quoteToml(inject.host)}`,
+        `model = ${quoteToml(inject.model)}`,
+        `protocol = "openai"`,
+        `max_context_size = 262144`,
+        "",
+      ].join("\n"),
     );
   }
   if (blocks.length) {
     const prefix = text && !text.endsWith("\n") ? `${text}\n\n` : text ? `${text}\n` : "";
     writeFileSync(path, `${prefix}${blocks.join("\n")}`);
+  } else if (text !== original) {
+    writeFileSync(path, text);
   }
   return alias;
+}
+
+/** Env keys Kimi 0.36+ reads to synthesize an in-memory default model.
+ *  ACP `session/new` runs auth readiness against `default_model`, not `-m`.
+ *  Without a default, a missing/expired `kimi login` becomes
+ *  "Authentication required" even when the picker is a local host. */
+const KIMI_MODEL_ENV = [
+  "KIMI_MODEL_NAME",
+  "KIMI_MODEL_API_KEY",
+  "KIMI_MODEL_BASE_URL",
+  "KIMI_MODEL_PROVIDER_TYPE",
+  "KIMI_MODEL_DISPLAY_NAME",
+] as const;
+
+/** Overlay a local inject as Kimi's in-memory default. Does not write
+ *  config.toml — Kimi strips these reserved entries on persist. */
+export function applyKimiLocalModelEnv(
+  env: Record<string, string | undefined>,
+  modelId: string | undefined,
+): void {
+  const inject = decodeInjectId(modelId);
+  if (!inject) return;
+  const host = localHost(inject.host);
+  if (!host) return;
+  env.KIMI_MODEL_NAME = inject.model;
+  env.KIMI_MODEL_API_KEY = hostApiKey(host, env);
+  env.KIMI_MODEL_BASE_URL = host.baseUrl;
+  // Env overlay accepts openai | anthropic | kimi — not the toml
+  // openai_legacy type we write for the on-disk provider row.
+  env.KIMI_MODEL_PROVIDER_TYPE = "openai";
+  env.KIMI_MODEL_DISPLAY_NAME = `${inject.model} (${host.label})`;
+}
+
+/** Drop leftover shell `KIMI_MODEL_*` so they cannot steal a cloud turn. */
+function stripKimiModelEnv(env: Record<string, string | undefined>): void {
+  for (const key of KIMI_MODEL_ENV) delete env[key];
 }
 
 function readKimiModelCatalog(env: Record<string, string | undefined>): ModelCatalog {
@@ -180,6 +514,12 @@ const support: AcpSupport = {
   transformEnv: (env) => {
     delete env.MOONSHOT_API_KEY;
     delete env.KIMI_API_KEY;
+    // A leftover shell overlay would steal every Kimi turn, including
+    // subscription models. applyTurnEnv puts the inject back per turn.
+    stripKimiModelEnv(env);
+  },
+  applyTurnEnv: (env, { requestedModel }) => {
+    applyKimiLocalModelEnv(env, requestedModel);
   },
 
   // The only advertised authMethod is {id:"login", type:"terminal"} — a
