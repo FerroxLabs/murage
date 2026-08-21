@@ -83,7 +83,7 @@ describe("configuration", () => {
     const { speak, NoVoiceConfigured } = await voice();
     expect(() => speak({}, "hi")).toThrow(NoVoiceConfigured);
     expect(() => speak({}, "hi")).toThrow(
-      "Add an ElevenLabs key in an agent profile on the paired computer to turn on voice.",
+      "Add an ElevenLabs key in Settings on the computer to turn on voice.",
     );
     expect(() => speak(cfg({ key: "k" }), "hi")).toThrow(
       "Pick a voice in the agent profile.",
