@@ -20,6 +20,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
+import { PROVIDER_CREDENTIAL_ENV, stripWorkspaceCredentialEnv } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
 import { describeSpawnFailure, killCliTree, spawnCli } from "../procs.ts";
 
@@ -183,7 +184,15 @@ interface PiEvent {
 }
 
 function piEnvironment(source: Record<string, string | undefined>): Record<string, string | undefined> {
-  return { ...source, PATH: augmentedPath() };
+  const env: Record<string, string | undefined> = { ...source, PATH: augmentedPath() };
+  // pi is BYOK and reads provider keys straight from its environment: an
+  // inherited key would silently flip billing onto one the user never granted
+  // pi, and workspace credentials are the harness's secrets, not pi's. The
+  // keys pi may use live in its own settings file, so the child inherits
+  // neither list.
+  stripWorkspaceCredentialEnv(env);
+  for (const key of PROVIDER_CREDENTIAL_ENV) delete env[key];
+  return env;
 }
 
 export const PiDriver: ProviderDriver<PiConfig> = {

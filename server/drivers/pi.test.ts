@@ -194,23 +194,42 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-exit")).toBe(false);
   });
 
-  it("records argv and only configured environment names in FAKE_PI_DUMP", async () => {
+  it("scrubs provider and workspace credentials from every pi child env", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omb-pi-dump-"));
     const dump = join(dir, "dump.jsonl");
-    await create(undefined, {
-      FAKE_PI_DUMP: dump,
-      ANTHROPIC_API_KEY: "anthropic-secret-value",
-      OPENAI_API_KEY: "openai-secret-value",
-    });
-    await instance.dispose();
+    // Plant a workspace credential on the harness process itself — the leak
+    // path is `...process.env`, not just input.environment.
+    const savedBox = process.env.BOX_TOKEN;
+    const savedXai = process.env.XAI_API_KEY;
+    process.env.BOX_TOKEN = "box-secret-value";
+    process.env.XAI_API_KEY = "xai-secret-value";
+    try {
+      await create(undefined, {
+        FAKE_PI_DUMP: dump,
+        ANTHROPIC_API_KEY: "anthropic-secret-value",
+        OPENAI_API_KEY: "openai-secret-value",
+      });
+      await instance.dispose();
+    } finally {
+      if (savedBox === undefined) delete process.env.BOX_TOKEN;
+      else process.env.BOX_TOKEN = savedBox;
+      if (savedXai === undefined) delete process.env.XAI_API_KEY;
+      else process.env.XAI_API_KEY = savedXai;
+    }
 
     const rows = readFileSync(dump, "utf8")
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as { argv: string[]; envConfigured: string[] });
     expect(rows.some((row) => row.argv.join(" ") === "--mode rpc --no-session")).toBe(true);
-    expect(rows.some((row) => row.envConfigured.includes("ANTHROPIC_API_KEY"))).toBe(true);
-    expect(rows.some((row) => row.envConfigured.includes("OPENAI_API_KEY"))).toBe(true);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.envConfigured).toContain("PATH");
+      expect(row.envConfigured).not.toContain("ANTHROPIC_API_KEY");
+      expect(row.envConfigured).not.toContain("OPENAI_API_KEY");
+      expect(row.envConfigured).not.toContain("XAI_API_KEY");
+      expect(row.envConfigured).not.toContain("BOX_TOKEN");
+    }
     expect(JSON.stringify(rows)).not.toContain("anthropic-secret-value");
     expect(JSON.stringify(rows)).not.toContain("openai-secret-value");
   });

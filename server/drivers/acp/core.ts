@@ -15,7 +15,7 @@
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { homedir } from "node:os";
 
-import { WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
+import { PROVIDER_CREDENTIAL_ENV, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
 
 import type {
@@ -128,19 +128,6 @@ const INIT_TIMEOUT = 20_000;
 const SESSION_CONFIG_TIMEOUT = 20_000; // configureSession's per-request default
 const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
-const PROVIDER_CREDENTIAL_ENV = [
-  "ANTHROPIC_API_KEY",
-  "FACTORY_API_KEY",
-  "GEMINI_API_KEY",
-  "GOOGLE_API_KEY",
-  "KIMI_API_KEY",
-  "MOONSHOT_API_KEY",
-  "OPENAI_API_KEY",
-  "OPENCODE_API_KEY",
-  "XAI_API_KEY",
-  "CURSOR_API_KEY",
-  "CURSOR_AUTH_TOKEN",
-] as const;
 
 function decodeAcpConfig(defaultCli: string) {
   return (raw: unknown): AcpConfig => {
