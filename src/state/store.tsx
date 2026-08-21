@@ -19,7 +19,7 @@ import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
-import { showNotification } from "@/lib/notify";
+import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 
@@ -443,6 +443,29 @@ export type Action =
       botId: string;
       patch: BotUpdatePatch;
     };
+
+export function openNotificationTarget(
+  dispatch: (action: Action) => void,
+  target: NotificationTarget,
+  state: Pick<AppState, "bots" | "groups">,
+) {
+  // A room's approval/question notification carries the asker bot with the
+  // GROUP's thread id; asking the bot to switch to that thread would 404.
+  // Open the room itself. A thread that is neither a room nor one of the
+  // bot's own lands on a plain bot select instead of an error banner.
+  const group = state.groups.find((candidate) => candidate.threadId === target.threadId);
+  if (group) {
+    dispatch({ type: "select", id: group.id });
+    return;
+  }
+  dispatch({ type: "select", id: target.botId });
+  const bot = state.bots.find((candidate) => candidate.id === target.botId);
+  if (!bot) return;
+  const known =
+    bot.threadId === target.threadId ||
+    (bot.tasks ?? []).some((task) => task.threadId === target.threadId);
+  if (known) dispatch({ type: "switchTask", botId: target.botId, threadId: target.threadId });
+}
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
   return { ...state, bots: state.bots.map((b) => (b.id === botId ? fn(b) : b)) };
@@ -1439,7 +1462,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // unread:false back. Opening a bot from its own notification and
           // watching the badge return on the next hydration is exactly the
           // bug that makes notifications feel broken.
-          showNotification(frame.notification, (botId) => dispatch({ type: "select", id: botId }));
+          showNotification(frame.notification, (target) => openNotificationTarget(dispatch, target, stateRef.current));
           break;
         case "group.deleted":
           rawDispatch({ type: "groupDeleted", groupId: frame.groupId });

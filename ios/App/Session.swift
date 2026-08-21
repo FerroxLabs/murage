@@ -41,6 +41,10 @@ final class Session: ObservableObject {
     /// A short-lived desktop handoff waiting for PairingView to present it.
     @Published private(set) var pairingInvite: PairingInvite?
 
+    /// A notification response that should be pushed by the roster's
+    /// NavigationStack after the exact detached task has been activated.
+    @Published private(set) var notificationChat: Chat?
+
     private var client: CompanionClient?
     /// The device token, kept in memory so the client can be rebuilt when the
     /// dial moves to another stored host. The keychain remains the only place
@@ -77,6 +81,10 @@ final class Session: ObservableObject {
     /// A saved connection exists, but its token could not be read yet. Keeps
     /// "the keychain is locked" from being mistaken for "not paired".
     private var restorePending = false
+    /// A notification can cold-launch the app before protected Keychain data
+    /// is available. Retain the last explicitly tapped destination until the
+    /// paired client can be rebuilt after unlock.
+    private var pendingNotification: NotificationTarget?
 
     private static let connectionKey = "companion.connection"
 
@@ -84,6 +92,9 @@ final class Session: ObservableObject {
 
     init() {
         _ = NotificationCoordinator.shared
+        NotificationCoordinator.shared.responseHandler = { [weak self] target in
+            Task { @MainActor in await self?.openNotification(target) }
+        }
 #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-store-preview"),
            let url = Bundle.main.url(forResource: "StorePreview", withExtension: "json"),
@@ -194,6 +205,7 @@ final class Session: ObservableObject {
         streamTask?.cancel()
         streamTask = nil
         restorePending = false
+        pendingNotification = nil
         if let id = connection?.id { Keychain.remove(id) }
         UserDefaults.standard.removeObject(forKey: Self.connectionKey)
         connection = nil
@@ -214,6 +226,10 @@ final class Session: ObservableObject {
         // purpose. Coming to the front is the moment worth retrying on: the
         // app is on screen, so the phone is in someone's hand and unlocked.
         if client == nil, restorePending { restore() }
+        if client != nil, let pendingNotification {
+            self.pendingNotification = nil
+            Task { [weak self] in await self?.openNotification(pendingNotification) }
+        }
         // back before the grace period ran out: keep the stream, drop the task
         endLinger()
         guard client != nil, streamTask == nil else { return }
@@ -728,6 +744,99 @@ final class Session: ObservableObject {
         guard let client else { return nil }
         return try? await client.config()
     }
+
+    // MARK: - Routines
+
+    func loadRoutines() async -> (routines: [Routine], runs: [RoutineRun]) {
+        guard let client else { return ([], []) }
+        do { return try await client.routines() }
+        catch { actionError = error.localizedDescription; return ([], []) }
+    }
+
+    func loadRoutineRunAvailability() async -> RoutineRunAvailability? {
+        guard let client else { return nil }
+        do {
+            async let config = client.config()
+            async let instances = client.instances()
+            return try await RoutineRunAvailability(config: config, instances: instances)
+        } catch {
+            actionError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func saveRoutine(_ input: RoutineInput, id: String?) async -> Routine? {
+        guard let client else { return nil }
+        do {
+            if let id { return try await client.updateRoutine(id: id, input: input) }
+            return try await client.createRoutine(input)
+        } catch { actionError = error.localizedDescription; return nil }
+    }
+
+    func setRoutineEnabled(_ routine: Routine, enabled: Bool) async -> Routine? {
+        guard let client else { return nil }
+        do { return try await client.setRoutineEnabled(id: routine.id, enabled: enabled) }
+        catch { actionError = error.localizedDescription; return nil }
+    }
+
+    func runRoutine(_ routine: Routine) async -> RoutineRun? {
+        guard let client else { return nil }
+        do { return try await client.runRoutine(id: routine.id) }
+        catch { actionError = error.localizedDescription; return nil }
+    }
+
+    func deleteRoutine(_ routine: Routine) async -> Bool {
+        guard let client else { return false }
+        do { try await client.deleteRoutine(id: routine.id); return true }
+        catch { actionError = error.localizedDescription; return false }
+    }
+
+    // MARK: - Notification navigation
+
+    func openNotification(_ target: NotificationTarget) async {
+        guard let client else {
+            // Do not carry a stale destination into a future, unrelated
+            // pairing. Only a saved connection waiting for Keychain access is
+            // eligible for replay.
+            if restorePending {
+                pendingNotification = target
+                connect()
+            } else {
+                actionError = "Pair this phone with your computer to open that task."
+            }
+            return
+        }
+        pendingNotification = nil
+        do {
+            var bot = state.bot(target.botId)
+            if bot == nil {
+                let fleet = try await client.fleet(messages: 50)
+                state.hydrate(fleet)
+                bot = state.bot(target.botId)
+            }
+            // A room's approval/question notification carries the asker bot
+            // with the ROOM's thread id — open the room rather than asking
+            // the bot to switch to a thread it does not own (a 404).
+            if let room = state.rooms.first(where: { $0.threadId == target.threadId }) {
+                notificationChat = .room(room)
+                return
+            }
+            guard var selected = bot else { throw APIError.status(code: 404, message: "That agent no longer exists.") }
+            if target.requiresTaskSwitch(activeThreadId: selected.threadId) {
+                do {
+                    selected = try await client.switchTask(botId: selected.id, threadId: target.threadId)
+                    state.apply(.bot(selected))
+                } catch {
+                    // The thread may be gone (task deleted, stale payload).
+                    // Landing in the bot's current chat still beats an error
+                    // banner and no navigation at all.
+                }
+            }
+            notificationChat = .bot(selected)
+        } catch { actionError = error.localizedDescription }
+    }
+
+    func consumeNotificationChat() { notificationChat = nil }
 
     func react(to message: Message, in threadId: String, emoji: String) async {
         guard let client else { return }

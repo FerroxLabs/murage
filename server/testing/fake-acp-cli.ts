@@ -5,7 +5,7 @@
 // session/prompt, and streams session/update notifications for a scripted
 // turn. Failure modes mirror how real ACP agents misbehave:
 //
-//   FAKE_ACP_MODE   happy (default) | empty-reply | exit-early | hang | no-auth | auth-required | permission
+//   FAKE_ACP_MODE   happy (default) | empty-reply | exit-early | fail-after-text | hang | no-auth | auth-required | permission
 //                   | no-session-config (reject session/set_mode + set_model
 //                     with -32601, i.e. an agent predating those methods)
 //                   | ask-peer (spawn the injected "agents" MCP server from
@@ -303,6 +303,16 @@ function handle(msg: any) {
       if (mode === "hang") {
         // never resolve the prompt — lets tests exercise interrupt
         setInterval(() => {}, 1_000);
+        return;
+      }
+      if (mode === "fail-after-text") {
+        // Stream real text, THEN fail the turn — the shape of a crash
+        // mid-answer. This is the one case where the routine-failed/done
+        // notification dedup is load-bearing: the reply is non-empty, so
+        // nothing else suppresses the generic done.
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "half a report, then a crash" } } } });
+        recordMethod("session/prompt.error");
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "fake acp: turn failed after streaming" } });
         return;
       }
       const complete = () => {

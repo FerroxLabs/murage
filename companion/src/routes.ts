@@ -101,6 +101,14 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/api\/tts\/voices$/ },
   { method: "POST", path: /^\/api\/tts\/speak$/ },
 
+  // Routines create ordinary tasks using an existing agent configuration.
+  // Webhook management remains explicitly denied below.
+  { method: "GET", path: /^\/api\/routines$/ },
+  { method: "POST", path: /^\/api\/routines$/ },
+  { method: "PATCH", path: /^\/api\/routines\/[\w-]+$/ },
+  { method: "DELETE", path: /^\/api\/routines\/[\w-]+$/ },
+  { method: "POST", path: /^\/api\/routines\/[\w-]+\/run$/ },
+
   // Multi-account Composio management exposes opaque ids and aliases only.
   // Revocation stays on the Mac: the account DELETE route is deliberately
   // absent — a paired phone can see and add accounts, never remove one.
@@ -133,7 +141,10 @@ const EXPLAINED: ReadonlyArray<{ path: RegExp; error: string }> = [
     error: "webhooks are set up on your computer",
   },
   { path: /^\/api\/connectors(\/|$)/, error: "connected apps are set up on your computer" },
-  { path: /^\/api\/routines(\/|$)/, error: "routines are set up on your computer" },
+  {
+    path: /^\/api\/routines(\/|$)/,
+    error: "this routine operation is only available on your computer",
+  },
   { path: /^\/api\/teams(\/|$)/, error: "teams are imported and exported on your computer" },
 ];
 

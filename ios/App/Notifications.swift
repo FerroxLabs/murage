@@ -8,6 +8,9 @@ import CompanionCore
 final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationCoordinator()
     private let center = UNUserNotificationCenter.current()
+    /// Set by `Session`; kept as an id-only value so the notification layer
+    /// does not know about SwiftUI navigation or mutable fleet state.
+    var responseHandler: ((NotificationTarget) -> Void)?
 
     private override init() {
         super.init()
@@ -52,5 +55,18 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .list, .sound, .badge])
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let strings = response.notification.request.content.userInfo.reduce(into: [String: String]()) { result, pair in
+            guard let key = pair.key as? String, let value = pair.value as? String else { return }
+            result[key] = value
+        }
+        if let target = NotificationTarget(payload: strings) { responseHandler?(target) }
+        completionHandler()
     }
 }

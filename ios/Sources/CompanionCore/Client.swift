@@ -449,6 +449,11 @@ public struct CompanionClient: Sendable {
         try await send(try makeRequest("GET", "/api/tts/voices"), as: VoiceListResponse.self).voices
     }
 
+    public func routines() async throws -> (routines: [Routine], runs: [RoutineRun]) {
+        let response = try await send(try makeRequest("GET", "/api/routines"), as: RoutinesResponse.self)
+        return (response.routines, response.runs)
+    }
+
     // MARK: - Doing
 
     /// Make a new bot. The harness picks its name, colour and greeting — the
@@ -505,6 +510,54 @@ public struct CompanionClient: Sendable {
         let (data, response) = try await perform(request)
         try Self.check(response, data)
         return data
+    }
+
+    public func createRoutine(_ input: RoutineInput) async throws -> Routine {
+        guard input.schedule.type != .unknown else {
+            throw APIError.transport("Choose a supported schedule before saving this routine.")
+        }
+        return try await send(
+            try makeRequest("POST", "/api/routines", body: Self.routineBody(input)),
+            as: RoutineResponse.self
+        ).routine
+    }
+
+    public func updateRoutine(id: String, input: RoutineInput) async throws -> Routine {
+        guard input.schedule.type != .unknown else {
+            throw APIError.transport("Choose a supported schedule before saving this routine.")
+        }
+        return try await send(
+            try makeRequest("PATCH", "/api/routines/\(id)", body: Self.routineBody(input)),
+            as: RoutineResponse.self
+        ).routine
+    }
+
+    public func setRoutineEnabled(id: String, enabled: Bool) async throws -> Routine {
+        try await send(
+            try makeRequest("PATCH", "/api/routines/\(id)", body: ["enabled": enabled]),
+            as: RoutineResponse.self
+        ).routine
+    }
+
+    public func runRoutine(id: String) async throws -> RoutineRun {
+        try await send(try makeRequest("POST", "/api/routines/\(id)/run"), as: RoutineRunResponse.self).run
+    }
+
+    public func deleteRoutine(id: String) async throws {
+        try await send(try makeRequest("DELETE", "/api/routines/\(id)"))
+    }
+
+    private static func routineBody(_ input: RoutineInput) -> [String: Any] {
+        var schedule: [String: Any] = ["type": input.schedule.type.rawValue]
+        if let at = input.schedule.at { schedule["at"] = at }
+        if let time = input.schedule.time { schedule["time"] = time }
+        if let weekdays = input.schedule.weekdays { schedule["weekdays"] = weekdays }
+        var body: [String: Any] = [
+            "name": input.name, "prompt": input.prompt, "botId": input.botId,
+            "runOn": input.runOn, "schedule": schedule, "durationMinutes": input.durationMinutes,
+        ]
+        if let enabled = input.enabled { body["enabled"] = enabled }
+        return body
     }
 
     /// Make a room. The harness names it after the first member when `name`
