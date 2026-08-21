@@ -56,6 +56,34 @@ final class DecodingTests: XCTestCase {
         XCTAssertNil(fleet.bots.first?.hasMore)
     }
 
+    func testDecodesTheCloudBackendAndItsAbsence() throws {
+        // The cloud-desktop button hides on cloudBackend == "vps", so both
+        // sides of that gate must decode: a harness that sends the field, and
+        // an older one that has never heard of it (nil keeps the button).
+        let json = """
+        {
+          "bots": [
+            {
+              "id":"b1","threadId":"t1","name":"Scout","title":"","description":"",
+              "notifications":true,"color":"green","unread":false,
+              "modelSelection":{"instanceId":"i1","model":"m1"},"createdAt":1,
+              "computer":"cloud","cloudBackend":"vps"
+            },
+            {
+              "id":"b2","threadId":"t2","name":"Rio","title":"","description":"",
+              "notifications":true,"color":"blue","unread":false,
+              "modelSelection":{"instanceId":"i1","model":"m1"},"createdAt":2,
+              "computer":"cloud"
+            }
+          ],
+          "groups": []
+        }
+        """
+        let fleet = try JSONDecoder().decode(Fleet.self, from: Data(json.utf8))
+        XCTAssertEqual(fleet.bots.first?.cloudBackend, "vps")
+        XCTAssertNil(fleet.bots.last?.cloudBackend)
+    }
+
     func testOneMalformedBotDoesNotHideTheRestOfTheFleet() throws {
         let json = """
         {
@@ -123,6 +151,15 @@ final class DecodingTests: XCTestCase {
         XCTAssertTrue(card.isPending)
         XCTAssertTrue(card.isPermission)
         XCTAssertEqual(card.allowKey, "Bash:rm")
+        XCTAssertEqual(card.responseBehavior(for: "Allow"), "allow")
+        XCTAssertEqual(card.responseBehavior(for: "Approve"), "allow")
+        XCTAssertEqual(card.responseBehavior(for: "Yes"), "allow")
+        XCTAssertEqual(card.responseBehavior(for: "Always allow"), "allow")
+        XCTAssertEqual(card.responseBehavior(for: "Deny"), "deny")
+        XCTAssertEqual(card.responseBehavior(for: " deny "), "deny")
+        XCTAssertTrue(card.shouldRememberPermission(for: "Always allow"))
+        XCTAssertFalse(card.shouldRememberPermission(for: "Allow"))
+        XCTAssertFalse(card.shouldRememberPermission(for: " deny "))
 
         var answered = card
         answered.answered = "Allow"
@@ -131,6 +168,14 @@ final class DecodingTests: XCTestCase {
         var dismissed = card
         dismissed.dismissed = true
         XCTAssertFalse(dismissed.isPending)
+    }
+
+    func testAQuestionSendsItsChoiceAsAnAnswer() throws {
+        let message = try decode(Message.self, "options-card")
+        let card = try XCTUnwrap(message.card)
+        XCTAssertFalse(card.isPermission)
+        XCTAssertEqual(card.responseBehavior(for: "Anything"), "answer")
+        XCTAssertFalse(card.shouldRememberPermission(for: "Always allow"))
     }
 
     func testDecodesAMessageThatGainedAFieldWeDoNotKnow() throws {

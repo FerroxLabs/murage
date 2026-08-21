@@ -19,16 +19,23 @@ struct ChatView: View {
     let chat: Chat
     @EnvironmentObject private var session: Session
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draft = ""
+    @State private var showingTasks = false
+    @State private var showingComputer = false
+    @State private var showingPlus = false
+    @State private var shareFile: ShareFile?
     @FocusState private var composerFocused: Bool
+    /// The opening beat: the island grows with the bot's face in it, then
+    /// shrinks away as the face settles into the header. `facePhase` is 1
+    /// with the face in the island, 0 with it home in the header.
+    @State private var islandExpanded = false
+    @State private var islandVisible = false
+    @State private var facePhase: CGFloat = 0
 
     /// The live bubble's scroll target. A constant because there is at most
     /// one per chat and it has no message id to borrow.
     static let liveBubbleId = "companion.live"
-
-    private var messages: [Message] {
-        session.state.visibleTranscript(forThread: chat.threadId)
-    }
 
     /// The live chat record, so busy/unread stay current as frames land.
     private var current: Chat {
@@ -37,6 +44,21 @@ struct ChatView: View {
         case let .room(room):
             return session.state.rooms.first { $0.id == room.id }.map(Chat.room) ?? chat
         }
+    }
+
+    /// A bot receives a new thread when its task changes. Navigation keeps
+    /// the original Chat value, so every transcript lookup must follow the
+    /// live record instead of the snapshot that opened this screen.
+    private var threadId: String { current.threadId }
+
+    private var messages: [Message] {
+        session.state.visibleTranscript(forThread: threadId)
+    }
+
+    /// Unread elsewhere — what the back pill's badge counts, like Messages.
+    private var unreadElsewhere: Int {
+        let mine = current.unread ? 1 : 0
+        return max(0, session.state.unreadCount - mine)
     }
 
     var body: some View {
@@ -60,15 +82,18 @@ struct ChatView: View {
                     // height exact and the anchor land on the newest message.
                     // A thread holds 50 messages until you ask for more, so
                     // there is nothing here worth being lazy about.
-                    VStack(alignment: .leading, spacing: 12) {
-                        if session.state.hasMore[chat.threadId] == true {
+                    VStack(alignment: .leading, spacing: 6) {
+                        // room for the floating face when scrolled to the top
+                        Color.clear.frame(height: 72)
+
+                        if session.state.hasMore[threadId] == true {
                             Button("Load earlier messages") {
                                 // keep the reader where they were: after older
                                 // messages are prepended, sit back on the one
                                 // that used to be at the top
                                 let anchor = transcript.first?.id
                                 Task {
-                                    await session.loadOlder(threadId: chat.threadId)
+                                    await session.loadOlder(threadId: threadId)
                                     if let anchor { proxy.scrollTo(anchor, anchor: .top) }
                                 }
                             }
@@ -78,17 +103,22 @@ struct ChatView: View {
                         }
 
                         ForEach(Array(transcript.enumerated()), id: \.element.id) { index, message in
-                            VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 // a gap in time is worth marking; a timestamp
                                 // on every message is just noise
                                 if startsANewStretch(at: index, in: transcript) {
                                     Text(RelativeStamp.separator(message.date))
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(Color.secondary)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(Color.secondary.opacity(0.7))
                                         .frame(maxWidth: .infinity)
-                                        .padding(.top, 6)
+                                        .padding(.top, 10)
+                                        .padding(.bottom, 4)
                                 }
-                                MessageRow(chat: current, message: message)
+                                MessageRow(
+                                    chat: current,
+                                    message: message,
+                                    endsRun: endsRun(at: index, in: transcript)
+                                )
                             }
                             .id(message.id)
                         }
@@ -98,20 +128,66 @@ struct ChatView: View {
                         // one arrives — the store clears it on the same frame
                         // that appends the message, so there is never a beat
                         // where both are on screen.
-                        if let live = session.state.streaming[chat.threadId], !live.isEmpty {
-                            StreamingBubble(text: live, reasoning: nil)
+                        if let live = session.state.streaming[threadId], !live.isEmpty {
+                            StreamingBubble(text: live, reasoning: nil, color: current.color)
                                 .id(Self.liveBubbleId)
-                        } else if let thinking = session.state.reasoning[chat.threadId], !thinking.isEmpty {
+                        } else if let thinking = session.state.reasoning[threadId], !thinking.isEmpty {
                             // Only while there is no answer yet. Once tokens
                             // of the reply exist, the reasoning is behind us
                             // and showing both is just noise.
-                            StreamingBubble(text: nil, reasoning: thinking)
+                            StreamingBubble(text: nil, reasoning: thinking, color: current.color)
                                 .id(Self.liveBubbleId)
                         }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                // The header lives in the scroll view's top safe area: the
+                // transcript starts below it and scrolls under it — that is
+                // what the glass is for. An inset rather than a content
+                // margin, because `.defaultScrollAnchor(.bottom)` anchored
+                // unreliably against a margin and opened chats mid-way.
+                // The blur is only the top strip — back, computer — the way
+                // a system bar is; the transcript starts on that line and
+                // scrolls under the face and name, which float over it.
+                .safeAreaInset(edge: .top, spacing: 0) { headerBar }
+                .overlay(alignment: .top) { headerFace }
+                .overlay(alignment: .top) {
+                    // One face, in one layer, measured from the screen's top
+                    // edge: it sits in the island while that is open and
+                    // glides into its header slot when the island lets go.
+                    let topInset = IslandGeometry.topInset
+                    let hasIsland = IslandGeometry.hasIsland(topInset: topInset)
+                    let islandSide: CGFloat = 220
+                    // centred in the part of the square the hardware island does not cover
+                    let islandFaceCentre = IslandGeometry.top + IslandGeometry.size.height + (islandSide - IslandGeometry.size.height) / 2
+                    let headerFaceCentre = topInset + 26
+                    let faceSize = 60 + 72 * facePhase
+                    let faceCentre = headerFaceCentre + (islandFaceCentre - headerFaceCentre) * facePhase
+                    ZStack(alignment: .top) {
+                        if islandVisible {
+                            IslandShell(expanded: islandExpanded, hasIsland: hasIsland, expandedSize: CGSize(width: islandSide, height: islandSide)) {
+                                Color.clear
+                            }
+                        }
+                        MausAvatar(color: current.color, size: faceSize, state: MausState.forChat(current, in: session.state), comets: islandExpanded)
+                            .offset(y: faceCentre - faceSize / 2)
+                            .allowsHitTesting(false)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .ignoresSafeArea(edges: .top)
+                }
+                .task {
+                    // grow, hold a beat, shrink — the face rides along
+                    guard !reduceMotion else { return }
+                    islandVisible = true
+                    try? await Task.sleep(for: .milliseconds(40))
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { islandExpanded = true; facePhase = 1 }
+                    try? await Task.sleep(for: .milliseconds(1000))
+                    withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) { islandExpanded = false; facePhase = 0 }
+                    try? await Task.sleep(for: .milliseconds(600))
+                    islandVisible = false
                 }
                 // A conversation grows from the bottom: a transcript shorter
                 // than the screen rests at the bottom, and opening a chat
@@ -125,64 +201,44 @@ struct ChatView: View {
                 // the string so this fires once per delta batch, and without
                 // animation — animating every token turns a smooth stream
                 // into a stutter, because each scroll interrupts the last.
-                .onChange(of: session.state.streaming[chat.threadId]?.count ?? 0) { _, length in
+                .onChange(of: session.state.streaming[threadId]?.count ?? 0) { _, length in
                     guard length > 0 else { return }
                     proxy.scrollTo(Self.liveBubbleId, anchor: .bottom)
                 }
+                .onChange(of: session.focusedMessageId) { _, messageId in
+                    guard let messageId,
+                          messages.contains(where: { $0.id == messageId })
+                    else { return }
+                    withAnimation { proxy.scrollTo(messageId, anchor: .center) }
+                    session.consumeFocus(messageId)
+                }
+                .task {
+                    guard let messageId = session.focusedMessageId,
+                          messages.contains(where: { $0.id == messageId })
+                    else { return }
+                    proxy.scrollTo(messageId, anchor: .center)
+                    session.consumeFocus(messageId)
+                }
             }
+            .id(threadId)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             composer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .navigationBarTitleDisplayMode(.inline)
+        .overlay(alignment: .bottom) { plusSheet }
+        .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button { dismiss() } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.primary)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(Color.secondary.opacity(0.16)))
-                }
-            }
-            ToolbarItem(placement: .principal) {
-                HStack(spacing: 8) {
-                    MausAvatar(color: current.color, size: 26)
-                    Text(current.name)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Color.primary)
-                }
-                .padding(.leading, 6)
-                .padding(.trailing, 14)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(Color.secondary.opacity(0.16)))
-            }
-            if case let .bot(bot) = current {
-                // Rooms have no computer of their own — whichever member is
-                // speaking owns one, and picking for the reader would be a
-                // guess. Bots only.
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        ComputerView(bot: bot)
-                    } label: {
-                        Image(systemName: "display")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(Color.primary)
-                    }
-                    .accessibilityLabel("Watch \(bot.name)'s computer")
-                }
-            }
-            if current.busy, case let .bot(bot) = current {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Stop") { Task { await session.interrupt(bot: bot) } }
-                }
-            }
+        .navigationDestination(isPresented: $showingComputer) {
+            if case let .bot(bot) = current { ComputerView(bot: bot) }
         }
-        .task {
+        .task(id: threadId) {
             // opening a chat is what marks it read, exactly as on the desktop
             if current.unread { await session.markRead(current) }
+#if DEBUG
+            // `-open-plus`: the + sheet up, for the screenshot harness
+            if ProcessInfo.processInfo.arguments.contains("-open-plus") { showingPlus = true }
+#endif
         }
         .onChange(of: current.unread) { _, unread in
             // A message can arrive while this chat is already on screen. The
@@ -190,6 +246,243 @@ struct ChatView: View {
             // bit here rather than leaving a badge on an open conversation.
             if unread { Task { await session.markRead(current) } }
         }
+        .sheet(isPresented: $showingTasks) {
+            if case let .bot(bot) = current { TaskManagerView(bot: bot) }
+        }
+        .sheet(item: $shareFile) { file in
+            ActivityShareSheet(items: [file.url])
+        }
+    }
+
+    // MARK: - Header
+
+    /// Back on the left with the rest-of-app unread count, the bot's
+    /// computer on the right — a blurred strip to the top edge.
+    private var headerBar: some View {
+        HStack(alignment: .top) {
+            Button { dismiss() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                    if unreadElsewhere > 0 {
+                        Text("\(unreadElsewhere)")
+                            .font(.system(size: 13, weight: .semibold))
+                            .padding(.horizontal, 7)
+                            .frame(minWidth: 22, minHeight: 22)
+                            .background(Capsule().fill(Color.secondary.opacity(0.22)))
+                    }
+                }
+                .foregroundStyle(Color.primary)
+                .padding(.leading, 12)
+                .padding(.trailing, unreadElsewhere > 0 ? 8 : 12)
+                .frame(height: 44)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .glassCapsule()
+            .accessibilityLabel("Back")
+
+            Spacer(minLength: 4)
+
+            if case .bot = current {
+                GlassButton(systemImage: "display", size: 44, weight: .medium) {
+                    showingComputer = true
+                }
+                .accessibilityLabel("Watch \(current.name)'s computer")
+            } else {
+                Color.clear.frame(width: 44, height: 44)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+        .background(
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .mask(
+                    VStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: 20)
+                    }
+                )
+                .padding(.bottom, -20)
+                .ignoresSafeArea(edges: .top)
+                .allowsHitTesting(false)
+        )
+    }
+
+    /// The bot's face over its name pill, floating over the transcript
+    /// between the two buttons.
+    private var headerFace: some View {
+        VStack(spacing: 6) {
+            // Always here, following the island's face while that one is
+            // the source: when the island lets go, this one flies home.
+            // the face itself is drawn by the island layer above, so it can
+            // travel; this is its seat
+            Color.clear.frame(width: 60, height: 60)
+            Menu {
+                chatActions
+            } label: {
+                HStack(spacing: 6) {
+                    Text(current.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                    if !current.subtitle.isEmpty {
+                        Text(current.subtitle)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(1)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.secondary)
+                }
+                .padding(.leading, 12)
+                .padding(.trailing, 10)
+                .frame(height: 32)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .glassCapsule()
+        }
+        .padding(.top, -4)
+    }
+
+    /// Everything the name pill and the composer's + can do. One list, two
+    /// doors — the pill for "about this chat", the + for "do something".
+    @ViewBuilder
+    private var chatActions: some View {
+        if case let .bot(bot) = current {
+            Button("New task", systemImage: "plus.square.on.square") {
+                Task { await session.createTask(for: bot, title: nil) }
+            }
+            .disabled(bot.busy == true)
+            Button("Tasks", systemImage: "square.stack") { showingTasks = true }
+            Button("Watch computer", systemImage: "display") { showingComputer = true }
+        }
+        Button("Share as Markdown", systemImage: "doc.plaintext") {
+            Task {
+                if let url = await session.export(threadId: current.threadId, format: "markdown") {
+                    shareFile = ShareFile(url: url)
+                }
+            }
+        }
+        Button("Share as JSON", systemImage: "curlybraces") {
+            Task {
+                if let url = await session.export(threadId: current.threadId, format: "json") {
+                    shareFile = ShareFile(url: url)
+                }
+            }
+        }
+        if current.busy, case let .bot(bot) = current {
+            Divider()
+            Button("Interrupt", systemImage: "stop.fill", role: .destructive) {
+                Task { await session.interrupt(bot: bot) }
+            }
+        }
+    }
+
+    // MARK: - The + sheet
+
+    /// What the composer's + opens: a glass sheet of the things you can do
+    /// here, each with a line saying what it does. Rises above the composer;
+    /// tapping anywhere else, or the × the + became, puts it away.
+    @ViewBuilder
+    private var plusSheet: some View {
+        if showingPlus {
+            ZStack(alignment: .bottom) {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .onTapGesture { withAnimation(.snappy(duration: 0.28)) { showingPlus = false } }
+
+                VStack(spacing: 0) {
+                    ForEach(plusActions) { action in
+                        Button {
+                            withAnimation(.snappy(duration: 0.28)) { showingPlus = false }
+                            action.run()
+                        } label: {
+                            HStack(spacing: 16) {
+                                Image(systemName: action.systemImage)
+                                    .font(.system(size: 20, weight: .medium))
+                                    .foregroundStyle(action.destructive ? Color.red : Color.primary)
+                                    .frame(width: 44, height: 44)
+                                    .background(Circle().fill(Color.primary.opacity(0.10)))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(action.title)
+                                        .font(.system(size: 19, weight: .medium))
+                                        .foregroundStyle(action.destructive ? Color.red : Color.primary)
+                                    Text(action.subtitle)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(Color.secondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 18)
+                            .frame(height: 64)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(action.disabled)
+                        .opacity(action.disabled ? 0.45 : 1)
+                    }
+                }
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassSheet(cornerRadius: 30)
+                .padding(.leading, 12)
+                .padding(.trailing, 44)
+                .padding(.bottom, 70)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private struct PlusAction: Identifiable {
+        let id: String
+        let systemImage: String
+        let title: String
+        let subtitle: String
+        var destructive = false
+        var disabled = false
+        let run: () -> Void
+    }
+
+    private var plusActions: [PlusAction] {
+        var out: [PlusAction] = []
+        if case let .bot(bot) = current {
+            out.append(PlusAction(
+                id: "task", systemImage: "plus.square.on.square", title: "New task",
+                subtitle: "Start a fresh thread with \(bot.name)", disabled: bot.busy == true
+            ) { Task { await session.createTask(for: bot, title: nil) } })
+            out.append(PlusAction(
+                id: "tasks", systemImage: "square.stack", title: "Tasks",
+                subtitle: "Switch, rename or remove one"
+            ) { showingTasks = true })
+            out.append(PlusAction(
+                id: "computer", systemImage: "display", title: "Watch computer",
+                subtitle: "Live view of what \(bot.name) is doing"
+            ) { showingComputer = true })
+        }
+        out.append(PlusAction(
+            id: "share", systemImage: "doc.plaintext", title: "Share transcript",
+            subtitle: "This chat as Markdown"
+        ) {
+            Task {
+                if let url = await session.export(threadId: current.threadId, format: "markdown") {
+                    shareFile = ShareFile(url: url)
+                }
+            }
+        })
+        if current.busy, case let .bot(bot) = current {
+            out.append(PlusAction(
+                id: "stop", systemImage: "stop.fill", title: "Interrupt",
+                subtitle: "Stop the current turn", destructive: true
+            ) { Task { await session.interrupt(bot: bot) } })
+        }
+        return out
     }
 
     /// True when this message opens a fresh stretch of conversation — the
@@ -197,6 +490,18 @@ struct ChatView: View {
     private func startsANewStretch(at index: Int, in messages: [Message]) -> Bool {
         guard index > 0 else { return true }
         return messages[index].at - messages[index - 1].at > 30 * 60 * 1000
+    }
+
+    /// True when the next message is from someone else (or there is none),
+    /// which is where a run of bubbles gets its tail — one per run, like
+    /// every messaging app, rather than one per bubble.
+    private func endsRun(at index: Int, in messages: [Message]) -> Bool {
+        guard index + 1 < messages.count else { return true }
+        let this = messages[index], next = messages[index + 1]
+        if this.role != next.role { return true }
+        if this.from?.name != next.from?.name { return true }
+        // a card or a tool chip between two texts breaks the run visually
+        return next.kind != .text
     }
 
     private var canSend: Bool {
@@ -210,56 +515,165 @@ struct ChatView: View {
         Task { await session.send(text, to: current) }
     }
 
-    private var composer: some View {
-        HStack(spacing: 10) {
-            TextField("Ask \(current.name)", text: $draft, axis: .vertical)
-                .lineLimit(1...5)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Capsule().fill(Color.secondary.opacity(0.16)))
-                .focused($composerFocused)
-                .submitLabel(.send)
-                // Return sends, Shift+Return breaks the line — the shape
-                // every chat app has. `.ignored` hands the keypress back to
-                // the text field, which is what inserts the newline; there is
-                // no way to type one otherwise once Return is claimed.
-                .onKeyPress(.return, phases: .down) { press in
-                    guard !press.modifiers.contains(.shift) else { return .ignored }
-                    submit()
-                    return .handled
-                }
-                // software keyboards have no Shift+Return, so their Return
-                // key is a send — which is what `.submitLabel(.send)` promises
-                .onSubmit(submit)
+    // MARK: - Composer
 
-            Button {
-                submit()
-            } label: {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(Color(uiColor: .systemBackground))
-                    .frame(width: 36, height: 36)
-                    .background(
-                        Circle().fill(canSend ? Color.primary : Color.secondary.opacity(0.35))
-                    )
+    /// A round + and a glass pill with the send button inside it.
+    private var composer: some View {
+        GlassGroup(spacing: 10) {
+            HStack(alignment: .bottom, spacing: 10) {
+                Button {
+                    composerFocused = false
+                    withAnimation(.snappy(duration: 0.28)) { showingPlus.toggle() }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(showingPlus ? Color(uiColor: .systemBackground) : Color.primary)
+                        .rotationEffect(.degrees(showingPlus ? 45 : 0))
+                        .frame(width: 44, height: 44)
+                        .background(Circle().fill(showingPlus ? Color.primary : Color.clear))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .glassCapsule()
+                .accessibilityLabel(showingPlus ? "Close" : "More")
+
+                HStack(alignment: .bottom, spacing: 6) {
+                    TextField("Ask \(current.name)", text: $draft, axis: .vertical)
+                        .lineLimit(1...5)
+                        .font(.system(size: 17))
+                        .padding(.leading, 16)
+                        .padding(.vertical, 11)
+                        .focused($composerFocused)
+                        .submitLabel(.send)
+                        // Return sends, Shift+Return breaks the line — the shape
+                        // every chat app has. `.ignored` hands the keypress back to
+                        // the text field, which is what inserts the newline; there is
+                        // no way to type one otherwise once Return is claimed.
+                        .onKeyPress(.return, phases: .down) { press in
+                            guard !press.modifiers.contains(.shift) else { return .ignored }
+                            submit()
+                            return .handled
+                        }
+                        // software keyboards have no Shift+Return, so their Return
+                        // key is a send — which is what `.submitLabel(.send)` promises
+                        .onSubmit(submit)
+
+                    Button {
+                        submit()
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(canSend ? Color.white : Color.secondary)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                Circle().fill(canSend ? BubbleColor.mine : Color.secondary.opacity(0.18))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSend)
+                    .padding(.trailing, 6)
+                    .padding(.bottom, 6)
+                    .animation(.easeOut(duration: 0.15), value: canSend)
+                }
+                .frame(minHeight: 44)
+                .glassCapsule(interactive: false)
             }
-            .disabled(!canSend)
-            .animation(.easeOut(duration: 0.15), value: canSend)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
     }
 }
 
 struct MessageRow: View {
     let chat: Chat
     let message: Message
+    /// Last bubble of a run from the same side: the one that gets the tail.
+    var endsRun = true
+    @EnvironmentObject private var session: Session
+    @State private var editingText = ""
+    @State private var showingEdit = false
+
+    private static let reactionChoices = ["👍", "❤️", "😂", "🎉", "👀"]
+
+    private var versions: [Message] {
+        session.state.versions(of: message, inThread: chat.threadId)
+    }
 
     var body: some View {
+        VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
+            content
+
+            if let comm = message.comm {
+                Label("Messaged \(comm.withName)", systemImage: "arrow.up.right.bubble")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.secondary)
+            }
+
+            if let reactions = message.reactions, !reactions.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(reactionGroups(reactions), id: \.emoji) { group in
+                        Button("\(group.emoji) \(group.count)") {
+                            Task { await session.react(to: message, in: chat.threadId, emoji: group.emoji) }
+                        }
+                        .font(.system(size: 13))
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                        .tint(group.mine ? Color.accentColor : Color.secondary)
+                    }
+                }
+            }
+
+            if versions.count > 1, let index = versions.firstIndex(where: { $0.id == message.id }),
+               case let .bot(bot) = chat {
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await session.switchVersion(to: versions[index - 1], for: bot) }
+                    } label: { Image(systemName: "chevron.left") }
+                    .disabled(index == 0 || bot.busy == true)
+                    Text("\(index + 1) of \(versions.count)")
+                    Button {
+                        Task { await session.switchVersion(to: versions[index + 1], for: bot) }
+                    } label: { Image(systemName: "chevron.right") }
+                    .disabled(index + 1 >= versions.count || bot.busy == true)
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.secondary)
+            }
+        }
+        .contextMenu {
+            ForEach(Self.reactionChoices, id: \.self) { emoji in
+                Button(emoji) { Task { await session.react(to: message, in: chat.threadId, emoji: emoji) } }
+            }
+            if message.role == .user, message.kind == .text, case let .bot(bot) = chat {
+                Divider()
+                Button("Edit and retry", systemImage: "pencil") {
+                    editingText = message.text ?? ""
+                    showingEdit = true
+                }
+                .disabled(bot.busy == true)
+            }
+        }
+        .alert("Edit and retry", isPresented: $showingEdit) {
+            TextField("Message", text: $editingText)
+            Button("Cancel", role: .cancel) {}
+            if case let .bot(bot) = chat {
+                Button("Send") {
+                    let text = editingText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !text.isEmpty else { return }
+                    Task { await session.edit(message, for: bot, text: text) }
+                }
+            }
+        } message: {
+            Text("This creates a new version and continues from there.")
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch message.kind {
         case .text:
-            TextBubble(message: message)
+            TextBubble(message: message, chat: chat, tailed: endsRun)
         case .options:
             CardView(chat: chat, message: message)
         case .activity:
@@ -273,25 +687,52 @@ struct MessageRow: View {
             // When there is nothing to show, show nothing — a placeholder
             // saying "unsupported" is a worse gap than the gap.
             if let text = message.text, !text.isEmpty {
-                TextBubble(message: message)
+                TextBubble(message: message, chat: chat, tailed: endsRun)
             }
         }
     }
+
+    private func reactionGroups(_ reactions: [Reaction]) -> [(emoji: String, count: Int, mine: Bool)] {
+        Dictionary(grouping: reactions, by: \.emoji)
+            .map { (emoji: $0.key, count: $0.value.count, mine: $0.value.contains { $0.by == "user" }) }
+            .sorted { $0.emoji < $1.emoji }
+    }
+}
+
+private struct ShareFile: Identifiable {
+    let url: URL
+    var id: String { url.path }
+}
+
+private struct ActivityShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 struct TextBubble: View {
     let message: Message
+    let chat: Chat
+    var tailed = true
 
     var body: some View {
         let mine = message.role == .user
-        HStack {
-            if mine { Spacer(minLength: 44) }
+        // rooms attribute each line to the member who said it
+        let speaker = message.from
+        // No face beside the bubble: the bot's face is in the header, and in
+        // a room the name line says who spoke. The bubble sits at the edge.
+        HStack(alignment: .bottom, spacing: 0) {
+            if mine { Spacer(minLength: 56) }
+
             VStack(alignment: .leading, spacing: 4) {
-                // rooms attribute each line to the member who said it
-                if let from = message.from {
-                    Text(from.name)
+                if let speaker, !mine {
+                    Text(speaker.name)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(MausPalette.color(from.color))
+                        .foregroundStyle(MausPalette.color(speaker.color))
                 }
                 // Bots get markdown, you do not — the same split the desktop
                 // makes. Markdown you did not intend is worse than markdown
@@ -299,7 +740,7 @@ struct TextBubble: View {
                 if mine {
                     Text(message.text ?? "")
                         .font(.system(size: 17))
-                        .foregroundStyle(Color.primary)
+                        .foregroundStyle(BubbleColor.mineText)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -309,12 +750,15 @@ struct TextBubble: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 15)
+            .padding(.vertical, 11)
             .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.secondary.opacity(mine ? 0.24 : 0.13))
+                SpeechBubble(tail: tailed ? (mine ? .trailing : .leading) : .none)
+                    .fill(mine ? BubbleColor.mine : BubbleColor.theirs)
             )
+            // leave room for the tail below, so the next row does not sit on it
+            .padding(.bottom, tailed ? SpeechBubble.tailDrop() : 0)
+
             if !mine { Spacer(minLength: 44) }
         }
     }
@@ -366,21 +810,29 @@ struct CardView: View {
 
     /// One definition of "the refusal", shared by the button tint and the
     /// choice above so the two cannot drift apart.
-    private static func isRefusal(_ option: String) -> Bool {
-        option.caseInsensitiveCompare("Deny") == .orderedSame
-    }
+    private static func isRefusal(_ option: String) -> Bool { OptionCard.isRefusal(option) }
+
+    private var tint: Color { MausPalette.color(chat.color) }
 
     var body: some View {
         if let card = message.card {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
+                if card.isPending {
+                    Label("\(chat.name) is waiting on you", systemImage: "hand.raised.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(tint)
+                }
                 Text(card.title)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Color.primary)
-                Text(card.subtitle)
-                    .font(.system(size: 15))
-                    .foregroundStyle(Color.secondary)
-                    .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+                if !card.subtitle.isEmpty {
+                    Text(card.subtitle)
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if let held = card.held {
                     Label(held, systemImage: "exclamationmark.shield")
@@ -389,20 +841,29 @@ struct CardView: View {
                 }
 
                 if card.isPending {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         ForEach(card.options, id: \.self) { option in
-                            Button(option) {
+                            Button {
                                 answering = true
                                 Task {
-                                    await session.answer(threadId: chat.threadId, card: card, choice: option)
+                                    await session.answer(chat: chat, card: card, choice: option)
                                     answering = false
                                 }
+                            } label: {
+                                Text(option)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(Self.isRefusal(option) ? Color.primary : .white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 40)
+                                    .background(
+                                        Capsule().fill(Self.isRefusal(option) ? Color.secondary.opacity(0.18) : tint)
+                                    )
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(Self.isRefusal(option) ? Color.secondary : Color.accentColor)
+                            .buttonStyle(.plain)
                             .disabled(answering)
                         }
                     }
+                    .padding(.top, 2)
 
                     // The grant key comes from the card. The phone never
                     // derives its own, so it cannot permit something subtly
@@ -414,11 +875,18 @@ struct CardView: View {
                             answering = true
                             Task {
                                 await session.alwaysAllow(bot: bot, card: card)
-                                await session.answer(threadId: chat.threadId, card: card, choice: allow)
+                                await session.answer(
+                                    chat: chat,
+                                    card: card,
+                                    choice: allow,
+                                    rememberingPermission: false
+                                )
                                 answering = false
                             }
                         }
-                        .font(.system(size: 14))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.secondary)
+                        .frame(maxWidth: .infinity)
                         .disabled(answering)
                     }
                 } else if let answered = card.answered {
@@ -427,15 +895,15 @@ struct CardView: View {
                         .foregroundStyle(Color.secondary)
                 }
             }
-            .padding(16)
+            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.secondary.opacity(0.13))
+                    .fill(card.isPending ? tint.opacity(0.12) : Color.secondary.opacity(0.13))
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(card.isPending ? Color.accentColor : .clear, lineWidth: 1.5)
+                    .strokeBorder(card.isPending ? tint : .clear, lineWidth: 1.5)
             }
         }
     }
@@ -495,9 +963,10 @@ struct ScreenShot: View {
 struct StreamingBubble: View {
     let text: String?
     let reasoning: String?
+    var color: String = "blue"
 
     var body: some View {
-        HStack {
+        HStack(alignment: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 if let reasoning, !reasoning.isEmpty, text?.isEmpty != false {
                     // Quieter and smaller than an answer, because it is not
@@ -524,12 +993,10 @@ struct StreamingBubble: View {
                         .foregroundStyle(Color.primary)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.secondary.opacity(0.13))
-            )
+            .padding(.horizontal, 15)
+            .padding(.vertical, 11)
+            .background(SpeechBubble(tail: .leading).fill(BubbleColor.theirs))
+            .padding(.bottom, SpeechBubble.tailDrop())
             Spacer(minLength: 44)
         }
         // No `.textSelection` on purpose: selecting text that is still growing

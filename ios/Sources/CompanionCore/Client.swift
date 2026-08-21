@@ -16,26 +16,40 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     public var name: String
     public var host: String
     public var port: Int
+    /// Every other address the computer answered on at pairing time, best
+    /// first — the tailnet name, the LAN address, the sidecar's mDNS name.
+    /// Optional so connections saved before fallbacks existed still decode;
+    /// read through `orderedHosts`, which is never empty.
+    public var hosts: [String]?
 
-    public init(id: String = UUID().uuidString, name: String, host: String, port: Int) {
+    public init(id: String = UUID().uuidString, name: String, host: String, port: Int, hosts: [String]? = nil) {
         self.id = id
         self.name = name
         self.host = Self.urlHost(host)
         self.port = port
+        self.hosts = hosts
     }
 
     /// The representation `URLComponents.host` accepts for a literal IPv6
     /// address. It adds brackets exactly once and leaves DNS/IPv4 names alone.
-    /// A scope zone on a link-local address is intentionally retained;
+    /// A scope zone on a link-local IPv6 address is intentionally retained;
     /// URLComponents percent-encodes it when it builds the URL.
+    ///
+    /// An interface zone on anything *else* is dropped. `NWEndpoint.Host`
+    /// describes a resolved IPv4 address with the interface it arrived on
+    /// ("192.168.1.3%en0"); the zone carries no meaning there and
+    /// URLComponents refuses it as a host, which made a Bonjour-discovered
+    /// computer fail with "that address doesn't look right".
     public static func urlHost(_ host: String) -> String {
-        let bare: String
+        var bare: String
         if host.hasPrefix("["), host.hasSuffix("]") {
             bare = String(host.dropFirst().dropLast())
         } else {
             bare = host
         }
-        return bare.contains(":") ? "[\(bare)]" : bare
+        if bare.contains(":") { return "[\(bare)]" }
+        if let zone = bare.firstIndex(of: "%") { bare = String(bare[..<zone]) }
+        return bare
     }
 
     /// Parse a manually entered companion address. A bare IPv6 literal uses
@@ -110,6 +124,77 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
         components.host = Self.urlHost(host)
         components.port = port
         return components.url
+    }
+}
+
+/// A pairing window handed from the desktop to the app as a QR/deep link.
+/// It contains only the address and a short-lived, single-use credential.
+/// New desktop builds put a high-entropy token in the QR; older builds carry
+/// the same six-digit code shown on screen. The long-lived device token is
+/// created later by `CompanionClient.pair` and never appears in the link.
+public struct PairingInvite: Equatable, Sendable {
+    public let connection: Connection
+    public let credential: String
+
+    public init(connection: Connection, credential: String) {
+        self.connection = connection
+        self.credential = credential
+    }
+
+    public static func parse(_ url: URL) -> PairingInvite? {
+        guard url.scheme?.lowercased() == "openmausbot",
+              url.host?.lowercased() == "pair",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return nil }
+
+        var values: [String: String] = [:]
+        for item in components.queryItems ?? [] {
+            guard values[item.name] == nil, let value = item.value else { return nil }
+            values[item.name] = value
+        }
+        guard let address = values["address"],
+              let credential = Self.credential(from: values),
+              var connection = Connection.parse(address)
+        else { return nil }
+
+        if let name = values["name"]?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            let cleaned = name.filter {
+                (!$0.isASCII && !$0.isNewline) || $0.asciiValue.map { $0 >= 32 && $0 != 127 } == true
+            }
+            if !cleaned.isEmpty { connection.name = String(cleaned.prefix(80)) }
+        }
+        // The desktop's ordered fallback list, comma-joined. Advisory rather
+        // than load-bearing: a bad entry costs one failed dial when its turn
+        // comes, so unusable candidates are dropped instead of failing the
+        // whole invite. 253 bytes is the DNS name ceiling.
+        if let list = values["hosts"] {
+            let candidates = list.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { candidate in
+                    !candidate.isEmpty && candidate.utf8.count <= 253 &&
+                        !candidate.contains(where: { $0.isWhitespace || "/?#".contains($0) })
+                }
+            if !candidates.isEmpty { connection.hosts = Array(candidates.prefix(8)) }
+        }
+        return PairingInvite(connection: connection, credential: credential)
+    }
+
+    private static func credential(from values: [String: String]) -> String? {
+        if let token = values["token"] {
+            guard token.hasPrefix("omb_pair_"),
+                  token.utf8.count == 52,
+                  token.dropFirst("omb_pair_".count).utf8.allSatisfy({
+                      (48...57).contains($0) || (65...90).contains($0) ||
+                      (97...122).contains($0) || $0 == 45 || $0 == 95
+                  })
+            else { return nil }
+            return token
+        }
+        guard let code = values["code"],
+              code.utf8.count == 6,
+              code.utf8.allSatisfy({ (48...57).contains($0) })
+        else { return nil }
+        return code
     }
 }
 
@@ -221,15 +306,26 @@ public struct CompanionClient: Sendable {
 
     // MARK: - Pairing
 
-    /// Redeem a code for a device token. The only call made without one.
+    /// Redeem a one-time pairing credential for a device token. The only call
+    /// made without a device token.
     public static func pair(
         connection: Connection,
-        code: String,
+        credential: String,
         deviceName: String,
         session: URLSession = .shared
     ) async throws -> PairResponse {
         let client = CompanionClient(connection: connection, token: nil, session: session)
-        let pairRequest = try client.makeRequest("POST", "/api/pair", body: ["code": code, "deviceName": deviceName])
+        // A six-digit credential is an older desktop or manual entry. Keep
+        // its field name for compatibility; new QR credentials use the
+        // explicit field and are never persisted by the app.
+        let key = credential.utf8.count == 6 && credential.utf8.allSatisfy({ (48...57).contains($0) })
+            ? "code"
+            : "credential"
+        let pairRequest = try client.makeRequest(
+            "POST",
+            "/api/pair",
+            body: [key: credential, "deviceName": deviceName]
+        )
         return try await client.send(pairRequest, as: PairResponse.self)
     }
 
@@ -247,6 +343,48 @@ public struct CompanionClient: Sendable {
         var query = [URLQueryItem(name: "limit", value: String(limit))]
         if let before { query.append(URLQueryItem(name: "before", value: before)) }
         return try await send(try makeRequest("GET", "/api/threads/\(threadId)/messages", query: query), as: ThreadPage.self)
+    }
+
+    /// A page containing one exact message, for landing on a search hit.
+    public func messages(threadId: String, around messageId: String, limit: Int = 50) async throws -> ThreadPage {
+        let query = [
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "around", value: messageId),
+        ]
+        return try await send(try makeRequest("GET", "/api/threads/\(threadId)/messages", query: query), as: ThreadPage.self)
+    }
+
+    public func search(_ query: String, limit: Int = 40) async throws -> [SearchHit] {
+        let items = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        return try await send(try makeRequest("GET", "/api/search", query: items), as: SearchResponse.self).hits
+    }
+
+    public func export(threadId: String, format: String) async throws -> TranscriptExport {
+        let request = try makeRequest(
+            "GET",
+            "/api/threads/\(threadId)/export",
+            query: [URLQueryItem(name: "format", value: format)]
+        )
+        let (data, response) = try await perform(request)
+        try Self.check(response, data)
+        let http = response as? HTTPURLResponse
+        let fallback = "transcript.\(format == "json" ? "json" : "md")"
+        let disposition = http?.value(forHTTPHeaderField: "Content-Disposition") ?? ""
+        let filenamePart = disposition
+            .split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { $0.lowercased().hasPrefix("filename=") }
+        let filename = filenamePart.map {
+            String($0.dropFirst("filename=".count)).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        } ?? fallback
+        return TranscriptExport(
+            data: data,
+            filename: filename,
+            contentType: http?.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream"
+        )
     }
 
     public func instances() async throws -> [Instance] {
@@ -274,6 +412,14 @@ public struct CompanionClient: Sendable {
         try await send(try makeRequest("POST", "/api/bots"), as: CreatedBot.self).bot
     }
 
+    /// Make a room. The harness names it after the first member when `name`
+    /// is empty, exactly as the desktop's dialog does.
+    public func createRoom(name: String?, memberIds: [String]) async throws -> Room {
+        var body: [String: Any] = ["memberIds": memberIds]
+        if let name, !name.trimmingCharacters(in: .whitespaces).isEmpty { body["name"] = name }
+        return try await send(try makeRequest("POST", "/api/groups", body: body), as: CreatedRoom.self).group
+    }
+
     public func send(text: String, toBot botId: String) async throws {
         try await send(try makeRequest("POST", "/api/bots/\(botId)/messages", body: ["text": text]))
     }
@@ -299,8 +445,59 @@ public struct CompanionClient: Sendable {
         try await send(try makeRequest("POST", "/api/bots/\(botId)/always-allow", body: ["allowKey": key]))
     }
 
+    public func toggleReaction(threadId: String, messageId: String, emoji: String) async throws -> Message {
+        try await send(
+            try makeRequest(
+                "POST",
+                "/api/threads/\(threadId)/messages/\(messageId)/reactions",
+                body: ["emoji": emoji]
+            ),
+            as: MessageResponse.self
+        ).message
+    }
+
+    public func edit(botId: String, messageId: String, text: String) async throws {
+        try await send(try makeRequest("POST", "/api/bots/\(botId)/messages/\(messageId)/edit", body: ["text": text]))
+    }
+
+    public func setActiveBranch(botId: String, messageId: String) async throws -> String {
+        try await send(
+            try makeRequest("POST", "/api/bots/\(botId)/active-branch", body: ["messageId": messageId]),
+            as: ActiveBranchResponse.self
+        ).activeLeafId
+    }
+
+    public func createTask(botId: String, title: String? = nil) async throws -> Bot {
+        var body: [String: Any] = [:]
+        if let title, !title.isEmpty { body["title"] = title }
+        return try await send(try makeRequest("POST", "/api/bots/\(botId)/tasks", body: body), as: BotResponse.self).bot
+    }
+
+    public func switchTask(botId: String, threadId: String) async throws -> Bot {
+        try await send(try makeRequest("POST", "/api/bots/\(botId)/tasks/\(threadId)"), as: BotResponse.self).bot
+    }
+
+    public func renameTask(botId: String, threadId: String, title: String) async throws {
+        try await send(try makeRequest("PATCH", "/api/bots/\(botId)/tasks/\(threadId)", body: ["title": title]))
+    }
+
+    public func deleteTask(botId: String, threadId: String) async throws -> Bot {
+        try await send(try makeRequest("DELETE", "/api/bots/\(botId)/tasks/\(threadId)"), as: BotResponse.self).bot
+    }
+
     public func interrupt(botId: String) async throws {
         try await send(try makeRequest("POST", "/api/bots/\(botId)/interrupt"))
+    }
+
+    /// Mint a fresh interactive viewer for an existing cloud computer. The
+    /// response URL is a bearer credential: the caller presents it directly
+    /// and never stores it. The sidecar additionally requires this paired
+    /// device's cloud-desktop capability to be enabled on the Mac.
+    public func cloudDesktop(botId: String) async throws -> CloudDesktopSession {
+        try await send(
+            try makeRequest("POST", "/api/bots/\(botId)/computer/join"),
+            as: CloudDesktopSession.self
+        )
     }
 
     public func markRead(botId: String) async throws {

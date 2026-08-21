@@ -26,7 +26,15 @@ declare global {
     localComputer: {
       available: boolean;
       support: "supported" | "limited" | "unsupported";
+      enabled: boolean;
+      status: "disabled" | "checking" | "starting" | "ready" | "error" | "stopped" | "unavailable";
       reasonCode?: string;
+      message?: string;
+      driverPath?: string;
+      driverVersion?: string;
+      driverSource?: "bundled" | "environment" | "user-local" | "path";
+      session?: "x11" | "wayland" | "headless" | "unknown";
+      compositor?: "gnome-mutter";
     };
   };
 
@@ -34,7 +42,21 @@ declare global {
     ogb?: {
       platform: NodeJS.Platform;
       getCapabilities(): Promise<DesktopCapabilities>;
+      onCapabilitiesChanged(cb: (capabilities: DesktopCapabilities) => void): () => void;
+      localControl: {
+        status(): Promise<LinuxLocalControlStatus>;
+        enable(): Promise<LinuxLocalControlStatus>;
+        disable(): Promise<LinuxLocalControlStatus>;
+        retry(): Promise<LinuxLocalControlStatus>;
+      };
+      /** Arms one user-initiated display capture request from this frame. */
+      beginScreenPreviewIntent(): boolean;
       screenFrame(): Promise<string | null>;
+      androidDevice?: {
+        status(): Promise<AndroidDeviceStatus>;
+        frame(serial: string): Promise<{ serial: string; dataUrl: string }>;
+        input(serial: string, payload: AndroidDeviceInput): Promise<void>;
+      };
       /** Start native dictation. Call mode supplies endpointMs so silence
        * finalizes a turn; composer dictation omits it and remains manual. */
       speechStart(options?: { endpointMs?: number }): Promise<void>;
@@ -54,17 +76,25 @@ declare global {
       permStatus(): Promise<{ mic: string }>;
       /** Triggers the macOS microphone prompt; resolves true when granted. */
       permRequestMic(): Promise<boolean>;
-      /** Opens System Settings on a privacy pane: mic|screen|speech. */
-      permOpenSettings(pane: "mic" | "screen" | "speech"): Promise<void>;
+      /** Opens System Settings on a privacy pane: mic|screen|speech|accessibility. */
+      permOpenSettings(pane: "mic" | "screen" | "speech" | "accessibility"): Promise<void>;
       /** Copies an engine install command and opens a blank terminal. False
        * when no terminal could be launched; the clipboard still has it. */
       openInstallTerminal?(command: string): Promise<boolean>;
       /** Opens an http(s) link in the user's default browser. */
       openExternal?(url: string): Promise<boolean>;
+      /** Opens a live desktop as a sandboxed modal owned by OpenMausBot. */
+      desktopViewer?: {
+        open(url: string, title: string, contextId: string): Promise<boolean>;
+        onState(cb: (state: { open: boolean; contextId: string | null }) => void): () => void;
+      };
       /** Native folder picker; resolves null when the user cancels. */
       pickFolder?(current?: string): Promise<string | null>;
       /** Save a provider credential through Electron's OS-backed store. */
-      setCredential?(name: "composioApiKey", value: string): Promise<ConfigStatus>;
+      setCredential?(
+        name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey",
+        value: string,
+      ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
        * fires immediately with the current state, then on transitions. */
       updater?: {
@@ -76,6 +106,19 @@ declare global {
       };
     };
   }
+}
+
+export interface LinuxLocalControlStatus {
+  enabled: boolean;
+  status: "disabled" | "checking" | "starting" | "ready" | "error" | "stopped" | "unavailable";
+  reasonCode?: string;
+  message?: string;
+  driverPath?: string;
+  driverVersion?: string;
+  driverSource?: "bundled" | "environment" | "user-local" | "path";
+  session?: "x11" | "wayland" | "headless" | "unknown";
+  compositor?: "gnome-mutter";
+  warnings?: Array<{ label: string; status: string; message: string; detail?: string }>;
 }
 
 export interface UpdaterState {
@@ -91,3 +134,34 @@ export interface UpdaterState {
   percent?: number;
   message?: string;
 }
+
+export type AndroidUsbDevice = {
+  serial: string;
+  state: string;
+  connection: "usb";
+  model: string;
+  product?: string;
+  transportId?: string;
+};
+
+export type AndroidDeviceStatus = {
+  available: boolean;
+  reasonCode?: "adb-unavailable" | "adb-failed";
+  message?: string;
+  devices: AndroidUsbDevice[];
+};
+
+export type AndroidDeviceInput =
+  | { type: "tap"; x: number; y: number; width: number; height: number }
+  | {
+      type: "swipe";
+      fromX: number;
+      fromY: number;
+      toX: number;
+      toY: number;
+      durationMs: number;
+      width: number;
+      height: number;
+    }
+  | { type: "key"; key: string; width?: number; height?: number }
+  | { type: "text"; text: string; width?: number; height?: number };

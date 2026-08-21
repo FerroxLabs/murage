@@ -7,11 +7,12 @@
 import { type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createControlServer, originIsLoopback } from "../src/control.ts";
+import { createControlServer, hostCandidates, originIsLoopback } from "../src/control.ts";
 import { DeviceRegistry } from "../src/devices.ts";
 
 let control: Server;
 let port = 0;
+let devices: DeviceRegistry;
 
 const ask = async (
   method: string,
@@ -28,8 +29,9 @@ const ask = async (
 };
 
 beforeAll(async () => {
+  devices = new DeviceRegistry();
   control = createControlServer({
-    devices: new DeviceRegistry(),
+    devices,
     companionPort: 8810,
     discovery: () => ({ advertising: false, name: "Test computer" }),
   });
@@ -43,6 +45,39 @@ afterAll(async () => {
 });
 
 describe("origins the control server will change state for", () => {
+  it("controls cloud desktop access per paired device", async () => {
+    const { code } = devices.openPairing();
+    const paired = devices.redeem(code, "iPhone");
+    if ("error" in paired) throw new Error(paired.error);
+
+    expect(paired.device.cloudDesktopAccess).toBe(false);
+    expect((await ask("POST", `/devices/${paired.device.id}/cloud-desktop`)).status).toBe(200);
+    expect(devices.authenticate(paired.token)?.cloudDesktopAccess).toBe(true);
+    expect((await ask("DELETE", `/devices/${paired.device.id}/cloud-desktop`)).status).toBe(200);
+    expect(devices.authenticate(paired.token)?.cloudDesktopAccess).toBe(false);
+    expect((await ask("POST", "/devices/missing/cloud-desktop")).status).toBe(404);
+  });
+
+  it("reports a permission write failure without dropping the control server", async () => {
+    const [device] = devices.list();
+    const writable = devices as unknown as { persist: () => void };
+    const persist = writable.persist;
+    writable.persist = () => {
+      throw new Error("ENOSPC: no space left on device");
+    };
+    try {
+      const failed = await ask("POST", `/devices/${device.id}/cloud-desktop`);
+      expect(failed).toEqual({
+        status: 500,
+        body: { error: "could not save cloud desktop access" },
+      });
+      expect(devices.list().find((candidate) => candidate.id === device.id)?.cloudDesktopAccess).toBe(false);
+      expect((await ask("GET", "/state")).status).toBe(200);
+    } finally {
+      writable.persist = persist;
+    }
+  });
+
   it("refuses a state change from a foreign page", async () => {
     // The attack this exists for: a form POST needs no preflight, and the
     // Host header on it is the loopback one this server already approves.
@@ -103,6 +138,35 @@ describe("origins the control server will change state for", () => {
     const { status, body } = await ask("GET", "/state", { origin: "https://evil.example" });
     expect(status).toBe(403);
     expect(body.error).toContain("cross-origin");
+  });
+});
+
+describe("hostCandidates", () => {
+  it("orders by reachability: tailnet name, then LAN, then the mDNS name last", () => {
+    // 100.121.5.6 is the bare tailnet address: excluded outright, because iOS
+    // refuses plain HTTP to 100.64/10 and a candidate that can never succeed
+    // only slows the walk down. The synthetic mDNS name is last — it resolves
+    // only while the sidecar runs.
+    const hosts = hostCandidates(["100.121.5.6", "192.168.1.42", "10.0.0.7"], "macbook.tail1234.ts.net");
+    expect(hosts.slice(0, 3)).toEqual(["macbook.tail1234.ts.net", "192.168.1.42", "10.0.0.7"]);
+    expect(hosts.at(-1)).toMatch(/^openmausbot-[0-9a-f]{8}\.local$/);
+    expect(hosts).not.toContain("100.121.5.6");
+  });
+
+  it("skips the tailnet name when Tailscale is not part of the picture", () => {
+    // A MagicDNS name left over from a cached read is only dialable while a
+    // tailnet address exists; without one it would be a dead first candidate.
+    expect(hostCandidates(["192.168.1.42"], "stale.tail1234.ts.net")[0]).toBe("192.168.1.42");
+    expect(hostCandidates(["100.121.5.6", "192.168.1.42"], null)[0]).toBe("192.168.1.42");
+  });
+
+  it("is what /state hands the pairing panel", async () => {
+    const { status, body } = await ask("GET", "/state");
+    expect(status).toBe(200);
+    expect(Array.isArray(body.hosts)).toBe(true);
+    // Whatever this machine's interfaces are, the mDNS fallback is always
+    // present and always last.
+    expect(body.hosts.at(-1)).toMatch(/^openmausbot-[0-9a-f]{8}\.local$/);
   });
 });
 

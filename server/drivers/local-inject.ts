@@ -58,7 +58,9 @@ export function contextWindowsFromPs(extra: unknown): Map<string, number> {
     const ctx = typeof row.context_length === "number" && Number.isFinite(row.context_length) && row.context_length > 0 ? row.context_length : null;
     if (id && ctx) {
       out.set(id, ctx);
-      out.set(id.split(":")[0]!, ctx);
+      const baseId = id.split(":")[0]!;
+      const current = out.get(baseId);
+      out.set(baseId, current === undefined ? ctx : Math.min(current, ctx));
     }
   }
   return out;
@@ -84,6 +86,23 @@ export function localHost(id: string): LocalHost | undefined {
 
 export function injectedApiModel(id: string | null | undefined): string | null {
   return decodeInjectId(id)?.model ?? null;
+}
+
+/**
+ * Map a picker / leftover API id onto a live `host::model` inject id.
+ * Claude Code's settings.model is the last slug it used (e.g.
+ * `orcarouter/Qwen3.8-27B-Uncensored-GGUF`) and is not host-encoded, so a
+ * Custom pick of that leftover would otherwise skip inject and demand /login.
+ */
+export function resolveInjectId(
+  modelId: string | null | undefined,
+  extras: readonly InjectedModel[],
+): string | null | undefined {
+  if (!modelId) return modelId;
+  if (decodeInjectId(modelId)) return modelId;
+  const matches = extras.filter((row) => row.id === modelId || row.model === modelId);
+  const match = matches.find((row) => row.loaded) ?? matches[0];
+  return match?.id ?? modelId;
 }
 
 /** Anthropic-compatible base (Claude Code wants this without a trailing /v1). */
@@ -128,13 +147,44 @@ export function codexLocalProviderArgs(
   ];
 }
 
+function firstUnslothToken(row: unknown): string | null {
+  if (!row || typeof row !== "object") return null;
+  const rec = row as { minted?: unknown; saved?: unknown; api_key?: unknown };
+  for (const bucket of [rec.minted, rec.saved]) {
+    if (typeof bucket === "string" && bucket) return bucket;
+    if (Array.isArray(bucket)) {
+      const token = bucket.find((value) => typeof value === "string" && value);
+      if (typeof token === "string") return token;
+    }
+  }
+  if (typeof rec.api_key === "string" && rec.api_key) return rec.api_key;
+  return null;
+}
+
 function readUnslothKey(env: Record<string, string | undefined>): string | null {
   const home = env.HOME || env.USERPROFILE || homedir();
   try {
     const raw = JSON.parse(readFileSync(join(home, ".unsloth", "studio", "auth", "agent_api_key.json"), "utf8")) as {
       api_key?: unknown;
+      servers?: unknown;
     };
-    return typeof raw.api_key === "string" && raw.api_key ? raw.api_key : null;
+    // Older Studio wrote `{ api_key }`. Current Studio writes
+    // `{ servers: { "http://127.0.0.1:8888": { minted: ["sk-unsloth-…"] } } }`.
+    // Prefer the localhost minted token so a stale mixed-format file cannot
+    // win; keep the top-level key as fallback.
+    if (raw.servers && typeof raw.servers === "object") {
+      const servers = raw.servers as Record<string, unknown>;
+      for (const url of ["http://127.0.0.1:8888", "http://localhost:8888"]) {
+        const token = firstUnslothToken(servers[url]);
+        if (token) return token;
+      }
+      for (const row of Object.values(servers)) {
+        const token = firstUnslothToken(row);
+        if (token) return token;
+      }
+    }
+    if (typeof raw.api_key === "string" && raw.api_key) return raw.api_key;
+    return null;
   } catch {
     return null;
   }
@@ -313,7 +363,12 @@ export async function mergeLocalInject(
   if (vitest === "true" && probe !== "1") return catalog;
   const extras = await probeLocalInjects(env, fetchImpl);
   if (!extras.length) return catalog;
-  const options = catalog.options.map((option) => ({ ...option }));
+  const liveApiIds = new Set(extras.map((extra) => extra.model));
+  // A settings leftover that is just the API id of a live inject is not a
+  // second model — Custom should only offer the host:: row.
+  const options = catalog.options
+    .filter((option) => decodeInjectId(option.id) || !option.custom || !liveApiIds.has(option.id))
+    .map((option) => ({ ...option }));
   const seen = new Set(options.map((option) => option.id));
   for (const extra of extras) {
     const existing = options.find((option) => option.id === extra.id);

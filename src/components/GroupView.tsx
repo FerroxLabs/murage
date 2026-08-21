@@ -3,8 +3,9 @@
 // does not become a wall of competing motion. Plain messages go to the room's
 // default responder; @mentions override that routing.
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ChevronDown, Pin } from "lucide-react";
+import { ArrowDown, ChevronDown, Folder, FolderOpen, Pin, PinOff, X } from "lucide-react";
 import {
+  api,
   useStore,
   useStreaming,
   formatTime,
@@ -18,11 +19,14 @@ import { normalizeState } from "@/lib/mascot";
 import { effectiveDefaultResponder, groupResponseHint } from "@/lib/group-routing";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Composer } from "./Composer";
+import { ConnectorCard } from "./ConnectorCard";
 import { GroupCallButton, GroupCallOverlay } from "./GroupCallView";
 import { ReactionBar, ReactionChips } from "./Reactions";
 import { ApprovalCard } from "./ApprovalCard";
+import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { useFocusMessage } from "@/lib/focus-message";
+import { shortPath } from "@/lib/short-path";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 import { showWorkingDots } from "@/lib/turn-tail";
 import {
@@ -60,6 +64,28 @@ function ClusterLabel({ bot, name, color }: { bot?: Bot; name: string; color: st
   );
 }
 
+/** Pin toggle for one room message — one pin per room, patchGroup path. */
+function PinToggle({ group, message }: { group: Group; message: Message }) {
+  const { dispatch } = useStore();
+  const pinned = group.pinnedMessageId === message.id;
+  return (
+    <button
+      onClick={() =>
+        dispatch({
+          type: "patchGroup",
+          groupId: group.id,
+          patch: { pinnedMessageId: pinned ? "" : message.id },
+        })
+      }
+      aria-label={pinned ? "Unpin message" : "Pin message"}
+      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+      title={pinned ? "Unpin this message" : "Pin this message to the top of the room"}
+    >
+      {pinned ? <PinOff size={14} /> : <Pin size={14} />}
+    </button>
+  );
+}
+
 const Transcript = memo(function Transcript({
   group,
   members,
@@ -85,7 +111,9 @@ const Transcript = memo(function Transcript({
           // `tool` distinguishes a permission from a QUESTION — a question
           // only accepts an "answer", so routing it here would offer an
           // Allow the broker rejects
-          m.kind === "options" && m.card?.requestId && m.card.tool ? (
+          m.kind === "connector" && m.connector && m.from?.botId ? (
+            <ConnectorCard botId={m.from.botId} threadId={group.threadId} message={m} />
+          ) : m.kind === "options" && m.card?.requestId && m.card.tool ? (
             <div className="flex justify-start">
               <ApprovalCard bot={memberOf(m.from?.botId)} message={m} />
             </div>
@@ -104,6 +132,7 @@ const Transcript = memo(function Transcript({
             <div className={cn("group flex w-full flex-col", user ? "items-end" : "items-start")}>
               <div className={cn("flex w-full items-end gap-1.5", user ? "justify-end" : "justify-start")}>
                 {user && <ReactionBar threadId={group.threadId} message={m} />}
+                <PinToggle group={group} message={m} />
                 <div
                   className={cn(
                     "max-w-[70%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
@@ -201,6 +230,122 @@ function DefaultResponderSelect({ group, members }: { group: Group; members: Bot
   );
 }
 
+/** The room's shared desk: where every member's shell and file tools run,
+ * overriding each bot's own folder for room turns. The room pins its own
+ * copy on its first turn (the server does the pinning — engines key their
+ * sessions to the folder a thread starts in, so a folder must not move
+ * under a room that already worked somewhere). The PATCH is made directly
+ * rather than through patchGroup: the server validates the path and a
+ * rejected folder must not stick in local state. */
+function RoomWorkingFolder({ group }: { group: Group }) {
+  const { capabilities } = useDesktopCapabilities();
+  const home = capabilities.host.homeDir;
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const canPick = Boolean(window.ogb?.pickFolder);
+  const pinned = group.pinnedCwd; // undefined = not yet, null = each bot's own, string = folder
+  const locked = pinned !== undefined;
+  const shownCwd = locked ? (pinned ?? undefined) : group.cwd;
+
+  const save = async (cwd: string | null) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api(`/api/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ cwd }) });
+      setDraft(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const pick = async () => {
+    const chosen = await window.ogb?.pickFolder?.(group.cwd);
+    if (chosen) void save(chosen);
+  };
+
+  return (
+    <div className="rounded-xl bg-card p-4">
+      <div className="text-[15px] font-medium text-ink">Working folder</div>
+      <div className="mt-0.5 text-[13px] text-ink-secondary">Where every bot in this room runs its shell and file tools.</div>
+      {locked ? (
+        <div className="mt-3">
+          <div className="truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={shownCwd}>
+            {shownCwd ? shortPath(shownCwd, home) : <span className="text-ink-secondary">Each bot's own folder</span>}
+          </div>
+          <div className="mt-2 text-[12px] text-ink-secondary">
+            Fixed after this room's first turn. Create a new room and choose its folder before sending the first message to work somewhere else.
+          </div>
+        </div>
+      ) : canPick ? (
+        <div className="mt-3 flex items-center gap-2">
+          <div className="min-w-0 flex-1 truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={group.cwd}>
+            {group.cwd ? shortPath(group.cwd, home) : <span className="text-ink-secondary">Each bot's own folder</span>}
+          </div>
+          <button onClick={() => void pick()} disabled={saving} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
+            <FolderOpen size={14} /> Choose…
+          </button>
+          {group.cwd && (
+            <button onClick={() => void save(null)} disabled={saving} className="shrink-0 rounded-lg px-2 py-2 text-[13px] text-ink-secondary hover:text-ink disabled:opacity-50">
+              Clear
+            </button>
+          )}
+        </div>
+      ) : (
+        <form
+          className="mt-3 flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            // an emptied field clears the folder — the server wants null
+            void save((draft ?? group.cwd ?? "").trim() || null);
+          }}
+        >
+          <input
+            className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 font-mono text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none focus:border-hairline"
+            placeholder="Each bot's own folder — or an absolute path"
+            value={draft ?? group.cwd ?? ""}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <button type="submit" disabled={saving || draft === null} className="shrink-0 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
+            Save
+          </button>
+        </form>
+      )}
+      {error && <div className="mt-2 text-[12px] text-danger">{error}</div>}
+    </div>
+  );
+}
+
+/** The folder this room's turns run in — the pinned folder once a turn ran,
+ * else the room folder a first turn would pin. Always present so the desk
+ * is settable before any folder exists; quiet (icon only) until then. */
+function RoomWorkingFolderChip({ group, onToggle }: { group: Group; onToggle: () => void }) {
+  const folder = group.pinnedCwd === undefined ? group.cwd : (group.pinnedCwd ?? undefined);
+  if (!folder) {
+    return (
+      <button
+        onClick={onToggle}
+        className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+        title="Room working folder"
+      >
+        <Folder size={14} />
+      </button>
+    );
+  }
+  const name = folder.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || folder;
+  return (
+    <button
+      onClick={onToggle}
+      className="flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+      title={`Working folder: ${folder}`}
+    >
+      <Folder size={12} />
+      <span className="truncate font-mono">{name}</span>
+    </button>
+  );
+}
+
 export function GroupView({ group }: { group: Group }) {
   const { state, dispatch } = useStore();
   const stream = useStreaming();
@@ -212,6 +357,7 @@ export function GroupView({ group }: { group: Group }) {
   const touchY = useRef(0);
   const [bulletinOpen, setBulletinOpen] = useState(false);
   const [bulletinDraft, setBulletinDraft] = useState(group.bulletin);
+  const [folderOpen, setFolderOpen] = useState(false);
 
   const members = useMemo(
     () => group.memberIds.map((id) => state.bots.find((b) => b.id === id)).filter((b): b is Bot => Boolean(b)),
@@ -267,6 +413,8 @@ export function GroupView({ group }: { group: Group }) {
   useFocusMessage(group.threadId, group.messages.length > 0);
 
   useEffect(() => setBulletinDraft(group.bulletin), [group.id, group.bulletin]);
+  // an open folder editor belongs to the room it was opened in
+  useEffect(() => setFolderOpen(false), [group.id]);
   // deps track the FULL messages.length, so expanding the window (which only
   // changes windowedMessages) can never re-trigger this bottom scrollTo
   useEffect(() => {
@@ -336,6 +484,7 @@ export function GroupView({ group }: { group: Group }) {
         <span className="text-[15px] font-semibold text-ink">{group.name}</span>
         <div className="flex items-center gap-1.5" style={noDrag}>
           <GroupCallButton group={group} members={members} />
+          {!group.dm && <RoomWorkingFolderChip group={group} onToggle={() => setFolderOpen((open) => !open)} />}
           {!group.dm && <DefaultResponderSelect group={group} members={members} />}
           {members.map((b) => (
             <span
@@ -394,6 +543,46 @@ export function GroupView({ group }: { group: Group }) {
           </button>
         )}
       </div>
+
+      {/* Working folder card — the chip in the header toggles it */}
+      {folderOpen && !group.dm && (
+        <div className="mx-auto w-full max-w-[900px] px-5">
+          <div className="mb-1">
+            <RoomWorkingFolder group={group} />
+          </div>
+        </div>
+      )}
+
+      {/* Pinned message banner — resolves against the room's full transcript */}
+      {(() => {
+        const pinned = group.messages.find((m) => m.id === group.pinnedMessageId && m.kind === "text");
+        const text = pinned ? (pinned.text ?? "").replace(/\s+/g, " ").trim() : "";
+        if (!pinned || !text) return null;
+        const sender = pinned.role === "user" ? "You" : (pinned.from?.name ?? "A bot");
+        return (
+          <div className="mx-auto w-full max-w-[900px] px-5">
+            <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent/[0.07] px-3 py-1.5">
+              <Pin size={12} className="shrink-0 text-accent" />
+              <button
+                onClick={() => dispatch({ type: "focusMessage", threadId: group.threadId, messageId: pinned.id })}
+                className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+                title="Jump to the pinned message"
+              >
+                <span className="shrink-0 text-[11.5px] font-medium text-accent">{sender}</span>
+                <span className="truncate text-[12.5px] text-ink-secondary">{text}</span>
+              </button>
+              <button
+                onClick={() => dispatch({ type: "patchGroup", groupId: group.id, patch: { pinnedMessageId: "" } })}
+                aria-label="Unpin message"
+                title="Unpin"
+                className="shrink-0 rounded p-0.5 text-ink-secondary hover:bg-raised hover:text-ink"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Transcript */}
       <div

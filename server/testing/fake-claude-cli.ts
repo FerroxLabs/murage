@@ -52,6 +52,19 @@ if (argv[0] === "auth" && argv[1] === "status") {
   );
 }
 
+// One-shot helper mode used by generateText. It does not use stdin or emit
+// the stream-json turn protocol.
+if (argAfter("--output-format") === "text") {
+  if (process.env.FAKE_CLAUDE_DUMP) {
+    writeFileSync(
+      process.env.FAKE_CLAUDE_DUMP,
+      JSON.stringify({ pid: process.pid, argv, env: process.env, prompt: argAfter("-p"), mcpConfig: null }, null, 2),
+    );
+  }
+  process.stdout.write("fake generated text\n");
+  process.exit(0);
+}
+
 // Line-driven, like the real CLI under --input-format stream-json: each user
 // message starts a turn; a message that arrives WHILE a turn is playing is
 // folded into it (the real CLI delivers it before the next model call — the
@@ -62,10 +75,8 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 const sessionId = argAfter("--resume") ?? argAfter("--session-id") ?? "fake-session";
 const model = argAfter("--model") ?? "claude-fake";
 let dumped = false;
-let initSent = false;
 let turnRunning = false;
 let steered: string[] = [];
-const queue: JsonValue[] = [];
 let stdinEnded = false;
 
 const promptText = (prompt: JsonValue): string => {
@@ -74,7 +85,7 @@ const promptText = (prompt: JsonValue): string => {
 };
 
 const finishIfDone = () => {
-  if (stdinEnded && !turnRunning && queue.length === 0) process.exit(0);
+  if (stdinEnded && !turnRunning) process.exit(0);
 };
 
 const playTurn = (prompt: JsonValue) => {
@@ -91,7 +102,7 @@ const playTurn = (prompt: JsonValue) => {
         /* leave null — the test will see it */
       }
     }
-    writeFileSync(process.env.FAKE_CLAUDE_DUMP, JSON.stringify({ argv, env: process.env, prompt, mcpConfig }, null, 2));
+    writeFileSync(process.env.FAKE_CLAUDE_DUMP, JSON.stringify({ pid: process.pid, argv, env: process.env, prompt, mcpConfig }, null, 2));
   }
 
   if (mode === "exit-early") {
@@ -101,7 +112,6 @@ const playTurn = (prompt: JsonValue) => {
 
   // the real CLI re-announces init on every turn of a live process
   out({ type: "system", subtype: "init", session_id: sessionId, model });
-  initSent = true;
 
   if (mode === "hang") {
     // stay alive until killed — lets tests exercise interrupt + the
@@ -142,8 +152,7 @@ const playTurn = (prompt: JsonValue) => {
   const finish = () => {
     out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0.01, usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 } });
     turnRunning = false;
-    if (queue.length) playTurn(queue.shift()!);
-    else finishIfDone();
+    finishIfDone();
   };
   if (mode === "slow") {
     // a gap a test can steer into; the closing reply carries anything that
@@ -181,4 +190,3 @@ process.stdin.on("end", () => {
   stdinEnded = true;
   finishIfDone();
 });
-void initSent;

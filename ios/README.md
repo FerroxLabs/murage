@@ -11,7 +11,7 @@ same harness the desktop app talks to, through the restricted sidecar described 
 ## Status
 
 Built and verified against a real harness on both a simulator and an iPhone:
-Bonjour discovery, manual LAN and Tailscale pairing, the roster, paged chat,
+QR handoff, Bonjour discovery, manual LAN and Tailscale pairing, the roster, paged chat,
 streaming replies, the computer view, and — the one that matters — an approval
 raised by a bot on the Mac, answered on the phone, with the bot carrying on.
 
@@ -55,9 +55,15 @@ ios/
     Discovery.swift              NWBrowser for _openmausbot._tcp
     Keychain.swift               the device token
     MausAvatar.swift             the mascot face, in the desktop's palette
-    PairingView.swift            find a computer, type the six digits
-    ChatListView.swift           roster, with "waiting on you" pulled to the top
-    ChatView.swift               transcript, approval cards, composer
+    PairingView.swift            QR handoff, discovery, address and code fallback
+    PairingScanner.swift         native QR camera, permission and recovery UI
+    Glass.swift                  the one material the chrome is made of (Liquid Glass on 26+)
+    SpeechBubble.swift           the bubble shape; the tail is the reference vector, scaled
+    ChatListView.swift           roster: glass header, groups strip, bots, the Updates bar
+    Updates.swift                what the Updates pill shows — only bots doing something
+    UpdatesSheet.swift           the pill opened: needs you / working / to review
+    NewGroupSheet.swift          make a room from the phone
+    ChatView.swift               transcript, tailed bubbles, approval cards, composer
     ComputerView.swift           opt-in live view of a bot's computer
     MarkdownText.swift           the supported Markdown presentation layer
     SettingsView.swift           status, and unpair
@@ -114,10 +120,11 @@ here by simply not having the methods:
 | Allowed | Refused |
 |---|---|
 | Read bots, rooms and transcripts | Write API keys (`PUT /api/config`) |
-| Send messages | Manage pairing or revoke devices |
-| **Answer approvals and questions** | Drive the Local VM |
+| Send messages, make a bot or a room | Manage pairing or revoke devices |
+| **Answer approvals and questions** | Drive the Local VM or this computer |
 | Interrupt a bot, mark chats read | Reach `/api/internal/*` |
 | Fetch screen images on demand | Load the packaged desktop UI |
+| Open an explicitly enabled cloud desktop | Provision, sleep or run shell commands on cloud computers |
 
 Marking a chat read and remembering an approval use purpose-built server
 verbs. The sidecar does not expose the general bot or room `PATCH` routes,
@@ -127,10 +134,20 @@ working directories.
 Companion settings stay on the computer on purpose: losing the phone must not
 mean losing the ability to lock it out.
 
+Interactive cloud desktop access is additionally enabled per paired device and
+starts off. The phone asks the Mac to mint a fresh provider URL after an
+explicit warning, validates that it is HTTPS, opens it in an in-app Safari
+sheet, and never persists it. The Local VM's loopback-only noVNC listener and
+the host computer remain unreachable through the companion.
+
 ## Design notes
 
 - **Zero third-party dependencies.** The raw-byte SSE reader, Keychain,
   `NWBrowser`, and notifications are all first-party.
+- **QR scan confirms before connecting.** The QR carries a short-lived,
+  high-entropy credential rather than relying on the visible six-digit code.
+  The app validates the target, asks the user to confirm it, exchanges the
+  credential once, and persists only the resulting device token in Keychain.
 - **Thin client.** The harness already folds provider events into settled
   messages. The phone folds `message`, `message.patch`, and `bot` frames, plus
   the small `runtime` delta subset needed to show a reply while it is typed.
@@ -156,12 +173,18 @@ mean losing the ability to lock it out.
   Software keyboards have no Shift+Return, so there `.onSubmit` sends.
 - **No affordance without a feature behind it.** The reference design this was
   modelled on has a composer mic; there is no dictation here, so it is not
-  drawn. Search and the roster's "+" are real: the latter creates the same
-  basic bot the desktop endpoint creates, then opens it.
+  drawn. Search covers the SQLite transcript store and opens the exact task,
+  branch, and message; the roster's "+" creates the same basic bot the desktop
+  endpoint creates, then opens it.
 
 ## Not in this version
 
-The app is foreground-only. There is no APNs delivery while it is closed, no
-voice/call mode, no task-management or SQLite transcript-search UI, and no
-hosted relay. Tailscale is supported through manual MagicDNS entry; it is not a
-dependency and OpenMausBot does not operate a cloud copy of local data.
+The live connection is foreground-only. Notification frames produce native
+banners, sounds, time-sensitive approval alerts, and an app badge while connected;
+the resume cursor replays alerts missed during a short background pause. There is
+no APNs delivery after the app is terminated, no voice/call mode, and no hosted relay.
+Task management, SQLite transcript search,
+transcript sharing, reactions, and edit/version controls use narrow companion
+routes and the computer remains the source of truth. Tailscale is supported
+through manual MagicDNS entry; it is not a dependency and OpenMausBot does not
+operate a cloud copy of local data.

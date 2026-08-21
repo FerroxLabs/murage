@@ -36,6 +36,35 @@ public struct OptionCard: Codable, Hashable, Sendable {
 
     /// Permission cards carry a tool; questions do not.
     public var isPermission: Bool { tool != nil }
+
+    /// The wire API accepts an approval behavior rather than the button's
+    /// display text. Treat the one refusal as deny and every other offered
+    /// permission choice as allow: providers may say "Approve", "Yes", or
+    /// "Always allow", and none of those should accidentally become a deny.
+    public func responseBehavior(for choice: String) -> String {
+        Self.responseBehavior(for: choice, isPermission: isPermission)
+    }
+
+    /// The ID-only form is used by Live Activity buttons, which carry the
+    /// card kind but not the full card payload.
+    public static func responseBehavior(for choice: String, isPermission: Bool) -> String {
+        guard isPermission else { return "answer" }
+        return isRefusal(choice) ? "deny" : "allow"
+    }
+
+    /// Shared by all of the app's card surfaces and by Live Activities.
+    public static func isRefusal(_ choice: String) -> Bool {
+        choice.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare("Deny") == .orderedSame
+    }
+
+    /// A provider may include the standing grant as an option of its own.
+    /// Only remember it when the server supplied the narrow grant key.
+    public func shouldRememberPermission(for choice: String) -> Bool {
+        guard isPermission, allowKey != nil else { return false }
+        let normalized = choice.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.caseInsensitiveCompare("Always allow") == .orderedSame
+    }
 }
 
 public struct ToolActivity: Codable, Hashable, Sendable {
@@ -153,6 +182,10 @@ public struct Bot: Codable, Hashable, Identifiable, Sendable {
     public var autoApprove: Bool?
     public var alwaysAllow: [String]?
     public var computer: String?
+    /// Which cloud computer backs `computer == "cloud"`. Absent (older
+    /// harnesses included) means the hosted Box; "vps" means the user's own
+    /// server, which has no interactive desktop to offer a phone.
+    public var cloudBackend: String?
     public var speakReplies: Bool?
     public var voice: String?
     public var mascotExpression: String?
@@ -216,6 +249,36 @@ public struct ThreadPage: Codable, Sendable {
     public var hasMore: Bool?
 }
 
+public struct SearchHit: Codable, Hashable, Identifiable, Sendable {
+    public var threadId: String
+    public var messageId: String
+    public var at: Double
+    public var role: Message.Role
+    public var kind: Message.Kind
+    public var snippet: String
+    public var matchStart: Int
+    public var matchLength: Int
+    public var botId: String?
+    public var groupId: String?
+    public var name: String
+    public var task: String?
+    public var onActivePath: Bool
+
+    public var id: String { "\(threadId):\(messageId)" }
+}
+
+public struct TranscriptExport: Sendable {
+    public var data: Data
+    public var filename: String
+    public var contentType: String
+
+    public init(data: Data, filename: String, contentType: String) {
+        self.data = data
+        self.filename = filename
+        self.contentType = contentType
+    }
+}
+
 public struct PairedDevice: Codable, Hashable, Identifiable, Sendable {
     public var id: String
     public var name: String
@@ -229,6 +292,35 @@ public struct PairResponse: Codable, Sendable {
     /// What the computer calls itself — worth showing so someone with two
     /// paired machines can tell them apart.
     public var serverName: String
+    /// Every address the computer answers on, best first. Stored with the
+    /// connection so the app can walk to the next one when the address it
+    /// paired on stops resolving. Absent from older sidecars.
+    public var hosts: [String]?
+}
+
+/// A freshly minted provider viewer. It is deliberately not Codable for
+/// persistence: the URL is a short-lived bearer credential and belongs only
+/// in memory for the browser session that requested it.
+public struct CloudDesktopSession: Decodable, Sendable {
+    public let url: URL
+
+    private enum CodingKeys: String, CodingKey { case joinUrl }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let raw = try container.decode(String.self, forKey: .joinUrl)
+        guard let parsed = URL(string: raw),
+              parsed.scheme?.lowercased() == "https",
+              parsed.host != nil
+        else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .joinUrl,
+                in: container,
+                debugDescription: "Cloud desktop URL must be HTTPS"
+            )
+        }
+        url = parsed
+    }
 }
 
 public struct ProviderSnapshot: Codable, Hashable, Sendable {
@@ -306,4 +398,25 @@ public struct ScreenFrame: Hashable, Sendable {
 /// `POST /api/bots` — the harness answers with the bot it made.
 public struct CreatedBot: Codable, Sendable {
     public var bot: Bot
+}
+
+/// `POST /api/groups` — the harness answers with the room it made.
+public struct CreatedRoom: Codable, Sendable {
+    public var group: Room
+}
+
+struct SearchResponse: Codable, Sendable {
+    var hits: [SearchHit]
+}
+
+struct MessageResponse: Codable, Sendable {
+    var message: Message
+}
+
+struct ActiveBranchResponse: Codable, Sendable {
+    var activeLeafId: String
+}
+
+struct BotResponse: Codable, Sendable {
+    var bot: Bot
 }

@@ -133,6 +133,23 @@ xcodebuild -project OpenMausCompanion.xcodeproj \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
+That command is a compile gate only. **To actually pair in the Simulator**,
+build with a team and local signing instead — without an
+`application-identifier` entitlement the Simulator's keychain refuses the
+device token with "A required entitlement isn't present", right after the
+code is accepted:
+
+```sh
+xcodebuild -project OpenMausCompanion.xcodeproj -scheme OpenMausCompanion \
+  -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  DEVELOPMENT_TEAM=<your team id> CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual build
+```
+
+No provisioning profile is involved for the Simulator; the team id only
+makes Xcode emit the entitlement. Bonjour works from the Simulator (it
+shares the Mac's network), so **On this network** lists the Mac — tap it and
+type the code; there is no camera for the QR path.
+
 **Re-run `xcodegen generate` whenever a pull adds a file to `App/`.** The
 generated project lists source files explicitly, so a new one is missing from
 the target until you regenerate, and the build fails with `Cannot find 'X' in
@@ -158,7 +175,14 @@ paid account is required to run on your own phone.
 
 On the phone, in order:
 
-1. **Pair.** The computer should appear by name. Tap it, type the code.
+1. **Pair.** In OpenMausBot → Settings → Companion, choose **Set up a
+   phone**. Scan the QR code with the phone's Camera, open OpenMausMobile,
+   confirm that the computer and six-digit code are filled in, then tap
+   **Connect**. The computer should also appear by name for the manual path:
+   tap it and type the same code.
+   - Relaunch the app after pairing once. It should return to the roster
+     without asking for another code; that proves the device token made it
+     into Keychain rather than only living in memory.
    - If the list stays empty, check in this order:
      1. **Local Network permission.** iOS asks once, and a denial is
         permanent and silent. Settings → OpenMausBot → Local Network. If the
@@ -224,9 +248,10 @@ so this is also how the phone reaches the Mac over cellular.
    `192.168.x.x` address, the sidecar could not find the Tailscale CLI — it
    asks once at startup, so turn the Companion toggle off and on again (or
    restart `pnpm companion` if running it by hand) after Tailscale is up.
-4. **On the phone:** pair by typing that name. Discovery does not help here —
-   Bonjour is multicast and a tailnet does not carry it — so the typed address
-   is the path, and it is the one path that works from anywhere.
+4. **On the phone:** scan the Companion panel's QR code, which carries that
+   MagicDNS name, or pair by typing the name. Discovery does not help here —
+   Bonjour is multicast and a tailnet does not carry it — so the QR/manual
+   address is the path, and it is the one path that works from anywhere.
 
 **Use the name, not the address.** Both reach the harness, but only the name
 gets past App Transport Security. iOS exempts local networking, and `100.64/10`
@@ -246,8 +271,11 @@ port — only the route to it is different.
 
 Not built yet, so not bugs:
 
-- **Nothing arrives while the app is closed.** No push until APNs.
-- **No voice, routines, task management, or transcript search.**
+- **Nothing arrives after the app is terminated.** Live and replayed notification
+  frames now become native alerts and badges, but closed-app push still needs an
+  APNs relay with project-owned Apple credentials.
+- **No voice or routine management.** Tasks, SQLite transcript search/export,
+  reactions, and edit/version switching are available from the conversation UI.
 
 (Two entries that used to sit on this list have since shipped: replies stream
 token by token as the provider emits them, and each bot has a computer panel —

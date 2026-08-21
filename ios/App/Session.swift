@@ -11,6 +11,8 @@ import Foundation
 import OSLog
 import SwiftUI
 import CompanionCore
+import UserNotifications
+import UIKit
 
 /// Stream lifecycle, in Console.app and the Xcode console. A companion that
 /// is silently not connected looks exactly like one with nothing to say, so
@@ -33,8 +35,21 @@ final class Session: ObservableObject {
     @Published private(set) var status: Status = .unpaired
     /// Transient, user-facing failures from an action they just took.
     @Published var actionError: String?
+    /// One exact message the next opened chat should reveal.
+    @Published private(set) var focusedMessageId: String?
+    @Published private(set) var notificationAuthorization: UNAuthorizationStatus = .notDetermined
+    /// A short-lived desktop handoff waiting for PairingView to present it.
+    @Published private(set) var pairingInvite: PairingInvite?
 
     private var client: CompanionClient?
+    /// The device token, kept in memory so the client can be rebuilt when the
+    /// dial moves to another stored host. The keychain remains the only place
+    /// it is persisted.
+    private var token: String?
+    /// Which of the connection's stored hosts the next attempt dials. The
+    /// walk advances on address-shaped failures and the winner is promoted —
+    /// and persisted — when a stream goes live.
+    private var rotation = CandidateRotation(hosts: [])
     private var streamTask: Task<Void, Never>?
     /// Identifies the task currently stored in `streamTask`. A cancelled task
     /// can finish after its replacement starts; its cleanup must not clear
@@ -54,7 +69,20 @@ final class Session: ObservableObject {
     // MARK: - Pairing
 
     init() {
+        _ = NotificationCoordinator.shared
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-store-preview"),
+           let url = Bundle.main.url(forResource: "StorePreview", withExtension: "json"),
+           let data = try? Data(contentsOf: url),
+           let fleet = try? JSONDecoder().decode(Fleet.self, from: data) {
+            connection = Connection(name: "Preview Mac", host: "preview.tailnet.ts.net", port: 8810)
+            state.hydrate(fleet)
+            status = .live
+            return
+        }
+#endif
         restore()
+        Task { await refreshNotificationAuthorization() }
     }
 
     /// Rebuild the last connection at launch.
@@ -92,29 +120,60 @@ final class Session: ObservableObject {
         guard let stored else { return } // no token: genuinely not paired
 
         connection = saved
+        token = stored
+        // `orderedHosts` puts the stored host first, so the address that
+        // worked last time is the one dialed first this time.
+        rotation = CandidateRotation(hosts: saved.orderedHosts)
         client = CompanionClient(connection: saved, token: stored)
         status = .connecting
     }
 
-    /// Redeem a pairing code. On success the token goes to the keychain and
-    /// the connection to defaults — deliberately apart, so the thing that
-    /// gets backed up is never the credential.
-    func pair(with connection: Connection, code: String, deviceName: String) async throws {
-        let paired = try await CompanionClient.pair(connection: connection, code: code, deviceName: deviceName)
+    /// Redeem a one-time pairing credential. On success the device token goes
+    /// to the keychain and the connection to defaults — deliberately apart,
+    /// so the thing that gets backed up is never the credential.
+    func pair(with connection: Connection, credential: String, deviceName: String) async throws {
+        let paired = try await CompanionClient.pair(
+            connection: connection,
+            credential: credential,
+            deviceName: deviceName
+        )
         // prefer the name the computer calls itself over the Bonjour label
         var stored = connection
         if !paired.serverName.isEmpty { stored.name = paired.serverName }
+        // The computer knows every address it answers on, and what it says at
+        // redeem time beats whatever the invite carried. Then the host that
+        // just redeemed the code leads: it demonstrably works from here.
+        if let hosts = paired.hosts, !hosts.isEmpty { stored.hosts = hosts }
+        stored.promote(stored.host)
 
         try Keychain.save(paired.token, for: stored.id)
         UserDefaults.standard.set(try? JSONEncoder().encode(stored), forKey: Self.connectionKey)
 
         self.connection = stored
+        self.token = paired.token
+        self.rotation = CandidateRotation(hosts: stored.orderedHosts)
         self.client = CompanionClient(connection: stored, token: paired.token)
         self.state = CompanionState()
         // A fresh pairing settles any restore that was still waiting on the
         // keychain — the token is in hand, so there is nothing left to retry.
         restorePending = false
         connect()
+    }
+
+    func receivePairingURL(_ url: URL) {
+        guard status == .unpaired else {
+            actionError = "This phone is already paired. Unpair it in Settings before connecting it to another computer."
+            return
+        }
+        guard let invite = PairingInvite.parse(url) else {
+            actionError = "That pairing invitation is not valid. Start pairing again on your computer."
+            return
+        }
+        pairingInvite = invite
+    }
+
+    func consumePairingInvite() {
+        pairingInvite = nil
     }
 
     func signOut() {
@@ -125,7 +184,10 @@ final class Session: ObservableObject {
         UserDefaults.standard.removeObject(forKey: Self.connectionKey)
         connection = nil
         client = nil
+        token = nil
+        rotation = CandidateRotation(hosts: [])
         state = CompanionState()
+        NotificationCoordinator.shared.setBadge(0)
         status = .unpaired
     }
 
@@ -137,6 +199,8 @@ final class Session: ObservableObject {
         // purpose. Coming to the front is the moment worth retrying on: the
         // app is on screen, so the phone is in someone's hand and unlocked.
         if client == nil, restorePending { restore() }
+        // back before the grace period ran out: keep the stream, drop the task
+        endLinger()
         guard client != nil, streamTask == nil else { return }
         reconnectDelay = 0
         streamGeneration += 1
@@ -202,6 +266,33 @@ final class Session: ObservableObject {
     func disconnect() {
         streamTask?.cancel()
         streamTask = nil
+        endLinger()
+    }
+
+    private var lingerTask: UIBackgroundTaskIdentifier = .invalid
+
+    /// Leaving the screen: keep the stream alive for the grace period iOS
+    /// allows (~30 s) rather than cutting it at once, so an approval that
+    /// lands right after you swipe home still reaches the Live Activity and
+    /// the island. After that, iOS suspends us anyway; disconnect cleanly so
+    /// the cursor is written down at a known point.
+    func linger() {
+        guard streamTask != nil, lingerTask == .invalid else { disconnect(); return }
+        lingerTask = UIApplication.shared.beginBackgroundTask(withName: "companion.linger") { [weak self] in
+            // time is up before our own timer — the system wants us gone now
+            self?.disconnect()
+        }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(25))
+            guard let self, self.lingerTask != .invalid else { return }
+            self.disconnect()
+        }
+    }
+
+    private func endLinger() {
+        guard lingerTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(lingerTask)
+        lingerTask = .invalid
     }
 
     private func run() async {
@@ -232,9 +323,16 @@ final class Session: ObservableObject {
                             state.resetCursor(cursor)
                         }
                         status = .live
+                        // this candidate carried a live stream — dial it
+                        // first from now on, including next launch
+                        promoteWorkingHost()
                         continue
                     }
                     state.apply(frame)
+                    if case let .notify(notification) = frame.frame {
+                        NotificationCoordinator.shared.deliver(notification, sequence: frame.seq)
+                    }
+                    NotificationCoordinator.shared.setBadge(state.unreadCount)
                     state.advance(to: frame.seq)
                 }
                 // the stream ended without an error — the harness went away
@@ -252,7 +350,7 @@ final class Session: ObservableObject {
                     return
                 }
                 log.error("stream failed: \(error.localizedDescription, privacy: .public)")
-                status = .offline(error.localizedDescription)
+                status = .offline(failureMessage(for: error))
             }
 
             if Task.isCancelled { return }
@@ -268,6 +366,61 @@ final class Session: ObservableObject {
         let fleet = try await client.fleet(messages: 50)
         log.info("hydrated \(fleet.bots.count, privacy: .public) bots, \(fleet.groups.count, privacy: .public) rooms")
         state.hydrate(fleet)
+        NotificationCoordinator.shared.setBadge(state.unreadCount)
+    }
+
+    // MARK: - Which address to dial
+
+    /// Turn a stream failure into advice a person can act on — and, when the
+    /// failure is about the address rather than the pairing, move the dial to
+    /// the next stored host so the retry that follows tries somewhere new.
+    /// A 401 never reaches here: the unauthorized path returns above, which
+    /// is what keeps a token problem from masquerading as an address walk.
+    private func failureMessage(for error: Error) -> String {
+        guard let urlError = error as? URLError, let connection else {
+            return error.localizedDescription
+        }
+        let failed = rotation.current.isEmpty ? connection.host : rotation.current
+        var next: String?
+        if ConnectionAdvice.shouldTryAnotherHost(urlError.code), rotation.count > 1 {
+            let candidate = rotation.advance()
+            if let token {
+                client = CompanionClient(connection: connection.dialing(candidate), token: token)
+            }
+            next = candidate
+            log.info("advancing to candidate host \(candidate, privacy: .public)")
+        }
+        return ConnectionAdvice.message(for: urlError.code, host: failed, port: connection.port, tryingNext: next)
+    }
+
+    /// The candidate that just carried a live stream dials first from now on.
+    /// Persisted, so the next launch starts from the address that works
+    /// rather than re-walking the list from a stale front-runner.
+    private func promoteWorkingHost() {
+        let winner = rotation.current
+        guard !winner.isEmpty, var updated = connection,
+              updated.host != Connection.urlHost(winner) else { return }
+        updated.promote(winner)
+        connection = updated
+        UserDefaults.standard.set(try? JSONEncoder().encode(updated), forKey: Self.connectionKey)
+    }
+
+    /// Replace the stored address by hand, keeping the pairing and its token.
+    /// False when the text does not parse as a host or host:port.
+    @discardableResult
+    func updateAddress(_ text: String) -> Bool {
+        guard var updated = connection, let parsed = Connection.parse(text) else { return false }
+        updated.port = parsed.port
+        updated.promote(parsed.host)
+        connection = updated
+        UserDefaults.standard.set(try? JSONEncoder().encode(updated), forKey: Self.connectionKey)
+        rotation = CandidateRotation(hosts: updated.orderedHosts)
+        if let token { client = CompanionClient(connection: updated, token: token) }
+        // Dial the new address now rather than on the next backoff tick —
+        // someone who just typed an address is watching the banner.
+        restartStream()
+        connect()
+        return true
     }
 
     // MARK: - Actions
@@ -286,16 +439,31 @@ final class Session: ObservableObject {
         }
     }
 
-    func answer(threadId: String, card: OptionCard, choice: String) async {
+    func answer(chat: Chat, card: OptionCard, choice: String, rememberingPermission: Bool = true) async {
         guard let requestId = card.requestId else { return }
+        if rememberingPermission, card.shouldRememberPermission(for: choice), case let .bot(bot) = chat {
+            await alwaysAllow(bot: bot, card: card)
+        }
+        await answer(
+            threadId: chat.threadId,
+            requestId: requestId,
+            choice: choice,
+            isPermission: card.isPermission
+        )
+    }
+
+    /// The same answer, from something that only has the ids — the Live
+    /// Activity's buttons.
+    func answer(threadId: String, requestId: String, choice: String, isPermission: Bool) async {
         await perform {
             // Permission cards answer allow/deny; a question answers with
             // the chosen text. The harness tells them apart by `behavior`.
-            if card.isPermission {
+            let behavior = OptionCard.responseBehavior(for: choice, isPermission: isPermission)
+            if behavior != "answer" {
                 try await $0.respond(
                     threadId: threadId,
                     requestId: requestId,
-                    behavior: choice.lowercased() == "allow" ? "allow" : "deny"
+                    behavior: behavior
                 )
             } else {
                 try await $0.respond(threadId: threadId, requestId: requestId, behavior: "answer", message: choice)
@@ -331,8 +499,35 @@ final class Session: ObservableObject {
         }
     }
 
+    /// Make a room from the phone. Same shape as `createBot`: fold it in
+    /// rather than wait for a broadcast, and hand it back so it can be opened.
+    @discardableResult
+    func createRoom(name: String?, memberIds: [String]) async -> Room? {
+        guard let client else { return nil }
+        do {
+            let room = try await client.createRoom(name: name, memberIds: memberIds)
+            state.apply(.room(room))
+            return room
+        } catch {
+            actionError = error.localizedDescription
+            return nil
+        }
+    }
+
     func interrupt(bot: Bot) async {
         await perform { try await $0.interrupt(botId: bot.id) }
+    }
+
+    /// Ask for one fresh cloud viewer URL. Unlike ordinary actions this
+    /// returns the value to a browser sheet and never writes it to app state.
+    func cloudDesktop(for bot: Bot) async throws -> URL {
+        guard let client else { throw APIError.transport("This computer is offline.") }
+        do {
+            return try await client.cloudDesktop(botId: bot.id).url
+        } catch let error as APIError where error.isUnauthorized {
+            status = .unauthorized
+            throw error
+        }
     }
 
     func markRead(_ chat: Chat) async {
@@ -356,6 +551,137 @@ final class Session: ObservableObject {
 
     func image(threadId: String, messageId: String) async -> Data? {
         try? await client?.image(threadId: threadId, messageId: messageId)
+    }
+
+    func search(_ query: String) async -> [SearchHit] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2, let client else { return [] }
+        do { return try await client.search(trimmed) }
+        catch {
+            actionError = error.localizedDescription
+            return []
+        }
+    }
+
+    /// Resolve a SQLite search hit into the live task/branch, load a page
+    /// around it, and hand navigation the current chat record.
+    func open(_ hit: SearchHit) async -> Chat? {
+        guard let client else { return nil }
+        do {
+            if let botId = hit.botId, var bot = state.bot(botId) {
+                if bot.threadId != hit.threadId {
+                    bot = try await client.switchTask(botId: bot.id, threadId: hit.threadId)
+                    state.apply(.bot(bot))
+                }
+                if !hit.onActivePath {
+                    let leaf = try await client.setActiveBranch(botId: bot.id, messageId: hit.messageId)
+                    state.apply(.thread(threadId: hit.threadId, activeLeafId: leaf))
+                }
+                let page = try await client.messages(threadId: hit.threadId, around: hit.messageId)
+                state.merge(page, intoThread: hit.threadId)
+                focusedMessageId = hit.messageId
+                return state.bot(bot.id).map(Chat.bot)
+            }
+            if let groupId = hit.groupId,
+               let room = state.rooms.first(where: { $0.id == groupId }) {
+                let page = try await client.messages(threadId: hit.threadId, around: hit.messageId)
+                state.merge(page, intoThread: hit.threadId)
+                focusedMessageId = hit.messageId
+                return .room(room)
+            }
+        } catch { actionError = error.localizedDescription }
+        return nil
+    }
+
+    func consumeFocus(_ messageId: String) {
+        if focusedMessageId == messageId { focusedMessageId = nil }
+    }
+
+    func createTask(for bot: Bot, title: String?) async {
+        guard let client else { return }
+        do { state.apply(.bot(try await client.createTask(botId: bot.id, title: title))) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func switchTask(_ task: BotTask, for bot: Bot) async {
+        guard let client, task.threadId != bot.threadId else { return }
+        do { state.apply(.bot(try await client.switchTask(botId: bot.id, threadId: task.threadId))) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func renameTask(_ task: BotTask, for bot: Bot, title: String) async {
+        guard let client else { return }
+        do {
+            try await client.renameTask(botId: bot.id, threadId: task.threadId, title: title)
+            await refresh()
+        } catch { actionError = error.localizedDescription }
+    }
+
+    func deleteTask(_ task: BotTask, for bot: Bot) async {
+        guard let client else { return }
+        do { state.apply(.bot(try await client.deleteTask(botId: bot.id, threadId: task.threadId))) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func react(to message: Message, in threadId: String, emoji: String) async {
+        guard let client else { return }
+        do {
+            let patched = try await client.toggleReaction(threadId: threadId, messageId: message.id, emoji: emoji)
+            state.apply(.messagePatch(threadId: threadId, message: patched))
+        } catch { actionError = error.localizedDescription }
+    }
+
+    func edit(_ message: Message, for bot: Bot, text: String) async {
+        await perform { try await $0.edit(botId: bot.id, messageId: message.id, text: text) }
+    }
+
+    func switchVersion(to message: Message, for bot: Bot) async {
+        guard let client else { return }
+        do {
+            let leaf = try await client.setActiveBranch(botId: bot.id, messageId: message.id)
+            state.apply(.thread(threadId: bot.threadId, activeLeafId: leaf))
+        } catch { actionError = error.localizedDescription }
+    }
+
+    func export(threadId: String, format: String) async -> URL? {
+        guard let client else { return nil }
+        do {
+            let exported = try await client.export(threadId: threadId, format: format)
+            let name = URL(fileURLWithPath: exported.filename).lastPathComponent
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+            try exported.data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            actionError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func refreshNotificationAuthorization() async {
+        notificationAuthorization = await NotificationCoordinator.shared.authorizationStatus()
+    }
+
+    func enableNotifications() async {
+        if notificationAuthorization == .denied {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                await UIApplication.shared.open(url)
+            }
+            return
+        }
+        _ = await NotificationCoordinator.shared.requestAuthorization()
+        await refreshNotificationAuthorization()
+        NotificationCoordinator.shared.setBadge(state.unreadCount)
+    }
+
+    var notificationStatusText: String {
+        switch notificationAuthorization {
+        case .authorized: return "On"
+        case .provisional: return "Quietly on"
+        case .ephemeral: return "Temporarily on"
+        case .denied: return "Off in Settings"
+        case .notDetermined: return "Not enabled"
+        @unknown default: return "Unknown"
+        }
     }
 
     private func perform(quietly: Bool = false, _ body: (CompanionClient) async throws -> Void) async {
@@ -499,7 +825,11 @@ extension CompanionState {
         guard let last else { return "" }
         switch last.kind {
         case .text: return last.text ?? ""
-        case .options: return last.card?.isPending == true ? "Waiting on you" : (last.card?.title ?? "")
+        // a pending card's question is the preview; the roster row already
+        // says "waiting on you" beside it
+        case .options:
+            guard let card = last.card else { return "" }
+            return card.isPending && !card.subtitle.isEmpty ? card.subtitle : card.title
         case .activity: return last.tool?.name ?? ""
         case .screen: return "Screenshot"
         case .unknown: return last.text ?? ""

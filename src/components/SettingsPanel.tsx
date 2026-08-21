@@ -8,11 +8,15 @@ import {
   MAUS_COLORS,
   MAUS_COLOR_NAMES,
 } from "@/lib/mascot";
+import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { requestNotificationPermission } from "@/lib/notify";
+import { botUsage, costCaption, formatTokens, formatUsd, hasFiniteCost } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
+import { instanceSupportsLocalComputer, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
+import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 
 function Field({
   label,
@@ -26,6 +30,47 @@ function Field({
       <div className="mb-1.5 text-[13px] text-ink-secondary">{label}</div>
       {children}
     </label>
+  );
+}
+
+/** What this bot has spent across its tasks. Cost is captioned by how the
+ * engine is billed — on a subscription the figure is an equivalent. */
+function BotUsageCard({ bot }: { bot: Bot }) {
+  const { state, dispatch } = useStore();
+  const usage = botUsage(bot);
+  const instance = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId);
+  if (usage.turns === 0) return null;
+  return (
+    <div className="rounded-xl bg-card p-4">
+      <div className="flex items-baseline justify-between">
+        <div className="text-[15px] font-medium text-ink">Usage</div>
+        <button
+          onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })}
+          className="text-[12px] text-ink-secondary hover:text-ink"
+        >
+          All bots →
+        </button>
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-3 text-[13px]">
+        <div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Turns</div>
+          <div className="mt-0.5 tabular-nums text-ink">{usage.turns}</div>
+        </div>
+        <div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Tokens</div>
+          <div className="mt-0.5 tabular-nums text-ink" title={`${formatTokens(usage.input)} in · ${formatTokens(usage.output)} out`}>
+            {formatTokens(usage.input + usage.output)}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Cost</div>
+          <div className="mt-0.5 tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : "—"}</div>
+        </div>
+      </div>
+      <div className="mt-2 text-[12px] text-ink-secondary">
+        {hasFiniteCost(usage.costUsd) ? `Cost ${costCaption(instance?.snapshot.billing)}.` : "This engine doesn't report a price; tokens are counted."}
+      </div>
+    </div>
   );
 }
 
@@ -276,6 +321,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const [voices, setVoices] = useState<Array<{ id: string; label: string; description?: string }>>([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
+  const { capabilities } = useDesktopCapabilities();
+  const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
+  const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
+  const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "local" | null>(null);
+  const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const patch = (
     p: Partial<
       Pick<
@@ -285,6 +335,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "description"
         | "notifications"
         | "computer"
+        | "cloudBackend"
         | "color"
         | "mascotExpression"
         | "autoApprove"
@@ -295,13 +346,14 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "composio"
         | "modelSelection"
       >
-    >,
+    > & { acknowledgeLocalAuto?: boolean },
   ) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const activeState = stateForBot(bot);
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
   const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
+  const canUseVps = engine?.capabilities?.computerMcp === true && engine.driverKind !== "boxAgent";
   const connectedAppsConfigured = state.config?.composio?.configured === true;
   const connectedAppsEnabled = bot.composio !== false;
   const currentChief = state.bots.find((candidate) => candidate.chiefOfStaff);
@@ -323,6 +375,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   }, [state.config?.tts?.configured]);
 
   return (
+    <>
     <aside className="animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3">
@@ -603,24 +656,44 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               Where this bot's computer runs{bot.computer ? "" : " (currently: auto)"}
             </div>
             <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
-              {(["cloud", "local", "off"] as const).map((mode, i) => (
+              {([
+                ["cloud", "Cloud"],
+                ["vm", "Local VM"],
+                ["local", "This computer"],
+                ["off", "Off"],
+              ] as const).map(([mode, label], i) => (
                 <button
                   key={mode}
-                  onClick={() => patch({ computer: mode })}
+                  disabled={mode === "local" && !localSelectable}
+                  title={mode === "local" && !localSelectable ? localDisabledReason ?? undefined : undefined}
+                  onClick={() => {
+                    if (mode === bot.computer) return;
+                    if (mode === "local" && bot.autoApprove) setLocalAutoWarning("local");
+                    else patch({ computer: mode });
+                  }}
                   className={cn(
                     "flex-1 py-1.5 text-[13px] capitalize",
                     i > 0 && "border-l border-hairline/40",
+                    mode === "local" && !localSelectable && "cursor-not-allowed opacity-40",
                     bot.computer === mode
                       ? "bg-raised text-ink"
                       : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
                   )}
                 >
-                  {mode}
+                  {label}
                 </button>
               ))}
             </div>
+            {(!bot.computer || bot.computer === "cloud") && (
+              <CloudBackendPicker
+                value={bot.cloudBackend ?? "box"}
+                vpsSupported={canUseVps}
+                onChange={(backend) => patch({ cloudBackend: backend })}
+              />
+            )}
           </div>
 
+          <BotUsageCard bot={bot} />
           <WorkingFolder bot={bot} />
 
           {/* keyed so switching bots never shows one bot's notes under another's name */}
@@ -630,7 +703,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             <div>
               <div className="text-[15px] font-medium text-ink">Auto mode</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {bot.autoApprove
+                {bot.computer === "local"
+                  ? bot.autoApprove
+                    ? "Keeps going on this computer — you'll still be asked about anything destructive, and about questions it asks you."
+                    : "Approve each action on this computer yourself. Turn on to let this bot keep working without stopping to ask."
+                  : bot.autoApprove
                   ? "Keeps going on its own — you'll still be asked about anything destructive, and about questions it asks you."
                   : "Approve each action yourself. Turn on to let this bot keep working without stopping to ask."}
               </div>
@@ -639,7 +716,10 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               role="switch"
               aria-checked={Boolean(bot.autoApprove)}
               aria-label="Auto mode"
-              onClick={() => patch({ autoApprove: !bot.autoApprove })}
+              onClick={() => {
+                if (!bot.autoApprove && bot.computer === "local") setLocalAutoWarning("auto");
+                else patch({ autoApprove: !bot.autoApprove });
+              }}
               className={cn(
                 "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
                 bot.autoApprove ? "bg-accent" : "bg-raised",
@@ -739,5 +819,15 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         </div>
       </div>
     </aside>
+    <LocalComputerAutoWarning
+      open={localAutoWarning !== null}
+      onCancel={() => setLocalAutoWarning(null)}
+      onConfirm={() => {
+        if (localAutoWarning === "auto") patch({ autoApprove: true, acknowledgeLocalAuto: true });
+        if (localAutoWarning === "local") patch({ computer: "local", acknowledgeLocalAuto: true });
+        setLocalAutoWarning(null);
+      }}
+    />
+    </>
   );
 }

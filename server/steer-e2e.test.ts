@@ -1,9 +1,9 @@
 // Mid-turn steering, end to end: boots the real harness with the fake claude
 // CLI in `slow` mode (a gap after the tool result the way a real turn has
 // between model calls), sends a message WHILE the turn runs, and asserts
-// it is taken into the turn — 202 steered, not 409; in the transcript in
-// order and marked; folded into the reply — while an engine without a live
-// session still gets the 409 the composer queues behind.
+// it is taken into the turn — 202 steered; in the transcript in order and
+// marked; folded into the reply — while an engine without a live session
+// falls back to the server-side queue.
 //
 // POSIX-gated like the other CLI e2es (the fakes are shebang scripts).
 import { spawn, type ChildProcess } from "node:child_process";
@@ -52,7 +52,7 @@ posixOnly("mid-turn steering e2e", () => {
       JSON.stringify({
         instances: {
           claude: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "slow" }, config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" } },
-          // no live session: a message while busy is a 409 the composer queues behind
+          // no live session: a message while busy uses the server-side queue
           acp: { driver: "grokAgent", environment: { FAKE_ACP_MODE: "hang" }, config: { cli: FAKE_ACP, fullAuto: true } },
         },
       }),
@@ -121,13 +121,24 @@ posixOnly("mid-turn steering e2e", () => {
     40_000,
   );
 
-  it("an engine without a live session still refuses a message while busy (the composer queues it)", async () => {
+  it("an engine without a live session preserves the message in the server-side queue", async () => {
     const created = (await api("POST", "/api/bots")).body.bot;
     await api("PATCH", `/api/bots/${created.id}`, { modelSelection: { instanceId: "acp", model: "fake-model" } });
     expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
     await waitFor(async () => (await getBot(created.id)).busy === true, "the hung turn to start");
-    expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "second" })).status).toBe(409);
+    const queued = await api("POST", `/api/bots/${created.id}/messages`, { text: "second" });
+    expect(queued.status).toBe(202);
+    expect(queued.body.queued).toBe(true);
+    await waitFor(
+      async () => (await getBot(created.id)).messages.some((m: any) => m.text === "second" && m.queued === true),
+      "the queued message to appear",
+    );
     await api("POST", `/api/bots/${created.id}/interrupt`);
-    await waitFor(async () => (await getBot(created.id)).busy === false, "the turn to settle");
+    await waitFor(
+      async () => (await getBot(created.id)).messages.some((m: any) => m.text === "second" && m.queued !== true),
+      "the queued message to begin its turn",
+    );
+    await api("POST", `/api/bots/${created.id}/interrupt`);
+    await waitFor(async () => (await getBot(created.id)).busy === false, "the queued turn to settle");
   }, 30_000);
 });
