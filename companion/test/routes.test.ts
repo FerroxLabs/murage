@@ -57,6 +57,10 @@ describe("what the app may do", () => {
     ["GET", "/api/threads/th_1/export"],
     ["POST", "/api/threads/th_1/respond"],
     ["GET", "/api/search"],
+    ["GET", "/api/connectors/catalog"],
+    ["GET", "/api/connectors/connected"],
+    ["GET", "/api/connectors"],
+    ["POST", "/api/connectors/slack/authorize"],
   ];
 
   for (const [method, path] of calls) {
@@ -74,7 +78,6 @@ describe("what it may not", () => {
       ["POST", "/api/local-computer/start"],
       ["POST", "/api/webhooks"],
       ["POST", "/api/webhooks/wh_1/rotate"],
-      ["GET", "/api/connectors"],
       ["DELETE", "/api/connectors/gmail"],
       ["GET", "/api/routines"],
       ["POST", "/api/teams/import"],
@@ -112,6 +115,11 @@ describe("what it may not", () => {
     expect(allowed("POST", "/api/threads/th_1/messages")).toBe(false);
     expect(allowed("GET", "/api/groups/room-1")).toBe(false);
     expect(allowed("PATCH", "/api/bots/bot_123")).toBe(false);
+    expect(allowed("DELETE", "/api/connectors/slack")).toBe(false);
+    expect(allowed("GET", "/api/connectors/connected/all")).toBe(false);
+    // revocation is a Mac-only affordance: the phone can list and add
+    // accounts but the account DELETE route is deliberately not allowed
+    expect(allowed("DELETE", "/api/connectors/slack/accounts/ca_123")).toBe(false);
     expect(allowed("PATCH", "/api/groups/room-1")).toBe(false);
   });
 
