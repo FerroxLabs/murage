@@ -368,40 +368,6 @@ struct ChatView: View {
         .padding(.top, -4)
     }
 
-    /// Everything the name pill and the composer's + can do. One list, two
-    /// doors — the pill for "about this chat", the + for "do something".
-    @ViewBuilder
-    private var chatActions: some View {
-        if case let .bot(bot) = current {
-            Button("New task", systemImage: "plus.square.on.square") {
-                Task { await session.createTask(for: bot, title: nil) }
-            }
-            .disabled(bot.busy == true)
-            Button("Tasks", systemImage: "square.stack") { showingTasks = true }
-            Button("Watch computer", systemImage: "display") { showingComputer = true }
-        }
-        Button("Share as Markdown", systemImage: "doc.plaintext") {
-            Task {
-                if let url = await session.export(threadId: current.threadId, format: "markdown") {
-                    shareFile = ShareFile(url: url)
-                }
-            }
-        }
-        Button("Share as JSON", systemImage: "curlybraces") {
-            Task {
-                if let url = await session.export(threadId: current.threadId, format: "json") {
-                    shareFile = ShareFile(url: url)
-                }
-            }
-        }
-        if current.busy, case let .bot(bot) = current {
-            Divider()
-            Button("Interrupt", systemImage: "stop.fill", role: .destructive) {
-                Task { await session.interrupt(bot: bot) }
-            }
-        }
-    }
-
     // MARK: - The + sheet
 
     /// What the composer's + opens: a glass sheet of the things you can do
@@ -490,6 +456,16 @@ struct ChatView: View {
         ) {
             Task {
                 if let url = await session.export(threadId: current.threadId, format: "markdown") {
+                    shareFile = ShareFile(url: url)
+                }
+            }
+        })
+        out.append(PlusAction(
+            id: "share-json", systemImage: "curlybraces", title: "Share as JSON",
+            subtitle: "Structured transcript data"
+        ) {
+            Task {
+                if let url = await session.export(threadId: current.threadId, format: "json") {
                     shareFile = ShareFile(url: url)
                 }
             }
