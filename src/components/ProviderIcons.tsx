@@ -109,6 +109,21 @@ export function QwenMark({ size = 16, className }: IconProps) {
   );
 }
 
+/** Official pi (pi.dev) mark — geometric "Pi" wordmark from pi.dev/logo.svg. */
+export function PiMark({ size = 16, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 800 800" className={cn("fill-[#F5F5F5]", className)} aria-hidden>
+      {/* P shape: outer boundary clockwise, inner hole counter-clockwise */}
+      <path
+        fillRule="evenodd"
+        d="M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z"
+      />
+      {/* i dot */}
+      <path d="M517.36 400 H634.72 V634.72 H517.36 Z" />
+    </svg>
+  );
+}
+
 export function ProviderMark({ driverKind, size, className }: IconProps & { driverKind: string }) {
   switch (driverKind) {
     case "grok":
@@ -134,6 +149,8 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
       return <HermesMark size={size} className={className} />;
     case "boxAgent":
       return <ComputerMark size={size} className={className} />;
+    case "piAgent":
+      return <PiMark size={size} className={className} />;
     default:
       return (
         <span className="flex size-full items-center justify-center text-[10px] font-semibold tracking-tight text-ink-secondary">

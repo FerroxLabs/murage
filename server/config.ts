@@ -330,10 +330,12 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     computer: { driver: "boxAgent" },
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
+    pi: { driver: "piAgent" },
   };
   const CUSTOM_ONLY = {
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
+    pi: { driver: "piAgent" },
   } as const;
   // New default-fleet engines that existing product configs would otherwise
   // never see. Custom-only engines stay in CUSTOM_ONLY so a one-off test map
