@@ -4,9 +4,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DroidAgentDriver, ensureDroidInjectModel } from "./acp/droid.ts";
+import { applyDroidLocalAuthEnv, DroidAgentDriver, ensureDroidInjectModel } from "./acp/droid.ts";
 import { ensureGrokInjectSlug, GrokAgentDriver } from "./acp/grok.ts";
-import { ensureKimiInjectAlias, KimiAgentDriver } from "./acp/kimi.ts";
+import { applyKimiLocalModelEnv, ensureKimiInjectAlias, KimiAgentDriver } from "./acp/kimi.ts";
 import { ensureOpenCodeInjectModel } from "./acp/opencode-go.ts";
 import { AntigravityDriver } from "./antigravity.ts";
 
@@ -21,9 +21,11 @@ import {
   codexLocalProviderArgs,
   decodeInjectId,
   encodeInjectId,
+  contextWindowsFromPs,
   loadedIdsFromPayloads,
   LOCAL_HOSTS,
   mergeLocalInject,
+  resolveInjectId,
 } from "./local-inject.ts";
 
 const scratchDirs: string[] = [];
@@ -43,6 +45,61 @@ describe("inject ids", () => {
   it("rejects official cloud slugs", () => {
     expect(decodeInjectId("claude-sonnet-5")).toBeNull();
     expect(decodeInjectId("gpt-5.6-sol")).toBeNull();
+  });
+});
+
+describe("contextWindowsFromPs", () => {
+  it("reads Ollama's per-model context_length from /api/ps, keyed by full and base id", () => {
+    const windows = contextWindowsFromPs({
+      models: [
+        { name: "qwen3:8b", model: "qwen3:8b", context_length: 40960 },
+        { name: "llama3.2:1b", model: "llama3.2:1b", context_length: 8192 },
+        { name: "llama3.2:70b", model: "llama3.2:70b", context_length: 131072 },
+        { name: "no-ctx:1b", model: "no-ctx:1b" },
+        { name: "bad:1b", model: "bad:1b", context_length: -1 },
+      ],
+    });
+    expect(windows.get("qwen3:8b")).toBe(40960);
+    expect(windows.get("qwen3")).toBe(40960);
+    expect(windows.get("llama3.2:1b")).toBe(8192);
+    expect(windows.get("llama3.2:70b")).toBe(131072);
+    expect(windows.get("llama3.2")).toBe(8192);
+    expect(windows.has("no-ctx:1b")).toBe(false);
+    expect(windows.has("bad:1b")).toBe(false);
+  });
+  it("tolerates payloads that are not a ps listing", () => {
+    expect(contextWindowsFromPs(null).size).toBe(0);
+    expect(contextWindowsFromPs({ data: [] }).size).toBe(0);
+  });
+});
+
+describe("resolveInjectId", () => {
+  it("keeps an already-encoded inject id", () => {
+    expect(resolveInjectId("unsloth::orcarouter/Qwen3.8-27B-Uncensored-GGUF", [])).toBe(
+      "unsloth::orcarouter/Qwen3.8-27B-Uncensored-GGUF",
+    );
+  });
+
+  it("maps a leftover API id onto the live host:: row", () => {
+    expect(
+      resolveInjectId("orcarouter/Qwen3.8-27B-Uncensored-GGUF", [
+        {
+          id: "unsloth::orcarouter/Qwen3.8-27B-Uncensored-GGUF",
+          host: "unsloth",
+          model: "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
+          label: "orcarouter/Qwen3.8-27B-Uncensored-GGUF (Unsloth)",
+        },
+      ]),
+    ).toBe("unsloth::orcarouter/Qwen3.8-27B-Uncensored-GGUF");
+  });
+
+  it("prefers a loaded host when several serve the same API id", () => {
+    expect(
+      resolveInjectId("GLM-5.2-fp8", [
+        { id: "omlx::GLM-5.2-fp8", host: "omlx", model: "GLM-5.2-fp8", label: "GLM-5.2-fp8 (oMLX)" },
+        { id: "lmstudio::GLM-5.2-fp8", host: "lmstudio", model: "GLM-5.2-fp8", label: "GLM-5.2-fp8 (LM Studio)", loaded: true },
+      ]),
+    ).toBe("lmstudio::GLM-5.2-fp8");
   });
 });
 
@@ -182,6 +239,29 @@ describe("mergeLocalInject", () => {
     expect(catalog.options.some((option) => option.id === "omlx::GLM-5.2-fp8" && option.custom)).toBe(true);
     expect(catalog.options.some((option) => option.id.includes("nomic"))).toBe(false);
   });
+
+  it("drops a leftover custom API id that a live inject already covers", async () => {
+    const catalog = await mergeLocalInject(
+      {
+        default: "claude-sonnet-5",
+        options: [
+          { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+          { id: "orcarouter/Qwen3.8-27B-Uncensored-GGUF", label: "orcarouter/Qwen3.8-27B-Uncensored-GGUF", custom: true },
+        ],
+      },
+      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      async (url) => {
+        if (String(url).includes(":8888")) {
+          return new Response(JSON.stringify({ data: [{ id: "orcarouter/Qwen3.8-27B-Uncensored-GGUF" }] }), { status: 200 });
+        }
+        return new Response("nope", { status: 500 });
+      },
+    );
+    expect(catalog.options.some((option) => option.id === "orcarouter/Qwen3.8-27B-Uncensored-GGUF")).toBe(false);
+    expect(catalog.options.some((option) => option.id === "unsloth::orcarouter/Qwen3.8-27B-Uncensored-GGUF" && option.custom)).toBe(
+      true,
+    );
+  });
 });
 
 describe("applyOpenAIInject", () => {
@@ -303,6 +383,275 @@ describe("ensureKimiInjectAlias", () => {
     expect(text.match(/\[providers\.omlx\]/g)?.length).toBe(1);
     expect(text).toContain(`base_url = "http://127.0.0.1:8080/v1"`);
     expect(text).toContain(`model = "GLM-5.2-fp8"`);
+    expect(text).toContain(`protocol = "openai"`);
+    expect(text).toContain(`max_context_size = 262144`);
+  });
+
+  it("amends an existing alias with protocol and context size and leaves user keys", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-patch-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      [
+        "[[hooks]]",
+        'event = "Stop"',
+        "",
+        "[providers.omlx]",
+        'type = "openai_legacy"',
+        'base_url = "http://127.0.0.1:8080/v1"',
+        'api_key = "omlx"',
+        "",
+        '[models."omlx/GLM-5.2-fp8"]',
+        'provider = "omlx"',
+        'model = "GLM-5.2-fp8"',
+        'display_name = "keep me"',
+        "",
+      ].join("\n"),
+    );
+    expect(ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home })).toBe("omlx/GLM-5.2-fp8");
+    expect(ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home })).toBe("omlx/GLM-5.2-fp8");
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text).toContain("[[hooks]]");
+    expect(text).toContain('display_name = "keep me"');
+    expect(text).toContain('provider = "omlx"');
+    expect(text).toContain('model = "GLM-5.2-fp8"');
+    expect(text.match(/protocol = "openai"/g)?.length).toBe(1);
+    expect(text.match(/max_context_size = 262144/g)?.length).toBe(1);
+  });
+
+  it("does not overwrite a user's protocol or context size", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-keep-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      [
+        '[models."omlx/GLM-5.2-fp8"]',
+        'provider = "omlx"',
+        'model = "GLM-5.2-fp8"',
+        'protocol = "openai_responses"',
+        "max_context_size = 8192",
+        "",
+      ].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text).toContain('protocol = "openai_responses"');
+    expect(text).toContain("max_context_size = 8192");
+    expect(text).not.toContain('protocol = "openai"');
+    expect(text).not.toContain("max_context_size = 262144");
+  });
+
+  it("treats a quoted protocol key as already set and does not duplicate it", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-quoted-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      [
+        '[models."omlx/GLM-5.2-fp8"]',
+        'provider = "omlx"',
+        'model = "GLM-5.2-fp8"',
+        '"protocol" = "openai"',
+        "",
+      ].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text.match(/protocol/g)?.length).toBe(1);
+    expect(text).toContain("max_context_size = 262144");
+  });
+
+  it("finds a heading with a trailing comment and does not append a second table", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-heading-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      ['[models."omlx/GLM-5.2-fp8"] # keep', 'provider = "omlx"', 'model = "GLM-5.2-fp8"', ""].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text.match(/\[models\./g)?.length).toBe(1);
+    expect(text).toContain("# keep");
+    expect(text).toContain('protocol = "openai"');
+  });
+
+  it("does not hide a model table behind an apostrophe in a preceding comment", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-apos-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      [
+        "# user's setting",
+        '[models."omlx/GLM-5.2-fp8"]',
+        'provider = "omlx"',
+        'model = "GLM-5.2-fp8"',
+        "",
+      ].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text.match(/\[models\./g)?.length).toBe(1);
+    expect(text).toContain("# user's setting");
+    expect(text).toContain('protocol = "openai"');
+    expect(text).toContain("max_context_size = 262144");
+  });
+
+  it("stops a model table before a following array-of-tables heading", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-aot-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      [
+        '[models."omlx/GLM-5.2-fp8"]',
+        'provider = "omlx"',
+        'model = "GLM-5.2-fp8"',
+        "",
+        "[[hooks]]",
+        'event = "Stop"',
+        "",
+      ].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text.indexOf('protocol = "openai"')).toBeLessThan(text.indexOf("[[hooks]]"));
+    expect(text.indexOf("max_context_size = 262144")).toBeLessThan(text.indexOf("[[hooks]]"));
+    expect(text).toMatch(/\[\[hooks\]\]\s*event = "Stop"/);
+  });
+
+  it("treats a unicode-escaped model key as the same table as the literal alias", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-unicode-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      ['[models."omlx/GLM-\\u0035.2-fp8"]', 'provider = "omlx"', 'model = "GLM-5.2-fp8"', ""].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text.match(/\[models\./g)?.length).toBe(1);
+    expect(text).toContain("GLM-\\u0035.2-fp8");
+    expect(text).toContain('protocol = "openai"');
+    expect(text).toContain("max_context_size = 262144");
+  });
+
+  it("does not treat a malformed escape as a canonical alias", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-badesc-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      ['[models."omlx/GLM-\\q.2-fp8"]', 'provider = "omlx"', 'model = "nope"', ""].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text).toContain("GLM-\\q.2-fp8");
+    expect(text).toContain('model = "nope"');
+    expect(text.match(/\[models\./g)?.length).toBe(2);
+    expect(text).toContain('model = "GLM-5.2-fp8"');
+    expect(text).toContain('protocol = "openai"');
+  });
+
+  it("treats whitespace around dotted heading keys as the same table", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-dots-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      ['[models . "omlx/GLM-5.2-fp8"]', 'provider = "omlx"', 'model = "GLM-5.2-fp8"', ""].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text.match(/\[models/g)?.length).toBe(1);
+    expect(text).toContain('protocol = "openai"');
+    expect(text).toContain("max_context_size = 262144");
+  });
+
+  it("does not treat a triple-quote inside a single-line string as multiline", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-squote-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      [
+        '[models."omlx/GLM-5.2-fp8"]',
+        'provider = "omlx"',
+        'model = "GLM-5.2-fp8"',
+        `note = '"""'`,
+        'protocol = "openai"',
+        "",
+      ].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text.match(/protocol = "openai"/g)?.length).toBe(1);
+    expect(text).toContain("max_context_size = 262144");
+  });
+
+  it("does not treat a triple-quote inside a comment as multiline", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-hash-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      [
+        '[models."omlx/GLM-5.2-fp8"]',
+        'provider = "omlx"',
+        'model = "GLM-5.2-fp8"',
+        'note = "x" # """',
+        'protocol = "openai"',
+        "",
+      ].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text.match(/protocol = "openai"/g)?.length).toBe(1);
+    expect(text).toContain("max_context_size = 262144");
+  });
+
+  it("does not treat a bracket line inside a multiline string as a table", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-ml-"));
+    scratchDirs.push(home);
+    const root = join(home, ".kimi-code");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "config.toml"),
+      [
+        '[models."omlx/GLM-5.2-fp8"]',
+        'provider = "omlx"',
+        'model = "GLM-5.2-fp8"',
+        'notes = """',
+        "[providers.evil]",
+        'protocol = "skip"',
+        '"""',
+        "",
+      ].join("\n"),
+    );
+    ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: home });
+    const text = readFileSync(join(root, "config.toml"), "utf8");
+    expect(text).toContain('protocol = "skip"');
+    expect(text).toContain('protocol = "openai"');
+    const notesOpen = text.indexOf('"""', text.indexOf("notes"));
+    const notesClose = text.indexOf('"""', notesOpen + 3);
+    const protocolAt = text.indexOf('protocol = "openai"');
+    expect(protocolAt).toBeGreaterThan(notesClose);
+    expect(text).toContain("[providers.omlx]");
+    expect(text).toContain("[providers.evil]");
   });
 
   it("treats USERPROFILE as the same home for credentials and config", async () => {
@@ -323,6 +672,76 @@ describe("ensureKimiInjectAlias", () => {
       expect(snap.authenticated).toBe(true);
       expect(ensureKimiInjectAlias("omlx::GLM-5.2-fp8", { HOME: undefined, USERPROFILE: home })).toBe("omlx/GLM-5.2-fp8");
       expect(readFileSync(join(home, ".kimi-code", "config.toml"), "utf8")).toContain("[providers.omlx]");
+    } finally {
+      await instance.dispose();
+    }
+  });
+});
+
+describe("applyKimiLocalModelEnv", () => {
+  it("overlays an OpenAI-compatible default for a local inject pick", () => {
+    const env: Record<string, string | undefined> = {};
+    applyKimiLocalModelEnv(env, "ollama::ornith:35b-bf16");
+    expect(env).toMatchObject({
+      KIMI_MODEL_NAME: "ornith:35b-bf16",
+      KIMI_MODEL_API_KEY: "ollama",
+      KIMI_MODEL_BASE_URL: "http://127.0.0.1:11434/v1",
+      KIMI_MODEL_PROVIDER_TYPE: "openai",
+    });
+  });
+
+  it("leaves subscription slugs and already-resolved aliases alone", () => {
+    const env: Record<string, string | undefined> = { KIMI_MODEL_NAME: "keep-me" };
+    applyKimiLocalModelEnv(env, "kimi-code/k3");
+    applyKimiLocalModelEnv(env, "ollama/ornith:35b-bf16");
+    applyKimiLocalModelEnv(env, undefined);
+    expect(env.KIMI_MODEL_NAME).toBe("keep-me");
+    expect(env.KIMI_MODEL_API_KEY).toBeUndefined();
+  });
+
+  it("reads the Unsloth token from the turn env", () => {
+    const env: Record<string, string | undefined> = { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" };
+    applyKimiLocalModelEnv(env, "unsloth::qwen3-coder");
+    expect(env.KIMI_MODEL_API_KEY).toBe("unsloth-secret");
+    expect(env.KIMI_MODEL_BASE_URL).toBe("http://127.0.0.1:8888/v1");
+  });
+
+  it("puts the overlay on the Kimi child only for a local inject pick", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-kimi-overlay-"));
+    scratchDirs.push(home);
+    mkdirSync(join(home, ".kimi-code"), { recursive: true });
+    const dump = join(home, "dump.json");
+    const instance = await KimiAgentDriver.create({
+      instanceId: "kimi-overlay",
+      displayName: "Kimi",
+      environment: { HOME: home, FAKE_ACP_DUMP: dump, KIMI_MODEL_NAME: "from-shell" },
+      enabled: true,
+      config: { cli: FAKE_ACP, fullAuto: false },
+    });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      await instance.adapter.sendTurn({
+        threadId: "t-inject",
+        text: "hi",
+        model: "ollama::ornith:35b-bf16",
+      });
+      await recorder.until((e) => e.type === "turn.completed");
+      const injectDump = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string> };
+      expect(injectDump.env).toMatchObject({
+        KIMI_MODEL_NAME: "ornith:35b-bf16",
+        KIMI_MODEL_API_KEY: "ollama",
+        KIMI_MODEL_BASE_URL: "http://127.0.0.1:11434/v1",
+        KIMI_MODEL_PROVIDER_TYPE: "openai",
+      });
+
+      await instance.adapter.sendTurn({
+        threadId: "t-cloud",
+        text: "hi",
+        model: "kimi-code/k3",
+      });
+      await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-cloud");
+      const cloudDump = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string> };
+      expect(cloudDump.env.KIMI_MODEL_NAME).toBeUndefined();
     } finally {
       await instance.dispose();
     }
@@ -370,6 +789,72 @@ describe("ensureDroidInjectModel", () => {
     expect(id).toBe("custom:openmausbot-omlx-MiniMax-M3-4bit");
     expect(settings.customModels).toHaveLength(1);
     expect(settings.customModels[0]?.id).toBe(id);
+  });
+});
+
+describe("applyDroidLocalAuthEnv", () => {
+  it("fills a placeholder Factory key only for a local inject pick", () => {
+    const env: Record<string, string | undefined> = {};
+    applyDroidLocalAuthEnv(env, "ollama::ornith:35b-bf16");
+    expect(env.FACTORY_API_KEY).toBe("openmausbot-local");
+    applyDroidLocalAuthEnv(env, "ollama::ornith:35b-bf16");
+    expect(env.FACTORY_API_KEY).toBe("openmausbot-local");
+  });
+
+  it("leaves a real Factory key and cloud slugs alone", () => {
+    const kept: Record<string, string | undefined> = { FACTORY_API_KEY: "fk-real" };
+    applyDroidLocalAuthEnv(kept, "ollama::ornith:35b-bf16");
+    expect(kept.FACTORY_API_KEY).toBe("fk-real");
+    const cloud: Record<string, string | undefined> = {};
+    applyDroidLocalAuthEnv(cloud, "claude-opus-5");
+    applyDroidLocalAuthEnv(cloud, undefined);
+    expect(cloud.FACTORY_API_KEY).toBeUndefined();
+  });
+
+  it("does not invent a Factory key when a Droid auth file already exists", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-droid-authfile-"));
+    scratchDirs.push(home);
+    mkdirSync(join(home, ".factory"), { recursive: true });
+    writeFileSync(join(home, ".factory", "auth.v2.file"), "signed-in");
+    const env: Record<string, string | undefined> = { FACTORY_HOME_OVERRIDE: home };
+    applyDroidLocalAuthEnv(env, "ollama::ornith:35b-bf16");
+    expect(env).toEqual({ FACTORY_HOME_OVERRIDE: home });
+  });
+
+  it("puts the placeholder on the Droid child only for a local inject pick", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-droid-overlay-"));
+    scratchDirs.push(home);
+    mkdirSync(join(home, ".factory"), { recursive: true });
+    const dump = join(home, "dump.json");
+    const instance = await DroidAgentDriver.create({
+      instanceId: "droid-overlay",
+      displayName: "Droid",
+      environment: { HOME: home, FACTORY_HOME_OVERRIDE: home, FAKE_ACP_DUMP: dump, FACTORY_API_KEY: "" },
+      enabled: true,
+      config: { cli: FAKE_ACP, fullAuto: false },
+    });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      await instance.adapter.sendTurn({
+        threadId: "t-inject",
+        text: "hi",
+        model: "ollama::ornith:35b-bf16",
+      });
+      await recorder.until((e) => e.type === "turn.completed");
+      expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).toBe("openmausbot-local");
+
+      await instance.adapter.sendTurn({
+        threadId: "t-cloud",
+        text: "hi",
+        model: "claude-opus-5",
+      });
+      await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-cloud");
+      expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).not.toBe(
+        "openmausbot-local",
+      );
+    } finally {
+      await instance.dispose();
+    }
   });
 });
 

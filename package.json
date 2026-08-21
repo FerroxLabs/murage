@@ -23,6 +23,7 @@
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "lint": "oxlint .",
+    "check:contrast": "node scripts/check-contrast.mjs",
     "dev": "vite",
     "companion": "node --experimental-strip-types companion/src/index.ts",
     "dev:server": "node --experimental-strip-types server/index.ts",

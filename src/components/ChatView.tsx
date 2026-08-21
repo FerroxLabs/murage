@@ -22,7 +22,7 @@ import {
   Webhook,
   X,
 } from "lucide-react";
-import { costCaption, formatTokens, formatUsd, usageChip } from "@/lib/usage";
+import { costCaption, formatTokens, formatUsd, hasFiniteCost, usageChip } from "@/lib/usage";
 import {
   useStore,
   useStreaming,
@@ -49,6 +49,7 @@ import { ReactionBar, ReactionChips } from "./Reactions";
 import { SpeakButton } from "./SpeakButton";
 import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
+import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
 import { useFocusMessage } from "@/lib/focus-message";
 import { webhookMessageView } from "@/lib/webhook-message";
 import { attachmentBasename, splitAttachedImages } from "@/lib/composer-attachments";
@@ -398,6 +399,11 @@ function Bubble({
               >
                 {visibleText}
               </div>
+              {message.steered && (
+                <div className="mt-1 text-[11px] text-ink-secondary/70" title="Sent while the bot was working — it saw this before its next step, inside the same turn.">
+                  sent mid-turn
+                </div>
+              )}
               {collapsible && (
                 <button onClick={() => setExpanded(true)} className="mt-1 text-[12.5px] text-ink-secondary hover:text-ink">
                   Show full message
@@ -893,7 +899,9 @@ export function ChatView({ bot }: { bot: Bot }) {
       {/* Header */}
       <div
         className={cn(
-          "flex items-center justify-between px-5 py-3",
+          // @container so the chips on the right can fold to icon bubbles
+          // when the column is narrow (side panel open, small window)
+          "@container/chathead flex items-center justify-between px-5 py-3",
           // Room for the drawer button, which overlays this corner below md.
           "pl-11 md:pl-5",
           isWin && "pr-[148px]",
@@ -930,15 +938,18 @@ export function ChatView({ bot }: { bot: Bot }) {
           )}
           {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
         </div>
-        <div className="flex items-center gap-2" style={noDrag}>
+        <div className="flex shrink-0 items-center gap-2" style={noDrag}>
           {bot.busy && (
             <button
               onClick={() => dispatch({ type: "interrupt", botId: bot.id })}
-              className="flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink",
+                COMPACT_BUBBLE,
+              )}
               title="Stop this turn"
             >
               <Square size={12} className="fill-current" />
-              Stop
+              <span className="@max-4xl/chathead:hidden">Stop</span>
             </button>
           )}
           <TaskPicker bot={bot} />
@@ -1124,17 +1135,20 @@ function UsageChip({ bot }: { bot: Bot }) {
   const detail = [
     `${usage.turns} turn${usage.turns === 1 ? "" : "s"}`,
     `${formatTokens(usage.input)} in · ${formatTokens(usage.output)} out`,
-    usage.costUsd !== null ? `${formatUsd(usage.costUsd)} ${costCaption(billing)}` : null,
+    hasFiniteCost(usage.costUsd) ? `${formatUsd(usage.costUsd)} ${costCaption(billing)}` : null,
   ]
     .filter(Boolean)
     .join("\n");
+  // folded: one figure — cost when the engine reports one, else tokens
+  const short = usage.costUsd !== null ? formatUsd(usage.costUsd) : formatTokens(usage.input + usage.output);
   return (
     <button
       onClick={() => dispatch({ type: "toggleSettings", open: true })}
-      className="rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink"
+      className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
       title={detail}
     >
-      {text}
+      <span className="@max-4xl/chathead:hidden">{text}</span>
+      <span className="hidden @max-4xl/chathead:inline">{short}</span>
     </button>
   );
 }
@@ -1151,11 +1165,14 @@ function WorkingFolderChip({ bot }: { bot: Bot }) {
   return (
     <button
       onClick={() => dispatch({ type: "toggleSettings", open: true })}
-      className="flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+      className={cn(
+        "flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink",
+        COMPACT_SQUARE,
+      )}
       title={`Working folder: ${folder}`}
     >
-      <Folder size={12} />
-      <span className="truncate font-mono">{name}</span>
+      <Folder size={12} className="@max-4xl/chathead:size-[14px]" />
+      <span className="truncate font-mono @max-4xl/chathead:hidden">{name}</span>
     </button>
   );
 }

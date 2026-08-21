@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
+import { resolveCuaMacArches } from "./cua-mac-arches.mjs";
 
 if (process.platform !== "darwin") throw new Error("prepare-cua is macOS-only");
 
@@ -107,7 +108,7 @@ if (!details.isFile() || (details.mode & 0o111) === 0) {
 // not on a user's Intel Mac); the SDK's dylib/.node are genuinely per-arch,
 // pulled from the two darwin native packages that pnpm installs because of
 // supportedArchitectures in package.json.
-const MAC_ARCHES = ["arm64", "x64"];
+const MAC_ARCHES = resolveCuaMacArches(process.env);
 
 const { stdout: archList } = await run("/usr/bin/lipo", ["-archs", binary]);
 for (const arch of MAC_ARCHES) {

@@ -64,6 +64,8 @@ export interface Message {
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
   tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
+  /** user messages sent into a running turn — the model saw it mid-turn */
+  steered?: boolean;
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;
@@ -227,6 +229,7 @@ export interface ConfigStatus {
   box: { configured: boolean };
   vps: { configured: boolean; sshAlias: string };
   rooms: { turnTimeoutMinutes: number };
+  localVm: { mode: "shared" | "per-bot"; maxInstances: number };
   opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
@@ -240,7 +243,7 @@ export interface ConfigStatus {
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "opencodeGo" | "tts" | "imageGen" | "profile"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -250,6 +253,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     box: frame.box,
     vps: frame.vps,
     rooms: frame.rooms,
+    localVm: frame.localVm,
     opencodeGo: frame.opencodeGo,
     tts: frame.tts,
     imageGen: frame.imageGen,
@@ -287,6 +291,8 @@ export interface InstanceInfo {
     composioMcp?: boolean;
     images?: boolean;
     effortLevels?: readonly EffortLevel[];
+    /** the engine keeps a live session and takes a message mid-turn */
+    queueing?: boolean;
     localComputerMcp?: boolean;
   };
   /** `custom` agents sit below the rail divider — no subscription catalog. */
@@ -438,9 +444,27 @@ export type Action =
       patch: BotUpdatePatch;
     };
 
-export function openNotificationTarget(dispatch: (action: Action) => void, target: NotificationTarget) {
+export function openNotificationTarget(
+  dispatch: (action: Action) => void,
+  target: NotificationTarget,
+  state: Pick<AppState, "bots" | "groups">,
+) {
+  // A room's approval/question notification carries the asker bot with the
+  // GROUP's thread id; asking the bot to switch to that thread would 404.
+  // Open the room itself. A thread that is neither a room nor one of the
+  // bot's own lands on a plain bot select instead of an error banner.
+  const group = state.groups.find((candidate) => candidate.threadId === target.threadId);
+  if (group) {
+    dispatch({ type: "select", id: group.id });
+    return;
+  }
   dispatch({ type: "select", id: target.botId });
-  dispatch({ type: "switchTask", botId: target.botId, threadId: target.threadId });
+  const bot = state.bots.find((candidate) => candidate.id === target.botId);
+  if (!bot) return;
+  const known =
+    bot.threadId === target.threadId ||
+    (bot.tasks ?? []).some((task) => task.threadId === target.threadId);
+  if (known) dispatch({ type: "switchTask", botId: target.botId, threadId: target.threadId });
 }
 
 function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppState {
@@ -820,10 +844,8 @@ export function reducer(state: AppState, action: Action): AppState {
             ),
           }
         : animated;
-      return updateBot(next, action.botId, (b) => {
-        const merged = { ...b, ...action.patch };
-        return merged.computer === "local" ? { ...merged, autoApprove: false } : merged;
-      });
+      const { acknowledgeLocalAuto: _ack, ...botPatch } = action.patch;
+      return updateBot(next, action.botId, (b) => ({ ...b, ...botPatch }));
     }
     case "threadActive": {
       const bot = state.bots.find((b) => b.threadId === action.threadId);
@@ -1036,7 +1058,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  useEffect(() => () => botPatchQueue.dispose(), [botPatchQueue]);
+  useEffect(() => {
+    // StrictMode's dev probe runs this cleanup once against the same memoized
+    // queue; revive undoes it so profile saves survive development mounts.
+    botPatchQueue.revive();
+    return () => botPatchQueue.dispose();
+  }, [botPatchQueue]);
 
   const dispatch = useMemo(() => {
     const showError = (e: unknown) => {
@@ -1435,7 +1462,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // unread:false back. Opening a bot from its own notification and
           // watching the badge return on the next hydration is exactly the
           // bug that makes notifications feel broken.
-          showNotification(frame.notification, (target) => openNotificationTarget(dispatch, target));
+          showNotification(frame.notification, (target) => openNotificationTarget(dispatch, target, stateRef.current));
           break;
         case "group.deleted":
           rawDispatch({ type: "groupDeleted", groupId: frame.groupId });

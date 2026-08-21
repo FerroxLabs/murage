@@ -112,9 +112,16 @@ describe("autoDecision", () => {
     expect(autoDecision({ alwaysAllow: ["Bash"] }, "Bash", "sudo rm -rf /var")).toBeNull();
   });
 
-  it("never delegates a local-computer request to auto or remembered grants", () => {
+  it("auto-approves a local-computer request when Auto mode is on", () => {
+    expect(
+      autoDecision({ autoApprove: true }, "mcp__computer__click", "Click the Submit button", {
+        scope: "local-computer",
+      }),
+    ).toBe("auto-approved mcp__computer__click");
+  });
+
+  it("does not let always-allow cover host control without Auto mode", () => {
     const bot = {
-      autoApprove: true,
       alwaysAllow: ["mcp__computer__click", "local-computer:mcp__computer__click"],
     };
     expect(

@@ -62,7 +62,11 @@ posixOnly("routine failure notification wiring", () => {
         instances: {
           grok: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "exit-early" },
+            // fail-after-text streams a partial answer before failing: with a
+            // NON-empty reply, only the routine-failed/done dedup suppresses
+            // the generic done — exit-early would pass on the empty-reply
+            // rule alone and leave the dedup guard untested.
+            environment: { FAKE_ACP_MODE: "fail-after-text" },
             config: { cli: FAKE_CLI, fullAuto: false },
           },
         },

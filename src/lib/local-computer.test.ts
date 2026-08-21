@@ -4,6 +4,7 @@ import {
   autoSelectsLocalComputer,
   instanceSupportsLocalComputer,
   linuxAutoDescription,
+  localComputerSelectable,
 } from "./local-computer";
 
 describe("local computer UI eligibility", () => {
@@ -23,6 +24,30 @@ describe("local computer UI eligibility", () => {
         [{ ...instances[0], capabilities: {} }] as InstanceInfo[],
         bot,
       ),
+    ).toBe(false);
+    expect(
+      instanceSupportsLocalComputer(
+        [{ ...instances[0], capabilities: { computerMcp: true } }] as InstanceInfo[],
+        bot,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps This computer selectable on macOS before CUA is granted", () => {
+    const capabilities = {
+      host: { platform: "darwin" as const },
+      localComputer: { available: false },
+    } as DesktopCapabilities;
+    expect(localComputerSelectable({ capabilities, providerSupportsLocal: true })).toBe(true);
+    expect(localComputerSelectable({ capabilities, providerSupportsLocal: false })).toBe(false);
+    expect(
+      localComputerSelectable({
+        capabilities: {
+          host: { platform: "linux" as const },
+          localComputer: { available: false },
+        } as DesktopCapabilities,
+        providerSupportsLocal: true,
+      }),
     ).toBe(false);
   });
 

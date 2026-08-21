@@ -470,9 +470,17 @@ final class Session: ObservableObject {
         }
     }
 
-    func answer(threadId: String, card: OptionCard, choice: String) async {
+    func answer(chat: Chat, card: OptionCard, choice: String, rememberingPermission: Bool = true) async {
         guard let requestId = card.requestId else { return }
-        await answer(threadId: threadId, requestId: requestId, choice: choice, isPermission: card.isPermission)
+        if rememberingPermission, card.shouldRememberPermission(for: choice), case let .bot(bot) = chat {
+            await alwaysAllow(bot: bot, card: card)
+        }
+        await answer(
+            threadId: chat.threadId,
+            requestId: requestId,
+            choice: choice,
+            isPermission: card.isPermission
+        )
     }
 
     /// The same answer, from something that only has the ids — the Live
@@ -481,11 +489,12 @@ final class Session: ObservableObject {
         await perform {
             // Permission cards answer allow/deny; a question answers with
             // the chosen text. The harness tells them apart by `behavior`.
-            if isPermission {
+            let behavior = OptionCard.responseBehavior(for: choice, isPermission: isPermission)
+            if behavior != "answer" {
                 try await $0.respond(
                     threadId: threadId,
                     requestId: requestId,
-                    behavior: choice.lowercased() == "allow" ? "allow" : "deny"
+                    behavior: behavior
                 )
             } else {
                 try await $0.respond(threadId: threadId, requestId: requestId, behavior: "answer", message: choice)
@@ -805,10 +814,23 @@ final class Session: ObservableObject {
                 state.hydrate(fleet)
                 bot = state.bot(target.botId)
             }
+            // A room's approval/question notification carries the asker bot
+            // with the ROOM's thread id — open the room rather than asking
+            // the bot to switch to a thread it does not own (a 404).
+            if let room = state.rooms.first(where: { $0.threadId == target.threadId }) {
+                notificationChat = .room(room)
+                return
+            }
             guard var selected = bot else { throw APIError.status(code: 404, message: "That agent no longer exists.") }
             if target.requiresTaskSwitch(activeThreadId: selected.threadId) {
-                selected = try await client.switchTask(botId: selected.id, threadId: target.threadId)
-                state.apply(.bot(selected))
+                do {
+                    selected = try await client.switchTask(botId: selected.id, threadId: target.threadId)
+                    state.apply(.bot(selected))
+                } catch {
+                    // The thread may be gone (task deleted, stale payload).
+                    // Landing in the bot's current chat still beats an error
+                    // banner and no navigation at all.
+                }
             }
             notificationChat = .bot(selected)
         } catch { actionError = error.localizedDescription }

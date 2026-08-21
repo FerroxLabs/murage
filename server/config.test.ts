@@ -8,6 +8,8 @@ import {
   instanceConfigs,
   isValidSshAlias,
   loadConfig,
+  localVmMaxInstances,
+  localVmMode,
   parseConfigPatch,
   parseStoredConfig,
   roomTurnTimeoutMinutes,
@@ -66,6 +68,24 @@ describe("configuration boundaries", () => {
       );
     },
   );
+
+  it("preserves shared Local VM behavior by default and accepts bounded per-bot mode", () => {
+    expect(localVmMode({})).toBe("shared");
+    expect(localVmMaxInstances({})).toBe(2);
+    expect(parseConfigPatch({ localVm: { mode: "per-bot", maxInstances: 4 } })).toEqual({
+      localVm: { mode: "per-bot", maxInstances: 4 },
+    });
+    expect(localVmMode({ localVm: { mode: "per-bot" } })).toBe("per-bot");
+    expect(localVmMaxInstances({ localVm: { maxInstances: 3 } })).toBe(3);
+  });
+
+  it.each([0, 1.5, 5, "2", null])("rejects an invalid per-bot VM limit: %j", (maxInstances) => {
+    expect(() => parseConfigPatch({ localVm: { maxInstances } })).toThrow("localVm.maxInstances");
+  });
+
+  it.each(["one-per-bot", "windows", 1, null])("rejects an invalid Local VM mode: %j", (mode) => {
+    expect(() => parseConfigPatch({ localVm: { mode } })).toThrow("localVm.mode");
+  });
 });
 
 describe("default fleet", () => {

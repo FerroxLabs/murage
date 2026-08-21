@@ -10,15 +10,36 @@ import {
 } from "./store";
 
 describe("notification routing", () => {
+  const bots = [{ id: "bot-1", threadId: "main-thread", tasks: [{ threadId: "detached-thread" }] }] as never;
+  const groups = [{ id: "room-1", threadId: "room-thread" }] as never;
+
   it("selects the bot and switches to the notification's exact task", () => {
     const dispatch = vi.fn();
 
-    openNotificationTarget(dispatch, { botId: "bot-1", threadId: "detached-thread" });
+    openNotificationTarget(dispatch, { botId: "bot-1", threadId: "detached-thread" }, { bots, groups });
 
     expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
       { type: "select", id: "bot-1" },
       { type: "switchTask", botId: "bot-1", threadId: "detached-thread" },
     ]);
+  });
+
+  it("opens the room when the thread is a group's — never a bot task switch that would 404", () => {
+    // room approval/question notifications carry the asker bot with the
+    // GROUP's thread id; the exact destination is the room itself
+    const dispatch = vi.fn();
+
+    openNotificationTarget(dispatch, { botId: "bot-1", threadId: "room-thread" }, { bots, groups });
+
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([{ type: "select", id: "room-1" }]);
+  });
+
+  it("lands on a plain bot select for a thread it cannot place, not an error", () => {
+    const dispatch = vi.fn();
+
+    openNotificationTarget(dispatch, { botId: "bot-1", threadId: "deleted-task-thread" }, { bots, groups });
+
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([{ type: "select", id: "bot-1" }]);
   });
 });
 
@@ -31,6 +52,7 @@ describe("config status frames", () => {
         box: { configured: false },
         vps: { configured: true, sshAlias: "homelab" },
         rooms: { turnTimeoutMinutes: 20 },
+        localVm: { mode: "per-bot", maxInstances: 3 },
         opencodeGo: { configured: true },
         tts: { configured: true, ready: true, voice: "Ada" },
         profile: { name: "Ian", email: "ian@example.test" },
@@ -41,6 +63,7 @@ describe("config status frames", () => {
       box: { configured: false },
       vps: { configured: true, sshAlias: "homelab" },
       rooms: { turnTimeoutMinutes: 20 },
+      localVm: { mode: "per-bot", maxInstances: 3 },
       opencodeGo: { configured: true },
       tts: { configured: true, ready: true, voice: "Ada" },
       profile: { name: "Ian", email: "ian@example.test" },
