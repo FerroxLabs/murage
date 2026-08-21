@@ -84,6 +84,32 @@ process.stdin.on("data", (chunk) => {
       case "initialize":
         out({ jsonrpc: "2.0", id: msg.id, result: { ok: true } });
         break;
+      case "model/list":
+        if (msg.params?.cursor === "page-2") {
+          out({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {
+              data: [
+                { id: "gpt-hidden", displayName: "Hidden", hidden: true, isDefault: false },
+                { id: "gpt-page-two", displayName: "GPT Page Two", hidden: false, isDefault: false },
+              ],
+              nextCursor: null,
+            },
+          });
+        } else {
+          out({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {
+              data: [
+                { id: "gpt-fake-default", displayName: "GPT Fake Default", hidden: false, isDefault: true },
+              ],
+              nextCursor: "page-2",
+            },
+          });
+        }
+        break;
       case "thread/resume":
         if (mode === "resume") {
           out({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: msg.params?.threadId } } });

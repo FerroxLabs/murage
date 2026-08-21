@@ -109,6 +109,7 @@ export type RuntimeEvent = RuntimeEventBase &
         tool: string;
         summary: string;
         choices?: string[];
+        approvalScope?: "local-computer";
       }
     | {
         type: "request.resolved";
@@ -117,6 +118,7 @@ export type RuntimeEvent = RuntimeEventBase &
          * harness (turn ended / settings changed), or nobody — the answerer
          * was already gone and the action never ran */
         source: "user" | "auto" | "timeout" | "system" | "unavailable" | "peer";
+        approvalScope?: "local-computer";
       }
     | { type: "thread.token-usage.updated"; input: number; output: number }
     // `setup: true` marks a failure the user fixes by installing or
@@ -153,10 +155,28 @@ export interface SendTurnInput {
      * bridge harness-controlled lets it turn connection requests into trusted
      * chat cards consistently across provider CLIs. */
     composio?: { command: string; args: string[]; env: Record<string, string> };
-    /** Cloud computer, reached through OpenMausBot's REST-to-MCP adapter. */
-    computer?: { kind?: "box"; boxId: string; token: string };
-    /** Direct stdio connection to a Cua Driver MCP server (host, sandbox, or VPS). */
-    localComputer?: { command: string; args: string[]; env: Record<string, string> };
+    /** Cloud computer, reached through OpenMausBot's REST-to-MCP adapter.
+     * `control` is the harness's loopback who-is-driving endpoint: the
+     * adapter consults it so a person who takes the wheel in the panel
+     * pauses the bot's hands mid-turn instead of typing over them. */
+    computer?: {
+      kind?: "box";
+      boxId: string;
+      token: string;
+      control?: { url: string; token: string };
+    };
+    /** Direct stdio connection to a Cua Driver MCP server (host, sandbox, or
+     * VPS). `scope` is set only for the user's host desktop; isolated and
+     * remote computers intentionally omit it so host-only approval rules
+     * cannot change their semantics. */
+    localComputer?: {
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+      platform?: "darwin" | "linux" | "win32";
+      generation?: string;
+      scope?: "local-computer";
+    };
     /** Peer-agent comms: an MCP proxy (list_bots / ask_bot) that routes back
      * through the harness so this bot can message other bots. The harness
      * owns turns, permissions, and recursion limits; the proxy only forwards. */
@@ -193,10 +213,18 @@ export interface ProviderAdapter {
     composioMcp?: boolean;
     /** True when the driver can mount the first-party physical-phone MCP. */
     phoneMcp?: boolean;
+    /** True when this engine accepts images in the prompt — gates image
+     * paste in the composer. Same rule as computerMcp: never offer an
+     * attachment an engine cannot open (a bot told it has an image it
+     * cannot read burns the turn). */
+    images?: boolean;
     /** Effort levels this driver can pass to its CLI, ascending. Absent =
      * the driver cannot set effort, so the app never offers the control —
      * same rule as computerMcp: never show a knob the driver cannot turn. */
     effortLevels?: readonly EffortLevel[];
+    /** True only when local MCP calls can reach the human approval channel.
+     * Full-auto/bypass provider instances must leave this false. */
+    localComputerMcp?: boolean;
   };
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;
   interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void>;

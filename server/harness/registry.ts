@@ -141,7 +141,7 @@ export class ProviderRegistry {
             displayName: entry.shadow.displayName ?? entry.shadow.driverKind,
             snapshot: { state: "unavailable", reason: entry.shadow.reason } satisfies ProviderSnapshot,
             models: { default: "", options: [] },
-            capabilities: { computerMcp: false, agentsMcp: false },
+            capabilities: { computerMcp: false, agentsMcp: false, localComputerMcp: false },
             // an unknown driver has no driver record, hence no install path
             access: driver?.metadata.access ?? "subscription",
             install: driver?.install,
@@ -171,7 +171,9 @@ export class ProviderRegistry {
             agentsMcp: inst.adapter.capabilities.agentsMcp === true,
             composioMcp: inst.adapter.capabilities.composioMcp === true,
             phoneMcp: inst.adapter.capabilities.phoneMcp === true,
+            images: inst.adapter.capabilities.images === true,
             effortLevels: inst.adapter.capabilities.effortLevels,
+            localComputerMcp: inst.adapter.capabilities.localComputerMcp === true,
           },
           access: driver?.metadata.access ?? "subscription",
           install: driver?.install,

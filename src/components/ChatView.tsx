@@ -15,6 +15,8 @@ import {
   Loader2,
   Monitor,
   Pencil,
+  Pin,
+  PinOff,
   RefreshCw,
   Square,
   Webhook,
@@ -50,6 +52,7 @@ import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
 import { useFocusMessage } from "@/lib/focus-message";
 import { webhookMessageView } from "@/lib/webhook-message";
+import { attachmentBasename, splitAttachedImages } from "@/lib/composer-attachments";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 import {
   TRANSCRIPT_WINDOW_SIZE,
@@ -288,7 +291,8 @@ function Bubble({
   const [expanded, setExpanded] = useState(false);
   const text = message.text ?? "";
   const webhookView = user ? webhookMessageView(text) : null;
-  const visibleText = webhookView?.task ?? text;
+  const attachedImages = user && !webhookView ? splitAttachedImages(text) : null;
+  const visibleText = webhookView?.task ?? attachedImages?.display ?? text;
   const collapsible =
     user && !webhookView && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
 
@@ -324,6 +328,24 @@ function Bubble({
         )}
         {user && message.kind === "text" && <ReactionBar threadId={bot.threadId} message={message} />}
         {user && <CopyButton text={visibleText} />}
+        <button
+          onClick={() =>
+            dispatch({
+              type: "updateBot",
+              botId: bot.id,
+              patch: { pinnedMessageId: bot.pinnedMessageId === message.id ? "" : message.id },
+            })
+          }
+          aria-label={bot.pinnedMessageId === message.id ? "Unpin message" : "Pin message"}
+          className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+          title={
+            bot.pinnedMessageId === message.id
+              ? "Unpin this message"
+              : "Pin this message to the top of the thread"
+          }
+        >
+          {bot.pinnedMessageId === message.id ? <PinOff size={14} /> : <Pin size={14} />}
+        </button>
         <div
           className={cn(
             "max-w-[70%] rounded-2xl text-[15px] leading-relaxed",
@@ -351,10 +373,31 @@ function Bubble({
             </div>
           ) : user ? (
             <>
+              {attachedImages && attachedImages.images.length > 0 && (
+                <div className="mb-2 flex flex-wrap justify-end gap-2">
+                  {attachedImages.images.map((path) => (
+                    <a
+                      key={path}
+                      href={`/api/attachments/${encodeURIComponent(attachmentBasename(path))}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block max-w-[260px] overflow-hidden rounded-lg border border-hairline/40"
+                      title={path}
+                    >
+                      <img
+                        src={`/api/attachments/${encodeURIComponent(attachmentBasename(path))}`}
+                        alt="Attached image"
+                        loading="lazy"
+                        className="block max-h-[220px] w-full object-cover"
+                      />
+                    </a>
+                  ))}
+                </div>
+              )}
               <div
                 className={cn(collapsible && "max-h-40 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]")}
               >
-                {text}
+                {visibleText}
               </div>
               {collapsible && (
                 <button onClick={() => setExpanded(true)} className="mt-1 text-[12.5px] text-ink-secondary hover:text-ink">
@@ -625,6 +668,53 @@ const MessagesList = memo(function MessagesList({
   );
 });
 
+/** The one pinned message, above the transcript: sender, one line, click to
+ * jump, X to unpin. Resolves the pin id against the full message list; a
+ * pin that no longer resolves renders nothing (edited away or deleted). */
+function PinnedBanner({
+  bot,
+  pinnedId,
+  messages,
+  onJump,
+  onUnpin,
+}: {
+  bot: Bot;
+  pinnedId?: string;
+  messages: Message[];
+  onJump: (messageId: string) => void;
+  onUnpin: () => void;
+}) {
+  const pinned = messages.find((m) => m.id === pinnedId);
+  if (!pinned || pinned.kind !== "text") return null;
+  const sender =
+    pinned.role === "user" ? "You" : (pinned.from?.name ?? bot.name);
+  const text = (pinned.text ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  return (
+    <div className="mx-auto w-full max-w-[900px] px-5">
+      <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent/[0.07] px-3 py-1.5">
+        <Pin size={12} className="shrink-0 text-accent" />
+        <button
+          onClick={() => onJump(pinned.id)}
+          className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+          title="Jump to the pinned message"
+        >
+          <span className="shrink-0 text-[11.5px] font-medium text-accent">{sender}</span>
+          <span className="truncate text-[12.5px] text-ink-secondary">{text}</span>
+        </button>
+        <button
+          onClick={onUnpin}
+          aria-label="Unpin message"
+          title="Unpin"
+          className="shrink-0 rounded p-0.5 text-ink-secondary hover:bg-raised hover:text-ink"
+        >
+          <X size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ChatView({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -892,6 +982,19 @@ export function ChatView({ bot }: { bot: Bot }) {
           </div>
         </div>
       )}
+
+      {/* Pinned message banner */}
+      <PinnedBanner
+        bot={bot}
+        pinnedId={bot.pinnedMessageId}
+        messages={messages}
+        onJump={(messageId) =>
+          dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })
+        }
+        onUnpin={() =>
+          dispatch({ type: "updateBot", botId: bot.id, patch: { pinnedMessageId: "" } })
+        }
+      />
 
       {/* Messages */}
       <div

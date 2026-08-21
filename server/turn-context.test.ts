@@ -47,8 +47,12 @@ describe("engineIsFresh", () => {
   const withUser = transcript;
   const greetingOnly = [{ role: "assistant" as const, text: "Hey — I'm Wren. Nice to meet you." }];
 
-  it("is false when the same instance ran the last turn", () => {
+  it("is false when the same instance ran the last turn and has a cursor", () => {
     expect(engineIsFresh({ instanceId: "claude", lastInstanceId: "claude", resumeCursors: { claude: "s1" }, transcript: withUser })).toBe(false);
+  });
+
+  it("is true when the same instance ran last but there is no cursor to resume", () => {
+    expect(engineIsFresh({ instanceId: "pi", lastInstanceId: "pi", resumeCursors: {}, transcript: withUser })).toBe(true);
   });
 
   it("is true when another instance ran the last turn — even if this one has an older cursor", () => {
