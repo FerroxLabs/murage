@@ -12,6 +12,7 @@ describe("workspace credential migration", () => {
       xai: { key: "xai-secret", url: "https://api.example.test/v1" },
       box: { token: "box-secret" },
       tts: { key: "tts-secret", voice: "narrator" },
+      imageGen: { key: "image-secret" },
       opencodeGo: { apiKey: "ocg-secret" },
       profile: { name: "Ada" },
     };
@@ -23,6 +24,7 @@ describe("workspace credential migration", () => {
       boxToken: "box-secret",
       ttsKey: "tts-secret",
       opencodeGoApiKey: "ocg-secret",
+      openaiImageApiKey: "image-secret",
     });
     // secrets are DELETED (not blanked) so "" stays meaningful as "cleared";
     // non-secret siblings (endpoint url, chosen voice) stay in the file
@@ -30,6 +32,7 @@ describe("workspace credential migration", () => {
       xai: { url: "https://api.example.test/v1" },
       box: {},
       tts: { voice: "narrator" },
+      imageGen: {},
       opencodeGo: {},
       profile: { name: "Ada" },
     });
@@ -95,6 +98,7 @@ describe("workspace credential env", () => {
         boxToken: "box-secret",
         ttsKey: "tts-secret",
         opencodeGoApiKey: "ocg-secret",
+        openaiImageApiKey: "image-secret",
         composioApiKey: "ak_handled-separately",
       }),
     ).toEqual({
@@ -102,6 +106,7 @@ describe("workspace credential env", () => {
       BOX_TOKEN: "box-secret",
       OMB_TTS_KEY: "tts-secret",
       OPENCODE_API_KEY: "ocg-secret",
+      OMB_OPENAI_IMAGE_KEY: "image-secret",
     });
   });
 

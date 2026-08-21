@@ -734,6 +734,7 @@ const CREDENTIAL_PATCH = {
   boxToken: (value) => ({ box: { token: value } }),
   opencodeGoApiKey: (value) => ({ opencodeGo: { apiKey: value } }),
   ttsKey: (value) => ({ tts: { key: value } }),
+  openaiImageApiKey: (value) => ({ imageGen: { key: value } }),
 };
 
 ipcMain.handle("credential:set", async (_event, name, value) => {

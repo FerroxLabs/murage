@@ -90,7 +90,7 @@ struct NeedsYouIsland: View {
                         // The hardware island covers the first 37pt of the
                         // square; the face sits clear of it, centred.
                         Button { open(shown.chat) } label: {
-                            MausAvatar(color: shown.chat.color, size: 120, state: MausState.forChat(shown.chat, in: session.state), comets: true)
+                            ChatAvatarView(chat: shown.chat, size: 120, state: MausState.forChat(shown.chat, in: session.state), comets: true)
                         }
                         .buttonStyle(.plain)
                         .padding(.top, IslandGeometry.size.height + 14)

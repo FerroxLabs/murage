@@ -27,6 +27,13 @@ const server = join(root, "server");
 // Every file run as its own process. Keep in sync with the spawn sites above.
 const ENTRY_POINTS = [
   "index.ts",
+  // The packaged smoke probe imports this manifest directly. Importing the
+  // shared avatar contract widens TypeScript's inferred emit root to the repo,
+  // so tsc may place its copy under dist-server/server/. Bundle an explicit
+  // root sibling to keep the packaged runtime contract stable. The Linux
+  // package smoke probe also imports local-computer.js directly.
+  "proxy-paths.ts",
+  "local-computer.ts",
   "computer-proxy.ts",
   "container-mcp.ts",
   "vps-container-mcp.ts",

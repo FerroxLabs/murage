@@ -24,6 +24,7 @@ struct ChatView: View {
     @State private var showingTasks = false
     @State private var showingComputer = false
     @State private var showingPlus = false
+    @State private var showingProfile = false
     @State private var shareFile: ShareFile?
     @FocusState private var composerFocused: Bool
     /// The opening beat: the island grows with the bot's face in it, then
@@ -171,7 +172,7 @@ struct ChatView: View {
                                 Color.clear
                             }
                         }
-                        MausAvatar(color: current.color, size: faceSize, state: MausState.forChat(current, in: session.state), comets: islandExpanded)
+                        ChatAvatarView(chat: current, size: faceSize, state: MausState.forChat(current, in: session.state), comets: islandExpanded)
                             .offset(y: faceCentre - faceSize / 2)
                             .allowsHitTesting(false)
                     }
@@ -238,6 +239,9 @@ struct ChatView: View {
 #if DEBUG
             // `-open-plus`: the + sheet up, for the screenshot harness
             if ProcessInfo.processInfo.arguments.contains("-open-plus") { showingPlus = true }
+            // Profile parity screenshots without automating a tap through the
+            // animated island/header transition.
+            if ProcessInfo.processInfo.arguments.contains("-open-profile") { showingProfile = true }
 #endif
         }
         .onChange(of: current.unread) { _, unread in
@@ -248,6 +252,9 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showingTasks) {
             if case let .bot(bot) = current { TaskManagerView(bot: bot) }
+        }
+        .sheet(isPresented: $showingProfile) {
+            if case let .bot(bot) = current { AgentProfileView(bot: bot) }
         }
         .sheet(item: $shareFile) { file in
             ActivityShareSheet(items: [file.url])
@@ -318,11 +325,27 @@ struct ChatView: View {
         VStack(spacing: 6) {
             // Always here, following the island's face while that one is
             // the source: when the island lets go, this one flies home.
-            // the face itself is drawn by the island layer above, so it can
-            // travel; this is its seat
-            Color.clear.frame(width: 60, height: 60)
-            Menu {
-                chatActions
+            // The face itself is drawn by the island layer above so there is
+            // still only one animated avatar. This transparent seat becomes
+            // its independent profile button once the opening transition has
+            // settled.
+            if case .bot = current {
+                Button { showingProfile = true } label: {
+                    Color.clear
+                        .frame(width: 60, height: 60)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .allowsHitTesting(!islandVisible)
+                .accessibilityHidden(islandVisible)
+                .accessibilityLabel("Open \(current.name) profile")
+                .accessibilityHint("Edits this agent's identity, avatar, notifications, and voice")
+            } else {
+                Color.clear.frame(width: 60, height: 60)
+            }
+            Button {
+                if case .bot = current { showingProfile = true }
+                else { showingPlus = true }
             } label: {
                 HStack(spacing: 6) {
                     Text(current.name)
@@ -335,7 +358,7 @@ struct ChatView: View {
                             .foregroundStyle(Color.secondary)
                             .lineLimit(1)
                     }
-                    Image(systemName: "chevron.right")
+                    Image(systemName: current.isBot ? "person.crop.circle" : "ellipsis")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.secondary)
                 }
@@ -346,6 +369,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .glassCapsule()
+            .accessibilityLabel(current.isBot ? "Open \(current.name) profile" : "Open \(current.name) chat options")
         }
         .padding(.top, -4)
     }

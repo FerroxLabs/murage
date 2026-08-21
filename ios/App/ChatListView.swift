@@ -335,13 +335,13 @@ struct GroupTile: View {
             ZStack {
                 if let room {
                     Circle().fill(Color.secondary.opacity(0.14))
-                    let colors = memberColors(room)
-                    if let first = colors.first {
-                        MausAvatar(color: first, size: 34, state: .happy, animated: false)
+                    let bots = memberBots(room)
+                    if let first = bots.first {
+                        BotAvatarView(bot: first, size: 34, state: .happy, animated: false)
                             .offset(x: -9, y: -6)
                     }
-                    if colors.count > 1 {
-                        MausAvatar(color: colors[1], size: 30, state: .happy, animated: false)
+                    if bots.count > 1 {
+                        BotAvatarView(bot: bots[1], size: 30, state: .happy, animated: false)
                             .padding(2)
                             .background(Circle().fill(Color(uiColor: .systemBackground)))
                             .offset(x: 11, y: 9)
@@ -374,8 +374,8 @@ struct GroupTile: View {
         .contentShape(Rectangle())
     }
 
-    private func memberColors(_ room: Room) -> [String] {
-        room.memberIds.compactMap { session.state.bot($0)?.color }
+    private func memberBots(_ room: Room) -> [Bot] {
+        room.memberIds.compactMap { session.state.bot($0) }
     }
 }
 
@@ -401,7 +401,7 @@ struct ChatRow: View {
             .frame(maxHeight: .infinity)
 
             HStack(alignment: .top, spacing: 14) {
-                MausAvatar(color: chat.color, size: 52, state: state)
+                ChatAvatarView(chat: chat, size: 52, state: state)
                     .padding(.top, 12)
 
                 VStack(alignment: .leading, spacing: 4) {

@@ -233,7 +233,7 @@ describe("credential env narrowing", () => {
 });
 
 describe("credential env preference", () => {
-  const VARS = ["XAI_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "OMB_TTS_KEY", "COMPOSIO_API_KEY"] as const;
+  const VARS = ["XAI_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "OMB_TTS_KEY", "OMB_OPENAI_IMAGE_KEY", "COMPOSIO_API_KEY"] as const;
   let saved: Record<string, string | undefined>;
 
   beforeEach(() => {
@@ -261,27 +261,31 @@ describe("credential env preference", () => {
         box: { token: "file-box" },
         opencodeGo: { apiKey: "file-ocg" },
         tts: { key: "file-tts", voice: "narrator" },
+        imageGen: { key: "file-image" },
       }),
     );
     process.env.XAI_API_KEY = "env-xai";
     process.env.BOX_TOKEN = "env-box";
     process.env.OPENCODE_API_KEY = "env-ocg";
     process.env.OMB_TTS_KEY = "env-tts";
+    process.env.OMB_OPENAI_IMAGE_KEY = "env-image";
     const cfg = loadConfig();
     expect(cfg.xai).toEqual({ key: "env-xai", url: "https://api.example.test/v1" });
     expect(cfg.box).toEqual({ token: "env-box" });
     expect(cfg.opencodeGo).toEqual({ apiKey: "env-ocg" });
     expect(cfg.tts).toEqual({ key: "env-tts", voice: "narrator" });
+    expect(cfg.imageGen).toEqual({ key: "env-image" });
   });
 
   it("falls back to the config file when the env var is unset (dev mode)", () => {
     writeFileSync(
       join(DATA_DIR, "config.json"),
-      JSON.stringify({ xai: { key: "file-xai" }, tts: { key: "file-tts" } }),
+      JSON.stringify({ xai: { key: "file-xai" }, tts: { key: "file-tts" }, imageGen: { key: "file-image" } }),
     );
     const cfg = loadConfig();
     expect(cfg.xai?.key).toBe("file-xai");
     expect(cfg.tts?.key).toBe("file-tts");
+    expect(cfg.imageGen?.key).toBe("file-image");
   });
 
   it("treats a blanked file field as absent when env supplies the secret", () => {
@@ -327,5 +331,6 @@ describe("workspace credential env strip", () => {
     // consumed in-process (Computer driver / voice module), never by a CLI
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("BOX_TOKEN");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_TTS_KEY");
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_OPENAI_IMAGE_KEY");
   });
 });

@@ -48,6 +48,8 @@ describe("what the app may do", () => {
     ["POST", "/api/bots/bot_123/tasks/th_1"],
     ["PATCH", "/api/bots/bot_123/tasks/th_1"],
     ["DELETE", "/api/bots/bot_123/tasks/th_1"],
+    ["PATCH", "/api/bots/bot_123/profile"],
+    ["POST", "/api/bots/bot_123/avatar/generate"],
     ["POST", "/api/bots/bot_123/computer/join"],
     ["POST", "/api/groups/room-1/messages"],
     ["POST", "/api/groups/room-1/read"],
@@ -57,6 +59,10 @@ describe("what the app may do", () => {
     ["GET", "/api/threads/th_1/export"],
     ["POST", "/api/threads/th_1/respond"],
     ["GET", "/api/search"],
+    ["POST", "/api/attachments"],
+    ["GET", "/api/attachments/avatar-123.webp"],
+    ["GET", "/api/tts/voices"],
+    ["POST", "/api/tts/speak"],
     ["GET", "/api/connectors/catalog"],
     ["GET", "/api/connectors/connected"],
     ["GET", "/api/connectors"],
@@ -115,6 +121,9 @@ describe("what it may not", () => {
     expect(allowed("POST", "/api/threads/th_1/messages")).toBe(false);
     expect(allowed("GET", "/api/groups/room-1")).toBe(false);
     expect(allowed("PATCH", "/api/bots/bot_123")).toBe(false);
+    expect(allowed("PATCH", "/api/bots/bot_123/profile/execution-policy")).toBe(false);
+    expect(allowed("PUT", "/api/config")).toBe(false);
+    expect(allowed("GET", "/api/attachments/../config.json")).toBe(false);
     expect(allowed("DELETE", "/api/connectors/slack")).toBe(false);
     expect(allowed("GET", "/api/connectors/connected/all")).toBe(false);
     // revocation is a Mac-only affordance: the phone can list and add
