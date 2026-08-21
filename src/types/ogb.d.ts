@@ -83,6 +83,11 @@ declare global {
       openInstallTerminal?(command: string): Promise<boolean>;
       /** Opens an http(s) link in the user's default browser. */
       openExternal?(url: string): Promise<boolean>;
+      /** Opens a live desktop as a sandboxed modal owned by OpenMausBot. */
+      desktopViewer?: {
+        open(url: string, title: string, contextId: string): Promise<boolean>;
+        onState(cb: (state: { open: boolean; contextId: string | null }) => void): () => void;
+      };
       /** Native folder picker; resolves null when the user cancels. */
       pickFolder?(current?: string): Promise<string | null>;
       /** Save a provider credential through Electron's OS-backed store. */

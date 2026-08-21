@@ -8,7 +8,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   CalendarDays,
   CalendarClock,
-  ExternalLink,
   Hand,
   Loader2,
   Monitor,
@@ -104,6 +103,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const [localFrame, setLocalFrame] = useState<string | null>(null);
   const [pending, setPending] = useState<"join" | "sleep" | "provision" | null>(null);
   const [controlPending, setControlPending] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creatingRoutine, setCreatingRoutine] = useState(false);
   const [panelView, setPanelView] = useState<"computer" | "android">("computer");
@@ -114,6 +114,12 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const selectedInstance = state.instances.find(
     (instance) => instance.instanceId === bot.modelSelection.instanceId,
   );
+
+  useEffect(() => {
+    return window.ogb?.desktopViewer?.onState((viewer) => {
+      if (viewer.contextId === bot.id) setViewerOpen(viewer.open);
+    });
+  }, [bot.id]);
 
   useEffect(() => {
     if (!androidConnected && panelView === "android") setPanelView("computer");
@@ -314,7 +320,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const sseFlowing = Boolean(bot.busy && live);
   const inFlight = useRef(false);
   useEffect(() => {
-    if (phase !== "ready" || sseFlowing) return;
+    if (phase !== "ready" || sseFlowing || viewerOpen) return;
     let alive = true;
     const shoot = async () => {
       if (inFlight.current) return;
@@ -334,13 +340,13 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       alive = false;
       clearInterval(timer);
     };
-  }, [phase, sseFlowing, bot.id]);
+  }, [phase, sseFlowing, bot.id, viewerOpen]);
 
   // Local VM preview comes directly from Cua Driver through the harness. It
   // does not use the password-protected noVNC viewer or cloud endpoints.
   const vmInFlight = useRef(false);
   useEffect(() => {
-    if (phase !== "vm") return;
+    if (phase !== "vm" || viewerOpen) return;
     let alive = true;
     const shoot = async () => {
       if (vmInFlight.current) return;
@@ -360,7 +366,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [phase]);
+  }, [phase, viewerOpen]);
 
   // local preview: frames from the Electron main process. The FIRST capture
   // attempt is what makes macOS show the Screen Recording prompt (there is
@@ -423,45 +429,79 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bot.id]);
+  const requestControl = async (action: "take" | "release" | "dismiss-help") => {
+    const snap = await api(`/api/bots/${bot.id}/computer/control`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+    dispatch({
+      type: "computerControl",
+      botId: bot.id,
+      held: snap.held === true,
+      helpReason: typeof snap.helpReason === "string" ? snap.helpReason : null,
+    });
+    return snap;
+  };
+
   const controlAction = (action: "take" | "release" | "dismiss-help") => {
     setControlPending(true);
-    api(`/api/bots/${bot.id}/computer/control`, { method: "POST", body: JSON.stringify({ action }) })
-      .then((snap) =>
-        dispatch({
-          type: "computerControl",
-          botId: bot.id,
-          held: snap.held === true,
-          helpReason: typeof snap.helpReason === "string" ? snap.helpReason : null,
-        }),
-      )
+    requestControl(action)
       .catch((e) => setError(e.message))
       .finally(() => setControlPending(false));
   };
 
-  const run = (kind: "join" | "sleep" | "provision") => {
+  const openDesktop = async () => {
+    setPending("join");
+    setControlPending(true);
+    setError(null);
+    let tookControl = false;
+    // A plain-web development session still needs a synchronous blank tab;
+    // the packaged app uses the reliable Electron modal below.
+    let fallbackTab: Window | null = null;
+    if (!window.ogb?.desktopViewer && !window.ogb?.openExternal) {
+      fallbackTab = window.open("", "_blank");
+      if (fallbackTab) fallbackTab.opener = null;
+    }
+    try {
+      if (!control.held) {
+        await requestControl("take");
+        tookControl = true;
+      }
+
+      let viewerUrl = vmViewerUrl;
+      if (phase === "ready") {
+        const result = await api(`/api/bots/${bot.id}/computer/join`, { method: "POST" });
+        viewerUrl = result.joinUrl?.constructor === String ? String(result.joinUrl) : null;
+      }
+      if (!viewerUrl) throw new Error("The computer did not return a live desktop link");
+
+      if (window.ogb?.desktopViewer) {
+        const opened = await window.ogb.desktopViewer.open(viewerUrl, `${bot.name}'s live desktop`, bot.id);
+        if (!opened) throw new Error("OpenMausBot could not open the live desktop");
+      } else if (fallbackTab) {
+        fallbackTab.location.replace(viewerUrl);
+      } else if (window.ogb?.openExternal) {
+        const opened = await window.ogb.openExternal(viewerUrl);
+        if (!opened) throw new Error("OpenMausBot could not open the live desktop link");
+      } else if (!window.open(viewerUrl, "_blank", "noopener")) {
+        throw new Error("Your browser blocked the live desktop tab");
+      }
+    } catch (e) {
+      fallbackTab?.close();
+      // A failed viewer must not leave the bot's hands paused indefinitely.
+      if (tookControl) await requestControl("release").catch(() => {});
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPending(null);
+      setControlPending(false);
+    }
+  };
+
+  const run = (kind: "sleep" | "provision") => {
     setPending(kind);
     setError(null);
-    // Pop-up blockers only allow windows opened synchronously inside the click,
-    // so pre-open the tab before the request and point it at the join URL once
-    // minted (same pattern as ConnectorCard); Electron keeps using openExternal.
-    let joinTab: Window | null = null;
-    if (kind === "join" && !window.ogb?.openExternal) {
-      joinTab = window.open("", "_blank");
-      if (joinTab) joinTab.opener = null;
-    }
     api(`/api/bots/${bot.id}/computer/${kind}`, { method: "POST" })
-      .then(async (result) => {
-        // the join URL's stream token rotates — always freshly minted, never cached
-        if (kind === "join") {
-          if (!result.joinUrl) throw new Error("The computer did not return a join link");
-          if (joinTab) joinTab.location.replace(result.joinUrl);
-          else if (window.ogb?.openExternal) {
-            const opened = await window.ogb.openExternal(result.joinUrl);
-            if (!opened) throw new Error("OpenMausBot could not open the computer join link");
-          } else if (!window.open(result.joinUrl, "_blank", "noopener")) {
-            throw new Error("Your browser blocked the computer join tab");
-          }
-        }
+      .then((result) => {
         if (kind === "provision") {
           setBoxState(result.container ?? null);
           if (result.ready) setPhase("ready");
@@ -476,7 +516,6 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         }
       })
       .catch((e) => {
-        joinTab?.close();
         setError(e.message);
       })
       .finally(() => setPending(null));
@@ -667,11 +706,13 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             </div>
             <div className="mt-2 flex gap-2">
               <button
-                onClick={() => controlAction("take")}
-                disabled={controlPending}
+                onClick={() =>
+                  phase === "vm" || cloudBackend === "box" ? void openDesktop() : controlAction("take")
+                }
+                disabled={controlPending || pending === "join"}
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-accent py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-50"
               >
-                <Hand size={14} />
+                {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Hand size={14} />}
                 Take control
               </button>
               <button
@@ -701,29 +742,25 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             </button>
           </div>
         )}
-        {phase === "vm" && vmViewerUrl && (
+        {phase === "vm" && vmViewerUrl && control.held && (
           <button
-            onClick={() => {
-              // Electron opens the viewer in the system browser; the plain-web
-              // fallback opens a tab. Same URL Settings links as Watch screen.
-              if (window.ogb?.openExternal) void window.ogb.openExternal(vmViewerUrl);
-              else window.open(vmViewerUrl, "_blank", "noopener");
-            }}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover"
-            title="Open the Local VM's interactive desktop — click and type there"
+            onClick={() => void openDesktop()}
+            disabled={pending === "join"}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
+            title="Open the Local VM's live desktop inside OpenMausBot"
           >
-            <ExternalLink size={14} />
-            Open desktop
+            {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Monitor size={14} />}
+            Open live desktop
           </button>
         )}
         {phase === "vm" && !control.held && !control.helpReason && (
           <button
-            onClick={() => controlAction("take")}
-            disabled={controlPending}
+            onClick={() => void openDesktop()}
+            disabled={controlPending || pending === "join" || !vmViewerUrl}
             className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-            title="Pause the bot's hands and drive the Local VM yourself"
+            title="Pause the bot's hands and open the Local VM's live desktop"
           >
-            <Hand size={14} />
+            {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Hand size={14} />}
             Take control
           </button>
         )}
@@ -732,23 +769,25 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           <div className="mt-3 flex gap-2">
             {!control.held && !control.helpReason && (
               <button
-                onClick={() => controlAction("take")}
-                disabled={controlPending}
+                onClick={() =>
+                  cloudBackend === "box" ? void openDesktop() : controlAction("take")
+                }
+                disabled={controlPending || pending === "join"}
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
                 title="Pause the bot's hands and drive this computer yourself"
               >
-                <Hand size={14} />
+                {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Hand size={14} />}
                 Take control
               </button>
             )}
-            {cloudBackend === "box" && (
+            {cloudBackend === "box" && control.held && (
               <button
-                onClick={() => run("join")}
+                onClick={() => void openDesktop()}
                 disabled={pending === "join"}
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
               >
-                {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <ExternalLink size={14} />}
-                Open desktop
+                {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Monitor size={14} />}
+                Open live desktop
               </button>
             )}
             {(cloudBackend === "vps" || boxState !== "archived") && (
