@@ -815,7 +815,8 @@ export function ComputerPanel({
           </div>
         )}
 
-        {vmStatus?.mode === "per-bot" &&
+        {phase === "vm" &&
+          vmStatus?.mode === "per-bot" &&
           window.ogb?.desktopWorkspace &&
           onOpenVmWorkspace && (
             <button

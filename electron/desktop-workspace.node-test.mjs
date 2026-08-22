@@ -124,6 +124,13 @@ test("manager keeps two isolated watch-only views and rejects duplicates or a th
   );
   assert.equal(views.every((view) => view.webContents.url.includes("view_only=true")), true);
   assert.equal(views.every((view) => view.options.webPreferences.sandbox === true), true);
+  assert.equal(views.every((view) => view.options.webPreferences.contextIsolation === true), true);
+  assert.equal(views.every((view) => view.options.webPreferences.nodeIntegration === false), true);
+  assert.equal(views.every((view) => view.options.webPreferences.webSecurity === true), true);
+  assert.equal(
+    views.every((view) => view.options.webPreferences.allowRunningInsecureContent === false),
+    true,
+  );
   assert.equal(views.every((view) => view.webContents.permissionCheck() === false), true);
   assert.equal(views.every((view) => view.webContents.windowOpenHandler().action === "deny"), true);
   assert.equal(
@@ -202,6 +209,28 @@ test("manager serializes overlapping demotion and promotion calls", async () => 
   assert.equal(views[1].webContents.url.includes("view_only=false"), true);
 });
 
+test("manager preserves one controller across reverse-order queued switches", async () => {
+  const { manager, open, views } = managerFixture();
+  await open("left", 6080);
+  await open("right", 6081);
+  await manager.setInteractive("left");
+
+  let finishDemotion;
+  const demotionGate = new Promise((resolve) => { finishDemotion = resolve; });
+  views[0].webContents.loadHook = async (url) => {
+    if (url.includes("view_only=true")) await demotionGate;
+  };
+
+  const switchRight = manager.setInteractive("right");
+  await new Promise((resolve) => setImmediate(resolve));
+  const switchBackLeft = manager.setInteractive("left");
+  finishDemotion();
+  await Promise.all([switchRight, switchBackLeft]);
+
+  assert.equal(views[0].webContents.url.includes("view_only=false"), true);
+  assert.equal(views[1].webContents.url.includes("view_only=true"), true);
+});
+
 test("queued interaction cannot promote a replacement pane with a reused context id", async () => {
   const { manager, open, views } = managerFixture();
   await open("left", 6080);
@@ -224,6 +253,35 @@ test("queued interaction cannot promote a replacement pane with a reused context
   await demote;
   await assert.rejects(stalePromotion, /not open/);
   assert.equal(views[2].webContents.url.includes("view_only=true"), true);
+});
+
+test("manager fails closed when an interactive reload derives from an invalid URL", async () => {
+  const { manager, open, views } = managerFixture();
+  await open("left", 6080);
+  views[0].webContents.url = "https://desktop.example/vnc.html#password=never-print-this";
+
+  await assert.rejects(
+    manager.setInteractive("left"),
+    (error) => error instanceof Error && !error.message.includes("never-print-this"),
+  );
+  assert.equal(manager.size(), 0);
+  assert.equal(views[0].webContents.closed, true);
+});
+
+test("manager does not report a pane ready after it closes during open", async () => {
+  const { manager, notifications, open } = managerFixture();
+  const pending = open("left", 6080);
+  manager.close("left");
+
+  const state = await pending;
+  assert.deepEqual(state, {
+    contextId: "left",
+    open: false,
+    status: "closed",
+    interactive: false,
+  });
+  assert.equal(notifications.at(-1)?.status, "closed");
+  assert.equal(manager.size(), 0);
 });
 
 test("manager closes panes independently and emits no viewer URL", async () => {

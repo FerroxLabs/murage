@@ -496,7 +496,6 @@ export function LocalVmWorkspace({
     initialLocalVmWorkspaceSlots(state.bots, primaryBotId),
   );
   const slotsRef = useRef(slots);
-  slotsRef.current = slots;
   const [controlledBotId, setControlledBotId] = useState<string | null>(null);
   const controlledBotIdRef = useRef<string | null>(null);
   const controlLeaseIdRef = useRef<string | null>(null);
@@ -510,6 +509,10 @@ export function LocalVmWorkspace({
   const [controlPending, setControlPending] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
   const obscured = useNativeViewObscured(overlayOpen);
+
+  useEffect(() => {
+    slotsRef.current = slots;
+  }, [slots]);
 
   const controlPort = useMemo<LocalVmWorkspaceControlPort>(
     () => ({

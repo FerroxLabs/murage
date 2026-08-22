@@ -113,9 +113,8 @@ export async function releaseLocalVmWorkspaceControl(
   currentBotId: string | null,
 ) {
   if (!currentBotId) return null;
-  await port.setInteractive(null);
-  const released = await port.release(currentBotId);
-  return released;
+  await port.setInteractive(null).catch(() => {});
+  return port.release(currentBotId);
 }
 
 export function eligibleLocalVmBotIds(bots: readonly LocalVmWorkspaceBot[]): string[] {

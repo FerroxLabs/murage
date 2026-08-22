@@ -91,7 +91,9 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
   };
 
   const removeEntry = (entry, status = "closed", code) => {
-    if (entries.get(entry.contextId) !== entry) return;
+    if (entries.get(entry.contextId) !== entry) {
+      return entry.terminalState ?? stateFor(entry, status, code);
+    }
     entries.delete(entry.contextId);
     try {
       entry.view.setVisible(false);
@@ -104,7 +106,10 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
         entry.view.webContents.close({ waitForBeforeUnload: false });
       }
     } catch {}
-    emit(stateFor(entry, status, code));
+    const terminalState = stateFor(entry, status, code);
+    entry.terminalState = terminalState;
+    emit(terminalState);
+    return terminalState;
   };
 
   const secureView = (entry, viewerOrigin) => {
@@ -129,11 +134,11 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
   };
 
   const loadMode = async (entry, interactive) => {
-    const current = entry.view.webContents.getURL();
-    const next = desktopWorkspaceUrl(current, interactive);
-    entry.interactive = interactive;
-    emit(stateFor(entry, "opening"));
     try {
+      const current = entry.view.webContents.getURL();
+      const next = desktopWorkspaceUrl(current, interactive);
+      entry.interactive = interactive;
+      emit(stateFor(entry, "opening"));
       await entry.view.webContents.loadURL(next.toString());
     } catch {
       // A failed demotion must never leave an old interactive noVNC document
@@ -189,8 +194,12 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
         removeEntry(entry, "error", "load-failed");
         throw new Error("The Local VM desktop did not load");
       }
-      if (entries.get(contextId) === entry) emit(stateFor(entry, "ready"));
-      return stateFor(entry, "ready");
+      if (entries.get(contextId) === entry) {
+        const readyState = stateFor(entry, "ready");
+        emit(readyState);
+        return readyState;
+      }
+      return entry.terminalState ?? stateFor(entry, "closed");
     },
 
     layout(items) {
@@ -216,7 +225,6 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
 
     setInteractive(rawContextId) {
       const contextId = rawContextId == null ? null : desktopWorkspaceContextId(rawContextId);
-      const scopedEntries = [...entries.values()];
       const targetEntry = contextId === null ? null : entries.get(contextId);
       if (contextId !== null && !targetEntry) {
         return Promise.reject(new Error("That desktop workspace slot is not open"));
@@ -228,7 +236,7 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
         // Always finish every demotion before promoting. The queue is part of
         // this invariant: overlapping renderer IPC calls cannot observe a flag
         // change while the old interactive noVNC document is still reloading.
-        for (const entry of scopedEntries) {
+        for (const entry of entries.values()) {
           if (
             entries.get(entry.contextId) === entry &&
             entry.interactive &&

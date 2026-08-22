@@ -270,7 +270,13 @@ function privateCache(path: string): Buffer | null {
   } catch {
     return null;
   } finally {
-    if (descriptor !== null) closeSync(descriptor);
+    if (descriptor !== null) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // Cleanup failures must not escape the fail-closed cache read.
+      }
+    }
   }
 }
 

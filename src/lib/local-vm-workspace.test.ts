@@ -130,6 +130,20 @@ describe("Local VM workspace control", () => {
     expect(fixture.calls).toEqual(["interactive:none", "release:vm-a"]);
   });
 
+  it("releases the API hold even when native demotion fails", async () => {
+    const fixture = port({ held: true, owned: true });
+    fixture.value.setInteractive = async (contextId: string | null) => {
+      fixture.calls.push(`interactive:${contextId ?? "none"}`);
+      throw new Error("native viewer unavailable");
+    };
+
+    await expect(releaseLocalVmWorkspaceControl(fixture.value, "vm-a")).resolves.toMatchObject({
+      held: false,
+      released: true,
+    });
+    expect(fixture.calls).toEqual(["interactive:none", "release:vm-a"]);
+  });
+
   it("revalidates and restores the same workspace-owned pane", async () => {
     const fixture = port({ held: true, owned: true });
     const result = await switchLocalVmWorkspaceControl(fixture.value, "vm-a", "vm-a", "left");
