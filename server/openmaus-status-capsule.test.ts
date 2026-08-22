@@ -21,6 +21,7 @@ const OLD_SINGLE_VIEW_SHA = `sha256:${"1".repeat(64)}`;
 const DUAL_VIEW_SHA = `sha256:${"2".repeat(64)}`;
 const roots: string[] = [];
 const jsonObjectSchema = z.record(z.string(), z.custom<JsonValue>());
+const posixOnly = describe.skipIf(process.getuid === undefined);
 
 interface TestCapsule extends JsonObject {
   schema: string;
@@ -151,7 +152,7 @@ function cachePath(capsule: TestCapsule): string {
   return path;
 }
 
-describe("readOpenMausStatus", () => {
+posixOnly("readOpenMausStatus", () => {
   it("projects only fresh normalized two-VM capability data", () => {
     const capsule = successCapsule();
     // Cross-language receipt produced by scripts/aos_openmausbot_status.py
@@ -299,3 +300,27 @@ describe("readOpenMausStatus", () => {
     ).toBe("missing_or_insecure");
   });
 });
+
+it.skipIf(process.getuid !== undefined)(
+  "fails closed when POSIX owner and mode checks are unavailable",
+  () => {
+    const path = cachePath(successCapsule());
+    expect(readOpenMausStatus({ cachePath: path, now: NOW })).toMatchObject({
+      freshness: "unknown",
+      reason: "missing_or_insecure",
+      runtimeState: "unknown",
+      mode: "unknown",
+      maxInstances: null,
+      readyCount: 0,
+      slots: [],
+      ui: {
+        twoUp: false,
+        maxVisible: 1,
+        defaultWatchOnly: false,
+      },
+    });
+    expect(openMausStatusSystemPrompt({ cachePath: path, now: NOW })).toContain(
+      "runtime_state=unknown",
+    );
+  },
+);
