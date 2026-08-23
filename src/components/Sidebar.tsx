@@ -1103,7 +1103,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       );
       for (const response of archiveNew) dispatch({ type: "botPatched", bot: response.bot });
 
-      const previousChief = result.archived.find((bot) => bot.chiefOfStaff);
+      const previousChiefs = result.archived.filter((bot) => bot.chiefOfStaff);
       const restoreOthers = await Promise.all(
         result.archived
           .filter((bot) => !bot.chiefOfStaff)
@@ -1115,13 +1115,15 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           ),
       );
       for (const response of restoreOthers) dispatch({ type: "botPatched", bot: response.bot });
-      if (previousChief) {
-        const response = await api(`/api/bots/${previousChief.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ hidden: false, chiefOfStaff: true }),
-        });
-        dispatch({ type: "botPatched", bot: response.bot });
-      }
+      const restoredChiefs = await Promise.all(
+        previousChiefs.map((previousChief) =>
+          api(`/api/bots/${previousChief.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ hidden: false, chiefOfStaff: true }),
+          }),
+        ),
+      );
+      for (const response of restoredChiefs) dispatch({ type: "botPatched", bot: response.bot });
       const first = result.archived[0];
       if (first) dispatch({ type: "select", id: first.id });
       setTeamFeedback({ error: false, text: "Previous team restored" });
@@ -1197,7 +1199,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         (b.title ?? "").toLowerCase().includes(q) ||
         preview(b).toLowerCase().includes(q),
     );
-  const chiefBot = matchingBots.find((bot) => bot.chiefOfStaff);
+  const unsectionedChief = matchingBots.find((bot) => bot.chiefOfStaff && !bot.section);
+  const sectionChiefs = matchingBots.filter((bot) => bot.chiefOfStaff && bot.section);
   const sectionedBots = matchingBots
     .filter((bot) => !bot.chiefOfStaff && bot.section)
     .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
@@ -1211,6 +1214,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   // whose members all moved away (or fell out of the filter) simply vanishes
   const sectionNames: string[] = [];
   for (const bot of sectionedBots) {
+    if (!sectionNames.includes(bot.section!)) sectionNames.push(bot.section!);
+  }
+  for (const bot of sectionChiefs) {
     if (!sectionNames.includes(bot.section!)) sectionNames.push(bot.section!);
   }
   for (const group of sectionedGroups) {
@@ -1401,13 +1407,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       {/* Bot list */}
       <div className="flex-1 overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5">
-          {!chiefBot && visibleBots.length === 0 && sectionedBots.length === 0 && visibleGroups.length === 0 && q && q.length < MIN_QUERY && (
+          {!unsectionedChief && sectionChiefs.length === 0 && visibleBots.length === 0 && sectionedBots.length === 0 && visibleGroups.length === 0 && q && q.length < MIN_QUERY && (
             <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">Nothing matches “{query}”</div>
           )}
-          {chiefBot && (
+          {unsectionedChief && (
             <div className="mb-1.5">
               <BotListItem
-                bot={chiefBot}
+                bot={unsectionedChief}
                 density={density}
                 onMenu={setMenu}
                 onArchive={(bot) => void archiveBot(bot)}
@@ -1433,6 +1439,18 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           {sectionNames.map((name) => (
             <Fragment key={name}>
               {density !== "icons" && <SectionDivider name={name} />}
+              {sectionChiefs
+                .filter((bot) => bot.section === name)
+                .map((bot) => (
+                  <BotListItem
+                    key={bot.id}
+                    bot={bot}
+                    density={density}
+                    onMenu={setMenu}
+                    onArchive={(candidate) => void archiveBot(candidate)}
+                    archiveDisabled
+                  />
+                ))}
               {sectionedGroups
                 .filter((g) => g.section === name)
                 .map((g) => (

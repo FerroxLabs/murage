@@ -106,6 +106,41 @@ describe("cross-client bot creation", () => {
   });
 });
 
+describe("section Chiefs", () => {
+  const bot = (id: string, section: string, chiefOfStaff = false) => ({
+    id,
+    threadId: `thread-${id}`,
+    name: id,
+    title: "",
+    description: "",
+    notifications: true,
+    color: "green" as const,
+    unread: false,
+    modelSelection: { instanceId: "codex", model: "default" },
+    section,
+    chiefOfStaff,
+  });
+
+  it("hands off only within the patched bot's section", () => {
+    const workChief = bot("work-a", "Work", true);
+    const workCandidate = bot("work-b", "Work");
+    const personalChief = bot("personal", "Personal", true);
+    const state = {
+      ...initialState,
+      bots: [workChief, workCandidate, personalChief].map((candidate) => ({ ...candidate, messages: [] })),
+    };
+
+    const next = reducer(state, {
+      type: "botPatched",
+      bot: { ...workCandidate, chiefOfStaff: true },
+    });
+
+    expect(next.bots.find((candidate) => candidate.id === workChief.id)?.chiefOfStaff).toBe(false);
+    expect(next.bots.find((candidate) => candidate.id === workCandidate.id)?.chiefOfStaff).toBe(true);
+    expect(next.bots.find((candidate) => candidate.id === personalChief.id)?.chiefOfStaff).toBe(true);
+  });
+});
+
 describe("pending queued chip", () => {
   const bot = {
     id: "b1",

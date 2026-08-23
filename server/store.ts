@@ -301,8 +301,8 @@ export interface BotRecord {
   /** the one message pinned to the top of this bot's active thread; a pin
    * that no longer resolves (branch switched away, deleted) renders nothing */
   pinnedMessageId?: string;
-  /** The single workspace-wide coordinator. The store enforces that at
-   * most one bot owns this role, even if an older/corrupt file says more. */
+  /** The coordinator for this bot's sidebar section. The store enforces
+   * at most one Chief per section (including the unsectioned area). */
   chiefOfStaff?: boolean;
   /** Pause for human approval before this bot talks to a peer (ask_bot,
    * delegate_bot). Off by default: a chief-of-staff-style bot is most
@@ -340,6 +340,10 @@ const COLORS: MausColor[] = [
   "teal",
   "coral",
 ];
+
+/** Sections are persisted as display labels, so exact trimmed labels are
+ * their identity. Missing/blank means the unsectioned (General) team. */
+export const sectionKey = (section?: string | null): string => section?.trim() || "";
 
 /** Resolve @mentions in a message against a bot roster: `@` must start a
  * word, the name must end on a word boundary (so "@New Bottle" never matches
@@ -447,7 +451,7 @@ export class Store {
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;
-    let chiefSeen = false;
+    const chiefSectionsSeen = new Set<string>();
     let groupsMigrated = false;
     for (const b of this.bots) {
       // transient state never survives a restart — and if a previous
@@ -472,8 +476,9 @@ export class Store {
     }
     for (const b of this.bots) {
       if (!b.chiefOfStaff) continue;
-      if (!chiefSeen) {
-        chiefSeen = true;
+      const key = sectionKey(b.section);
+      if (!chiefSectionsSeen.has(key)) {
+        chiefSectionsSeen.add(key);
         if (b.hidden) {
           b.hidden = false;
           botsMigrated = true;
@@ -778,7 +783,7 @@ export class Store {
 
   createBot(
     profile: Partial<
-      Pick<BotRecord, "name" | "title" | "description" | "color" | "mascotExpression" | "modelSelection">
+      Pick<BotRecord, "name" | "title" | "description" | "color" | "mascotExpression" | "modelSelection" | "section">
     > = {},
     opts: {
       /** false = no greeting/onboarding seed. Imported bots must not open
@@ -787,6 +792,7 @@ export class Store {
     } = {},
   ): BotRecord {
     const name = profile.name?.trim() || pickBotName(this.bots.map((b) => b.name));
+    const section = sectionKey(profile.section);
     const bot: BotRecord = {
       id: newId(),
       threadId: newId(),
@@ -801,6 +807,7 @@ export class Store {
       resumeCursors: {},
       createdAt: Date.now(),
     };
+    if (section) bot.section = section;
     bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {} }];
     this.bots.unshift(bot);
     this.saveBots();
@@ -859,18 +866,21 @@ export class Store {
     return bot;
   }
 
-  /** Elect one Chief of Staff (or clear the role) as one persisted change.
+  /** Elect one Chief of Staff in its section (or clear one section) as one persisted change.
    * The changed records are returned so the server can update every open
    * window, including the bot that just handed the role over. */
-  setChiefOfStaff(id: string | null): BotRecord[] | null {
-    if (id && !this.bot(id)) return null;
+  setChiefOfStaff(id: string | null, section?: string | null): BotRecord[] | null {
+    const selected = id ? this.bot(id) : null;
+    if (id && !selected) return null;
+    const targetSection = sectionKey(selected?.section ?? section);
     const changed: BotRecord[] = [];
     for (const bot of this.bots) {
+      if (sectionKey(bot.section) !== targetSection) continue;
       const next = bot.id === id;
       if (Boolean(bot.chiefOfStaff) === next && !(next && bot.hidden)) continue;
       if (next) {
         bot.chiefOfStaff = true;
-        // The workspace's main contact must stay reachable in the sidebar.
+        // A section's main contact must stay reachable in the sidebar.
         bot.hidden = false;
       } else {
         bot.chiefOfStaff = false;
