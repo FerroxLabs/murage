@@ -172,20 +172,17 @@ function storedAuthPaths(env: Record<string, string | undefined>): string[] {
   return [...new Set(roots)].map((root) => join(root, "opencode", "auth.json"));
 }
 
-/** True when an auth.json entry looks like a usable OpenCode login.
+/** True when auth.json contains a usable OpenCode Go login.
  *
  * The CLI writes `{type:"api", key}` for pasted keys and
- * `{type:"oauth", access, refresh}` for browser sign-ins — demanding `key`
- * alone rejects every OAuth login. The entry id is `"opencode"` for the
- * standard Zen sign-in and `"opencode-go"` for the Go product; both unlock
- * the Go models, so both count. */
+ * `{type:"oauth", access, refresh}` for browser sign-ins. OpenCode Zen uses
+ * the separate `"opencode"` id and does not load the `opencode-go` provider,
+ * so accepting it here produces a misleading "model not found" at runtime. */
 function usableAuthEntry(parsed: Record<string, unknown>): boolean {
-  return ["opencode-go", "opencode"].some((id) => {
-    const auth = parsed[id];
-    if (!auth || typeof auth !== "object") return false;
-    const entry = auth as { key?: unknown; access?: unknown; refresh?: unknown };
-    return Boolean(entry.key || entry.access || entry.refresh);
-  });
+  const auth = parsed["opencode-go"];
+  if (!auth || typeof auth !== "object") return false;
+  const entry = auth as { key?: unknown; access?: unknown; refresh?: unknown };
+  return Boolean(entry.key || entry.access || entry.refresh);
 }
 
 function hasStoredOpenCodeGoAuth(env: Record<string, string | undefined>) {
@@ -214,7 +211,7 @@ const support = (fetcher: typeof fetch): AcpSupport => ({
   defaultCli: "opencode",
   nativeSource: "opencode-go.acp",
   loginNote:
-    "OpenCode is not signed in — run `opencode auth login` and pick OpenCode, or add an OPENCODE_API_KEY in OpenMausBot settings",
+    "OpenCode Go is not connected — run `opencode auth login --provider opencode-go`, or add your OpenCode Go API key in Settings → Connections",
   install: {
     command: {
       darwin: "npm install -g opencode-ai",
@@ -222,7 +219,7 @@ const support = (fetcher: typeof fetch): AcpSupport => ({
       win32: "npm install -g opencode-ai",
     },
     docsUrl: "https://opencode.ai/docs/",
-    signInCommand: "opencode auth login",
+    signInCommand: "opencode auth login --provider opencode-go",
     needsNode: true,
   },
   spawnArgs: () => ["acp"],
@@ -233,6 +230,7 @@ const support = (fetcher: typeof fetch): AcpSupport => ({
   pickAuthMethod: () => null,
   authFailure: "continue",
   isAuthenticated: (env) => Boolean(env.OPENCODE_API_KEY) || hasStoredOpenCodeGoAuth(env),
+  requireAuthenticationBeforeSpawn: true,
   classifyError: classifyOpenCodeGoError,
   resolveModels: async (environment) => mergeLocalInject(await fetchOpenCodeGoModels(fetcher), environment),
   buildPromptText: (turn) => turn.system ? `${turn.system}\n\n${turn.text}` : turn.text,

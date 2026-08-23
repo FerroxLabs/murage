@@ -23,7 +23,9 @@ arguments.
 OpenCode Go remains unavailable until both the `opencode` executable and the
 credential are present. It is never selected as a runnable default while either
 requirement is missing. Users may instead manage OpenCode's own login flow with
-`opencode auth login`; OpenMausBot does not edit OpenCode auth/config files.
+`opencode auth login --provider opencode-go`; OpenMausBot does not edit
+OpenCode auth/config files. A normal OpenCode Zen login is a different
+provider and does not authenticate OpenCode Go.
 
 ## Models
 
