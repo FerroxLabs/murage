@@ -23,6 +23,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Sparkles,
   Settings,
   Puzzle,
   Trash2,
@@ -1457,6 +1458,19 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 
       {/* Footer */}
       <div className={cn("pb-3 pt-2", density === "icons" ? "px-2" : "px-3")}>
+        <button
+          onClick={() => dispatch({ type: "showSkillRecorder" })}
+          aria-label={density === "icons" ? "Teach a skill" : undefined}
+          title={density === "icons" ? "Teach a skill" : undefined}
+          className={cn(
+            "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
+            density === "icons" ? "justify-center px-2" : "gap-3 px-3",
+            state.activeView === "skill-recorder" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+          )}
+        >
+          <Sparkles size={20} className={state.activeView === "skill-recorder" ? "text-accent" : "text-ink-secondary"} />
+          <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Teach a skill</span>
+        </button>
         <button
           onClick={() => dispatch({ type: "showRoutines" })}
           aria-label={density === "icons" ? "Tasks and routines" : undefined}

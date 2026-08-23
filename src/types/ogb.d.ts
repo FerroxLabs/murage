@@ -1,7 +1,40 @@
 // The narrow bridge the Electron preload exposes. Absent in the browser.
 
-
 declare global {
+type NativeSkillRecordingEvent = {
+  type: "app" | "click" | "scroll" | "key";
+  atMs: number;
+  app?: string;
+  windowTitle?: string;
+  x?: number;
+  y?: number;
+  button?: "left" | "right" | "other";
+  deltaY?: number;
+  keycode?: number;
+  meta?: boolean;
+  control?: boolean;
+  option?: boolean;
+  shift?: boolean;
+};
+
+type SkillRecordingPayload = {
+  name: string;
+  description: string;
+  durationMs: number;
+  transcript: string;
+  transcription?: { provider: "assemblyai"; model: string };
+  audio?: string;
+  events: Array<{
+    type: "app" | "click" | "scroll" | "shortcut" | "typing";
+    atMs: number;
+    app?: string;
+    windowTitle?: string;
+    direction?: "up" | "down";
+    shortcut?: string;
+    screenshot?: string;
+  }>;
+};
+
   type DesktopCapabilities = {
     host: {
       platform: "darwin" | "linux" | "win32" | "other";
@@ -67,6 +100,19 @@ declare global {
         cb: (line: { partial?: boolean; text?: string; error?: string }) => void,
       ): () => void;
       onSpeechEnd(cb: (info: { code: number | null; reason?: string }) => void): () => void;
+      skillRecorder?: {
+        permissions(): Promise<{ supported: boolean; reason?: string }>;
+        start(): Promise<{ recording: boolean }>;
+        stop(): Promise<{ recording: boolean }>;
+        save(payload: SkillRecordingPayload): Promise<{ id: string; path: string; events: number }>;
+        onEvent(cb: (event: NativeSkillRecordingEvent) => void): () => void;
+        onEnd(cb: (info: { code: number | null; reason?: string }) => void): () => void;
+      };
+      transcription?: {
+        status(): Promise<{ configured: boolean }>;
+        setKey(value: string): Promise<{ configured: boolean }>;
+        streamingToken(): Promise<{ token: string; expiresInSeconds: number }>;
+      };
       /** Absolute path of a dropped File ("" when the drag carried no
        * file on disk). Absent in older builds of the shell. */
       getPathForFile?(file: File): string;

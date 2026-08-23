@@ -109,7 +109,7 @@ import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./
 import { memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
-import { loadBundledSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
+import { loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
@@ -131,6 +131,7 @@ const cfg = loadConfig();
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
 const bundledSkills = loadBundledSkills();
+const availableSkills = () => mergeSkills(bundledSkills, loadUserSkills(join(DATA_DIR, "skills")));
 
 const bus = new EventBus();
 bus.attach(registry.instances());
@@ -1419,12 +1420,11 @@ async function startTurn(
       const selectedSkills = selectBundledSkills(
         text,
         instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : [],
-        bundledSkills,
+        availableSkills(),
       );
       if (selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
         integrations.phone = phoneIntegration();
       }
-      const skillInstructions = renderSkillInstructions(selectedSkills);
       // the user's connected apps, but only to a driver that can mount
       // them — a key in the config says the connections exist, not that
       // this engine can reach them — and only to a bot the user has not
@@ -1439,6 +1439,9 @@ async function startTurn(
       // MEMORY.md lives. API/box engines have no local filesystem story.
       const worksInWorkspace = instance.driverKind !== "grok" && instance.driverKind !== "boxAgent";
       const privateWorkspace = worksInWorkspace ? ensureWorkspace(bot.id) : undefined;
+      const skillInstructions = renderSkillInstructions(selectedSkills, {
+        includeRoot: worksInWorkspace && opts?.runOn !== "cloud",
+      });
       // An explicit working folder wins for new tasks; otherwise they use
       // the private bot workspace. A legacy task with an existing provider
       // session deliberately pins to null (the old home-folder behavior),
@@ -1863,7 +1866,7 @@ async function runGroupMemberTurn(
   const selectedSkills = selectBundledSkills(
     serializeRoomContext(group.threadId, userName),
     instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : [],
-    bundledSkills,
+    availableSkills(),
   );
   if (selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
     integrations.phone = phoneIntegration();
@@ -1920,7 +1923,7 @@ async function runGroupMemberTurn(
   const cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id));
   const roomSystem =
     (workspace ? `${system}\n${memorySystemPrompt(bot.id).trim()}` : system) +
-    renderSkillInstructions(selectedSkills);
+    renderSkillInstructions(selectedSkills, { includeRoot: Boolean(workspace) });
 
   // run the turn and wait for it to settle, folding the reply text so a
   // chained @mention can be routed afterwards
