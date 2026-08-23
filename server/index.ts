@@ -22,7 +22,7 @@ import {
 } from "./avatar-image.ts";
 import { parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
-import { RoomTurnStallRegistry, roomTurnTimeoutMessage, scheduleRoomTurnTimeout } from "./room-turn-timeout.ts";
+import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
@@ -1940,23 +1940,9 @@ async function runGroupMemberTurn(
   const timeoutMinutes = roomTurnTimeoutMinutes(cfg);
   const outcome = await new Promise<"settled" | "dispatch_failed" | "stalled" | "timed_out">((resolve) => {
     let done = false;
-    let timer!: ReturnType<typeof setTimeout>;
     let unsub = () => {};
     let unregisterStall = () => {};
-    const finish = (value: "settled" | "dispatch_failed" | "stalled" | "timed_out") => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      unsub();
-      unregisterStall();
-      resolve(value);
-    };
-    unsub = bus.subscribe((e: RuntimeEvent) => {
-      if (e.threadId !== group.threadId) return;
-      if (e.type === "item.completed" && e.itemType === "assistant_text") replyText += `\n${e.text}`;
-      else if (e.type === "turn.completed") finish("settled");
-    });
-    timer = scheduleRoomTurnTimeout(timeoutMinutes, () => {
+    const deadline = new RoomTurnDeadline(timeoutMinutes, () => {
       void instance.adapter.interruptTurn(group.threadId).catch(() => {});
       store.appendMessage(group.threadId, {
         role: "bot",
@@ -1966,6 +1952,25 @@ async function runGroupMemberTurn(
       });
       finish("timed_out");
     });
+    const finish = (value: "settled" | "dispatch_failed" | "stalled" | "timed_out") => {
+      if (done) return;
+      done = true;
+      deadline.stop();
+      unsub();
+      unregisterStall();
+      resolve(value);
+    };
+    unsub = bus.subscribe((e: RuntimeEvent) => {
+      if (e.threadId !== group.threadId) return;
+      if (e.type === "item.completed" && e.itemType === "assistant_text") replyText += `\n${e.text}`;
+      else if (e.type === "turn.completed") finish("settled");
+      // Waiting on a person is not turn work: hold the ceiling while an
+      // approval or question card is open, so deciding slowly does not
+      // stop the turn underneath the card. Everything else keeps burning it.
+      else if (e.type === "request.opened") deadline.setWaitingOnHuman(true);
+      else if (e.type === "request.resolved") deadline.setWaitingOnHuman(false);
+    });
+    deadline.start();
     unregisterStall = roomStallCompletions.register(group.threadId, () => finish("stalled"));
     watchdog.watch(group.threadId, bot.id);
     instance.adapter
