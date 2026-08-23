@@ -97,6 +97,14 @@ final class ConnectedAppsClientTests: XCTestCase {
         XCTAssertEqual(object, ["alias": "Personal"])
     }
 
+    func testOmitsAWhitespaceOnlyAlias() async throws {
+        ConnectorRequestStub.responseBody = Data(#"{"url":"https://auth.example/connect"}"#.utf8)
+
+        _ = try await client.authorizeConnector(slug: "gmail", alias: "   \n  ")
+
+        XCTAssertNil(ConnectorRequestStub.capturedBody)
+    }
+
     func testRejectsUnsafeToolkitComponentsAndAuthorizationURLsLocally() async {
         await assertBadURL { _ = try await self.client.authorizeConnector(slug: "café", alias: nil) }
         await assertBadURL { _ = try await self.client.authorizeConnector(slug: "bad/slash", alias: nil) }

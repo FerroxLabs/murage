@@ -150,6 +150,10 @@ final class DecodingTests: XCTestCase {
               "pending": false,
               "status": "ACTIVE",
               "accounts": []
+            },
+            "slack": {
+              "connected": false,
+              "pending": true
             }
           }
         }
@@ -165,6 +169,10 @@ final class DecodingTests: XCTestCase {
         let noAuth = try XCTUnwrap(statuses.services["weather"])
         XCTAssertTrue(noAuth.connected)
         XCTAssertEqual(noAuth.accounts?.isEmpty, true)
+
+        let pending = try XCTUnwrap(statuses.services["slack"])
+        XCTAssertEqual(pending.pending, true)
+        XCTAssertNil(pending.accounts)
     }
 
     func testOneMalformedBotDoesNotHideTheRestOfTheFleet() throws {

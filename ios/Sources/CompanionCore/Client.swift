@@ -611,7 +611,12 @@ public struct CompanionClient: Sendable {
     public func authorizeConnector(slug: String, alias: String?) async throws -> URL {
         guard Self.validConnectorSlug(slug) else { throw APIError.badURL }
         let trimmed = alias?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let body = trimmed.map { ["alias": $0] }
+        let body: [String: String]?
+        if let trimmed, !trimmed.isEmpty {
+            body = ["alias": trimmed]
+        } else {
+            body = nil
+        }
         let response = try await send(
             try makeRequest("POST", "/api/connectors/\(slug)/authorize", body: body),
             as: ConnectorAuthorizationResponse.self
