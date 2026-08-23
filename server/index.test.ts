@@ -559,8 +559,20 @@ describe("harness HTTP API", () => {
     expect(clearedEmpty.status).toBe(200);
     expect(clearedEmpty.body.bot).not.toHaveProperty("section");
 
-    // rooms file under the same sidebar sections, with the same contract
-    const sectionRoom = (await api("POST", "/api/groups", { name: "Filed", memberIds: [bot.id] })).body.group;
+    // Channels can be born inside a Work/Personal/project context, and can
+    // later move through the same context contract as bots.
+    const createdInContext = await api("POST", "/api/groups", {
+      name: "Filed",
+      memberIds: [bot.id, bot.id],
+      section: "  Work  ",
+    });
+    expect(createdInContext.status).toBe(201);
+    expect(createdInContext.body.group).toMatchObject({ section: "Work", memberIds: [bot.id] });
+    expect((await api("POST", "/api/groups", { name: 7, memberIds: [bot.id] })).status).toBe(400);
+    expect((await api("POST", "/api/groups", { name: "N".repeat(101), memberIds: [bot.id] })).status).toBe(400);
+    expect((await api("POST", "/api/groups", { name: "Bad context", memberIds: [bot.id], section: 7 })).status).toBe(400);
+    expect((await api("POST", "/api/groups", { name: "Long context", memberIds: [bot.id], section: "S".repeat(61) })).status).toBe(400);
+    const sectionRoom = createdInContext.body.group;
     const roomSectioned = await api("PATCH", `/api/groups/${sectionRoom.id}`, { section: "  Clients  " });
     expect(roomSectioned.status).toBe(200);
     expect(roomSectioned.body.group).toMatchObject({ section: "Clients" });

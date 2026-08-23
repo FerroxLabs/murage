@@ -296,7 +296,7 @@ export function Composer({
                   </span>
                 )}
                 <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{peer.name}</span>
-                <span className="shrink-0 text-xs text-ink-secondary">{peer.bot ? "Agent" : "Room"}</span>
+                <span className="shrink-0 text-xs text-ink-secondary">{peer.bot ? "Agent" : "Channel"}</span>
               </button>
             ))}
           </div>

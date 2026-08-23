@@ -565,7 +565,7 @@ export class Store {
     return this.groups.find((g) => g.threadId === threadId);
   }
 
-  createGroup(name: string, memberIds: string[], dm = false): GroupRecord {
+  createGroup(name: string, memberIds: string[], dm = false, section?: string): GroupRecord {
     const group: GroupRecord = {
       id: newId(),
       threadId: newId(),
@@ -577,6 +577,7 @@ export class Store {
       createdAt: Date.now(),
       dm: dm || undefined,
       busyBotId: null,
+      section,
     };
     this.groups.unshift(group);
     this.saveGroups();

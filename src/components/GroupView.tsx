@@ -80,7 +80,7 @@ function PinToggle({ group, message }: { group: Group; message: Message }) {
       }
       aria-label={pinned ? "Unpin message" : "Pin message"}
       className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-      title={pinned ? "Unpin this message" : "Pin this message to the top of the room"}
+      title={pinned ? "Unpin this message" : "Pin this message to the top of the channel"}
     >
       {pinned ? <PinOff size={14} /> : <Pin size={14} />}
     </button>
@@ -189,7 +189,7 @@ function DefaultResponderSelect({ group, members }: { group: Group; members: Bot
   const lead = responder.kind === "member" ? members.find((member) => member.id === responder.botId) : undefined;
   const title =
     responder.kind === "everyone"
-      ? "Plain messages go to every room member; @mentions override this"
+      ? "Plain messages go to every channel member; @mentions override this"
       : responder.kind === "mentions"
         ? "Only explicitly @mentioned bots respond"
         : `Plain messages go to ${lead?.name ?? "the lead bot"}; @mentions override this`;
@@ -210,14 +210,14 @@ function DefaultResponderSelect({ group, members }: { group: Group; members: Bot
         onChange={(event) => change(event.target.value)}
         className="h-8 max-w-[190px] appearance-none truncate rounded-full border border-hairline/40 bg-raised/60 py-1 pl-3 pr-7 text-[12.5px] font-medium text-ink outline-none hover:bg-raised focus:border-accent"
       >
-        <optgroup label="Room lead">
+        <optgroup label="Channel lead">
           {members.map((member) => (
             <option key={member.id} value={`member:${member.id}`}>
               Lead: {member.name}
             </option>
           ))}
         </optgroup>
-        <optgroup label="Room behavior">
+        <optgroup label="Channel behavior">
           <option value="everyone">Everyone responds</option>
           <option value="mentions">Mentions only</option>
         </optgroup>
@@ -269,14 +269,14 @@ function RoomWorkingFolder({ group }: { group: Group }) {
   return (
     <div className="rounded-xl bg-card p-4">
       <div className="text-[15px] font-medium text-ink">Working folder</div>
-      <div className="mt-0.5 text-[13px] text-ink-secondary">Where every bot in this room runs its shell and file tools.</div>
+      <div className="mt-0.5 text-[13px] text-ink-secondary">Where every bot in this channel runs its shell and file tools.</div>
       {locked ? (
         <div className="mt-3">
           <div className="truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={shownCwd}>
             {shownCwd ? shortPath(shownCwd, home) : <span className="text-ink-secondary">Each bot's own folder</span>}
           </div>
           <div className="mt-2 text-[12px] text-ink-secondary">
-            Fixed after this room's first turn. Create a new room and choose its folder before sending the first message to work somewhere else.
+            Fixed after this channel's first turn. Create a new channel and choose its folder before sending the first message to work somewhere else.
           </div>
         </div>
       ) : canPick ? (
@@ -328,7 +328,7 @@ function RoomWorkingFolderChip({ group, onToggle }: { group: Group; onToggle: ()
       <button
         onClick={onToggle}
         className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
-        title="Room working folder"
+        title="Channel working folder"
       >
         <Folder size={14} />
       </button>
@@ -521,7 +521,7 @@ export function GroupView({ group }: { group: Group }) {
               type="button"
               onClick={() => setMembersOpen(true)}
               title="Manage members"
-              aria-label={`Manage members — ${members.length} ${members.length === 1 ? "bot" : "bots"} in this room`}
+              aria-label={`Manage members — ${members.length} ${members.length === 1 ? "bot" : "bots"} in this channel`}
               className="flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-1.5 hover:bg-raised/60"
             >
               {memberMauses}
@@ -549,7 +549,7 @@ export function GroupView({ group }: { group: Group }) {
                   setBulletinOpen(false);
                 }
               }}
-              placeholder="Room instructions — every bot in this room follows them (who does what, tone, goals, a task checklist…)"
+              placeholder="Channel instructions — every bot in this channel follows them (who does what, tone, goals, a task checklist…)"
               rows={4}
               className="w-full resize-none bg-transparent text-[13px] leading-relaxed text-ink placeholder:text-ink-secondary focus:outline-none"
             />
@@ -558,11 +558,11 @@ export function GroupView({ group }: { group: Group }) {
           <button
             onClick={() => setBulletinOpen(true)}
             className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-raised/40"
-            title="Room bulletin — shared instructions for every bot here"
+            title="Channel bulletin — shared instructions for every bot here"
           >
             <Pin size={12} className="shrink-0 text-ink-secondary" />
             <span className={cn("truncate text-[12.5px]", group.bulletin ? "text-ink-secondary" : "text-ink-secondary/60")}>
-              {group.bulletin.split("\n")[0] || "Add room instructions…"}
+              {group.bulletin.split("\n")[0] || "Add channel instructions…"}
             </span>
           </button>
         )}

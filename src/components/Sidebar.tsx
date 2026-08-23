@@ -323,7 +323,7 @@ function RoomContextMenu({
           <button
             type="button"
             onClick={saveRename}
-            aria-label="Save room name"
+            aria-label="Save channel name"
             title="Save"
             className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
           >
@@ -332,7 +332,7 @@ function RoomContextMenu({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Cancel room rename"
+            aria-label="Cancel channel rename"
             title="Cancel"
             className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
           >
@@ -348,7 +348,7 @@ function RoomContextMenu({
           className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
         >
           <Pencil size={16} className="text-ink-secondary" />
-          Rename Room
+          Rename Channel
         </button>
       )}
       <button
@@ -359,7 +359,7 @@ function RoomContextMenu({
         className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
       >
         <FolderPlus size={16} className="text-ink-secondary" />
-        Move to section
+        Move to context
       </button>
       <button
         onClick={() => {
@@ -379,17 +379,18 @@ function RoomContextMenu({
         className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger hover:bg-raised/70"
       >
         <Trash2 size={16} />
-        Delete Room
+        Delete Channel
       </button>
     </div>,
     document.body,
   );
 }
 
-/** Pick members → Create. The room name is optional; the server defaults it. */
+/** Pick members and an optional Work/Personal/project context, then create. */
 function NewRoomPanel({ onClose }: { onClose: () => void }) {
   const { state, dispatch } = useStore();
   const [name, setName] = useState("");
+  const [section, setSection] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const bots = state.bots.filter((b) => !b.hidden);
   const toggle = (id: string) =>
@@ -401,8 +402,13 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
     });
   const create = () => {
     if (!picked.size) return;
-    dispatch({ type: "createGroup", memberIds: [...picked], name: name.trim() || undefined });
-    track("room_created", { members: picked.size });
+    dispatch({
+      type: "createGroup",
+      memberIds: [...picked],
+      name: name.trim() || undefined,
+      section: section.trim() || undefined,
+    });
+    track("room_created", { members: picked.size, context: Boolean(section.trim()) });
     onClose();
   };
   return (
@@ -411,30 +417,43 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="w-[340px] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
-        <div className="mb-3 text-[15px] font-semibold text-ink">New Room</div>
+        <div className="mb-3 text-[15px] font-semibold text-ink">New Channel</div>
         <input
           autoFocus
+          maxLength={100}
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") create();
             if (e.key === "Escape") onClose();
           }}
-          placeholder="Room name (optional)"
+          placeholder="Channel name (for example, Website launch)"
+          className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
+        />
+        <input
+          value={section}
+          maxLength={60}
+          onChange={(e) => setSection(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") create();
+            if (e.key === "Escape") onClose();
+          }}
+          placeholder="Context (optional): Work, Personal, Client…"
+          aria-label="Channel context"
           className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         <BotPickerList
           bots={bots}
           picked={picked}
           onToggle={toggle}
-          emptyHint="Create a bot first — rooms are made of bots."
+          emptyHint="Create a bot first — channels are made of bots."
         />
         <button
           onClick={create}
           disabled={!picked.size}
           className="mt-3 w-full rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
         >
-          Create Room{picked.size ? ` · ${picked.size} ${picked.size === 1 ? "bot" : "bots"}` : ""}
+          Create Channel{picked.size ? ` · ${picked.size} ${picked.size === 1 ? "bot" : "bots"}` : ""}
         </button>
       </div>
     </div>
@@ -456,7 +475,7 @@ function SectionDivider({ name }: { name: string }) {
 
 /** Move-to-section popover: existing sections as chips (checkmark on the
  * target's current one), a create field, and a remove action. Serves bots
- * and rooms alike — the caller supplies the assignment. Mirrors the
+ * and channels alike — the caller supplies the assignment. Mirrors the
  * context menu's fixed positioning + dismiss-on-outside-click contract. */
 function SectionPicker({
   current,
@@ -490,8 +509,8 @@ function SectionPicker({
     };
   }, [onClose]);
 
-  // hidden bots can carry a stale assignment; don't offer it as a section.
-  // Rooms and bots share one namespace, so a heading can hold both.
+  // Hidden bots can carry a stale assignment; don't offer it as a context.
+  // Channels and bots share one namespace, so Work or Personal can hold both.
   const sections = [
     ...new Set([
       ...state.bots.filter((b) => !b.hidden && b.section).map((b) => b.section!),
@@ -514,7 +533,7 @@ function SectionPicker({
       className="fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-2 shadow-2xl shadow-black/60"
     >
       <div className="px-3.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-        Move to section
+        Move to context
       </div>
       {sections.length > 0 && (
         <div className="flex flex-col gap-0.5 px-1.5 py-1">
@@ -546,8 +565,8 @@ function SectionPicker({
           maxLength={60}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="New section…"
-          aria-label="New section name"
+          placeholder="New context…"
+          aria-label="New context name"
           className="w-full rounded-lg bg-raised/70 px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         <button
@@ -569,7 +588,7 @@ function SectionPicker({
             className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[13px] text-danger hover:bg-raised/70"
           >
             <FolderMinus size={15} />
-            Remove from section
+            Remove from context
           </button>
         </>
       )}
@@ -1321,7 +1340,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <Users size={16} className="text-ink-secondary" />
-                  New Room
+                  New Channel
                 </button>
                 <button
                   onClick={() => {
@@ -1395,9 +1414,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               />
             </div>
           )}
+          {unsectionedGroups.length > 0 && density !== "icons" && <SectionDivider name="Channels" />}
           {unsectionedGroups.map((g) => (
             <GroupListItem key={g.id} group={g} density={density} onMenu={setRoomMenu} />
           ))}
+          {visibleBots.length > 0 && density !== "icons" && <SectionDivider name="Bots" />}
           {visibleBots.map((b) => (
             <BotListItem
               key={b.id}

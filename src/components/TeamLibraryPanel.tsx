@@ -482,7 +482,7 @@ export function TeamLibraryPanel({
                     </>
                   )
                 ) : (
-                  "No room is created—you can make one later if you want."
+                  "No channel is created—you can make one later if you want."
                 )}
               </div>
               <button
@@ -799,7 +799,7 @@ export function TeamLibraryPanel({
                         <input
                           value={roomName}
                           onChange={(event) => setRoomName(event.target.value)}
-                          aria-label="Project room name"
+                          aria-label="Project channel name"
                           className="min-w-0 flex-1 rounded-xl bg-raised/80 px-3 py-2.5 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
                         />
                         <button
@@ -808,11 +808,11 @@ export function TeamLibraryPanel({
                           className="flex shrink-0 items-center justify-center gap-2 rounded-full bg-accent px-5 py-2.5 text-[13.5px] font-medium text-white hover:bg-accent/90 disabled:opacity-60"
                         >
                           {creating && <Loader2 size={15} className="animate-spin" />}
-                          {creating ? "Creating…" : "Create project room"}
+                          {creating ? "Creating…" : "Create project channel"}
                         </button>
                       </div>
                       <p className="mt-2 text-[12px] text-ink-secondary">
-                        Creates the team as new bots, opens a room for them, and points the room at this folder.
+                        Creates the team as new bots, opens a channel for them, and points the channel at this folder.
                       </p>
                     </div>
                   )}

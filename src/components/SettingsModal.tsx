@@ -287,7 +287,7 @@ export function SettingsModal() {
                 <Card title="Skin" subtitle="Applies instantly and is remembered on this machine.">
                   <SkinPicker />
                 </Card>
-                <Card title="Room turns" subtitle="Set one maximum duration for every bot turn in a room.">
+                <Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
                   <RoomTurnTimeoutSettings />
                 </Card>
                 <UpdatesRow />

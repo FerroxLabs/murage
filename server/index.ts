@@ -2968,18 +2968,32 @@ const server = createServer(async (req, res) => {
       return res.end(lines.join("\n"));
     }
 
-    // ── rooms (group chats) ─────────────────────────────────────────────
+    // ── channels (persisted internally as groups) ───────────────────────
     if (method === "POST" && path === "/api/groups") {
       const body = await readBody(req);
-      const memberIds = (Array.isArray(body.memberIds) ? body.memberIds : []).filter(
-        (id: unknown): id is string => typeof id === "string" && Boolean(store.bot(id)),
-      );
-      if (memberIds.length === 0) return json(res, 400, { error: "a room needs at least one bot" });
-      const name =
-        typeof body.name === "string" && body.name.trim()
-          ? body.name.trim()
-          : `${store.bot(memberIds[0])!.name} & co.`;
-      const group = store.createGroup(name, memberIds);
+      const requestedMemberIds: unknown[] = Array.isArray(body.memberIds) ? body.memberIds : [];
+      const memberIds = [
+        ...new Set(
+          requestedMemberIds.filter(
+            (id): id is string => typeof id === "string" && Boolean(store.bot(id)),
+          ),
+        ),
+      ];
+      if (memberIds.length === 0) return json(res, 400, { error: "a channel needs at least one bot" });
+      if (body.name !== undefined && typeof body.name !== "string") {
+        return json(res, 400, { error: "channel name must be a string" });
+      }
+      const name = body.name?.trim() || `${store.bot(memberIds[0])!.name} & co.`;
+      if (name.length > 100) return json(res, 400, { error: "channel name must be at most 100 characters" });
+      let section: string | undefined;
+      if (body.section !== undefined && body.section !== null) {
+        if (typeof body.section !== "string") return json(res, 400, { error: "context must be a string" });
+        section = body.section.trim() || undefined;
+        if (section && section.length > 60) {
+          return json(res, 400, { error: "context must be at most 60 characters" });
+        }
+      }
+      const group = store.createGroup(name, memberIds, false, section);
       return json(res, 201, { group: { ...group, messages: [] } });
     }
     if (method === "POST" && path === "/api/teams/export") {
