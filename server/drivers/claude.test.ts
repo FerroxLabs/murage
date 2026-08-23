@@ -157,6 +157,10 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   afterEach(async () => {
     delete process.env.FAKE_CLAUDE_MODE;
     delete process.env.FAKE_CLAUDE_DUMP;
+    delete process.env.FAKE_CLAUDE_TRANSIENTS;
+    delete process.env.FAKE_CLAUDE_PARTIAL_FAILS;
+    delete process.env.FAKE_CLAUDE_STATE;
+    delete process.env.FAKE_CLAUDE_RETRY_SCALE;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.XAI_API_KEY;
     delete process.env.COMPOSIO_API_KEY;
@@ -566,6 +570,72 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const error = recorder.events.find((e) => e.type === "runtime.error")!;
     expect(error.message).toContain("simulated crash");
   });
+
+  it("auto-retries transient exits, then completes with exactly one final message", async () => {
+    process.env.FAKE_CLAUDE_TRANSIENTS = "2";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-retry", text: "go" });
+
+    await recorder.until((e) => e.type === "turn.completed" && e.ok === true);
+    const retries = recorder.events.filter((e) => e.type === "turn.retrying");
+    expect(retries.map((e) => e.attempt)).toEqual([1, 2]);
+    expect(retries.every((e) => e.delayMs > 0 && typeof e.reason === "string")).toBe(true);
+    // exactly one settled reply across all three launches
+    const replies = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text");
+    expect(replies).toHaveLength(1);
+  }, 20_000);
+
+  it("stops retrying at the attempt cap and settles the turn as failed", async () => {
+    process.env.FAKE_CLAUDE_TRANSIENTS = "9";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-cap");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-cap", text: "go" });
+
+    await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
+    const retries = recorder.events.filter((e) => e.type === "turn.retrying");
+    expect(retries.map((e) => e.attempt)).toEqual([1, 2]);
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(true);
+  }, 20_000);
+
+  it("never retries a terminal (auth-shaped) exit", async () => {
+    await create("exit-early"); // exit 3 with no transient vocabulary — terminal
+    await instance.adapter.sendTurn({ threadId: "t-terminal", text: "go" });
+
+    await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
+    expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+  }, 20_000);
+
+  it("never retries after assistant text already streamed (duplicate-text hazard)", async () => {
+    process.env.FAKE_CLAUDE_TRANSIENTS = "9";
+    process.env.FAKE_CLAUDE_PARTIAL_FAILS = "1";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-partial");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-partial", text: "go" });
+
+    await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
+    expect(recorder.events.some((e) => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(true);
+    expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+  }, 20_000);
+
+  it("an interrupt during the retry backoff cancels cleanly without a zombie relaunch", async () => {
+    process.env.FAKE_CLAUDE_TRANSIENTS = "9";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-cancel");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "60"; // long backoff — we cancel inside it
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-cancel-backoff", text: "go" });
+
+    await recorder.until((e) => e.type === "turn.retrying");
+    await instance.adapter.interruptTurn("t-cancel-backoff");
+    await recorder.until((e) => e.type === "turn.completed");
+    // no second launch ever happened: no further retries, no extra replies
+    expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text")).toHaveLength(0);
+  }, 30_000);
+
 
   it("skips malformed protocol lines without losing the turn", async () => {
     await create("malformed");

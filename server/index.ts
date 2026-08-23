@@ -61,6 +61,7 @@ import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts"
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import { buildNotification, type Notification } from "./notify.ts";
 import { isEffortLevel, type RequestOutcome, type RuntimeEvent } from "./contracts.ts";
+import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
@@ -941,6 +942,15 @@ bus.subscribe((event: RuntimeEvent) => {
       }
       break;
     }
+    case "turn.retrying":
+      // the driver is about to relaunch the turn after a transient failure;
+      // the activity chip keeps the bot visibly busy through the backoff
+      pushMessage({
+        role: "bot",
+        kind: "activity",
+        tool: { name: `retry ${event.attempt}/${RETRY_MAX_ATTEMPTS} in ${Math.round(event.delayMs / 1000)}s — ${event.reason}`, ok: true },
+      });
+      break;
     case "runtime.error":
       pushMessage({
         role: "bot",
