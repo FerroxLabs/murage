@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { removeTempDir } from "../../testing/cleanup.ts";
+import { recordEvents } from "../../testing/events.ts";
 import {
   classifyOpenCodeGoError,
   createOpenCodeGoDriver,
@@ -81,6 +82,7 @@ describe("OpenCode Go catalog", () => {
     expect(driver.driverKind).toBe("opencodeGo");
     expect(driver.decodeConfig(undefined)).toEqual({ cli: "opencode", fullAuto: false, workspace: undefined });
     expect(driver.install?.docsUrl).toContain("opencode.ai");
+    expect(driver.install?.signInCommand).toBe("opencode auth login --provider opencode-go");
   });
 
   it("recognizes an OpenCode Go login stored by the CLI", async () => {
@@ -133,11 +135,7 @@ describe("OpenCode Go catalog", () => {
     }
   });
 
-  it("accepts a browser (oauth) sign-in stored under the plain 'opencode' id", async () => {
-    // `opencode auth login` -> OpenCode writes {type:"oauth", access, refresh}
-    // under "opencode", not an api `key` under "opencode-go". Both unlock the
-    // Go models; demanding `key` under "opencode-go" rejected every real
-    // browser login.
+  it("does not mistake an OpenCode Zen login for OpenCode Go", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-oauth-"));
     const authDir = join(scratch, "opencode");
     mkdirSync(authDir, { recursive: true });
@@ -153,8 +151,44 @@ describe("OpenCode Go catalog", () => {
       config: { cli: FAKE_CLI, fullAuto: false },
     });
     try {
-      expect((await instance.snapshot()).authenticated).toBe(true);
+      expect((await instance.snapshot()).authenticated).toBe(false);
     } finally {
+      await instance.dispose();
+      await removeTempDir(scratch);
+    }
+  });
+
+  it("shows setup before spawning a Go turn when only Zen is connected", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-zen-only-"));
+    const authDir = join(scratch, "opencode");
+    mkdirSync(authDir, { recursive: true });
+    writeFileSync(join(authDir, "auth.json"), JSON.stringify({
+      opencode: { type: "api", key: "zen-only-secret" },
+    }));
+    const driver = createOpenCodeGoDriver(async () => new Response("[]", { status: 200 }));
+    const instance = await driver.create({
+      instanceId: "opencode-zen-only",
+      displayName: "OpenCode Go",
+      environment: { XDG_DATA_HOME: scratch, OPENCODE_API_KEY: "" },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      await instance.adapter.sendTurn({
+        threadId: "t-opencode-zen-only",
+        text: "hello",
+        model: "opencode-go/ox-alpha-free",
+      });
+      const done = await recorder.until((event) => event.type === "turn.completed");
+      expect(done).toMatchObject({ ok: false, stopReason: "auth_required" });
+      expect(recorder.events.find((event) => event.type === "runtime.error")).toMatchObject({
+        setup: true,
+        message: expect.stringContaining("--provider opencode-go"),
+      });
+      expect(recorder.events.some((event) => event.type === "session.started")).toBe(false);
+    } finally {
+      recorder.stop();
       await instance.dispose();
       await removeTempDir(scratch);
     }
