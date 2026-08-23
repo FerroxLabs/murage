@@ -181,7 +181,7 @@ the host computer remain unreachable through the companion.
   branch, and message; the roster's "+" creates the same basic bot the desktop
   endpoint creates, then opens it.
 
-## Not in this version
+## Limits in this version
 
 The live connection is foreground-only. Notification frames produce native
 banners, sounds, time-sensitive approval alerts, and an app badge while connected;

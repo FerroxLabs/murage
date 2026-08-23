@@ -27,6 +27,7 @@ struct ChatView: View {
     @State private var showingComputer = false
     @State private var showingPlus = false
     @State private var showingProfile = false
+    @State private var showCommandHUD = false
     @State private var shareFile: ShareFile?
     @FocusState private var composerFocused: Bool
     @StateObject private var dictation = SpeechDictation()
@@ -141,6 +142,10 @@ struct ChatView: View {
                             // and showing both is just noise.
                             StreamingBubble(text: nil, reasoning: thinking, color: current.color)
                                 .id(Self.liveBubbleId)
+                        } else if current.busy {
+                            TypingIndicatorView(tintColor: MausPalette.color(current.color))
+                                .id(Self.liveBubbleId)
+                                .accessibilityLabel("\(current.name) is working")
                         }
                     }
                     .padding(.horizontal, 16)
@@ -542,13 +547,20 @@ struct ChatView: View {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func submit() {
+    private var hasPendingApproval: Bool {
+        messages.contains { $0.card?.isPending == true }
+    }
+
+    private func submit(_ explicitText: String? = nil) {
         // This also cancels an in-flight permission prompt before it can
         // open the microphone after the message has already been sent.
         dictation.stop()
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = (explicitText ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         draft = ""
+        showCommandHUD = false
+        SoundEffects.playSent()
+        Haptics.impact(.medium)
         Task { await session.send(text, to: current) }
     }
 
@@ -563,6 +575,33 @@ struct ChatView: View {
                     .foregroundStyle(.orange)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 4)
+            }
+
+            if showCommandHUD {
+                CommandSkillHUDView(
+                    text: $draft,
+                    isVisible: $showCommandHUD,
+                    commands: current.isBot
+                        ? CommandSkillHUDView.defaultCommands
+                        : CommandSkillHUDView.defaultCommands.filter { $0.id != "computer" && $0.id != "tasks" },
+                    accentColor: MausPalette.color(current.color)
+                ) { command in
+                    switch command.id {
+                    case "computer":
+                        draft = ""
+                        showingComputer = true
+                    case "tasks":
+                        draft = ""
+                        showingTasks = true
+                    default: submit(command.command)
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if draft.isEmpty && !current.busy && !hasPendingApproval {
+                PredictiveActionChipsView(accentColor: MausPalette.color(current.color)) { chip in
+                    submit(chip.prompt)
+                }
+                .transition(.opacity)
             }
 
             GlassGroup(spacing: 10) {
@@ -585,6 +624,23 @@ struct ChatView: View {
                     .accessibilityLabel(showingPlus ? "Close" : "More")
 
                     HStack(alignment: .bottom, spacing: 6) {
+                        Button {
+                            dictation.stop()
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                showCommandHUD.toggle()
+                            }
+                            Haptics.selection()
+                        } label: {
+                            Image(systemName: "command")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(showCommandHUD ? Color.primary : Color.secondary)
+                                .frame(width: 30, height: 32)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Slash commands")
+                        .padding(.leading, 6)
+                        .padding(.bottom, 6)
+
                         TextField(
                             dictation.isListening ? "Listening…" : "Ask \(current.name)",
                             text: $draft,
@@ -592,19 +648,23 @@ struct ChatView: View {
                         )
                             .lineLimit(1...5)
                             .font(.system(size: 17))
-                            .padding(.leading, 16)
                             .padding(.vertical, 11)
                             .focused($composerFocused)
                             .submitLabel(.send)
                             // Partial transcripts rebuild from a frozen base;
                             // prevent competing edits without dimming the text.
                             .allowsHitTesting(!dictation.isListening && !dictation.isStarting)
+                            .onChange(of: draft) { _, value in
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    showCommandHUD = value.hasPrefix("/")
+                                }
+                            }
                             .onKeyPress(.return, phases: .down) { press in
                                 guard !press.modifiers.contains(.shift) else { return .ignored }
                                 submit()
                                 return .handled
                             }
-                            .onSubmit(submit)
+                            .onSubmit { submit() }
 
                         Button {
                             composerFocused = false
@@ -627,9 +687,7 @@ struct ChatView: View {
                         .padding(.bottom, 6)
                         .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Start dictation")
 
-                        Button {
-                            submit()
-                        } label: {
+                        Button { submit() } label: {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(canSend ? Color.white : Color.secondary)
@@ -789,8 +847,81 @@ struct TextBubble: View {
     let chat: Chat
     var tailed = true
 
+    private var parsedDiff: (filename: String, diff: String)? {
+        guard message.role != .user, let source = message.text else { return nil }
+        let text = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let diff: String
+        if text.hasPrefix("```diff"), text.hasSuffix("```") {
+            diff = String(text.dropFirst("```diff".count).dropLast(3))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if text.hasPrefix("diff --git ") {
+            diff = text
+        } else {
+            return nil
+        }
+        let firstLine = diff.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+        let filename = firstLine.split(separator: " ").last.map(String.init)?
+            .replacingOccurrences(of: "b/", with: "") ?? "Git patch"
+        return (filename, diff)
+    }
+
+    private var parsedTable: (headers: [String], rows: [[String]])? {
+        guard message.role != .user, let source = message.text else { return nil }
+        let lines = source.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard lines.count >= 3, lines.allSatisfy({ $0.hasPrefix("|") && $0.hasSuffix("|") }) else {
+            return nil
+        }
+        let headers = Self.tableCells(lines[0])
+        let separators = Self.tableCells(lines[1])
+        guard !headers.isEmpty, separators.count == headers.count,
+              separators.allSatisfy(Self.isTableSeparator) else { return nil }
+        let rows = lines.dropFirst(2).map(Self.tableCells)
+        guard rows.allSatisfy({ $0.count == headers.count }) else { return nil }
+        return (headers, rows)
+    }
+
+    private static func tableCells(_ line: String) -> [String] {
+        var body = line
+        if body.first == "|" { body.removeFirst() }
+        if body.last == "|" { body.removeLast() }
+
+        var cells: [String] = []
+        var cell = ""
+        var escaped = false
+        for character in body {
+            if escaped {
+                if character == "|" {
+                    cell.append(character)
+                } else {
+                    cell.append("\\")
+                    cell.append(character)
+                }
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "|" {
+                cells.append(cell.trimmingCharacters(in: .whitespaces))
+                cell = ""
+            } else {
+                cell.append(character)
+            }
+        }
+        if escaped { cell.append("\\") }
+        cells.append(cell.trimmingCharacters(in: .whitespaces))
+        return cells
+    }
+
+    private static func isTableSeparator(_ cell: String) -> Bool {
+        let compact = cell.replacingOccurrences(of: " ", with: "")
+        let core = compact.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+        return core.count >= 3 && core.allSatisfy { $0 == "-" }
+    }
+
     var body: some View {
         let mine = message.role == .user
+        let customCard = parsedDiff != nil || parsedTable != nil
         // rooms attribute each line to the member who said it
         let speaker = message.from
         // No face beside the bubble: the bot's face is in the header, and in
@@ -807,7 +938,11 @@ struct TextBubble: View {
                 // Bots get markdown, you do not — the same split the desktop
                 // makes. Markdown you did not intend is worse than markdown
                 // you did: a message about `**` should show the asterisks.
-                if mine {
+                if let diff = parsedDiff {
+                    GitPRDiffCardView(filename: diff.filename, diffText: diff.diff)
+                } else if let table = parsedTable {
+                    SQLResultTableView(columns: table.headers, rows: table.rows)
+                } else if mine {
                     Text(message.text ?? "")
                         .font(.system(size: 17))
                         .foregroundStyle(BubbleColor.mineText)
@@ -820,14 +955,18 @@ struct TextBubble: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(.horizontal, 15)
-            .padding(.vertical, 11)
+            .padding(.horizontal, customCard ? 0 : 15)
+            .padding(.vertical, customCard ? 0 : 11)
             .background(
-                SpeechBubble(tail: tailed ? (mine ? .trailing : .leading) : .none)
-                    .fill(mine ? BubbleColor.mine : BubbleColor.theirs)
+                Group {
+                    if !customCard {
+                        SpeechBubble(tail: tailed ? (mine ? .trailing : .leading) : .none)
+                            .fill(mine ? BubbleColor.mine : BubbleColor.theirs)
+                    }
+                }
             )
             // leave room for the tail below, so the next row does not sit on it
-            .padding(.bottom, tailed ? SpeechBubble.tailDrop() : 0)
+            .padding(.bottom, !customCard && tailed ? SpeechBubble.tailDrop() : 0)
 
             if !mine { Spacer(minLength: 44) }
         }
@@ -841,14 +980,11 @@ struct ActivityChip: View {
 
     var body: some View {
         if let tool {
-            Label {
-                Text(tool.name).lineLimit(1)
-            } icon: {
-                Image(systemName: tool.ok == false ? "exclamationmark.triangle" : "wrench.and.screwdriver")
-            }
-            .font(.system(size: 13))
-            .foregroundStyle(tool.ok == false ? Color.red : Color.secondary)
-            .padding(.leading, 4)
+            SkillExecutionReceiptView(
+                skillName: tool.name,
+                status: tool.ok.map { $0 ? "success" : "error" } ?? "running"
+            )
+            .padding(.leading, 2)
         }
     }
 }
@@ -1039,17 +1175,12 @@ struct StreamingBubble: View {
         HStack(alignment: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 if let reasoning, !reasoning.isEmpty, text?.isEmpty != false {
-                    // Quieter and smaller than an answer, because it is not
-                    // one. Tail-limited: reasoning runs to thousands of words
-                    // and the part worth seeing is always the end.
-                    //
-                    // Plain text, unlike the answer: the tail cut lands
-                    // wherever it lands, and rendering markdown that starts
-                    // mid-syntax invents structure the model did not write.
-                    Text(String(reasoning.suffix(400)))
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    AgentThoughtChamberView(
+                        reasoning: String(reasoning.suffix(2_000)),
+                        botName: "Bot",
+                        mascotColor: MausPalette.color(color),
+                        isStreaming: true
+                    )
                 }
                 if let text, !text.isEmpty {
                     // Same renderer as the settled bubble, for the same
