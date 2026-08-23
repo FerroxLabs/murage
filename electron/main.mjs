@@ -6,6 +6,12 @@ import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
 import { createAndroidDeviceController } from "./android-device.mjs";
 import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
+import {
+  recorderPermissionStatus,
+  saveSkillRecording,
+  startRecorder,
+  stopRecorder,
+} from "./skill-recorder.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import { buildDiagnosticsReport, decodeLogTail, diagnosticsFileName } from "./diagnostics.mjs";
@@ -779,6 +785,15 @@ ipcMain.handle("speech:finish", () => {
   if (nativeActions.appleSpeech) finishSpeech();
 });
 
+ipcMain.handle("skill-recorder:permissions", () => recorderPermissionStatus());
+ipcMain.handle("skill-recorder:start", (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) throw new Error("The recorder window is unavailable");
+  return startRecorder(win);
+});
+ipcMain.handle("skill-recorder:stop", () => stopRecorder());
+ipcMain.handle("skill-recorder:save", (_event, payload) => saveSkillRecording(payload));
+
 // ── companion sidecar ──────────────────────────────────────────────────
 // The renderer gets these five and nothing else: it can turn the companion
 // on and off, look at it, open or cancel a pairing window, and remove a
@@ -996,6 +1011,7 @@ app.on("before-quit", (e) => {
   // a live dictation session runs its own helper child that holds the mic —
   // stop it here so quitting never orphans a recording process
   if (nativeActions.appleSpeech) stopSpeech();
+  stopRecorder();
   const cleanup = Promise.race([
     stopCua().catch(() => {}),
     new Promise((resolve) => setTimeout(resolve, CUA_STOP_TIMEOUT_MS).unref()),
