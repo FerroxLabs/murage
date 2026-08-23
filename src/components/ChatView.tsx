@@ -39,7 +39,7 @@ import { BotAvatar, MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { ChatMarkdown } from "./ChatMarkdown";
-import { OptionCard } from "./OptionCard";
+import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { ConnectorCard } from "./ConnectorCard";
@@ -626,6 +626,7 @@ function WorkingTimer({ since }: { since: number }) {
 const MessagesList = memo(function MessagesList({
   bot,
   messages,
+  transcript,
   editingId,
   lastBotTextId,
   canRetryLast,
@@ -637,6 +638,8 @@ const MessagesList = memo(function MessagesList({
 }: {
   bot: Bot;
   messages: Message[];
+  /** Active-branch messages, including ones outside the mounted window. */
+  transcript: Message[];
   editingId: string | null;
   lastBotTextId: string | undefined;
   canRetryLast: boolean;
@@ -672,13 +675,13 @@ const MessagesList = memo(function MessagesList({
             case "connector":
               return m.connector ? <ConnectorCard botId={bot.id} threadId={bot.threadId} message={m} /> : null;
             case "options":
-              // a live permission ask gets the approval box; questions and
-              // the onboarding quiz keep the list card
-              return m.card?.requestId && m.card.tool ? (
-                <ApprovalCard bot={bot} message={m} />
-              ) : (
-                <OptionCard botId={bot.id} message={m} />
-              );
+              // a live permission ask gets the approval box; questions keep
+              // the list card. The first-run quiz drops out once they talk.
+              if (m.card?.requestId && m.card.tool) {
+                return <ApprovalCard bot={bot} message={m} />;
+              }
+              if (shouldHideOnboardingCard(m, transcript)) return null;
+              return <OptionCard botId={bot.id} message={m} />;
             case "activity":
               // a failed turn is an error, not a tool run — render it as one
               return m.tool?.name.startsWith("error:") ? (
@@ -1101,6 +1104,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           <MessagesList
             bot={bot}
             messages={windowedMessages}
+            transcript={messages}
             editingId={editingId}
             lastBotTextId={lastBotTextId}
             canRetryLast={!bot.busy && Boolean(lastUserMessage)}
