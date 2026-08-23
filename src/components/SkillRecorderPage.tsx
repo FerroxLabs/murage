@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
   Circle,
+  Clipboard,
   Cloud,
+  Download,
   EyeOff,
   FileText,
   Keyboard,
@@ -40,7 +42,18 @@ const iconFor = (type: RecordedSkillEvent["type"]) => {
   if (type === "click") return MousePointer2;
   if (type === "scroll") return ScrollText;
   if (type === "typing" || type === "shortcut") return Keyboard;
+  if (type === "clipboard") return Clipboard;
+  if (type === "download") return Download;
   return MonitorUp;
+};
+
+const originHost = (url?: string): string | undefined => {
+  if (!url) return undefined;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
 };
 
 function blobDataUrl(blob: Blob): Promise<string> {
@@ -104,9 +117,13 @@ export function SkillRecorderPage() {
       if (phaseRef.current !== "recording") return;
       const result = appendNativeEvent(eventsRef.current, native);
       if (result.addedId) {
-        const screenshot = native.type === "key" && !(native.meta || native.control || native.option)
-          ? undefined
-          : takeScreenshot();
+        // A frame is worth keeping for visual/context-changing moments (clicks,
+        // app switches, scrolls, downloads) but not for typing bursts or
+        // clipboard ops — those add no visual evidence and a typing frame can
+        // catch field contents. Secure-field typing never reaches here (the
+        // native helper suppresses it), but skip typing frames regardless.
+        const noFrame = native.type === "typing" || native.type === "clipboard";
+        const screenshot = noFrame ? undefined : takeScreenshot();
         if (screenshot) {
           const index = result.events.findIndex((event) => event.id === result.addedId);
           if (index >= 0) result.events[index] = { ...result.events[index]!, screenshot };
@@ -374,7 +391,7 @@ export function SkillRecorderPage() {
                 <div className="mt-6 flex items-start gap-3 rounded-2xl bg-inset px-4 py-3">
                   <EyeOff size={17} className="mt-0.5 shrink-0 text-success" />
                   <p className="text-[12px] leading-5 text-ink-secondary">
-                    Typed characters are never stored. Clicks and screenshots stay on this computer; microphone audio is streamed to AssemblyAI for transcription. You review everything before creating the skill.
+                    Raw keystrokes and clipboard contents are never stored. Screen frames can contain visible text and stay on this computer; microphone audio is streamed to AssemblyAI for transcription. You review everything before creating the skill.
                   </p>
                 </div>
 
@@ -441,6 +458,12 @@ export function SkillRecorderPage() {
                 <section className="min-w-0 space-y-3">
                   {events.map((event, index) => {
                     const Icon = iconFor(event.type);
+                    const context = [
+                      event.name,
+                      event.app,
+                      event.windowTitle,
+                      event.type === "download" ? originHost(event.whereFroms?.[0]) : undefined,
+                    ].filter(Boolean).join(" · ") || formatRecordingTime(event.atMs);
                     return (
                       <article key={event.id} className="group overflow-hidden rounded-2xl border border-hairline bg-panel">
                         {event.screenshot && <img src={event.screenshot} alt={`Recorded screen at step ${index + 1}`} className="aspect-[16/9] w-full bg-inset object-cover object-top" />}
@@ -448,7 +471,7 @@ export function SkillRecorderPage() {
                           <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-card text-ink-secondary"><Icon size={15} /></span>
                           <div className="min-w-0 flex-1">
                             <div className="text-[12px] font-medium">{index + 1}. {eventLabel(event)}</div>
-                            <div className="truncate text-[10.5px] text-ink-secondary">{[event.app, event.windowTitle].filter(Boolean).join(" · ") || formatRecordingTime(event.atMs)}</div>
+                            <div className="truncate text-[10.5px] text-ink-secondary">{context}</div>
                           </div>
                           <button type="button" aria-label={`Remove step ${index + 1}`} onClick={() => removeEvent(event.id)} className="rounded-lg p-2 text-ink-secondary opacity-60 hover:bg-raised hover:text-danger group-hover:opacity-100"><X size={14} /></button>
                         </div>
