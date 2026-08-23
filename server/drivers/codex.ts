@@ -486,7 +486,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       });
 
       active.set(threadId, { stop, turnId, asks });
-      emit({ ...base(threadId, turnId), type: "turn.started" });
+      // Relaunching the app-server is still the same logical turn. Keep the
+      // active process current on every attempt, but announce the turn once.
+      if (attempt === 0) emit({ ...base(threadId, turnId), type: "turn.started" });
 
       // handshake + kickoff; a transient failure (5xx/overloaded/reset) gets
       // one relaunch of the whole app-server after backoff — but only when
