@@ -56,7 +56,11 @@ export async function fetchOpenCodeGoModels(fetcher: typeof fetch = fetch): Prom
         const full = `opencode-go/${id}`;
         if (seen.has(full)) continue;
         seen.add(full);
-        options.push({ id: full, label: labelForModel(id), custom: true });
+        // These are live OpenCode Go cloud models. `custom` is reserved for
+        // models discovered on a user's own Ollama/oMLX/LM Studio-style host;
+        // marking catalog additions custom moves them into the Local pane and
+        // incorrectly bypasses the OpenCode Go sign-in gate.
+        options.push({ id: full, label: labelForModel(id) });
       }
       const catalog = { default: STATIC_MODELS.default, options } satisfies ModelCatalog;
       lastSuccessfulCatalog = catalog;

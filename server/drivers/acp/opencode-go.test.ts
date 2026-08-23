@@ -22,6 +22,7 @@ describe("OpenCode Go catalog", () => {
       new Response(JSON.stringify({
         data: [
           { id: "minimax-m3", object: "model" },
+          { id: "ox-alpha-free", object: "model" },
           { id: "bad id", object: "model" },
           { object: "model" },
         ],
@@ -29,10 +30,11 @@ describe("OpenCode Go catalog", () => {
     );
 
     expect(models.default).toBe("opencode-go/minimax-m3");
-    expect(models.options.filter((option) => !option.custom).map((option) => option.id)).toEqual([
+    expect(models.options.map((option) => option.id)).toEqual([
       "opencode-go/minimax-m3",
       "opencode-go/kimi-k3",
       "opencode-go/glm-5.2",
+      "opencode-go/ox-alpha-free",
     ]);
     expect(models.options.some((option) => option.custom)).toBe(false);
   });
@@ -47,7 +49,7 @@ describe("OpenCode Go catalog", () => {
     });
 
     expect(fallback.default).toBe("opencode-go/minimax-m3");
-    expect(fallback.options.some((option) => option.id === "opencode-go/extra-live" && option.custom)).toBe(true);
+    expect(fallback.options.some((option) => option.id === "opencode-go/extra-live" && !option.custom)).toBe(true);
   });
 
   it("refreshes the same instance catalog on each explicit refresh", async () => {
@@ -68,9 +70,9 @@ describe("OpenCode Go catalog", () => {
     expect(instance.models.default).toBe("opencode-go/minimax-m3");
     expect(instance.models.options.some((option) => option.custom)).toBe(false);
     await instance.refreshModels?.();
-    expect(instance.models.options.some((option) => option.id === "opencode-go/extra-two" && option.custom)).toBe(true);
+    expect(instance.models.options.some((option) => option.id === "opencode-go/extra-two" && !option.custom)).toBe(true);
     await instance.refreshModels?.();
-    expect(instance.models.options.some((option) => option.id === "opencode-go/extra-three" && option.custom)).toBe(true);
+    expect(instance.models.options.some((option) => option.id === "opencode-go/extra-three" && !option.custom)).toBe(true);
     await instance.dispose();
   });
 
