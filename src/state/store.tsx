@@ -876,11 +876,15 @@ export function reducer(state: AppState, action: Action): AppState {
       const animated = mascotChanged
         ? withMascotMotion(state, action.botId, "customize")
         : state;
+      const target = animated.bots.find((bot) => bot.id === action.botId);
+      const chiefSection = (action.patch.section ?? target?.section)?.trim() || "";
       const next = action.patch.chiefOfStaff
         ? {
             ...animated,
             bots: animated.bots.map((b) =>
-              b.id === action.botId ? b : { ...b, chiefOfStaff: false },
+              b.id === action.botId || (b.section?.trim() || "") !== chiefSection
+                ? b
+                : { ...b, chiefOfStaff: false },
             ),
           }
         : animated;
