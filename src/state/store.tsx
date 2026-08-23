@@ -190,7 +190,7 @@ export interface Bot {
   section?: string;
   /** the one message pinned to the top of this bot's active thread */
   pinnedMessageId?: string;
-  /** The workspace's one primary coordinator. */
+  /** This sidebar section's primary coordinator. */
   chiefOfStaff?: boolean;
   /** When this bot wants to talk to another bot (ask_bot/delegate_bot),
    * pause and ask the user first. Off by default. */
@@ -684,7 +684,9 @@ export function reducer(state: AppState, action: Action): AppState {
         ? {
             ...animated,
             bots: animated.bots.map((b) =>
-              b.id === action.bot.id ? b : { ...b, chiefOfStaff: false },
+              b.id === action.bot.id || (b.section?.trim() || "") !== (action.bot.section?.trim() || "")
+                ? b
+                : { ...b, chiefOfStaff: false },
             ),
           }
         : animated;

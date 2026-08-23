@@ -179,23 +179,29 @@ describe("Store", () => {
     expect(reloaded.bot(bot.id)?.modelSelection.effort).toBe("high");
   });
 
-  it("keeps exactly one persisted Chief of Staff and supports handoff", () => {
+  it("keeps one persisted Chief of Staff per section and supports handoff", () => {
     const store = new Store(selection);
-    const first = store.createBot();
-    const second = store.createBot();
+    const first = store.createBot({ section: "Work" });
+    const second = store.createBot({ section: "Work" });
+    const personal = store.createBot({ section: "Personal" });
 
     expect(store.setChiefOfStaff(first.id)?.map((bot) => bot.id)).toEqual([first.id]);
     expect(store.bot(first.id)?.chiefOfStaff).toBe(true);
+    expect(store.setChiefOfStaff(personal.id)?.map((bot) => bot.id)).toEqual([personal.id]);
 
     const changed = store.setChiefOfStaff(second.id)!;
     expect(changed.map((bot) => bot.id).sort()).toEqual([first.id, second.id].sort());
     expect(store.bot(first.id)?.chiefOfStaff).toBe(false);
     expect(store.bot(second.id)?.chiefOfStaff).toBe(true);
+    expect(store.bot(personal.id)?.chiefOfStaff).toBe(true);
 
     const reloaded = new Store(selection);
-    expect(reloaded.bots.filter((bot) => bot.chiefOfStaff).map((bot) => bot.id)).toEqual([second.id]);
-    expect(reloaded.setChiefOfStaff(null)?.map((bot) => bot.id)).toEqual([second.id]);
-    expect(reloaded.bots.some((bot) => bot.chiefOfStaff)).toBe(false);
+    expect(reloaded.bots.filter((bot) => bot.chiefOfStaff).map((bot) => bot.id).sort()).toEqual(
+      [second.id, personal.id].sort(),
+    );
+    expect(reloaded.setChiefOfStaff(null, "Work")?.map((bot) => bot.id)).toEqual([second.id]);
+    expect(reloaded.bot(personal.id)?.chiefOfStaff).toBe(true);
+    expect(reloaded.bot(second.id)?.chiefOfStaff).toBe(false);
   });
 
   it("patchMessage merges card patches and returns null for unknown ids", () => {

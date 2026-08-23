@@ -630,6 +630,35 @@ describe("harness HTTP API", () => {
     expect(after.body.bots.find((b: { id: string }) => b.id === bot.id)).toBeUndefined();
   });
 
+  it("elects one Chief of Staff per section and preserves other section Chiefs", async () => {
+    const workA = (await api("POST", "/api/bots")).body.bot;
+    const workB = (await api("POST", "/api/bots")).body.bot;
+    const personal = (await api("POST", "/api/bots")).body.bot;
+    try {
+      await api("PATCH", `/api/bots/${workA.id}`, { section: "Work", chiefOfStaff: true });
+      await api("PATCH", `/api/bots/${workB.id}`, { section: "Work" });
+      await api("PATCH", `/api/bots/${personal.id}`, { section: "Personal", chiefOfStaff: true });
+
+      let bots = (await api("GET", "/api/bots")).body.bots;
+      expect(bots.find((bot: { id: string }) => bot.id === workA.id).chiefOfStaff).toBe(true);
+      expect(bots.find((bot: { id: string }) => bot.id === personal.id).chiefOfStaff).toBe(true);
+
+      await api("PATCH", `/api/bots/${workB.id}`, { chiefOfStaff: true });
+      bots = (await api("GET", "/api/bots")).body.bots;
+      expect(bots.find((bot: { id: string }) => bot.id === workA.id).chiefOfStaff).toBe(false);
+      expect(bots.find((bot: { id: string }) => bot.id === workB.id).chiefOfStaff).toBe(true);
+      expect(bots.find((bot: { id: string }) => bot.id === personal.id).chiefOfStaff).toBe(true);
+
+      // Moving a Chief keeps its role and hands off only in the destination.
+      await api("PATCH", `/api/bots/${workB.id}`, { section: "Personal" });
+      bots = (await api("GET", "/api/bots")).body.bots;
+      expect(bots.find((bot: { id: string }) => bot.id === workB.id).chiefOfStaff).toBe(true);
+      expect(bots.find((bot: { id: string }) => bot.id === personal.id).chiefOfStaff).toBe(false);
+    } finally {
+      for (const bot of [workA, workB, personal]) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("explains when archived room members cannot respond", async () => {
     const archived = (await api("POST", "/api/bots")).body.bot;
     const active = (await api("POST", "/api/bots")).body.bot;
