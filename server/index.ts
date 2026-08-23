@@ -76,6 +76,7 @@ import {
   roomResponders,
   Store,
   type GroupDefaultResponder,
+  type GroupRecord,
   type Message,
   type TaskRecord,
 } from "./store.ts";
@@ -2004,6 +2005,9 @@ async function runGroupMemberTurn(
 function startGroupTurn(groupId: string, text: string) {
   const group = store.group(groupId);
   if (!group) throw Object.assign(new Error("no such group"), { status: 404 });
+  if (roomSetupPending(group)) {
+    throw Object.assign(new Error("finish room setup before sending the first message"), { status: 409 });
+  }
   store.appendMessage(group.threadId, { role: "user", kind: "text", text });
 
   const members = group.memberIds
@@ -2069,6 +2073,19 @@ function startGroupTurn(groupId: string, text: string) {
     }
   });
   groupQueues.set(groupId, next.catch(() => {}));
+}
+
+function roomSetupPending(group: GroupRecord): boolean {
+  const hasMarker =
+    Object.prototype.hasOwnProperty.call(group, "setupCompletedAt") ||
+    Object.prototype.hasOwnProperty.call(group, "setupSkippedAt");
+  return (
+    !group.dm &&
+    hasMarker &&
+    group.setupCompletedAt == null &&
+    group.setupSkippedAt == null &&
+    store.messagesFor(group.threadId).length === 0
+  );
 }
 
 const CONNECTOR_SLUG = /^[a-z0-9][a-z0-9_-]{0,80}$/;
@@ -3195,6 +3212,47 @@ const server = createServer(async (req, res) => {
         for (const bot of importedBots) store.deleteBot(bot.id);
         throw error;
       }
+    }
+    m = path.match(/^\/api\/groups\/([\w-]+)\/setup$/);
+    if (m && method === "PATCH") {
+      const group = store.group(m[1]);
+      if (!group) return json(res, 404, { error: "no such room" });
+      if (group.dm) return json(res, 400, { error: "direct-message channels do not have room setup" });
+      const body = await readBody(req);
+      if (body.action !== "complete" && body.action !== "skip") {
+        return json(res, 400, { error: "action must be complete or skip" });
+      }
+      if (group.setupCompletedAt != null || group.setupSkippedAt != null) {
+        return json(res, 200, { group });
+      }
+      if (store.messagesFor(group.threadId).length > 0) {
+        return json(res, 409, { error: "room setup must be finished before the first message" });
+      }
+
+      const patch: Partial<Pick<GroupRecord, "cwd" | "defaultResponder" | "bulletin" | "setupCompletedAt" | "setupSkippedAt">> = {};
+      if (body.action === "complete") {
+        const checked = validateBotCwd(body.cwd ?? null);
+        if (!checked.ok) return json(res, 400, { error: checked.error });
+        if (typeof body.bulletin !== "string") return json(res, 400, { error: "bulletin must be a string" });
+        if (body.bulletin.length > 12_000) return json(res, 400, { error: "bulletin must be at most 12000 characters" });
+        const value = body.defaultResponder as { kind?: unknown; botId?: unknown } | null;
+        let responder: GroupDefaultResponder | null = null;
+        if (value?.kind === "everyone") responder = { kind: "everyone" };
+        else if (value?.kind === "mentions") responder = { kind: "mentions" };
+        else if (value?.kind === "member" && typeof value.botId === "string" && group.memberIds.includes(value.botId)) {
+          responder = { kind: "member", botId: value.botId };
+        }
+        if (!responder) return json(res, 400, { error: "invalid default responder" });
+        patch.cwd = checked.cwd ?? undefined;
+        patch.defaultResponder = responder;
+        patch.bulletin = body.bulletin;
+        patch.setupCompletedAt = Date.now();
+      } else {
+        patch.setupSkippedAt = Date.now();
+      }
+      const updated = store.patchGroup(m[1], patch);
+      if (!updated) return json(res, 404, { error: "no such room" });
+      return json(res, 200, { group: updated });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
     if (m && method === "PATCH") {
