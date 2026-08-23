@@ -10,6 +10,7 @@ import { decodeMinimaxConfig, loadLocalMiniMaxConfig, MinimaxDriver } from "./mi
 describe("MinimaxDriver", () => {
   const saved = {
     home: process.env.HOME,
+    userProfile: process.env.USERPROFILE,
     key: process.env.MINIMAX_API_KEY,
     url: process.env.MINIMAX_BASE_URL,
   };
@@ -18,6 +19,7 @@ describe("MinimaxDriver", () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "openmausbot-minimax-"));
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
     delete process.env.MINIMAX_API_KEY;
     delete process.env.MINIMAX_BASE_URL;
   });
@@ -25,6 +27,8 @@ describe("MinimaxDriver", () => {
   afterEach(() => {
     if (saved.home === undefined) delete process.env.HOME;
     else process.env.HOME = saved.home;
+    if (saved.userProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = saved.userProfile;
     if (saved.key === undefined) delete process.env.MINIMAX_API_KEY;
     else process.env.MINIMAX_API_KEY = saved.key;
     if (saved.url === undefined) delete process.env.MINIMAX_BASE_URL;
