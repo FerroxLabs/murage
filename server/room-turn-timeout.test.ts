@@ -85,6 +85,24 @@ describe("room turn timeout", () => {
     deadline.stop();
   });
 
+  it("expires immediately when a card opens after the budget already ran out", async () => {
+    vi.useFakeTimers();
+    const onTimeout = vi.fn();
+    const deadline = new RoomTurnDeadline(5, onTimeout);
+    deadline.start();
+
+    // a stalled event loop delivers the card event past the deadline, before
+    // the timer callback had its turn — the exhausted budget must still fire
+    vi.setSystemTime(Date.now() + 5 * 60_000 + 1);
+    deadline.setWaitingOnHuman(true);
+    expect(onTimeout).toHaveBeenCalledOnce();
+
+    // and nothing afterwards re-arms or double-fires
+    deadline.setWaitingOnHuman(false);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(onTimeout).toHaveBeenCalledOnce();
+  });
+
   it("ignores resolves for cards it never saw open", async () => {
     vi.useFakeTimers();
     const onTimeout = vi.fn();

@@ -66,6 +66,9 @@ export class RoomTurnDeadline {
     this.remainingMs -= Date.now() - this.armedAt;
     clearTimeout(this.timer);
     this.timer = null;
+    // A delayed event loop can deliver the card event after the deadline
+    // already passed; a person's wait must not extend an exhausted budget.
+    if (this.remainingMs <= 0) this.expired();
   }
 
   private arm(): void {
