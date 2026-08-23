@@ -503,6 +503,23 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(retries.map((e) => e.attempt)).toEqual([1, 2]);
   }, 20_000);
 
+  it("interrupting one thread does not cancel another thread's retry", async () => {
+    process.env.FAKE_CODEX_TRANSIENTS = "2";
+    process.env.FAKE_CODEX_STATE = join(scratch, "codex-launches-concurrent");
+    await create();
+
+    const first = instance.adapter.sendTurn({ threadId: "t-codex-stop", text: "stop me" });
+    const second = instance.adapter.sendTurn({ threadId: "t-codex-continue", text: "keep going" });
+    await recorder.until((e) => e.type === "turn.retrying" && e.threadId === "t-codex-stop");
+    await recorder.until((e) => e.type === "turn.retrying" && e.threadId === "t-codex-continue");
+    await instance.adapter.interruptTurn("t-codex-stop");
+
+    await expect(
+      recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-codex-continue"),
+    ).resolves.toMatchObject({ ok: true });
+    await Promise.allSettled([first, second]);
+  }, 20_000);
+
   it("never retries after agent text already streamed (duplicate-text hazard)", async () => {
     process.env.FAKE_CODEX_TRANSIENTS = "1";
     process.env.FAKE_CODEX_PARTIAL_FAILS = "1";

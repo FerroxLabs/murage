@@ -158,7 +158,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 const stringOrMissing = (value: unknown) => value === undefined || typeof value === "string";
 const stringOrNullOrMissing = (value: unknown) => value === undefined || value === null || typeof value === "string";
 const numberOrNullOrMissing = (value: unknown) => value === undefined || value === null || typeof value === "number";
-const numberIs = (value: unknown) => typeof value === "number";
 const stringsOrMissing = (value: unknown) => value === undefined || (Array.isArray(value) && value.every((item) => typeof item === "string"));
 
 function isRuntimeEvent(value: unknown): value is RuntimeEvent {
@@ -183,9 +182,13 @@ function isRuntimeEvent(value: unknown): value is RuntimeEvent {
       return true;
     case "turn.retrying":
       return (
-        numberIs(value.attempt) &&
-        numberIs(value.delayMs) &&
-        stringOrMissing(value.reason)
+        typeof value.attempt === "number" &&
+        Number.isInteger(value.attempt) &&
+        value.attempt >= 1 &&
+        typeof value.delayMs === "number" &&
+        Number.isFinite(value.delayMs) &&
+        value.delayMs >= 0 &&
+        typeof value.reason === "string"
       );
     case "turn.completed":
       return (

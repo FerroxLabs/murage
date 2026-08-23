@@ -131,7 +131,6 @@ describe("GrokDriver turns (fake fetch)", () => {
         setTimeout(() => controller.error(new Error("connection reset by peer")), 10);
       },
     });
-    previousFetch = globalThis.fetch;
     // SAFETY: a real Response built from a live stream, same as above.
     globalThis.fetch = (async () => {
       calls++;

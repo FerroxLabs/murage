@@ -600,6 +600,20 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(true);
   }, 20_000);
 
+  it("gives a later turn on the same thread a fresh retry budget", async () => {
+    process.env.FAKE_CLAUDE_TRANSIENTS = "9";
+    process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-fresh-budget");
+    process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
+    await create();
+
+    await instance.adapter.sendTurn({ threadId: "t-fresh-budget", text: "one" });
+    const firstDone = await recorder.until((e) => e.type === "turn.completed");
+    await instance.adapter.sendTurn({ threadId: "t-fresh-budget", text: "two" });
+    await recorder.until((e) => e.type === "turn.completed" && e.eventId !== firstDone.eventId);
+
+    expect(recorder.events.filter((e) => e.type === "turn.retrying").map((e) => e.attempt)).toEqual([1, 2, 1, 2]);
+  }, 20_000);
+
   it("never retries a terminal (auth-shaped) exit", async () => {
     await create("exit-early"); // exit 3 with no transient vocabulary — terminal
     await instance.adapter.sendTurn({ threadId: "t-terminal", text: "go" });

@@ -137,9 +137,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       createdAt: new Date().toISOString(),
     });
 
-    let stopRequested = false;
     const sendTurn = async (turn: SendTurnInput) => {
-      stopRequested = false;
+      // One driver instance serves many threads. Interrupt state belongs to
+      // this turn so activity elsewhere cannot cancel or revive its retry.
+      let stopRequested = false;
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const turnId = newId();
@@ -194,6 +195,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           stdio: ["pipe", "pipe", "pipe"],
         });
 
+      let abandoned = false;
       const state = {
         settled: false,
         lastText: "",
@@ -467,10 +469,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (stderr.length > 8192) stderr = stderr.slice(-8192);
       });
       child.on("error", (e) => {
+        if (abandoned) return;
         emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
         settle(false, "spawn_error");
       });
       child.on("close", (code) => {
+        if (abandoned) return;
         if (!state.settled) {
           emit({
             ...base(threadId, turnId),
@@ -544,13 +548,17 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             delayMs,
             reason: verdict.reason,
           });
+          // This app-server never exits by itself. Retire the failed attempt
+          // and silence its late handlers before the replacement launches.
+          abandoned = true;
+          killCliTree(child);
           await new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, Math.max(1, Math.round(delayMs * retryScale)));
             timer.unref?.();
           });
-          if (!state.settled && !stopRequested) {
+          if (!stopRequested) {
             void launchAttempt(attempt).catch(() => {});
-          } else if (!state.settled) {
+          } else {
             settle(false, "interrupted");
           }
           return;

@@ -745,6 +745,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         active.delete(threadId);
         session.turn = null;
+        // A settled turn owns no retry budget. Retained CLI sessions may run
+        // many later turns on this thread, and each must start fresh.
+        retryState.delete(threadId);
         emit({ ...base(threadId, t.turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}) });
         if (session.child.exitCode === null && !session.closing) armIdle(threadId);
       };
@@ -876,7 +879,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             // emit no terminal event, and relaunch after the backoff. The
             // `active` entry STAYS — it is what makes an interrupt during
             // the backoff reach this turn's stop() and cancel the retry.
-            session.broker?.pause();
+            const failedBroker = session.broker;
+            session.broker = undefined;
+            failedBroker?.pause();
+            failedBroker?.close();
             if (session.mcpConfigPath) {
               try {
                 rmSync(dirname(session.mcpConfigPath), { recursive: true, force: true });
@@ -913,7 +919,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               }
               // hand the thread back before recursing — the relaunch's own
               // guard would otherwise reject it as "already running"
-              active.delete(threadId);              try {
+              active.delete(threadId);
+              try {
                 const cursor = session.sessionId ?? sessionId ?? undefined;
                 await sendTurn({ ...turn, resumeCursor: cursor });
               } catch (e) {
