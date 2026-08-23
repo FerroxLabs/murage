@@ -117,6 +117,24 @@ if (argv[0] === "status" || argv[0] === "whoami") {
   process.exit(0);
 }
 if (argv[0] === "models" || argv.includes("--list-models")) {
+  if (models.length) {
+    const verbose = argv.includes("--verbose");
+    console.log(
+      models.flatMap((slug) => verbose
+        ? [
+            slug,
+            JSON.stringify({
+              id: slug.slice(slug.indexOf("/") + 1),
+              providerID: slug.slice(0, slug.indexOf("/")),
+              name: slug,
+              status: "active",
+              limit: { context: 200_000 },
+            }, null, 2),
+          ]
+        : [slug]).join("\n"),
+    );
+    process.exit(0);
+  }
   console.log(
     [
       "Available models",

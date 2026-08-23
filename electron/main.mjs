@@ -126,7 +126,7 @@ async function secureComposioConfig() {
   }
 }
 
-// The remaining workspace credentials (xai/box/voice/OpenCode Go keys) get
+// The remaining workspace credentials (xai/box/voice/OpenCode keys) get
 // the same at-rest treatment as the Composio key above. New packaged-app
 // saves go straight through credential:set below; this boot-time sweep also
 // migrates plaintext left by older versions or direct development clients.
@@ -290,7 +290,7 @@ async function startServerOn(port) {
       ...(secureCredentials.composioApiKey
         ? { COMPOSIO_API_KEY: secureCredentials.composioApiKey }
         : {}),
-      // one env var per stored workspace secret (xai/box/voice/OpenCode Go);
+      // one env var per stored workspace secret (xai/box/voice/OpenCode);
       // the server prefers these over config.json, whose plaintext fields
       // the boot migration has deleted
       ...workspaceCredentialEnv(secureCredentials),
