@@ -24,6 +24,7 @@ import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "minimax";
+const API_KEY_ENV = "MINIMAX_API_KEY";
 const DEFAULT_URL = "https://api.minimax.io/v1";
 const CN_URL = "https://api.minimaxi.com/v1";
 
@@ -38,8 +39,6 @@ const MODELS: ModelCatalog = {
 
 export interface MinimaxConfig {
   url: string;
-  /** env-var name holding the API key, default MINIMAX_API_KEY */
-  apiKeyEnv: string;
 }
 
 interface LocalMiniMaxConfig {
@@ -57,7 +56,6 @@ const localConfigSchema = z.object({
 
 const driverConfigSchema = z.object({
   url: z.string().optional(),
-  apiKeyEnv: z.string().optional(),
 });
 
 function normalizedApiUrl(value: string): string {
@@ -91,7 +89,6 @@ export function decodeMinimaxConfig(raw: unknown): MinimaxConfig {
   const envUrl = process.env.MINIMAX_BASE_URL?.trim();
   return {
     url: normalizedApiUrl(config.url?.trim() || envUrl || DEFAULT_URL),
-    apiKeyEnv: config.apiKeyEnv?.trim() || "MINIMAX_API_KEY",
   };
 }
 
@@ -119,8 +116,8 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
     // Resolution order: instance env → process env → official mmx-cli config.
     // Empty higher-priority values are skipped instead of masking a real key.
     const apiKey =
-      input.environment[config.apiKeyEnv]?.trim() ||
-      process.env[config.apiKeyEnv]?.trim() ||
+      input.environment[API_KEY_ENV]?.trim() ||
+      process.env[API_KEY_ENV]?.trim() ||
       local.apiKey;
     const apiUrl = config.url === DEFAULT_URL && local.url !== DEFAULT_URL ? local.url : config.url;
     const models = local.defaultModel && MODELS.options.some((model) => model.id === local.defaultModel)
@@ -217,7 +214,7 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
 
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
-      if (!apiKey) throw new Error(`no MiniMax key — set ${config.apiKeyEnv} or run mmx auth login --api-key …`);
+      if (!apiKey) throw new Error(`no MiniMax key — set ${API_KEY_ENV} or run mmx auth login --api-key …`);
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
 
       const turnId = newId();
@@ -296,7 +293,7 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
       if (!apiKey) {
         return {
           state: "unavailable",
-          reason: `no MiniMax API key — run mmx auth login --api-key … or set ${config.apiKeyEnv}`,
+          reason: `no MiniMax API key — run mmx auth login --api-key … or set ${API_KEY_ENV}`,
         };
       }
       return { state: "available", authenticated: true, version: null, billing: "metered" };

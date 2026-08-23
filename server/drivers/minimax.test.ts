@@ -50,7 +50,7 @@ describe("MinimaxDriver", () => {
 
   it("normalizes custom API roots", () => {
     expect(decodeMinimaxConfig({ url: "https://example.test/", apiKeyEnv: "CUSTOM_KEY" }))
-      .toEqual({ url: "https://example.test/v1", apiKeyEnv: "CUSTOM_KEY" });
+      .toEqual({ url: "https://example.test/v1" });
   });
 
   it("reads the official mmx-cli config and honors its region and model", () => {
