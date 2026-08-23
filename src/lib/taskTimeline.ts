@@ -3,7 +3,7 @@
 export interface TimelineMessage {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen";
+  kind: "text" | "options" | "activity" | "screen" | "connector";
   text?: string;
   tool?: { name: string; ok?: boolean };
   png?: string;
