@@ -9,7 +9,7 @@
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_CODEX_MODE ?? "happy";
 
@@ -132,6 +132,33 @@ process.stdin.on("data", (chunk) => {
             },
           });
           break;
+        }
+        // transient-failure script for retry tests. FAKE_CODEX_TRANSIENTS is
+        // how many launches fail transiently; the launch count lives in a
+        // state FILE because child processes cannot mutate the parent's env.
+        // FAKE_CODEX_PARTIAL_FAILS makes the FIRST failing turn stream a text
+        // delta first, so the partial-output guard has something to see.
+        if (process.env.FAKE_CODEX_TRANSIENTS && process.env.FAKE_CODEX_STATE) {
+          let launched = 0;
+          try {
+            launched = Number(readFileSync(process.env.FAKE_CODEX_STATE, "utf8")) || 0;
+          } catch {}
+          const quota = Number(process.env.FAKE_CODEX_TRANSIENTS) || 0;
+          writeFileSync(process.env.FAKE_CODEX_STATE, String(launched + 1));
+          if (launched < quota) {
+            if (process.env.FAKE_CODEX_PARTIAL_FAILS) {
+              out({ jsonrpc: "2.0", id: msg.id, result: { ok: true } });
+              notify("item/agentMessage/delta", { itemId: "m1", delta: "half an answer" });
+              notify("turn/completed", { turn: { status: "failed", error: { message: "provider overloaded, try again" } } });
+              break;
+            }
+            out({
+              jsonrpc: "2.0",
+              id: msg.id,
+              error: { code: -32603, message: "provider returned 503: upstream capacity exceeded" },
+            });
+            break;
+          }
         }
         out({ jsonrpc: "2.0", id: msg.id, result: { ok: true } });
         const command = mode === "windows-command"
