@@ -14,12 +14,14 @@ import CompanionCore
 // isn't. The App target is iOS; CompanionCore is where the portable half
 // lives.
 import UIKit
+import AVFoundation
 
 struct ChatView: View {
     let chat: Chat
     @EnvironmentObject private var session: Session
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @State private var draft = ""
     @State private var showingTasks = false
     @State private var showingComputer = false
@@ -27,6 +29,7 @@ struct ChatView: View {
     @State private var showingProfile = false
     @State private var shareFile: ShareFile?
     @FocusState private var composerFocused: Bool
+    @StateObject private var dictation = SpeechDictation()
     /// The opening beat: the island grows with the bot's face in it, then
     /// shrinks away as the face settles into the header. `facePhase` is 1
     /// with the face in the island, 0 with it home in the header.
@@ -249,6 +252,37 @@ struct ChatView: View {
             // initial task above will not run again, so clear that new unread
             // bit here rather than leaving a badge on an open conversation.
             if unread { Task { await session.markRead(current) } }
+        }
+        .onDisappear { dictation.stop() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { dictation.stop() }
+        }
+        .onChange(of: showingComputer) { _, shown in
+            if shown { dictation.stop() }
+        }
+        .onChange(of: showingTasks) { _, shown in
+            if shown { dictation.stop() }
+        }
+        .onChange(of: showingProfile) { _, shown in
+            if shown { dictation.stop() }
+        }
+        .onChange(of: showingPlus) { _, shown in
+            if shown { dictation.stop() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey]
+            let value = (raw as? NSNumber)?.uintValue ?? (raw as? UInt)
+            if value == AVAudioSession.InterruptionType.began.rawValue {
+                dictation.stop()
+            }
+        }
+        .onChange(of: dictation.transcript) { _, spoken in
+            // Always join against the text frozen at capture start. A newer
+            // partial then replaces the older partial instead of duplicating it.
+            draft = Dictation.draft(base: dictation.base, transcript: spoken)
+        }
+        .onChange(of: dictation.isListening) { _, listening in
+            if listening { composerFocused = false }
         }
         .sheet(isPresented: $showingTasks) {
             if case let .bot(bot) = current { TaskManagerView(bot: bot) }
@@ -509,6 +543,9 @@ struct ChatView: View {
     }
 
     private func submit() {
+        // This also cancels an in-flight permission prompt before it can
+        // open the microphone after the message has already been sent.
+        dictation.stop()
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         draft = ""
@@ -517,66 +554,99 @@ struct ChatView: View {
 
     // MARK: - Composer
 
-    /// A round + and a glass pill with the send button inside it.
+    /// A round + and a glass pill with dictation and send inside it.
     private var composer: some View {
-        GlassGroup(spacing: 10) {
-            HStack(alignment: .bottom, spacing: 10) {
-                Button {
-                    composerFocused = false
-                    withAnimation(.snappy(duration: 0.28)) { showingPlus.toggle() }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(showingPlus ? Color(uiColor: .systemBackground) : Color.primary)
-                        .rotationEffect(.degrees(showingPlus ? 45 : 0))
-                        .frame(width: 44, height: 44)
-                        .background(Circle().fill(showingPlus ? Color.primary : Color.clear))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .glassCapsule()
-                .accessibilityLabel(showingPlus ? "Close" : "More")
+        VStack(spacing: 6) {
+            if let error = dictation.error {
+                Text(error)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+            }
 
-                HStack(alignment: .bottom, spacing: 6) {
-                    TextField("Ask \(current.name)", text: $draft, axis: .vertical)
-                        .lineLimit(1...5)
-                        .font(.system(size: 17))
-                        .padding(.leading, 16)
-                        .padding(.vertical, 11)
-                        .focused($composerFocused)
-                        .submitLabel(.send)
-                        // Return sends, Shift+Return breaks the line — the shape
-                        // every chat app has. `.ignored` hands the keypress back to
-                        // the text field, which is what inserts the newline; there is
-                        // no way to type one otherwise once Return is claimed.
-                        .onKeyPress(.return, phases: .down) { press in
-                            guard !press.modifiers.contains(.shift) else { return .ignored }
-                            submit()
-                            return .handled
-                        }
-                        // software keyboards have no Shift+Return, so their Return
-                        // key is a send — which is what `.submitLabel(.send)` promises
-                        .onSubmit(submit)
-
+            GlassGroup(spacing: 10) {
+                HStack(alignment: .bottom, spacing: 10) {
                     Button {
-                        submit()
+                        dictation.stop()
+                        composerFocused = false
+                        withAnimation(.snappy(duration: 0.28)) { showingPlus.toggle() }
                     } label: {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(canSend ? Color.white : Color.secondary)
-                            .frame(width: 32, height: 32)
-                            .background(
-                                Circle().fill(canSend ? BubbleColor.mine : Color.secondary.opacity(0.18))
-                            )
+                        Image(systemName: "plus")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(showingPlus ? Color(uiColor: .systemBackground) : Color.primary)
+                            .rotationEffect(.degrees(showingPlus ? 45 : 0))
+                            .frame(width: 44, height: 44)
+                            .background(Circle().fill(showingPlus ? Color.primary : Color.clear))
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(!canSend)
-                    .padding(.trailing, 6)
-                    .padding(.bottom, 6)
-                    .animation(.easeOut(duration: 0.15), value: canSend)
+                    .glassCapsule()
+                    .accessibilityLabel(showingPlus ? "Close" : "More")
+
+                    HStack(alignment: .bottom, spacing: 6) {
+                        TextField(
+                            dictation.isListening ? "Listening…" : "Ask \(current.name)",
+                            text: $draft,
+                            axis: .vertical
+                        )
+                            .lineLimit(1...5)
+                            .font(.system(size: 17))
+                            .padding(.leading, 16)
+                            .padding(.vertical, 11)
+                            .focused($composerFocused)
+                            .submitLabel(.send)
+                            // Partial transcripts rebuild from a frozen base;
+                            // prevent competing edits without dimming the text.
+                            .allowsHitTesting(!dictation.isListening && !dictation.isStarting)
+                            .onKeyPress(.return, phases: .down) { press in
+                                guard !press.modifiers.contains(.shift) else { return .ignored }
+                                submit()
+                                return .handled
+                            }
+                            .onSubmit(submit)
+
+                        Button {
+                            composerFocused = false
+                            dictation.toggle(capturing: draft)
+                        } label: {
+                            Image(systemName: dictation.isListening ? "mic.fill" : "mic")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(dictation.isListening ? Color.red : Color.primary)
+                                .frame(width: 32, height: 32)
+                                .background(
+                                    Circle().fill(
+                                        dictation.isListening
+                                            ? Color.red.opacity(0.2)
+                                            : Color.secondary.opacity(0.12)
+                                    )
+                                )
+                                .symbolEffect(.pulse, isActive: dictation.isListening)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.bottom, 6)
+                        .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Start dictation")
+
+                        Button {
+                            submit()
+                        } label: {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(canSend ? Color.white : Color.secondary)
+                                .frame(width: 32, height: 32)
+                                .background(
+                                    Circle().fill(canSend ? BubbleColor.mine : Color.secondary.opacity(0.18))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canSend)
+                        .padding(.trailing, 6)
+                        .padding(.bottom, 6)
+                        .animation(.easeOut(duration: 0.15), value: canSend)
+                    }
+                    .frame(minHeight: 44)
+                    .glassCapsule(interactive: false)
                 }
-                .frame(minHeight: 44)
-                .glassCapsule(interactive: false)
             }
         }
         .padding(.horizontal, 12)
