@@ -22,6 +22,8 @@ const STATIC_MODELS: ModelCatalog = {
 };
 
 let lastSuccessfulCatalog: ModelCatalog | null = null;
+const MODEL_PROBE_TTL_MS = 30_000;
+const modelProbeCache = new Map<string, { expiresAt: number; result: Promise<boolean> }>();
 
 export type OpenCodeCatalogLoader = (
   environment: Record<string, string | undefined>,
@@ -55,7 +57,7 @@ function localModelRecord(record: Record<string, unknown>): boolean {
     : {};
   if (typeof api.url !== "string") return false;
   try {
-    const host = new URL(api.url).hostname;
+    const host = new URL(api.url).hostname.replace(/^\[|\]$/gu, "");
     return host === "localhost" || host === "127.0.0.1" || host === "::1";
   } catch {
     return false;
@@ -123,7 +125,8 @@ export function parseOpenCodeModelsOutput(stdout: string): ModelCatalog | null {
   flush();
 
   if (!options.length) return null;
-  return { default: options[0]!.id, options };
+  const preferred = options.find((option) => option.id === STATIC_MODELS.default);
+  return { default: (preferred ?? options[0]!).id, options };
 }
 
 function runOpenCodeModels(
@@ -166,6 +169,7 @@ export async function discoverOpenCodeModels(
 
 export function resetOpenCodeModelCache() {
   lastSuccessfulCatalog = null;
+  modelProbeCache.clear();
 }
 
 /** Compatibility export for older tests/imports while the product migrates
@@ -301,17 +305,28 @@ function hasStoredOpenCodeAuth(env: Record<string, string | undefined>) {
   });
 }
 
-async function canListOpenCodeModels(
+export async function canListOpenCodeModels(
   env: Record<string, string | undefined>,
   cli: string,
+  runModels: typeof runOpenCodeModels = runOpenCodeModels,
 ): Promise<boolean> {
-  try {
-    return (await runOpenCodeModels(cli, env, false))
+  const cached = modelProbeCache.get(cli);
+  if (cached && cached.expiresAt > Date.now()) return cached.result;
+
+  const entry = {
+    expiresAt: Number.POSITIVE_INFINITY,
+    result: Promise.resolve(false),
+  };
+  entry.result = runModels(cli, env, false)
+    .then((stdout) => stdout
       .split(/\r?\n/u)
-      .some((line) => validModelSlug(line.trim()));
-  } catch {
-    return false;
-  }
+      .some((line) => validModelSlug(line.trim())))
+    .catch(() => false)
+    .finally(() => {
+      entry.expiresAt = Date.now() + MODEL_PROBE_TTL_MS;
+    });
+  modelProbeCache.set(cli, entry);
+  return entry.result;
 }
 
 /** Migrate the model name published during Ox Alpha's first preview. The

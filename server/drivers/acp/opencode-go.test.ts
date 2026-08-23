@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,6 +8,7 @@ import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents } from "../../testing/events.ts";
 import {
   classifyOpenCodeError,
+  canListOpenCodeModels,
   createOpenCodeDriver,
   normalizeLegacyOpenCodeModel,
   parseOpenCodeModelsOutput,
@@ -24,29 +25,41 @@ const catalog = (...ids: string[]): ModelCatalog => ({
 describe("OpenCode catalog", () => {
   it("parses Zen, Go, third-party, and local models using exact CLI slugs", () => {
     const models = parseOpenCodeModelsOutput([
+      "openrouter/vendor/model-v2",
+      JSON.stringify({ name: "Vendor Model", status: "active" }, null, 2),
       "opencode/x-preview-f-free",
       JSON.stringify({ name: "Ox Alpha Free", status: "active", limit: { context: 1_000_000 } }, null, 2),
       "opencode-go/minimax-m3",
       JSON.stringify({ name: "MiniMax M3", status: "active" }, null, 2),
-      "openrouter/vendor/model-v2",
-      JSON.stringify({ name: "Vendor Model", status: "active" }, null, 2),
       "ollama/qwen3",
       JSON.stringify({ name: "Qwen 3", api: { url: "http://127.0.0.1:11434/v1" } }, null, 2),
+      "lmstudio/qwen3-ipv6",
+      JSON.stringify({ name: "Qwen 3 IPv6", api: { url: "http://[::1]:1234/v1" } }, null, 2),
       "opencode/retired",
       JSON.stringify({ name: "Retired", status: "deprecated" }, null, 2),
     ].join("\n"));
 
     expect(models?.default).toBe("opencode/x-preview-f-free");
     expect(models?.options).toEqual([
+      expect.objectContaining({ id: "openrouter/vendor/model-v2", label: "OpenRouter · Vendor Model" }),
       expect.objectContaining({
         id: "opencode/x-preview-f-free",
         label: "Zen · Ox Alpha Free",
         contextWindow: 1_000_000,
       }),
       expect.objectContaining({ id: "opencode-go/minimax-m3", label: "Go · MiniMax M3" }),
-      expect.objectContaining({ id: "openrouter/vendor/model-v2", label: "OpenRouter · Vendor Model" }),
       expect.objectContaining({ id: "ollama/qwen3", custom: true, loaded: true }),
+      expect.objectContaining({ id: "lmstudio/qwen3-ipv6", custom: true, loaded: true }),
     ]);
+  });
+
+  it("caches the anonymous model probe across authentication checks", async () => {
+    const runModels = vi.fn(async () => "opencode/x-preview-f-free\n");
+
+    await expect(canListOpenCodeModels({}, "counting-opencode", runModels)).resolves.toBe(true);
+    await expect(canListOpenCodeModels({}, "counting-opencode", runModels)).resolves.toBe(true);
+
+    expect(runModels).toHaveBeenCalledOnce();
   });
 
   it("accepts header-only output from older CLIs and rejects malformed lines", () => {
