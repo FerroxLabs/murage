@@ -60,6 +60,10 @@ const localVmConfigSchema = z.object({
     .max(MAX_LOCAL_VM_MAX_INSTANCES)
     .optional(),
 });
+const featureConfigSchema = z.object({
+  /** Experimental desktop workflow recorder. Hidden unless explicitly enabled. */
+  skillRecorder: z.boolean().optional(),
+});
 const instanceConfigSchema = z.object({
   driver: z.string().min(1),
   displayName: optionalText,
@@ -87,6 +91,7 @@ const appConfigSchema = z.object({
   profile: z.object({ name: optionalText, email: optionalText }).optional(),
   rooms: roomConfigSchema.optional(),
   localVm: localVmConfigSchema.optional(),
+  features: featureConfigSchema.optional(),
   instances: instanceConfigMapSchema.optional(),
 });
 const appConfigPatchSchema = appConfigSchema.omit({ instances: true });
@@ -107,6 +112,8 @@ export interface AppConfig {
   /** Shared preserves the historical singleton. Per-bot gives every bot a
    * separate container, durable workspace, viewer and lease. */
   localVm?: { mode?: "shared" | "per-bot"; maxInstances?: number };
+  /** Opt-in product experiments. Every flag defaults to disabled. */
+  features?: { skillRecorder?: boolean };
   instances?: InstanceConfigMap;
 }
 export type ConfigPatch = z.output<typeof appConfigPatchSchema>;
@@ -139,6 +146,10 @@ export function localVmMode(cfg: AppConfig): "shared" | "per-bot" {
 
 export function localVmMaxInstances(cfg: AppConfig): number {
   return cfg.localVm?.maxInstances ?? DEFAULT_LOCAL_VM_MAX_INSTANCES;
+}
+
+export function skillRecorderEnabled(cfg: AppConfig): boolean {
+  return cfg.features?.skillRecorder === true;
 }
 
 // OMB_DATA_DIR isolates test/soak rigs from the user's real fleet.
@@ -263,7 +274,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     /* first write */
   }
   const checkedPatch = appConfigSchema.partial().parse(patch);
-  for (const key of ["xai", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm"] as const) {
+  for (const key of ["xai", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);

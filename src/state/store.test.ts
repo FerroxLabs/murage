@@ -56,6 +56,7 @@ describe("config status frames", () => {
         opencodeGo: { configured: true },
         tts: { configured: true, ready: true, voice: "Ada" },
         profile: { name: "Ian", email: "ian@example.test" },
+        features: { skillRecorder: true },
       }),
     ).toEqual({
       xai: { configured: true },
@@ -67,7 +68,34 @@ describe("config status frames", () => {
       opencodeGo: { configured: true },
       tts: { configured: true, ready: true, voice: "Ada" },
       profile: { name: "Ian", email: "ian@example.test" },
+      features: { skillRecorder: true },
     });
+  });
+});
+
+describe("Teach a skill feature flag", () => {
+  const config = configStatusFromFrame({
+    composio: { configured: false },
+    box: { configured: false },
+    vps: { configured: false, sshAlias: "" },
+    rooms: { turnTimeoutMinutes: 5 },
+    localVm: { mode: "shared", maxInstances: 2 },
+    features: { skillRecorder: true },
+  });
+
+  it("does not open the recorder while the experiment is disabled", () => {
+    expect(reducer(initialState, { type: "showSkillRecorder" }).activeView).toBe("chat");
+  });
+
+  it("opens after opt-in and returns to chat when disabled", () => {
+    const enabled = reducer({ ...initialState, config }, { type: "showSkillRecorder" });
+    expect(enabled.activeView).toBe("skill-recorder");
+
+    const disabled = reducer(enabled, {
+      type: "configStatus",
+      config: { ...config, features: { skillRecorder: false } },
+    });
+    expect(disabled.activeView).toBe("chat");
   });
 });
 

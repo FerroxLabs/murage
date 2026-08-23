@@ -1508,6 +1508,23 @@ describe("harness HTTP API", () => {
     await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
   });
 
+  it("keeps Teach a skill off by default and persists an explicit opt-in", async () => {
+    const before = await api("GET", "/api/config");
+    expect(before.status).toBe(200);
+    expect(before.body.features).toEqual({ skillRecorder: false });
+
+    const saved = await api("PATCH", "/api/config", {
+      features: { skillRecorder: true },
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.features).toEqual({ skillRecorder: true });
+
+    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    expect(disk.features).toEqual({ skillRecorder: true });
+
+    await api("PATCH", "/api/config", { features: { skillRecorder: false } });
+  });
+
   it("keeps shared Local VM mode by default and resolves isolated targets per bot when enabled", async () => {
     const first = (await api("POST", "/api/bots")).body.bot;
     const second = (await api("POST", "/api/bots")).body.bot;
