@@ -1,18 +1,18 @@
 // MiniMax driver — OpenAI-compatible chat/completions API with SSE streaming.
-// Reads config from ~/.minimax/user-settings.json (populated by MiniMax Code)
-// or from MINIMAX_API_KEY env / openmausbot config.json.
+// Reads an API key from an instance, the environment, or the official
+// mmx-cli config at ~/.mmx/config.json.
 //
 // API: https://api.minimax.io/v1/chat/completions
-// Models: MiniMax-M3 (frontier coding/agentic, 1M ctx), minimax-01, minimax-pro
-//
-// To register: add to server/drivers/builtIn.ts imports + BUILT_IN_DRIVERS array.
+// Models: https://platform.minimax.io/docs/guides/models-intro
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 
 import type {
   DriverCreateInput,
+  ModelCatalog,
   ProviderDriver,
   ProviderInstance,
   ProviderSnapshot,
@@ -25,16 +25,14 @@ import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "minimax";
 const DEFAULT_URL = "https://api.minimax.io/v1";
+const CN_URL = "https://api.minimaxi.com/v1";
 
-const MODELS = {
+const MODELS: ModelCatalog = {
   default: "MiniMax-M3",
   options: [
-    { id: "MiniMax-M3",          label: "MiniMax M3 (Frontier · 1M ctx)" },
-    { id: "minimax-01",          label: "MiniMax 01" },
-    { id: "minimax-pro",         label: "MiniMax Pro" },
-    { id: "minimax-pro-128k",    label: "MiniMax Pro 128k" },
-    { id: "minimax-pro-voice",   label: "MiniMax Pro Voice" },
-    { id: "minimax-vision",      label: "MiniMax Vision" },
+    { id: "MiniMax-M3", label: "MiniMax M3", contextWindow: 1_000_000 },
+    { id: "MiniMax-M2.7", label: "MiniMax M2.7", contextWindow: 204_800 },
+    { id: "MiniMax-M2.7-highspeed", label: "MiniMax M2.7 Highspeed", contextWindow: 204_800 },
   ],
 };
 
@@ -44,45 +42,96 @@ export interface MinimaxConfig {
   apiKeyEnv: string;
 }
 
-function loadLocalKey(): string {
+interface LocalMiniMaxConfig {
+  apiKey: string;
+  url: string;
+  defaultModel: string;
+}
+
+const localConfigSchema = z.object({
+  api_key: z.string().optional(),
+  region: z.enum(["global", "cn"]).optional(),
+  base_url: z.string().optional(),
+  default_text_model: z.string().optional(),
+});
+
+const driverConfigSchema = z.object({
+  url: z.string().optional(),
+  apiKeyEnv: z.string().optional(),
+});
+
+function normalizedApiUrl(value: string): string {
+  const root = value.trim().replace(/\/+$/, "");
+  return root.endsWith("/v1") ? root : `${root}/v1`;
+}
+
+export function loadLocalMiniMaxConfig(home = homedir()): LocalMiniMaxConfig {
   try {
-    const p = join(homedir(), ".minimax", "user-settings.json");
-    const raw = JSON.parse(readFileSync(p, "utf8"));
-    return (raw.apiKey as string) ?? "";
+    const raw = localConfigSchema.parse(JSON.parse(readFileSync(join(home, ".mmx", "config.json"), "utf8")));
+    const region = raw.region === "cn" ? "cn" : "global";
+    const configuredUrl = raw.base_url?.trim()
+      ? raw.base_url
+      : region === "cn" ? CN_URL : DEFAULT_URL;
+    return {
+      apiKey: raw.api_key?.trim() ?? "",
+      url: normalizedApiUrl(configuredUrl),
+      defaultModel: raw.default_text_model?.trim() ?? "",
+    };
   } catch {
-    return "";
+    return { apiKey: "", url: DEFAULT_URL, defaultModel: "" };
   }
 }
 
-function decodeConfig(raw: unknown): MinimaxConfig {
-  const o = (raw ?? {}) as Record<string, unknown>;
+// ProviderDriver supplies untrusted config as unknown; the schema below is
+// the I/O boundary that converts it to the driver's concrete contract.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters
+export function decodeMinimaxConfig(raw: unknown): MinimaxConfig {
+  const parsed = driverConfigSchema.safeParse(raw ?? {});
+  const config = parsed.success ? parsed.data : {};
+  const envUrl = process.env.MINIMAX_BASE_URL?.trim();
   return {
-    url: typeof o.url === "string" ? o.url : DEFAULT_URL,
-    apiKeyEnv: typeof o.apiKeyEnv === "string" ? o.apiKeyEnv : "MINIMAX_API_KEY",
+    url: normalizedApiUrl(config.url?.trim() || envUrl || DEFAULT_URL),
+    apiKeyEnv: config.apiKeyEnv?.trim() || "MINIMAX_API_KEY",
   };
 }
 
 export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
   driverKind: DRIVER_KIND,
-  metadata: { displayName: "MiniMax (API)", supportsMultipleInstances: true },
+  metadata: { displayName: "MiniMax (API)", supportsMultipleInstances: true, access: "custom" },
   models: MODELS,
-  decodeConfig,
-  defaultConfig: () => decodeConfig({}),
+  install: {
+    docsUrl: "https://platform.minimax.io/docs/token-plan/minimax-cli",
+    command: {
+      darwin: "npm install -g mmx-cli",
+      linux: "npm install -g mmx-cli",
+      win32: "npm install -g mmx-cli",
+    },
+    signInCommand: "mmx auth login --api-key YOUR_MINIMAX_API_KEY",
+    needsNode: true,
+  },
+  decodeConfig: decodeMinimaxConfig,
+  defaultConfig: () => decodeMinimaxConfig({}),
 
   async create(input: DriverCreateInput<MinimaxConfig>): Promise<ProviderInstance> {
     const { instanceId, config } = input;
 
-    // Resolution order: instance env → process env → ~/.minimax/user-settings.json
+    const local = loadLocalMiniMaxConfig();
+    // Resolution order: instance env → process env → official mmx-cli config.
+    // Empty higher-priority values are skipped instead of masking a real key.
     const apiKey =
-      input.environment[config.apiKeyEnv] ??
-      process.env[config.apiKeyEnv] ??
-      loadLocalKey();
+      input.environment[config.apiKeyEnv]?.trim() ||
+      process.env[config.apiKeyEnv]?.trim() ||
+      local.apiKey;
+    const apiUrl = config.url === DEFAULT_URL && local.url !== DEFAULT_URL ? local.url : config.url;
+    const models = local.defaultModel && MODELS.options.some((model) => model.id === local.defaultModel)
+      ? { ...MODELS, default: local.defaultModel }
+      : MODELS;
 
     const listeners = new Set<RuntimeEventListener>();
     const active = new Map<string, { abort: AbortController; turnId: string }>();
 
     const emit = (event: RuntimeEvent) => {
-      for (const l of [...listeners]) l(event);
+      for (const l of listeners) l(event);
     };
 
     const base = (threadId: string, turnId: string) => ({
@@ -98,14 +147,23 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
       model: string,
       opts: { stream: boolean; signal?: AbortSignal; onDelta?: (d: string) => void },
     ): Promise<{ text: string; usage: { input: number; output: number } | null }> => {
-      const res = await fetch(`${config.url}/chat/completions`, {
+      const timeout = AbortSignal.timeout(180_000);
+      const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+      const body = {
+        model,
+        messages,
+        stream: opts.stream,
+        reasoning_split: true,
+        stream_options: opts.stream ? { include_usage: true } : undefined,
+      };
+      const res = await fetch(`${apiUrl}/chat/completions`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ model, messages, stream: opts.stream }),
-        signal: opts.signal ?? AbortSignal.timeout(180_000),
+        body: JSON.stringify(body),
+        signal,
       });
 
       if (!res.ok) {
@@ -126,35 +184,40 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
       // SSE streaming — identical to grok.ts pattern
       let text = "";
       let usage: { input: number; output: number } | null = null;
-      const reader = res.body!.getReader();
+      if (!res.body) throw new Error("MiniMax returned no response body");
+      const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl;
-        while ((nl = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (data === "[DONE]") continue;
-          let chunk: any;
-          try { chunk = JSON.parse(data); } catch { continue; }
-          const delta = chunk.choices?.[0]?.delta?.content;
-          if (delta) { text += delta; opts.onDelta?.(delta); }
-          if (chunk.usage) {
-            usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
+      try {
+        readLoop: for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let nl;
+          while ((nl = buf.indexOf("\n")) !== -1) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (!line.startsWith("data:")) continue;
+            const data = line.slice(5).trim();
+            if (data === "[DONE]") break readLoop;
+            let chunk: any;
+            try { chunk = JSON.parse(data); } catch { continue; }
+            const delta = chunk.choices?.[0]?.delta?.content;
+            if (delta) { text += delta; opts.onDelta?.(delta); }
+            if (chunk.usage) {
+              usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
+            }
           }
         }
+      } finally {
+        await reader.cancel().catch(() => {});
       }
       return { text, usage };
     };
 
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
-      if (!apiKey) throw new Error(`no MiniMax key — set MINIMAX_API_KEY or add to ~/.minimax/user-settings.json`);
+      if (!apiKey) throw new Error(`no MiniMax key — set ${config.apiKeyEnv} or run mmx auth login --api-key …`);
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
 
       const turnId = newId();
@@ -170,21 +233,29 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
         { role: "user", content: turn.text },
       ];
 
-      appendNative(threadId, { dir: "out", source: "minimax.chat.completions", msg: { model: turn.model, messages } });
+      appendNative(threadId, {
+        dir: "out",
+        source: "minimax.chat.completions",
+        msg: { model: turn.model ?? models.default, messageCount: messages.length },
+      });
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
-      emit({ ...base(threadId, turnId), type: "session.started", sessionId: null, model: turn.model ?? MODELS.default });
+      emit({ ...base(threadId, turnId), type: "session.started", sessionId: null, model: turn.model ?? models.default });
 
       (async () => {
         try {
-          const { text, usage } = await complete(messages, turn.model || MODELS.default, {
+          const { text, usage } = await complete(messages, turn.model || models.default, {
             stream: true,
             signal: abort.signal,
             onDelta: (delta) =>
               emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta }),
           });
 
-          appendNative(threadId, { dir: "in", source: "minimax.chat.completions", msg: { text, usage } });
+          appendNative(threadId, {
+            dir: "in",
+            source: "minimax.chat.completions",
+            msg: { textLength: text.length, usage },
+          });
 
           if (text.trim()) {
             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
@@ -193,12 +264,20 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
             emit({ ...base(threadId, turnId), type: "thread.token-usage.updated", ...usage });
           }
           active.delete(threadId);
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: null, cost: null });
+          const completed: RuntimeEvent = {
+            ...base(threadId, turnId),
+            type: "turn.completed",
+            ok: true,
+            stopReason: null,
+            cost: null,
+          };
+          emit(usage ? { ...completed, usage } : completed);
         } catch (e) {
           active.delete(threadId);
-          const aborted = (e as Error).name === "AbortError";
+          const error = e instanceof Error ? e : new Error(String(e));
+          const aborted = error.name === "AbortError";
           if (!aborted) {
-            emit({ ...base(threadId, turnId), type: "runtime.error", message: (e as Error).message });
+            emit({ ...base(threadId, turnId), type: "runtime.error", message: error.message });
           }
           emit({
             ...base(threadId, turnId),
@@ -217,20 +296,10 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
       if (!apiKey) {
         return {
           state: "unavailable",
-          reason: `no MiniMax API key — add to ~/.minimax/user-settings.json or set MINIMAX_API_KEY`,
+          reason: `no MiniMax API key — run mmx auth login --api-key … or set ${config.apiKeyEnv}`,
         };
       }
-      // Quick connectivity check — cheap models list call
-      try {
-        const res = await fetch(`${config.url}/models`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
-          signal: AbortSignal.timeout(5_000),
-        });
-        if (!res.ok) return { state: "unavailable", reason: `MiniMax API returned ${res.status}` };
-      } catch {
-        return { state: "unavailable", reason: "MiniMax API unreachable" };
-      }
-      return { state: "available", authenticated: true, version: null };
+      return { state: "available", authenticated: true, version: null, billing: "metered" };
     };
 
     return {
@@ -238,14 +307,14 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
       enabled: input.enabled,
-      models: MODELS,
+      models,
       snapshot,
       adapter: {
         provider: DRIVER_KIND,
         capabilities: { sessionModelSwitch: "in-session" },
         sendTurn,
         interruptTurn: async (threadId) => active.get(threadId)?.abort.abort(),
-        respondToRequest: async () => { throw new Error("minimax driver has no pending asks"); },
+        respondToRequest: async (): Promise<"unavailable"> => "unavailable",
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => { for (const { abort } of active.values()) abort.abort(); },
         onEvent: (listener) => {
@@ -254,7 +323,7 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
         },
       },
       generateText: async (prompt: string) => {
-        const { text } = await complete([{ role: "user", content: prompt }], "minimax-01", { stream: false });
+        const { text } = await complete([{ role: "user", content: prompt }], models.default, { stream: false });
         return text;
       },
       dispose: async () => {
