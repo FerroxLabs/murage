@@ -337,6 +337,9 @@ export function saveSkillRecording(payload, options = {}) {
     }
 
     const transcript = cleanText(payload.transcript, 12_000);
+    const transcription = payload.transcription?.provider === "assemblyai"
+      ? { provider: "assemblyai", model: cleanText(payload.transcription.model, 80) || "u3-rt-pro" }
+      : undefined;
     const recording = {
       schemaVersion: 1,
       name,
@@ -344,6 +347,7 @@ export function saveSkillRecording(payload, options = {}) {
       createdAt: new Date().toISOString(),
       durationMs: Math.max(0, Math.round(Number(payload.durationMs) || 0)),
       transcript,
+      transcription,
       audio: audioReference,
       events,
       privacy: { typedCharactersRetained: false, reviewedBeforeInstall: true },

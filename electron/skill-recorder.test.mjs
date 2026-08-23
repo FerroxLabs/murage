@@ -23,6 +23,7 @@ describe("skill recorder compiler", () => {
       description: "Use when submitting a travel receipt",
       durationMs: 4_200,
       transcript: "Choose the matching trip and attach the receipt.",
+      transcription: { provider: "assemblyai", model: "u3-rt-pro" },
       events: [{
         type: "click",
         atMs: 800,
@@ -37,6 +38,7 @@ describe("skill recorder compiler", () => {
     expect(skill).toContain("name: file-an-expense");
     expect(skill).toContain("recorded frame under the skill root");
     expect(recording).not.toContain("base64");
+    expect(recording).toContain('"provider": "assemblyai"');
     expect(existsSync(path.join(result.path, "references", "step-001.webp"))).toBe(true);
   });
 

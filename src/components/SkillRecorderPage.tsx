@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
   Circle,
+  Cloud,
   EyeOff,
   FileText,
   Keyboard,
+  Loader2,
   Mic,
   MonitorUp,
   MousePointer2,
@@ -17,6 +19,12 @@ import {
   X,
 } from "lucide-react";
 
+import {
+  mergeAssemblyAITurn,
+  startAssemblyAITranscription,
+  type AssemblyAITranscript,
+  type AssemblyAITranscriptionSession,
+} from "@/lib/assemblyai-transcription";
 import {
   appendNativeEvent,
   eventLabel,
@@ -53,6 +61,9 @@ export function SkillRecorderPage() {
   const [transcript, setTranscript] = useState("");
   const transcriptRef = useRef("");
   const [partialTranscript, setPartialTranscript] = useState("");
+  const [transcriptionConfigured, setTranscriptionConfigured] = useState<boolean | null>(null);
+  const [transcriptionKey, setTranscriptionKey] = useState("");
+  const [savingTranscriptionKey, setSavingTranscriptionKey] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
@@ -61,6 +72,8 @@ export function SkillRecorderPage() {
   const screenRef = useRef<MediaStream | null>(null);
   const micRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const transcriptionSessionRef = useRef<AssemblyAITranscriptionSession | null>(null);
+  const cloudTranscriptRef = useRef<AssemblyAITranscript>({ turns: new Map(), finalText: "", partialText: "" });
   const audioChunksRef = useRef<Blob[]>([]);
   const audioDataRef = useRef("");
   const startedRef = useRef(0);
@@ -111,21 +124,11 @@ export function SkillRecorderPage() {
   }, [bridge, takeScreenshot]);
 
   useEffect(() => {
-    const ogb = window.ogb;
-    if (!ogb) return;
-    const offTranscript = ogb.onSpeechTranscript((line) => {
-      if (phaseRef.current !== "recording" || line.text === undefined) return;
-      if (line.partial === false) {
-        const next = [transcriptRef.current, line.text.trim()].filter(Boolean).join(" ");
-        transcriptRef.current = next;
-        setTranscript(next);
-        setPartialTranscript("");
-      } else {
-        setPartialTranscript(line.text);
-      }
-    });
-    const offEnd = ogb.onSpeechEnd(() => setPartialTranscript(""));
-    return () => { offTranscript(); offEnd(); };
+    let alive = true;
+    window.ogb?.transcription?.status()
+      .then((status) => alive && setTranscriptionConfigured(status.configured))
+      .catch(() => alive && setTranscriptionConfigured(false));
+    return () => { alive = false; };
   }, []);
 
   useEffect(() => {
@@ -146,14 +149,34 @@ export function SkillRecorderPage() {
 
   useEffect(() => () => {
     void bridge?.stop();
-    void window.ogb?.speechStop();
+    void transcriptionSessionRef.current?.stop();
     releaseStreams();
   }, [bridge, releaseStreams]);
+
+  const saveTranscriptionKey = async () => {
+    const secret = transcriptionKey.trim();
+    if (!secret || !window.ogb?.transcription) return;
+    setSavingTranscriptionKey(true);
+    setError("");
+    try {
+      const status = await window.ogb.transcription.setKey(secret);
+      setTranscriptionConfigured(status.configured);
+      setTranscriptionKey("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSavingTranscriptionKey(false);
+    }
+  };
 
   const start = async () => {
     setError("");
     if (!bridge || !window.ogb?.beginScreenPreviewIntent || !navigator.mediaDevices?.getDisplayMedia) {
       setError("Skill recording requires the OpenMausBot desktop app on macOS.");
+      return;
+    }
+    if (!transcriptionConfigured || !window.ogb.transcription) {
+      setError("Add your AssemblyAI key under Cloud transcription before recording.");
       return;
     }
     const nextPermission = await bridge.permissions();
@@ -189,19 +212,34 @@ export function SkillRecorderPage() {
       mediaRecorderRef.current = recorder;
 
       await bridge.start();
-      await window.ogb.speechStart();
       eventsRef.current = [];
       setEvents([]);
       transcriptRef.current = "";
       setTranscript("");
       setPartialTranscript("");
+      cloudTranscriptRef.current = { turns: new Map(), finalText: "", partialText: "" };
+      transcriptionSessionRef.current = await startAssemblyAITranscription({
+        stream: mic,
+        getToken: () => window.ogb!.transcription!.streamingToken(),
+        onTurn: (turn) => {
+          const next = mergeAssemblyAITurn(cloudTranscriptRef.current, turn);
+          cloudTranscriptRef.current = next;
+          transcriptRef.current = next.finalText;
+          setTranscript(next.finalText);
+          setPartialTranscript(next.partialText);
+        },
+        onError: (message) => setError(message),
+      });
       audioDataRef.current = "";
       startedRef.current = Date.now();
       setElapsed(0);
       updatePhase("recording");
     } catch (caught) {
       await bridge.stop().catch(() => {});
-      await window.ogb.speechStop().catch(() => {});
+      await transcriptionSessionRef.current?.stop().catch(() => {});
+      transcriptionSessionRef.current = null;
+      if (mediaRecorderRef.current?.state !== "inactive") mediaRecorderRef.current?.stop();
+      mediaRecorderRef.current = null;
       releaseStreams();
       updatePhase("idle");
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -214,7 +252,17 @@ export function SkillRecorderPage() {
     setElapsed(Date.now() - startedRef.current);
     try {
       await bridge?.stop();
-      await window.ogb?.speechFinish?.();
+      await transcriptionSessionRef.current?.stop().catch(() => {
+        setError("Cloud transcription did not close cleanly; the original audio is still available.");
+      });
+      transcriptionSessionRef.current = null;
+      const capturedTranscript = [
+        cloudTranscriptRef.current.finalText,
+        cloudTranscriptRef.current.partialText,
+      ].filter(Boolean).join(" ");
+      transcriptRef.current = capturedTranscript;
+      setTranscript(capturedTranscript);
+      setPartialTranscript("");
       const recorder = mediaRecorderRef.current;
       if (recorder && recorder.state !== "inactive") {
         const stopped = new Promise<void>((resolve) => recorder.addEventListener("stop", () => resolve(), { once: true }));
@@ -226,12 +274,6 @@ export function SkillRecorderPage() {
         const mime = recorder?.mimeType.split(";")[0] || "audio/webm";
         audioDataRef.current = await blobDataUrl(new Blob(audioChunksRef.current, { type: mime }));
       }
-      if (partialTranscript.trim()) {
-        const next = [transcriptRef.current, partialTranscript.trim()].filter(Boolean).join(" ");
-        transcriptRef.current = next;
-        setTranscript(next);
-      }
-      await window.ogb?.speechStop();
       releaseStreams();
       updatePhase("review");
     } finally {
@@ -241,7 +283,10 @@ export function SkillRecorderPage() {
 
   const discard = async () => {
     await bridge?.stop().catch(() => {});
-    await window.ogb?.speechStop().catch(() => {});
+    await transcriptionSessionRef.current?.stop().catch(() => {});
+    transcriptionSessionRef.current = null;
+    if (mediaRecorderRef.current?.state !== "inactive") mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
     releaseStreams();
     eventsRef.current = [];
     setEvents([]);
@@ -270,6 +315,7 @@ export function SkillRecorderPage() {
         description,
         durationMs: elapsed,
         transcript: transcriptRef.current,
+        transcription: { provider: "assemblyai", model: "u3-rt-pro" },
         audio: audioDataRef.current || undefined,
         events: eventsRef.current,
       });
@@ -329,11 +375,39 @@ export function SkillRecorderPage() {
                 <div className="mt-6 flex items-start gap-3 rounded-2xl bg-inset px-4 py-3">
                   <EyeOff size={17} className="mt-0.5 shrink-0 text-success" />
                   <p className="text-[12px] leading-5 text-ink-secondary">
-                    Typed characters are never stored. Before the skill is created, you can remove any step or screenshot. Nothing leaves this Mac during recording.
+                    Typed characters are never stored. Clicks and screenshots stay on this computer; microphone audio is streamed to AssemblyAI for transcription. You review everything before creating the skill.
                   </p>
                 </div>
 
-                <button type="button" disabled={phase === "starting"} onClick={() => void start()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3.5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-60">
+                <div className="mt-4 rounded-2xl border border-hairline bg-card p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent/12 text-accent-text"><Cloud size={17} /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 text-[13px] font-medium">
+                        Cloud transcription
+                        {transcriptionConfigured && <span className="text-[10px] font-medium text-success">Saved</span>}
+                      </div>
+                      <p className="mt-0.5 text-[11px] leading-4 text-ink-secondary">AssemblyAI works the same on macOS, Windows, and Linux. The saved key is protected by your operating system.</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      type="password"
+                      value={transcriptionKey}
+                      onChange={(event) => setTranscriptionKey(event.target.value)}
+                      onKeyDown={(event) => event.key === "Enter" && transcriptionKey.trim() && void saveTranscriptionKey()}
+                      placeholder={transcriptionConfigured ? "••••••••  (paste to replace)" : "Paste AssemblyAI API key"}
+                      aria-label="AssemblyAI API key"
+                      autoComplete="off"
+                      className="min-w-0 flex-1 rounded-xl border border-hairline bg-inset px-3 py-2.5 text-[12px] outline-none placeholder:text-ink-secondary/60 focus:border-accent"
+                    />
+                    <button type="button" onClick={() => void saveTranscriptionKey()} disabled={!transcriptionKey.trim() || savingTranscriptionKey} className="flex w-20 items-center justify-center gap-1.5 rounded-xl bg-control px-3 text-[12px] font-medium hover:bg-raised-hover disabled:opacity-40">
+                      {savingTranscriptionKey ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
+                    </button>
+                  </div>
+                </div>
+
+                <button type="button" disabled={phase === "starting" || !transcriptionConfigured} onClick={() => void start()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3.5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-40">
                   {phase === "starting" ? <><Circle size={15} className="animate-pulse" /> Getting ready…</> : <><Circle size={14} fill="currentColor" /> Start recording</>}
                 </button>
                 <p className="mt-3 text-center text-[11px] text-ink-secondary">macOS will ask for screen, microphone, and action-recording access the first time.</p>
@@ -349,7 +423,7 @@ export function SkillRecorderPage() {
                 <p className="mt-2 text-[14px] text-ink-secondary">Move through the task and explain the why as you go.</p>
                 <div className="mx-auto mt-6 max-w-lg rounded-2xl bg-inset p-4 text-left">
                   <div className="flex items-center justify-between text-[11px] font-medium uppercase tracking-[0.12em] text-ink-secondary">
-                    <span className="flex items-center gap-2"><Volume2 size={14} /> Live narration</span>
+                    <span className="flex items-center gap-2"><Volume2 size={14} /> Live narration · AssemblyAI</span>
                     <span>{events.length} moments</span>
                   </div>
                   <p className="mt-3 min-h-12 text-[13px] leading-5 text-ink">

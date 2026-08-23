@@ -22,6 +22,7 @@ type SkillRecordingPayload = {
   description: string;
   durationMs: number;
   transcript: string;
+  transcription?: { provider: "assemblyai"; model: string };
   audio?: string;
   events: Array<{
     type: "app" | "click" | "scroll" | "shortcut" | "typing";
@@ -106,6 +107,11 @@ type SkillRecordingPayload = {
         save(payload: SkillRecordingPayload): Promise<{ id: string; path: string; events: number }>;
         onEvent(cb: (event: NativeSkillRecordingEvent) => void): () => void;
         onEnd(cb: (info: { code: number | null; reason?: string }) => void): () => void;
+      };
+      transcription?: {
+        status(): Promise<{ configured: boolean }>;
+        setKey(value: string): Promise<{ configured: boolean }>;
+        streamingToken(): Promise<{ token: string; expiresInSeconds: number }>;
       };
       /** Absolute path of a dropped File ("" when the drag carried no
        * file on disk). Absent in older builds of the shell. */

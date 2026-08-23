@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
 import { createAndroidDeviceController } from "./android-device.mjs";
+import { assemblyAICredential, mintAssemblyAIStreamingToken } from "./assemblyai.mjs";
 import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
 import {
   recorderPermissionStatus,
@@ -830,6 +831,28 @@ ipcMain.handle("desktop:capabilities", async () =>
   }),
 );
 
+ipcMain.handle("assemblyai:status", () => ({
+  configured: Boolean(assemblyAICredential(secureCredentials)),
+}));
+
+ipcMain.handle("assemblyai:set-key", async (_event, value) => {
+  if (typeof value !== "string") throw new Error("Unsupported credential");
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) {
+    throw new Error("The operating-system credential store is unavailable");
+  }
+  const secret = value.trim();
+  const nextCredentials = { ...secureCredentials };
+  if (secret) nextCredentials.assemblyAiApiKey = secret;
+  else delete nextCredentials.assemblyAiApiKey;
+  await saveSecureCredentials(nextCredentials);
+  secureCredentials = nextCredentials;
+  return { configured: Boolean(secret) };
+});
+
+ipcMain.handle("assemblyai:streaming-token", () =>
+  mintAssemblyAIStreamingToken(assemblyAICredential(secureCredentials)),
+);
+
 const CREDENTIAL_PATCH = {
   composioApiKey: (value) => ({ composio: { apiKey: value } }),
   xaiApiKey: (value) => ({ xai: { key: value } }),
@@ -902,8 +925,8 @@ setCuaStateListener((connection) => {
 
 app.whenReady().then(async () => {
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
+  secureCredentials = await loadSecureCredentials();
   if (app.isPackaged) {
-    secureCredentials = await loadSecureCredentials();
     await secureComposioConfig();
     await secureWorkspaceConfig();
     await ensureManagedComposioCredentials();

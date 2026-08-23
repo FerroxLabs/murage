@@ -71,6 +71,11 @@ contextBridge.exposeInMainWorld("ogb", {
       return () => ipcRenderer.removeListener("skill-recorder:end", handler);
     },
   },
+  transcription: {
+    status: () => ipcRenderer.invoke("assemblyai:status"),
+    setKey: (value) => ipcRenderer.invoke("assemblyai:set-key", value),
+    streamingToken: () => ipcRenderer.invoke("assemblyai:streaming-token"),
+  },
   /** Absolute path of a dropped File — Electron 32 removed File.path, and
    * only the preload can ask. "" when the drag carried no file on disk. */
   getPathForFile: (file) => {
