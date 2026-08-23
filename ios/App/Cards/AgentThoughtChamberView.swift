@@ -9,7 +9,6 @@ public struct AgentThoughtChamberView: View {
     
     @Environment(\.colorScheme) private var colorScheme
     @State private var isExpanded: Bool = false
-    @State private var pulseAnimation: Bool = false
     
     public init(
         reasoning: String,
@@ -58,22 +57,6 @@ public struct AgentThoughtChamberView: View {
                 .stroke(isDark ? mascotColor.opacity(0.3) : Color.black.opacity(0.08), lineWidth: 0.65)
         )
         .shadow(color: Color.black.opacity(isDark ? 0.25 : 0.04), radius: 3, y: 1)
-        .onAppear {
-            if isStreaming {
-                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                    pulseAnimation = true
-                }
-            }
-        }
-        .onChange(of: isStreaming) { _, streaming in
-            if streaming {
-                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                    pulseAnimation = true
-                }
-            } else {
-                pulseAnimation = false
-            }
-        }
     }
     
     @ViewBuilder
@@ -88,7 +71,6 @@ public struct AgentThoughtChamberView: View {
                 Image(systemName: "brain.head.profile")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(mascotColor)
-                    .scaleEffect(pulseAnimation ? 1.15 : 1.0)
                 
                 Text(isStreaming ? "Thinking…" : "Thought Process")
                     .font(.caption2.weight(.bold))
@@ -98,7 +80,7 @@ public struct AgentThoughtChamberView: View {
                     Circle()
                         .fill(mascotColor)
                         .frame(width: 6, height: 6)
-                        .opacity(pulseAnimation ? 1.0 : 0.3)
+                        .symbolEffect(.pulse, options: .repeating, isActive: isStreaming)
                 }
                 
                 Spacer()

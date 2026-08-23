@@ -13,7 +13,7 @@ public struct SkillExecutionReceiptView: View {
     public init(
         skillName: String,
         status: String = "success",
-        durationMs: Int = 120,
+        durationMs: Int = 0,
         parameters: String = "",
         output: String = ""
     ) {
@@ -26,9 +26,11 @@ public struct SkillExecutionReceiptView: View {
     
     public var body: some View {
         let isDark = colorScheme == .dark
+        let hasDetails = !parameters.isEmpty || !output.isEmpty
         
         VStack(alignment: .leading, spacing: 6) {
             Button {
+                guard hasDetails else { return }
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                     isExpanded.toggle()
                 }
@@ -53,9 +55,11 @@ public struct SkillExecutionReceiptView: View {
                     
                     statusBadge
                     
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(isDark ? Color(hex: "#94A3B8") : Color(hex: "#64748B"))
+                    if hasDetails {
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(isDark ? Color(hex: "#94A3B8") : Color(hex: "#64748B"))
+                    }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -63,8 +67,9 @@ public struct SkillExecutionReceiptView: View {
                 .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+            .disabled(!hasDetails)
             
-            if isExpanded {
+            if isExpanded && hasDetails {
                 VStack(alignment: .leading, spacing: 5) {
                     if !parameters.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {

@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct TypingIndicatorView: View {
     public let tintColor: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dotScales: [CGFloat] = [0.35, 0.35, 0.35]
     
     public init(tintColor: Color = .purple) {
@@ -22,7 +23,11 @@ public struct TypingIndicatorView: View {
         .background(Color.secondary.opacity(0.12))
         .clipShape(Capsule())
         .onAppear {
-            animateDots()
+            if reduceMotion {
+                dotScales = [1, 1, 1]
+            } else {
+                animateDots()
+            }
         }
     }
     

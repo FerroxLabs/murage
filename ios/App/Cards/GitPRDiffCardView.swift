@@ -8,7 +8,12 @@ public struct GitPRDiffCardView: View {
     
     @Environment(\.colorScheme) private var colorScheme
     @State private var showDiff: Bool = true
-    @State private var isApproved: Bool = false
+    @State private var showAllLines: Bool = false
+
+    private var lines: [String] { diffText.components(separatedBy: "\n") }
+    private var visibleLines: ArraySlice<String> {
+        lines.prefix(showAllLines ? lines.count : 80)
+    }
     
     public init(
         filename: String = "Changes",
@@ -37,7 +42,7 @@ public struct GitPRDiffCardView: View {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.pull")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(isApproved ? Color(hex: "#A855F7") : Color(hex: "#22C55E"))
+                    .foregroundColor(Color(hex: "#22C55E"))
                 
                 Text(filename)
                     .font(.caption.weight(.bold))
@@ -85,7 +90,7 @@ public struct GitPRDiffCardView: View {
                     if showDiff {
                         ScrollView(.horizontal, showsIndicators: false) {
                             VStack(alignment: .leading, spacing: 1) {
-                                ForEach(Array(diffText.components(separatedBy: "\n").prefix(30).enumerated()), id: \.offset) { _, line in
+                                ForEach(Array(visibleLines.enumerated()), id: \.offset) { _, line in
                                     diffLineView(line, isDark: isDark)
                                 }
                             }
@@ -94,6 +99,16 @@ public struct GitPRDiffCardView: View {
                         .background(isDark ? Color.black.opacity(0.55) : Color(hex: "#0F172A"))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .transition(.opacity.combined(with: .move(edge: .top)))
+
+                        if lines.count > 80 {
+                            Button(showAllLines ? "Show first 80 lines" : "Show all \(lines.count) lines") {
+                                withAnimation(.easeInOut(duration: 0.2)) { showAllLines.toggle() }
+                                Haptics.selection()
+                            }
+                            .font(.caption2.weight(.semibold))
+                            .buttonStyle(.plain)
+                            .accessibilityHint("The copied diff always includes every line")
+                        }
                     }
                 }
             }
@@ -104,7 +119,6 @@ public struct GitPRDiffCardView: View {
             HStack(spacing: 8) {
                 Button {
                     PlatformBridge.copyToPasteboard(diffText)
-                    Haptics.selection()
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "doc.on.doc")
@@ -116,33 +130,6 @@ public struct GitPRDiffCardView: View {
                 .buttonStyle(.plain)
                 
                 Spacer()
-                
-                Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                        isApproved.toggle()
-                    }
-                    if isApproved {
-                        SoundEffects.playActionSuccess()
-                        Haptics.success()
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: isApproved ? "checkmark.circle.fill" : "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                        Text(isApproved ? "Approved" : "Approve Diff")
-                            .font(.caption2.weight(.bold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        isApproved
-                            ? LinearGradient(colors: [Color(hex: "#8B5CF6"), Color(hex: "#7C3AED")], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            : LinearGradient(colors: [Color(hex: "#10B981"), Color(hex: "#059669")], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
             }
         }
         .padding(10)

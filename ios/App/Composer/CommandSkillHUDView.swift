@@ -21,6 +21,7 @@ public struct CommandSkillItem: Identifiable {
 public struct CommandSkillHUDView: View {
     @Binding public var text: String
     @Binding public var isVisible: Bool
+    public let commands: [CommandSkillItem]
     public let accentColor: Color
     public let onSelectCommand: (CommandSkillItem) -> Void
     
@@ -72,11 +73,13 @@ public struct CommandSkillHUDView: View {
     public init(
         text: Binding<String>,
         isVisible: Binding<Bool>,
+        commands: [CommandSkillItem] = CommandSkillHUDView.defaultCommands,
         accentColor: Color = .purple,
         onSelectCommand: @escaping (CommandSkillItem) -> Void
     ) {
         self._text = text
         self._isVisible = isVisible
+        self.commands = commands
         self.accentColor = accentColor
         self.onSelectCommand = onSelectCommand
     }
@@ -84,11 +87,11 @@ public struct CommandSkillHUDView: View {
     private var filteredCommands: [CommandSkillItem] {
         if text.hasPrefix("/") && text.count > 1 {
             let query = String(text.dropFirst()).lowercased()
-            return Self.defaultCommands.filter {
+            return commands.filter {
                 $0.title.lowercased().contains(query) || $0.description.lowercased().contains(query)
             }
         }
-        return Self.defaultCommands
+        return commands
     }
     
     public var body: some View {
@@ -161,6 +164,7 @@ public struct CommandSkillHUDView: View {
                     .foregroundColor(isDark ? Color(hex: "#64748B") : Color(hex: "#94A3B8"))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Close slash commands")
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)

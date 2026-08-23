@@ -74,7 +74,7 @@ public struct SQLResultTableView: View {
                     Divider().background(isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.08))
                     
                     // Rows
-                    ForEach(Array(rows.prefix(15).enumerated()), id: \.offset) { _, row in
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                         HStack(spacing: 12) {
                             ForEach(Array(columns.indices), id: \.self) { colIdx in
                                 let val = colIdx < row.count ? row[colIdx] : ""
@@ -94,9 +94,10 @@ public struct SQLResultTableView: View {
             // Footer
             HStack {
                 Button {
-                    let csv = ([columns.joined(separator: ",")] + rows.map { $0.joined(separator: ",") }).joined(separator: "\n")
+                    let csv = ([columns] + rows)
+                        .map { $0.map(Self.csvField).joined(separator: ",") }
+                        .joined(separator: "\n")
                     PlatformBridge.copyToPasteboard(csv)
-                    Haptics.selection()
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "doc.on.doc")
@@ -131,5 +132,12 @@ public struct SQLResultTableView: View {
                 .stroke(Color(hex: "#3ECF8E").opacity(0.35), lineWidth: 0.8)
         )
         .shadow(color: Color.black.opacity(isDark ? 0.20 : 0.04), radius: 4, y: 1.5)
+    }
+
+    private static func csvField(_ value: String) -> String {
+        guard value.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n" || $0 == "\r" }) else {
+            return value
+        }
+        return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
     }
 }

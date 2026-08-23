@@ -14,6 +14,7 @@ import UIKit
 struct PairingView: View {
     @EnvironmentObject private var session: Session
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var discovery = Discovery()
 
     @State private var manualAddress = ""
@@ -27,6 +28,7 @@ struct PairingView: View {
     /// "Looking…" forever is not an answer. After a few seconds with nothing
     /// found, say the thing that is almost always true.
     @State private var searchedLongEnough = false
+    @State private var choiceGeneration = 0
 
     // Radar pulse animation states
     @State private var radarPulse = false
@@ -72,11 +74,16 @@ struct PairingView: View {
             .onAppear {
                 discovery.start()
                 accept(session.pairingInvite)
-                withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: false)) {
-                    radarPulse = true
+                if !reduceMotion {
+                    withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: false)) {
+                        radarPulse = true
+                    }
                 }
             }
-            .onDisappear { discovery.stop() }
+            .onDisappear {
+                choiceGeneration += 1
+                discovery.stop()
+            }
             .onChange(of: session.pairingInvite) { _, invite in accept(invite) }
             .fullScreenCover(isPresented: $showingScanner) {
                 PairingScannerSheet { payload in
@@ -151,7 +158,7 @@ struct PairingView: View {
                         .frame(width: 7, height: 7)
                     Text("LOCAL NETWORK RADAR")
                         .font(.system(size: 11, weight: .heavy, design: .monospaced))
-                        .foregroundColor(accentTint)
+                        .foregroundColor(isDark ? accentTint : Color(hex: "#0369A1"))
                 }
 
                 Text(discoveryStatus)
@@ -241,7 +248,7 @@ struct PairingView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundColor(isDark ? .white : Color(hex: "#0F172A"))
                 }
-                Text("Guest networks or multi-band routers often isolate Wi-Fi devices. Use the QR scanner below or enter your computer's IP address directly.")
+                Text("Guest networks and some router isolation settings block devices from seeing each other. Use the QR scanner below or enter your computer's address directly.")
                     .font(.caption)
                     .foregroundColor(isDark ? Color(hex: "#94A3B8") : Color(hex: "#64748B"))
                     .lineSpacing(2)
@@ -308,7 +315,7 @@ struct PairingView: View {
                     Image(systemName: "network")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(isDark ? Color(hex: "#94A3B8") : Color(hex: "#64748B"))
-                    Text("Direct Host / Tailscale IP")
+                    Text("Direct Host Address")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(isDark ? Color(hex: "#94A3B8") : Color(hex: "#64748B"))
                     Spacer()
@@ -502,7 +509,7 @@ struct PairingView: View {
                 .foregroundColor(Color(hex: "#EF4444"))
             Text(message)
                 .font(.caption)
-                .foregroundColor(Color(hex: "#EF4444"))
+                .foregroundColor(isDark ? Color(hex: "#F87171") : Color(hex: "#B91C1C"))
                 .multilineTextAlignment(.leading)
         }
         .padding(12)
@@ -515,11 +522,17 @@ struct PairingView: View {
         )
     }
 
+    @MainActor
     private func choose(_ service: Discovery.Found) async {
+        choiceGeneration += 1
+        let generation = choiceGeneration
         failure = nil
         do {
-            chosen = try await discovery.resolve(service)
+            let resolved = try await discovery.resolve(service)
+            guard generation == choiceGeneration else { return }
+            chosen = resolved
         } catch {
+            guard generation == choiceGeneration else { return }
             failure = error.localizedDescription
         }
     }
@@ -549,6 +562,7 @@ struct PairingView: View {
 
     private func accept(_ invite: PairingInvite?) {
         guard let invite else { return }
+        choiceGeneration += 1
         chosen = invite.connection
         scannedCredential = invite.credential
         code = ""
