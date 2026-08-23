@@ -639,6 +639,7 @@ describe("harness HTTP API", () => {
     })).body.group;
 
     try {
+      expect((await api("PATCH", `/api/groups/${room.id}/setup`, { action: "skip" })).status).toBe(200);
       const archivedBot = await api("PATCH", `/api/bots/${archived.id}`, {
         name: "Quill",
         hidden: true,

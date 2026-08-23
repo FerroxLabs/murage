@@ -1604,10 +1604,13 @@ async function startTurn(
       // stop, so the user's tokens can't be burned by a bot-to-bot loop.
       // Only drivers that mount the tools get the integration (and, via the
       // integrations.agents gate below, the prompt hint) — a bot on a driver
-      // without it must not be told about tools it cannot call. Keep the
-      // integration mounted even with an empty roster: create_bot is how the
-      // first persistent teammate gets made.
-      if (commsDepth < MAX_COMMS_DEPTH && instance.adapter.capabilities.agentsMcp === true) {
+      // without it must not be told about tools it cannot call. Any bot can
+      // still be the TARGET of ask_bot regardless of its driver.
+      if (
+        commsDepth < MAX_COMMS_DEPTH &&
+        instance.adapter.capabilities.agentsMcp === true &&
+        store.bots.filter((b) => b.id !== bot.id && !b.hidden).length > 0
+      ) {
         integrations.agents = agentsIntegration(bot.id, threadId, commsDepth);
       }
       // @mentions in the user's message (the composer's tagging UI) become
@@ -1622,7 +1625,7 @@ async function startTurn(
       const coordinationPrompt = bot.chiefOfStaff
         ? chiefOfStaffSystemPrompt(bot.id, store.bots, Boolean(integrations.agents))
         : integrations.agents
-          ? "You can manage the user's bot team through the agents tools — list_bots shows who's available, create_bot adds a persistent teammate, and ask_bot sends one a message and returns its reply."
+          ? "You can work with the user's other bots through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
           : "";
 
       // (activeVpsThreads was already claimed above, before the provision or
@@ -2450,7 +2453,7 @@ const server = createServer(async (req, res) => {
     }
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
-    // manage the roster and hand work to a peer. Not part of the public API.
+    // discover peers and hand a message to one. Not part of the public API.
     if (path.startsWith("/api/internal/")) {
       if (!authorizedComms(req.headers.authorization)) {
         return json(res, 401, { error: "unauthorized" });
@@ -2470,31 +2473,6 @@ const server = createServer(async (req, res) => {
             description: b.description || undefined,
           }));
         return json(res, 200, { bots });
-      }
-      if (method === "POST" && path === "/api/internal/create-bot") {
-        const body = await readBody(req);
-        const fromBotId = String(body.fromBotId ?? "");
-        const from = store.bot(fromBotId);
-        if (!from) return json(res, 404, { error: "no such sender bot" });
-        const fromThreadId = String(body.fromThreadId ?? from.threadId);
-        if (!store.taskByThread(from.id, fromThreadId)) {
-          return json(res, 403, { error: "source thread does not belong to sender" });
-        }
-        const name = String(body.name ?? "").trim();
-        const role = String(body.role ?? "").trim();
-        const description = String(body.description ?? "").trim();
-        if (!name || !role) return json(res, 400, { error: "name and role required" });
-        if (name.length > 80) return json(res, 400, { error: "name must be 80 characters or fewer" });
-        if (role.length > 120) return json(res, 400, { error: "role must be 120 characters or fewer" });
-        if (description.length > 200) return json(res, 400, { error: "description must be 200 characters or fewer" });
-
-        // A model-created teammate starts with the creator's selected engine;
-        // the user can change it in the normal bot settings afterward.
-        const created = store.createBot(
-          { name, title: role, description, modelSelection: from.modelSelection },
-          { seedMessages: false },
-        );
-        return json(res, 201, { bot: publicBot(created) });
       }
       if (method === "POST" && path === "/api/internal/ask-bot") {
         const body = await readBody(req);
