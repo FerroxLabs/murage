@@ -6,7 +6,6 @@ import {
   EyeOff,
   FileText,
   Keyboard,
-  Loader2,
   Mic,
   MonitorUp,
   MousePointer2,
@@ -32,6 +31,8 @@ import {
   type RecordedSkillEvent,
 } from "@/lib/skill-recorder";
 import { requestScreenPreview, stopScreenPreview } from "@/lib/screen-preview";
+import { TRANSCRIPTION_STATUS_EVENT } from "@/lib/transcription-status";
+import { useStore } from "@/state/store";
 
 type Phase = "idle" | "starting" | "recording" | "review" | "saving" | "saved";
 
@@ -52,6 +53,7 @@ function blobDataUrl(blob: Blob): Promise<string> {
 }
 
 export function SkillRecorderPage() {
+  const { dispatch } = useStore();
   const bridge = window.ogb?.skillRecorder;
   const [phase, setPhase] = useState<Phase>("idle");
   const phaseRef = useRef<Phase>("idle");
@@ -62,8 +64,6 @@ export function SkillRecorderPage() {
   const transcriptRef = useRef("");
   const [partialTranscript, setPartialTranscript] = useState("");
   const [transcriptionConfigured, setTranscriptionConfigured] = useState<boolean | null>(null);
-  const [transcriptionKey, setTranscriptionKey] = useState("");
-  const [savingTranscriptionKey, setSavingTranscriptionKey] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
@@ -125,10 +125,17 @@ export function SkillRecorderPage() {
 
   useEffect(() => {
     let alive = true;
+    const onStatus = (event: CustomEvent<{ configured: boolean }>) => {
+      setTranscriptionConfigured(event.detail.configured);
+    };
+    window.addEventListener(TRANSCRIPTION_STATUS_EVENT, onStatus);
     window.ogb?.transcription?.status()
       .then((status) => alive && setTranscriptionConfigured(status.configured))
       .catch(() => alive && setTranscriptionConfigured(false));
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+      window.removeEventListener(TRANSCRIPTION_STATUS_EVENT, onStatus);
+    };
   }, []);
 
   useEffect(() => {
@@ -152,22 +159,6 @@ export function SkillRecorderPage() {
     void transcriptionSessionRef.current?.stop();
     releaseStreams();
   }, [bridge, releaseStreams]);
-
-  const saveTranscriptionKey = async () => {
-    const secret = transcriptionKey.trim();
-    if (!secret || !window.ogb?.transcription) return;
-    setSavingTranscriptionKey(true);
-    setError("");
-    try {
-      const status = await window.ogb.transcription.setKey(secret);
-      setTranscriptionConfigured(status.configured);
-      setTranscriptionKey("");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSavingTranscriptionKey(false);
-    }
-  };
 
   const start = async () => {
     setError("");
@@ -379,32 +370,24 @@ export function SkillRecorderPage() {
                   </p>
                 </div>
 
-                <div className="mt-4 rounded-2xl border border-hairline bg-card p-4">
-                  <div className="flex items-start gap-3">
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent/12 text-accent-text"><Cloud size={17} /></span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 text-[13px] font-medium">
-                        Cloud transcription
-                        {transcriptionConfigured && <span className="text-[10px] font-medium text-success">Saved</span>}
-                      </div>
-                      <p className="mt-0.5 text-[11px] leading-4 text-ink-secondary">AssemblyAI works the same on macOS, Windows, and Linux. The saved key is protected by your operating system.</p>
+                <div className="mt-4 flex items-center gap-3 rounded-2xl border border-hairline bg-card p-4">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent/12 text-accent-text"><Cloud size={17} /></span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-[13px] font-medium">
+                      Cloud transcription
+                      {transcriptionConfigured && <span className="text-[10px] font-medium text-success">Saved</span>}
                     </div>
+                    <p className="mt-0.5 text-[11px] leading-4 text-ink-secondary">
+                      {transcriptionConfigured ? "AssemblyAI is ready for live narration." : "Add an AssemblyAI key in Settings before recording."}
+                    </p>
                   </div>
-                  <div className="mt-3 flex gap-2">
-                    <input
-                      type="password"
-                      value={transcriptionKey}
-                      onChange={(event) => setTranscriptionKey(event.target.value)}
-                      onKeyDown={(event) => event.key === "Enter" && transcriptionKey.trim() && void saveTranscriptionKey()}
-                      placeholder={transcriptionConfigured ? "••••••••  (paste to replace)" : "Paste AssemblyAI API key"}
-                      aria-label="AssemblyAI API key"
-                      autoComplete="off"
-                      className="min-w-0 flex-1 rounded-xl border border-hairline bg-inset px-3 py-2.5 text-[12px] outline-none placeholder:text-ink-secondary/60 focus:border-accent"
-                    />
-                    <button type="button" onClick={() => void saveTranscriptionKey()} disabled={!transcriptionKey.trim() || savingTranscriptionKey} className="flex w-20 items-center justify-center gap-1.5 rounded-xl bg-control px-3 text-[12px] font-medium hover:bg-raised-hover disabled:opacity-40">
-                      {savingTranscriptionKey ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}
+                    className="shrink-0 rounded-xl bg-control px-3 py-2 text-[12px] font-medium text-ink hover:bg-raised-hover"
+                  >
+                    {transcriptionConfigured ? "Manage" : "Open Settings"}
+                  </button>
                 </div>
 
                 <button type="button" disabled={phase === "starting" || !transcriptionConfigured} onClick={() => void start()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3.5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-40">

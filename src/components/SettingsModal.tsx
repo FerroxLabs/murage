@@ -15,6 +15,7 @@ import { Card } from "./SettingsPrimitives";
 import { UsageSection } from "./UsageSection";
 import { SkinPicker } from "./SkinPicker";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
+import { TranscriptionSettings } from "./TranscriptionSettings";
 import { cn } from "@/lib/cn";
 
 const SECTIONS: Array<{ id: AppSettingsSection; label: string; icon: typeof User }> = [
@@ -307,6 +308,7 @@ export function SettingsModal() {
                       Connected apps service is ready
                     </div>
                   ) : null}
+                  <TranscriptionSettings />
                   <ApiKeyRow section="box" />
                   <VpsConnection />
                   <ApiKeyRow section="opencodeGo" />
