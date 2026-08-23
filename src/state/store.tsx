@@ -22,6 +22,7 @@ import { currentCall } from "@/lib/call";
 import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
+import { skillRecorderEnabled } from "@/lib/feature-flags";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -247,11 +248,13 @@ export interface ConfigStatus {
   imageGen?: { configured: boolean };
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
+  /** Experimental features are opt-in and default off when absent. */
+  features?: { skillRecorder: boolean };
 }
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile" | "features"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -266,6 +269,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     tts: frame.tts,
     imageGen: frame.imageGen,
     profile: frame.profile,
+    features: frame.features,
   };
 }
 
@@ -548,6 +552,7 @@ export function reducer(state: AppState, action: Action): AppState {
         pluginsOpen: false,
       };
     case "showSkillRecorder":
+      if (!skillRecorderEnabled(state.config)) return state;
       return {
         ...state,
         activeView: "skill-recorder",
@@ -615,7 +620,14 @@ export function reducer(state: AppState, action: Action): AppState {
     case "instances":
       return { ...state, instances: action.instances };
     case "configStatus":
-      return { ...state, config: action.config };
+      return {
+        ...state,
+        config: action.config,
+        activeView:
+          state.activeView === "skill-recorder" && !skillRecorderEnabled(action.config)
+            ? "chat"
+            : state.activeView,
+      };
     case "select": {
       if (state.groups.some((g) => g.id === action.id)) {
         return {

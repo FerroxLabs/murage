@@ -4,8 +4,9 @@
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
 import { Coins, KeyRound, Monitor, Smartphone, Terminal, User, X } from "lucide-react";
-import { useStore, type AppSettingsSection } from "@/state/store";
+import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
+import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { ApiKeyRow, VpsConnection } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
@@ -126,6 +127,57 @@ function AnalyticsRow() {
       >
         <span className={cnKnob(on)} />
       </button>
+    </Card>
+  );
+}
+
+function ExperimentalFeaturesRow() {
+  const { state, dispatch } = useStore();
+  const enabled = skillRecorderEnabled(state.config);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const toggle = async () => {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const config: ConfigStatus = await api("/api/config", {
+        method: "PATCH",
+        body: JSON.stringify({ features: { skillRecorder: !enabled } }),
+      });
+      dispatch({ type: "configStatus", config });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save the experimental feature setting.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Experimental features"
+      subtitle="Early features may change while we test them. They stay off unless you enable them."
+    >
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-[14px] font-medium text-ink">Teach a skill</div>
+          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+            Show the workflow recorder in the sidebar.
+          </div>
+        </div>
+        <button
+          role="switch"
+          aria-checked={enabled}
+          aria-label="Show Teach a skill"
+          disabled={saving}
+          onClick={() => void toggle()}
+          className={`${cnSwitch(enabled)} disabled:cursor-wait disabled:opacity-50`}
+        >
+          <span className={cnKnob(enabled)} />
+        </button>
+      </div>
+      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
     </Card>
   );
 }
@@ -291,6 +343,7 @@ export function SettingsModal() {
                 <Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
                   <RoomTurnTimeoutSettings />
                 </Card>
+                <ExperimentalFeaturesRow />
                 <UpdatesRow />
                 <DiagnosticsRow />
                 <AnalyticsRow />
