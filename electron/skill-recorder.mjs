@@ -204,6 +204,17 @@ function cleanText(value, max = 500) {
   return typeof value === "string" ? value.replace(/[\u0000-\u001f]+/g, " ").trim().slice(0, max) : "";
 }
 
+function safeWebOrigin(value) {
+  const cleaned = cleanText(value, 2_000);
+  if (!cleaned) return "";
+  try {
+    const url = new URL(cleaned);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.origin : "";
+  } catch {
+    return "";
+  }
+}
+
 export function skillSlug(value) {
   const slug = cleanText(value, 80)
     .toLowerCase()
@@ -347,7 +358,7 @@ export function saveSkillRecording(payload, options = {}) {
         ? raw.ancestry.map((entry) => cleanText(entry, 120)).filter(Boolean).slice(0, 6)
         : undefined;
       const whereFroms = Array.isArray(raw.whereFroms)
-        ? raw.whereFroms.map((entry) => cleanText(entry, 500)).filter(Boolean).slice(0, 5)
+        ? [...new Set(raw.whereFroms.map(safeWebOrigin).filter(Boolean))].slice(0, 5)
         : undefined;
       const event = {
         type,
@@ -399,7 +410,12 @@ export function saveSkillRecording(payload, options = {}) {
       events,
       truncated,
       omittedEvents,
-      privacy: { typedCharactersRetained: false, reviewedBeforeInstall: true },
+      privacy: {
+        rawKeystrokesRetained: false,
+        clipboardContentsRetained: false,
+        screenFramesMayContainVisibleText: true,
+        reviewedBeforeInstall: true,
+      },
     };
     writeFileSync(path.join(references, "recording.json"), `${JSON.stringify(recording, null, 2)}\n`, { mode: 0o600 });
     writeFileSync(

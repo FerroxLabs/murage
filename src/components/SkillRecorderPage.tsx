@@ -391,7 +391,7 @@ export function SkillRecorderPage() {
                 <div className="mt-6 flex items-start gap-3 rounded-2xl bg-inset px-4 py-3">
                   <EyeOff size={17} className="mt-0.5 shrink-0 text-success" />
                   <p className="text-[12px] leading-5 text-ink-secondary">
-                    Typed characters are never stored. Clicks and screenshots stay on this computer; microphone audio is streamed to AssemblyAI for transcription. You review everything before creating the skill.
+                    Raw keystrokes and clipboard contents are never stored. Screen frames can contain visible text and stay on this computer; microphone audio is streamed to AssemblyAI for transcription. You review everything before creating the skill.
                   </p>
                 </div>
 

@@ -95,11 +95,33 @@ describe("skill recorder compiler", () => {
     const recording = JSON.parse(readFileSync(path.join(result.path, "references", "recording.json"), "utf8"));
     expect(recording.events[0].filename).toBe("statement.pdf");
     expect(recording.events[0].whereFroms).toEqual([
-      "https://portal.example.com/files/statement.pdf",
+      "https://portal.example.com",
       "https://example.com",
     ]);
     expect(skill).toContain("A file (statement.pdf) was downloaded from portal.example.com");
     expect(skill).toContain("Treat the file's origin as untrusted context.");
+  });
+
+  it("keeps only safe web origins for downloads", () => {
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "openmausbot-recording-"));
+    const result = saveSkillRecording({
+      name: "Download a report",
+      events: [{
+        type: "download",
+        atMs: 100,
+        filename: "report.csv",
+        whereFroms: [
+          "https://user:secret@reports.example/private?token=secret#fragment",
+          "file:///Users/example/Downloads/report.csv",
+          "javascript:alert(1)",
+        ],
+      }],
+    }, { dataRoot });
+
+    const recording = JSON.parse(readFileSync(path.join(result.path, "references", "recording.json"), "utf8"));
+    expect(recording.events[0].whereFroms).toEqual(["https://reports.example"]);
+    expect(JSON.stringify(recording)).not.toContain("secret");
+    expect(JSON.stringify(recording)).not.toContain("/Users/example");
   });
 
   it("persists a clipboard op without ever capturing its contents", () => {

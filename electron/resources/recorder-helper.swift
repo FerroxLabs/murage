@@ -128,11 +128,12 @@ final class Recorder {
         secureCachedMs = t
         var focused: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(systemWide, "AXFocusedUIElement" as CFString, &focused)
-        // Deny-by-default: if focus can't be determined, treat as NOT secure.
+        // Deny by default: if focus cannot be determined, suppress content-
+        // adjacent events rather than risk treating a password field as safe.
         guard err == .success, let focusedRef = focused,
               CFGetTypeID(focusedRef) == AXUIElementGetTypeID() else {
-            secureCachedValue = false
-            return false
+            secureCachedValue = true
+            return true
         }
         let element = focusedRef as! AXUIElement
         secureCachedValue = (axString(element, "AXRole") == "AXSecureTextField")
@@ -186,7 +187,9 @@ final class Recorder {
         // secure field is focused OR the hit element is itself a secure field.
         let omitContent = secure || elementIsSecure
         if !omitContent {
-            if let name = axString(el, "AXTitle") ?? axString(el, "AXValue") ?? axString(el, "AXDescription") {
+            // AXValue is deliberately excluded: for text fields it is the
+            // user's entered text, which would reconstruct what they typed.
+            if let name = axString(el, "AXTitle") ?? axString(el, "AXDescription") {
                 values["name"] = String(name.prefix(120))
             }
             if let identifier = axString(el, "AXIdentifier") {
@@ -200,7 +203,7 @@ final class Recorder {
                       let pRef = parentRef, CFGetTypeID(pRef) == AXUIElementGetTypeID() else { break }
                 let parent = pRef as! AXUIElement
                 let role = axString(parent, "AXRole") ?? ""
-                let name = axString(parent, "AXTitle") ?? axString(parent, "AXValue") ?? axString(parent, "AXDescription") ?? ""
+                let name = axString(parent, "AXTitle") ?? axString(parent, "AXDescription") ?? ""
                 ancestry.append("\(role):\(String(name.prefix(120)))")
                 current = parent
             }
@@ -288,9 +291,29 @@ final class Recorder {
     private func readWhereFroms(_ path: String) -> [String] {
         guard let item = MDItemCreate(kCFAllocatorDefault, path as CFString),
               let value = MDItemCopyAttribute(item, kMDItemWhereFroms) else { return [] }
-        if let strings = value as? [String] { return strings }
-        if let anys = value as? [Any] { return anys.compactMap { $0 as? String } }
-        return []
+        let strings: [String]
+        if let values = value as? [String] {
+            strings = values
+        } else if let values = value as? [Any] {
+            strings = values.compactMap { $0 as? String }
+        } else {
+            return []
+        }
+        // Download metadata can contain signed query strings, credentials,
+        // fragments, or local file URLs. Only the web origin is useful to a
+        // reusable skill, so strip everything else before it leaves native.
+        return strings.compactMap { raw in
+            guard var components = URLComponents(string: raw),
+                  let scheme = components.scheme?.lowercased(),
+                  (scheme == "https" || scheme == "http"),
+                  components.host != nil else { return nil }
+            components.user = nil
+            components.password = nil
+            components.path = ""
+            components.query = nil
+            components.fragment = nil
+            return components.string
+        }
     }
 
     // MARK: - Event handling
@@ -372,7 +395,7 @@ final class Recorder {
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
             let recorder = Unmanaged<Recorder>.fromOpaque(refcon).takeUnretainedValue()
-            if type == .tapDisabledByTimeout {
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                 if let tap = recorder.tap {
                     CGEvent.tapEnable(tap: tap, enable: true)
                 }
