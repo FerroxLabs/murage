@@ -2,7 +2,7 @@
 
 declare global {
 type NativeSkillRecordingEvent = {
-  type: "app" | "click" | "scroll" | "key";
+  type: "app" | "click" | "scroll" | "key" | "typing" | "clipboard" | "download";
   atMs: number;
   app?: string;
   windowTitle?: string;
@@ -15,6 +15,18 @@ type NativeSkillRecordingEvent = {
   control?: boolean;
   option?: boolean;
   shift?: boolean;
+  /** Element identity for a click, from the accessibility tree. */
+  role?: string;
+  name?: string;
+  identifier?: string;
+  ancestry?: string[];
+  /** Typed keystroke count (never the characters themselves). */
+  keyCount?: number;
+  /** Clipboard action kind — never its contents. */
+  op?: "copy" | "cut" | "paste";
+  /** Downloaded file name and its origin URLs. */
+  filename?: string;
+  whereFroms?: string[];
 };
 
 type SkillRecordingPayload = {
@@ -25,13 +37,24 @@ type SkillRecordingPayload = {
   transcription?: { provider: "assemblyai"; model: string };
   audio?: string;
   events: Array<{
-    type: "app" | "click" | "scroll" | "shortcut" | "typing";
+    type: "app" | "click" | "scroll" | "shortcut" | "typing" | "clipboard" | "download";
     atMs: number;
     app?: string;
     windowTitle?: string;
     direction?: "up" | "down";
     shortcut?: string;
+    keyCount?: number;
     screenshot?: string;
+    /** Element identity for a click. */
+    role?: string;
+    name?: string;
+    identifier?: string;
+    ancestry?: string[];
+    /** Clipboard action kind — never its contents. */
+    op?: "copy" | "cut" | "paste";
+    /** Downloaded file name and its origin URLs. */
+    filename?: string;
+    whereFroms?: string[];
   }>;
 };
 

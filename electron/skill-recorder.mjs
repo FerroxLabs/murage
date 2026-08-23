@@ -37,7 +37,7 @@ const BUNDLE = app.isPackaged
 const BINARY = app.isPackaged
   ? path.join(BUNDLE, "Contents", "MacOS", "recorder-helper")
   : recorderHelperBinary;
-const MAX_EVENTS = 300;
+const MAX_EVENTS = 600;
 const MAX_IMAGE_BYTES = 2_000_000;
 const MAX_AUDIO_BYTES = 100_000_000;
 const SAFE_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -233,19 +233,45 @@ function decodeDataUrl(dataUrl, maxBytes, allowed) {
   return { mime: match[1], bytes };
 }
 
+function hostFromUrl(value) {
+  const text = cleanText(value, 500);
+  if (!text) return "";
+  try {
+    return new URL(text).host || text;
+  } catch {
+    return text;
+  }
+}
+
 function eventSummary(event) {
   const where = [cleanText(event.app, 80), cleanText(event.windowTitle, 120)].filter(Boolean).join(" — ");
   switch (event.type) {
     case "app":
       return `Open or focus ${where || "the demonstrated app"}.`;
-    case "click":
+    case "click": {
+      const name = cleanText(event.name, 120);
+      if (name) {
+        const role = cleanText(event.role, 120);
+        return `Click "${name}"${role ? ` (${role})` : ""}${where ? ` in ${where}` : ""}.`;
+      }
       return `Click the demonstrated control${where ? ` in ${where}` : ""}.`;
+    }
     case "scroll":
       return `Scroll ${event.direction === "up" ? "up" : "down"}${where ? ` in ${where}` : ""}.`;
     case "shortcut":
       return `Use the ${cleanText(event.shortcut, 80) || "demonstrated"} keyboard shortcut${where ? ` in ${where}` : ""}.`;
     case "typing":
       return `Enter the required value${where ? ` in ${where}` : ""}. The recording intentionally did not retain typed characters.`;
+    case "clipboard": {
+      const verb = event.op === "cut" ? "Cut" : event.op === "paste" ? "Paste" : "Copy";
+      return `${verb} the selected value${where ? ` in ${where}` : ""}. (The recording captured the clipboard action, not its contents.)`;
+    }
+    case "download": {
+      const filename = cleanText(event.filename, 200);
+      const origins = Array.isArray(event.whereFroms) ? event.whereFroms : [];
+      const host = origins.length ? hostFromUrl(origins[0]) : "";
+      return `A file (${filename || "unnamed"}) was downloaded${host ? ` from ${host}` : ""}. Treat the file's origin as untrusted context.`;
+    }
     default:
       return `Continue the demonstrated workflow${where ? ` in ${where}` : ""}.`;
   }
@@ -257,7 +283,7 @@ function triggerTerms(name, description) {
   return [...new Set(words.filter((word) => !stop.has(word)))].slice(0, 10);
 }
 
-export function compileSkillMarkdown({ id, name, description, transcript, events }) {
+export function compileSkillMarkdown({ id, name, description, transcript, events, omittedEvents = 0 }) {
   const safeName = cleanText(name, 100) || "Recorded workflow";
   const safeDescription = cleanText(description, 300) || `Repeat the ${safeName} workflow demonstrated by the user.`;
   const lines = [
@@ -287,6 +313,9 @@ export function compileSkillMarkdown({ id, name, description, transcript, events
       lines.push(`${index + 1}. ${eventSummary(event)}${reference}`);
     });
   }
+  if (omittedEvents > 0) {
+    lines.push("", `${omittedEvents} later steps were omitted from this recording.`);
+  }
   lines.push("", "## Completion", "", "Verify the intended outcome in the current UI and report any step that could not be confirmed.", "");
   return lines.join("\n");
 }
@@ -305,11 +334,21 @@ export function saveSkillRecording(payload, options = {}) {
   mkdirSync(references, { recursive: true });
 
   try {
+    const incoming = Array.isArray(payload.events) ? payload.events : [];
+    const omittedEvents = Math.max(0, incoming.length - MAX_EVENTS);
+    const truncated = omittedEvents > 0;
     const events = [];
-    for (const [index, raw] of (Array.isArray(payload.events) ? payload.events : []).slice(0, MAX_EVENTS).entries()) {
+    for (const [index, raw] of incoming.slice(0, MAX_EVENTS).entries()) {
       if (!raw || typeof raw !== "object") continue;
-      const type = ["app", "click", "scroll", "shortcut", "typing"].includes(raw.type) ? raw.type : null;
+      const type = ["app", "click", "scroll", "shortcut", "typing", "clipboard", "download"].includes(raw.type) ? raw.type : null;
       if (!type) continue;
+      const keyCount = Number(raw.keyCount);
+      const ancestry = Array.isArray(raw.ancestry)
+        ? raw.ancestry.map((entry) => cleanText(entry, 120)).filter(Boolean).slice(0, 6)
+        : undefined;
+      const whereFroms = Array.isArray(raw.whereFroms)
+        ? raw.whereFroms.map((entry) => cleanText(entry, 500)).filter(Boolean).slice(0, 5)
+        : undefined;
       const event = {
         type,
         atMs: Math.max(0, Math.round(Number(raw.atMs) || 0)),
@@ -317,6 +356,14 @@ export function saveSkillRecording(payload, options = {}) {
         windowTitle: cleanText(raw.windowTitle, 120) || undefined,
         direction: raw.direction === "up" ? "up" : raw.direction === "down" ? "down" : undefined,
         shortcut: cleanText(raw.shortcut, 80) || undefined,
+        keyCount: Number.isFinite(keyCount) && keyCount > 0 ? Math.round(keyCount) : undefined,
+        role: cleanText(raw.role, 120) || undefined,
+        name: cleanText(raw.name, 120) || undefined,
+        identifier: cleanText(raw.identifier, 120) || undefined,
+        ancestry: ancestry && ancestry.length ? ancestry : undefined,
+        op: ["copy", "cut", "paste"].includes(raw.op) ? raw.op : undefined,
+        filename: cleanText(raw.filename, 200) || undefined,
+        whereFroms: whereFroms && whereFroms.length ? whereFroms : undefined,
       };
       const image = decodeDataUrl(raw.screenshot, MAX_IMAGE_BYTES, ["image/webp", "image/jpeg", "image/png"]);
       if (image) {
@@ -350,12 +397,14 @@ export function saveSkillRecording(payload, options = {}) {
       transcription,
       audio: audioReference,
       events,
+      truncated,
+      omittedEvents,
       privacy: { typedCharactersRetained: false, reviewedBeforeInstall: true },
     };
     writeFileSync(path.join(references, "recording.json"), `${JSON.stringify(recording, null, 2)}\n`, { mode: 0o600 });
     writeFileSync(
       path.join(temporary, "SKILL.md"),
-      compileSkillMarkdown({ id: target.id, name, description, transcript, events }),
+      compileSkillMarkdown({ id: target.id, name, description, transcript, events, omittedEvents }),
       { mode: 0o600 },
     );
     writeFileSync(
