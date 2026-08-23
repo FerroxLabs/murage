@@ -587,8 +587,12 @@ struct ChatView: View {
                     accentColor: MausPalette.color(current.color)
                 ) { command in
                     switch command.id {
-                    case "computer": showingComputer = true
-                    case "tasks": showingTasks = true
+                    case "computer":
+                        draft = ""
+                        showingComputer = true
+                    case "tasks":
+                        draft = ""
+                        showingTasks = true
                     default: submit(command.command)
                     }
                 }
@@ -874,6 +878,7 @@ struct TextBubble: View {
         guard !headers.isEmpty, separators.count == headers.count,
               separators.allSatisfy(Self.isTableSeparator) else { return nil }
         let rows = lines.dropFirst(2).map(Self.tableCells)
+        guard rows.allSatisfy({ $0.count == headers.count }) else { return nil }
         return (headers, rows)
     }
 
@@ -881,8 +886,31 @@ struct TextBubble: View {
         var body = line
         if body.first == "|" { body.removeFirst() }
         if body.last == "|" { body.removeLast() }
-        return body.split(separator: "|", omittingEmptySubsequences: false)
-            .map { String($0).trimmingCharacters(in: .whitespaces) }
+
+        var cells: [String] = []
+        var cell = ""
+        var escaped = false
+        for character in body {
+            if escaped {
+                if character == "|" {
+                    cell.append(character)
+                } else {
+                    cell.append("\\")
+                    cell.append(character)
+                }
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "|" {
+                cells.append(cell.trimmingCharacters(in: .whitespaces))
+                cell = ""
+            } else {
+                cell.append(character)
+            }
+        }
+        if escaped { cell.append("\\") }
+        cells.append(cell.trimmingCharacters(in: .whitespaces))
+        return cells
     }
 
     private static func isTableSeparator(_ cell: String) -> Bool {

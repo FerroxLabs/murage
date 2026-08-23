@@ -95,8 +95,16 @@ struct PairingView: View {
                 }
             }
             .task {
-                try? await Task.sleep(nanoseconds: 7_000_000_000)
-                searchedLongEnough = true
+                searchedLongEnough = false
+                do {
+                    try await Task.sleep(nanoseconds: 7_000_000_000)
+                    try Task.checkCancellation()
+                    searchedLongEnough = true
+                } catch is CancellationError {
+                    return
+                } catch {
+                    return
+                }
             }
         }
     }
@@ -355,6 +363,7 @@ struct PairingView: View {
                             failure = "That should look like 192.168.1.42:8810 or host.ts.net:8810."
                             return
                         }
+                        choiceGeneration += 1
                         scannedCredential = nil
                         chosen = connection
                     } label: {
