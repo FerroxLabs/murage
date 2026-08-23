@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Check, Loader2, Volume2 } from "lucide-react";
 
 import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
+import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { speaker } from "@/lib/tts";
 import { cn } from "@/lib/cn";
 
@@ -24,10 +25,16 @@ export function VoiceSettings({
 
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [voices, setVoices] = useState<Array<{ id: string; label: string; description?: string }>>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
 
+  const { capabilities } = useDesktopCapabilities();
+  // Built-in voices are offered where the desktop contract says they exist —
+  // never inferred from a user agent.
+  const systemVoicesAvailable = capabilities.host.platform === "darwin";
+  const provider = tts?.provider ?? "elevenlabs";
   const configured = Boolean(tts?.configured);
 
   useEffect(() => {
@@ -48,7 +55,19 @@ export function VoiceSettings({
     return () => {
       alive = false;
     };
-  }, [configured]);
+  }, [configured, provider]);
+
+  const setProvider = (next: "elevenlabs" | "system") => {
+    if (next === provider || switching) return;
+    setSwitching(true);
+    setError(null);
+    // the provider is a setting, not a secret — it rides the ordinary
+    // config write, and the key row reappears or disappears with it
+    api("/api/config", { method: "PUT", body: JSON.stringify({ tts: { provider: next } }) })
+      .then((status: ConfigStatus) => dispatch({ type: "configStatus", config: status }))
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setSwitching(false));
+  };
 
   const saveKey = () => {
     const nextKey = key.trim();
@@ -76,11 +95,39 @@ export function VoiceSettings({
     <div className="rounded-xl bg-card p-4">
       <div className="text-[15px] font-medium text-ink">Voice</div>
       <div className="mt-0.5 text-[13px] text-ink-secondary">
-        Give this agent a voice for calls and spoken replies. The ElevenLabs key is shared by the workspace;
-        the voice choice belongs to this agent.
+        Give this agent a voice for calls and spoken replies. The voice choice belongs to this agent;
+        {provider === "system" ? " the voices are the ones already installed on this Mac." : " the ElevenLabs key is shared by the workspace."}
       </div>
 
-      <div className="mt-4">
+      {systemVoicesAvailable && (
+        <div className="mt-4">
+          <div className="mb-2 text-[13px] text-ink-secondary">Voice engine</div>
+          <div className="inline-flex rounded-xl bg-inset p-1" role="radiogroup" aria-label="Voice engine">
+            {([
+              { value: "elevenlabs", label: "ElevenLabs" },
+              { value: "system", label: "Built-in Mac voices" },
+            ] as const).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={provider === option.value}
+                disabled={switching}
+                onClick={() => setProvider(option.value)}
+                className={cn(
+                  "rounded-lg px-3.5 py-1.5 text-[12.5px] transition-colors disabled:opacity-50",
+                  provider === option.value ? "bg-raised text-ink shadow" : "text-ink-secondary hover:text-ink",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {provider === "elevenlabs" && (
+        <div className="mt-4">
         <div className="mb-1.5 flex items-center gap-2 text-[13px] text-ink-secondary">
           <span className={cn("size-1.5 rounded-full", configured ? "bg-success" : "bg-raised-hover")} />
           <span>ElevenLabs key</span>
@@ -115,7 +162,8 @@ export function VoiceSettings({
             Get a key from ElevenLabs
           </a>
         )}
-      </div>
+        </div>
+      )}
 
       {configured && (
         <div className="mt-4">
