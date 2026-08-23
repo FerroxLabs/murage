@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type AssemblyAITurn = {
   order: number;
   text: string;
@@ -178,4 +180,3 @@ export async function startAssemblyAITranscription({
     },
   };
 }
-import { z } from "zod";

@@ -30,8 +30,11 @@ function contextMatches(a: RecordedSkillEvent, event: NativeSkillRecordingEvent)
   return a.app === event.app && a.windowTitle === event.windowTitle;
 }
 
+let eventSequence = 0;
+
 function idFor(event: NativeSkillRecordingEvent, suffix = ""): string {
-  return `${event.atMs}-${event.type}${suffix}`;
+  eventSequence += 1;
+  return `${event.atMs}-${event.type}${suffix}-${eventSequence}`;
 }
 
 export function shortcutLabel(event: NativeSkillRecordingEvent): string {

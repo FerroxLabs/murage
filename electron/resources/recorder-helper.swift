@@ -32,9 +32,11 @@ final class Recorder {
         var focused: CFTypeRef?
         var title = ""
         if AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute as CFString, &focused) == .success,
-           let window = focused {
+           let window = focused,
+           CFGetTypeID(window) == AXUIElementGetTypeID() {
             var value: CFTypeRef?
-            if AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &value) == .success,
+            let windowElement = window as! AXUIElement
+            if AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &value) == .success,
                let string = value as? String {
                 title = String(string.prefix(240))
             }
@@ -99,6 +101,12 @@ final class Recorder {
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
             let recorder = Unmanaged<Recorder>.fromOpaque(refcon).takeUnretainedValue()
+            if type == .tapDisabledByTimeout {
+                if let tap = recorder.tap {
+                    CGEvent.tapEnable(tap: tap, enable: true)
+                }
+                return Unmanaged.passUnretained(event)
+            }
             recorder.handle(type: type, event: event)
             return Unmanaged.passUnretained(event)
         }

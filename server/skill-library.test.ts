@@ -23,7 +23,9 @@ describe("bundled skill library", () => {
   it("selects a skill only when both its trigger and capability are present", () => {
     const rendered = skillInstructionsFor("Open Uber on my Android", ["phoneMcp"], [phone]);
     expect(rendered).toContain("Use phone tools");
-    expect(rendered).toContain('root="/skills/phone-harness"');
+    expect(rendered).not.toContain('root="/skills/phone-harness"');
+    expect(skillInstructionsFor("Open Uber on my Android", ["phoneMcp"], [phone], { includeRoot: true }))
+      .toContain('root="/skills/phone-harness"');
     expect(skillInstructionsFor("Open Uber on my Android", [], [phone])).toBe("");
     expect(skillInstructionsFor("Write a poem", ["phoneMcp"], [phone])).toBe("");
   });
@@ -54,5 +56,12 @@ describe("bundled skill library", () => {
 
   it("does not let a user skill shadow a bundled skill id", () => {
     expect(mergeSkills([phone], [{ ...phone, instructions: "user replacement" }])).toEqual([phone]);
+  });
+
+  it("treats a non-directory user skill root as empty", () => {
+    const root = mkdtempSync(join(tmpdir(), "openmausbot-skills-root-"));
+    const file = join(root, "not-a-directory");
+    writeFileSync(file, "nope");
+    expect(loadUserSkills(file)).toEqual([]);
   });
 });

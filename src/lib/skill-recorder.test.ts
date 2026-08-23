@@ -24,5 +24,10 @@ describe("skill recording events", () => {
     const second = appendNativeEvent(first.events, event({ type: "scroll", atMs: 600, deltaY: -7 }));
     expect(second.events).toHaveLength(1);
   });
-});
 
+  it("gives same-millisecond events distinct ids", () => {
+    const first = appendNativeEvent([], event({ type: "click", atMs: 100 }));
+    const second = appendNativeEvent(first.events, event({ type: "click", atMs: 100 }));
+    expect(second.events[0]?.id).not.toBe(second.events[1]?.id);
+  });
+});

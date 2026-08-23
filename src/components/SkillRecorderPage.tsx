@@ -267,6 +267,14 @@ export function SkillRecorderPage() {
       }
       releaseStreams();
       updatePhase("review");
+    } catch (caught) {
+      await transcriptionSessionRef.current?.stop().catch(() => {});
+      transcriptionSessionRef.current = null;
+      if (mediaRecorderRef.current?.state !== "inactive") mediaRecorderRef.current?.stop();
+      mediaRecorderRef.current = null;
+      releaseStreams();
+      updatePhase("review");
+      setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       stoppingRef.current = false;
     }

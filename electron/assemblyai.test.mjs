@@ -18,7 +18,10 @@ describe("AssemblyAI credential boundary", () => {
       .resolves.toEqual({ token: "temporary", expiresInSeconds: 600 });
     expect(fetchImpl).toHaveBeenCalledWith(
       "https://streaming.assemblyai.com/v3/token?expires_in_seconds=600",
-      { headers: { authorization: "permanent" } },
+      {
+        headers: { authorization: "permanent" },
+        signal: expect.any(AbortSignal),
+      },
     );
   });
 

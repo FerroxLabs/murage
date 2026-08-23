@@ -79,8 +79,14 @@ export function loadBundledSkills(root = process.env.OMB_SKILLS_DIR || join(proc
  * isolated instead of taking down every bot turn. */
 export function loadUserSkills(root: string): BundledSkill[] {
   if (!existsSync(root)) return [];
+  let names: string[];
+  try {
+    names = readdirSync(root).sort();
+  } catch {
+    return [];
+  }
   const skills: BundledSkill[] = [];
-  for (const name of readdirSync(root).sort()) {
+  for (const name of names) {
     try {
       const skill = loadSkillDirectory(join(root, name));
       if (skill) skills.push(skill);
@@ -104,8 +110,9 @@ export function skillInstructionsFor(
   text: string,
   capabilities: Iterable<string>,
   skills: readonly BundledSkill[],
+  options?: { includeRoot?: boolean },
 ): string {
-  return renderSkillInstructions(selectBundledSkills(text, capabilities, skills));
+  return renderSkillInstructions(selectBundledSkills(text, capabilities, skills), options);
 }
 
 export function selectBundledSkills(
@@ -122,9 +129,12 @@ export function selectBundledSkills(
   );
 }
 
-export function renderSkillInstructions(selected: readonly BundledSkill[]): string {
+export function renderSkillInstructions(
+  selected: readonly BundledSkill[],
+  { includeRoot = false }: { includeRoot?: boolean } = {},
+): string {
   if (!selected.length) return "";
   return selected.map(({ manifest, instructions, directory }) =>
-    `\n\n<openmaus-skill id=${JSON.stringify(manifest.id)} version=${JSON.stringify(manifest.version)} root=${JSON.stringify(directory)}>\n${instructions}\n</openmaus-skill>`,
+    `\n\n<openmaus-skill id=${JSON.stringify(manifest.id)} version=${JSON.stringify(manifest.version)}${includeRoot ? ` root=${JSON.stringify(directory)}` : ""}>\n${instructions}\n</openmaus-skill>`,
   ).join("");
 }

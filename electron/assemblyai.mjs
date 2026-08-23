@@ -20,6 +20,7 @@ export async function mintAssemblyAIStreamingToken(
   try {
     response = await fetchImpl(`${TOKEN_ENDPOINT}?expires_in_seconds=${lifetime}`, {
       headers: { authorization: secret },
+      signal: AbortSignal.timeout(10_000),
     });
   } catch {
     throw new Error("Could not reach AssemblyAI. Check your connection and try again.");
