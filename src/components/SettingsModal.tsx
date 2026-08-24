@@ -3,7 +3,7 @@
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { Coins, KeyRound, Monitor, Smartphone, Terminal, User, X } from "lucide-react";
+import { Coins, KeyRound, Monitor, Search, Smartphone, Terminal, User, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
@@ -19,14 +19,24 @@ import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
 import { cn } from "@/lib/cn";
 
-const SECTIONS: Array<{ id: AppSettingsSection; label: string; icon: typeof User }> = [
-  { id: "general", label: "General", icon: User },
-  { id: "connections", label: "Connections", icon: KeyRound },
-  { id: "engines", label: "Engines", icon: Terminal },
-  { id: "companion", label: "Companion", icon: Smartphone },
-  { id: "computer", label: "Local VM", icon: Monitor },
-  { id: "usage", label: "Usage", icon: Coins },
+const SECTIONS: Array<{
+  id: AppSettingsSection;
+  label: string;
+  icon: typeof User;
+  keywords: string[];
+}> = [
+  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates"] },
+  { id: "connections", label: "Connections", icon: KeyRound, keywords: ["keys", "api", "composio", "box", "xai", "vps"] },
+  { id: "engines", label: "Engines", icon: Terminal, keywords: ["models", "claude", "grok", "providers", "cli"] },
+  { id: "companion", label: "Companion", icon: Smartphone, keywords: ["phone", "pair", "mobile"] },
+  { id: "computer", label: "Local VM", icon: Monitor, keywords: ["vm", "virtual", "desktop"] },
+  { id: "usage", label: "Usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
 ];
+
+function sectionMatches(section: (typeof SECTIONS)[number], query: string): boolean {
+  if (!query) return true;
+  return [section.label, ...section.keywords].some((part) => part.toLowerCase().includes(query));
+}
 
 /** Name + email, persisted to /api/config {profile} on blur. */
 function ProfileFields() {
@@ -239,6 +249,16 @@ export function SettingsModal() {
   const { state, dispatch } = useStore();
   const section = state.appSettingsSection;
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const visibleSections = SECTIONS.filter((entry) => sectionMatches(entry, q));
+
+  useEffect(() => {
+    const visible = SECTIONS.filter((entry) => sectionMatches(entry, q));
+    if (visible.some((entry) => entry.id === section)) return;
+    const first = visible[0];
+    if (first) dispatch({ type: "toggleAppSettings", open: true, section: first.id });
+  }, [dispatch, q, section]);
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -301,7 +321,28 @@ export function SettingsModal() {
           <div id="app-settings-title" className="px-2 pb-2 pt-1 text-[15px] font-semibold text-ink">
             Settings
           </div>
-          {SECTIONS.map(({ id, label, icon: Icon }) => (
+          <div className="mb-1.5 flex items-center gap-2 rounded-lg bg-control/70 px-2.5 py-1.5">
+            <Search size={14} className="shrink-0 text-ink-secondary" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Escape") return;
+                e.stopPropagation();
+                if (query) setQuery("");
+                else dispatch({ type: "toggleAppSettings", open: false });
+              }}
+              placeholder="Search"
+              aria-label="Search settings"
+              className="w-full bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
+            />
+          </div>
+          {visibleSections.length === 0 && (
+            <div className="px-2.5 py-4 text-[12.5px] leading-relaxed text-ink-secondary">
+              Nothing matches “{query.trim()}”
+            </div>
+          )}
+          {visibleSections.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: id })}

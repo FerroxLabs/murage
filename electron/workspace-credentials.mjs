@@ -18,12 +18,17 @@ export const WORKSPACE_CREDENTIALS = [
 /** One boot-time sweep of config.json: move every plaintext workspace secret
  * into the encrypted store and DELETE the plaintext field.
  *
- * Deleting (never blanking) keeps "" meaningful. The server persists a
- * credential save by writing the field — a mid-session save lands as the new
- * value, a mid-session clear lands as "". So on the next boot:
+ * Deleting (never blanking) keeps the meaning of what remains unambiguous:
  *   - non-empty value  → newest user intent: overwrite the stored secret
- *   - ""               → the user cleared it: drop the stored secret too
- *   - field absent     → already migrated: keep what the store holds
+ *   - "" or absent     → no plaintext information; the store stays authoritative
+ *
+ * "" must never drop a stored secret. The packaged app's external-secret
+ * save path writes an empty tombstone into config.json on EVERY credential
+ * commit (the real value goes to credentials.bin first), so reading "" as
+ * "the user cleared this" deleted freshly saved keys at the next boot.
+ * Clearing runs through the desktop shell's credential:set handler, which
+ * removes the entry from the store directly before persisting the same
+ * tombstone — so there is no "" case in which the store should lose data.
  * Running twice is a no-op, and nothing is lost if a boot dies between the
  * two writes — the caller persists credentials BEFORE rewriting config, so
  * the worst case re-runs the same overwrite.
@@ -43,13 +48,8 @@ export function migrateWorkspaceCredentials(config, credentials) {
     const value = home[field];
     if (typeof value !== "string") continue;
     const secret = value.trim();
-    if (secret) {
-      if (nextCredentials[name] !== secret) {
-        nextCredentials[name] = secret;
-        credentialsChanged = true;
-      }
-    } else if (Object.hasOwn(nextCredentials, name)) {
-      delete nextCredentials[name];
+    if (secret && nextCredentials[name] !== secret) {
+      nextCredentials[name] = secret;
       credentialsChanged = true;
     }
     delete home[field];

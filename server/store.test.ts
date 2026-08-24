@@ -29,6 +29,40 @@ describe("Store", () => {
     expect(bot.modelSelection).toEqual(selection());
   });
 
+  it("dismisses the onboarding quiz when the user talks, and leaves live asks", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const quiz = store.messagesFor(bot.threadId)[1]!;
+    expect(quiz.card?.dismissed).toBeUndefined();
+
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "hi" });
+    expect(store.messagesFor(bot.threadId).find((m) => m.id === quiz.id)?.card?.dismissed).toBe(true);
+
+    const reloaded = new Store(selection);
+    expect(reloaded.messagesFor(bot.threadId).find((m) => m.id === quiz.id)?.card?.dismissed).toBe(true);
+
+    const ask = store.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "options",
+      card: {
+        title: "Approval needed",
+        subtitle: "run rm",
+        options: ["Allow", "Deny"],
+        requestId: "req-1",
+        tool: "Bash",
+      },
+    });
+    store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "later" });
+    expect(store.messagesFor(bot.threadId).find((m) => m.id === ask.id)?.card?.dismissed).toBeUndefined();
+  });
+
+  it("does not dismiss the quiz for bot-authored messages", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "still here" });
+    expect(store.messagesFor(bot.threadId)[1]?.card?.dismissed).toBeUndefined();
+  });
+
   it("createBot with seedMessages:false starts with an empty transcript", () => {
     const store = new Store(selection);
     const bot = store.createBot({ name: "Imported" }, { seedMessages: false });
@@ -376,12 +410,28 @@ describe("Store change stream", () => {
 
   it("emits once per write, after the write, with the record it wrote", () => {
     const store = new Store(selection);
-    const bot = store.createBot();
+    // no first-run quiz: a user append is exactly one write
+    const bot = store.createBot({ name: "Quiet" }, { seedMessages: false });
     const events = record(store);
     const m = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "hi" });
     expect(events).toEqual([{ type: "message", threadId: bot.threadId, message: m }]);
     // the emitted record is the stored one (redacted, id'd) — not the input
     expect(store.messagesFor(bot.threadId).at(-1)).toBe(m);
+  });
+
+  it("emits a card patch after a user message hides the onboarding quiz", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const quiz = store.messagesFor(bot.threadId)[1]!;
+    const events = record(store);
+    const m = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "hi" });
+    expect(events.map((event) => event.type)).toEqual(["message", "message.patch"]);
+    expect(events[0]).toEqual({ type: "message", threadId: bot.threadId, message: m });
+    expect(events[1]).toMatchObject({
+      type: "message.patch",
+      threadId: bot.threadId,
+      message: { id: quiz.id, card: { dismissed: true } },
+    });
   });
 
   it("announces a new bot before its onboarding messages", () => {

@@ -362,7 +362,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
   return (
     <>
-    <aside className="animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
+    <aside className="animate-panel-in relative z-20 flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3">
         <button
@@ -542,14 +542,19 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             </button>
           </div>
 
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
-            <div>
-              <div className="text-[15px] font-medium text-ink">Model</div>
-              <div className="mt-0.5 text-[13px] text-ink-secondary">
-                Which provider and model this bot runs on
-              </div>
-            </div>
-            <ModelPicker bot={bot} />
+          <div className="rounded-xl bg-card p-4">
+            <ModelPicker
+              bot={bot}
+              contained
+              label={
+                <div>
+                  <div className="text-[15px] font-medium text-ink">Model</div>
+                  <div className="mt-0.5 text-[13px] text-ink-secondary">
+                    Which provider and model this bot runs on
+                  </div>
+                </div>
+              }
+            />
           </div>
 
           {!!engine?.capabilities?.effortLevels?.length && (

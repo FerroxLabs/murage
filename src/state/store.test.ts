@@ -99,6 +99,72 @@ describe("Teach a skill feature flag", () => {
   });
 });
 
+describe("onboarding quiz", () => {
+  const quizCard = {
+    title: "What do you mostly want help with?",
+    subtitle: "Pick whatever's closest; we can always expand from there.",
+    options: ["Work & projects"],
+  };
+  const bot = {
+    id: "echo",
+    threadId: "t1",
+    name: "Echo",
+    title: "",
+    description: "",
+    notifications: true,
+    color: "green",
+    unread: false,
+    modelSelection: { instanceId: "x", model: "y" },
+    messages: [
+      { id: "g", role: "bot", kind: "text", text: "Hey", at: 1 },
+      { id: "q", role: "bot", kind: "options", card: quizCard, at: 2 },
+    ],
+    activeLeafId: "q",
+  } satisfies Bot;
+
+  it("hides the quiz as soon as the person sends a message", () => {
+    const state = { ...initialState, bots: [bot], selectedId: bot.id };
+    const next = reducer(state, { type: "send", botId: bot.id, text: "Hi bro" });
+    expect(next.bots[0]?.messages.find((message) => message.id === "q")?.card?.dismissed).toBe(true);
+  });
+
+  it("hides the quiz when they pick an option", () => {
+    const state = { ...initialState, bots: [bot], selectedId: bot.id };
+    const next = reducer(state, { type: "answerCard", botId: bot.id, messageId: "q", answer: "Work & projects" });
+    expect(next.bots[0]?.messages.find((message) => message.id === "q")?.card).toMatchObject({
+      answered: "Work & projects",
+      dismissed: true,
+    });
+  });
+
+  it("leaves a live permission card in place", () => {
+    const askBot: Bot = {
+      ...bot,
+      messages: [
+        ...bot.messages,
+        {
+          id: "ask",
+          role: "bot",
+          kind: "options",
+          card: {
+            title: "Approval needed",
+            subtitle: "rm",
+            options: ["Allow", "Deny"],
+            requestId: "r1",
+            tool: "Bash",
+          },
+          at: 3,
+        },
+      ],
+      activeLeafId: "ask",
+    };
+    const state = { ...initialState, bots: [askBot], selectedId: askBot.id };
+    const next = reducer(state, { type: "send", botId: askBot.id, text: "ok" });
+    expect(next.bots[0]?.messages.find((message) => message.id === "ask")?.card?.dismissed).toBeUndefined();
+    expect(next.bots[0]?.messages.find((message) => message.id === "q")?.card?.dismissed).toBe(true);
+  });
+});
+
 describe("cross-client bot creation", () => {
   it("adds an announced bot before its greeting frames arrive", () => {
     const announced = {

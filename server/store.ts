@@ -701,7 +701,21 @@ export class Store {
       }
     }
     this.emit({ type: "message", threadId, message: full });
+    // The first-run quiz is not a live ask. Talking past it hides it so the
+    // transcript is just the greeting plus what they said. Cards with a
+    // requestId are permission/question prompts and stay until answered.
+    if (full.role === "user" && full.kind === "text") this.dismissOnboardingCard(threadId);
     return full;
+  }
+
+  /** Hide the first-run quiz on this thread, if it is still open. */
+  dismissOnboardingCard(threadId: string): Message | null {
+    const t = this.thread(threadId);
+    const card = t.messages.find(
+      (message) => message.kind === "options" && message.card && !message.card.requestId && !message.card.dismissed,
+    );
+    if (!card?.card) return null;
+    return this.patchMessage(threadId, card.id, { card: { ...card.card, dismissed: true } });
   }
 
   /** Screen frames are ~100-500KB of base64 each; keeping every frame of a
