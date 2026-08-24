@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { fetchPiModels, parsePiCatalog, PiDriver } from "./pi.ts";
+import { buildMcpServers, fetchPiModels, parsePiCatalog, PiDriver } from "./pi.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-pi-cli.ts");
 const MODELS_LINE =
@@ -51,6 +51,55 @@ describe("parsePiCatalog", () => {
       '{"type":"extension_ui_request","id":"x","method":"setStatus","statusKey":"loops"}\n' + MODELS_LINE + "\n";
     const catalog = parsePiCatalog(stdout);
     expect(catalog.options).toHaveLength(2);
+  });
+});
+
+describe("buildMcpServers", () => {
+  it("returns null when there are no integrations", () => {
+    expect(buildMcpServers({ threadId: "t", text: "hi" })).toBeNull();
+  });
+
+  it("passes composio/agents/phone through as stdio servers", () => {
+    const servers = buildMcpServers({
+      threadId: "t",
+      text: "hi",
+      integrations: {
+        composio: { command: "node", args: ["c"], env: { A: "1" } },
+        agents: { command: "node", args: ["a"], env: { B: "2" } },
+        phone: { command: "node", args: ["p"], env: {} },
+      },
+    });
+    expect(servers).toEqual({
+      composio: { command: "node", args: ["c"], env: { A: "1" } },
+      agents: { command: "node", args: ["a"], env: { B: "2" } },
+      phone: { command: "node", args: ["p"], env: {} },
+    });
+  });
+
+  it("wraps the cloud computer in the computer-proxy spawn contract", () => {
+    const servers = buildMcpServers({
+      threadId: "t",
+      text: "hi",
+      integrations: {
+        computer: { kind: "box", boxId: "b1", token: "tok", control: { url: "http://c", token: "ct" } },
+      },
+    });
+    expect(servers?.computer).toMatchObject({
+      command: process.execPath,
+      args: [expect.stringContaining("computer-proxy")],
+      env: expect.objectContaining({ OGB_BOX_ID: "b1", OGB_BOX_TOKEN: "tok" }),
+    });
+  });
+
+  it("passes a local computer (Cua/VPS) through as a direct stdio server", () => {
+    const servers = buildMcpServers({
+      threadId: "t",
+      text: "hi",
+      integrations: {
+        localComputer: { command: "node", args: ["mcp"], env: { X: "y" } },
+      },
+    });
+    expect(servers?.computer).toEqual({ command: "node", args: ["mcp"], env: { X: "y" } });
   });
 });
 
