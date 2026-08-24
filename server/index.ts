@@ -19,6 +19,7 @@ import {
 } from "../shared/credential-request.ts";
 
 import { approvalKey, autoVerdict } from "./auto-approve.ts";
+import * as checkpoints from "./checkpoints.ts";
 import { appendDecision, readDecisions } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
 import { attachmentExists, extensionForMime, IMAGE_MAX_BYTES, readAttachment, saveImage, type SavedAttachment } from "./attachments.ts";
@@ -1522,6 +1523,13 @@ async function startTurn(
           ? store.pinTaskCwd(bot.id, threadId, privateWorkspace)
           : null;
       const cwd = pinnedCwd ?? undefined;
+      // Per-turn workspace checkpoint: snapshot the folder this turn will run
+      // in (the bot's custom working folder or its private workspace) into the
+      // bot's shadow git repo, so the turn's file changes can be rolled back.
+      // Fire-and-forget on purpose — a checkpoint must never delay or fail a
+      // turn, and checkpoints.ts guarantees snapshot() never throws. The turn
+      // record stores nothing; GET /api/bots/:id/checkpoints is the timeline.
+      if (cwd) void checkpoints.snapshot(bot.id, cwd, `turn ${threadId.slice(0, 8)}`);
       // dweb is opt-in: without an explicit daemon URL, do not advertise
       // tools that would fail on every call or spawn an unnecessary proxy.
       const dwebUrl = process.env.DWEB_URL?.trim();
@@ -4307,6 +4315,39 @@ const server = createServer(async (req, res) => {
       const text = readMemoryTopic(m[1], name);
       if (text === null) return json(res, 404, { error: "no such topic file" });
       return json(res, 200, { name, text });
+    }
+
+    // ── workspace checkpoints: per-turn shadow-git snapshots ────────────
+    // The list endpoint is the source of truth (turns store nothing), and
+    // `enabled` tells the UI whether snapshots can happen here at all —
+    // false for refused folders (home, Desktop…), a missing git, or a bot
+    // whose checkpoints failed earlier this session.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/checkpoints$/);
+    if (m && method === "GET") {
+      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      const cwd = url.searchParams.get("cwd") ?? "";
+      if (!cwd.trim()) return json(res, 400, { error: "cwd query parameter required" });
+      return json(res, 200, {
+        checkpoints: await checkpoints.listCheckpoints(m[1]!, cwd),
+        enabled: await checkpoints.checkpointsEnabled(m[1]!, cwd),
+      });
+    }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/checkpoints\/restore$/);
+    if (m && method === "POST") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const parsed = z
+        .object({ cwd: z.string().min(1), hash: z.string().regex(/^[0-9a-f]{40}$/) })
+        .safeParse(await readBody(req));
+      if (!parsed.success) {
+        return json(res, 400, { error: "cwd (absolute path) and hash (full 40-character checkpoint hash) required" });
+      }
+      // restoring under a live turn would fight the engine writing files —
+      // same rule as rewinding a thread: stop, then roll back
+      if (bot.busy) return json(res, 409, { error: "the bot is working — stop the turn before restoring files" });
+      const result = await checkpoints.restore(m[1]!, parsed.data.cwd, parsed.data.hash);
+      if (!result.ok) return json(res, 400, { error: result.error });
+      return json(res, 200, { ok: true });
     }
 
     // onboarding/ask cards persist their answered/dismissed state
