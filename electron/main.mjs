@@ -68,8 +68,15 @@ let secureCredentials = {};
 const CREDENTIALS_FILE = path.join(app.getPath("userData"), "credentials.bin");
 
 async function loadSecureCredentials() {
+  if (!fs.existsSync(CREDENTIALS_FILE)) return {};
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) {
+    // Returning nothing here looks identical to "the user never saved keys".
+    // Say why, so an OS-store hiccup is diagnosable instead of reading as
+    // wiped credentials.
+    slog("OS credential store unavailable; saved credentials are not loaded this launch");
+    return {};
+  }
   try {
-    if (!fs.existsSync(CREDENTIALS_FILE) || !(await safeStorage.isAsyncEncryptionAvailable())) return {};
     const decrypted = await safeStorage.decryptStringAsync(fs.readFileSync(CREDENTIALS_FILE));
     return JSON.parse(decrypted.result);
   } catch (error) {
