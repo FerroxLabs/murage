@@ -295,6 +295,42 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(JSON.stringify(rows)).not.toContain("openai-secret-value");
   });
 
+  it("mounts integrations as stdio MCP servers and loads the pi-mcp-extension", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omb-pi-mcp-dump-"));
+    const dump = join(dir, "dump.jsonl");
+    await create(undefined, { FAKE_PI_DUMP: dump });
+    const { turnId } = await instance.adapter.sendTurn({
+      threadId: "t-mcp",
+      text: "hi",
+      integrations: {
+        composio: { command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } },
+        computer: { kind: "box", boxId: "b1", token: "bt", control: { url: "http://c", token: "ct" } },
+      },
+    });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    const rows = readFileSync(dump, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { argv: string[]; mcpConfig?: { mcpServers?: Record<string, any> } | null });
+    const mcpRow = rows.find((r) => r.mcpConfig != null);
+    expect(mcpRow).toBeTruthy();
+
+    // the extension rides `-e` so the external pi process mounts the servers
+    const extIndex = mcpRow!.argv.indexOf("-e");
+    expect(extIndex).toBeGreaterThanOrEqual(0);
+    expect(mcpRow!.argv[extIndex + 1]).toContain("pi-mcp-extension");
+
+    const servers = mcpRow!.mcpConfig!.mcpServers!;
+    // composio passes through verbatim as a stdio server
+    expect(servers.composio).toMatchObject({ command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } });
+    // the cloud computer wraps in the computer-proxy spawn contract
+    expect(servers.computer.args[0]).toContain("computer-proxy");
+    expect(servers.computer.env).toMatchObject({ OGB_BOX_ID: "b1", OGB_BOX_TOKEN: "bt" });
+    // the box token lives in the 0600 config file, never in argv
+    expect(JSON.stringify(mcpRow!.argv)).not.toContain("bt");
+  });
+
   it("rides the toolUse auto-continue and only settles on the final end_turn", async () => {
     await create("tooluse");
     await instance.adapter.sendTurn({ threadId: "t-tool", text: "run it" });

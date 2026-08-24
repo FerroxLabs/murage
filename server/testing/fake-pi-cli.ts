@@ -10,7 +10,7 @@
 //   FAKE_PI_DUMP   path to append {argv, env} JSON, so a test can assert argv shape
 //                  and env hygiene (no leaked secrets into the pi child).
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 
 const mode = process.env.FAKE_PI_MODE ?? "happy";
 const modelPairs = (process.env.FAKE_PI_MODELS ?? "ollama-cloud/glm-5.2,openai/gpt-4o")
@@ -31,6 +31,18 @@ if (argv.includes("--version") || argv.includes("-v")) {
 
 if (process.env.FAKE_PI_DUMP) {
   try {
+    // When the driver mounts integrations it hands the MCP config through
+    // OMB_MCP_CONFIG; read it here so a test can assert the mount contract
+    // (servers, proxy wrap, credential hygiene) without racing the temp file
+    // cleanup the driver runs at turn settle.
+    let mcpConfig: unknown = null;
+    if (process.env.OMB_MCP_CONFIG) {
+      try {
+        mcpConfig = JSON.parse(readFileSync(process.env.OMB_MCP_CONFIG, "utf8"));
+      } catch {
+        /* unreadable config dumps as null */
+      }
+    }
     appendFileSync(
       process.env.FAKE_PI_DUMP,
       JSON.stringify({
@@ -38,6 +50,7 @@ if (process.env.FAKE_PI_DUMP) {
         envConfigured: ["PATH", "HOME", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "BOX_TOKEN"].filter(
           (k) => process.env[k] !== undefined,
         ),
+        mcpConfig,
       }) + "\n",
     );
   } catch {
