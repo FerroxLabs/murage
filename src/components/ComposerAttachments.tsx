@@ -7,16 +7,15 @@ import { ClipboardPaste, File as FileIcon, Image as ImageIcon, X } from "lucide-
 import { cn } from "@/lib/cn";
 import {
   attachmentBasename,
-  attachmentsFromDroppedFiles,
+  intakeFiles,
   formatSize,
   imageAttachmentFromFile,
-  isImageFile,
   pasteSummary,
   type Attachment,
 } from "@/lib/composer-attachments";
 
 /** Electron 32 removed File.path — only the preload can name a file. */
-function pathForFile(file: File): string {
+export function pathForFile(file: File): string {
   return window.ogb?.getPathForFile?.(file) ?? "";
 }
 
@@ -25,14 +24,17 @@ export function ComposerAttachments({
   onAdd,
   onRemove,
   allowImages = true,
+  notice,
+  onNotice,
 }: {
   items: Attachment[];
   onAdd: (attachments: Attachment[]) => void;
   onRemove: (id: string) => void;
   allowImages?: boolean;
+  notice: string | null;
+  onNotice: (notice: string | null) => void;
 }) {
   const [dragging, setDragging] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   // dragenter/dragleave fire once per element crossed, so the overlay
   // tracks depth rather than the last event it happened to see
   const depth = useRef(0);
@@ -62,30 +64,18 @@ export function ComposerAttachments({
       depth.current = 0;
       setDragging(false);
       const files = Array.from(e.dataTransfer?.files ?? []);
-      const images = allowImages ? files.filter(isImageFile) : [];
-      const rest = files.filter((f) => !isImageFile(f));
-      const { attachments, rejectedNames } = await attachmentsFromDroppedFiles(rest, pathForFile);
-      const uploaded: Attachment[] = [];
-      const imageErrors: string[] = [];
-      for (const file of images) {
-        try {
-          const attachment = await imageAttachmentFromFile(file);
-          if (attachment) uploaded.push(attachment);
-        } catch (err) {
-          imageErrors.push(`${file.name}: ${err instanceof Error ? err.message : "upload failed"}`);
-        }
-      }
+      // Same intake the attach button uses: a dropped file and a picked one
+      // must not appear in a different order.
+      const { attachments, notice: message } = await intakeFiles(files, {
+        allowImages,
+        getPath: pathForFile,
+        uploadImage: imageAttachmentFromFile,
+      });
       if (!active) return;
-      if (attachments.length || uploaded.length) onAdd([...attachments, ...uploaded]);
-      setNotice(
-        rejectedNames.length && imageErrors.length
-          ? `${rejectedNames.join(", ")} — that drag carried no file on disk. Save it first, then drop it from Finder. (${imageErrors.join("; ")})`
-          : rejectedNames.length
-            ? `${rejectedNames.join(", ")} — that drag carried no file on disk. Save it first, then drop it from Finder.`
-            : imageErrors.length
-              ? imageErrors.join("; ")
-              : null,
-      );
+      if (attachments.length) onAdd(attachments);
+      // Only a failure changes the notice. This keeps a concurrent successful
+      // intake from clearing an error before the user can read it.
+      if (message) onNotice(message);
     };
 
     window.addEventListener("dragenter", onEnter);
@@ -99,7 +89,7 @@ export function ComposerAttachments({
       window.removeEventListener("dragover", onOver);
       window.removeEventListener("drop", onDrop);
     };
-  }, [onAdd, allowImages]);
+  }, [onAdd, allowImages, onNotice]);
 
   return (
     <>
@@ -115,7 +105,7 @@ export function ComposerAttachments({
         <div className="mb-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
           <span className="min-w-0 flex-1">{notice}</span>
           <button
-            onClick={() => setNotice(null)}
+            onClick={() => onNotice(null)}
             aria-label="Dismiss"
             className="shrink-0 rounded p-0.5"
           >
