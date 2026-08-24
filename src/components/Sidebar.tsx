@@ -1018,6 +1018,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
   const [teamLibraryOpen, setTeamLibraryOpen] = useState(false);
+  const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [exportingTeam, setExportingTeam] = useState(false);
   const [teamFeedback, setTeamFeedback] = useState<{
@@ -1075,6 +1076,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   }, [densityOpen]);
 
   useEffect(() => {
+    return window.ogb?.onPackageInstall?.((url) => {
+      setTeamInstallUrl(url);
+      setTeamLibraryOpen(true);
+    });
+  }, []);
+
+  useEffect(() => {
     if (!teamFeedback) return;
     const timer = window.setTimeout(() => setTeamFeedback(null), 5000);
     return () => window.clearTimeout(timer);
@@ -1100,6 +1108,18 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const undoTeamLoad = async (result: TeamImportResult) => {
     setTeamFeedback(null);
     try {
+      await Promise.all([
+        ...result.importedRoutineIds.map((routineId) =>
+          api(`/api/routines/${routineId}`, { method: "DELETE" }).then(() =>
+            dispatch({ type: "routineDeleted", routineId }),
+          ),
+        ),
+        ...result.importedGroupIds.map((groupId) =>
+          api(`/api/groups/${groupId}`, { method: "DELETE" }).then(() =>
+            dispatch({ type: "groupDeleted", groupId }),
+          ),
+        ),
+      ]);
       const archiveNew = await Promise.all(
         result.importedBotIds.map((botId) =>
           api(`/api/bots/${botId}`, {
@@ -1604,9 +1624,14 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       {teamLibraryOpen && (
         <TeamLibraryPanel
           returnFocusRef={importReturnRef}
-          onClose={() => setTeamLibraryOpen(false)}
+          initialUrl={teamInstallUrl ?? undefined}
+          onClose={() => {
+            setTeamLibraryOpen(false);
+            setTeamInstallUrl(null);
+          }}
           onImported={(result) => {
             setTeamLibraryOpen(false);
+            setTeamInstallUrl(null);
             setTeamFeedback(
               result.archived.length > 0
                 ? {

@@ -139,6 +139,20 @@ Keep Work, Personal, and each project in separate channels without cloning your 
 its own transcript, shared instructions, working folder, responder rules, and editable bot roster. File a
 channel and its bots under a named context, then rename it or change its members whenever the team changes.
 
+### 📦 Install a complete team from one Markdown file
+
+Browse outcome-driven teams on [BotMRR](https://botmrr.io), then choose **Add to OpenMausBot**. The app
+opens a review screen before creating the bots, Chief of Staff, channels, playbooks, connector checklist,
+and suggested routines. You can also import the same `.md` file from disk or paste its public GitHub URL
+in **Teams → Import**.
+
+The format stays portable: OpenMausBot reads the structured YAML frontmatter for a reliable one-click
+install, while Grok, Claude, ChatGPT, and people can follow the ordinary Markdown playbook. Connections
+remain off until you approve them, routines arrive paused, and packages never carry credentials,
+conversations, permissions, memory, or computer access. Browse the
+[open-source playbook repository](https://github.com/milind-soni/openmausbot-teams) or read its
+[portable format](https://github.com/milind-soni/openmausbot-teams/blob/main/FORMAT.md).
+
 ### 🎧 Bots that talk back
 
 Press the speaker on any reply, or switch a bot to read its answers out as they land — so you can listen

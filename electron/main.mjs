@@ -18,6 +18,7 @@ import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import { buildDiagnosticsReport, decodeLogTail, diagnosticsFileName } from "./diagnostics.mjs";
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
+import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import capabilitiesModule from "./capabilities.cjs";
 
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
@@ -40,6 +41,7 @@ const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 let desktopViewerWindow = null;
 let desktopViewerOwner = null;
 let desktopViewerContextId = null;
+let pendingPackageInstallUrl = packageUrlFromCommandLine(process.argv);
 let mainWindow = null;
 let unreadCount = 0;
 let unreadOverlayIcon = null;
@@ -120,8 +122,34 @@ if (!app.requestSingleInstanceLock()) {
   console.log("[desktop] OpenMausBot is already running — focusing that window");
   process.exit(0);
 }
-app.on("second-instance", () => {
+function deliverPackageInstall(win) {
+  if (!pendingPackageInstallUrl || !win || win.isDestroyed()) return;
+  if (win.webContents.isLoadingMainFrame()) return;
+  win.webContents.send("package:install", pendingPackageInstallUrl);
+  pendingPackageInstallUrl = null;
+}
+
+function queuePackageInstall(rawLink) {
+  const packageUrl = packageUrlFromDeepLink(rawLink);
+  if (!packageUrl) return false;
+  pendingPackageInstallUrl = packageUrl;
   activateExistingWindow(BrowserWindow.getAllWindows());
+  const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
+  deliverPackageInstall(target);
+  return true;
+}
+
+app.on("open-url", (event, url) => {
+  if (!queuePackageInstall(url)) return;
+  event.preventDefault();
+});
+
+app.on("second-instance", (_event, commandLine) => {
+  const packageUrl = packageUrlFromCommandLine(commandLine);
+  if (packageUrl) pendingPackageInstallUrl = packageUrl;
+  activateExistingWindow(BrowserWindow.getAllWindows());
+  const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
+  deliverPackageInstall(target);
 });
 
 // Packaged: the harness server ships in Resources (compiled JS, zero deps)
@@ -636,6 +664,7 @@ function createWindow() {
     shell.openExternal(url);
     return { action: "deny" };
   });
+  win.webContents.on("did-finish-load", () => deliverPackageInstall(win));
 
   // Packaged CI smoke hook. It validates the real renderer/preload bridge and
   // same-origin embedded server, then follows the normal window-close path.
@@ -1047,6 +1076,7 @@ setCuaStateListener((connection) => {
 });
 
 app.whenReady().then(async () => {
+  if (app.isPackaged) app.setAsDefaultProtocolClient("openmausbot");
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
   secureCredentials = await loadSecureCredentials();
   if (app.isPackaged) {

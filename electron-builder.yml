@@ -2,6 +2,10 @@ appId: com.openmausbot.app
 productName: OpenMausBot
 artifactName: OpenMausBot-${version}-${arch}.${ext}
 
+protocols:
+  - name: OpenMausBot package install
+    schemes: [openmausbot]
+
 # In-app auto-update reads latest-mac.yml + the .zip (macOS) or latest.yml +
 # the NSIS .exe (Windows) from this PUBLIC releases repo (separate from the
 # source repo). Public → no token on users' machines. Baked into

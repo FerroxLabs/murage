@@ -152,6 +152,8 @@ type SkillRecordingPayload = {
       openInstallTerminal?(command: string): Promise<boolean>;
       /** Opens an http(s) link in the user's default browser. */
       openExternal?(url: string): Promise<boolean>;
+      /** Receives a GitHub package URL opened through openmausbot://install. */
+      onPackageInstall?(cb: (url: string) => void): () => void;
       /** Updates the native Dock/taskbar unread indicator. */
       setUnreadCount?(count: number): void;
       /** Opens a live desktop as a sandboxed window owned by OpenMausBot. */

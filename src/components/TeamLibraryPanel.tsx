@@ -1,15 +1,21 @@
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
+import type { Routine } from "@/lib/routines";
 import { api, useStore, type Bot, type Group } from "@/state/store";
 import {
   ArrowLeft,
+  BookOpen,
+  CalendarClock,
   Check,
   Compass,
+  Crown,
   ExternalLink,
   FolderOpen,
   Github,
   Loader2,
+  MessageSquare,
+  Plug,
   Search,
   UploadCloud,
   Users,
@@ -26,6 +32,10 @@ interface TeamCatalogEntry {
   name: string;
   summary: string;
   category: string;
+  outcome?: string;
+  setupMinutes?: number;
+  featured?: boolean;
+  package?: string;
   manifest: string;
   readme: string;
   members: number;
@@ -47,6 +57,8 @@ export interface TeamImportResult {
   name: string;
   members: number;
   importedBotIds: string[];
+  importedGroupIds: string[];
+  importedRoutineIds: string[];
   archived: ArchivedTeamBot[];
 }
 
@@ -108,10 +120,12 @@ export function TeamLibraryPanel({
   onClose,
   onImported,
   returnFocusRef,
+  initialUrl,
 }: {
   onClose: () => void;
   onImported: (result: TeamImportResult) => void;
   returnFocusRef: React.RefObject<HTMLButtonElement | null>;
+  initialUrl?: string;
 }) {
   const { state, dispatch } = useStore();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -210,12 +224,15 @@ export function TeamLibraryPanel({
 
   const readFile = async (file: File) => {
     if (file.size > MAX_TEAM_FILE_BYTES) throw new Error("That team file is too large.");
-    let manifest: unknown;
-    try {
-      manifest = JSON.parse(await file.text());
-    } catch (cause) {
-      if (cause instanceof SyntaxError) throw new Error("That team file is not valid JSON.");
-      throw cause;
+    const raw = await file.text();
+    let manifest: unknown = raw;
+    if (!file.name.toLowerCase().endsWith(".md")) {
+      try {
+        manifest = JSON.parse(raw);
+      } catch (cause) {
+        if (cause instanceof SyntaxError) throw new Error("That legacy team file is not valid JSON.");
+        throw cause;
+      }
     }
     previewManifest(teamImportPreview(manifest), "file");
   };
@@ -233,13 +250,17 @@ export function TeamLibraryPanel({
   };
 
   const loadGithubTeam = async () => {
-    if (!githubUrl.trim()) return;
+    await loadGithubUrl(githubUrl);
+  };
+
+  const loadGithubUrl = async (requestedUrl: string) => {
+    if (!requestedUrl.trim()) return;
     setGithubLoading(true);
     setError("");
     try {
       const manifest = await api("/api/team-library/github", {
         method: "POST",
-        body: JSON.stringify({ url: githubUrl.trim() }),
+        body: JSON.stringify({ url: requestedUrl.trim() }),
       });
       previewManifest(teamImportPreview(manifest), "github");
     } catch (cause) {
@@ -248,6 +269,16 @@ export function TeamLibraryPanel({
       setGithubLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!initialUrl) return;
+    setTab("import");
+    setGithubUrl(initialUrl);
+    void loadGithubUrl(initialUrl);
+    // A deep link is immutable for this panel instance; reloading it on
+    // every callback identity change would duplicate the preview request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialUrl]);
 
   const importTeam = async () => {
     if (!pending) return;
@@ -258,9 +289,17 @@ export function TeamLibraryPanel({
       const response = (await api(`/api/teams/import?mode=${importMode}`, {
         method: "POST",
         body: JSON.stringify(pending.manifest),
-      })) as { bots: Bot[]; archivedBots?: Bot[]; archived?: ArchivedTeamBot[] };
+      })) as {
+        bots: Bot[];
+        groups?: Group[];
+        routines?: Routine[];
+        archivedBots?: Bot[];
+        archived?: ArchivedTeamBot[];
+      };
       for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", bot });
       for (const bot of response.bots) dispatch({ type: "botAdded", bot });
+      for (const group of response.groups ?? []) dispatch({ type: "groupPatched", group });
+      for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
       const first = response.bots[0];
       if (first) dispatch({ type: "select", id: first.id });
       track("team_imported", { members: response.bots.length, source, mode: importMode });
@@ -268,6 +307,8 @@ export function TeamLibraryPanel({
         name: pending.name,
         members: response.bots.length,
         importedBotIds: response.bots.map((bot) => bot.id),
+        importedGroupIds: (response.groups ?? []).map((group) => group.id),
+        importedRoutineIds: (response.routines ?? []).map((routine) => routine.id),
         archived: response.archived ?? [],
       });
     } catch (cause) {
@@ -360,6 +401,8 @@ export function TeamLibraryPanel({
         name: room,
         members: response.bots.length,
         importedBotIds: response.bots.map((bot) => bot.id),
+        importedGroupIds: response.group ? [response.group.id] : [],
+        importedRoutineIds: [],
         archived: [],
       });
     } catch (cause) {
@@ -411,7 +454,11 @@ export function TeamLibraryPanel({
               </h2>
             </div>
             <p className={cn("mt-1 text-[13px] text-ink-secondary", pending && "ml-9")}>
-              {pending ? `${pending.members.length} ready-to-load bots` : "Start with a complete team or bring your own."}
+                {pending
+                  ? pending.kind === "package"
+                    ? `${pending.members.length} bots · portable Markdown playbook`
+                    : `${pending.members.length} ready-to-load bots`
+                  : "Start with a complete playbook or bring your own."}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -443,6 +490,15 @@ export function TeamLibraryPanel({
               {pending.description && (
                 <p className="max-w-2xl text-[13.5px] leading-relaxed text-ink-secondary">{pending.description}</p>
               )}
+              {pending.kind === "package" && (
+                <div className="mt-5 flex flex-wrap gap-2 text-[11.5px] text-ink-secondary">
+                  {pending.chiefOfStaff && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Crown size={13} />{pending.chiefOfStaff} leads</span>}
+                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><MessageSquare size={13} />{pending.rooms} {pending.rooms === 1 ? "room" : "rooms"}</span>
+                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><BookOpen size={13} />{pending.playbooks} playbooks</span>
+                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><CalendarClock size={13} />{pending.routines} paused routines</span>
+                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Plug size={13} />{pending.apps.length} connections</span>
+                </div>
+              )}
               <div className="mt-6 text-[12px] font-medium text-ink-secondary">Team members</div>
               <div className="mt-2 grid grid-cols-1 gap-x-10 md:grid-cols-2">
                 {pending.members.map((member, index) => (
@@ -460,8 +516,9 @@ export function TeamLibraryPanel({
               <div className="mt-6 flex items-start gap-2.5 rounded-xl bg-raised/45 px-4 py-3 text-[12.5px] leading-relaxed text-ink-secondary">
                 <Check size={15} className="mt-0.5 shrink-0 text-success" />
                 <p>
-                  Only roles and appearance are loaded. Your conversations, account connections, permissions, and computer access stay private.
-                  {source === "library" && " Playbooks remain available in the community repo for review."}
+                  {pending.kind === "package"
+                    ? "Bots, Chief of Staff, rooms, and reviewed playbooks are loaded. Suggested routines arrive paused, and connected apps stay off until you approve them. Conversations, credentials, permissions, and computer access stay private."
+                    : "Only roles and appearance are loaded. Your conversations, account connections, permissions, and computer access stay private."}
                 </p>
               </div>
               {error && <div role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
@@ -482,7 +539,7 @@ export function TeamLibraryPanel({
                     </>
                   )
                 ) : (
-                  "No channel is created—you can make one later if you want."
+                  pending.kind === "package" ? "Review the complete setup, then activate the playbook." : "No channel is created—you can make one later if you want."
                 )}
               </div>
               <button
@@ -493,7 +550,9 @@ export function TeamLibraryPanel({
                 {importing && <Loader2 size={15} className="animate-spin" />}
                 {importing
                   ? "Loading…"
-                  : currentBotCount === 0
+                  : pending.kind === "package" && currentBotCount === 0
+                    ? "Activate playbook"
+                    : currentBotCount === 0
                     ? "Load team"
                     : importMode === "replace"
                       ? "Replace team"
@@ -586,8 +645,12 @@ export function TeamLibraryPanel({
                           <TeamGlyph index={index} />
                           <div className="min-w-0 flex-1">
                             <h3 className="truncate text-[14px] font-medium text-ink">{entry.name}</h3>
-                            <p className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{entry.summary}</p>
-                            <p className="mt-1 text-[11.5px] text-ink-secondary/80">{entry.members} bots · {entry.skills.length} playbooks</p>
+                            <p className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{entry.outcome ?? entry.summary}</p>
+                            <p className="mt-1 truncate text-[11.5px] text-ink-secondary/80">
+                              {entry.members} bots · {entry.skills.length} playbooks
+                              {entry.requires.apps.length > 0 && ` · ${entry.requires.apps.join(", ")}`}
+                              {entry.setupMinutes && ` · ~${entry.setupMinutes} min`}
+                            </p>
                           </div>
                           <button
                             onClick={() => void loadLibraryTeam(entry)}
@@ -615,7 +678,7 @@ export function TeamLibraryPanel({
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".json,.mausteam.json,application/json"
+                    accept=".md,.json,.mausteam.json,text/markdown,application/json"
                     className="hidden"
                     onChange={(event) => {
                       const file = event.currentTarget.files?.[0];
@@ -647,7 +710,7 @@ export function TeamLibraryPanel({
                     >
                       <UploadCloud size={27} className="text-accent" />
                       <span className="mt-3 text-[14px] font-medium text-ink">Choose a team file</span>
-                      <span className="mt-1 text-[12.5px] text-ink-secondary">or drop a .mausteam.json here</span>
+                      <span className="mt-1 text-[12.5px] text-ink-secondary">or drop a BotMRR .md / legacy .mausteam.json here</span>
                     </button>
 
                     <div className="flex min-h-56 flex-col justify-center rounded-2xl bg-raised/25 px-6">

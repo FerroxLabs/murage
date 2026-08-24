@@ -340,6 +340,12 @@ export interface BotRecord {
    * start false — a shared persona must not reach the user's Gmail on
    * turn one. */
   composio?: boolean;
+  /** Public, package-authored playbooks installed for this bot. They carry
+   * process guidance only—never executable code, credentials, or grants. */
+  playbooks?: InstalledPlaybook[];
+  /** Listing provenance and connector intent retained for package details
+   * and future re-export. It never means the apps are authorized. */
+  installedPackage?: InstalledPackageMetadata;
   /** Derived from `activity` — kept so the 200+ readers across the app and
    * tests keep working unchanged. Write through setActivity(), never here. */
   busy?: boolean;
@@ -348,6 +354,21 @@ export interface BotRecord {
    * Transient like busy: reset to idle on load. */
   activity?: BotActivity;
   createdAt: number;
+}
+
+export interface InstalledPlaybook {
+  key: string;
+  name: string;
+  summary: string;
+  triggers: string[];
+  instructions: string;
+}
+
+export interface InstalledPackageMetadata {
+  id: string;
+  name: string;
+  release: string;
+  requiredApps: Array<{ slug: string; label: string; reason: string; optional?: boolean }>;
 }
 
 const BOTS_FILE = join(DATA_DIR, "bots.json");

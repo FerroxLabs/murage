@@ -964,6 +964,12 @@ describe("harness HTTP API", () => {
     ]));
     expect(exported.body.team).not.toHaveProperty("room");
     expect(JSON.stringify(exported.body)).not.toMatch(/Archived|autoApprove|alwaysAllow|modelSelection|threadId/);
+    const markdownExport = await api("POST", "/api/teams/export", { name: "Field Team", format: "package" });
+    expect(markdownExport.status).toBe(200);
+    expect(markdownExport.body).toMatchObject({ name: "Field Team", members: visibleNames.length });
+    expect(markdownExport.body.markdown).toContain("## Activation");
+    expect(markdownExport.body.markdown).toContain("Give this file to your Chief of Staff");
+    expect(markdownExport.body.markdown).not.toMatch(/Archived|autoApprove|alwaysAllow|modelSelection|threadId/);
     expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore);
     expect((await api("POST", "/api/teams/export", {})).body.team.name).toBe("My OpenMaus Team");
 
@@ -1089,6 +1095,111 @@ describe("harness HTTP API", () => {
     } finally {
       stream.close();
     }
+  });
+
+  it("installs a complete bot package with a Chief, room, playbook, connector intent, and paused routine", async () => {
+    const packageFile = {
+      format: "openmaus.package",
+      version: 1,
+      package: {
+        id: "signal-desk",
+        release: "1.0.0",
+        name: "Signal Desk",
+        tagline: "Find and explain the signal.",
+        summary: "A complete two-bot signal workflow.",
+        category: "Research",
+        author: { name: "OpenMausBot" },
+        license: "MIT",
+        outcomes: ["Produce a concise signal brief."],
+        setupMinutes: 4,
+        requirements: {
+          apps: [{ slug: "reddit", label: "Reddit", reason: "Read approved communities." }],
+          capabilities: ["computer"],
+        },
+        agents: [
+          {
+            key: "scout",
+            name: "Package Scout",
+            title: "Researcher",
+            description: "Find evidence.",
+            appearance: { color: "cyan" },
+            playbooks: ["signal-check"],
+            autoApprove: true,
+          },
+          {
+            key: "editor",
+            name: "Package Editor",
+            title: "Editor",
+            description: "Explain the result.",
+            appearance: { color: "green" },
+          },
+        ],
+        chiefOfStaff: "scout",
+        rooms: [{
+          key: "signals",
+          name: "Signal Room",
+          members: ["scout", "editor"],
+          bulletin: "Separate direct evidence from inference.",
+          defaultResponder: { kind: "agent", agent: "scout" },
+        }],
+        routines: [{
+          key: "morning-signals",
+          name: "Morning signals",
+          agent: "scout",
+          prompt: "Prepare the approved morning signal brief.",
+          runOn: "maus",
+          schedule: { type: "daily", time: "09:00", weekdays: [1, 2, 3, 4, 5] },
+          durationMinutes: 30,
+          enabledAfterInstall: false,
+        }],
+        playbooks: [{
+          key: "signal-check",
+          name: "Signal Check",
+          summary: "Verify a public signal.",
+          triggers: ["signal brief"],
+          instructions: "Keep the source URL and confidence.",
+        }],
+      },
+    };
+
+    const installed = await api("POST", "/api/teams/import", packageFile);
+    expect(installed.status).toBe(201);
+    expect(installed.body.bots).toHaveLength(2);
+    expect(installed.body.groups).toHaveLength(1);
+    expect(installed.body.routines).toHaveLength(1);
+
+    const scout = installed.body.bots.find((bot: { name: string }) => bot.name.startsWith("Package Scout"));
+    const editor = installed.body.bots.find((bot: { name: string }) => bot.name.startsWith("Package Editor"));
+    expect(scout).toMatchObject({
+      chiefOfStaff: true,
+      composio: false,
+      playbooks: [{ key: "signal-check", instructions: "Keep the source URL and confidence." }],
+      installedPackage: {
+        id: "signal-desk",
+        release: "1.0.0",
+        requiredApps: [{ slug: "reddit", label: "Reddit" }],
+      },
+    });
+    expect(scout).not.toHaveProperty("autoApprove");
+    expect(editor.playbooks).toBeUndefined();
+    expect(scout.section).toBe(editor.section);
+    expect(installed.body.groups[0]).toMatchObject({
+      name: "Signal Room",
+      memberIds: expect.arrayContaining([scout.id, editor.id]),
+      defaultResponder: { kind: "member", botId: scout.id },
+      bulletin: "Separate direct evidence from inference.",
+      setupCompletedAt: expect.any(Number),
+    });
+    expect(installed.body.routines[0]).toMatchObject({
+      name: "Morning signals",
+      botId: scout.id,
+      enabled: false,
+      nextRunAt: null,
+    });
+
+    await api("DELETE", `/api/routines/${installed.body.routines[0].id}`);
+    await api("DELETE", `/api/groups/${installed.body.groups[0].id}`);
+    for (const bot of installed.body.bots) await api("DELETE", `/api/bots/${bot.id}`);
   });
 
   it("the scout reads a folder, proposes an importable team, and creates nothing until the human imports", async () => {
