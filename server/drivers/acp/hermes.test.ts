@@ -32,11 +32,34 @@ describe("hermesConfiguredModel", () => {
     });
   });
 
-  it("treats a commented-out key as not configured", () => {
-    // The shipped .env carries `# OPENROUTER_API_KEY=`; reading that as
-    // configured would offer a model that cannot authenticate.
-    const env = home("# OPENROUTER_API_KEY=\n", "model:\n  default: anthropic/claude-opus-4.6\n");
+  it.each(["GLM_API_KEY", "ZAI_API_KEY", "Z_AI_API_KEY"])(
+    "offers Hermes for a key-only Z.AI setup using %s",
+    (name) => {
+      const env = home(`${name}=zai-test-key\n`);
+      expect(hermesConfiguredModel(env)).toEqual({
+        id: HERMES_CONFIG_MODEL_ID,
+        label: "Hermes default (config)",
+        custom: true,
+      });
+    },
+  );
+
+  it("treats a commented-out key with no config.yaml as not configured", () => {
+    // The shipped .env carries `# OPENROUTER_API_KEY=`; without config.yaml
+    // there's no evidence of a working provider, so it must not read as configured.
+    const env = home("# OPENROUTER_API_KEY=\n");
     expect(hermesConfiguredModel(env)).toBeNull();
+  });
+
+  it("treats a commented-out key with config.yaml as configured (Nous Portal)", () => {
+    // A Nous Portal user has OAuth tokens, not an OpenRouter API key.
+    // config.yaml existing is sufficient evidence of a working provider.
+    const env = home("# OPENROUTER_API_KEY=\n", "model:\n  default: z-ai/glm-5.2\n");
+    expect(hermesConfiguredModel(env)).toEqual({
+      id: HERMES_CONFIG_MODEL_ID,
+      label: "z-ai/glm-5.2 (Hermes config)",
+      custom: true,
+    });
   });
 
   it.each([
@@ -44,14 +67,80 @@ describe("hermesConfiguredModel", () => {
     'OPENROUTER_API_KEY=""\n',
     "OPENROUTER_API_KEY='' # intentionally blank\n",
     "OPENROUTER_API_KEY=   # configured later\n",
-  ])("does not treat a blank key as configured: %j", (line) => {
+  ])("does not treat a blank key with no config.yaml as configured: %j", (line) => {
     expect(hermesConfiguredModel(home(line))).toBeNull();
   });
 
-  it("returns null when there is no .env at all, leaving local-only setups unchanged", () => {
+  it("returns null when there is no .env and no config.yaml, leaving local-only setups unchanged", () => {
     const root = mkdtempSync(join(tmpdir(), "omb-hermes-bare-"));
     dirs.push(root);
+    mkdirSync(join(root, ".hermes"), { recursive: true });
     expect(hermesConfiguredModel({ HERMES_HOME: join(root, ".hermes") })).toBeNull();
+  });
+
+  it("offers the configured model when only config.yaml exists (Nous Portal OAuth)", () => {
+    // A Nous Portal user logs in via OAuth — no API key in .env, but
+    // config.yaml exists with a default model. This is the most common
+    // setup for `hermes setup` / `hermes login` users.
+    const root = mkdtempSync(join(tmpdir(), "omb-hermes-nous-"));
+    dirs.push(root);
+    const h = join(root, ".hermes");
+    mkdirSync(h, { recursive: true });
+    writeFileSync(join(h, "config.yaml"), "model:\n  default: z-ai/glm-5.2\n");
+    expect(hermesConfiguredModel({ HERMES_HOME: h })).toEqual({
+      id: HERMES_CONFIG_MODEL_ID,
+      label: "z-ai/glm-5.2 (Hermes config)",
+      custom: true,
+    });
+  });
+
+  it("does not treat an inject-only config.yaml as hosted configuration", () => {
+    const env = home("", "providers:\n  ollama:\n    base_url: http://127.0.0.1:11434/v1\n");
+    expect(hermesConfiguredModel(env)).toBeNull();
+  });
+
+  it.each(["custom", "ollama", "vllm", "llamacpp", "lmstudio"])(
+    "does not probe a model explicitly routed through the local %s provider",
+    (provider) => {
+      const env = home("", `model:\n  default: llama3.2 # local model\n  provider: ${provider}\n`);
+      expect(hermesConfiguredModel(env)).toBeNull();
+    },
+  );
+
+  it("keeps an explicit local provider even when a hosted key is also present", () => {
+    const env = home(
+      "OPENROUTER_API_KEY=stale-hosted-key\n",
+      "model:\n  default: llama3.2\n  provider: ollama\n",
+    );
+    expect(hermesConfiguredModel(env)).toBeNull();
+  });
+
+  it("keeps a named custom provider even when a hosted key is also present", () => {
+    const env = home(
+      "OPENROUTER_API_KEY=stale-hosted-key\n",
+      "model:\n  default: local-model\n  provider: custom:local\n",
+    );
+    expect(hermesConfiguredModel(env)).toBeNull();
+  });
+
+  it.each([
+    ["scalar", "model: z-ai/glm-5.2 # selected by setup\n", "z-ai/glm-5.2"],
+    ["default", "model:\n  default: z-ai/glm-5.2 # selected by setup\n", "z-ai/glm-5.2"],
+    ["model alias", "model:\n  model: z-ai/glm-5.2\n", "z-ai/glm-5.2"],
+    ["name alias", "model:\n  name: z-ai/glm-5.2\n", "z-ai/glm-5.2"],
+    [
+      "nested default",
+      "model:\n  provider: auto\n  default:\n    provider: nous\n    model: z-ai/glm-5.2\n",
+      "z-ai/glm-5.2",
+    ],
+    ["legacy root provider", "provider: nous\nmodel:\n  default: z-ai/glm-5.2\n", "z-ai/glm-5.2"],
+  ])("supports Hermes' %s configuration schema", (_schema, cfg, expectedModel) => {
+    const env = home("", cfg);
+    expect(hermesConfiguredModel(env)).toEqual({
+      id: HERMES_CONFIG_MODEL_ID,
+      label: `${expectedModel} (Hermes config)`,
+      custom: true,
+    });
   });
 
   it("still offers the model when config.yaml is unreadable, with a generic label", () => {

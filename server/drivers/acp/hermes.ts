@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 
 import type { ModelCatalog } from "../../contracts.ts";
 import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } from "../local-inject.ts";
@@ -113,21 +114,78 @@ function nonEmptyDotenvValue(text: string, name: string): string | null {
   return raw.replace(/[ \t]+#.*$/, "").trim() || null;
 }
 
-/** Model Hermes' own config will use, when a remote provider is configured.
+const HERMES_HOSTED_PROVIDER_KEYS = [
+  "OPENROUTER_API_KEY",
+  "GLM_API_KEY",
+  "ZAI_API_KEY",
+  "Z_AI_API_KEY",
+] as const;
+
+const HERMES_LOCAL_CONFIG_PROVIDERS = new Set(["custom", "lmstudio", "ollama", "vllm", "llamacpp"]);
+
+function yamlString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Read the model/provider forms accepted by Hermes' `_normalize_root_model_keys`:
+ * a scalar `model`, or a mapping whose id is `default`, `model`, or `name`.
+ * Those id fields may themselves be `{ provider, model/default }` mappings.
+ * An explicit outer provider wins, except `auto`, where the nested provider is
+ * the more specific routing choice. Root-level `provider` is Hermes' legacy
+ * fallback. YAML parsing also handles quotes and trailing comments correctly.
+ */
+function hermesConfigDefault(text: string): { model: string; provider: string } | null {
+  let raw: unknown;
+  try {
+    raw = parseYaml(text);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const config = raw as Record<string, unknown>;
+  const rootProvider = yamlString(config.provider);
+  if (typeof config.model === "string") {
+    const model = config.model.trim();
+    return model ? { model, provider: rootProvider } : null;
+  }
+  if (!config.model || typeof config.model !== "object" || Array.isArray(config.model)) return null;
+
+  const modelConfig = config.model as Record<string, unknown>;
+  const outerProvider = yamlString(modelConfig.provider) || rootProvider;
+  for (const key of ["default", "model", "name"] as const) {
+    const candidate = modelConfig[key];
+    const scalar = yamlString(candidate);
+    if (scalar) return { model: scalar, provider: outerProvider };
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const nested = candidate as Record<string, unknown>;
+    const nestedModel = yamlString(nested.model) || yamlString(nested.default);
+    if (!nestedModel) continue;
+    const nestedProvider = yamlString(nested.provider);
+    const provider = !outerProvider || outerProvider === "auto" ? nestedProvider || outerProvider : outerProvider;
+    return { model: nestedModel, provider };
+  }
+  return null;
+}
+
+/** Detect whether Hermes has a hosted provider configured.
  *
- * Hermes is a BYOK harness and OpenMausBot only ever offered it *local* hosts
- * (Ollama, LM Studio, EXO...). A user who has configured Hermes with a hosted
- * provider — an OpenRouter key in `~/.hermes/.env`, which is how `hermes setup`
- * stores it — had no selectable model at all: the picker showed "No local
- * models found" and greyed the agent out, despite Hermes being installed,
- * authenticated and perfectly able to answer.
+ * Hermes supports multiple auth methods:
+ * - OpenRouter API key in `~/.hermes/.env` (OPENROUTER_API_KEY)
+ * - Nous Portal OAuth (tokens stored in `~/.hermes/` — the default for
+ *   `hermes setup` / `hermes login`)
+ * - Z.AI / GLM keys in `~/.hermes/.env`
  *
- * Read-only on purpose. `ensureHermesInjectProvider` writes `config.yaml`, and
- * doing that from a catalog probe would rewrite the user's real Hermes config
- * as a side effect of opening a menu.
+ * Previously only OPENROUTER_API_KEY was checked, so a Nous Portal user
+ * — logged in via OAuth, no OpenRouter key — saw "No local models found"
+ * despite Hermes being installed, authenticated, and serving 100+ models.
  *
- * Returns null when no hosted key is configured, which leaves the catalog
- * exactly as it was for local-only setups.
+ * Read-only on purpose. `ensureHermesInjectProvider` writes `config.yaml`,
+ * and doing that from a catalog probe would rewrite the user's real Hermes
+ * config as a side effect of opening a menu.
+ *
+ * Returns null when no hosted provider is configured, which leaves the
+ * catalog exactly as it was for local-only setups.
  */
 export function hermesConfiguredModel(
   env: Record<string, string | undefined> = process.env,
@@ -137,20 +195,32 @@ export function hermesConfiguredModel(
   try {
     secrets = readFileSync(join(dir, ".env"), "utf8");
   } catch {
-    return null;
+    /* .env may not exist — check OAuth below */
   }
-  // Only an uncommented, non-empty assignment counts; the shipped file has the
-  // key present but commented out, and that must not read as "configured".
-  if (!nonEmptyDotenvValue(secrets, "OPENROUTER_API_KEY")) return null;
 
-  let model = "";
+  const hasHostedProviderKey = HERMES_HOSTED_PROVIDER_KEYS.some((name) => nonEmptyDotenvValue(secrets, name));
+
+  // `hermes login` / `hermes setup` records the selected default in
+  // config.yaml while the OAuth token lives in Hermes' auth store. An explicit
+  // local/custom provider must not trigger the hosted catalog probe.
+  let configuredDefault: { model: string; provider: string } | null = null;
   try {
-    const cfg = readFileSync(join(dir, "config.yaml"), "utf8");
-    const m = /^[ \t]*default[ \t]*:[ \t]*["']?([\w./:+-]+)["']?[ \t]*$/m.exec(cfg);
-    if (m) model = m[1];
+    configuredDefault = hermesConfigDefault(readFileSync(join(dir, "config.yaml"), "utf8"));
   } catch {
-    /* config unreadable — the id still works, only the label is less specific */
+    /* config may not exist or may be unreadable */
   }
+
+  const configuredProvider = configuredDefault?.provider.toLowerCase() ?? "";
+  // The model/provider selected in config.yaml is the user's explicit routing
+  // choice. A stale hosted key must not override an explicitly local setup.
+  const configIsLocal =
+    HERMES_LOCAL_CONFIG_PROVIDERS.has(configuredProvider) || configuredProvider.startsWith("custom:");
+  if (configuredDefault && configIsLocal) return null;
+
+  const configIsHosted = configuredDefault !== null;
+  if (!hasHostedProviderKey && !configIsHosted) return null;
+
+  const model = configuredDefault?.model ?? "";
   // `custom: true` is not cosmetic. ModelPicker renders a custom-only agent's
   // *custom* pane exclusively, and that pane lists only options carrying this
   // flag; anything without it lands in the "official" bucket the pane never
