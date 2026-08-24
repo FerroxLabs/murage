@@ -9,6 +9,14 @@ import { extname, join } from "node:path";
 
 import { z } from "zod";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
+import {
+  CREDENTIAL_TARGETS,
+  credentialResumeOutcome,
+  credentialIsConfigured,
+  isReusableCredentialRequest,
+  isCredentialTargetId,
+  type CredentialTargetId,
+} from "../shared/credential-request.ts";
 
 import { approvalKey, autoVerdict } from "./auto-approve.ts";
 import { appendDecision, readDecisions } from "./decision-log.ts";
@@ -616,6 +624,12 @@ const watchdog = new TurnWatchdog({
         stopScreenPoller(currentBot.id);
         if (activeVpsThreads.get(currentBot.id) === turn.threadId) activeVpsThreads.delete(currentBot.id);
         store.setActivity(currentBot.id, "idle");
+        // The grace fallback replaces a missing turn.completed event. Release
+        // every kind of work that may have queued behind this bot, including
+        // connector and credential continuations.
+        drainQueuedSends();
+        drainConnectorResumes();
+        drainSecretResumes();
       }
     }, 6_000);
     release.unref?.();
@@ -1325,10 +1339,10 @@ async function startTurn(
     automationSource?: RoutineRunTrigger;
     /** the caller was already running unattended, so this turn is too */
     unattended?: boolean;
-    /** Resume an agent after the user completed an inline connection card.
+    /** Resume an agent after the user completed an inline connection or credential card.
      * The prompt is control-plane context: it reaches the provider without
      * masquerading as another message authored by the user. */
-    connectorContinuation?: boolean;
+    cardContinuation?: boolean;
     onDispatchError?: (message: string) => void;
   },
 ) {
@@ -1339,12 +1353,12 @@ async function startTurn(
   // a webhook turn, or one inherited from a bot already running unattended
   if (opts?.automationSource === "webhook" || opts?.unattended) markUnattended(bot.id);
   // a person typing into this bot ends the unattended window immediately
-  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.connectorContinuation) clearUnattended(bot.id);
+  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(bot.id);
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
   const commsDepth = opts?.commsDepth ?? 0;
   // a task takes its name from the first thing you asked it to do
-  if (text.trim() && !opts?.connectorContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
+  if (text.trim() && !opts?.cardContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
   const instance = opts?.runOn === "cloud"
     ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
@@ -1376,8 +1390,8 @@ async function startTurn(
   // an edit hands us its already-branched user message; a plain send appends
   let userMessage = opts?.userMessage;
   if (!userMessage) {
-    userMessage = opts?.connectorContinuation
-      ? { id: `connector-${randomUUID()}`, at: Date.now(), role: "user", kind: "text", text }
+    userMessage = opts?.cardContinuation
+      ? { id: `card-${randomUUID()}`, at: Date.now(), role: "user", kind: "text", text }
       : store.appendMessage(threadId, { role: "user", kind: "text", text });
   }
 
@@ -1616,8 +1630,8 @@ async function startTurn(
           computerKind = "local";
         }
       }
-      // peer-agent comms: give a user-initiated turn the list_bots/ask_bot
-      // tools. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
+      // Agent control tools include peer comms and the secure credential
+      // request card. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
       // stop, so the user's tokens can't be burned by a bot-to-bot loop.
       // Only drivers that mount the tools get the integration (and, via the
       // integrations.agents gate below, the prompt hint) — a bot on a driver
@@ -1631,8 +1645,7 @@ async function startTurn(
       );
       if (
         commsDepth < MAX_COMMS_DEPTH &&
-        instance.adapter.capabilities.agentsMcp === true &&
-        (bot.chiefOfStaff || sectionPeers.length > 0)
+        instance.adapter.capabilities.agentsMcp === true
       ) {
         integrations.agents = agentsIntegration(bot.id, threadId, commsDepth);
       }
@@ -1647,9 +1660,12 @@ async function startTurn(
         : [];
       const coordinationPrompt = bot.chiefOfStaff
         ? chiefOfStaffSystemPrompt(bot.id, store.bots, Boolean(integrations.agents))
-        : integrations.agents
+        : integrations.agents && sectionPeers.length > 0
           ? "You can work with the other bots in your section through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
           : "";
+      const credentialPrompt = integrations.agents
+        ? " If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat."
+        : "";
 
       // (activeVpsThreads was already claimed above, before the provision or
       // reuse await, so the backend guards saw this turn the whole time.)
@@ -1686,6 +1702,7 @@ async function startTurn(
             ? " The user's connected apps (Gmail, Calendar, Slack, Notion, and the rest) are reachable through the composio tools — find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service."
             : "") +
           (coordinationPrompt ? ` ${coordinationPrompt}` : "") +
+          credentialPrompt +
           (privateWorkspace ? memorySystemPrompt(bot.id) + skillsSystemPrompt(bot.id) : "") +
           skillInstructions +
           (opts?.automationSource === "webhook"
@@ -1726,6 +1743,8 @@ async function startTurn(
       // a dispatch failure never emits turn.completed, so the settle-driven
       // drain would strand anything queued behind this turn
       drainQueuedSends();
+      drainConnectorResumes();
+      drainSecretResumes();
     }
   })();
 }
@@ -1852,7 +1871,8 @@ async function runGroupMemberTurn(
   // bots that already spoke for this user message — "@Scout ask @Pixel"
   // must not run Pixel twice (once chained, once as a direct responder)
   spoken: Set<string> = new Set(),
-  connectorContinuation?: string,
+  cardContinuation?: string,
+  onDispatchError?: (message: string) => void,
 ): Promise<boolean> {
   const group = store.group(groupId);
   const bot = store.bot(botId);
@@ -1861,12 +1881,14 @@ async function runGroupMemberTurn(
   const instance = registry.get(bot.modelSelection.instanceId);
   const userName = cfg.profile?.name?.trim() || "User";
   if (!instance) {
+    const message = `${bot.name}'s model is unavailable`;
     store.appendMessage(group.threadId, {
       role: "bot",
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
-      tool: { name: `error: ${bot.name}'s model is unavailable`, ok: false },
+      tool: { name: `error: ${message}`, ok: false },
     });
+    onDispatchError?.(message);
     return true;
   }
   // One turn per bot at a time, across BOTH engines. Without this a bot
@@ -1874,15 +1896,20 @@ async function runGroupMemberTurn(
   // processes, interleaved token spend, and an interrupt that only ever
   // reached one of them.
   if (bot.busy) {
+    const message = `${bot.name} is busy in another conversation — skipped this round`;
     store.appendMessage(group.threadId, {
       role: "bot",
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
-      tool: { name: `${bot.name} is busy in another conversation — skipped this round`, ok: false },
+      tool: { name: message, ok: false },
     });
+    onDispatchError?.(message);
     return true;
   }
   const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
+  if (hop < MAX_COMMS_DEPTH && instance.adapter.capabilities.agentsMcp === true) {
+    integrations.agents = agentsIntegration(bot.id, group.threadId, hop);
+  }
   const selectedSkills = selectBundledSkills(
     serializeRoomContext(group.threadId, userName),
     instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : [],
@@ -1897,12 +1924,14 @@ async function runGroupMemberTurn(
       if (connection) integrations.composio = connection;
     }
   } catch (error) {
+    const message = `connected apps are unavailable — ${error instanceof Error ? error.message : String(error)}`;
     store.appendMessage(group.threadId, {
       role: "bot",
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
-      tool: { name: `error: connected apps are unavailable — ${error instanceof Error ? error.message : String(error)}`, ok: false },
+      tool: { name: `error: ${message}`, ok: false },
     });
+    onDispatchError?.(message);
     return true;
   }
   store.setActivity(bot.id, "working");
@@ -1922,12 +1951,14 @@ async function runGroupMemberTurn(
     `Room members: ${roster}, and ${userName} (the human).`,
     group.bulletin.trim() && `Room bulletin (shared instructions for everyone):\n${group.bulletin.trim()}`,
     `Reply as yourself, briefly and conversationally. To bring a teammate in, mention them like @Name — they'll see the conversation and respond.`,
+    integrations.agents &&
+      "If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat.",
   ]
     .filter(Boolean)
     .join("\n");
 
   const text = `${serializeRoomContext(group.threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)${
-    connectorContinuation ? `\n\n${connectorContinuation}` : ""
+    cardContinuation ? `\n\n${cardContinuation}` : ""
   }`;
 
   // same workspace + memory as a 1:1 turn — the room is a different
@@ -1994,12 +2025,14 @@ async function runGroupMemberTurn(
         ...memberTurnSelection(bot.modelSelection),
       })
       .catch((err) => {
+        const message = err instanceof Error ? err.message : "turn failed";
         store.appendMessage(group.threadId, {
           role: "bot",
           kind: "activity",
           from: { botId: bot.id, name: bot.name, color: bot.color },
-          tool: { name: `error: ${err instanceof Error ? err.message.slice(0, 140) : "turn failed"}`, ok: false },
+          tool: { name: `error: ${message.slice(0, 140)}`, ok: false },
         });
+        onDispatchError?.(message);
         watchdog.settle(group.threadId);
         finish("dispatch_failed");
       });
@@ -2015,6 +2048,13 @@ async function runGroupMemberTurn(
     groupSpeakers.delete(group.threadId);
     store.patchGroup(group.id, { busyBotId: null, unread: true });
     if (store.bot(bot.id)?.busy) store.setActivity(bot.id, "idle");
+  }
+  if (outcome === "dispatch_failed") {
+    // No turn.completed follows a rejected room dispatch. Anything that was
+    // queued while this bot briefly owned the room must be retried now.
+    drainQueuedSends();
+    drainConnectorResumes();
+    drainSecretResumes();
   }
 
   // chained mentions: a member's reply can summon teammates — one hop only
@@ -2179,7 +2219,7 @@ function dispatchConnectorResume(entry: { botId: string; threadId: string; resum
   }
   void startTurn(entry.botId, prompt, {
     threadId: entry.threadId,
-    connectorContinuation: true,
+    cardContinuation: true,
     onDispatchError: (message) => markConnectorResumeFailed(entry.threadId, entry.resumeKey, message),
   }).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -2208,8 +2248,114 @@ function drainConnectorResumes() {
   }
 }
 
+type SecretResumeEntry = {
+  botId: string;
+  threadId: string;
+  messageId: string;
+  label: string;
+  outcome: "provided" | "dismissed";
+};
+const pendingSecretResumes = new Map<string, SecretResumeEntry>();
+
+function secretMessage(botId: string, threadId: string, messageId: string): Message | null {
+  if (!connectorThread(botId, threadId)) return null;
+  const message = store.messagesFor(threadId).find((candidate) => candidate.id === messageId);
+  return message?.kind === "secret" && message.secret ? message : null;
+}
+
+function markSecretResumeFailed(threadId: string, messageId: string, error: string) {
+  const message = store.messagesFor(threadId).find((candidate) => candidate.id === messageId);
+  if (!message?.secret) return;
+  store.patchMessage(threadId, message.id, {
+    secret: { ...message.secret, resumed: false, error: error.slice(0, 180) },
+  });
+}
+
+function dispatchSecretResume(entry: SecretResumeEntry) {
+  const owner = connectorThread(entry.botId, entry.threadId);
+  if (!owner) return;
+  const prompt =
+    entry.outcome === "provided"
+      ? `OpenMausBot credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
+      : `OpenMausBot credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
+  if (owner.bot.busy) {
+    pendingSecretResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
+    return;
+  }
+  if (owner.group) {
+    const previous = groupQueues.get(owner.group.id) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const current = connectorThread(entry.botId, entry.threadId);
+      if (!current?.group) return;
+      if (current.bot.busy) {
+        pendingSecretResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
+        return;
+      }
+      await runGroupMemberTurn(
+        current.group.id,
+        entry.botId,
+        0,
+        new Set(),
+        prompt,
+        (message) => markSecretResumeFailed(entry.threadId, entry.messageId, message),
+      );
+    });
+    groupQueues.set(
+      owner.group.id,
+      next.catch((error) => {
+        markSecretResumeFailed(
+          entry.threadId,
+          entry.messageId,
+          error instanceof Error ? error.message : String(error),
+        );
+      }),
+    );
+    return;
+  }
+  void startTurn(entry.botId, prompt, {
+    threadId: entry.threadId,
+    cardContinuation: true,
+    onDispatchError: (message) => markSecretResumeFailed(entry.threadId, entry.messageId, message),
+  }).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/already working/i.test(message)) {
+      pendingSecretResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
+    } else {
+      markSecretResumeFailed(entry.threadId, entry.messageId, message);
+    }
+  });
+}
+
+function resumeSecretCard(botId: string, threadId: string, messageId: string, outcome: SecretResumeEntry["outcome"]) {
+  const message = secretMessage(botId, threadId, messageId);
+  if (!message?.secret) return false;
+  if (message.secret.resumed) return true;
+  store.patchMessage(threadId, message.id, {
+    secret: {
+      ...message.secret,
+      provided: outcome === "provided" ? true : message.secret.provided,
+      dismissed: outcome === "dismissed" ? true : message.secret.dismissed,
+      resumed: true,
+      error: undefined,
+    },
+  });
+  dispatchSecretResume({ botId, threadId, messageId, label: message.secret.label, outcome });
+  return true;
+}
+
+function drainSecretResumes() {
+  for (const [key, entry] of pendingSecretResumes) {
+    if (store.bot(entry.botId)?.busy) continue;
+    pendingSecretResumes.delete(key);
+    dispatchSecretResume(entry);
+  }
+}
+
 bus.subscribe((event: RuntimeEvent) => {
-  if (event.type === "turn.completed") drainConnectorResumes();
+  if (event.type === "turn.completed") {
+    drainConnectorResumes();
+    drainSecretResumes();
+  }
 });
 
 /** Pre-save probe for a CLI path override: run `<cli> --version` with the
@@ -2376,6 +2522,8 @@ async function reloadProviders() {
   // killed turns settle here without a turn.completed event, so anything
   // queued behind them drains now — onto the freshly loaded fleet
   drainQueuedSends();
+  drainConnectorResumes();
+  drainSecretResumes();
 }
 
 // Config writes rebuild the whole provider registry. Keep the read-modify-write
@@ -2686,6 +2834,44 @@ const server = createServer(async (req, res) => {
           section: safeBot.section || "General",
           model: safeBot.modelSelection.model,
         });
+      }
+      if (method === "POST" && path === "/api/internal/request-credential") {
+        const body = await readBody(req);
+        const fromBotId = String(body.fromBotId ?? "");
+        const from = store.bot(fromBotId);
+        if (!from) return json(res, 403, { error: "unknown sender" });
+        const fromThreadId = String(body.fromThreadId ?? from.threadId);
+        const owner = connectorThread(from.id, fromThreadId);
+        if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
+        if (!isCredentialTargetId(body.credentialId)) {
+          return json(res, 400, { error: "unsupported credential id" });
+        }
+        const credentialId: CredentialTargetId = body.credentialId;
+        const target = CREDENTIAL_TARGETS[credentialId];
+        if (credentialIsConfigured(cfg, credentialId)) {
+          return json(res, 200, { alreadyConfigured: true, label: target.label });
+        }
+        const existing = store.messagesFor(fromThreadId).find((message) =>
+          isReusableCredentialRequest(message, credentialId, from.id, Boolean(owner.group))
+        );
+        if (existing) {
+          return json(res, 200, { messageId: existing.id, label: target.label });
+        }
+        const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 240) : "";
+        const message = store.appendMessage(fromThreadId, {
+          role: "bot",
+          kind: "secret",
+          ...(owner.group ? { from: { botId: from.id, name: from.name, color: from.color } } : {}),
+          secret: {
+            target: credentialId,
+            label: target.label,
+            description: reason ? `${target.description} ${reason}` : target.description,
+            placeholder: target.placeholder,
+            helpUrl: target.helpUrl,
+            requestKey: randomUUID(),
+          },
+        });
+        return json(res, 201, { messageId: message.id, label: target.label });
       }
       if (method === "POST" && path === "/api/internal/connectors/mcp") {
         const body = await readBody(req);
@@ -4490,6 +4676,38 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") return json(res, 200, await composio.removeAccount(cfg, m[1], m[2]));
     m = path.match(/^\/api\/connectors\/([\w-]+)$/);
     if (m && method === "DELETE") return json(res, 200, await composio.removeService(cfg, m[1]));
+
+    // Inline credential cards never receive the credential value. Electron
+    // saves it through the OS-backed store first; this route only verifies
+    // configured state, updates card metadata, and resumes the paused turn.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/secret-cards\/([\w-]+)\/(provided|resume|dismiss)$/);
+    if (m && method === "POST") {
+      const body = await readBody(req);
+      const threadId = String(body.threadId ?? "");
+      const message = secretMessage(m[1], threadId, m[2]);
+      if (!message?.secret) return json(res, 404, { error: "no such credential request" });
+      if (m[3] === "provided") {
+        if (message.secret.dismissed) return json(res, 409, { error: "this credential request was dismissed" });
+        if (!credentialIsConfigured(cfg, message.secret.target)) {
+          return json(res, 409, { error: `${message.secret.label} was not saved yet` });
+        }
+        resumeSecretCard(m[1], threadId, message.id, "provided");
+        return json(res, 200, { provided: true, resumed: true });
+      }
+      if (m[3] === "resume") {
+        const outcome = credentialResumeOutcome(message.secret);
+        if (!outcome) {
+          return json(res, 409, { error: "this credential request is not ready to resume" });
+        }
+        if (outcome === "provided" && !credentialIsConfigured(cfg, message.secret.target)) {
+          return json(res, 409, { error: `${message.secret.label} is no longer configured` });
+        }
+        resumeSecretCard(m[1], threadId, message.id, outcome);
+        return json(res, 200, { resumed: true });
+      }
+      if (!message.secret.provided) resumeSecretCard(m[1], threadId, message.id, "dismissed");
+      return json(res, 200, { dismissed: true, resumed: true });
+    }
 
     // Inline connection cards are bound to both the bot and the exact task
     // or room thread that created them. The browser auth URL is returned
