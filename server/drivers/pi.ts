@@ -314,8 +314,18 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       let mcpTempDir: string | null = null;
       if (mcpServers) {
         mcpTempDir = mkdtempSync(join(tmpdir(), "omb-pi-mcp-"));
-        const mcpConfigPath = join(mcpTempDir, "mcp.json");
-        writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers }), { mode: 0o600 });
+        try {
+          writeFileSync(join(mcpTempDir, "mcp.json"), JSON.stringify({ mcpServers }), { mode: 0o600 });
+        } catch (err) {
+          // A failed write must not leave the temp dir behind — a partial file
+          // could still hold the box token / composio key / comms token.
+          try {
+            rmSync(mcpTempDir, { recursive: true, force: true });
+          } catch {
+            /* best effort */
+          }
+          throw err;
+        }
       }
       const childArgs = mcpServers ? [...PI_ARGS, "-e", SPAWNED_PROXIES.piMcpExtension] : PI_ARGS;
 
