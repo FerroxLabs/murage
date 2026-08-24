@@ -21,3 +21,4 @@ release
 cloudflare/composio-broker/worker-configuration.d.ts
 .claude/worktrees/
 .vercel/
+.pi/

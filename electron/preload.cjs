@@ -100,9 +100,11 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Open a web link in the default browser. Unlike renderer window.open,
    * this remains reliable after an asynchronous API request. */
   openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
-  /** Live VNC/noVNC in a sandboxed modal owned by the app window. */
+  /** Live VNC/noVNC in a sandboxed window owned by the app window. */
   desktopViewer: {
     open: (url, title, contextId) => ipcRenderer.invoke("desktop-viewer:open", url, title, contextId),
+    close: (contextId) => ipcRenderer.invoke("desktop-viewer:close", contextId),
+    currentState: () => ipcRenderer.invoke("desktop-viewer:state-now"),
     onState: (cb) => {
       const handler = (_event, state) => cb(state);
       ipcRenderer.on("desktop-viewer:state", handler);
