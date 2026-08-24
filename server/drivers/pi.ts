@@ -319,15 +319,31 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       }
       const childArgs = mcpServers ? [...PI_ARGS, "-e", SPAWNED_PROXIES.piMcpExtension] : PI_ARGS;
 
-      const child = spawnCli(config.cli, childArgs, {
-        stdio: ["pipe", "pipe", "pipe"],
-        cwd: turn.cwd,
-        env: piEnvironment({
-          ...process.env,
-          ...input.environment,
-          ...(mcpServers && mcpTempDir ? { OMB_MCP_CONFIG: join(mcpTempDir, "mcp.json") } : {}),
-        }),
-      });
+      // spawnCli can throw synchronously (unresolvable CLI); if it does, the
+      // 0600 temp file with the box token / composio key / comms token must
+      // not be left on disk — settle() never runs because no child existed.
+      const child = (() => {
+        try {
+          return spawnCli(config.cli, childArgs, {
+            stdio: ["pipe", "pipe", "pipe"],
+            cwd: turn.cwd,
+            env: piEnvironment({
+              ...process.env,
+              ...input.environment,
+              ...(mcpServers && mcpTempDir ? { OMB_MCP_CONFIG: join(mcpTempDir, "mcp.json") } : {}),
+            }),
+          });
+        } catch (err) {
+          if (mcpTempDir) {
+            try {
+              rmSync(mcpTempDir, { recursive: true, force: true });
+            } catch {
+              /* best effort */
+            }
+          }
+          throw err;
+        }
+      })();
       let buf = "";
       let assistantText = "";
       // resolve one-shot RPC responses (new_session / switch_session / set_model)

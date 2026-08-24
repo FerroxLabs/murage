@@ -54,6 +54,14 @@ class StdioMcp {
     this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (chunk: string) => this.onData(chunk));
     this.child.on("error", (err) => this.failAll(err));
+    // A server that starts and then dies emits `exit`, never `error`; without
+    // settling on it, an in-flight init/listTools would hang the extension
+    // load for the whole turn.
+    this.child.on("exit", (code) => this.failAll(new Error(`MCP server exited (code ${code ?? "?"})`)));
+    // A write to a dead child errors asynchronously on the stream; an
+    // unhandled stream error would kill the pi process (the same hazard
+    // spawnCli documents for driver-spawned children in procs.ts).
+    this.child.stdin.on("error", () => this.failAll(new Error("MCP server stdin closed")));
   }
 
   private failAll(err: Error): void {
@@ -85,11 +93,25 @@ class StdioMcp {
     }
   }
 
-  private call(method: string, params?: unknown): Promise<unknown> {
+  private call(method: string, params?: unknown, timeoutMs = 30_000): Promise<unknown> {
     const id = this.nextId++;
     return new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`MCP ${method} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      timer.unref?.();
+      this.pending.set(id, {
+        resolve: (v) => (clearTimeout(timer), resolve(v)),
+        reject: (e) => (clearTimeout(timer), reject(e)),
+      });
+      try {
+        this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      } catch (err) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
