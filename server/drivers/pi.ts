@@ -58,7 +58,14 @@ export function buildMcpServers(turn: SendTurnInput): Record<string, unknown> | 
     };
   } else if (turn.integrations?.localComputer) {
     const local = turn.integrations.localComputer;
-    servers.computer = { command: local.command, args: local.args, env: local.env };
+    servers.computer = {
+      command: local.command,
+      args: local.args,
+      env: local.env,
+      // Host control carries scope so the extension gates every call behind
+      // a permission card; isolated computers deliberately omit it.
+      ...(local.scope ? { scope: local.scope } : {}),
+    };
   }
   if (turn.integrations?.agents) servers.agents = { ...turn.integrations.agents };
   if (turn.integrations?.phone) servers.phone = { ...turn.integrations.phone };
@@ -180,14 +187,22 @@ export async function fetchPiModels(
 
 export interface PiConfig {
   cli: string;
+  /** Full-auto: never ask before an action. Host control is unavailable in
+   * this mode — the same knob as Claude's `bypassPermissions` and the ACP
+   * engines' `fullAuto`. */
+  fullAuto: boolean;
 }
 
 function decodeConfig(raw: unknown): PiConfig {
-  if (raw === null || raw === undefined) return { cli: "pi" };
+  if (raw === null || raw === undefined) return { cli: "pi", fullAuto: false };
   if (typeof raw !== "object") throw new Error("pi config must be an object");
-  const obj = raw as { cli?: unknown };
+  const obj = raw as { cli?: unknown; fullAuto?: unknown };
   if (obj.cli !== undefined && typeof obj.cli !== "string") throw new Error("pi config `cli` must be a string");
-  return { cli: obj.cli && obj.cli.trim() ? obj.cli.trim() : "pi" };
+  if (obj.fullAuto !== undefined && typeof obj.fullAuto !== "boolean") throw new Error("pi config `fullAuto` must be a boolean");
+  return {
+    cli: obj.cli && obj.cli.trim() ? obj.cli.trim() : "pi",
+    fullAuto: obj.fullAuto === true,
+  };
 }
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
@@ -281,6 +296,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      // Host control always routes through the permission card; full-auto must
+      // never get unapproved hands on the user's machine (same guard as the
+      // Claude and ACP drivers).
+      const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
+      if (controlsHost && config.fullAuto) {
+        throw new Error("local computer control requires the interactive approval broker");
+      }
       const turnId = newId();
       const pending = new Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>();
       let settled = false;
@@ -597,11 +619,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           computerMcp: true,
           composioMcp: true,
           phoneMcp: true,
-          // Host control (the user's real Mac) is deliberately OFF: the
-          // harness routes those actions through its permission broker, which
-          // the pi RPC bridge does not wire up yet. Cloud box / Local VM / VPS
-          // ride `computerMcp` and are isolated, so they are safe to mount.
-          localComputerMcp: false,
+          // Host control (the user's real Mac) rides the pi-native permission
+          // card (`ctx.ui.confirm` → extension_ui_request) gated in the
+          // extension, so it is offered exactly when the other engines offer
+          // it: enabled unless the bot is in full-auto.
+          localComputerMcp: !config.fullAuto,
           images: false,
         },
         sendTurn,

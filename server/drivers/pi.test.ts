@@ -101,19 +101,31 @@ describe("buildMcpServers", () => {
     });
     expect(servers?.computer).toEqual({ command: "node", args: ["mcp"], env: { X: "y" } });
   });
+
+  it("marks a host computer with scope so the extension gates its tools", () => {
+    const servers = buildMcpServers({
+      threadId: "t",
+      text: "hi",
+      integrations: {
+        localComputer: { command: "node", args: ["mcp"], env: {}, scope: "local-computer" },
+      },
+    });
+    expect(servers?.computer).toMatchObject({ scope: "local-computer" });
+  });
 });
 
 describe("PiDriver config + install", () => {
   it("defaults to the `pi` binary", () => {
-    expect(PiDriver.decodeConfig({})).toEqual({ cli: "pi" });
-    expect(PiDriver.decodeConfig(undefined)).toEqual({ cli: "pi" });
-    expect(PiDriver.decodeConfig(null)).toEqual({ cli: "pi" });
-    expect(PiDriver.decodeConfig({ cli: "  " })).toEqual({ cli: "pi" });
+    expect(PiDriver.decodeConfig({})).toEqual({ cli: "pi", fullAuto: false });
+    expect(PiDriver.decodeConfig(undefined)).toEqual({ cli: "pi", fullAuto: false });
+    expect(PiDriver.decodeConfig(null)).toEqual({ cli: "pi", fullAuto: false });
+    expect(PiDriver.decodeConfig({ cli: "  " })).toEqual({ cli: "pi", fullAuto: false });
   });
 
   it("rejects invalid config (throws → shadow snapshot)", () => {
     expect(() => PiDriver.decodeConfig(5)).toThrow(/object/);
     expect(() => PiDriver.decodeConfig({ cli: 5 })).toThrow(/string/);
+    expect(() => PiDriver.decodeConfig({ fullAuto: "yes" })).toThrow(/boolean/);
   });
 
   it("publishes the npm installer on every platform and points docs at pi.dev", () => {
@@ -166,7 +178,7 @@ describe("PiDriver turns (fake CLI)", () => {
       displayName: "pi Test",
       environment: { ...environment, ...(mode ? { FAKE_PI_MODE: mode } : {}) },
       enabled: true,
-      config: { cli: FAKE_CLI },
+      config: { cli: FAKE_CLI, fullAuto: false },
     });
     recorder = recordEvents(instance.adapter);
   };
@@ -365,7 +377,7 @@ describe("PiDriver snapshot", () => {
       displayName: undefined,
       environment: {},
       enabled: true,
-      config: { cli: FAKE_CLI },
+      config: { cli: FAKE_CLI, fullAuto: false },
     });
     const snap = await instance.snapshot();
     expect(snap.state).toBe("available");
@@ -380,7 +392,7 @@ describe("PiDriver snapshot", () => {
       displayName: undefined,
       environment: {},
       enabled: true,
-      config: { cli: "pi-definitely-not-on-path-xyz" },
+      config: { cli: "pi-definitely-not-on-path-xyz", fullAuto: false },
     });
     const snap = await instance.snapshot();
     expect(snap.state).toBe("unavailable");

@@ -20,6 +20,9 @@ interface McpServerDef {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  /** "local-computer" marks the user's real host desktop: every tool on such
+   * a server is gated behind a permission card before it executes. */
+  scope?: string;
 }
 
 interface McpConfig {
@@ -194,6 +197,16 @@ function sanitizeToolName(server: string, tool: string): string {
   return raw.slice(0, 64) || `mcp_tool`;
 }
 
+/** A short human-readable line for the permission card's detail. */
+function summarizeParams(params: unknown): string {
+  try {
+    const s = JSON.stringify(params ?? {});
+    return s === "{}" ? "" : s.slice(0, 300);
+  } catch {
+    return "";
+  }
+}
+
 export default async function (pi: ExtensionAPI): Promise<void> {
   const configPath = process.env.OMB_MCP_CONFIG;
   if (!configPath) return;
@@ -210,6 +223,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   for (const [serverName, def] of Object.entries(config.mcpServers ?? {})) {
     if (!def || typeof def.command !== "string") continue;
+    const gated = def.scope === "local-computer";
     let client: StdioMcp | undefined;
     try {
       client = new StdioMcp(def);
@@ -224,7 +238,20 @@ export default async function (pi: ExtensionAPI): Promise<void> {
           label: `${serverName}:${tool.name}`,
           description: tool.description ?? `${tool.name} (MCP tool from ${serverName})`,
           parameters: toTypebox(tool.inputSchema),
-          async execute(_toolCallId, params) {
+          async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+            // Host tools ask first, using pi's native permission card
+            // (ctx.ui.confirm → extension_ui_request → Allow/Deny card). This
+            // mirrors ACP's session/request_permission and Codex's elicitation.
+            if (gated) {
+              const detail = summarizeParams(params);
+              const allowed = await ctx.ui.confirm(
+                `Allow ${tool.name} on your computer?`,
+                detail || `Run ${serverName}:${tool.name}`,
+              );
+              if (!allowed) {
+                return { content: [{ type: "text", text: "Blocked by the user." }], details: {} };
+              }
+            }
             const res = await client.callTool(tool.name, params);
             const text = res.isError ? `(tool returned an error)\n${res.text}` : res.text;
             return { content: [{ type: "text", text }], details: {} };
