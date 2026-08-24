@@ -37,6 +37,7 @@ import {
   localComputerDisabledReason,
   localComputerSelectable,
 } from "@/lib/local-computer";
+import { vpsComputerNeedsReplacement, type VpsComputerStatus } from "@/lib/vps-computer";
 
 async function api(path: string, init?: RequestInit): Promise<any> {
   const res = await fetch(path, { headers: { "content-type": "application/json" }, ...init });
@@ -53,6 +54,7 @@ type Phase =
   | "vm"
   | "vm-unavailable"
   | "vps-unconfigured"
+  | "vps-incompatible"
   | "vps-stopped"
   | "local"
   | "local-unavailable"
@@ -122,9 +124,10 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   // the only way a person can actually drive the VM.
   const [vmViewerUrl, setVmViewerUrl] = useState<string | null>(null);
   const [vmStatus, setVmStatus] = useState<LocalVmStatus | null>(null);
+  const [vpsStatus, setVpsStatus] = useState<VpsComputerStatus | null>(null);
   const [localFrame, setLocalFrame] = useState<string | null>(null);
   const [pending, setPending] = useState<
-    "join" | "sleep" | "provision" | "vm-create" | "vm-recreate" | "vm-delete" | null
+    "join" | "sleep" | "provision" | "vps-replace" | "vm-create" | "vm-recreate" | "vm-delete" | null
   >(null);
   const [controlPending, setControlPending] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -195,6 +198,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     setVmFrame(null);
     setVmViewerUrl(null);
     setVmStatus(null);
+    setVpsStatus(null);
     setLocalFrame(null);
     setError(null);
     if (bot.computer === "off") {
@@ -279,8 +283,10 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         return;
       }
       api(`/api/bots/${bot.id}/computer`)
-        .then((status) => {
+        .then((rawStatus) => {
           if (!alive) return;
+          const status: VpsComputerStatus = rawStatus;
+          setVpsStatus(status);
           if (!status.configured) {
             if (autoLocal) setPhase("local");
             else {
@@ -292,6 +298,15 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           if (status.ready) {
             setBoxState(status.container ?? null);
             setPhase("ready");
+            return;
+          }
+          // App updates can bump IMAGE_LAYER_VERSION while this bot still has
+          // a managed container from the previous release. Provision refuses
+          // to overwrite it by design, so surface the explicit replacement
+          // path instead of automatically issuing a request that can only 409.
+          if (vpsComputerNeedsReplacement(status)) {
+            setError(status.problem);
+            setPhase("vps-incompatible");
             return;
           }
           if (bot.computer === "cloud") {
@@ -617,6 +632,29 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     }
   };
 
+  const replaceVpsComputer = async () => {
+    if (!window.confirm(`Replace ${bot.name}'s VPS computer with the version required by this OpenMausBot update? Files stored only inside the disposable container will be deleted.`)) return;
+    setPending("vps-replace");
+    setError(null);
+    try {
+      await api(`/api/bots/${bot.id}/computer/remove`, { method: "POST", body: "{}" });
+      const result: VpsComputerStatus = await api(`/api/bots/${bot.id}/computer/provision`, {
+        method: "POST",
+        body: "{}",
+      });
+      setVpsStatus(result);
+      setBoxState(result.container ?? null);
+      setPhase(result.ready ? "ready" : "error");
+      if (!result.ready) setError(result.problem ?? "The replacement VPS Cua desktop is not ready yet");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPhase("error");
+    } finally {
+      setPending(null);
+      setRetry((n) => n + 1);
+    }
+  };
+
   const openVmSettings = () => {
     window.sessionStorage.setItem("openmausbot.settings.section", "computer");
     dispatch({ type: "toggleAppSettings", open: true });
@@ -631,6 +669,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     starting: "Starting your bot's computer…",
     unconfigured: "No cloud computer configured",
     "vps-unconfigured": "No managed VPS computer is configured for this bot",
+    "vps-incompatible": "This VPS computer belongs to an earlier OpenMausBot version",
     "vps-stopped": "The managed VPS computer is stopped",
     "local-unavailable": localDisabledReason ?? "Local computer control isn't ready.",
     "vm-unavailable": "The Local VM isn't available for this bot",
@@ -772,6 +811,16 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                 >
                   {pending === "provision" && <Loader2 size={13} className="mr-1.5 inline animate-spin" />}
                   Start VPS computer
+                </button>
+              )}
+              {phase === "vps-incompatible" && vpsStatus?.managed && (
+                <button
+                  onClick={() => void replaceVpsComputer()}
+                  disabled={pending === "vps-replace"}
+                  className="mt-1 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-50"
+                >
+                  {pending === "vps-replace" && <Loader2 size={13} className="mr-1.5 inline animate-spin" />}
+                  Replace VPS computer
                 </button>
               )}
             </div>
