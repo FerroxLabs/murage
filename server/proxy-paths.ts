@@ -42,4 +42,8 @@ export const SPAWNED_PROXIES = {
   dweb: resolveProxy("drivers/dweb-proxy"),
   connectors: resolveProxy("connector-proxy"),
   phone: resolveProxy("drivers/phone-proxy"),
+  // Loaded by the external `pi` process via `-e`, not by this server — but
+  // resolved through the same single source of truth so the packaged layout
+  // check can assert it ships.
+  piMcpExtension: resolveProxy("drivers/pi-mcp-extension"),
 } as const;
