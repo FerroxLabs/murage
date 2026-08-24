@@ -108,17 +108,29 @@ const LINUX_WHEELS = {
 
 /** Reproducible, multi-architecture derivative of Cua's sandbox desktop.
  * Both Linux wheels are exact-version and SHA-256 verified. Supervisor owns
- * the daemon so it starts, restarts, and stops with the desktop container. */
+ * the daemon so it starts, restarts, and stops with the desktop container.
+ *
+ * The first RUN also rejects a defective base image before anything uses it:
+ * some published ARM64 layers of upstream bases have shipped zero-byte
+ * OpenSSL libraries, which surfaces later as a baffling "curl: error while
+ * loading shared libraries … file too short" that reads as a network fault.
+ * The gate names the actual problem at the step that can act on it. */
 export function managedImageDockerfile(): string {
   return `FROM ${BASE_IMAGE}
 USER root
 RUN set -eux; \\
     arch="$(uname -m)"; \\
     case "$arch" in \\
-      x86_64) wheel_url='${LINUX_WHEELS.x86_64.url}'; wheel_sha='${LINUX_WHEELS.x86_64.sha256}'; wheel_path='/tmp/cua_driver-${CUA_DRIVER_VERSION}-py3-none-manylinux_2_31_x86_64.whl' ;; \\
-      aarch64|arm64) wheel_url='${LINUX_WHEELS.aarch64.url}'; wheel_sha='${LINUX_WHEELS.aarch64.sha256}'; wheel_path='/tmp/cua_driver-${CUA_DRIVER_VERSION}-py3-none-manylinux_2_31_aarch64.whl' ;; \\
+      x86_64) wheel_url='${LINUX_WHEELS.x86_64.url}'; wheel_sha='${LINUX_WHEELS.x86_64.sha256}'; wheel_path='/tmp/cua_driver-${CUA_DRIVER_VERSION}-py3-none-manylinux_2_31_x86_64.whl'; lib_triplet='x86_64-linux-gnu' ;; \\
+      aarch64|arm64) wheel_url='${LINUX_WHEELS.aarch64.url}'; wheel_sha='${LINUX_WHEELS.aarch64.sha256}'; wheel_path='/tmp/cua_driver-${CUA_DRIVER_VERSION}-py3-none-manylinux_2_31_aarch64.whl'; lib_triplet='aarch64-linux-gnu' ;; \\
       *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \\
     esac; \\
+    for ssl_lib in "/lib/$lib_triplet/libssl.so.3" "/lib/$lib_triplet/libcrypto.so.3"; do \\
+      if [ -e "$ssl_lib" ] && [ ! -s "$ssl_lib" ]; then \\
+        echo "pinned base image is defective on $arch: $ssl_lib is zero bytes, so curl cannot start — re-pull or replace the base image instead of debugging the wheel download" >&2; \\
+        exit 1; \\
+      fi; \\
+    done; \\
     curl -fsSL "$wheel_url" -o "$wheel_path"; \\
     echo "$wheel_sha  $wheel_path" | sha256sum -c -; \\
     /opt/venv/bin/python -m pip install --no-cache-dir --force-reinstall --no-deps "$wheel_path"; \\
