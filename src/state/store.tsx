@@ -527,6 +527,19 @@ function patchCard(state: AppState, botId: string, messageId: string, patch: Par
   }));
 }
 
+/** First-run quiz still sitting on this bot's thread. */
+function openOnboardingCard(bot: Bot): Message | undefined {
+  return bot.messages.find(
+    (message) => message.kind === "options" && message.card && !message.card.requestId && !message.card.dismissed,
+  );
+}
+
+function dismissOnboardingCard(state: AppState, botId: string): AppState {
+  const bot = state.bots.find((candidate) => candidate.id === botId);
+  const quiz = bot ? openOnboardingCard(bot) : undefined;
+  return quiz ? patchCard(state, botId, quiz.id, { dismissed: true }) : state;
+}
+
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "hydrate": {
@@ -644,12 +657,19 @@ export function reducer(state: AppState, action: Action): AppState {
       );
     }
     // optimistic card settle; the server's message.patch confirms it later
-    case "answerCard":
+    case "answerCard": {
+      const bot = state.bots.find((candidate) => candidate.id === action.botId);
+      const card = bot?.messages.find((message) => message.id === action.messageId)?.card;
       return withMascotMotion(
-        patchCard(state, action.botId, action.messageId, { answered: action.answer }),
+        patchCard(state, action.botId, action.messageId, {
+          answered: action.answer,
+          // talking past the first-run quiz hides it; live asks stay until resolved
+          ...(card?.requestId ? {} : { dismissed: true }),
+        }),
         action.botId,
         "working",
       );
+    }
     case "dismissCard":
       return patchCard(state, action.botId, action.messageId, { dismissed: true });
     case "decideRequest":
@@ -980,6 +1000,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, pendingQueued };
     }
     case "send":
+      return withMascotMotion(dismissOnboardingCard(state, action.botId), action.botId, "working");
     case "editMessage":
       return withMascotMotion(state, action.botId, "working");
     case "newTask":
@@ -1173,6 +1194,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         action.type === "updateBot"
           ? stateRef.current.bots.find((candidate) => candidate.id === action.botId)
           : undefined;
+      const quizBeforeSend = (() => {
+        if (action.type !== "send") return undefined;
+        const bot = stateRef.current.bots.find((candidate) => candidate.id === action.botId);
+        return bot ? openOnboardingCard(bot) : undefined;
+      })();
       if (action.type === "deleteBot") botPatchQueue.cancel(action.botId);
       rawDispatch(action);
       switch (action.type) {
@@ -1197,7 +1223,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "markRoutineRunSeen":
           api(`/api/routine-runs/${action.runId}/seen`, { method: "POST" }).catch(showError);
           break;
-        case "send":
+        case "send": {
+          // persist through the existing card route so an older server that
+          // does not auto-dismiss still hides the quiz on this client
+          if (quizBeforeSend) persistCard(action.botId, quizBeforeSend.id, { dismissed: true });
           void api(`/api/bots/${action.botId}/messages`, {
             method: "POST",
             body: JSON.stringify({ text: action.text }),
@@ -1218,6 +1247,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             })
             .catch(showError);
           break;
+        }
         case "editMessage":
           api(`/api/bots/${action.botId}/messages/${action.messageId}/edit`, {
             method: "POST",
@@ -1274,7 +1304,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               }),
             }).catch(showError);
           } else {
-            persistCard(action.botId, action.messageId, { answered: action.answer });
+            persistCard(action.botId, action.messageId, { answered: action.answer, dismissed: true });
             api(`/api/bots/${action.botId}/messages`, {
               method: "POST",
               body: JSON.stringify({ text: action.answer }),
