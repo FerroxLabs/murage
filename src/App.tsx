@@ -78,6 +78,25 @@ function Shell() {
     setDrawerOpen(false);
   }, [state.selectedId, state.activeView, state.pluginsOpen, state.settingsOpen]);
 
+  // The viewer outlives ComputerPanel and can target any bot, so release control
+  // here (always mounted) when a bot's viewer closes. release() is idempotent.
+  useEffect(() => {
+    return window.ogb?.desktopViewer?.onState((viewer) => {
+      if (viewer.open || !viewer.contextId) return;
+      const botId = viewer.contextId;
+      void fetch(`/api/bots/${botId}/computer/control`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "release" }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((snap) => {
+          if (snap) dispatch({ type: "computerControl", botId, held: snap.held === true, helpReason: snap.helpReason ?? null });
+        })
+        .catch(() => {});
+    });
+  }, [dispatch]);
+
   return (
     <div className="flex h-full flex-col">
       {/* fixed-position popup, bottom-left — outside the layout flow */}

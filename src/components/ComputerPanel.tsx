@@ -140,10 +140,26 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     (instance) => instance.instanceId === bot.modelSelection.instanceId,
   );
 
+  // Pause the screenshot poll while this bot's viewer is open; seed from the
+  // live viewer so a remount/switch mid-session doesn't wrongly resume it.
   useEffect(() => {
-    return window.ogb?.desktopViewer?.onState((viewer) => {
+    let alive = true;
+    const dv = window.ogb?.desktopViewer;
+    if (dv?.currentState) {
+      void dv
+        .currentState()
+        .then((s) => {
+          if (alive) setViewerOpen(s.open && s.contextId === bot.id);
+        })
+        .catch(() => {});
+    }
+    const off = dv?.onState((viewer) => {
       if (viewer.contextId === bot.id) setViewerOpen(viewer.open);
     });
+    return () => {
+      alive = false;
+      off?.();
+    };
   }, [bot.id]);
 
   useEffect(() => {
@@ -843,7 +859,10 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
               {phase === "vm" && " Use Open desktop to drive — the preview here is watch-only."}
             </div>
             <button
-              onClick={() => controlAction("release")}
+              onClick={() => {
+                controlAction("release");
+                void window.ogb?.desktopViewer?.close(bot.id);
+              }}
               disabled={controlPending}
               className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-accent py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-50"
             >

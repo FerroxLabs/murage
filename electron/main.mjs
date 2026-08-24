@@ -417,12 +417,25 @@ function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
   const titleCandidate = Object.prototype.toString.call(rawTitle) === "[object String]" ? rawTitle.trim() : "";
   const title = titleCandidate ? titleCandidate.slice(0, 80) : "Live desktop";
 
+  const nextContextId =
+    Object.prototype.toString.call(contextId) === "[object String]" ? contextId.slice(0, 120) : null;
+
   // Desktop URLs contain rotating access tokens. A newly minted URL replaces
   // the old viewer instead of being retained anywhere after its window closes.
-  if (desktopViewerWindow && !desktopViewerWindow.isDestroyed()) desktopViewerWindow.close();
+  // Clear the ref first so the stale window's close handler no-ops; on a bot
+  // change, tell the previous bot to release (same-bot reopen stays quiet).
+  if (desktopViewerWindow && !desktopViewerWindow.isDestroyed()) {
+    const previous = desktopViewerWindow;
+    const previousOwner = desktopViewerOwner;
+    const previousContextId = desktopViewerContextId;
+    desktopViewerWindow = null;
+    previous.close();
+    if (previousContextId !== nextContextId && previousOwner && !previousOwner.isDestroyed()) {
+      previousOwner.send("desktop-viewer:state", { open: false, contextId: previousContextId });
+    }
+  }
   desktopViewerOwner = owner.webContents;
-  desktopViewerContextId =
-    Object.prototype.toString.call(contextId) === "[object String]" ? contextId.slice(0, 120) : null;
+  desktopViewerContextId = nextContextId;
 
   const viewer = new BrowserWindow({
     width: 1220,
@@ -430,7 +443,9 @@ function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
     minWidth: 760,
     minHeight: 520,
     parent: owner,
-    modal: true,
+    // Not modal: the person still needs the app's "Hand control back" button
+    // while the desktop is open. `parent` keeps it floating above the app.
+    modal: false,
     show: false,
     title,
     icon: APP_ICON,
@@ -458,6 +473,7 @@ function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
   viewer.on("closed", () => {
     if (desktopViewerWindow !== viewer) return;
     desktopViewerWindow = null;
+    // The panel drops its "viewer open" state and releases control on this.
     notifyDesktopViewer(false);
     desktopViewerOwner = null;
     desktopViewerContextId = null;
@@ -745,6 +761,21 @@ ipcMain.handle("desktop-viewer:open", (event, rawUrl, title, contextId) => {
   const owner = BrowserWindow.fromWebContents(event.sender);
   return openDesktopViewer(owner, rawUrl, title, contextId);
 });
+
+// Close only when the caller owns the current viewer — otherwise one bot's
+// "Hand control back" would close (and release) another bot's viewer.
+ipcMain.handle("desktop-viewer:close", (_event, contextId) => {
+  const scoped = Object.prototype.toString.call(contextId) === "[object String]" ? contextId : null;
+  if (scoped !== desktopViewerContextId) return false;
+  if (desktopViewerWindow && !desktopViewerWindow.isDestroyed()) desktopViewerWindow.close();
+  return true;
+});
+
+// Lets a (re)mounted panel seed viewer-open state instead of defaulting to false.
+ipcMain.handle("desktop-viewer:state-now", () => ({
+  open: Boolean(desktopViewerWindow && !desktopViewerWindow.isDestroyed()),
+  contextId: desktopViewerContextId,
+}));
 
 ipcMain.handle("perm:status", () => ({
   mic:
