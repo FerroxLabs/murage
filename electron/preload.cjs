@@ -100,6 +100,8 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Open a web link in the default browser. Unlike renderer window.open,
    * this remains reliable after an asynchronous API request. */
   openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
+  /** Mirrors durable unread state into the native Dock/taskbar badge. */
+  setUnreadCount: (count) => ipcRenderer.send("desktop:unread-count", count),
   /** Live VNC/noVNC in a sandboxed window owned by the app window. */
   desktopViewer: {
     open: (url, title, contextId) => ipcRenderer.invoke("desktop-viewer:open", url, title, contextId),

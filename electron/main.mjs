@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
@@ -28,6 +28,7 @@ const { createDisplayMediaGuard, invokeDisplayMediaCallback, selectCaptureSource
 );
 const { STAGE_PREFIX: APPIMAGE_CUA_STAGE_PREFIX } = require("./cua-linux-bundle.cjs");
 const { desktopViewerUrl, sameDesktopViewerOrigin } = require("./desktop-viewer.cjs");
+const { normalizeUnreadCount, parseWindowState, resolveWindowState } = require("./window-state.cjs");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
@@ -39,6 +40,74 @@ const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 let desktopViewerWindow = null;
 let desktopViewerOwner = null;
 let desktopViewerContextId = null;
+let mainWindow = null;
+let unreadCount = 0;
+let unreadOverlayIcon = null;
+
+function windowStateFile() {
+  return path.join(app.getPath("userData"), "window-state.json");
+}
+
+function readWindowState() {
+  try {
+    return parseWindowState(fs.readFileSync(windowStateFile(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeWindowState(win) {
+  if (!win || win.isDestroyed()) return;
+  const file = windowStateFile();
+  const temporary = `${file}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify({ bounds: win.getNormalBounds(), maximized: win.isMaximized() }),
+      { mode: 0o600 },
+    );
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch {}
+    slog(`window state save failed: ${error?.message ?? error}`);
+  }
+}
+
+function installWindowStatePersistence(win) {
+  let timer = null;
+  const flush = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    writeWindowState(win);
+  };
+  const schedule = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(flush, 250);
+    timer.unref?.();
+  };
+  win.on("resize", schedule);
+  win.on("move", schedule);
+  win.on("maximize", schedule);
+  win.on("unmaximize", schedule);
+  win.on("close", flush);
+}
+
+function applyUnreadBadge(win = mainWindow) {
+  const count = normalizeUnreadCount(unreadCount);
+  if (process.platform === "win32") {
+    if (!win || win.isDestroyed()) return;
+    unreadOverlayIcon ??= nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 });
+    win.setOverlayIcon(
+      count > 0 && !unreadOverlayIcon.isEmpty() ? unreadOverlayIcon : null,
+      count > 0 ? `${count} unread conversation${count === 1 ? "" : "s"}` : "No unread conversations",
+    );
+    return;
+  }
+  if (process.platform === "darwin" || process.platform === "linux") app.setBadgeCount(count);
+}
 
 // GNOME groups the window with its installed desktop entry only when both
 // identities match. This must run before Electron becomes ready.
@@ -517,11 +586,20 @@ ipcMain.on("screen:preview-intent", (event) => {
   event.returnValue = displayMediaGuard.begin(event.senderFrame);
 });
 
+ipcMain.on("desktop:unread-count", (event, value) => {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (!sender || sender !== mainWindow || sender.isDestroyed()) return;
+  unreadCount = normalizeUnreadCount(value);
+  applyUnreadBadge(sender);
+});
+
 function createWindow() {
   const isMac = process.platform === "darwin";
+  const primary = screen.getPrimaryDisplay();
+  const displays = [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)];
+  const restored = resolveWindowState(readWindowState(), displays.map((display) => display.workArea));
   const win = new BrowserWindow({
-    width: 1440,
-    height: 920,
+    ...restored.bounds,
     minWidth: 900,
     minHeight: 600,
     icon: APP_ICON,
@@ -545,6 +623,13 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
     },
+  });
+  mainWindow = win;
+  installWindowStatePersistence(win);
+  applyUnreadBadge(win);
+  if (restored.maximized) win.maximize();
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {

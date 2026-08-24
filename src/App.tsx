@@ -3,6 +3,7 @@ import { Loader2, Menu } from "lucide-react";
 import { StoreProvider, useStore } from "@/state/store";
 import { Onboarding } from "@/components/Onboarding";
 import { emailGateDone, initAnalytics } from "@/lib/analytics";
+import { unreadConversationCount } from "@/lib/unread";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
@@ -20,6 +21,7 @@ import { SkillRecorderPage } from "@/components/SkillRecorderPage";
 
 function Shell() {
   const { state, dispatch } = useStore();
+  const unreadCount = unreadConversationCount(state.bots, state.groups);
   // Mobile-only drawer state. Above md, none of these properties are emitted
   // at all — Sidebar scopes every mobile class with max-md: rather than
   // cancelling them with md:, which would still emit a translate value and
@@ -67,6 +69,10 @@ function Shell() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [state.bots, state.selectedId, dispatch]);
+
+  useEffect(() => {
+    window.ogb?.setUnreadCount?.(unreadCount);
+  }, [unreadCount]);
 
   // Picking a conversation closes the drawer: on a phone the chat is what you
   // asked for, and leaving the list up would hide it. Watching activeView too
