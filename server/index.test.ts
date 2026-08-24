@@ -1419,6 +1419,9 @@ describe("harness HTTP API", () => {
     const send = await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello?" });
     expect(send.status).toBe(409);
     expect(send.body.error).toContain("unavailable");
+    // a failed send never landed a user message, so the first-run quiz stays
+    const afterFail = (await api("GET", "/api/bots")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id);
+    expect(afterFail.messages.find((m: { kind: string }) => m.kind === "options")?.card.dismissed).toBeFalsy();
   });
 
   it("refuses to fork a message when the provider is unavailable, without mutating", async () => {

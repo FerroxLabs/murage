@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { fetchPiModels, parsePiCatalog, PiDriver } from "./pi.ts";
+import { buildMcpServers, fetchPiModels, parsePiCatalog, PiDriver } from "./pi.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-pi-cli.ts");
 const MODELS_LINE =
@@ -54,17 +54,78 @@ describe("parsePiCatalog", () => {
   });
 });
 
+describe("buildMcpServers", () => {
+  it("returns null when there are no integrations", () => {
+    expect(buildMcpServers({ threadId: "t", text: "hi" })).toBeNull();
+  });
+
+  it("passes composio/agents/phone through as stdio servers", () => {
+    const servers = buildMcpServers({
+      threadId: "t",
+      text: "hi",
+      integrations: {
+        composio: { command: "node", args: ["c"], env: { A: "1" } },
+        agents: { command: "node", args: ["a"], env: { B: "2" } },
+        phone: { command: "node", args: ["p"], env: {} },
+      },
+    });
+    expect(servers).toEqual({
+      composio: { command: "node", args: ["c"], env: { A: "1" } },
+      agents: { command: "node", args: ["a"], env: { B: "2" } },
+      phone: { command: "node", args: ["p"], env: {} },
+    });
+  });
+
+  it("wraps the cloud computer in the computer-proxy spawn contract", () => {
+    const servers = buildMcpServers({
+      threadId: "t",
+      text: "hi",
+      integrations: {
+        computer: { kind: "box", boxId: "b1", token: "tok", control: { url: "http://c", token: "ct" } },
+      },
+    });
+    expect(servers?.computer).toMatchObject({
+      command: process.execPath,
+      args: [expect.stringContaining("computer-proxy")],
+      env: expect.objectContaining({ OGB_BOX_ID: "b1", OGB_BOX_TOKEN: "tok" }),
+    });
+  });
+
+  it("passes a local computer (Cua/VPS) through as a direct stdio server", () => {
+    const servers = buildMcpServers({
+      threadId: "t",
+      text: "hi",
+      integrations: {
+        localComputer: { command: "node", args: ["mcp"], env: { X: "y" } },
+      },
+    });
+    expect(servers?.computer).toEqual({ command: "node", args: ["mcp"], env: { X: "y" } });
+  });
+
+  it("marks a host computer with scope so the extension gates its tools", () => {
+    const servers = buildMcpServers({
+      threadId: "t",
+      text: "hi",
+      integrations: {
+        localComputer: { command: "node", args: ["mcp"], env: {}, scope: "local-computer" },
+      },
+    });
+    expect(servers?.computer).toMatchObject({ scope: "local-computer" });
+  });
+});
+
 describe("PiDriver config + install", () => {
   it("defaults to the `pi` binary", () => {
-    expect(PiDriver.decodeConfig({})).toEqual({ cli: "pi" });
-    expect(PiDriver.decodeConfig(undefined)).toEqual({ cli: "pi" });
-    expect(PiDriver.decodeConfig(null)).toEqual({ cli: "pi" });
-    expect(PiDriver.decodeConfig({ cli: "  " })).toEqual({ cli: "pi" });
+    expect(PiDriver.decodeConfig({})).toEqual({ cli: "pi", fullAuto: false });
+    expect(PiDriver.decodeConfig(undefined)).toEqual({ cli: "pi", fullAuto: false });
+    expect(PiDriver.decodeConfig(null)).toEqual({ cli: "pi", fullAuto: false });
+    expect(PiDriver.decodeConfig({ cli: "  " })).toEqual({ cli: "pi", fullAuto: false });
   });
 
   it("rejects invalid config (throws → shadow snapshot)", () => {
     expect(() => PiDriver.decodeConfig(5)).toThrow(/object/);
     expect(() => PiDriver.decodeConfig({ cli: 5 })).toThrow(/string/);
+    expect(() => PiDriver.decodeConfig({ fullAuto: "yes" })).toThrow(/boolean/);
   });
 
   it("publishes the npm installer on every platform and points docs at pi.dev", () => {
@@ -117,7 +178,7 @@ describe("PiDriver turns (fake CLI)", () => {
       displayName: "pi Test",
       environment: { ...environment, ...(mode ? { FAKE_PI_MODE: mode } : {}) },
       enabled: true,
-      config: { cli: FAKE_CLI },
+      config: { cli: FAKE_CLI, fullAuto: false },
     });
     recorder = recordEvents(instance.adapter);
   };
@@ -234,6 +295,42 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(JSON.stringify(rows)).not.toContain("openai-secret-value");
   });
 
+  it("mounts integrations as stdio MCP servers and loads the pi-mcp-extension", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omb-pi-mcp-dump-"));
+    const dump = join(dir, "dump.jsonl");
+    await create(undefined, { FAKE_PI_DUMP: dump });
+    const { turnId } = await instance.adapter.sendTurn({
+      threadId: "t-mcp",
+      text: "hi",
+      integrations: {
+        composio: { command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } },
+        computer: { kind: "box", boxId: "b1", token: "bt", control: { url: "http://c", token: "ct" } },
+      },
+    });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    const rows = readFileSync(dump, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { argv: string[]; mcpConfig?: { mcpServers?: Record<string, any> } | null });
+    const mcpRow = rows.find((r) => r.mcpConfig != null);
+    expect(mcpRow).toBeTruthy();
+
+    // the extension rides `-e` so the external pi process mounts the servers
+    const extIndex = mcpRow!.argv.indexOf("-e");
+    expect(extIndex).toBeGreaterThanOrEqual(0);
+    expect(mcpRow!.argv[extIndex + 1]).toContain("pi-mcp-extension");
+
+    const servers = mcpRow!.mcpConfig!.mcpServers!;
+    // composio passes through verbatim as a stdio server
+    expect(servers.composio).toMatchObject({ command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } });
+    // the cloud computer wraps in the computer-proxy spawn contract
+    expect(servers.computer.args[0]).toContain("computer-proxy");
+    expect(servers.computer.env).toMatchObject({ OGB_BOX_ID: "b1", OGB_BOX_TOKEN: "bt" });
+    // the box token lives in the 0600 config file, never in argv
+    expect(JSON.stringify(mcpRow!.argv)).not.toContain("bt");
+  });
+
   it("rides the toolUse auto-continue and only settles on the final end_turn", async () => {
     await create("tooluse");
     await instance.adapter.sendTurn({ threadId: "t-tool", text: "run it" });
@@ -316,7 +413,7 @@ describe("PiDriver snapshot", () => {
       displayName: undefined,
       environment: {},
       enabled: true,
-      config: { cli: FAKE_CLI },
+      config: { cli: FAKE_CLI, fullAuto: false },
     });
     const snap = await instance.snapshot();
     expect(snap.state).toBe("available");
@@ -331,7 +428,7 @@ describe("PiDriver snapshot", () => {
       displayName: undefined,
       environment: {},
       enabled: true,
-      config: { cli: "pi-definitely-not-on-path-xyz" },
+      config: { cli: "pi-definitely-not-on-path-xyz", fullAuto: false },
     });
     const snap = await instance.snapshot();
     expect(snap.state).toBe("unavailable");

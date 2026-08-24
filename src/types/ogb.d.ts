@@ -152,9 +152,13 @@ type SkillRecordingPayload = {
       openInstallTerminal?(command: string): Promise<boolean>;
       /** Opens an http(s) link in the user's default browser. */
       openExternal?(url: string): Promise<boolean>;
-      /** Opens a live desktop as a sandboxed modal owned by OpenMausBot. */
+      /** Opens a live desktop as a sandboxed window owned by OpenMausBot. */
       desktopViewer?: {
         open(url: string, title: string, contextId: string): Promise<boolean>;
+        /** Closes the live-desktop window, but only when it belongs to this bot. */
+        close(contextId: string): Promise<boolean>;
+        /** The current viewer state, for a panel to initialize from on mount. */
+        currentState(): Promise<{ open: boolean; contextId: string | null }>;
         onState(cb: (state: { open: boolean; contextId: string | null }) => void): () => void;
       };
       /** Native folder picker; resolves null when the user cancels. */

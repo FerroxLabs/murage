@@ -63,15 +63,34 @@ describe("workspace credential migration", () => {
     expect(result.config.box).toEqual({});
   });
 
-  it("treats an empty saved value as a clear and drops the stored secret", () => {
+  it("treats an empty saved value as no information and keeps the stored secret", () => {
+    // The packaged app tombstones every external-mode save as "" in
+    // config.json while the real key goes to credentials.bin — a boot that
+    // read "" as "cleared" would delete freshly saved keys on every restart.
     const result = migrateWorkspaceCredentials(
       { xai: { key: "" }, tts: { key: "   " } },
       { xaiApiKey: "xai-OLD", ttsKey: "tts-OLD", boxToken: "box-keep" },
     );
-    expect(result.credentialsChanged).toBe(true);
-    expect(result.credentials).toEqual({ boxToken: "box-keep" });
-    // the tombstone field itself is swept away too
+    expect(result.credentialsChanged).toBe(false);
+    expect(result.credentials).toEqual({ xaiApiKey: "xai-OLD", ttsKey: "tts-OLD", boxToken: "box-keep" });
+    // the swept field itself is still removed from the file
     expect(result.config).toEqual({ xai: {}, tts: {} });
+    expect(result.configChanged).toBe(true);
+  });
+
+  it("keeps the packaged save → restart cycle lossless end to end", () => {
+    // first boot migrates the plaintext key in and sweeps the field
+    const boot = migrateWorkspaceCredentials({ opencodeGo: { apiKey: "ocg-secret" } }, {});
+    expect(boot.credentials).toEqual({ opencodeGoApiKey: "ocg-secret" });
+
+    // an external-mode save commits the key to the store and leaves a ""
+    // tombstone in config.json; the next boot must not read it as a clear
+    const afterTombstone = migrateWorkspaceCredentials(
+      { opencodeGo: { apiKey: "" }, profile: { name: "Ada" } },
+      { opencodeGoApiKey: "ocg-secret" },
+    );
+    expect(afterTombstone.credentials).toEqual({ opencodeGoApiKey: "ocg-secret" });
+    expect(afterTombstone.credentialsChanged).toBe(false);
   });
 
   it("keeps stored secrets when the field is absent (already migrated)", () => {
