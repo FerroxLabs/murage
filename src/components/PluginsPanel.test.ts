@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  connectedInventoryCopy,
+  connectorActionLabel,
   disconnectAccountConfirmation,
   mergeCompleteConnectorStatus,
   mergeCurrentConnectorStatus,
+  requiresAccountAlias,
   type ConnectorStatus,
 } from "./PluginsPanel";
 
@@ -111,5 +114,35 @@ describe("connected-app status races", () => {
     expect(disconnectAccountConfirmation("GitHub", { id: "ca_personal" })).toContain(
       "Disconnect “ca_personal” from GitHub? Only this GitHub account will be revoked.",
     );
+  });
+
+  it("recognizes the existing-account alias guard and ignores unrelated errors", () => {
+    expect(requiresAccountAlias("Add an account alias so the existing connection is not replaced")).toBe(true);
+    expect(requiresAccountAlias("Authorization expired")).toBe(false);
+  });
+
+  it("never presents unloaded account state as disconnected", () => {
+    expect(connectedInventoryCopy("loading").title).toBe("Checking connected apps…");
+    expect(connectorActionLabel("loading", {
+      busy: false,
+      included: false,
+      canContinue: false,
+      hasAccounts: false,
+      failed: false,
+    })).toBe("Checking…");
+    expect(connectorActionLabel("ready", {
+      busy: false,
+      included: false,
+      canContinue: false,
+      hasAccounts: true,
+      failed: false,
+    })).toBe("Add account");
+    expect(connectorActionLabel("error", {
+      busy: false,
+      included: false,
+      canContinue: false,
+      hasAccounts: false,
+      failed: false,
+    })).toBe("Unavailable");
   });
 });

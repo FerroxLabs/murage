@@ -335,7 +335,9 @@ async function listSessionToolkits(
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; page < MAX_CONNECTED_ACCOUNT_PAGES; page += 1) {
-    const params = new URLSearchParams({ limit: "50" });
+    // Avoid walking the full marketplace just to render the Connected tab.
+    // Composio supports a server-side connected-only filter on this route.
+    const params = new URLSearchParams({ limit: "50", is_connected: "true" });
     if (cursor) params.set("cursor", cursor);
     const response = await composioRequest(
       env,

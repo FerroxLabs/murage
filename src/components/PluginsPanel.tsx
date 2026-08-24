@@ -12,6 +12,7 @@ interface ToolkitCard {
   label: string;
   blurb: string;
   logo: string | null;
+  noAuth?: boolean;
   domain: string | null;
 }
 
@@ -26,12 +27,75 @@ export interface ConnectorStatus {
   }>;
 }
 
+// The panel is a modal and unmounts whenever it closes. Keep the last known
+// account inventory at module scope so reopening never flashes every service
+// as disconnected while a fresh secure status check runs in the background.
+let cachedConnectorStatus: Record<string, ConnectorStatus> | null = null;
+let cachedConnectorStatusAt = 0;
+let connectorStatusRequest: Promise<Record<string, ConnectorStatus>> | null = null;
+const CONNECTOR_STATUS_CACHE_MS = 30_000;
+
+/** Warm the account inventory once the app server is ready. Concurrent panel
+ * opens share the same request, and recent data survives modal unmounts. */
+export function preloadConnectedApps(force = false): Promise<Record<string, ConnectorStatus>> {
+  if (!force && cachedConnectorStatus !== null && Date.now() - cachedConnectorStatusAt < CONNECTOR_STATUS_CACHE_MS) {
+    return Promise.resolve(cachedConnectorStatus);
+  }
+  if (connectorStatusRequest) return connectorStatusRequest;
+  connectorStatusRequest = api("/api/connectors/connected")
+    .then((response) => {
+      const services: Record<string, ConnectorStatus> = response.services ?? {};
+      cachedConnectorStatus = services;
+      cachedConnectorStatusAt = Date.now();
+      return services;
+    })
+    .finally(() => {
+      connectorStatusRequest = null;
+    });
+  return connectorStatusRequest;
+}
+
 export function disconnectAccountConfirmation(
   service: string,
   account: { id: string; alias?: string },
 ) {
   const identity = account.alias ? `“${account.alias}” (${account.id})` : `“${account.id}”`;
   return `Disconnect ${identity} from ${service}? Only this ${service} account will be revoked. Your other ${service} accounts will stay connected.`;
+}
+
+export function requiresAccountAlias(message: string) {
+  return /account alias.*existing connection.*not replaced/i.test(message);
+}
+
+export type ConnectorInventoryPhase = "loading" | "ready" | "error";
+
+export function connectorActionLabel(
+  phase: ConnectorInventoryPhase,
+  state: { busy: boolean; included: boolean; canContinue: boolean; hasAccounts: boolean; failed: boolean },
+) {
+  if (state.busy) return null;
+  if (state.included) return "Included";
+  if (phase === "loading") return "Checking…";
+  if (phase === "error") return "Unavailable";
+  if (state.canContinue) return "Continue";
+  if (state.hasAccounts) return "Add account";
+  if (state.failed) return "Retry";
+  return "Connect";
+}
+
+export function connectedInventoryCopy(phase: ConnectorInventoryPhase) {
+  if (phase === "loading") return {
+    title: "Checking connected apps…",
+    description: "Your accounts will appear here as soon as the secure connection check finishes.",
+  };
+  if (phase === "error") return {
+    title: "Couldn’t load connected apps",
+    description: "Retry the connection check before adding another account.",
+  };
+  return {
+    title: "No connected apps yet",
+    description: "Connect an app from Marketplace and it will appear here.",
+  };
 }
 
 export function mergeCurrentConnectorStatus(
@@ -94,12 +158,17 @@ export function PluginsPanel() {
   const [source, setSource] = useState<"api" | "curated">("curated");
   const [configured, setConfigured] = useState(true);
   const [mode, setMode] = useState<"managed" | "self-hosted" | "unavailable">("unavailable");
-  const [status, setStatus] = useState<Record<string, ConnectorStatus>>({});
+  const [status, setStatus] = useState<Record<string, ConnectorStatus>>(
+    () => cachedConnectorStatus ?? {},
+  );
   const [pendingUrls, setPendingUrls] = useState<Record<string, string>>({});
   const [aliasSlug, setAliasSlug] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [inventoryPhase, setInventoryPhase] = useState<ConnectorInventoryPhase>(
+    cachedConnectorStatus === null ? "loading" : "ready",
+  );
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"marketplace" | "connected">("marketplace");
@@ -138,12 +207,11 @@ export function PluginsPanel() {
       .finally(() => setRefreshing(false));
   }, []);
 
-  const refreshConnectedStatus = useCallback((): Promise<Record<string, ConnectorStatus>> => {
+  const refreshConnectedStatus = useCallback((force = false): Promise<Record<string, ConnectorStatus>> => {
     const requestGenerations = new Map(statusGenerations.current);
     setRefreshing(true);
-    return api("/api/connectors/connected")
-      .then((r) => {
-        const services: Record<string, ConnectorStatus> = r.services ?? {};
+    return preloadConnectedApps(force)
+      .then((services) => {
         setStatus((current) => mergeCompleteConnectorStatus(
           current,
           services,
@@ -161,9 +229,24 @@ export function PluginsPanel() {
         }
         return services;
       })
-      .catch(() => ({}))
       .finally(() => setRefreshing(false));
   }, []);
+
+  const loadConnectionInventory = useCallback((force = false) => {
+    const hadCachedInventory = cachedConnectorStatus !== null;
+    if (!hadCachedInventory) setInventoryPhase("loading");
+    setError(null);
+    return refreshConnectedStatus(force)
+      .then((services) => {
+        setInventoryPhase("ready");
+        return services;
+      })
+      .catch((cause) => {
+        if (!hadCachedInventory) setInventoryPhase("error");
+        setError(cause instanceof Error ? cause.message : String(cause));
+        return {};
+      });
+  }, [refreshConnectedStatus]);
 
   useEffect(() => () => {
     for (const timer of pollTimers.current.values()) clearInterval(timer);
@@ -171,7 +254,14 @@ export function PluginsPanel() {
   }, []);
 
   useEffect(() => {
+    if (inventoryPhase !== "ready") return;
+    cachedConnectorStatus = status;
+    cachedConnectorStatusAt = Date.now();
+  }, [inventoryPhase, status]);
+
+  useEffect(() => {
     let alive = true;
+    void loadConnectionInventory();
     api("/api/connectors/catalog")
       .then((r) => {
         if (!alive) return;
@@ -179,13 +269,15 @@ export function PluginsPanel() {
         setSource(r.source ?? "curated");
         setConfigured(Boolean(r.configured));
         setMode(r.mode ?? "unavailable");
-        if (r.configured) void refreshConnectedStatus();
       })
-      .catch((e) => alive && setError(e.message));
+      .catch((e) => {
+        if (!alive) return;
+        setError(e.message);
+      });
     return () => {
       alive = false;
     };
-  }, [refreshConnectedStatus]);
+  }, [loadConnectionInventory]);
 
   useEffect(() => {
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -284,7 +376,17 @@ export function PluginsPanel() {
       startPolling(slug);
       await openConnectUrl(url);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      if (requiresAccountAlias(message)) {
+        // Recover gracefully if an existing account was discovered after the
+        // button rendered. Show the label field and refresh only this app.
+        setAliasSlug(slug);
+        setAliasDraft("");
+        setError("This app already has an account. Add a label such as work or personal to connect another.");
+        void refreshStatus([slug]);
+      } else {
+        setError(message);
+      }
     } finally {
       setBusySlug(null);
     }
@@ -305,6 +407,7 @@ export function PluginsPanel() {
     tab === "marketplace" || status[card.slug]?.connected || Boolean(status[card.slug]?.accounts?.length)
   );
   const connectedCount = Object.values(status).filter((service) => service.connected || service.accounts?.length).length;
+  const connectedEmptyCopy = connectedInventoryCopy(inventoryPhase);
   const close = () => dispatch({ type: "togglePlugins", open: false });
 
   return (
@@ -327,7 +430,7 @@ export function PluginsPanel() {
           </div>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => refreshConnectedStatus()}
+              onClick={() => void loadConnectionInventory(true)}
               className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"
               title="Refresh connection status"
             >
@@ -430,7 +533,8 @@ export function PluginsPanel() {
               // connected with no accounts and nothing in flight = a no-auth
               // toolkit: there is no OAuth to run, so "Connect" would mint a
               // pointless authorize. It ships included.
-              const included = serviceStatus?.connected === true && !accounts.length && !pending && !failed;
+              const included = card.noAuth === true
+                || (serviceStatus?.connected === true && !accounts.length && !pending && !failed);
               const addingAccount = aliasSlug === card.slug;
               const busy = busySlug === card.slug;
               return (
@@ -448,7 +552,7 @@ export function PluginsPanel() {
                     </div>
                     <button
                       type="button"
-                      disabled={!configured || busy || included}
+                      disabled={!configured || inventoryPhase !== "ready" || busy || included}
                       onClick={() => {
                         if (pending && pendingUrls[card.slug]) {
                           setError(null);
@@ -462,16 +566,14 @@ export function PluginsPanel() {
                     >
                       {busy ? (
                         <Loader2 size={13} className="mx-auto animate-spin" />
-                      ) : pending && pendingUrls[card.slug] ? (
-                        "Continue"
-                      ) : accounts.length ? (
-                        "Add account"
-                      ) : included ? (
-                        "Included"
-                      ) : failed ? (
-                        "Retry"
                       ) : (
-                        "Connect"
+                        connectorActionLabel(inventoryPhase, {
+                          busy,
+                          included,
+                          canContinue: Boolean(pending && pendingUrls[card.slug]),
+                          hasAccounts: accounts.length > 0,
+                          failed: Boolean(failed),
+                        })
                       )}
                     </button>
                   </div>
@@ -547,11 +649,20 @@ export function PluginsPanel() {
           {cards !== null && visible.length === 0 && (
             <div className="flex min-h-56 flex-col items-center justify-center text-center">
               <div className="text-[14px] font-medium text-ink">
-                {tab === "connected" ? "No connected apps yet" : "No apps found"}
+                {tab === "connected" ? connectedEmptyCopy.title : "No apps found"}
               </div>
               <div className="mt-1 text-[12.5px] text-ink-secondary">
-                {tab === "connected" ? "Connect an app from Marketplace and it will appear here." : "Try a different search."}
+                {tab === "connected" ? connectedEmptyCopy.description : "Try a different search."}
               </div>
+              {tab === "connected" && inventoryPhase === "error" && (
+                <button
+                  type="button"
+                  onClick={() => void loadConnectionInventory(true)}
+                  className="mt-3 rounded-lg bg-raised px-3 py-2 text-[12px] text-ink hover:bg-raised-hover"
+                >
+                  Retry
+                </button>
+              )}
             </div>
           )}
         </div>

@@ -399,7 +399,10 @@ async function listSessionToolkits(
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; page < MAX_CONNECTED_ACCOUNT_PAGES; page += 1) {
-    const params = new URLSearchParams({ limit: "50" });
+    // The unfiltered endpoint contains the entire Composio marketplace and is
+    // cursor-paginated in 50-item pages. The Connected tab only needs the
+    // user's connected toolkits, so avoid scanning hundreds of unrelated apps.
+    const params = new URLSearchParams({ limit: "50", is_connected: "true" });
     if (cursor) params.set("cursor", cursor);
     const response = await fetch(
       `${apiBase()}/tool_router/session/${encodeURIComponent(sessionId)}/toolkits?${params}`,
@@ -673,6 +676,8 @@ export interface ToolkitCard {
   label: string;
   blurb: string;
   logo: string | null;
+  /** Toolkits such as public search need no user authorization. */
+  noAuth?: boolean;
   /** used for the client-side favicon fallback when logo is null/broken */
   domain: string | null;
 }
@@ -735,6 +740,7 @@ export async function listToolkits(cfg: AppConfig): Promise<{ cards: ToolkitCard
             label: t.name ?? t.slug ?? "",
             blurb: (t.meta?.description ?? t.description ?? "").slice(0, 90),
             logo: t.meta?.logo ?? t.logo ?? null,
+            noAuth: t.no_auth === true,
             domain: null,
           }));
           toolkitCache = { at: Date.now(), cards };

@@ -226,6 +226,7 @@ describe("connected-apps broker boundaries", () => {
     expect(fetchCalls.some((call) =>
       call.url.includes("/tool_router/session/trs_multi/toolkits?")
         && !call.url.includes("toolkits=")
+        && call.url.includes("is_connected=true")
         && call.url.includes("cursor=toolkits-page-2")
     )).toBe(true);
 

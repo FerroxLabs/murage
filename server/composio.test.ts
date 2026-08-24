@@ -307,6 +307,7 @@ describe.sequential("Composio Sessions", () => {
     expect(inventoryCalls[1]?.query).toContain("cursor=accounts-page-2");
     const toolkitCalls = calls.slice(callCount).filter((call) => call.path.endsWith("/toolkits"));
     expect(toolkitCalls).toHaveLength(2);
+    expect(toolkitCalls[0]?.query).toContain("is_connected=true");
     expect(toolkitCalls[1]?.query).toContain("cursor=toolkits-page-2");
   });
 
