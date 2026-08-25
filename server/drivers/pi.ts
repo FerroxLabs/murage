@@ -494,6 +494,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               flushAssistantText();
               const reqId = evt.id ?? newId();
               const isQuestion = evt.method === "input";
+              // Register BEFORE emitting: the harness may auto-approve from
+              // inside its synchronous request.opened listener. Emitting first
+              // made respondToRequest see no pending ask, return unavailable,
+              // then fall back to a human card on every "Always allow" call.
+              pending.set(reqId, (decision) => {
+                if (decision.behavior === "deny") send({ type: "extension_ui_response", id: reqId, cancelled: true });
+                else if (isQuestion) send({ type: "extension_ui_response", id: reqId, value: decision.message ?? "" });
+                else send({ type: "extension_ui_response", id: reqId, confirmed: true });
+              });
               emit({
                 ...base(threadId, turnId),
                 requestId: reqId,
@@ -501,11 +510,6 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                 requestType: isQuestion ? "question" : "permission",
                 tool: String(evt.title ?? "pi"),
                 summary: String(evt.title ?? "pi wants confirmation"),
-              });
-              pending.set(reqId, (decision) => {
-                if (decision.behavior === "deny") send({ type: "extension_ui_response", id: reqId, cancelled: true });
-                else if (isQuestion) send({ type: "extension_ui_response", id: reqId, value: decision.message ?? "" });
-                else send({ type: "extension_ui_response", id: reqId, confirmed: true });
               });
             }
             return;

@@ -434,6 +434,26 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(recorder.events.some((e) => e.type === "request.resolved")).toBe(true);
   });
 
+  it("registers an ask before emitting it so synchronous auto-approval works", async () => {
+    await create("permission");
+    let unsubscribe = () => {};
+    const outcome = new Promise<string>((resolve) => {
+      unsubscribe = instance.adapter.onEvent((event) => {
+        if (event.type !== "request.opened" || !event.requestId) return;
+        // This mirrors the harness's auto-approve listener: emit() invokes it
+        // synchronously, so the ask must already be in pending here.
+        void instance.adapter
+          .respondToRequest(event.threadId, event.requestId, { behavior: "allow" })
+          .then(resolve);
+      });
+    });
+    await instance.adapter.sendTurn({ threadId: "t-sync-auto", text: "go" });
+    expect(await outcome).toBe("allowed-once");
+    unsubscribe();
+    const done = await recorder.until((event) => event.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+  });
+
   it("respondToRequest is unavailable for an ask that is not pending", async () => {
     await create();
     await expect(instance.adapter.respondToRequest("t-none", "nope", { behavior: "allow" })).resolves.toBe("unavailable");
