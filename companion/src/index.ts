@@ -3,11 +3,13 @@
 //
 //   node companion/src/index.ts
 //
-// Three sockets, and the split between them is the whole security model:
+// Three public/runtime sockets, and one optional private managed origin. The
+// split between them is the whole security model:
 //
 //   :8810  0.0.0.0    devices     token required, allowlisted, scrubbed
 //   :8811  127.0.0.1  you         pairing and revocation — never off-machine
 //   :8799  127.0.0.1  the harness spoken to as this machine, unmodified
+//   UDS/pipe            one Electron-owned sidecar generation, never TCP
 //
 // 8810 rather than 8800, which is where these started: the harness opens a
 // webhook receiver one port above its own, so 8800 is already taken by the
@@ -33,6 +35,7 @@ import {
   type ServiceInfo,
 } from "./mdns.ts";
 import { createProxyHandler } from "./proxy.ts";
+import { companionOriginSocket, listenCompanionOrigin } from "./origin.ts";
 
 /** A port from the environment, or the default. Anything that is not a whole
  * number in range is the default — a typo'd port must not become port 0. */
@@ -46,7 +49,8 @@ const WEBHOOK_PORT = num(process.env.OMB_WEBHOOK_PORT, HARNESS_PORT + 1);
 const COMPANION_PORT = num(process.env.OMB_COMPANION_PORT, 8810);
 const CONTROL_PORT = num(process.env.OMB_CONTROL_PORT, 8811);
 const SERVICE_TYPE = "_openmausbot._tcp";
-const HOSTED_URL = hostedCompanionUrl(process.env.OMB_COMPANION_HOSTED_URL);
+let hostedUrl = hostedCompanionUrl(process.env.OMB_COMPANION_HOSTED_URL);
+const PRIVATE_ORIGIN = companionOriginSocket(process.env.OMB_COMPANION_INTERNAL_ORIGIN);
 
 /** Ports the harness takes for itself, and what it uses each for.
  *
@@ -127,8 +131,7 @@ const service = (): ServiceInfo => ({
   txt: ["v=1", `name=${clampBytes(machineName(), 200)}`],
 });
 
-const companion = createServer(
-  createProxyHandler({
+const proxy = createProxyHandler({
     harnessPort: HARNESS_PORT,
     // `authenticate` also stamps lastSeenAt, which is what makes the control
     // page able to say when a phone was last heard from.
@@ -139,14 +142,18 @@ const companion = createServer(
     // machine joins another network, and a pairing is exactly the moment the
     // list has to be right.
     hosts: () => hostCandidates(),
-    endpoints: () => companionEndpointCandidates(COMPANION_PORT, undefined, undefined, HOSTED_URL),
-  }),
-);
+    endpoints: () => companionEndpointCandidates(COMPANION_PORT, undefined, undefined, hostedUrl),
+  });
+const companion = createServer(proxy);
+const managedOrigin = PRIVATE_ORIGIN ? createServer(proxy) : null;
 
 const control = createControlServer({
   devices,
   companionPort: COMPANION_PORT,
-  hostedUrl: HOSTED_URL,
+  hostedUrl: () => hostedUrl,
+  setHostedUrl: (next) => {
+    hostedUrl = next;
+  },
   discovery: () => ({ advertising: mdns.advertising, name: service().name }),
 });
 
@@ -212,6 +219,9 @@ async function main(): Promise<void> {
 
   await listen(control, CONTROL_PORT, "127.0.0.1");
   await listen(companion, COMPANION_PORT, "0.0.0.0");
+  if (managedOrigin && PRIVATE_ORIGIN) {
+    await listenCompanionOrigin(managedOrigin, PRIVATE_ORIGIN);
+  }
 
   // Before advertising: the service name goes into the Bonjour record, and
   // re-advertising under a new name later would show the phone two computers.
@@ -262,9 +272,11 @@ const shutdown = async (signal: string): Promise<void> => {
   // own — drop the sockets so "stop" means stopped, now.
   companion.closeAllConnections?.();
   control.closeAllConnections?.();
+  managedOrigin?.closeAllConnections?.();
   await Promise.all([
     new Promise<void>((r) => companion.close(() => r())),
     new Promise<void>((r) => control.close(() => r())),
+    ...(managedOrigin ? [new Promise<void>((r) => managedOrigin.close(() => r()))] : []),
   ]);
   process.exit(0);
 };

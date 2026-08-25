@@ -13,9 +13,10 @@
 // else would hand away the control plane the design just took care to
 // withhold.
 import { createServer, type Server, type ServerResponse } from "node:http";
+import { z } from "zod";
 
 import type { DeviceRegistry } from "./devices.ts";
-import { companionEndpointCandidates } from "./endpoints.ts";
+import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
 import { lanAddresses, tailnetName, tailscaleAddress } from "./listener.ts";
 import { defaultHostName } from "./mdns.ts";
 
@@ -25,7 +26,10 @@ export interface ControlOptions {
   /** Where a phone connects — for display, and for the pairing instructions. */
   companionPort: number;
   /** Stable HTTPS route provisioned for this computer, when available. */
-  hostedUrl?: string | null;
+  hostedUrl?: () => string | null;
+  /** Electron alone uses this to publish a route after its connector health
+   * check succeeds, and to withdraw it immediately on connector loss. */
+  setHostedUrl?: (url: string | null) => void;
   /** Whether Bonjour came up, and under what name. */
   discovery: () => { advertising: boolean; name: string };
 }
@@ -84,6 +88,36 @@ const json = (res: ServerResponse, status: number, body: unknown) => {
   res.end(text);
 };
 
+const hostedEndpointPayload = z.object({ url: z.string().nullable() }).strict();
+
+const readHostedEndpoint = (
+  req: import("node:http").IncomingMessage,
+): Promise<z.infer<typeof hostedEndpointPayload>> =>
+  new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 4096) {
+        reject(new Error("body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("error", reject);
+    req.on("end", () => {
+      try {
+        resolve(hostedEndpointPayload.parse(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
+      } catch {
+        reject(new Error("invalid JSON body"));
+      }
+    });
+  });
+
+const currentHostedUrl = (options: ControlOptions): string | null =>
+  options.hostedUrl?.() ?? null;
+
 /** Every host a phone could dial for this computer, best first.
  *
  * One address is one point of failure: a phone paired over the tailnet keeps
@@ -135,7 +169,12 @@ export function companionState(options: ControlOptions) {
     hosts: hostCandidates(addresses, name),
     // Complete URLs for new clients. Unlike `hosts`, this can represent an
     // HTTPS route on its natural port without teaching the client to guess.
-    endpoints: companionEndpointCandidates(options.companionPort, addresses, name, options.hostedUrl),
+    endpoints: companionEndpointCandidates(
+      options.companionPort,
+      addresses,
+      name,
+      currentHostedUrl(options),
+    ),
     pairing: pairing ? { code: pairing.code, token: pairing.token, expiresAt: pairing.expiresAt } : null,
     devices: options.devices.list(),
     discovery: options.discovery(),
@@ -213,6 +252,22 @@ export function createControlServer(options: ControlOptions): Server {
     if (method === "DELETE" && path === "/pairing") {
       options.devices.closePairing();
       return json(res, 200, companionState(options));
+    }
+    const updateHostedUrl = options.setHostedUrl;
+    if (method === "PUT" && path === "/hosted-endpoint" && updateHostedUrl) {
+      readHostedEndpoint(req).then(
+        (body) => {
+          try {
+            const requested = body.url == null || body.url === "" ? null : hostedCompanionUrl(body.url);
+            updateHostedUrl(requested);
+            return json(res, 200, companionState(options));
+          } catch {
+            return json(res, 400, { error: "invalid hosted endpoint" });
+          }
+        },
+        (error: Error) => json(res, 400, { error: error.message }),
+      );
+      return;
     }
     const cloudDesktop = path.match(/^\/devices\/([\w-]+)\/cloud-desktop$/);
     if (cloudDesktop && (method === "POST" || method === "DELETE")) {

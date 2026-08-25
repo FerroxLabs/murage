@@ -10,8 +10,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  MANAGED_COMPANION_ORIGIN_PORT,
+  validCompanionOriginTarget,
+} from "./companion-origin-gateway.mjs";
+import { minimalGuardianEnvironment } from "./managed-companion-guardian.mjs";
+
 export const MANAGED_COMPANION_ENDPOINT_FIELD = "managedCompanionEndpointUrl";
 export const MANAGED_COMPANION_TOKEN_FIELD = "managedCompanionConnectorToken";
+export const MANAGED_COMPANION_ORIGIN_VERSION_FIELD = "managedCompanionOriginVersion";
+export const MANAGED_COMPANION_ORIGIN_VERSION = 2;
 
 const TOKEN_FILE_PATTERN = /^connector-([1-9][0-9]*)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.token$/;
 const TOKEN_MIN_BYTES = 40;
@@ -51,14 +59,24 @@ function validConnectorToken(value) {
   );
 }
 
-/** Read the all-or-nothing tunnel credential from Electron's encrypted blob. */
-export function managedCompanionTunnelAccess(credentials) {
+function normalizeManagedCompanionAccess(credentials) {
   const endpoint = normalizeManagedCompanionEndpoint(
     credentials?.[MANAGED_COMPANION_ENDPOINT_FIELD],
   );
   const token = credentials?.[MANAGED_COMPANION_TOKEN_FIELD];
   if (!endpoint || !validConnectorToken(token)) return null;
   return { endpoint, token };
+}
+
+/** Read the all-or-nothing tunnel credential from Electron's encrypted blob.
+ * The version gate is fail-closed migration: an older tunnel still points at
+ * the reusable LAN port, so it must be reconciled by the control plane before
+ * its cached connector token may ever start again. */
+export function managedCompanionTunnelAccess(credentials) {
+  if (credentials?.[MANAGED_COMPANION_ORIGIN_VERSION_FIELD] !== MANAGED_COMPANION_ORIGIN_VERSION) {
+    return null;
+  }
+  return normalizeManagedCompanionAccess(credentials);
 }
 
 /** Validate a control-plane provision response and return a copy to persist. */
@@ -72,6 +90,7 @@ export function withManagedCompanionTunnelAccess(credentials, provision) {
     ...credentials,
     [MANAGED_COMPANION_ENDPOINT_FIELD]: endpoint,
     [MANAGED_COMPANION_TOKEN_FIELD]: token,
+    [MANAGED_COMPANION_ORIGIN_VERSION_FIELD]: MANAGED_COMPANION_ORIGIN_VERSION,
   };
 }
 
@@ -79,6 +98,7 @@ export function withoutManagedCompanionTunnelAccess(credentials) {
   const next = { ...credentials };
   delete next[MANAGED_COMPANION_ENDPOINT_FIELD];
   delete next[MANAGED_COMPANION_TOKEN_FIELD];
+  delete next[MANAGED_COMPANION_ORIGIN_VERSION_FIELD];
   return next;
 }
 
@@ -109,7 +129,21 @@ export function resolveCloudflaredBinary({
     executable,
   );
   if (exists(staged)) return staged;
-  return executable;
+  const pathEntry = Object.entries(environment).find(([name]) => name.toLowerCase() === "path");
+  const pathValue = pathEntry?.[1];
+  if (!pathValue) return null;
+  const delimiter = platform === "win32" ? ";" : ":";
+  for (const directory of pathValue.split(delimiter)) {
+    if (!directory || !path.isAbsolute(directory)) continue;
+    const candidate = path.join(directory, executable);
+    if (exists(candidate)) return candidate;
+  }
+  return null;
+}
+
+export function resolveManagedCompanionGuardian({ appPath, exists = fs.existsSync } = {}) {
+  const entry = path.join(String(appPath ?? ""), "electron", "managed-companion-guardian.mjs");
+  return exists(entry) ? entry : null;
 }
 
 function ensurePrivateDirectory(directory, fileSystem, currentUid) {
@@ -208,19 +242,6 @@ function writePrivateToken(runtimeRoot, token, { fileSystem, processId, identifi
   }
 }
 
-function sanitizedConnectorEnvironment(environment) {
-  const next = { ...environment };
-  for (const name of [
-    "TUNNEL_TOKEN",
-    "TUNNEL_TOKEN_FILE",
-    "CLOUDFLARED_TOKEN",
-    "CF_TUNNEL_TOKEN",
-  ]) {
-    delete next[name];
-  }
-  return next;
-}
-
 async function waitForExit(child, milliseconds) {
   if (child.exitCode !== null || child.signalCode !== null) return;
   await new Promise((resolve) => {
@@ -239,14 +260,21 @@ async function waitForExit(child, milliseconds) {
 
 async function terminateChild(child, graceMs) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  // Closing the owner pipe asks the guardian to invalidate the gateway, kill
+  // cloudflared, wait for its exact exit, and only then release port 8812.
+  // Do this synchronously so stop intent preempts a hanging health probe.
   try {
-    child.kill("SIGTERM");
+    child.stdin?.end();
   } catch {}
   await waitForExit(child, graceMs);
   if (child.exitCode !== null || child.signalCode !== null) return;
   try {
-    child.kill("SIGKILL");
+    child.kill("SIGTERM");
   } catch {}
+  // Never SIGKILL the guardian. If cloudflared were wedged, killing its
+  // guardian would release the reserved origin port before the connector was
+  // confirmed dead — exactly the fail-open window this process exists to
+  // remove. A stuck guardian safely keeps 8812 unavailable.
   await waitForExit(child, Math.min(graceMs, 500));
 }
 
@@ -276,6 +304,9 @@ async function verifyHostedEndpoint(
  * intentionally secret-free so it is safe for diagnostics or future UI. */
 export function createManagedCompanionTunnel({
   binaryPath,
+  guardianEntry,
+  runtimeExecutable = process.execPath,
+  originPort = MANAGED_COMPANION_ORIGIN_PORT,
   runtimeRoot,
   environment = process.env,
   fileSystem = fs,
@@ -300,6 +331,7 @@ export function createManagedCompanionTunnel({
   let child = null;
   let tokenFile = null;
   let activeAttempt = null;
+  let originTarget = null;
   let access = null;
   let retryAttempt = 0;
   let retryTimer = null;
@@ -358,7 +390,14 @@ export function createManagedCompanionTunnel({
 
   const attempt = async (ownedGeneration) => {
     if (!desired || ownedGeneration !== generation || !access) return state;
-    if (!binaryPath) {
+    if (
+      !binaryPath ||
+      !path.isAbsolute(binaryPath) ||
+      !guardianEntry ||
+      !path.isAbsolute(guardianEntry) ||
+      !path.isAbsolute(runtimeExecutable) ||
+      !validCompanionOriginTarget(originTarget)
+    ) {
       publish({
         status: "unavailable",
         ready: false,
@@ -379,23 +418,22 @@ export function createManagedCompanionTunnel({
       });
       attemptTokenFile = tokenFile;
       const spawned = spawnProcess(
-        binaryPath,
+        runtimeExecutable,
         [
-          "tunnel",
-          "--no-autoupdate",
-          "--loglevel",
-          "info",
-          "--output",
-          "json",
-          "run",
-          "--token-file",
+          guardianEntry,
+          binaryPath,
           tokenFile,
+          originTarget.socketPath,
+          String(originTarget.pid),
+          String(originPort),
         ],
         {
-          env: sanitizedConnectorEnvironment(environment),
+          env: minimalGuardianEnvironment(environment),
           shell: false,
           windowsHide: true,
-          stdio: ["ignore", "ignore", "ignore"],
+          // This open pipe is the parent-death signal. The guardian owns both
+          // gateway and connector and tears them down on EOF.
+          stdio: ["pipe", "ignore", "ignore"],
         },
       );
       child = spawned;
@@ -504,15 +542,23 @@ export function createManagedCompanionTunnel({
         // during app shutdown, when start and quit can land in one event-loop
         // turn before either transition has acquired the queue.
         if (requestedRevision !== intentRevision) return state;
-        const normalized = managedCompanionTunnelAccess({
+        const normalized = normalizeManagedCompanionAccess({
           [MANAGED_COMPANION_ENDPOINT_FIELD]: rawAccess?.endpoint,
           [MANAGED_COMPANION_TOKEN_FIELD]: rawAccess?.token,
         });
+        const normalizedOriginTarget = validCompanionOriginTarget(rawAccess?.originTarget)
+          ? Object.freeze({
+              pid: rawAccess.originTarget.pid,
+              socketPath: rawAccess.originTarget.socketPath,
+            })
+          : null;
         if (
           desired &&
           normalized &&
           access?.endpoint === normalized.endpoint &&
           access?.token === normalized.token &&
+          originTarget?.pid === normalizedOriginTarget?.pid &&
+          originTarget?.socketPath === normalizedOriginTarget?.socketPath &&
           child
         ) {
           return state;
@@ -520,6 +566,7 @@ export function createManagedCompanionTunnel({
         generation += 1;
         desired = Boolean(normalized);
         access = normalized;
+        originTarget = normalizedOriginTarget;
         retryAttempt = 0;
         if (retryTimer) clearTimeout(retryTimer);
         retryTimer = null;

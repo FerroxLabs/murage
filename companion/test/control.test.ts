@@ -18,8 +18,9 @@ const ask = async (
   method: string,
   path: string,
   headers: Record<string, string> = {},
+  body?: string,
 ): Promise<{ status: number; body: any }> => {
-  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers });
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers, body });
   const text = await res.text();
   try {
     return { status: res.status, body: JSON.parse(text) };
@@ -30,9 +31,14 @@ const ask = async (
 
 beforeAll(async () => {
   devices = new DeviceRegistry();
+  let hostedUrl: string | null = null;
   control = createControlServer({
     devices,
     companionPort: 8810,
+    hostedUrl: () => hostedUrl,
+    setHostedUrl: (next) => {
+      hostedUrl = next;
+    },
     discovery: () => ({ advertising: false, name: "Test computer" }),
   });
   port = await new Promise<number>((resolve) =>
@@ -170,6 +176,38 @@ describe("hostCandidates", () => {
     expect(body.hosts.at(-1)).toMatch(/^openmausbot-[0-9a-f]{8}\.local$/);
     expect(body.endpoints.at(-1)).toMatchObject({ kind: "bonjour", priority: 300 });
     expect(body.endpoints.at(-1).url).toMatch(/^http:\/\/openmausbot-[0-9a-f]{8}\.local:8810$/);
+  });
+});
+
+describe("hosted endpoint advertisement", () => {
+  it("publishes and withdraws only a complete HTTPS origin", async () => {
+    const headers = { "content-type": "application/json" };
+    const published = await ask(
+      "PUT",
+      "/hosted-endpoint",
+      headers,
+      JSON.stringify({ url: "https://C-Opaque.OpenMausBot.Test/" }),
+    );
+    expect(published.status).toBe(200);
+    expect(published.body.endpoints[0]).toEqual({
+      kind: "hosted",
+      priority: 0,
+      url: "https://c-opaque.openmausbot.test",
+    });
+
+    expect(
+      (await ask("PUT", "/hosted-endpoint", headers, JSON.stringify({ url: "http://unsafe.test" }))).status,
+    ).toBe(400);
+    expect((await ask("GET", "/state")).body.endpoints[0]).toMatchObject({ kind: "hosted" });
+
+    const withdrawn = await ask(
+      "PUT",
+      "/hosted-endpoint",
+      headers,
+      JSON.stringify({ url: null }),
+    );
+    expect(withdrawn.status).toBe(200);
+    expect(withdrawn.body.endpoints.some((endpoint: { kind: string }) => endpoint.kind === "hosted")).toBe(false);
   });
 });
 

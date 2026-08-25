@@ -31,6 +31,7 @@ import {
   createManagedCompanionTunnel,
   managedCompanionTunnelAccess,
   resolveCloudflaredBinary,
+  resolveManagedCompanionGuardian,
   withManagedCompanionTunnelAccess,
   withoutManagedCompanionTunnelAccess,
 } from "./managed-companion-tunnel.mjs";
@@ -301,6 +302,7 @@ let logStream = null;
 import {
   companionAdvertisedHostedUrl,
   companionEnabledAtRest,
+  companionOriginTarget,
   companionPairing,
   companionCloudDesktopAccess,
   companionRevoke,
@@ -308,6 +310,8 @@ import {
   companionState,
   rememberCompanionEnabled,
   rememberCompanionKeepAwake,
+  setCompanionHostedUrl,
+  setCompanionLifecycleListener,
   startCompanion,
   stopCompanion,
 } from "./companion.mjs";
@@ -347,7 +351,6 @@ let companionAccountService = null;
 let companionDesiredThisLaunch = false;
 let companionLaunchGeneration = 0;
 let advertisementTransition = Promise.resolve();
-let advertisementRetryTimer = null;
 
 /** The one serialized credential mutation hook. Account onboarding and every
  * other runtime credential writer share this state, so persisting a tunnel
@@ -406,6 +409,8 @@ function ensureManagedCompanionConnector() {
       resourcesPath: process.resourcesPath,
       appPath: app.getAppPath(),
     }),
+    guardianEntry: resolveManagedCompanionGuardian({ appPath: app.getAppPath() }),
+    runtimeExecutable: process.execPath,
     runtimeRoot: path.join(app.getPath("userData"), "managed-companion-tunnel"),
     onChange: (status) => {
       slog(`managed companion connection ${status.status}`);
@@ -417,19 +422,9 @@ function ensureManagedCompanionConnector() {
   return managedCompanionConnector;
 }
 
-function scheduleAdvertisementRetry(endpoint, ownedGeneration) {
-  if (advertisementRetryTimer) return;
-  advertisementRetryTimer = setTimeout(() => {
-    advertisementRetryTimer = null;
-    if (ownedGeneration !== companionLaunchGeneration) return;
-    void reconcileCompanionAdvertisement(endpoint, ownedGeneration);
-  }, 1_000);
-  advertisementRetryTimer.unref?.();
-}
-
-/** Restart the sidecar only when its public route changes. A pairing window
- * is allowed to finish first so bringing the tunnel online cannot invalidate
- * the QR code currently on someone's screen. */
+/** Publish a hosted address only after its connector has passed public health
+ * verification. Updating the owned sidecar in place preserves the exact
+ * private origin generation and cannot invalidate an open pairing window. */
 function reconcileCompanionAdvertisement(
   endpoint,
   ownedGeneration = companionLaunchGeneration,
@@ -444,23 +439,8 @@ function reconcileCompanionAdvertisement(
     ) {
       return desktopCompanionState();
     }
-    const current = await companionState();
-    if (current.pairing) {
-      scheduleAdvertisementRetry(normalizedEndpoint, ownedGeneration);
-      return desktopCompanionState();
-    }
-
-    await stopCompanion();
-    if (ownedGeneration !== companionLaunchGeneration || !companionDesiredThisLaunch) {
-      return desktopCompanionState();
-    }
-    let restarted = await startCompanion(companionLaunchOptions(normalizedEndpoint));
-    // A hosted advertisement is optional. If its configuration somehow makes
-    // the sidecar reject startup, immediately restore the direct LAN service.
-    if ((!restarted.enabled || restarted.error) && normalizedEndpoint) {
-      restarted = await startCompanion(companionLaunchOptions());
-    }
-    return { ...restarted, managedConnection: publicManagedCompanionState() };
+    const updated = await setCompanionHostedUrl(normalizedEndpoint);
+    return { ...updated, managedConnection: publicManagedCompanionState() };
   });
   advertisementTransition = work.then(
     () => {},
@@ -475,7 +455,9 @@ async function startManagedCompanionConnection({ waitForVerification = true } = 
   }
   const access = managedCompanionTunnelAccess(secureCredentials);
   if (!access) return publicManagedCompanionState();
-  const operation = ensureManagedCompanionConnector().start(access);
+  const target = companionOriginTarget();
+  if (!target) return publicManagedCompanionState();
+  const operation = ensureManagedCompanionConnector().start({ ...access, originTarget: target });
   if (!waitForVerification) {
     void operation.catch(() => {});
     return publicManagedCompanionState();
@@ -488,10 +470,9 @@ async function startManagedCompanionConnection({ waitForVerification = true } = 
 async function startDesktopCompanion({ waitForHosted = true, remember = true } = {}) {
   companionDesiredThisLaunch = true;
   companionLaunchGeneration += 1;
-  const readyEndpoint = managedCompanionConnector?.getStatus().ready
-    ? managedCompanionConnector.getStatus().endpoint
-    : null;
-  const localState = await startCompanion(companionLaunchOptions(readyEndpoint));
+  // Direct LAN comes up first. The hosted endpoint is added in place only
+  // after the guardian has verified the public route to this exact sidecar.
+  const localState = await startCompanion(companionLaunchOptions());
   if (!localState.enabled || localState.error) {
     companionDesiredThisLaunch = false;
     return desktopCompanionState();
@@ -504,14 +485,23 @@ async function startDesktopCompanion({ waitForHosted = true, remember = true } =
 async function stopDesktopCompanion({ remember = true } = {}) {
   companionDesiredThisLaunch = false;
   companionLaunchGeneration += 1;
-  if (advertisementRetryTimer) clearTimeout(advertisementRetryTimer);
-  advertisementRetryTimer = null;
   if (remember) rememberCompanionEnabled(false);
   syncCompanionKeepAwake(false, false);
   await managedCompanionConnector?.stop();
   await stopCompanion();
   return desktopCompanionState();
 }
+
+setCompanionLifecycleListener(({ expected, pid }) => {
+  if (expected) return;
+  slog(`owned companion exited unexpectedly pid=${pid ?? "unknown"}`);
+  companionDesiredThisLaunch = false;
+  companionLaunchGeneration += 1;
+  syncCompanionKeepAwake(false, false);
+  // stop() invalidates the guardian's owner pipe synchronously, before the
+  // sidecar module removes this generation's private socket.
+  void managedCompanionConnector?.stop().catch(() => {});
+});
 
 /** Narrow main-process hook for the account onboarding flow. Its return value
  * is explicitly secret-free and can be used to refresh the settings panel. */

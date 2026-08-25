@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupStaleManagedCompanionTokens,
   createManagedCompanionTunnel,
+  MANAGED_COMPANION_ORIGIN_VERSION,
+  MANAGED_COMPANION_ORIGIN_VERSION_FIELD,
   managedCompanionTunnelAccess,
   normalizeManagedCompanionEndpoint,
   resolveCloudflaredBinary,
@@ -15,6 +17,17 @@ import {
 
 const TOKEN = `eyJ${"a".repeat(120)}=`;
 const ENDPOINT = "https://c-installation.openmausbot.com";
+const BINARY = "/trusted/cloudflared";
+const GUARDIAN = "/trusted/managed-companion-guardian.mjs";
+const RUNTIME = "/trusted/electron";
+const ORIGIN_TARGET =
+  process.platform === "win32"
+    ? {
+        pid: 31337,
+        socketPath:
+          "\\\\.\\pipe\\openmausbot-companion-origin-31337-12345678-1234-1234-1234-123456789abc",
+      }
+    : { pid: 31337, socketPath: "/tmp/omb-companion-origin-test/origin.sock" };
 const temporaryDirectories = [];
 
 function temporaryDirectory() {
@@ -28,6 +41,15 @@ function fakeChild(pid = 4242) {
   child.pid = pid;
   child.exitCode = null;
   child.signalCode = null;
+  child.stdin = {
+    end: vi.fn(() => {
+      queueMicrotask(() => {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        child.exitCode = 0;
+        child.emit("exit", 0, null);
+      });
+    }),
+  };
   child.kill = vi.fn((signal) => {
     if (child.exitCode !== null || child.signalCode !== null) return true;
     child.signalCode = signal;
@@ -74,12 +96,20 @@ describe("managed companion credentials", () => {
       managedCompanionTunnelAccess({
         managedCompanionEndpointUrl: ENDPOINT,
         managedCompanionConnectorToken: TOKEN,
+        [MANAGED_COMPANION_ORIGIN_VERSION_FIELD]: MANAGED_COMPANION_ORIGIN_VERSION,
       }),
     ).toEqual({ endpoint: ENDPOINT, token: TOKEN });
     expect(
       managedCompanionTunnelAccess({
         managedCompanionEndpointUrl: ENDPOINT,
         managedCompanionConnectorToken: "short",
+        [MANAGED_COMPANION_ORIGIN_VERSION_FIELD]: MANAGED_COMPANION_ORIGIN_VERSION,
+      }),
+    ).toBeNull();
+    expect(
+      managedCompanionTunnelAccess({
+        managedCompanionEndpointUrl: ENDPOINT,
+        managedCompanionConnectorToken: TOKEN,
       }),
     ).toBeNull();
   });
@@ -94,6 +124,7 @@ describe("managed companion credentials", () => {
       composioApiKey: "keep-me",
       managedCompanionEndpointUrl: ENDPOINT,
       managedCompanionConnectorToken: TOKEN,
+      [MANAGED_COMPANION_ORIGIN_VERSION_FIELD]: MANAGED_COMPANION_ORIGIN_VERSION,
     });
     expect(withoutManagedCompanionTunnelAccess(provisioned)).toEqual(credentials);
     expect(() =>
@@ -147,32 +178,28 @@ describe("managed connector lifecycle", () => {
     let capturedToken;
     let capturedMode;
     const spawnProcess = vi.fn((binary, args, options) => {
-      const tokenFile = args.at(-1);
+      const tokenFile = args[2];
       capturedToken = fs.readFileSync(tokenFile, "utf8");
       capturedMode = fs.statSync(tokenFile).mode & 0o777;
-      expect(binary).toBe("/trusted/cloudflared");
+      expect(binary).toBe(RUNTIME);
       expect(args).toEqual([
-        "tunnel",
-        "--no-autoupdate",
-        "--loglevel",
-        "info",
-        "--output",
-        "json",
-        "run",
-        "--token-file",
+        GUARDIAN,
+        BINARY,
         tokenFile,
+        ORIGIN_TARGET.socketPath,
+        String(ORIGIN_TARGET.pid),
+        "8812",
       ]);
       expect(JSON.stringify(args)).not.toContain(TOKEN);
       expect(options).toMatchObject({ shell: false, windowsHide: true });
-      expect(options.env).not.toHaveProperty("TUNNEL_TOKEN");
-      expect(options.env).not.toHaveProperty("TUNNEL_TOKEN_FILE");
-      expect(options.env).not.toHaveProperty("CLOUDFLARED_TOKEN");
-      expect(options.env).not.toHaveProperty("CF_TUNNEL_TOKEN");
+      expect(options.env).toEqual({ PATH: "/usr/bin", ELECTRON_RUN_AS_NODE: "1" });
       return child;
     });
     const states = [];
     const manager = createManagedCompanionTunnel({
-      binaryPath: "/trusted/cloudflared",
+      binaryPath: BINARY,
+      guardianEntry: GUARDIAN,
+      runtimeExecutable: RUNTIME,
       runtimeRoot,
       environment: {
         PATH: "/usr/bin",
@@ -180,6 +207,10 @@ describe("managed connector lifecycle", () => {
         TUNNEL_TOKEN_FILE: "/attacker/file",
         CLOUDFLARED_TOKEN: "must-not-leak",
         CF_TUNNEL_TOKEN: "must-not-leak",
+        TUNNEL_LOGLEVEL: "debug",
+        TUNNEL_TRANSPORT_PROTOCOL: "quic",
+        HTTP_PROXY: "http://attacker.invalid",
+        AWS_SECRET_ACCESS_KEY: "must-not-leak",
       },
       spawnProcess,
       fetchImpl: vi.fn(async (_url, options) => {
@@ -189,7 +220,9 @@ describe("managed connector lifecycle", () => {
       onChange: (state) => states.push(state),
     });
 
-    await expect(manager.start({ endpoint: ENDPOINT, token: TOKEN })).resolves.toMatchObject({
+    await expect(
+      manager.start({ endpoint: ENDPOINT, token: TOKEN, originTarget: ORIGIN_TARGET }),
+    ).resolves.toMatchObject({
       status: "ready",
       ready: true,
       configured: true,
@@ -201,7 +234,8 @@ describe("managed connector lifecycle", () => {
     expect(states.map((state) => state.status)).toEqual(["starting", "ready"]);
 
     await manager.stop();
-    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(child.stdin.end).toHaveBeenCalledOnce();
+    expect(child.kill).not.toHaveBeenCalled();
     expect(manager.getStatus()).toEqual({
       configured: true,
       endpoint: ENDPOINT,
@@ -213,7 +247,9 @@ describe("managed connector lifecycle", () => {
   it("keeps retry state secret-free when hosted verification fails", async () => {
     const child = fakeChild();
     const manager = createManagedCompanionTunnel({
-      binaryPath: "/trusted/cloudflared",
+      binaryPath: BINARY,
+      guardianEntry: GUARDIAN,
+      runtimeExecutable: RUNTIME,
       runtimeRoot: path.join(temporaryDirectory(), "runtime"),
       spawnProcess: vi.fn(() => child),
       fetchImpl: vi.fn(async () => ({ ok: false, text: async () => "" })),
@@ -221,7 +257,11 @@ describe("managed connector lifecycle", () => {
       maxRetryMs: 60_000,
     });
 
-    const state = await manager.start({ endpoint: ENDPOINT, token: TOKEN });
+    const state = await manager.start({
+      endpoint: ENDPOINT,
+      token: TOKEN,
+      originTarget: ORIGIN_TARGET,
+    });
     expect(state).toMatchObject({
       status: "retrying",
       ready: false,
@@ -232,12 +272,14 @@ describe("managed connector lifecycle", () => {
     await manager.stop();
   });
 
-  it("preempts a hanging startup probe and kills cloudflared before the start queue settles", async () => {
+  it("preempts a hanging startup probe by closing the guardian owner pipe", async () => {
     const child = fakeChild();
     const spawnProcess = vi.fn(() => child);
     const states = [];
     const manager = createManagedCompanionTunnel({
-      binaryPath: "/trusted/cloudflared",
+      binaryPath: BINARY,
+      guardianEntry: GUARDIAN,
+      runtimeExecutable: RUNTIME,
       runtimeRoot: path.join(temporaryDirectory(), "runtime"),
       spawnProcess,
       // Deliberately ignore AbortSignal: cancellation must wake the lifecycle
@@ -246,14 +288,15 @@ describe("managed connector lifecycle", () => {
       onChange: (state) => states.push(state),
     });
 
-    const starting = manager.start({ endpoint: ENDPOINT, token: TOKEN });
+    const starting = manager.start({ endpoint: ENDPOINT, token: TOKEN, originTarget: ORIGIN_TARGET });
     await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledOnce());
 
     const stopping = manager.stop();
     // This assertion is intentionally before either lifecycle promise is
     // awaited: stop intent must signal the owned process synchronously rather
     // than sitting behind the 15-second verification transition.
-    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(child.stdin.end).toHaveBeenCalledOnce();
+    expect(child.kill).not.toHaveBeenCalled();
     await expect(stopping).resolves.toMatchObject({ status: "stopped", ready: false });
     await expect(starting).resolves.toBeDefined();
     await new Promise((resolve) => setImmediate(resolve));
@@ -266,13 +309,15 @@ describe("managed connector lifecycle", () => {
   it("lets stop supersede a queued start before it can spawn", async () => {
     const spawnProcess = vi.fn(() => fakeChild());
     const manager = createManagedCompanionTunnel({
-      binaryPath: "/trusted/cloudflared",
+      binaryPath: BINARY,
+      guardianEntry: GUARDIAN,
+      runtimeExecutable: RUNTIME,
       runtimeRoot: path.join(temporaryDirectory(), "runtime"),
       spawnProcess,
       fetchImpl: vi.fn(async () => healthyResponse()),
     });
 
-    const starting = manager.start({ endpoint: ENDPOINT, token: TOKEN });
+    const starting = manager.start({ endpoint: ENDPOINT, token: TOKEN, originTarget: ORIGIN_TARGET });
     const stopping = manager.stop();
     await Promise.all([starting, stopping]);
 
@@ -285,13 +330,15 @@ describe("managed connector lifecycle", () => {
     const children = [fakeChild(1), fakeChild(2)];
     const spawnProcess = vi.fn(() => children[spawnProcess.mock.calls.length - 1]);
     const manager = createManagedCompanionTunnel({
-      binaryPath: "/trusted/cloudflared",
+      binaryPath: BINARY,
+      guardianEntry: GUARDIAN,
+      runtimeExecutable: RUNTIME,
       runtimeRoot: path.join(temporaryDirectory(), "runtime"),
       spawnProcess,
       fetchImpl: vi.fn(async () => healthyResponse()),
     });
 
-    await manager.start({ endpoint: ENDPOINT, token: TOKEN });
+    await manager.start({ endpoint: ENDPOINT, token: TOKEN, originTarget: ORIGIN_TARGET });
     children[0].crash();
     expect(manager.getStatus()).toMatchObject({ status: "retrying", retryInMs: 1_000 });
     await vi.advanceTimersByTimeAsync(1_000);
