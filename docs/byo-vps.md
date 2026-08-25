@@ -3,18 +3,18 @@
 OpenMausBot can turn a Linux server you already own into a bot's computer. The agent process stays on your
 machine; Docker's own SSH transport reaches the daemon on the VPS, and each bot gets one managed, hardened
 Cua container there — a Linux desktop it can see and control. SSH is the only credential involved and the
-only surface exposed: OpenMausBot never opens a port on the VPS, never stores a key or password, and never
-runs an agent remotely.
+only surface exposed: OpenMausBot never opens a public port on the VPS, never stores your SSH key or
+passphrase, and never runs an agent remotely.
 
 ## What works
 
 - A per-bot Linux desktop in a managed container on your VPS, driven through the official Cua tools.
 - Live screen preview in the Computer panel and in transcripts, same as a Box.
-- Explicit **Cloud** with the **Self-hosted VPS** backend provisions or starts the container; **Auto** only
-  reuses one that is already running and verified.
-
-Deliberately not offered: an interactive desktop tunnel. There is no "Open desktop" for a VPS bot — the
-container publishes no ports, so there is nothing to tunnel to, by design.
+- Explicit **Cloud** with the **Self-hosted VPS** backend provisions or starts the container. **Auto** reuses
+  a ready container by default; an off-by-default **Start VPS automatically** switch lets that bot prepare
+  or wake its managed container when needed.
+- Interactive **Take control** through a temporary SSH tunnel. The app binds noVNC only to a random
+  `127.0.0.1` port on your computer, closes the tunnel with the viewer, and never publishes VNC on the VPS.
 
 ## Prerequisites
 
@@ -66,7 +66,8 @@ host is unknown simply fails until you have done this once.
 ## Security
 
 - **No public ports.** The managed container is created with no published ports, and OpenMausBot refuses to
-  use a container that publishes any — the check runs before every attach, not just at creation.
+  use a container that publishes any — the check runs before every attach, not just at creation. Live view
+  reaches the container's private bridge address through SSH and is loopback-only on your computer.
 - **Firewall the VPS to SSH only**, ideally from your IP. Nothing OpenMausBot does needs any other inbound
   port open, so anything else open is pure attack surface.
 - **Nothing sensitive is stored.** The only thing OpenMausBot persists is the alias name itself
@@ -93,8 +94,10 @@ follows a Cua image upgrade, since a container pinned to an old image is refused
 it. Treat the container filesystem as **disposable**: anything a bot must keep should leave the VPS (pushed,
 uploaded, or pasted back into chat) before the container is removed.
 
-A bot set to **Auto** never touches this lifecycle. It attaches only when the container is already running
-and verified; otherwise it behaves as if no cloud computer existed.
+A bot set to **Auto** is lifecycle-read-only by default. It attaches only when the container is already
+running and verified. If no local fallback exists, the turn now explains why the VPS was unavailable instead
+of silently running without a computer. Enable **Start VPS automatically** per bot to let Auto prepare or wake
+that bot's managed container; the switch is deliberately off by default.
 
 ## Troubleshooting
 

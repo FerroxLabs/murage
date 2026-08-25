@@ -1789,6 +1789,10 @@ describe("harness HTTP API", () => {
     const patched = await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps" });
     expect(patched.status).toBe(200);
     expect(patched.body.bot.cloudBackend).toBe("vps");
+    const autoStart = await api("PATCH", `/api/bots/${bot.id}`, { autoStartVps: true });
+    expect(autoStart.status).toBe(200);
+    expect(autoStart.body.bot.autoStartVps).toBe(true);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { autoStartVps: "yes" })).status).toBe(400);
     const invalid = await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "daytona" });
     expect(invalid.status).toBe(400);
   });

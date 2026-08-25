@@ -134,7 +134,13 @@ const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
  * is the sidecar's credential and means nothing to the harness, and hop-by-hop
  * headers are by definition not ours to relay. */
 const forwardHeaders = (req: IncomingMessage): Record<string, string> => {
-  const out: Record<string, string> = { accept: String(req.headers.accept ?? "*/*") };
+  const out: Record<string, string> = {
+    accept: String(req.headers.accept ?? "*/*"),
+    // Lets a response whose URL is intentionally loopback-only (the VPS SSH
+    // viewer) fail before opening a tunnel a phone cannot reach. This header
+    // carries no authority; it only narrows behavior at the harness.
+    "x-openmausbot-companion": "1",
+  };
   const contentType = req.headers["content-type"];
   if (contentType) out["content-type"] = String(contentType);
   // Last-Event-ID is how a reconnecting client asks for the gap. Dropping it

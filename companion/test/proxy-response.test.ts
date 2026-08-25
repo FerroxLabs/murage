@@ -24,6 +24,7 @@ let harness: Server;
 let sidecar: Server;
 let sidecarPort = 0;
 let cloudDesktopAccess = true;
+let companionMarker = "";
 /** What the stub harness answers with next. Set per test. */
 let respond: (res: ServerResponse) => void = (res) => res.end();
 
@@ -46,7 +47,10 @@ const device = async (
 };
 
 beforeAll(async () => {
-  harness = createServer((_req, res) => respond(res));
+  harness = createServer((req, res) => {
+    companionMarker = String(req.headers["x-openmausbot-companion"] ?? "");
+    respond(res);
+  });
   const harnessPort = await listen(harness);
 
   sidecar = createServer(
@@ -85,6 +89,7 @@ describe("preparing a harness response for a device", () => {
     const { status, text } = await device("/api/bots/b1/computer/join", "POST");
     expect(status).toBe(200);
     expect(JSON.parse(text).joinUrl).toBe("https://desktop.example/session/fresh");
+    expect(companionMarker).toBe("1");
   });
 
   it("never forwards a body it could not scrub", async () => {

@@ -28,6 +28,7 @@ interface Device {
 
 interface CompanionState {
   enabled: boolean;
+  keepAwake: boolean;
   port: number;
   devices: Device[];
   pairing: { code: string; token: string; expiresAt: number } | null;
@@ -57,6 +58,7 @@ type Bridge = {
   state: () => Promise<CompanionState>;
   start: () => Promise<CompanionState>;
   stop: () => Promise<CompanionState>;
+  keepAwake: (enabled: boolean) => Promise<CompanionState>;
   pairing: (open: boolean) => Promise<CompanionState>;
   cloudDesktop: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
   revoke: (deviceId: string) => Promise<CompanionState>;
@@ -310,6 +312,24 @@ export function CompanionSection() {
         {(error || state.error) && (
           <div className="mt-3 text-[13px] text-danger">{error ?? state.error}</div>
         )}
+        <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
+          <div className="min-w-0">
+            <div className="text-[13px] text-ink">Keep this computer awake</div>
+            <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+              While Companion is on, prevent system sleep so your phone and scheduled work stay reachable. The screen may still turn off and battery use may increase.
+            </div>
+          </div>
+          <button
+            role="switch"
+            aria-checked={state.keepAwake}
+            aria-label="Keep this computer awake while Companion is on"
+            disabled={busy || !state.enabled}
+            onClick={() => void act((c) => c.keepAwake(!state.keepAwake))}
+            className={cnSwitch(state.keepAwake)}
+          >
+            <span className={cnKnob(state.keepAwake)} />
+          </button>
+        </div>
       </Card>
 
       {account?.available && (

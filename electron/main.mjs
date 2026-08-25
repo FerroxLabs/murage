@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -307,9 +307,22 @@ import {
   companionRunning,
   companionState,
   rememberCompanionEnabled,
+  rememberCompanionKeepAwake,
   startCompanion,
   stopCompanion,
 } from "./companion.mjs";
+
+let companionPowerBlocker = null;
+
+function syncCompanionKeepAwake(companionEnabled, keepAwake) {
+  const shouldBlock = companionEnabled && keepAwake;
+  if (shouldBlock && companionPowerBlocker === null) {
+    companionPowerBlocker = powerSaveBlocker.start("prevent-app-suspension");
+  } else if (!shouldBlock && companionPowerBlocker !== null) {
+    if (powerSaveBlocker.isStarted(companionPowerBlocker)) powerSaveBlocker.stop(companionPowerBlocker);
+    companionPowerBlocker = null;
+  }
+}
 
 function slog(line) {
   try {
@@ -369,7 +382,11 @@ function publicManagedCompanionState() {
 }
 
 async function desktopCompanionState() {
-  return { ...(await companionState()), managedConnection: publicManagedCompanionState() };
+  const state = await companionState();
+  // The panel polls this state, so a sidecar that exited on its own releases
+  // the blocker within one poll instead of keeping the computer awake forever.
+  syncCompanionKeepAwake(state.enabled && !state.error, state.keepAwake === true);
+  return { ...state, managedConnection: publicManagedCompanionState() };
 }
 
 function companionLaunchOptions(hostedUrl = null) {
@@ -490,6 +507,7 @@ async function stopDesktopCompanion({ remember = true } = {}) {
   if (advertisementRetryTimer) clearTimeout(advertisementRetryTimer);
   advertisementRetryTimer = null;
   if (remember) rememberCompanionEnabled(false);
+  syncCompanionKeepAwake(false, false);
   await managedCompanionConnector?.stop();
   await stopCompanion();
   return desktopCompanionState();
@@ -1244,6 +1262,10 @@ ipcMain.handle("skill-recorder:save", (_event, payload) => saveSkillRecording(pa
 ipcMain.handle("companion:state", () => desktopCompanionState());
 ipcMain.handle("companion:start", () => startDesktopCompanion());
 ipcMain.handle("companion:stop", () => stopDesktopCompanion());
+ipcMain.handle("companion:keep-awake", async (_event, enabled) => {
+  rememberCompanionKeepAwake(Boolean(enabled));
+  return desktopCompanionState();
+});
 ipcMain.handle("companion:pairing", async (_event, open) => {
   await companionPairing(Boolean(open));
   return desktopCompanionState();
@@ -1510,6 +1532,8 @@ app.on("before-quit", (e) => {
   try {
     serverProc?.kill();
   } catch {}
+  // Release the sleep blocker synchronously; child shutdown is awaited below.
+  syncCompanionKeepAwake(false, false);
   // a live dictation session runs its own helper child that holds the mic —
   // stop it here so quitting never orphans a recording process
   if (nativeActions.appleSpeech) stopSpeech();

@@ -670,11 +670,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // Only create a broker for a new process. A compatible retained process
       // keeps its existing proxy connection and broker across turns.
       if (socketPath) {
+        // remembers which tool each pending ask came from, so the resolved
+        // event can scope approvals to real desktop-control tools only
+        const askTools = new Map<string, string | undefined>();
         broker = createPermissionBroker({
           socketPath,
           isActive: () => Boolean(sessions.get(threadId)?.turn),
           onAsk: (ask) => {
             const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
+            askTools.set(ask.id, typeof ask.tool === "string" ? ask.tool : undefined);
             emit({
               ...base(threadId, eventTurnId),
               type: "request.opened",
@@ -682,7 +686,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               requestType: ask.kind,
               tool: ask.tool,
               summary: askSummary(ask),
-              approvalScope: controlsHost ? "local-computer" : undefined,
+              approvalScope:
+                typeof ask.tool === "string" && controlsHost && ask.tool.startsWith("mcp__computer")
+                  ? "local-computer"
+                  : undefined,
               choices: Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
             });
           },
@@ -694,8 +701,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               requestId: resolved.id,
               behavior: resolved.behavior,
               source: resolved.source,
-              approvalScope: controlsHost ? "local-computer" : undefined,
+              approvalScope:
+                controlsHost && typeof askTools.get(resolved.id) === "string" && askTools.get(resolved.id)!.startsWith("mcp__computer") ? "local-computer" : undefined,
             });
+            askTools.delete(resolved.id);
           },
         });
       }

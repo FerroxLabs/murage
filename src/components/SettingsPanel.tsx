@@ -331,6 +331,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "notifications"
         | "computer"
         | "cloudBackend"
+        | "autoStartVps"
         | "color"
         | "mascotExpression"
         | "avatarUrl"
@@ -625,11 +626,40 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               ))}
             </div>
             {(!bot.computer || bot.computer === "cloud") && (
-              <CloudBackendPicker
-                value={bot.cloudBackend ?? "box"}
-                vpsSupported={canUseVps}
-                onChange={(backend) => patch({ cloudBackend: backend })}
-              />
+              <>
+                <CloudBackendPicker
+                  value={bot.cloudBackend ?? "box"}
+                  vpsSupported={canUseVps}
+                  onChange={(backend) => patch({ cloudBackend: backend })}
+                />
+                {!bot.computer && bot.cloudBackend === "vps" && (
+                  <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
+                    <div className="min-w-0">
+                      <div className="text-[13px] text-ink">Start VPS automatically</div>
+                      <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+                        Allow Auto to create or wake this bot's managed container when needed.
+                      </div>
+                    </div>
+                    <button
+                      role="switch"
+                      aria-checked={Boolean(bot.autoStartVps)}
+                      aria-label="Start VPS automatically"
+                      onClick={() => patch({ autoStartVps: !bot.autoStartVps })}
+                      className={cn(
+                        "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+                        bot.autoStartVps ? "bg-accent" : "bg-control",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "absolute top-[3px] size-[18px] rounded-full bg-white transition-all",
+                          bot.autoStartVps ? "left-[22px]" : "left-[4px]",
+                        )}
+                      />
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
 
