@@ -65,7 +65,11 @@
     "broker:types": "wrangler types --config cloudflare/composio-broker/wrangler.jsonc cloudflare/composio-broker/worker-configuration.d.ts",
     "broker:check": "pnpm broker:types && tsc -p cloudflare/composio-broker/tsconfig.json",
     "broker:test": "vitest run --config cloudflare/composio-broker/vitest.config.ts",
-    "broker:deploy": "wrangler deploy --config cloudflare/composio-broker/wrangler.jsonc"
+    "broker:deploy": "wrangler deploy --config cloudflare/composio-broker/wrangler.jsonc",
+    "control-plane:types": "pnpm --filter @openmausbot/control-plane types",
+    "control-plane:check": "pnpm --filter @openmausbot/control-plane check",
+    "control-plane:test": "pnpm --filter @openmausbot/control-plane test",
+    "control-plane:dry-run": "pnpm --filter @openmausbot/control-plane dry-run"
   },
   "dependencies": {
     "@trycua/cua-driver": "0.20.0",
