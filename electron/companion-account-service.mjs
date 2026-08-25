@@ -24,6 +24,7 @@ export const COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD = "companionAccountCleanupP
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const INSTALLATION_ID = UUID;
 const INSTALLATION_CREDENTIAL = /^omb_install_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/;
+const DEFAULT_HEALTH_CACHE_MS = 30_000;
 
 const ownString = (document, field) => z.string().safeParse(document?.[field]).data ?? "";
 
@@ -137,7 +138,7 @@ const FRIENDLY_MESSAGES = Object.freeze({
   endpoint_busy: "The secure connection is still being prepared. Try again in a moment.",
   endpoint_unavailable: "The secure connection service could not finish setup. Local pairing still works; try again shortly.",
   endpoint_cleanup_pending: "The secure connection is still being removed. Try signing out again shortly.",
-  control_plane_unavailable: "Secure access is not configured in this build. Local pairing still works.",
+  control_plane_unavailable: "Secure access is not available right now. Local pairing still works.",
   invalid_response: "The secure connection service returned an unexpected response. Try again.",
 });
 
@@ -180,8 +181,13 @@ export function createCompanionAccountService({
   stopManagedEndpoint = async () => {},
   managedConnectionState = () => ({ status: "stopped", ready: false }),
   companionIsOn = () => false,
+  now = Date.now,
+  healthCacheMs = DEFAULT_HEALTH_CACHE_MS,
 } = {}) {
-  const available = Boolean(client);
+  const configured = Boolean(client);
+  let healthy = false;
+  let lastHealthCheck = null;
+  let healthProbe = null;
   let phase = null;
   let transition = Promise.resolve();
 
@@ -196,8 +202,40 @@ export function createCompanionAccountService({
 
   const credentials = () => readCredentials?.() ?? {};
 
+  const probeControlPlane = async ({ force = false } = {}) => {
+    if (!configured) return false;
+    const checkedAt = now();
+    if (
+      !force &&
+      lastHealthCheck !== null &&
+      checkedAt - lastHealthCheck < Math.max(0, healthCacheMs)
+    ) {
+      return healthy;
+    }
+    if (healthProbe) return healthProbe;
+    healthProbe = (async () => {
+      try {
+        await client.health();
+        healthy = true;
+      } catch {
+        healthy = false;
+      }
+      lastHealthCheck = now();
+      return healthy;
+    })().finally(() => {
+      healthProbe = null;
+    });
+    return healthProbe;
+  };
+
+  const requireHealthyControlPlane = async () => {
+    if (!(await probeControlPlane({ force: true }))) {
+      throw new ControlPlaneError("control_plane_unavailable");
+    }
+  };
+
   const settledState = () => {
-    if (!available) {
+    if (!configured) {
       return publicState({
         available: false,
         status: "signed-out",
@@ -207,6 +245,16 @@ export function createCompanionAccountService({
     const document = credentials();
     const account = storedAccount(document);
     const persistedAccess = managedCompanionTunnelAccess(document);
+    const available = healthy || Boolean(account);
+    if (!healthy) {
+      return publicState({
+        available,
+        status: account ? "error" : "signed-out",
+        email: account?.email,
+        endpoint: persistedAccess?.endpoint,
+        message: FRIENDLY_MESSAGES.control_plane_unavailable,
+      });
+    }
     if (
       phase &&
       ["connecting", "error"].includes(phase.status) &&
@@ -414,9 +462,10 @@ export function createCompanionAccountService({
   };
 
   const requestCode = (rawEmail) => serialize(async () => {
-    if (!available) throw new Error(FRIENDLY_MESSAGES.control_plane_unavailable);
+    if (!configured) throw new Error(FRIENDLY_MESSAGES.control_plane_unavailable);
     const email = normalizeAccountEmail(rawEmail);
     try {
+      await requireHealthyControlPlane();
       const requested = await client.requestOTP(email);
       phase = {
         status: "signed-out",
@@ -430,11 +479,12 @@ export function createCompanionAccountService({
   });
 
   const verifyCode = (rawEmail, rawCode) => serialize(async () => {
-    if (!available) throw new Error(FRIENDLY_MESSAGES.control_plane_unavailable);
+    if (!configured) throw new Error(FRIENDLY_MESSAGES.control_plane_unavailable);
     const email = normalizeAccountEmail(rawEmail);
     phase = { status: "connecting", email };
     let verified;
     try {
+      await requireHealthyControlPlane();
       verified = await client.verifyOTP(email, rawCode);
     } catch (error) {
       const message = failAction(error, { email, signedOut: true });
@@ -486,7 +536,7 @@ export function createCompanionAccountService({
   });
 
   const retryWork = async () => {
-    if (!available) return settledState();
+    if (!configured) return settledState();
     const account = storedAccount(credentials());
     if (!account) {
       phase = null;
@@ -495,6 +545,7 @@ export function createCompanionAccountService({
     if (companionAccountCleanupPending(credentials())) {
       phase = { status: "connecting", email: account.email };
       try {
+        await requireHealthyControlPlane();
         await cleanupCurrentAccount({ markPending: false });
       } catch (error) {
         failAction(error, { email: account.email, expiredSessionIsSignedOut: true });
@@ -503,6 +554,7 @@ export function createCompanionAccountService({
     }
     phase = { status: "connecting", email: account.email };
     try {
+      await requireHealthyControlPlane();
       return await provision({
         accountToken: account.accountToken,
         user: { id: account.userId, email: account.email },
@@ -523,6 +575,7 @@ export function createCompanionAccountService({
     const email = storedAccount(credentials())?.email;
     phase = { status: "connecting", email };
     try {
+      await requireHealthyControlPlane();
       await cleanupCurrentAccount();
       return settledState();
     } catch (error) {
@@ -532,7 +585,8 @@ export function createCompanionAccountService({
   });
 
   const restore = () => serialize(async () => {
-    if (!available) return settledState();
+    if (!configured) return settledState();
+    if (!(await probeControlPlane({ force: true }))) return settledState();
     if (companionAccountCleanupPending(credentials())) return retryWork();
     await ensureClientIdentity();
     const account = storedAccount(credentials());
@@ -542,7 +596,10 @@ export function createCompanionAccountService({
   });
 
   return Object.freeze({
-    state: settledState,
+    state: async () => {
+      await probeControlPlane();
+      return settledState();
+    },
     requestCode,
     verifyCode,
     retry,

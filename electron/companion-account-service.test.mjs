@@ -14,6 +14,8 @@ import {
 } from "./companion-account-service.mjs";
 import {
   MANAGED_COMPANION_ENDPOINT_FIELD,
+  MANAGED_COMPANION_ORIGIN_VERSION,
+  MANAGED_COMPANION_ORIGIN_VERSION_FIELD,
   MANAGED_COMPANION_TOKEN_FIELD,
 } from "./managed-companion-tunnel.mjs";
 
@@ -41,6 +43,7 @@ function credentialStore(initial = {}) {
 
 function readyClient(overrides = {}) {
   return {
+    health: vi.fn(async () => true),
     requestOTP: vi.fn(async (email) => ({ email })),
     verifyOTP: vi.fn(async (email) => ({
       accountToken: ACCOUNT_TOKEN,
@@ -95,6 +98,7 @@ function signedCredentials(overrides = {}) {
     [COMPANION_INSTALLATION_CREDENTIAL_FIELD]: INSTALLATION_CREDENTIAL,
     [MANAGED_COMPANION_ENDPOINT_FIELD]: ENDPOINT,
     [MANAGED_COMPANION_TOKEN_FIELD]: CONNECTOR_TOKEN,
+    [MANAGED_COMPANION_ORIGIN_VERSION_FIELD]: MANAGED_COMPANION_ORIGIN_VERSION,
     ...overrides,
   };
 }
@@ -113,6 +117,56 @@ describe("Companion account service", () => {
       environment: { OMB_CONTROL_PLANE_URL: "http://accounts.openmausbot.com" },
     })).toBe("");
     expect(resolveCompanionControlPlaneURL({ isPackaged: false, environment: {} })).toBe("");
+  });
+
+  it("hides account onboarding until the configured control plane is healthy", async () => {
+    const client = readyClient({
+      health: vi.fn(async () => {
+        throw new ControlPlaneError("request_failed", 404);
+      }),
+    });
+    const { service } = serviceFixture({ client });
+
+    await expect(service.restore()).resolves.toMatchObject({
+      available: false,
+      status: "signed-out",
+    });
+    await expect(service.requestCode("ada@example.com")).rejects.toThrow(
+      "Secure access is not available right now",
+    );
+    expect(client.requestOTP).not.toHaveBeenCalled();
+  });
+
+  it("keeps an existing account recoverable while the control plane is unhealthy", async () => {
+    const client = readyClient({
+      health: vi.fn(async () => {
+        throw new ControlPlaneError("network_unavailable");
+      }),
+    });
+    const { service, store } = serviceFixture({ initial: signedCredentials(), client });
+
+    await expect(service.restore()).resolves.toEqual({
+      available: true,
+      status: "error",
+      email: "ada@example.com",
+      endpoint: ENDPOINT,
+      message: "Secure access is not available right now. Local pairing still works.",
+    });
+    expect(store.writes).toHaveLength(0);
+  });
+
+  it("discovers a control plane that becomes healthy without restarting the app", async () => {
+    const health = vi
+      .fn()
+      .mockRejectedValueOnce(new ControlPlaneError("request_failed", 404))
+      .mockResolvedValueOnce(true);
+    const { service } = serviceFixture({
+      client: readyClient({ health }),
+      healthCacheMs: 0,
+    });
+
+    await expect(service.state()).resolves.toMatchObject({ available: false });
+    await expect(service.state()).resolves.toEqual({ available: true, status: "signed-out" });
   });
 
   it("persists one stable identity and the complete provision atomically", async () => {
@@ -146,6 +200,7 @@ describe("Companion account service", () => {
       [COMPANION_INSTALLATION_CREDENTIAL_FIELD]: INSTALLATION_CREDENTIAL,
       [MANAGED_COMPANION_ENDPOINT_FIELD]: ENDPOINT,
       [MANAGED_COMPANION_TOKEN_FIELD]: CONNECTOR_TOKEN,
+      [MANAGED_COMPANION_ORIGIN_VERSION_FIELD]: MANAGED_COMPANION_ORIGIN_VERSION,
     });
     // First write creates the identity; the next single document contains
     // account, installation, endpoint, and connector material together.
@@ -159,12 +214,13 @@ describe("Companion account service", () => {
 
   it("never exposes any bearer, connector token, installation ID, or credential", async () => {
     const { service } = serviceFixture({ initial: signedCredentials() });
-    const publicJSON = JSON.stringify(service.state());
+    const state = await service.state();
+    const publicJSON = JSON.stringify(state);
 
     for (const secret of [ACCOUNT_TOKEN, CONNECTOR_TOKEN, INSTALLATION_ID, INSTALLATION_CREDENTIAL]) {
       expect(publicJSON).not.toContain(secret);
     }
-    expect(Object.keys(service.state()).sort()).toEqual([
+    expect(Object.keys(state).sort()).toEqual([
       "available",
       "email",
       "endpoint",
@@ -183,12 +239,12 @@ describe("Companion account service", () => {
     await expect(service.verifyCode("ada@example.com", "00000000")).rejects.toThrow(
       "That code is not valid",
     );
-    expect(service.state()).toMatchObject({
+    expect(await service.state()).toMatchObject({
       available: true,
       status: "signed-out",
       email: "ada@example.com",
     });
-    expect(JSON.stringify(service.state())).not.toContain("invalid_otp");
+    expect(JSON.stringify(await service.state())).not.toContain("invalid_otp");
   });
 
   it("handles an expired account session without deleting recovery credentials", async () => {

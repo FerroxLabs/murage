@@ -163,6 +163,17 @@ export function createControlPlaneClient({
   return {
     origin,
 
+    async health() {
+      const { payload } = await request("/healthz");
+      if (
+        payload.ok !== true ||
+        payload.service !== "openmausbot-control-plane"
+      ) {
+        throw new ControlPlaneError("control_plane_unavailable");
+      }
+      return true;
+    },
+
     async requestOTP(rawEmail) {
       const email = normalizeAccountEmail(rawEmail);
       if (!email) throw new ControlPlaneError("invalid_email");

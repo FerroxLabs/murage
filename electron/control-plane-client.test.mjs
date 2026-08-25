@@ -32,6 +32,24 @@ describe("control-plane desktop client", () => {
     expect(normalizeAccountEmail("not-an-email")).toBe("");
   });
 
+  it("requires the exact healthy control-plane identity before onboarding", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ ok: true, service: "openmausbot-control-plane" }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true, service: "some-other-service" }));
+    const client = createControlPlaneClient({
+      baseURL: "https://accounts.openmausbot.com",
+      fetchImpl,
+    });
+
+    await expect(client.health()).resolves.toBe(true);
+    await expect(client.health()).rejects.toMatchObject({
+      code: "control_plane_unavailable",
+    });
+    expect(fetchImpl.mock.calls[0][0]).toBe("https://accounts.openmausbot.com/healthz");
+    expect(fetchImpl.mock.calls[0][1].redirect).toBe("error");
+  });
+
   it("uses the signed Better Auth bearer header, never its raw JSON token", async () => {
     const fetchImpl = vi.fn(async (_url, init) => {
       expect(JSON.parse(init.body)).toEqual({
