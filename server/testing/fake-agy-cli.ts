@@ -8,15 +8,35 @@
 // status SUCCESS. Deterministic, no network.
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const argv = process.argv.slice(2);
+if (process.env.FAKE_AGY_IGNORE_SIGTERM === "1") {
+  process.on("SIGTERM", () => {});
+}
+if (process.env.FAKE_AGY_READY_FILE) {
+  writeFileSync(process.env.FAKE_AGY_READY_FILE, "ready");
+}
 if (process.env.FAKE_AGY_DUMP) {
   writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
 }
 if (argv.includes("--version")) {
   console.log("1.1.12");
   process.exit(0);
+}
+
+const delayMs = Number(process.env.FAKE_AGY_DELAY_MS ?? 0);
+if (Number.isFinite(delayMs) && delayMs > 0) {
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+if (process.env.FAKE_AGY_MCP_DUMP) {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  let config = "null";
+  try {
+    config = readFileSync(join(home, ".gemini", "config", "mcp_config.json"), "utf8");
+  } catch {}
+  writeFileSync(process.env.FAKE_AGY_MCP_DUMP, config);
 }
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
@@ -33,4 +53,8 @@ out({ event: "step_update", conversation_id: CONV, step_update: { conversation_i
 out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "DONE", step_type: "tool", tool_name: "write_to_file", tool_info: { name: "write_to_file", parameters: {} } } });
 out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "DONE", step_type: "agent_response", usage: { input_tokens: 100, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 125 } } });
 out({ event: "result", conversation_id: CONV, result: { conversation_id: CONV, status: "SUCCESS", response: "done from fake agy", duration_seconds: 1, num_turns: 1, usage: { input_tokens: 100, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 125 } } });
+const postResultDelayMs = Number(process.env.FAKE_AGY_POST_RESULT_DELAY_MS ?? 0);
+if (Number.isFinite(postResultDelayMs) && postResultDelayMs > 0) {
+  await new Promise((resolve) => setTimeout(resolve, postResultDelayMs));
+}
 process.exit(0);
