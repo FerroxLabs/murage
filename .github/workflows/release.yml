@@ -106,6 +106,17 @@ jobs:
         run: |
           for app in release/mac-arm64/OpenMausBot.app release/mac/OpenMausBot.app; do
             codesign --verify --deep --strict "$app"
+            bin="$app/Contents/Resources/cloudflared/cloudflared"
+            test -x "$bin" || { echo "::error::missing executable $bin"; exit 1; }
+            test -f "$app/Contents/Resources/licenses/cloudflared-LICENSE.txt" \
+              || { echo "::error::missing cloudflared license in $app"; exit 1; }
+            test -f "$app/Contents/Resources/licenses/cloudflared-README.md" \
+              || { echo "::error::missing cloudflared provenance in $app"; exit 1; }
+            codesign --verify --strict "$bin"
+            app_team=$(codesign -dv --verbose=4 "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            bin_team=$(codesign -dv --verbose=4 "$bin" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            test -n "$app_team" && test "$bin_team" = "$app_team" || {
+              echo "::error::cloudflared is not signed by the app's Developer ID team in $app"; exit 1; }
             echo "ok: $app"
           done
 
@@ -133,6 +144,15 @@ jobs:
               lipo -archs "$bin" | grep -q "x86_64" || { echo "::error::$bin lacks x86_64"; exit 1; }
               lipo -archs "$bin" | grep -q "arm64" || { echo "::error::$bin lacks arm64"; exit 1; }
             done
+            cloudflared="$res/cloudflared/cloudflared"
+            expected_arch=x86_64
+            case "$app" in *mac-arm64*) expected_arch=arm64 ;; esac
+            test "$(lipo -archs "$cloudflared")" = "$expected_arch" || {
+              echo "::error::$cloudflared is not the expected $expected_arch executable"; exit 1; }
+            if [ "$(uname -m)" = "$expected_arch" ]; then
+              "$cloudflared" version | grep -Fq "cloudflared version 2026.8.2 " || {
+                echo "::error::$cloudflared has the wrong version"; exit 1; }
+            fi
           done
 
       - name: Notarize all four artifacts
@@ -213,6 +233,14 @@ jobs:
           res=release/win-unpacked/resources
           [ -f "$res/server/index.js" ] || { echo "::error::missing server/index.js"; exit 1; }
           [ -f "$res/ui/index.html" ] || { echo "::error::missing ui/index.html"; exit 1; }
+          [ -f "$res/cloudflared/cloudflared.exe" ] || { echo "::error::missing cloudflared.exe"; exit 1; }
+          [ -f "$res/licenses/cloudflared-LICENSE.txt" ] || { echo "::error::missing cloudflared license"; exit 1; }
+          [ -f "$res/licenses/cloudflared-README.md" ] || { echo "::error::missing cloudflared provenance"; exit 1; }
+          expected=c29eee2b121f5436a642eed69fd9767da7e7b8c510fa50aaa130337f931357b5
+          actual=$(sha256sum "$res/cloudflared/cloudflared.exe" | cut -d' ' -f1)
+          [ "$actual" = "$expected" ] || { echo "::error::cloudflared hash is $actual"; exit 1; }
+          "$res/cloudflared/cloudflared.exe" version | grep -Fq "cloudflared version 2026.8.2 " || {
+            echo "::error::cloudflared has the wrong version"; exit 1; }
           [ -f "$res/app-update.yml" ] || { echo "::error::missing app-update.yml"; exit 1; }
           grep -q "openmausbot-releases" "$res/app-update.yml" || { echo "::error::wrong update repo"; exit 1; }
           if grep -q "publisherName" "$res/app-update.yml"; then

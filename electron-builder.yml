@@ -53,6 +53,13 @@ extraResources:
     to: licenses/OpenMausBot-LICENSE.txt
   - from: NOTICE
     to: licenses/OpenMausBot-NOTICE.txt
+  # cloudflared is distributed under Apache-2.0 as a separate executable.
+  # OpenMausBot itself uses the same full license text; ship another named
+  # copy so the third-party executable's terms remain unambiguous.
+  - from: LICENSE
+    to: licenses/cloudflared-LICENSE.txt
+  - from: third_party/cloudflared/README.md
+    to: licenses/cloudflared-README.md
   - from: dist
     to: ui
   - from: dist-server
@@ -95,6 +102,8 @@ mac:
       to: cua-driver
     - from: dist-native/${arch}/cua-sdk
       to: cua-sdk
+    - from: dist-native/cloudflared/darwin-${arch}/cloudflared
+      to: cloudflared/cloudflared
   extendInfo:
     NSMicrophoneUsageDescription: OpenMausBot uses the microphone for voice dictation into the composer.
     NSSpeechRecognitionUsageDescription: OpenMausBot transcribes your voice on-device to type messages for you.
@@ -118,6 +127,9 @@ win:
     - target: zip
       arch: x64
   icon: build/icon.ico
+  extraResources:
+    - from: dist-native/cloudflared/win32-x64/cloudflared.exe
+      to: cloudflared/cloudflared.exe
   # No signing config yet (would go under win.signtoolOptions or
   # win.azureSignOptions — eb 26 nests it, there is no top-level
   # win.certificateFile). The installer is unsigned, so SmartScreen shows
@@ -158,6 +170,8 @@ linux:
   extraResources:
     - from: dist-native/cua-linux-x64
       to: cua-linux-x64
+    - from: dist-native/cloudflared/linux-x64/cloudflared
+      to: cloudflared/cloudflared
   desktop:
     entry:
       Name: OpenMausBot
