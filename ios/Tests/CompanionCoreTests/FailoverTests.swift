@@ -133,4 +133,68 @@ final class FailoverTests: XCTestCase {
         XCTAssertEqual(connection.hosts?.first, "10.0.0.7")
         XCTAssertEqual(connection.hosts?.count, 4)
     }
+
+    func testTypedRoutesKeepHostedHTTPSAheadOfAnActiveLANFallback() throws {
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example",
+            kind: .hosted,
+            priority: 0
+        ))
+        let lan = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.42:8810",
+            kind: .lan,
+            priority: 200
+        ))
+        var connection = Connection(
+            name: "Mac",
+            host: hosted.host,
+            port: hosted.port,
+            activeEndpoint: hosted,
+            endpoints: [lan, hosted]
+        )
+
+        connection.promote(lan)
+
+        XCTAssertEqual(connection.baseURL?.absoluteString, lan.url)
+        XCTAssertEqual(connection.orderedEndpoints.map(\.url), [hosted.url, lan.url])
+    }
+
+    func testPromotingAWorkingLegacyEndpointKeepsEveryLegacyFallback() throws {
+        var connection = Connection(
+            name: "Mac",
+            host: "mac.tail1234.ts.net",
+            port: 8810,
+            hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"]
+        )
+        let lan = try XCTUnwrap(CompanionEndpoint.direct(
+            host: "192.168.1.42",
+            port: 8810,
+            priority: 1
+        ))
+
+        connection.promote(lan)
+
+        XCTAssertNil(connection.endpoints)
+        XCTAssertEqual(connection.orderedEndpoints.map(\.host), [
+            "192.168.1.42", "mac.tail1234.ts.net", "openmausbot-aa.local",
+        ])
+    }
+
+    func testTypedRotationPreservesSchemesAndPorts() throws {
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example",
+            kind: .hosted,
+            priority: 0
+        ))
+        let direct = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.42:9910",
+            kind: .lan,
+            priority: 200
+        ))
+        var rotation = CandidateRotation(endpoints: [hosted, direct])
+
+        XCTAssertEqual(rotation.currentEndpoint, hosted)
+        XCTAssertEqual(rotation.advanceEndpoint(), direct)
+        XCTAssertEqual(rotation.promotedEndpoints(), [direct, hosted])
+    }
 }

@@ -346,7 +346,7 @@ struct PairingView: View {
                             .font(.system(size: 14))
                             .foregroundColor(isDark ? Color(hex: "#64748B") : Color(hex: "#94A3B8"))
 
-                        TextField("192.168.1.42:8810 or mac.ts.net:8810", text: $manualAddress)
+                        TextField("https://mac.example or 192.168.1.42:8810", text: $manualAddress)
                             .font(.system(size: 14, design: .monospaced))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -364,7 +364,7 @@ struct PairingView: View {
                         Haptics.selection()
                         failure = nil
                         guard let connection = Self.parse(manualAddress) else {
-                            failure = "That should look like 192.168.1.42:8810 or host.ts.net:8810."
+                            failure = "Enter a secure https:// address, 192.168.1.42:8810, or host.ts.net:8810."
                             return
                         }
                         choiceGeneration += 1
@@ -413,13 +413,15 @@ struct PairingView: View {
                 Text(connection.name)
                     .font(.title2.weight(.bold))
                     .foregroundColor(isDark ? .white : Color(hex: "#0F172A"))
-                Text("\(connection.host):\(connection.port)")
+                Text(connection.displayAddress)
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(isDark ? Color(hex: "#94A3B8") : Color(hex: "#64748B"))
             }
 
             if let credential = scannedCredential {
-                Text("Confirm this computer to establish an authenticated companion connection. Use a trusted Wi-Fi network or a tailnet; OpenMausBot does not encrypt local Wi-Fi traffic.")
+                Text(connection.activeEndpoint?.isSecure == true
+                    ? "Confirm this computer to establish an authenticated HTTPS companion connection."
+                    : "Confirm this computer to establish an authenticated companion connection. Use a trusted Wi-Fi network or a tailnet; OpenMausBot does not encrypt local Wi-Fi traffic.")
                     .font(.caption)
                     .foregroundColor(isDark ? Color(hex: "#94A3B8") : Color(hex: "#64748B"))
                     .multilineTextAlignment(.center)

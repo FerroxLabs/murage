@@ -16,36 +16,60 @@ import Foundation
 /// rather than giving up, because the retry loop it lives in already backs
 /// off between attempts and a network that comes back deserves a second lap.
 public struct CandidateRotation: Equatable, Sendable {
-    public private(set) var hosts: [String]
+    public private(set) var endpoints: [CompanionEndpoint]
     private var index: Int
 
     public init(hosts: [String]) {
-        self.hosts = hosts
+        endpoints = hosts.enumerated().compactMap { offset, host in
+            CompanionEndpoint.direct(host: host, port: 8810, priority: offset)
+        }
         index = 0
+    }
+
+    public init(endpoints: [CompanionEndpoint]) {
+        self.endpoints = endpoints
+        index = 0
+    }
+
+    /// Compatibility view for tests and callers that only understand the old
+    /// host list. New dialing code uses `currentEndpoint` so it never loses a
+    /// route's HTTPS scheme or distinct port.
+    public var hosts: [String] { endpoints.map(\.displayAddress) }
+
+    public var currentEndpoint: CompanionEndpoint? {
+        endpoints.indices.contains(index) ? endpoints[index] : nil
     }
 
     /// The host the next attempt should dial. Empty only when there are no
     /// hosts at all, which a real connection never produces.
     public var current: String {
-        hosts.indices.contains(index) ? hosts[index] : ""
+        currentEndpoint?.displayAddress ?? ""
     }
 
-    public var count: Int { hosts.count }
+    public var count: Int { endpoints.count }
 
     /// Move to the next candidate and return it, wrapping past the end.
     @discardableResult
     public mutating func advance() -> String {
-        guard !hosts.isEmpty else { return "" }
-        index = (index + 1) % hosts.count
-        return current
+        advanceEndpoint()?.displayAddress ?? ""
     }
 
-    /// The stored order after a success: the host that just worked first, so
-    /// the next launch dials it before anything that was failing, and the
-    /// rest keeping their relative order.
+    @discardableResult
+    public mutating func advanceEndpoint() -> CompanionEndpoint? {
+        guard !endpoints.isEmpty else { return nil }
+        index = (index + 1) % endpoints.count
+        return currentEndpoint
+    }
+
+    public func promotedEndpoints() -> [CompanionEndpoint] {
+        guard endpoints.indices.contains(index) else { return endpoints }
+        return [endpoints[index]] + endpoints.enumerated()
+            .filter { $0.offset != index }
+            .map(\.element)
+    }
+
     public func promoted() -> [String] {
-        guard hosts.indices.contains(index) else { return hosts }
-        return [hosts[index]] + hosts.enumerated().filter { $0.offset != index }.map(\.element)
+        promotedEndpoints().map(\.displayAddress)
     }
 }
 
@@ -109,12 +133,47 @@ extension Connection {
         return out
     }
 
+    /// Every complete route in policy order. Typed endpoints win over the
+    /// legacy fields because they can represent hosted HTTPS. A connection
+    /// either walks that complete typed set or, for an older desktop, derives
+    /// direct routes from the legacy fields — never a lossy mixture of both.
+    public var orderedEndpoints: [CompanionEndpoint] {
+        var candidates = endpoints ?? []
+        if !candidates.isEmpty {
+            if let activeEndpoint, !candidates.contains(where: { $0.url == activeEndpoint.url }) {
+                candidates.append(activeEndpoint)
+            }
+            candidates = candidates.enumerated().sorted {
+                $0.element.priority == $1.element.priority
+                    ? $0.offset < $1.offset
+                    : $0.element.priority < $1.element.priority
+            }.map(\.element)
+        } else {
+            candidates = orderedHosts.enumerated().compactMap { offset, candidate in
+                CompanionEndpoint.direct(host: candidate, port: port, priority: offset)
+            }
+        }
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0.url).inserted }.prefix(8).map { $0 }
+    }
+
     /// A copy dialing `candidate` — same pairing, same port, different
     /// address. The stored order is untouched; committing a winner is
     /// `promote`, and only success earns it.
     public func dialing(_ candidate: String) -> Connection {
+        guard let endpoint = CompanionEndpoint.direct(host: candidate, port: port, priority: 10_000) else {
+            return self
+        }
+        return dialing(endpoint)
+    }
+
+    /// A copy dialing one complete route without changing its stored policy
+    /// order or keychain identity.
+    public func dialing(_ candidate: CompanionEndpoint) -> Connection {
         var copy = self
-        copy.host = Self.urlHost(candidate)
+        copy.activeEndpoint = candidate
+        copy.host = candidate.host
+        copy.port = candidate.port
         return copy
     }
 
@@ -125,5 +184,22 @@ extension Connection {
         let rest = orderedHosts.filter { $0 != normalized }
         host = normalized
         hosts = [normalized] + rest
+        activeEndpoint = CompanionEndpoint.direct(host: normalized, port: port, priority: 10_000)
+    }
+
+    /// Remember the route that worked without letting a cleartext fallback
+    /// jump ahead of a lower-priority hosted/tailnet route on the next launch.
+    public mutating func promote(_ winner: CompanionEndpoint) {
+        activeEndpoint = winner
+        host = winner.host
+        port = winner.port
+        if let existing = endpoints,
+           !existing.contains(where: { $0.url == winner.url }) {
+            endpoints = existing + [winner]
+        }
+        if winner.kind != .hosted {
+            let rest = orderedHosts.filter { $0 != winner.host }
+            hosts = [winner.host] + rest
+        }
     }
 }

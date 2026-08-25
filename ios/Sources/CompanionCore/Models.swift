@@ -318,6 +318,9 @@ public struct PairResponse: Codable, Sendable {
     /// connection so the app can walk to the next one when the address it
     /// paired on stops resolving. Absent from older sidecars.
     public var hosts: [String]?
+    /// Full HTTPS/HTTP routes from newer sidecars. Absent during a staggered
+    /// rollout; `hosts` remains the compatibility path for older builds.
+    public var endpoints: [CompanionEndpoint]?
 }
 
 /// A freshly minted provider viewer. It is deliberately not Codable for

@@ -21,13 +21,29 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     /// Optional so connections saved before fallbacks existed still decode;
     /// read through `orderedHosts`, which is never empty.
     public var hosts: [String]?
+    /// Complete route currently being dialed. Absent on connections saved by
+    /// older app builds, where `host` + `port` still mean direct HTTP.
+    public var activeEndpoint: CompanionEndpoint?
+    /// Full routes advertised by a newer desktop. Each carries its own scheme
+    /// and port so hosted HTTPS can coexist with local HTTP fallbacks.
+    public var endpoints: [CompanionEndpoint]?
 
-    public init(id: String = UUID().uuidString, name: String, host: String, port: Int, hosts: [String]? = nil) {
+    public init(
+        id: String = UUID().uuidString,
+        name: String,
+        host: String,
+        port: Int,
+        hosts: [String]? = nil,
+        activeEndpoint: CompanionEndpoint? = nil,
+        endpoints: [CompanionEndpoint]? = nil
+    ) {
         self.id = id
         self.name = name
         self.host = Self.urlHost(host)
         self.port = port
         self.hosts = hosts
+        self.activeEndpoint = activeEndpoint
+        self.endpoints = endpoints
     }
 
     /// The representation `URLComponents.host` accepts for a literal IPv6
@@ -57,9 +73,20 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     /// same unambiguous form browsers and command-line tools use.
     public static func parse(_ text: String, defaultPort: Int = 8810) -> Connection? {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        for prefix in ["http://", "https://"] where trimmed.lowercased().hasPrefix(prefix) {
-            trimmed.removeFirst(prefix.count)
-            break
+        let lowercased = trimmed.lowercased()
+        if lowercased.hasPrefix("http://") || lowercased.hasPrefix("https://") {
+            guard let endpoint = CompanionEndpoint(
+                url: trimmed,
+                kind: lowercased.hasPrefix("https://") ? .hosted : .lan,
+                priority: 0
+            ) else { return nil }
+            return Connection(
+                name: endpoint.host,
+                host: endpoint.host,
+                port: endpoint.port,
+                activeEndpoint: endpoint,
+                endpoints: [endpoint]
+            )
         }
         while trimmed.hasSuffix("/") { trimmed.removeLast() }
         guard !trimmed.isEmpty else { return nil }
@@ -92,7 +119,8 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
         return Connection(name: host, host: host, port: port)
     }
 
-    /// Plain HTTP, and that is a real limitation rather than an oversight.
+    /// Hosted routes use ordinary certificate-validated HTTPS. A connection
+    /// saved by an older app still falls back to direct HTTP below.
     ///
     /// The bearer token goes out in a header on every request, so anyone who
     /// can observe the path between phone and computer can lift it and use it
@@ -117,6 +145,7 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     /// LAN path is documented as trusted-network-only, and pinned TLS is what
     /// this needs before it could claim otherwise. See `docs/ios-companion.md`.
     public var baseURL: URL? {
+        if let endpoint = activeEndpoint?.baseURL { return endpoint }
         var components = URLComponents()
         components.scheme = "http"
         // Normalize here too so connections saved by older builds with an
@@ -176,7 +205,43 @@ public struct PairingInvite: Equatable, Sendable {
                 }
             if !candidates.isEmpty { connection.hosts = Array(candidates.prefix(8)) }
         }
+        if let encoded = values["endpoints"] {
+            guard let endpoints = Self.decodeEndpoints(encoded) else { return nil }
+            connection.endpoints = endpoints
+            connection = connection.dialing(endpoints[0])
+        }
         return PairingInvite(connection: connection, credential: credential)
+    }
+
+    /// Unpadded base64url JSON keeps the typed array in one unambiguous query
+    /// value. A present-but-invalid value rejects the invite instead of
+    /// quietly downgrading a hosted HTTPS QR to its legacy HTTP address.
+    private static func decodeEndpoints(_ encoded: String) -> [CompanionEndpoint]? {
+        guard !encoded.isEmpty,
+              encoded.utf8.count <= 8_192,
+              encoded.utf8.allSatisfy({
+                  (48...57).contains($0) || (65...90).contains($0) ||
+                  (97...122).contains($0) || $0 == 45 || $0 == 95
+              })
+        else { return nil }
+
+        var base64 = encoded.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+        guard let data = Data(base64Encoded: base64),
+              let decoded = try? JSONDecoder().decode([CompanionEndpoint].self, from: data),
+              !decoded.isEmpty,
+              decoded.count <= 8
+        else { return nil }
+
+        let stable = decoded.enumerated().sorted {
+            $0.element.priority == $1.element.priority
+                ? $0.offset < $1.offset
+                : $0.element.priority < $1.element.priority
+        }.map(\.element)
+        var seen = Set<String>()
+        let unique = stable.filter { seen.insert($0.url).inserted }
+        return unique.isEmpty ? nil : unique
     }
 
     private static func credential(from values: [String: String]) -> String? {
@@ -392,11 +457,12 @@ public struct CompanionClient: Sendable {
         pairRequestId: String = UUID().uuidString,
         session: URLSession = .shared
     ) async throws -> PairingOutcome {
-        let candidates = connection.orderedHosts.map(connection.dialing)
+        let candidates = connection.orderedEndpoints.map(connection.dialing)
+        let attemptedRoutes = connection.orderedEndpoints.map(\.url)
         var remaining = candidates
         while !remaining.isEmpty {
             guard let winner = await firstHealthy(in: remaining, session: session) else {
-                throw PairingRouteError(attemptedHosts: connection.orderedHosts)
+                throw PairingRouteError(attemptedHosts: attemptedRoutes)
             }
             remaining.remove(at: winner.offset)
             do {
@@ -422,7 +488,7 @@ public struct CompanionClient: Sendable {
                 continue
             }
         }
-        throw PairingRouteError(attemptedHosts: connection.orderedHosts)
+        throw PairingRouteError(attemptedHosts: attemptedRoutes)
     }
 
     /// Probe every candidate together, but respect the advertised security
