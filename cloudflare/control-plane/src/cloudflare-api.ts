@@ -1,6 +1,7 @@
 import { z } from "zod";
-
 import type { ControlPlaneConfig } from "./config";
+
+export const MANAGED_COMPANION_ORIGIN_URL = "http://127.0.0.1:8812";
 
 const API_BASE = "https://api.cloudflare.com/client/v4/";
 const API_TIMEOUT_MS = 5_000;
@@ -16,7 +17,7 @@ const tunnelSchema = z.object({
 const dnsRecordSchema = z.object({
   id: z.string().min(1).max(64),
   name: z.string().min(1).max(255),
-  type: z.literal("CNAME"),
+  type: z.string().min(1).max(16),
   content: z.string().min(1).max(255),
   proxied: z.boolean(),
 });
@@ -52,10 +53,14 @@ export interface CloudflareDNSRecord {
   id: string;
   name: string;
   proxied: boolean;
+  type: string;
 }
 
 export class CloudflareAPIError extends Error {
-  constructor(public readonly code: string) {
+  constructor(
+    public readonly code: string,
+    public readonly status: number | null = null,
+  ) {
     super(code);
     this.name = "CloudflareAPIError";
   }
@@ -63,7 +68,7 @@ export class CloudflareAPIError extends Error {
 
 function isNotFound(error: unknown): boolean {
   return error instanceof CloudflareAPIError
-    && (error.code === "cf_http_404" || error.code === "cf_api_81044");
+    && (error.status === 404 || error.code === "cf_http_404" || error.code === "cf_api_81044");
 }
 
 async function boundedResponseText(response: Response): Promise<string> {
@@ -157,7 +162,7 @@ export class CloudflareAPI {
 
     const mediaType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
     if (mediaType !== "application/json") {
-      if (!response.ok) throw new CloudflareAPIError(`cf_http_${response.status}`);
+      if (!response.ok) throw new CloudflareAPIError(`cf_http_${response.status}`, response.status);
       throw new CloudflareAPIError("cf_invalid_response");
     }
 
@@ -166,12 +171,15 @@ export class CloudflareAPI {
     try {
       value = JSON.parse(text);
     } catch {
-      throw new CloudflareAPIError(response.ok ? "cf_invalid_response" : `cf_http_${response.status}`);
+      throw new CloudflareAPIError(
+        response.ok ? "cf_invalid_response" : `cf_http_${response.status}`,
+        response.status,
+      );
     }
 
     const envelope = errorEnvelopeSchema.safeParse(value);
     if (!response.ok || !envelope.success || !envelope.data.success) {
-      throw new CloudflareAPIError(providerErrorCode(value, response.status));
+      throw new CloudflareAPIError(providerErrorCode(value, response.status), response.status);
     }
     if (!value || typeof value !== "object" || !("result" in value)) {
       throw new CloudflareAPIError("cf_invalid_response");
@@ -189,6 +197,21 @@ export class CloudflareAPI {
     );
     const exact = tunnels.filter((tunnel) => tunnel.name === name && tunnel.deleted_at == null);
     return exact.map(({ id, name: tunnelName }) => ({ id, name: tunnelName }));
+  }
+
+  async getTunnel(tunnelId: string): Promise<CloudflareTunnel | null> {
+    try {
+      const tunnel = await this.request(
+        `accounts/${encodeURIComponent(this.config.accountId)}/cfd_tunnel/${encodeURIComponent(tunnelId)}`,
+        tunnelSchema,
+      );
+      if (tunnel.id !== tunnelId) throw new CloudflareAPIError("cf_invalid_response");
+      if (tunnel.deleted_at != null) return null;
+      return { id: tunnel.id, name: tunnel.name };
+    } catch (error) {
+      if (isNotFound(error)) return null;
+      throw error;
+    }
   }
 
   async createTunnel(name: string): Promise<CloudflareTunnel> {
@@ -211,7 +234,7 @@ export class CloudflareAPI {
         body: {
           config: {
             ingress: [
-              { hostname, service: "http://127.0.0.1:8810" },
+              { hostname, service: MANAGED_COMPANION_ORIGIN_URL },
               { service: "http_status:404" },
             ],
           },
@@ -223,7 +246,7 @@ export class CloudflareAPI {
     if (
       ingress.length !== 2
       || ingress[0]?.hostname !== hostname
-      || ingress[0]?.service !== "http://127.0.0.1:8810"
+      || ingress[0]?.service !== MANAGED_COMPANION_ORIGIN_URL
       || ingress[1]?.hostname !== undefined
       || ingress[1]?.service !== "http_status:404"
     ) {
@@ -242,8 +265,28 @@ export class CloudflareAPI {
       z.array(dnsRecordSchema),
     );
     return records
-      .filter((record) => record.name.toLowerCase() === hostname)
-      .map(({ content, id, name, proxied }) => ({ content, id, name, proxied }));
+      .filter((record) => record.type === "CNAME" && record.name.toLowerCase() === hostname)
+      .map(({ content, id, name, proxied, type }) => ({ content, id, name, proxied, type }));
+  }
+
+  async getDNSRecord(recordId: string): Promise<CloudflareDNSRecord | null> {
+    try {
+      const record = await this.request(
+        `zones/${encodeURIComponent(this.config.zoneId)}/dns_records/${encodeURIComponent(recordId)}`,
+        dnsRecordSchema,
+      );
+      if (record.id !== recordId) throw new CloudflareAPIError("cf_invalid_response");
+      return {
+        content: record.content,
+        id: record.id,
+        name: record.name,
+        proxied: record.proxied,
+        type: record.type,
+      };
+    } catch (error) {
+      if (isNotFound(error)) return null;
+      throw error;
+    }
   }
 
   async createDNSRecord(hostname: string, tunnelId: string): Promise<CloudflareDNSRecord> {
@@ -272,12 +315,19 @@ export class CloudflareAPI {
     );
     if (
       record.name.toLowerCase() !== hostname
+      || record.type !== "CNAME"
       || record.content.toLowerCase() !== target
       || !record.proxied
     ) {
       throw new CloudflareAPIError("cf_invalid_response");
     }
-    return { content: record.content, id: record.id, name: record.name, proxied: record.proxied };
+    return {
+      content: record.content,
+      id: record.id,
+      name: record.name,
+      proxied: record.proxied,
+      type: record.type,
+    };
   }
 
   async getConnectorToken(tunnelId: string): Promise<string> {

@@ -1,4 +1,10 @@
-import { CloudflareAPI, CloudflareAPIError, type CloudflareFetch } from "./cloudflare-api";
+import {
+  CloudflareAPI,
+  CloudflareAPIError,
+  type CloudflareDNSRecord,
+  type CloudflareFetch,
+  type CloudflareTunnel,
+} from "./cloudflare-api";
 import type { ControlPlaneConfig } from "./config";
 import { errorResponse, HTTPError, json } from "./http";
 import { requireInstallation } from "./installations";
@@ -178,6 +184,66 @@ async function updateClaimedResources(
   claim.row.dns_record_id = dnsRecordId;
 }
 
+async function renewClaim(env: Env, claim: ClaimedEndpoint): Promise<void> {
+  const now = Date.now();
+  const leaseExpiresAt = now + LEASE_MS;
+  const result = await env.DB.prepare(
+    `UPDATE installation_endpoints
+        SET lease_expires_at = ?, updated_at = ?
+      WHERE installation_id = ? AND generation = ? AND lease_owner = ?
+        AND lease_expires_at > ?`,
+  ).bind(
+    leaseExpiresAt,
+    now,
+    claim.row.installation_id,
+    claim.row.generation,
+    claim.leaseOwner,
+    now,
+  ).run();
+  if (result.meta.changes === 0) throw new EndpointOperationError("lease_lost");
+  claim.row.lease_expires_at = leaseExpiresAt;
+}
+
+async function withClaimLease<T>(
+  env: Env,
+  claim: ClaimedEndpoint,
+  operation: () => Promise<T>,
+): Promise<T> {
+  await renewClaim(env, claim);
+  return operation();
+}
+
+function expectedTunnelTarget(tunnelId: string): string {
+  return `${tunnelId}.cfargotunnel.com`;
+}
+
+function assertTunnelIdentity(
+  claim: ClaimedEndpoint,
+  tunnelId: string,
+  tunnel: { id: string; name: string },
+): void {
+  if (tunnel.id !== tunnelId || tunnel.name !== claim.row.tunnel_name) {
+    throw new EndpointOperationError("tunnel_identity_conflict");
+  }
+}
+
+function assertDNSIdentity(
+  claim: ClaimedEndpoint,
+  tunnelId: string,
+  dnsRecordId: string,
+  record: { content: string; id: string; name: string; proxied: boolean; type: string },
+): void {
+  if (
+    record.id !== dnsRecordId
+    || record.name.toLowerCase() !== claim.row.hostname
+    || record.type !== "CNAME"
+    || record.content.toLowerCase() !== expectedTunnelTarget(tunnelId)
+    || !record.proxied
+  ) {
+    throw new EndpointOperationError("dns_record_identity_conflict");
+  }
+}
+
 async function finishClaim(
   env: Env,
   claim: ClaimedEndpoint,
@@ -224,6 +290,129 @@ function busyResponse(): Response {
   return new Response(response.body, { status: response.status, headers });
 }
 
+async function reconcileDNSWriteResult(
+  env: Env,
+  claim: ClaimedEndpoint,
+  api: CloudflareAPI,
+  tunnelId: string,
+  expectedRecordId: string | null,
+): Promise<CloudflareDNSRecord | null> {
+  const records = await withClaimLease(
+    env,
+    claim,
+    () => api.listDNSRecords(claim.row.hostname),
+  );
+  if (records.length > 1) throw new EndpointOperationError("dns_record_conflict");
+  const record = records[0];
+  if (!record) return null;
+  if (expectedRecordId && record.id !== expectedRecordId) {
+    throw new EndpointOperationError("dns_record_conflict");
+  }
+  if (
+    record.name.toLowerCase() !== claim.row.hostname
+    || record.type !== "CNAME"
+    || record.content.toLowerCase() !== expectedTunnelTarget(tunnelId)
+    || !record.proxied
+  ) {
+    throw new EndpointOperationError("dns_record_conflict");
+  }
+  return record;
+}
+
+async function verifiedTunnelForCleanup(
+  env: Env,
+  claim: ClaimedEndpoint,
+  api: CloudflareAPI,
+  tunnelId: string,
+): Promise<CloudflareTunnel | null> {
+  const tunnel = await withClaimLease(env, claim, () => api.getTunnel(tunnelId));
+  const named = await withClaimLease(
+    env,
+    claim,
+    () => api.listTunnels(claim.row.tunnel_name),
+  );
+  if (named.length > 1) throw new EndpointOperationError("tunnel_identity_conflict");
+  if (!tunnel) {
+    if (named.length !== 0) throw new EndpointOperationError("tunnel_identity_conflict");
+    return null;
+  }
+  assertTunnelIdentity(claim, tunnelId, tunnel);
+  if (named.length !== 1 || named[0]?.id !== tunnelId) {
+    throw new EndpointOperationError("tunnel_identity_conflict");
+  }
+  return tunnel;
+}
+
+async function verifiedDNSForCleanup(
+  env: Env,
+  claim: ClaimedEndpoint,
+  api: CloudflareAPI,
+  tunnelId: string,
+  dnsRecordId: string,
+): Promise<CloudflareDNSRecord | null> {
+  const record = await withClaimLease(env, claim, () => api.getDNSRecord(dnsRecordId));
+  const named = await withClaimLease(
+    env,
+    claim,
+    () => api.listDNSRecords(claim.row.hostname),
+  );
+  if (named.length > 1) throw new EndpointOperationError("dns_record_identity_conflict");
+  if (!record) {
+    if (named.length !== 0) throw new EndpointOperationError("dns_record_identity_conflict");
+    return null;
+  }
+  assertDNSIdentity(claim, tunnelId, dnsRecordId, record);
+  if (named.length !== 1 || named[0]?.id !== dnsRecordId) {
+    throw new EndpointOperationError("dns_record_identity_conflict");
+  }
+  return record;
+}
+
+async function rollbackCreatedResources(
+  env: Env,
+  claim: ClaimedEndpoint,
+  api: CloudflareAPI,
+  state: {
+    createdDNSRecord: boolean;
+    createdTunnel: boolean;
+    dnsMayReferenceTunnel: boolean;
+    dnsRecordId: string | null;
+    tunnelId: string | null;
+  },
+): Promise<{ dnsRecordId: string | null; tunnelId: string | null }> {
+  let { dnsRecordId, tunnelId } = state;
+  if (!state.createdDNSRecord && !state.createdTunnel) return { dnsRecordId, tunnelId };
+  if (tunnelId) await verifiedTunnelForCleanup(env, claim, api, tunnelId);
+
+  if (state.createdDNSRecord && dnsRecordId && tunnelId) {
+    const record = await verifiedDNSForCleanup(env, claim, api, tunnelId, dnsRecordId);
+    if (record) {
+      await renewClaim(env, claim);
+      await api.deleteDNSRecord(dnsRecordId);
+    }
+    dnsRecordId = null;
+    await updateClaimedResources(env, claim, tunnelId, dnsRecordId);
+  }
+
+  if (
+    state.createdTunnel
+    && tunnelId
+    && (!state.dnsMayReferenceTunnel || (state.createdDNSRecord && !dnsRecordId))
+  ) {
+    // Re-fetch immediately before the destructive request. The stable name is
+    // our provider-side identity fence; a renamed/repurposed tunnel is retained.
+    const tunnel = await verifiedTunnelForCleanup(env, claim, api, tunnelId);
+    if (tunnel) {
+      await renewClaim(env, claim);
+      await api.deleteTunnel(tunnelId);
+    }
+    tunnelId = null;
+    await updateClaimedResources(env, claim, tunnelId, dnsRecordId);
+  }
+
+  return { dnsRecordId, tunnelId };
+}
+
 async function reconcileClaim(
   env: Env,
   config: ControlPlaneConfig,
@@ -235,9 +424,14 @@ async function reconcileClaim(
   let dnsRecordId = claim.row.dns_record_id;
   let createdTunnel = false;
   let createdDNSRecord = false;
+  let dnsMayReferenceTunnel = false;
 
   try {
-    const tunnels = await api.listTunnels(claim.row.tunnel_name);
+    const tunnels = await withClaimLease(
+      env,
+      claim,
+      () => api.listTunnels(claim.row.tunnel_name),
+    );
     if (tunnels.length > 1) throw new EndpointOperationError("tunnel_name_conflict");
     if (tunnels.length === 1) {
       if (tunnelId && tunnelId !== tunnels[0]?.id) {
@@ -245,54 +439,141 @@ async function reconcileClaim(
       }
       tunnelId = tunnels[0]?.id ?? null;
     } else {
-      const tunnel = await api.createTunnel(claim.row.tunnel_name);
-      tunnelId = tunnel.id;
-      createdTunnel = true;
+      try {
+        const tunnel = await withClaimLease(
+          env,
+          claim,
+          () => api.createTunnel(claim.row.tunnel_name),
+        );
+        tunnelId = tunnel.id;
+        createdTunnel = true;
+      } catch (createError) {
+        // A timeout/network failure can arrive after Cloudflare committed the
+        // POST. Reconcile by the stable opaque name instead of creating a
+        // duplicate tunnel on the next request.
+        let created: CloudflareTunnel[];
+        try {
+          created = await withClaimLease(
+            env,
+            claim,
+            () => api.listTunnels(claim.row.tunnel_name),
+          );
+        } catch {
+          throw createError;
+        }
+        if (created.length > 1) throw new EndpointOperationError("tunnel_name_conflict");
+        if (created.length === 0) throw createError;
+        tunnelId = created[0]?.id ?? null;
+      }
     }
     if (!tunnelId) throw new EndpointOperationError("tunnel_missing");
-    await updateClaimedResources(env, claim, tunnelId, dnsRecordId);
-    await api.configureTunnel(tunnelId, claim.row.hostname);
+    const activeTunnelId = tunnelId;
+    await updateClaimedResources(env, claim, activeTunnelId, dnsRecordId);
+    await withClaimLease(
+      env,
+      claim,
+      () => api.configureTunnel(activeTunnelId, claim.row.hostname),
+    );
 
-    const target = `${tunnelId}.cfargotunnel.com`;
-    const records = await api.listDNSRecords(claim.row.hostname);
+    const target = expectedTunnelTarget(activeTunnelId);
+    const records = await withClaimLease(
+      env,
+      claim,
+      () => api.listDNSRecords(claim.row.hostname),
+    );
     if (records.length > 1) throw new EndpointOperationError("dns_record_conflict");
     const existing = records[0];
     if (existing) {
       if (existing.content.toLowerCase() !== target && existing.id !== dnsRecordId) {
         throw new EndpointOperationError("dns_record_conflict");
       }
-      const record = existing.proxied && existing.content.toLowerCase() === target
-        ? existing
-        : await api.updateDNSRecord(existing.id, claim.row.hostname, tunnelId);
+      dnsMayReferenceTunnel = existing.content.toLowerCase() === target;
+      let record = existing;
+      if (!existing.proxied || existing.content.toLowerCase() !== target) {
+        dnsMayReferenceTunnel = true;
+        try {
+          record = await withClaimLease(
+            env,
+            claim,
+            () => api.updateDNSRecord(existing.id, claim.row.hostname, activeTunnelId),
+          );
+        } catch (writeError) {
+          try {
+            const reconciled = await reconcileDNSWriteResult(
+              env,
+              claim,
+              api,
+              activeTunnelId,
+              existing.id,
+            );
+            if (!reconciled) throw writeError;
+            record = reconciled;
+          } catch (reconcileError) {
+            if (reconcileError instanceof EndpointOperationError) throw reconcileError;
+            throw writeError;
+          }
+        }
+      }
       dnsRecordId = record.id;
     } else {
-      const record = await api.createDNSRecord(claim.row.hostname, tunnelId);
-      dnsRecordId = record.id;
-      createdDNSRecord = true;
+      dnsMayReferenceTunnel = true;
+      try {
+        const record = await withClaimLease(
+          env,
+          claim,
+          () => api.createDNSRecord(claim.row.hostname, activeTunnelId),
+        );
+        dnsRecordId = record.id;
+        createdDNSRecord = true;
+      } catch (writeError) {
+        try {
+          const reconciled = await reconcileDNSWriteResult(
+            env,
+            claim,
+            api,
+            activeTunnelId,
+            null,
+          );
+          if (!reconciled) {
+            dnsMayReferenceTunnel = false;
+            throw writeError;
+          }
+          // The write may have committed, but its response did not prove that
+          // this request created the record. Adopt and retain it on later
+          // failures instead of destructively guessing.
+          dnsRecordId = reconciled.id;
+        } catch (reconcileError) {
+          if (reconcileError instanceof EndpointOperationError) throw reconcileError;
+          throw writeError;
+        }
+      }
     }
-    await updateClaimedResources(env, claim, tunnelId, dnsRecordId);
+    await updateClaimedResources(env, claim, activeTunnelId, dnsRecordId);
 
-    const connectorToken = await api.getConnectorToken(tunnelId);
+    const connectorToken = await withClaimLease(
+      env,
+      claim,
+      () => api.getConnectorToken(activeTunnelId),
+    );
     const row = await finishClaim(env, claim, "ready");
     return { connectorToken, row };
   } catch (error) {
-    const operationCode = errorCode(error);
+    let operationCode = errorCode(error);
 
-    if (createdDNSRecord && dnsRecordId) {
-      try {
-        await api.deleteDNSRecord(dnsRecordId);
-        dnsRecordId = null;
-      } catch {
-        // Preserve the record ID below so a later request can finish cleanup.
-      }
-    }
-    if (createdTunnel && tunnelId) {
-      try {
-        await api.deleteTunnel(tunnelId);
-        tunnelId = null;
-      } catch {
-        // Preserve the tunnel ID below so a later request can reconcile it.
-      }
+    try {
+      const rolledBack = await rollbackCreatedResources(env, claim, api, {
+        createdDNSRecord,
+        createdTunnel,
+        dnsMayReferenceTunnel,
+        dnsRecordId,
+        tunnelId,
+      });
+      dnsRecordId = rolledBack.dnsRecordId;
+      tunnelId = rolledBack.tunnelId;
+    } catch (rollbackError) {
+      // A stale request must stop immediately: it no longer owns either the
+      // D1 generation or the provider resources that a successor may adopt.
+      operationCode = errorCode(rollbackError);
     }
     try {
       await updateClaimedResources(env, claim, tunnelId, dnsRecordId);
@@ -316,17 +597,30 @@ async function deleteClaim(
 
   try {
     if (!tunnelId) {
-      const tunnels = await api.listTunnels(claim.row.tunnel_name);
+      const tunnels = await withClaimLease(
+        env,
+        claim,
+        () => api.listTunnels(claim.row.tunnel_name),
+      );
       if (tunnels.length > 1) throw new EndpointOperationError("tunnel_name_conflict");
       tunnelId = tunnels[0]?.id ?? null;
       if (tunnelId) await updateClaimedResources(env, claim, tunnelId, dnsRecordId);
     }
     if (!dnsRecordId) {
-      const records = await api.listDNSRecords(claim.row.hostname);
+      const records = await withClaimLease(
+        env,
+        claim,
+        () => api.listDNSRecords(claim.row.hostname),
+      );
       if (records.length > 1) throw new EndpointOperationError("dns_record_conflict");
       const record = records[0];
       if (record) {
-        if (!tunnelId || record.content.toLowerCase() !== `${tunnelId}.cfargotunnel.com`) {
+        if (
+          !tunnelId
+          || record.type !== "CNAME"
+          || record.content.toLowerCase() !== expectedTunnelTarget(tunnelId)
+          || !record.proxied
+        ) {
           throw new EndpointOperationError("dns_record_conflict");
         }
         dnsRecordId = record.id;
@@ -334,13 +628,31 @@ async function deleteClaim(
       }
     }
 
+    // Validate the complete resource set before the first delete. Persisted
+    // provider IDs are only hints: the hostname/CNAME and stable tunnel name
+    // must still agree, otherwise cleanup retains metadata for an operator.
+    if (tunnelId) await verifiedTunnelForCleanup(env, claim, api, tunnelId);
+    const dnsRecord = dnsRecordId && tunnelId
+      ? await verifiedDNSForCleanup(env, claim, api, tunnelId, dnsRecordId)
+      : null;
+    if (dnsRecordId && !tunnelId) {
+      throw new EndpointOperationError("dns_record_identity_conflict");
+    }
+
     if (dnsRecordId) {
-      await api.deleteDNSRecord(dnsRecordId);
+      if (dnsRecord) {
+        await renewClaim(env, claim);
+        await api.deleteDNSRecord(dnsRecordId);
+      }
       dnsRecordId = null;
       await updateClaimedResources(env, claim, tunnelId, dnsRecordId);
     }
     if (tunnelId) {
-      await api.deleteTunnel(tunnelId);
+      const tunnel = await verifiedTunnelForCleanup(env, claim, api, tunnelId);
+      if (tunnel) {
+        await renewClaim(env, claim);
+        await api.deleteTunnel(tunnelId);
+      }
       tunnelId = null;
       await updateClaimedResources(env, claim, tunnelId, dnsRecordId);
     }

@@ -86,7 +86,7 @@ interface FakeDNSRecord {
   id: string;
   name: string;
   proxied: boolean;
-  type: "CNAME";
+  type: string;
 }
 
 interface Gate {
@@ -100,11 +100,21 @@ function jsonResult(result: unknown, status = 200): Response {
   return Response.json({ errors: [], messages: [], result, success: true }, { status });
 }
 
+function jsonNotFound(): Response {
+  return Response.json({
+    errors: [{ code: 1_003, message: "not found" }],
+    messages: [],
+    result: null,
+    success: false,
+  }, { status: 404 });
+}
+
 class FakeCloudflare {
   readonly calls: Array<{ authorization: string | null; body: unknown; method: string; url: string }> = [];
   readonly configurations = new Map<string, unknown>();
   readonly dns = new Map<string, FakeDNSRecord>();
   readonly failures = new Set<string>();
+  readonly failuresAfterApply = new Set<string>();
   readonly tunnels = new Map<string, FakeTunnel>();
   private counter = 1;
   private gate: Gate | null = null;
@@ -145,6 +155,12 @@ class FakeCloudflare {
     return `10000000-0000-4000-8000-${tail}`;
   }
 
+  private after(operation: string): void {
+    if (this.failuresAfterApply.has(operation)) {
+      throw new Error(`simulated ambiguous ${operation} result`);
+    }
+  }
+
   readonly fetch: CloudflareFetch = async (input, init = {}) => {
     const url = new URL(input instanceof Request ? input.url : input.toString());
     const method = init.method ?? "GET";
@@ -166,6 +182,13 @@ class FakeCloudflare {
         ? [{ ...tunnel, config_src: "cloudflare", deleted_at: null }]
         : []);
     }
+    if (method === "GET" && /\/cfd_tunnel\/[^/]+$/.test(url.pathname)) {
+      const id = url.pathname.split("/").at(-1);
+      const tunnel = [...this.tunnels.values()].find((candidate) => candidate.id === id);
+      return tunnel
+        ? jsonResult({ ...tunnel, config_src: "cloudflare", deleted_at: null })
+        : jsonNotFound();
+    }
     if (method === "POST" && url.pathname.endsWith("/cfd_tunnel")) {
       const failed = await this.before("create_tunnel");
       if (failed) return failed;
@@ -174,6 +197,7 @@ class FakeCloudflare {
       }
       const tunnel = { id: this.nextTunnelId(), name: body.name };
       this.tunnels.set(tunnel.name, tunnel);
+      this.after("create_tunnel");
       return jsonResult({ ...tunnel, config_src: "cloudflare", deleted_at: null });
     }
     if (method === "PUT" && url.pathname.endsWith("/configurations")) {
@@ -189,6 +213,11 @@ class FakeCloudflare {
       if (failed) return failed;
       const record = this.dns.get(url.searchParams.get("name.exact") ?? "");
       return jsonResult(record ? [record] : []);
+    }
+    if (method === "GET" && url.pathname.includes("/dns_records/")) {
+      const id = url.pathname.split("/").at(-1);
+      const record = [...this.dns.values()].find((candidate) => candidate.id === id);
+      return record ? jsonResult(record) : jsonNotFound();
     }
     if (method === "POST" && url.pathname.endsWith("/dns_records")) {
       const failed = await this.before("create_dns");
@@ -209,6 +238,7 @@ class FakeCloudflare {
         type: "CNAME",
       };
       this.dns.set(record.name, record);
+      this.after("create_dns");
       return jsonResult(record);
     }
     if (method === "PATCH" && url.pathname.includes("/dns_records/")) {
@@ -230,6 +260,7 @@ class FakeCloudflare {
         type: "CNAME",
       };
       this.dns.set(record.name, record);
+      this.after("update_dns");
       return jsonResult(record);
     }
     if (method === "GET" && url.pathname.endsWith("/token")) {
@@ -287,7 +318,7 @@ describe("managed companion endpoints", () => {
     expect(cloudflare.configurations.get(tunnel.id)).toEqual({
       config: {
         ingress: [
-          { hostname: firstPayload.endpoint.hostname, service: "http://127.0.0.1:8810" },
+          { hostname: firstPayload.endpoint.hostname, service: "http://127.0.0.1:8812" },
           { service: "http_status:404" },
         ],
       },
@@ -428,6 +459,148 @@ describe("managed companion endpoints", () => {
     expect(cloudflare.dns.size).toBe(1);
   });
 
+  it("never rolls back resources after an expired lease is taken over", async () => {
+    const cloudflare = new FakeCloudflare();
+    const gate = cloudflare.pauseNext("get_token");
+    const worker = createWorker(cloudflare.fetch);
+    const owner = await signIn(worker, "managed-takeover@example.com");
+    const installation = await createInstallation(worker, owner.token, "managed-takeover");
+
+    const staleRequest = call(worker, "/v1/installations/self/endpoint", {
+      method: "POST",
+      token: installation.credential,
+    });
+    await gate.entered;
+    await env.DB.prepare(
+      `UPDATE installation_endpoints
+          SET lease_expires_at = ?
+        WHERE installation_id = ?`,
+    ).bind(Date.now() - 1, installation.installation.id).run();
+
+    const successor = await call(worker, "/v1/installations/self/endpoint", {
+      method: "POST",
+      token: installation.credential,
+    });
+    expect(successor.status).toBe(200);
+    gate.release();
+    expect((await staleRequest).status).toBe(502);
+
+    const row = await env.DB.prepare(
+      `SELECT generation, lease_owner, status, tunnel_id, dns_record_id
+         FROM installation_endpoints WHERE installation_id = ?`,
+    ).bind(installation.installation.id).first<{
+      dns_record_id: string | null;
+      generation: number;
+      lease_owner: string | null;
+      status: string;
+      tunnel_id: string | null;
+    }>();
+    expect(row).toMatchObject({
+      dns_record_id: expect.any(String),
+      generation: 2,
+      lease_owner: null,
+      status: "ready",
+      tunnel_id: expect.any(String),
+    });
+    expect(cloudflare.tunnels.size).toBe(1);
+    expect(cloudflare.dns.size).toBe(1);
+    expect(cloudflare.calls.some((entry) => entry.method === "DELETE")).toBe(false);
+  });
+
+  it("retains and adopts a DNS create that committed before its response failed", async () => {
+    const cloudflare = new FakeCloudflare();
+    cloudflare.failuresAfterApply.add("create_dns");
+    cloudflare.failures.add("get_token");
+    const worker = createWorker(cloudflare.fetch);
+    const owner = await signIn(worker, "managed-ambiguous-create@example.com");
+    const installation = await createInstallation(worker, owner.token, "managed-ambiguous-create");
+
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const response = await call(worker, "/v1/installations/self/endpoint", {
+      method: "POST",
+      token: installation.credential,
+    });
+    expect(response.status).toBe(502);
+    expect(cloudflare.tunnels.size).toBe(1);
+    expect(cloudflare.dns.size).toBe(1);
+    expect(cloudflare.calls.filter((entry) => (
+      entry.method === "POST" && new URL(entry.url).pathname.endsWith("/dns_records")
+    ))).toHaveLength(1);
+    const row = await env.DB.prepare(
+      "SELECT dns_record_id, tunnel_id, status FROM installation_endpoints WHERE installation_id = ?",
+    ).bind(installation.installation.id).first<{
+      dns_record_id: string | null;
+      status: string;
+      tunnel_id: string | null;
+    }>();
+    expect(row).toMatchObject({
+      dns_record_id: expect.any(String),
+      status: "error",
+      tunnel_id: expect.any(String),
+    });
+
+    cloudflare.failures.clear();
+    cloudflare.failuresAfterApply.clear();
+    const retried = await call(worker, "/v1/installations/self/endpoint", {
+      method: "POST",
+      token: installation.credential,
+    });
+    expect(retried.status).toBe(200);
+    expect(cloudflare.tunnels.size).toBe(1);
+    expect(cloudflare.dns.size).toBe(1);
+    expect(cloudflare.calls.filter((entry) => (
+      entry.method === "POST" && new URL(entry.url).pathname.endsWith("/dns_records")
+    ))).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+
+  it("adopts a DNS update that committed before its response failed", async () => {
+    const cloudflare = new FakeCloudflare();
+    cloudflare.failuresAfterApply.add("update_dns");
+    const worker = createWorker(cloudflare.fetch);
+    const owner = await signIn(worker, "managed-ambiguous-update@example.com");
+    const installation = await createInstallation(worker, owner.token, "managed-ambiguous-update");
+    const hostname = "c-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.openmausbot.test";
+    const tunnel: FakeTunnel = {
+      id: "30000000-0000-4000-8000-000000000001",
+      name: "omb-c-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    };
+    cloudflare.tunnels.set(tunnel.name, tunnel);
+    cloudflare.dns.set(hostname, {
+      content: "old-target.example.test",
+      id: "dns-ambiguous-update",
+      name: hostname,
+      proxied: false,
+      type: "CNAME",
+    });
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO installation_endpoints
+        (installation_id, hostname, tunnel_name, tunnel_id, dns_record_id,
+         status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+    ).bind(
+      installation.installation.id,
+      hostname,
+      tunnel.name,
+      tunnel.id,
+      "dns-ambiguous-update",
+      now,
+      now,
+    ).run();
+
+    const response = await call(worker, "/v1/installations/self/endpoint", {
+      method: "POST",
+      token: installation.credential,
+    });
+    expect(response.status).toBe(200);
+    expect(cloudflare.dns.get(hostname)).toMatchObject({
+      content: `${tunnel.id}.cfargotunnel.com`,
+      id: "dns-ambiguous-update",
+      proxied: true,
+    });
+  });
+
   it("rolls back resources created by a failed attempt and redacts provider details", async () => {
     const cloudflare = new FakeCloudflare();
     cloudflare.failures.add("get_token");
@@ -522,6 +695,100 @@ describe("managed companion endpoints", () => {
     await expect((await call(worker, "/v1/installations/self/endpoint", {
       token: installation.credential,
     })).json()).resolves.toEqual({ endpoint: null });
+    vi.restoreAllMocks();
+  });
+
+  it("retains metadata and refuses to delete a repurposed DNS record", async () => {
+    const cloudflare = new FakeCloudflare();
+    const worker = createWorker(cloudflare.fetch);
+    const owner = await signIn(worker, "managed-repurposed-dns@example.com");
+    const installation = await createInstallation(worker, owner.token, "managed-repurposed-dns");
+    expect((await call(worker, "/v1/installations/self/endpoint", {
+      method: "POST",
+      token: installation.credential,
+    })).status).toBe(200);
+
+    const [hostname, record] = [...cloudflare.dns.entries()][0] ?? [];
+    if (!hostname || !record) throw new Error("fake DNS record missing");
+    cloudflare.dns.set(hostname, {
+      ...record,
+      content: "203.0.113.50",
+      name: "repurposed.openmausbot.test",
+      proxied: false,
+      type: "A",
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await call(worker, "/v1/installations/self/endpoint", {
+      method: "DELETE",
+      token: installation.credential,
+    });
+    expect(response.status).toBe(503);
+    expect(cloudflare.calls.some((entry) => entry.method === "DELETE")).toBe(false);
+    expect(cloudflare.dns.get(hostname)).toMatchObject({
+      content: "203.0.113.50",
+      name: "repurposed.openmausbot.test",
+      type: "A",
+    });
+    const retained = await env.DB.prepare(
+      `SELECT dns_record_id, tunnel_id, status, last_error_code
+         FROM installation_endpoints WHERE installation_id = ?`,
+    ).bind(installation.installation.id).first<{
+      dns_record_id: string | null;
+      last_error_code: string | null;
+      status: string;
+      tunnel_id: string | null;
+    }>();
+    expect(retained).toMatchObject({
+      dns_record_id: record.id,
+      last_error_code: "dns_record_identity_conflict",
+      status: "deleting",
+      tunnel_id: expect.any(String),
+    });
+    vi.restoreAllMocks();
+  });
+
+  it("retains metadata and refuses to delete a repurposed tunnel", async () => {
+    const cloudflare = new FakeCloudflare();
+    const worker = createWorker(cloudflare.fetch);
+    const owner = await signIn(worker, "managed-repurposed-tunnel@example.com");
+    const installation = await createInstallation(worker, owner.token, "managed-repurposed-tunnel");
+    expect((await call(worker, "/v1/installations/self/endpoint", {
+      method: "POST",
+      token: installation.credential,
+    })).status).toBe(200);
+
+    const [stableName, tunnel] = [...cloudflare.tunnels.entries()][0] ?? [];
+    if (!stableName || !tunnel) throw new Error("fake tunnel missing");
+    tunnel.name = "repurposed-tunnel";
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await call(worker, "/v1/installations/self/endpoint", {
+      method: "DELETE",
+      token: installation.credential,
+    });
+    expect(response.status).toBe(503);
+    expect(cloudflare.calls.some((entry) => entry.method === "DELETE")).toBe(false);
+    expect(cloudflare.tunnels.get(stableName)).toEqual({
+      id: tunnel.id,
+      name: "repurposed-tunnel",
+    });
+    expect(cloudflare.dns.size).toBe(1);
+    const retained = await env.DB.prepare(
+      `SELECT dns_record_id, tunnel_id, status, last_error_code
+         FROM installation_endpoints WHERE installation_id = ?`,
+    ).bind(installation.installation.id).first<{
+      dns_record_id: string | null;
+      last_error_code: string | null;
+      status: string;
+      tunnel_id: string | null;
+    }>();
+    expect(retained).toMatchObject({
+      dns_record_id: expect.any(String),
+      last_error_code: "tunnel_identity_conflict",
+      status: "deleting",
+      tunnel_id: tunnel.id,
+    });
     vi.restoreAllMocks();
   });
 
