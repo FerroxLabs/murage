@@ -142,6 +142,9 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Writes the redacted diagnostics report to a user-chosen file; resolves
    * the path, or null when the save dialog was cancelled. */
   exportDiagnostics: () => ipcRenderer.invoke("desktop:export-diagnostics"),
+  /** Copy a bot-created file (inside ~/.openmausbot) to ~/Downloads and
+   * reveal it. Returns the destination path. */
+  saveFile: (filePath) => ipcRenderer.invoke("desktop:save-file", filePath),
   /** Store a provider credential with OS-backed encryption. */
   setCredential: (name, value) => ipcRenderer.invoke("credential:set", name, value),
 

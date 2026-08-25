@@ -1151,6 +1151,37 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
   return result.filePath;
 });
 
+// Bots hand users files as markdown links to paths inside the OpenMausBot
+// home (workspaces, attachments). Clicking those used to route through
+// shell.openExternal, which only handles web links, so the click did
+// nothing. Copy the reviewed file to ~/Downloads and reveal it. The path is
+// renderer-controlled, so it must resolve inside ~/.openmausbot and be a
+// regular file — never a symlink escape or a directory.
+ipcMain.handle("desktop:save-file", async (_event, rawPath) => {
+  if (typeof rawPath !== "string" || !rawPath.trim()) throw new Error("A file path is required");
+  const root = path.join(os.homedir(), ".openmausbot");
+  let real;
+  try {
+    real = fs.realpathSync(rawPath);
+  } catch {
+    throw new Error("That file no longer exists");
+  }
+  if (real !== root && !real.startsWith(root + path.sep)) {
+    throw new Error("Only files created by your bots can be saved");
+  }
+  const stat = fs.lstatSync(real);
+  if (!stat.isFile()) throw new Error("That path is not a file");
+
+  const downloads = app.getPath("downloads");
+  const ext = path.extname(real);
+  const stem = path.basename(real, ext);
+  let dest = path.join(downloads, path.basename(real));
+  for (let n = 2; fs.existsSync(dest); n++) dest = path.join(downloads, `${stem} (${n})${ext}`);
+  fs.copyFileSync(real, dest);
+  shell.showItemInFolder(dest);
+  return dest;
+});
+
 ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {
   if (typeof rawUrl !== "string") throw new Error("A web address is required");
   let url;

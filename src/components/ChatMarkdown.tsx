@@ -32,6 +32,22 @@ const hash = (s: string) => {
   return (h >>> 0).toString(36);
 };
 
+// A markdown link whose target is a file on this machine: bots hand over
+// bot-created documents as absolute paths or file:// URLs. Web links stay
+// ordinary anchors handled by the shell's window-open policy.
+const localFilePath = (href?: string): string | null => {
+  if (!href) return null;
+  if (href.startsWith("file://")) {
+    try {
+      const p = decodeURIComponent(new URL(href).pathname);
+      return p.startsWith("/") ? p : null;
+    } catch {
+      return null;
+    }
+  }
+  return href.startsWith("/") ? href : null;
+};
+
 function CodeBlock({ code, lang, streaming }: { code: string; lang: string; streaming: boolean }) {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -185,6 +201,24 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
             );
           },
           a({ href, children }: { href?: string; children?: ReactNode }) {
+            const localPath = localFilePath(href);
+            if (localPath) {
+              return (
+                <a
+                  href={href}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void window.ogb?.saveFile?.(localPath).catch(() => {
+                      // the file is gone or outside the bot home — do nothing
+                      // rather than opening a dead dialog
+                    });
+                  }}
+                  className="break-words text-accent underline decoration-accent/40 hover:decoration-accent"
+                >
+                  {children}
+                </a>
+              );
+            }
             return (
               <a
                 href={href}
