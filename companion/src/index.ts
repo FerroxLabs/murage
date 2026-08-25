@@ -131,7 +131,7 @@ const companion = createServer(
     // `authenticate` also stamps lastSeenAt, which is what makes the control
     // page able to say when a phone was last heard from.
     authenticate: (token) => devices.authenticate(token),
-    redeem: (code, deviceName) => devices.redeem(code, deviceName),
+    redeem: (code, deviceName, pairRequestId) => devices.redeem(code, deviceName, pairRequestId),
     serverName: machineName,
     // Recomputed per pairing rather than cached: addresses change when the
     // machine joins another network, and a pairing is exactly the moment the

@@ -549,7 +549,7 @@ describe("pairing, end to end", () => {
       createProxyHandler({
         harnessPort: HARNESS_PORT,
         authenticate: (t) => registry.authenticate(t ?? undefined),
-        redeem: (code, deviceName) => registry.redeem(code, deviceName),
+        redeem: (code, deviceName, pairRequestId) => registry.redeem(code, deviceName, pairRequestId),
         serverName: () => "Ada's computer",
         hosts: () => ["macbook.tail1234.ts.net", "192.168.1.42", "openmausbot-abcd1234.local"],
       }),
@@ -591,10 +591,16 @@ describe("pairing, end to end", () => {
       expect(wrong.status).toBe(401);
 
       // The QR token is redeemed exactly once and never forwarded upstream.
+      const pairRequestId = "4c825d5b-cf40-4db7-aac5-2455f805a8ec";
+      const pairBody = JSON.stringify({
+        credential: opened.token,
+        deviceName: "Ada's iPhone",
+        pairRequestId,
+      });
       const res = await fetch(`${base}/api/pair`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ credential: opened.token, deviceName: "Ada's iPhone" }),
+        body: pairBody,
       });
       expect(res.status).toBe(201);
       // SAFETY: a 201 from /api/pair carries exactly this shape — the
@@ -605,6 +611,17 @@ describe("pairing, end to end", () => {
       // The fallback list rides on the redeem response so a phone that paired
       // by typed address learns the other ways to reach this computer too.
       expect(body.hosts).toEqual(["macbook.tail1234.ts.net", "192.168.1.42", "openmausbot-abcd1234.local"]);
+
+      // Losing the first response after it reached the Mac must not strand an
+      // orphan device. The same logical request can arrive through a fallback
+      // address and receives the exact token already committed to disk.
+      const replay = await fetch(`${base}/api/pair`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: pairBody,
+      });
+      expect(replay.status).toBe(201);
+      expect((await replay.json() as { token: string }).token).toBe(body.token);
 
       // and the token works on the real API, through the real proxy
       const bots = await fetch(`${base}/api/bots`, { headers: { authorization: `Bearer ${body.token}` } });

@@ -198,6 +198,35 @@ public struct PairingInvite: Equatable, Sendable {
     }
 }
 
+/// The server response together with the endpoint that actually answered.
+/// Pairing has to persist the winner, not merely the first address printed in
+/// a QR code, or the next launch repeats the same dead route.
+public struct PairingOutcome: Sendable {
+    public let response: PairResponse
+    public let connection: Connection
+
+    public init(response: PairResponse, connection: Connection) {
+        self.response = response
+        self.connection = connection
+    }
+}
+
+/// None of the addresses advertised for a computer answered the companion
+/// health check. Kept distinct from a pairing rejection: this invite is still
+/// valid and the UI can offer Retry without making someone scan it again.
+public struct PairingRouteError: Error, LocalizedError, Equatable, Sendable {
+    public let attemptedHosts: [String]
+
+    public init(attemptedHosts: [String]) {
+        self.attemptedHosts = attemptedHosts
+    }
+
+    public var errorDescription: String? {
+        let routes = attemptedHosts.joined(separator: ", ")
+        return "Couldn’t reach this computer through any available route (\(routes)). Keep OpenMausBot’s Companion turned on, then try again."
+    }
+}
+
 public enum APIError: Error, LocalizedError, Sendable {
     /// The harness answered, and said no.
     case status(code: Int, message: String?)
@@ -326,6 +355,7 @@ public struct CompanionClient: Sendable {
         connection: Connection,
         credential: String,
         deviceName: String,
+        pairRequestId: String? = nil,
         session: URLSession = .shared
     ) async throws -> PairResponse {
         let client = CompanionClient(connection: connection, token: nil, session: session)
@@ -335,12 +365,117 @@ public struct CompanionClient: Sendable {
         let key = credential.utf8.count == 6 && credential.utf8.allSatisfy({ (48...57).contains($0) })
             ? "code"
             : "credential"
-        let pairRequest = try client.makeRequest(
+        var body: [String: Any] = [key: credential, "deviceName": deviceName]
+        if let pairRequestId { body["pairRequestId"] = pairRequestId }
+        var pairRequest = try client.makeRequest(
             "POST",
             "/api/pair",
-            body: [key: credential, "deviceName": deviceName]
+            body: body
         )
+        // Pairing is allowed to move to another advertised route. One dead
+        // address must not consume the default twenty-second API deadline.
+        pairRequest.timeoutInterval = 8
         return try await client.send(pairRequest, as: PairResponse.self)
+    }
+
+    /// Resolve the multi-address invite before consuming its credential.
+    ///
+    /// Health probes are non-mutating and run together, so a dead MagicDNS
+    /// name cannot sit in front of a working LAN address for twenty seconds.
+    /// Only the first response that identifies itself as OpenMausBot receives
+    /// the one-time pairing POST. The request id makes that redemption safely
+    /// replayable by newer desktop builds if its response is lost in transit.
+    public static func pairFirstReachable(
+        connection: Connection,
+        credential: String,
+        deviceName: String,
+        pairRequestId: String = UUID().uuidString,
+        session: URLSession = .shared
+    ) async throws -> PairingOutcome {
+        let candidates = connection.orderedHosts.map(connection.dialing)
+        var remaining = candidates
+        while !remaining.isEmpty {
+            guard let winner = await firstHealthy(in: remaining, session: session) else {
+                throw PairingRouteError(attemptedHosts: connection.orderedHosts)
+            }
+            remaining.remove(at: winner.offset)
+            do {
+                let response = try await pair(
+                    connection: winner.connection,
+                    credential: credential,
+                    deviceName: deviceName,
+                    pairRequestId: pairRequestId,
+                    session: session
+                )
+                return PairingOutcome(response: response, connection: winner.connection)
+            } catch let error as APIError {
+                // An HTTP response is authoritative: a rejected or expired
+                // credential must not be sprayed at another address. A
+                // transport failure is ambiguous, though — the Mac may have
+                // committed the device before the route died. New desktops
+                // replay this exact request id safely through a fallback.
+                if case .transport = error { continue }
+                throw error
+            } catch {
+                // URL loading and decoding failures are likewise ambiguous.
+                // Keep the logical request id and try another verified route.
+                continue
+            }
+        }
+        throw PairingRouteError(attemptedHosts: connection.orderedHosts)
+    }
+
+    /// Probe every candidate together, but respect the advertised security
+    /// order. A quick cleartext LAN response must not outrank an encrypted
+    /// tailnet route that answers a moment later. A lower-priority result is
+    /// selected as soon as every route before it has conclusively failed.
+    private static func firstHealthy(
+        in candidates: [Connection],
+        session: URLSession
+    ) async -> (offset: Int, connection: Connection)? {
+        await withTaskGroup(
+            of: (Int, Bool).self,
+            returning: (offset: Int, connection: Connection)?.self
+        ) { group in
+            for (offset, candidate) in candidates.enumerated() {
+                group.addTask {
+                    (offset, await healthy(candidate, session: session))
+                }
+            }
+            var results = [Bool?](repeating: nil, count: candidates.count)
+            for await (offset, isHealthy) in group {
+                results[offset] = isHealthy
+                for priority in candidates.indices {
+                    guard let resolved = results[priority] else { break }
+                    if resolved {
+                        group.cancelAll()
+                        return (priority, candidates[priority])
+                    }
+                }
+            }
+            return nil
+        }
+    }
+
+    private struct HealthIdentity: Decodable {
+        let app: String
+    }
+
+    private static func healthy(_ connection: Connection, session: URLSession) async -> Bool {
+        do {
+            let client = CompanionClient(connection: connection, token: nil, session: session)
+            var request = try client.makeRequest("GET", "/api/health")
+            request.timeoutInterval = 4
+            let (data, response) = try await session.data(for: request)
+            guard !Task.isCancelled,
+                  let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode),
+                  try JSONDecoder().decode(HealthIdentity.self, from: data).app == "openmausbot"
+            else { return false }
+            return true
+        } catch {
+            return false
+        }
     }
 
     // MARK: - Reading
