@@ -137,14 +137,24 @@ describe("save-file source handles", () => {
 
   it("rejects a validation-to-open identity swap on Windows", async () => {
     const source = path.join(botHome, "workspaces", "bot", "report.docx");
-    const expected = { dev: 1, ino: 1, isFile: () => true };
-    const opened = { dev: 1, ino: 2, isFile: () => true };
+    // These IDs are distinct BigInts but collapse to the same Number. The
+    // options assertions below make the precision guarantee executable.
+    const expected = { dev: 1n, ino: 9007199254740992n, isFile: () => true };
+    const opened = { dev: 1n, ino: 9007199254740993n, isFile: () => true };
     let closed = false;
+    let statOptions;
+    let handleStatOptions;
     const fsp = {
       realpath: async (target) => target,
-      stat: async () => expected,
+      stat: async (_target, options) => {
+        statOptions = options;
+        return expected;
+      },
       open: async () => ({
-        stat: async () => opened,
+        stat: async (options) => {
+          handleStatOptions = options;
+          return opened;
+        },
         close: async () => {
           closed = true;
         },
@@ -156,5 +166,7 @@ describe("save-file source handles", () => {
       { message: "That file changed while it was being opened" },
     );
     assert.equal(closed, true);
+    assert.deepEqual(statOptions, { bigint: true });
+    assert.deepEqual(handleStatOptions, { bigint: true });
   });
 });

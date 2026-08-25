@@ -55,7 +55,7 @@ async function resolveSource(rawPath, { home, fsp, platform }) {
   const filePath = await canonicalPath(target, fsp, "That file no longer exists");
   assertInside(root, filePath);
 
-  const stats = await fsp.stat(filePath);
+  const stats = await fsp.stat(filePath, { bigint: true });
   assertRegularFile(stats);
   if (platform === "win32") {
     const pathAfterStat = await canonicalPath(filePath, fsp, "That file no longer exists");
@@ -76,7 +76,7 @@ async function openSavableFile(rawPath, { home, fsp, platform }) {
   const noFollow = platform === "win32" ? 0 : fs.constants.O_NOFOLLOW ?? 0;
   const handle = await fsp.open(source.filePath, fs.constants.O_RDONLY | noFollow);
   try {
-    const openedStats = await handle.stat();
+    const openedStats = await handle.stat({ bigint: true });
     assertRegularFile(openedStats);
     if (platform === "win32" && !isSameFile(source.stats, openedStats)) {
       throw new Error("That file changed while it was being opened");
