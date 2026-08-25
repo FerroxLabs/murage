@@ -14,7 +14,11 @@
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 
 import { bearerToken } from "./devices.ts";
-import type { CompanionEndpoint } from "./endpoints.ts";
+import {
+  COMPANION_ENDPOINT_KINDS,
+  MAX_COMPANION_ENDPOINTS,
+  type CompanionEndpoint,
+} from "./endpoints.ts";
 import { denyReason, isCloudDesktopJoin } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
@@ -45,6 +49,11 @@ export interface ProxyOptions {
   /** How long the harness may take to produce response *headers*. Optional,
    * and only ever set by tests — the default is the one that ships. */
   headersTimeoutMs?: number;
+}
+
+export interface CompanionEndpointSnapshot {
+  serverName: string;
+  endpoints: CompanionEndpoint[];
 }
 
 /** The harness has this long to send a status line and headers.
@@ -127,6 +136,55 @@ const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
     ...PRIVATE_RESPONSE_HEADERS,
   });
   res.end(text);
+};
+
+/** Reduce live endpoint metadata to the same tiny public shape returned at
+ * pairing time. The hook is internal, but this still validates and caps it at
+ * the network boundary so a future producer cannot accidentally publish an
+ * extra field, path-bearing URL, or unbounded list. */
+const endpointSnapshot = (options: ProxyOptions): CompanionEndpointSnapshot => {
+  const endpoints: CompanionEndpoint[] = [];
+  const seen = new Set<string>();
+  for (const candidate of options.endpoints?.() ?? []) {
+    if (endpoints.length >= MAX_COMPANION_ENDPOINTS) break;
+    if (
+      !COMPANION_ENDPOINT_KINDS.includes(candidate.kind) ||
+      !Number.isSafeInteger(candidate.priority) ||
+      candidate.priority < 0 ||
+      candidate.priority > 10_000 ||
+      Buffer.byteLength(candidate.url) > 2_048
+    ) {
+      continue;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(candidate.url);
+    } catch {
+      continue;
+    }
+    if (
+      !["http:", "https:"].includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password ||
+      (parsed.pathname !== "" && parsed.pathname !== "/") ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      continue;
+    }
+    const url = parsed.origin;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    endpoints.push({
+      kind: candidate.kind,
+      priority: candidate.priority,
+      url,
+    });
+  }
+  return {
+    serverName: [...options.serverName()].slice(0, 200).join(""),
+    endpoints,
+  };
 };
 
 /** Headers worth carrying to the harness. An allowlist rather than a
@@ -222,6 +280,13 @@ export function createProxyHandler(options: ProxyOptions) {
         (error: Error) => sendJson(res, 400, { error: error.message }),
       );
       return;
+    }
+
+    // A paired phone refreshes connection candidates here after setup. This
+    // is sidecar-owned state, so answer locally after the shared bearer and
+    // default-deny checks above and never send it to the harness.
+    if (method === "GET" && path === "/api/companion/endpoints") {
+      return sendJson(res, 200, endpointSnapshot(options));
     }
 
     const upstream = httpRequest(

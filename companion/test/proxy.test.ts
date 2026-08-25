@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createProxyHandler } from "../src/proxy.ts";
+import type { CompanionEndpoint } from "../src/endpoints.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
@@ -546,6 +547,88 @@ describe("the sidecar in front of an unmodified harness", () => {
       await new Promise<void>((r) => relay.close(() => r()));
     }
   }, 20_000);
+});
+
+describe("live companion endpoint refresh", () => {
+  it("requires a valid paired bearer and reflects hosted add/remove without restart", async () => {
+    let endpoints: Array<CompanionEndpoint & { internal?: string }> = [
+      {
+        kind: "lan",
+        priority: 200,
+        url: "http://192.168.1.42:8810",
+        internal: "must never cross the boundary",
+      },
+    ];
+    const endpointServer = createServer(
+      createProxyHandler({
+        // A successful response with no harness on this port also proves the
+        // sidecar terminated the route locally.
+        harnessPort: 1,
+        authenticate: (token) => token === TOKEN ? { cloudDesktopAccess: false } : null,
+        redeem: () => ({ error: "not used" }),
+        serverName: () => "Test computer",
+        endpoints: () => endpoints,
+      }),
+    );
+    await new Promise<void>((resolve) => endpointServer.listen(0, "127.0.0.1", resolve));
+    // SAFETY: an IP server that has completed listen() has an AddressInfo
+    // object with a numeric port.
+    const port = (endpointServer.address() as { port: number }).port;
+    const load = (token?: string) =>
+      fetch(`http://127.0.0.1:${port}/api/companion/endpoints`, {
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+      });
+
+    try {
+      expect((await load()).status).toBe(401);
+      expect((await load("wrong-token")).status).toBe(401);
+
+      const direct = await load(TOKEN);
+      expect(direct.status).toBe(200);
+      expect(await direct.json()).toEqual({
+        serverName: "Test computer",
+        endpoints: [{ kind: "lan", priority: 200, url: "http://192.168.1.42:8810" }],
+      });
+      expect(direct.headers.get("cache-control")).toBe("private, no-store");
+
+      endpoints = [
+        { kind: "hosted", priority: 0, url: "https://c-opaque.openmausbot.test" },
+        { kind: "lan", priority: 200, url: "http://192.168.1.42:8810" },
+      ];
+      expect(await (await load(TOKEN)).json()).toEqual({
+        serverName: "Test computer",
+        endpoints,
+      });
+
+      endpoints = [{ kind: "lan", priority: 200, url: "http://192.168.1.42:8810" }];
+      expect(await (await load(TOKEN)).json()).toEqual({
+        serverName: "Test computer",
+        endpoints,
+      });
+
+      endpoints = Array.from({ length: 12 }, (_unused, index) => ({
+        kind: "lan" as const,
+        priority: 200 + index,
+        url: `http://192.168.1.${index + 1}:8810`,
+        internal: `private-${index}`,
+      }));
+      // SAFETY: the endpoint route has just returned 200 JSON and this shape
+      // is asserted immediately below; the cast grants no runtime behavior.
+      const bounded = await (await load(TOKEN)).json() as {
+        endpoints: CompanionEndpoint[];
+        serverName: string;
+      };
+      expect(bounded.endpoints).toHaveLength(8);
+      expect(
+        bounded.endpoints.every(
+          (endpoint) => Object.keys(endpoint).sort().join(",") === "kind,priority,url",
+        ),
+      ).toBe(true);
+      expect(JSON.stringify(bounded)).not.toContain("private-");
+    } finally {
+      await new Promise<void>((resolve) => endpointServer.close(() => resolve()));
+    }
+  });
 });
 
 // The whole loop, with the real registry rather than a stub: open a pairing
