@@ -3,9 +3,10 @@
 // Composio API key is configured, a curated set otherwise. Icons resolve
 // logo → favicon → monogram.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { Check, Loader2, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
 
 interface ToolkitCard {
   slug: string;
@@ -32,23 +33,37 @@ export interface ConnectorStatus {
 // as disconnected while a fresh secure status check runs in the background.
 let cachedConnectorStatus: Record<string, ConnectorStatus> | null = null;
 let cachedConnectorStatusAt = 0;
-let connectorStatusRequest: Promise<Record<string, ConnectorStatus>> | null = null;
+let connectorStatusRequest: Promise<ConnectorInventory> | null = null;
 const CONNECTOR_STATUS_CACHE_MS = 30_000;
+
+export interface ConnectorInventory {
+  services: Record<string, ConnectorStatus>;
+  /** false when the server could not read the credential store: the list is
+   * then "we do not know", and nothing may be cleared on the strength of it */
+  authoritative: boolean;
+}
 
 /** Warm the account inventory once the app server is ready. Concurrent panel
  * opens share the same request, and recent data survives modal unmounts. */
-export function preloadConnectedApps(force = false): Promise<Record<string, ConnectorStatus>> {
+export function preloadConnectedApps(force = false): Promise<ConnectorInventory> {
   if (!force && cachedConnectorStatus !== null && Date.now() - cachedConnectorStatusAt < CONNECTOR_STATUS_CACHE_MS) {
-    return Promise.resolve(cachedConnectorStatus);
+    return Promise.resolve({ services: cachedConnectorStatus, authoritative: true });
   }
   if (connectorStatusRequest) return connectorStatusRequest;
   connectorStatusRequest = api("/api/connectors/connected")
     .then((response) => {
       const services: Record<string, ConnectorStatus> = response.services ?? {};
+      // An unreadable credential store tells us nothing about what is
+      // connected. Keep the last inventory we were sure about instead.
+      if (response.credentialStore === "unavailable") {
+        return { services: readCachedInventory()?.services ?? {}, authoritative: false };
+      }
       cachedConnectorStatus = services;
       cachedConnectorStatusAt = Date.now();
-      return services;
+      writeCachedInventory(services, Date.now());
+      return { services, authoritative: true };
     })
+    .catch(() => ({ services: readCachedInventory()?.services ?? {}, authoritative: false }))
     .finally(() => {
       connectorStatusRequest = null;
     });
@@ -117,8 +132,15 @@ export function mergeCompleteConnectorStatus(
   incoming: Record<string, ConnectorStatus>,
   latestGenerations: ReadonlyMap<string, number>,
   requestGenerations: ReadonlyMap<string, number>,
+  /** Did the server actually KNOW the full picture? A response sent while the
+   * credential store was unreadable carries no information about what is
+   * connected, so it must not be allowed to clear anything — an empty list
+   * from an ignorant server is exactly how a connected app became a Connect
+   * button. Disconnection still shows up on the next authoritative answer. */
+  authoritative = true,
 ) {
   const next = { ...current };
+  if (!authoritative) return mergeCurrentConnectorStatus(next, incoming, latestGenerations, requestGenerations);
   for (const [slug, state] of Object.entries(current)) {
     if (incoming[slug]) continue;
     if (!state.connected && !state.accounts?.length) continue;
@@ -170,9 +192,14 @@ export function PluginsPanel() {
   const [source, setSource] = useState<"api" | "curated">("curated");
   const [configured, setConfigured] = useState(true);
   const [mode, setMode] = useState<"managed" | "self-hosted" | "unavailable">("unavailable");
+  // Paint what we last knew before any request goes out: the module cache if
+  // this window already fetched, otherwise the inventory saved on disk. An
+  // empty panel is never the first thing a connected user sees.
   const [status, setStatus] = useState<Record<string, ConnectorStatus>>(
-    () => cachedConnectorStatus ?? {},
+    () => cachedConnectorStatus ?? readCachedInventory()?.services ?? {},
   );
+  /** true when what is on screen is remembered rather than confirmed */
+  const [stale, setStale] = useState(false);
   const [pendingUrls, setPendingUrls] = useState<Record<string, string>>({});
   const [aliasSlug, setAliasSlug] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
@@ -231,12 +258,14 @@ export function PluginsPanel() {
     const requestGenerations = new Map(statusGenerations.current);
     setRefreshing(true);
     return preloadConnectedApps(force)
-      .then((services) => {
+      .then(({ services, authoritative }) => {
+        setStale(!authoritative);
         setStatus((current) => mergeCompleteConnectorStatus(
           current,
           services,
           statusGenerations.current,
           requestGenerations,
+          authoritative,
         ));
         for (const [slug, state] of Object.entries(services)) {
           const isCurrent = (statusGenerations.current.get(slug) ?? 0) === (requestGenerations.get(slug) ?? 0);
@@ -467,6 +496,18 @@ export function PluginsPanel() {
           </div>
         </header>
 
+        {stale && (
+          // Say which of the two things is true. Silence here is what makes a
+          // remembered list indistinguishable from a confirmed one.
+          <div className="mx-6 mb-1 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning sm:mx-8">
+            <TriangleAlert size={14} className="mt-px shrink-0" />
+            <span>
+              Showing what was connected last time — this Mac's credential store could not be opened just now, so these
+              could not be re-checked. Your apps are still connected; restarting OpenMausBot usually clears this.
+            </span>
+          </div>
+        )}
+
         <div className="flex flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
           <div className="flex w-fit rounded-xl bg-raised/70 p-1" role="tablist" aria-label="Connected apps view">
             <button
@@ -504,7 +545,10 @@ export function PluginsPanel() {
           </label>
         </div>
 
-        {!configured && (
+        {/* Two notices about the same fact is one too many: the stale banner
+            above already explains this launch, and "configure your own
+            connection service" is advice for someone who never set one up. */}
+        {!configured && !stale && (
           <div className="mx-6 mb-1 rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning sm:mx-8">
             Connected apps are temporarily unavailable. You can retry after restarting, or configure your own connection service.{" "}
             <button

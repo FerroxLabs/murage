@@ -170,6 +170,20 @@ export function configured(cfg: AppConfig): boolean {
   return connectionMode(cfg) !== "unavailable";
 }
 
+/** Three answers, not two. The desktop shell sets OMB_CREDENTIAL_STORE to
+ * "unavailable" when it could not read credentials.bin this launch; without
+ * that signal an unreadable store is indistinguishable from a user who never
+ * connected anything, and the UI wipes a list it should have kept. */
+export type ConnectorAvailability = "configured" | "unconfigured" | "unreadable";
+
+export function connectorAvailability(
+  cfg: AppConfig,
+  storeState: string | undefined = process.env.OMB_CREDENTIAL_STORE,
+): ConnectorAvailability {
+  if (configured(cfg)) return "configured";
+  return storeState === "unavailable" ? "unreadable" : "unconfigured";
+}
+
 async function brokerRequest(path: string, init?: RequestInit): Promise<Response> {
   const broker = brokerAccess();
   if (!broker) throw new Error("The connected-apps service is unavailable");
