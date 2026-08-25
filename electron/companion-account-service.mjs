@@ -102,6 +102,20 @@ function withProvisionedAccount(credentials, { accountToken, user, installation,
   return next;
 }
 
+function withAuthenticatedAccount(credentials, { accountToken, user, clientInstanceId }) {
+  const next = {
+    ...credentials,
+    [COMPANION_ACCOUNT_TOKEN_FIELD]: accountToken,
+    [COMPANION_ACCOUNT_USER_ID_FIELD]: user.id,
+    [COMPANION_ACCOUNT_EMAIL_FIELD]: user.email,
+  };
+  if (!UUID.test(ownString(next, COMPANION_CLIENT_INSTANCE_FIELD))) {
+    next[COMPANION_CLIENT_INSTANCE_FIELD] = clientInstanceId;
+  }
+  delete next[COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD];
+  return next;
+}
+
 const FRIENDLY_MESSAGES = Object.freeze({
   invalid_email: "Enter a valid email address.",
   invalid_otp: "That code is not valid. Check the email and try again.",
@@ -286,7 +300,14 @@ export function createCompanionAccountService({
     if (!account.installationId || !account.accountToken) {
       throw new ControlPlaneError("signed_out", 401);
     }
-    await client.revokeInstallation(account.accountToken, account.installationId);
+    try {
+      await client.revokeInstallation(account.accountToken, account.installationId);
+    } catch (error) {
+      // A missing installation is already revoked for our purposes. The
+      // server's cleanup sweep also treats a missing owner row as work to
+      // finish, so retaining a now-useless local bearer would be less safe.
+      if (!(error instanceof ControlPlaneError) || error.status !== 404) throw error;
+    }
     try {
       await client.signOut(account.accountToken);
     } catch {
@@ -385,19 +406,39 @@ export function createCompanionAccountService({
     let verified;
     try {
       verified = await client.verifyOTP(email, rawCode);
-      const previous = storedAccount(credentials());
-      if (previous && previous.userId !== verified.user.id) {
-        try {
-          await cleanupCurrentAccount();
-        } catch (error) {
-          await client.signOut(verified.accountToken).catch(() => {});
-          throw error;
-        }
-      }
-      return await provision(verified);
     } catch (error) {
       const message = failAction(error, { email, signedOut: true });
       throw new Error(message);
+    }
+
+    const previous = storedAccount(credentials());
+    let authenticatedPersisted = false;
+    try {
+      if (previous && previous.userId !== verified.user.id) {
+        await cleanupCurrentAccount();
+      }
+      const existingIdentity = ownString(credentials(), COMPANION_CLIENT_INSTANCE_FIELD);
+      const clientInstanceId = UUID.test(existingIdentity)
+        ? existingIdentity
+        : newClientInstanceId?.();
+      if (!UUID.test(clientInstanceId ?? "")) {
+        throw new Error("A stable computer identity could not be created");
+      }
+      await updateCredentials((document) =>
+        withAuthenticatedAccount(document, {
+          ...verified,
+          clientInstanceId,
+        }),
+      );
+      authenticatedPersisted = true;
+      return await provision(verified);
+    } catch (error) {
+      if (!authenticatedPersisted) await client.signOut(verified.accountToken).catch(() => {});
+      failAction(error, {
+        email: authenticatedPersisted ? verified.user.email : previous?.email ?? email,
+        expiredSessionIsSignedOut: authenticatedPersisted,
+      });
+      return settledState();
     }
   });
 

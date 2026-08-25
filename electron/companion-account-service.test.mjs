@@ -232,6 +232,36 @@ describe("Companion account service", () => {
     });
   });
 
+  it("keeps a verified session when setup fails so Retry can recover without another code", async () => {
+    const ensureInstallation = vi
+      .fn()
+      .mockRejectedValueOnce(new ControlPlaneError("network_unavailable"))
+      .mockResolvedValueOnce({
+        installation: {
+          id: INSTALLATION_ID,
+          clientInstanceId: UUID,
+          name: "Test Mac",
+          platform: "darwin",
+        },
+        credential: INSTALLATION_CREDENTIAL,
+      });
+    const client = readyClient({ ensureInstallation });
+    const { service, store } = serviceFixture({ client });
+
+    await expect(service.verifyCode("ada@example.com", "12345678")).resolves.toMatchObject({
+      status: "error",
+      email: "ada@example.com",
+      message: expect.stringContaining("Check your internet"),
+    });
+    expect(store.read()).toMatchObject({
+      [COMPANION_CLIENT_INSTANCE_FIELD]: UUID,
+      [COMPANION_ACCOUNT_TOKEN_FIELD]: ACCOUNT_TOKEN,
+      [COMPANION_ACCOUNT_USER_ID_FIELD]: "user-1",
+    });
+    await expect(service.retry()).resolves.toMatchObject({ status: "ready", endpoint: ENDPOINT });
+    expect(client.verifyOTP).toHaveBeenCalledOnce();
+  });
+
   it("stops locally and preserves every cleanup credential until revocation succeeds", async () => {
     const revokeInstallation = vi
       .fn()
@@ -275,11 +305,25 @@ describe("Companion account service", () => {
     });
     const { service, store } = serviceFixture({ initial: signedCredentials(), client });
 
-    await expect(service.verifyCode("grace@example.com", "12345678")).rejects.toThrow(
-      "Check your internet",
-    );
+    await expect(service.verifyCode("grace@example.com", "12345678")).resolves.toMatchObject({
+      status: "error",
+      email: "ada@example.com",
+      message: expect.stringContaining("Check your internet"),
+    });
     expect(store.read()[COMPANION_ACCOUNT_USER_ID_FIELD]).toBe("user-1");
     expect(store.read()[COMPANION_ACCOUNT_TOKEN_FIELD]).toBe(ACCOUNT_TOKEN);
     expect(client.signOut).toHaveBeenCalledWith(newAccountToken);
+  });
+
+  it("treats an already removed installation as an idempotent sign-out", async () => {
+    const client = readyClient({
+      revokeInstallation: vi.fn(async () => {
+        throw new ControlPlaneError("not_found", 404);
+      }),
+    });
+    const { service, store } = serviceFixture({ initial: signedCredentials(), client });
+
+    await expect(service.signOut()).resolves.toEqual({ available: true, status: "signed-out" });
+    expect(store.read()).toEqual({ [COMPANION_CLIENT_INSTANCE_FIELD]: UUID });
   });
 });
