@@ -1,0 +1,285 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { ControlPlaneError } from "./control-plane-client.mjs";
+import {
+  COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD,
+  COMPANION_ACCOUNT_EMAIL_FIELD,
+  COMPANION_ACCOUNT_TOKEN_FIELD,
+  COMPANION_ACCOUNT_USER_ID_FIELD,
+  COMPANION_CLIENT_INSTANCE_FIELD,
+  COMPANION_INSTALLATION_CREDENTIAL_FIELD,
+  COMPANION_INSTALLATION_ID_FIELD,
+  createCompanionAccountService,
+  resolveCompanionControlPlaneURL,
+} from "./companion-account-service.mjs";
+import {
+  MANAGED_COMPANION_ENDPOINT_FIELD,
+  MANAGED_COMPANION_TOKEN_FIELD,
+} from "./managed-companion-tunnel.mjs";
+
+const UUID = "11111111-1111-4111-8111-111111111111";
+const INSTALLATION_ID = "22222222-2222-4222-8222-222222222222";
+const ACCOUNT_TOKEN = `signed.${"a".repeat(80)}`;
+const INSTALLATION_CREDENTIAL = `omb_install_${"b".repeat(22)}.${"c".repeat(43)}`;
+const CONNECTOR_TOKEN = `eyJ${"d".repeat(100)}`;
+const ENDPOINT = "https://c-opaque.openmausbot.com";
+
+function credentialStore(initial = {}) {
+  let document = structuredClone(initial);
+  const writes = [];
+  return {
+    read: () => structuredClone(document),
+    update: vi.fn(async (derive) => {
+      document = structuredClone(await derive(structuredClone(document)));
+      writes.push(structuredClone(document));
+      return structuredClone(document);
+    }),
+    writes,
+  };
+}
+
+function readyClient(overrides = {}) {
+  return {
+    requestOTP: vi.fn(async (email) => ({ email })),
+    verifyOTP: vi.fn(async (email) => ({
+      accountToken: ACCOUNT_TOKEN,
+      user: { id: "user-1", email },
+    })),
+    ensureInstallation: vi.fn(async () => ({
+      installation: {
+        id: INSTALLATION_ID,
+        clientInstanceId: UUID,
+        name: "Test Mac",
+        platform: "darwin",
+      },
+      credential: INSTALLATION_CREDENTIAL,
+      credentialExpiresAt: Date.now() + 10_000,
+    })),
+    ensureEndpoint: vi.fn(async () => ({
+      endpoint: { url: ENDPOINT },
+      connectorToken: CONNECTOR_TOKEN,
+    })),
+    deleteEndpoint: vi.fn(async () => {}),
+    revokeInstallation: vi.fn(async () => {}),
+    signOut: vi.fn(async () => {}),
+    ...overrides,
+  };
+}
+
+function serviceFixture({ initial, client = readyClient(), ...overrides } = {}) {
+  const store = credentialStore(initial);
+  const service = createCompanionAccountService({
+    client,
+    readCredentials: store.read,
+    updateCredentials: store.update,
+    identity: { name: "Test Mac", platform: "darwin", appVersion: "1.2.3" },
+    newClientInstanceId: () => UUID,
+    activatePersistedEndpoint: vi.fn(async () => ({ status: "ready", ready: true })),
+    stopManagedEndpoint: vi.fn(async () => {}),
+    managedConnectionState: () => ({ status: "ready", ready: true }),
+    companionIsOn: () => true,
+    ...overrides,
+  });
+  return { client, service, store };
+}
+
+function signedCredentials(overrides = {}) {
+  return {
+    [COMPANION_CLIENT_INSTANCE_FIELD]: UUID,
+    [COMPANION_ACCOUNT_TOKEN_FIELD]: ACCOUNT_TOKEN,
+    [COMPANION_ACCOUNT_USER_ID_FIELD]: "user-1",
+    [COMPANION_ACCOUNT_EMAIL_FIELD]: "ada@example.com",
+    [COMPANION_INSTALLATION_ID_FIELD]: INSTALLATION_ID,
+    [COMPANION_INSTALLATION_CREDENTIAL_FIELD]: INSTALLATION_CREDENTIAL,
+    [MANAGED_COMPANION_ENDPOINT_FIELD]: ENDPOINT,
+    [MANAGED_COMPANION_TOKEN_FIELD]: CONNECTOR_TOKEN,
+    ...overrides,
+  };
+}
+
+describe("Companion account service", () => {
+  it("uses the packaged hosted default and only explicit safe development origins", () => {
+    expect(resolveCompanionControlPlaneURL({ isPackaged: true, environment: {} })).toBe(
+      "https://accounts.openmausbot.com",
+    );
+    expect(resolveCompanionControlPlaneURL({
+      isPackaged: false,
+      environment: { OMB_CONTROL_PLANE_URL: "http://127.0.0.1:8787/" },
+    })).toBe("http://127.0.0.1:8787");
+    expect(resolveCompanionControlPlaneURL({
+      isPackaged: true,
+      environment: { OMB_CONTROL_PLANE_URL: "http://accounts.openmausbot.com" },
+    })).toBe("");
+    expect(resolveCompanionControlPlaneURL({ isPackaged: false, environment: {} })).toBe("");
+  });
+
+  it("persists one stable identity and the complete provision atomically", async () => {
+    const activatePersistedEndpoint = vi.fn(async () => ({ status: "ready", ready: true }));
+    const { client, service, store } = serviceFixture({ activatePersistedEndpoint });
+
+    await service.requestCode(" Ada@Example.com ");
+    const state = await service.verifyCode("Ada@example.com", "12345678");
+
+    expect(state).toEqual({
+      available: true,
+      status: "ready",
+      email: "ada@example.com",
+      endpoint: ENDPOINT,
+    });
+    expect(client.ensureInstallation).toHaveBeenCalledWith({
+      accountToken: ACCOUNT_TOKEN,
+      currentCredential: "",
+      clientInstanceId: UUID,
+      name: "Test Mac",
+      platform: "darwin",
+      appVersion: "1.2.3",
+    });
+    const persisted = store.read();
+    expect(persisted).toMatchObject({
+      [COMPANION_CLIENT_INSTANCE_FIELD]: UUID,
+      [COMPANION_ACCOUNT_TOKEN_FIELD]: ACCOUNT_TOKEN,
+      [COMPANION_ACCOUNT_USER_ID_FIELD]: "user-1",
+      [COMPANION_ACCOUNT_EMAIL_FIELD]: "ada@example.com",
+      [COMPANION_INSTALLATION_ID_FIELD]: INSTALLATION_ID,
+      [COMPANION_INSTALLATION_CREDENTIAL_FIELD]: INSTALLATION_CREDENTIAL,
+      [MANAGED_COMPANION_ENDPOINT_FIELD]: ENDPOINT,
+      [MANAGED_COMPANION_TOKEN_FIELD]: CONNECTOR_TOKEN,
+    });
+    // First write creates the identity; the next single document contains
+    // account, installation, endpoint, and connector material together.
+    expect(store.writes).toHaveLength(2);
+    expect(store.writes[1]).toMatchObject(persisted);
+    expect(activatePersistedEndpoint).toHaveBeenCalledOnce();
+
+    await service.restore();
+    expect(store.writes).toHaveLength(2);
+  });
+
+  it("never exposes any bearer, connector token, installation ID, or credential", async () => {
+    const { service } = serviceFixture({ initial: signedCredentials() });
+    const publicJSON = JSON.stringify(service.state());
+
+    for (const secret of [ACCOUNT_TOKEN, CONNECTOR_TOKEN, INSTALLATION_ID, INSTALLATION_CREDENTIAL]) {
+      expect(publicJSON).not.toContain(secret);
+    }
+    expect(Object.keys(service.state()).sort()).toEqual([
+      "available",
+      "email",
+      "endpoint",
+      "status",
+    ]);
+  });
+
+  it("keeps an invalid code on the signed-out path with a friendly message", async () => {
+    const client = readyClient({
+      verifyOTP: vi.fn(async () => {
+        throw new ControlPlaneError("invalid_otp", 400);
+      }),
+    });
+    const { service } = serviceFixture({ client });
+
+    await expect(service.verifyCode("ada@example.com", "00000000")).rejects.toThrow(
+      "That code is not valid",
+    );
+    expect(service.state()).toMatchObject({
+      available: true,
+      status: "signed-out",
+      email: "ada@example.com",
+    });
+    expect(JSON.stringify(service.state())).not.toContain("invalid_otp");
+  });
+
+  it("handles an expired account session without deleting recovery credentials", async () => {
+    const client = readyClient({
+      ensureInstallation: vi.fn(async () => {
+        throw new ControlPlaneError("unauthorized", 401);
+      }),
+    });
+    const incomplete = signedCredentials();
+    delete incomplete[MANAGED_COMPANION_ENDPOINT_FIELD];
+    delete incomplete[MANAGED_COMPANION_TOKEN_FIELD];
+    const { service, store } = serviceFixture({ initial: incomplete, client });
+
+    const state = await service.retry();
+
+    expect(state).toMatchObject({
+      status: "signed-out",
+      email: "ada@example.com",
+      message: expect.stringContaining("sign-in expired"),
+    });
+    expect(store.read()[COMPANION_ACCOUNT_TOKEN_FIELD]).toBe(ACCOUNT_TOKEN);
+    expect(store.read()[COMPANION_INSTALLATION_CREDENTIAL_FIELD]).toBe(INSTALLATION_CREDENTIAL);
+  });
+
+  it("recovers from a network provisioning failure on retry", async () => {
+    const ensureEndpoint = vi
+      .fn()
+      .mockRejectedValueOnce(new ControlPlaneError("network_unavailable"))
+      .mockResolvedValueOnce({ endpoint: { url: ENDPOINT }, connectorToken: CONNECTOR_TOKEN });
+    const client = readyClient({ ensureEndpoint });
+    const incomplete = signedCredentials();
+    delete incomplete[MANAGED_COMPANION_ENDPOINT_FIELD];
+    delete incomplete[MANAGED_COMPANION_TOKEN_FIELD];
+    const { service } = serviceFixture({ initial: incomplete, client });
+
+    await expect(service.retry()).resolves.toMatchObject({
+      status: "error",
+      message: expect.stringContaining("Check your internet"),
+    });
+    await expect(service.retry()).resolves.toMatchObject({
+      status: "ready",
+      endpoint: ENDPOINT,
+    });
+  });
+
+  it("stops locally and preserves every cleanup credential until revocation succeeds", async () => {
+    const revokeInstallation = vi
+      .fn()
+      .mockRejectedValueOnce(new ControlPlaneError("network_unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const client = readyClient({ revokeInstallation });
+    const stopManagedEndpoint = vi.fn(async () => {});
+    const { service, store } = serviceFixture({
+      initial: signedCredentials(),
+      client,
+      stopManagedEndpoint,
+    });
+
+    const failed = await service.signOut();
+
+    expect(failed).toMatchObject({ status: "error", email: "ada@example.com" });
+    expect(stopManagedEndpoint).toHaveBeenCalled();
+    expect(store.read()).toMatchObject({
+      [COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD]: true,
+      [COMPANION_ACCOUNT_TOKEN_FIELD]: ACCOUNT_TOKEN,
+      [COMPANION_INSTALLATION_CREDENTIAL_FIELD]: INSTALLATION_CREDENTIAL,
+      [MANAGED_COMPANION_TOKEN_FIELD]: CONNECTOR_TOKEN,
+    });
+
+    const recovered = await service.retry();
+    expect(recovered).toEqual({ available: true, status: "signed-out" });
+    expect(store.read()).toEqual({ [COMPANION_CLIENT_INSTANCE_FIELD]: UUID });
+    expect(revokeInstallation).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not overwrite a previous account when switching cleanup fails", async () => {
+    const newAccountToken = `signed.${"z".repeat(80)}`;
+    const client = readyClient({
+      verifyOTP: vi.fn(async () => ({
+        accountToken: newAccountToken,
+        user: { id: "user-2", email: "grace@example.com" },
+      })),
+      revokeInstallation: vi.fn(async () => {
+        throw new ControlPlaneError("network_unavailable");
+      }),
+    });
+    const { service, store } = serviceFixture({ initial: signedCredentials(), client });
+
+    await expect(service.verifyCode("grace@example.com", "12345678")).rejects.toThrow(
+      "Check your internet",
+    );
+    expect(store.read()[COMPANION_ACCOUNT_USER_ID_FIELD]).toBe("user-1");
+    expect(store.read()[COMPANION_ACCOUNT_TOKEN_FIELD]).toBe(ACCOUNT_TOKEN);
+    expect(client.signOut).toHaveBeenCalledWith(newAccountToken);
+  });
+});

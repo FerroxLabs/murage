@@ -1,6 +1,8 @@
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
@@ -33,6 +35,12 @@ import {
   withoutManagedCompanionTunnelAccess,
 } from "./managed-companion-tunnel.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
+import { createControlPlaneClient } from "./control-plane-client.mjs";
+import {
+  companionAccountCleanupPending,
+  createCompanionAccountService,
+  resolveCompanionControlPlaneURL,
+} from "./companion-account-service.mjs";
 import capabilitiesModule from "./capabilities.cjs";
 
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
@@ -322,6 +330,7 @@ function slog(line) {
 // is passed to cloudflared through a private token file by the lifecycle
 // module — never through IPC, argv, the environment, or logs.
 let managedCompanionConnector = null;
+let companionAccountService = null;
 let companionDesiredThisLaunch = false;
 let companionLaunchGeneration = 0;
 let advertisementTransition = Promise.resolve();
@@ -444,6 +453,9 @@ function reconcileCompanionAdvertisement(
 }
 
 async function startManagedCompanionConnection({ waitForVerification = true } = {}) {
+  if (companionAccountCleanupPending(secureCredentials)) {
+    return publicManagedCompanionState();
+  }
   const access = managedCompanionTunnelAccess(secureCredentials);
   if (!access) return publicManagedCompanionState();
   const operation = ensureManagedCompanionConnector().start(access);
@@ -503,6 +515,68 @@ export async function clearManagedCompanionEndpointCredentials() {
   await managedCompanionConnector?.stop();
   if (companionDesiredThisLaunch) await reconcileCompanionAdvertisement(null);
   return publicManagedCompanionState();
+}
+
+/** Account sign-out must stop advertising the hosted route before it asks
+ * the control plane to revoke anything, but it must not erase the retry
+ * credentials until that remote cleanup is durably scheduled. */
+async function stopManagedCompanionEndpointLocally() {
+  await managedCompanionConnector?.stop();
+  if (companionDesiredThisLaunch) await reconcileCompanionAdvertisement(null);
+  return publicManagedCompanionState();
+}
+
+async function activatePersistedManagedCompanionEndpoint() {
+  if (companionDesiredThisLaunch) {
+    return startManagedCompanionConnection({ waitForVerification: true });
+  }
+  return publicManagedCompanionState();
+}
+
+function installationDisplayName() {
+  const hostname = [...os.hostname()]
+    .filter((character) => character.codePointAt(0) >= 32 && character.codePointAt(0) !== 127)
+    .join("")
+    .trim();
+  return hostname.slice(0, 80) || "This computer";
+}
+
+function ensureCompanionAccountService() {
+  if (companionAccountService) return companionAccountService;
+  const baseURL = resolveCompanionControlPlaneURL({
+    isPackaged: app.isPackaged,
+    environment: process.env,
+  });
+  let client = null;
+  if (baseURL) {
+    try {
+      client = createControlPlaneClient({ baseURL });
+    } catch {
+      // An invalid explicit override disables hosted access. Direct LAN,
+      // Bonjour, and Tailscale pairing remain completely independent.
+    }
+  }
+  companionAccountService = createCompanionAccountService({
+    client,
+    readCredentials: () => secureCredentialState?.read() ?? secureCredentials,
+    updateCredentials: updateSecureCredentialDocument,
+    identity: {
+      name: installationDisplayName(),
+      platform:
+        process.platform === "win32"
+          ? "windows"
+          : process.platform === "darwin"
+            ? "darwin"
+            : "linux",
+      appVersion: app.getVersion().slice(0, 64),
+    },
+    newClientInstanceId: randomUUID,
+    activatePersistedEndpoint: activatePersistedManagedCompanionEndpoint,
+    stopManagedEndpoint: stopManagedCompanionEndpointLocally,
+    managedConnectionState: publicManagedCompanionState,
+    companionIsOn: () => companionDesiredThisLaunch,
+  });
+  return companionAccountService;
 }
 
 const LOG_TAIL_BYTES = 256 * 1024;
@@ -1181,6 +1255,18 @@ ipcMain.handle("companion:revoke", (_event, deviceId) =>
   companionRevoke(deviceId).then(() => desktopCompanionState()),
 );
 
+// Auth and connector credentials never cross this boundary. Every handler
+// returns the same deliberately tiny, secret-free public account state.
+ipcMain.handle("companion-account:state", () => ensureCompanionAccountService().state());
+ipcMain.handle("companion-account:request-code", (_event, email) =>
+  ensureCompanionAccountService().requestCode(email),
+);
+ipcMain.handle("companion-account:verify-code", (_event, email, code) =>
+  ensureCompanionAccountService().verifyCode(email, code),
+);
+ipcMain.handle("companion-account:retry", () => ensureCompanionAccountService().retry());
+ipcMain.handle("companion-account:sign-out", () => ensureCompanionAccountService().signOut());
+
 ipcMain.handle("desktop:capabilities", async () =>
   desktopCapabilities({
     platform: process.platform,
@@ -1290,6 +1376,7 @@ app.whenReady().then(async () => {
   // every account/API-key writer must use the shared serialized state.
   secureCredentialState = createSecureCredentialState(secureCredentials, saveSecureCredentials);
   secureCredentials = secureCredentialState.read();
+  const hostedAccount = ensureCompanionAccountService();
   // Display capture remains user-initiated. The renderer first sends a
   // short-lived one-shot intent, then calls getDisplayMedia in the same click.
   // The handler binds that request to the same frame/origin, rejects audio,
@@ -1364,6 +1451,10 @@ app.whenReady().then(async () => {
     void startDesktopCompanion({ waitForHosted: false, remember: false });
   }
   const win = createWindow();
+  // Reconcile incomplete setup and resume interrupted sign-out only after the
+  // local app is usable. This background network work never gates LAN pairing
+  // or the first window.
+  void hostedAccount.restore().catch(() => {});
   // Registration is optional network work. Start it only after the local
   // server and first window are usable, then update the server child over its
   // private parent port so Connected Apps becomes available without restart.
