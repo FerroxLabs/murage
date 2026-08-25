@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appendPastedText,
   attachmentBasename,
   attachmentImageUrl,
   composeMessage,
@@ -10,6 +11,20 @@ import {
   splitAttachedImages,
   type ImageAttachment,
 } from "./composer-attachments";
+
+describe("appendPastedText", () => {
+  it("adds pasted content after an existing draft", () => {
+    expect(appendPastedText("Keep this", "Edit this too")).toBe("Keep this\n\nEdit this too");
+  });
+
+  it("does not add a second separator when the draft ends with a newline", () => {
+    expect(appendPastedText("Keep this\n", "Edit this too")).toBe("Keep this\nEdit this too");
+  });
+
+  it("uses the pasted content directly for an empty draft", () => {
+    expect(appendPastedText("", "Edit this too")).toBe("Edit this too");
+  });
+});
 
 const image = (path: string): ImageAttachment => ({
   kind: "image",
