@@ -9,6 +9,7 @@ import {
   ensureSession,
   normalizeAccountAlias,
   parseSession,
+  requestAlias,
   sha256,
 } from "./index";
 
@@ -53,6 +54,17 @@ function testEnv(fetchCalls: Array<{ url: string; init?: RequestInit }>) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("connected-apps broker boundaries", () => {
+  it("accepts an empty authorize body as a first-account request", async () => {
+    await expect(requestAlias(new Request("https://broker.test/v1/connectors/gmail/authorize", {
+      method: "POST",
+      body: "",
+    }))).resolves.toBeUndefined();
+    await expect(requestAlias(new Request("https://broker.test/v1/connectors/gmail/authorize", {
+      method: "POST",
+      body: "  \n",
+    }))).resolves.toBeUndefined();
+  });
+
   it("accepts only HTTPS Composio MCP endpoints", () => {
     expect(parseSession({
       session_id: "session-1",

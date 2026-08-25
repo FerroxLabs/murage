@@ -552,6 +552,10 @@ async function requestAlias(request: Request) {
     if (new TextEncoder().encode(raw).byteLength > 2048) {
       throw new Response(JSON.stringify({ error: "request body is too large" }), { status: 413, headers: JSON_HEADERS });
     }
+    // Some Fetch implementations expose a zero-length POST as a non-null
+    // ReadableStream. First-account authorization intentionally has no alias,
+    // so accept that wire representation exactly like a missing body.
+    if (!raw.trim()) return undefined;
     body = aliasRequestSchema.parse(JSON.parse(raw));
   } catch (error) {
     if (error instanceof Response) throw error;
@@ -607,5 +611,6 @@ export {
   ensureSession,
   normalizeAccountAlias,
   parseSession,
+  requestAlias,
   sha256,
 };
