@@ -5,25 +5,42 @@ import XCTest
 final class FailoverTests: XCTestCase {
     // MARK: - CandidateRotation
 
-    func testWalksTheCandidatesInOrderAndWraps() {
-        var rotation = CandidateRotation(hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"])
-        XCTAssertEqual(rotation.current, "mac.tail1234.ts.net")
-        XCTAssertEqual(rotation.advance(), "192.168.1.42")
-        XCTAssertEqual(rotation.advance(), "openmausbot-aa.local")
+    func testWalksProtectedCandidatesInOrderAndWraps() throws {
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example", kind: .hosted, priority: 0
+        ))
+        let tailnet = try XCTUnwrap(CompanionEndpoint(
+            url: "http://mac.tail1234.ts.net:8810", kind: .tailnet, priority: 100
+        ))
+        var rotation = CandidateRotation(endpoints: [hosted, tailnet])
+        XCTAssertEqual(rotation.currentEndpoint, hosted)
+        XCTAssertEqual(rotation.advanceEndpoint(), tailnet)
         // Wraps rather than giving up: the retry loop backs off between laps,
         // and a network that comes back deserves another try at the front.
-        XCTAssertEqual(rotation.advance(), "mac.tail1234.ts.net")
+        XCTAssertEqual(rotation.advanceEndpoint(), hosted)
     }
 
-    func testPromotesTheWorkingCandidateToTheFront() {
-        var rotation = CandidateRotation(hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"])
-        rotation.advance() // the tailnet name failed; the LAN address carried a stream
-        XCTAssertEqual(rotation.promoted(), ["192.168.1.42", "mac.tail1234.ts.net", "openmausbot-aa.local"])
+    func testExplicitLocalRouteCanUpgradeButNeverDowngradeAgain() throws {
+        let local = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.42:8810", kind: .lan, priority: 0
+        ))
+        let tailnet = try XCTUnwrap(CompanionEndpoint(
+            url: "http://mac.tail1234.ts.net:8810", kind: .tailnet, priority: 100
+        ))
+        let bonjour = try XCTUnwrap(CompanionEndpoint(
+            url: "http://openmausbot-aa.local:8810", kind: .bonjour, priority: 200
+        ))
+        var rotation = CandidateRotation(endpoints: [local, tailnet, bonjour])
+
+        XCTAssertEqual(rotation.endpoints, [local, tailnet], "an unchosen local route is never automatic")
+        XCTAssertEqual(rotation.advanceEndpoint(), tailnet)
+        XCTAssertEqual(rotation.endpoints, [tailnet], "upgrading prunes the explicit cleartext route")
+        XCTAssertEqual(rotation.advanceEndpoint(), tailnet)
     }
 
-    func testPromotionWithoutAWalkChangesNothing() {
+    func testProtectedLegacyHostDoesNotRetainLANFallbacks() {
         let rotation = CandidateRotation(hosts: ["mac.tail1234.ts.net", "192.168.1.42"])
-        XCTAssertEqual(rotation.promoted(), ["mac.tail1234.ts.net", "192.168.1.42"])
+        XCTAssertEqual(rotation.promoted(), ["mac.tail1234.ts.net"])
     }
 
     func testSurvivesAnEmptyCandidateList() {
@@ -65,7 +82,7 @@ final class FailoverTests: XCTestCase {
         }
     }
 
-    func testTunnelGatewayFailureAdvancesFromHostedToLAN() throws {
+    func testTunnelGatewayFailureNeverAdvancesFromHostedToLAN() throws {
         let hosted = try XCTUnwrap(CompanionEndpoint(
             url: "https://mac.companion.example",
             kind: .hosted,
@@ -82,8 +99,9 @@ final class FailoverTests: XCTestCase {
             after: APIError.status(code: 502, message: nil)
         )
 
-        XCTAssertEqual(next, lan)
-        XCTAssertEqual(rotation.currentEndpoint, lan)
+        XCTAssertNil(next)
+        XCTAssertEqual(rotation.currentEndpoint, hosted)
+        XCTAssertEqual(rotation.endpoints, [hosted])
     }
 
     func testAuthenticationFailureDoesNotAdvanceTheRoute() throws {
@@ -247,21 +265,34 @@ final class FailoverTests: XCTestCase {
         ])
     }
 
-    func testTypedRotationPreservesSchemesAndPorts() throws {
+    func testTypedProtectedRotationPreservesSchemesAndPorts() throws {
         let hosted = try XCTUnwrap(CompanionEndpoint(
             url: "https://mac.companion.example",
             kind: .hosted,
             priority: 0
         ))
-        let direct = try XCTUnwrap(CompanionEndpoint(
-            url: "http://192.168.1.42:9910",
-            kind: .lan,
-            priority: 200
+        let tailnet = try XCTUnwrap(CompanionEndpoint(
+            url: "http://mac.tail1234.ts.net:9910",
+            kind: .tailnet,
+            priority: 100
         ))
-        var rotation = CandidateRotation(endpoints: [hosted, direct])
+        var rotation = CandidateRotation(endpoints: [hosted, tailnet])
 
         XCTAssertEqual(rotation.currentEndpoint, hosted)
-        XCTAssertEqual(rotation.advanceEndpoint(), direct)
-        XCTAssertEqual(rotation.promotedEndpoints(), [direct, hosted])
+        XCTAssertEqual(rotation.advanceEndpoint(), tailnet)
+        XCTAssertEqual(rotation.promotedEndpoints(), [tailnet, hosted])
+    }
+
+    func testTailnetKindRequiresATailscaleMagicDNSName() {
+        XCTAssertNil(CompanionEndpoint(
+            url: "http://public.example:8810",
+            kind: .tailnet,
+            priority: 100
+        ))
+        XCTAssertNotNil(CompanionEndpoint(
+            url: "http://mac.example-tailnet.ts.net:8810",
+            kind: .tailnet,
+            priority: 100
+        ))
     }
 }

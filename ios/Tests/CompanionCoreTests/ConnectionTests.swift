@@ -15,6 +15,10 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(hosted?.host, "companion.example.com")
         XCTAssertEqual(hosted?.port, 443)
         XCTAssertEqual(hosted?.baseURL?.absoluteString, "https://companion.example.com")
+
+        let tailnet = Connection.parse("http://macbook.tailnet.ts.net:8810")
+        XCTAssertEqual(tailnet?.activeEndpoint?.kind, .tailnet)
+        XCTAssertTrue(tailnet?.activeEndpoint?.protectsCredentials == true)
     }
 
     func testParsesIPv6WithAndWithoutAnExplicitPort() {

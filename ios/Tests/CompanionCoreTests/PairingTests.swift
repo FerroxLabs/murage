@@ -101,7 +101,7 @@ final class PairingTests: XCTestCase {
         super.tearDown()
     }
 
-    func testProbesEveryRouteAndRedeemsOnlyOnTheHealthyLANAddress() async throws {
+    func testProtectedInviteNeverProbesOrRedeemsOnLANOrBonjour() async throws {
         PairingRequestStub.reset { request in
             if request.url?.path == "/api/health" {
                 return request.url?.host == "192.168.1.42"
@@ -117,21 +117,23 @@ final class PairingTests: XCTestCase {
             hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"]
         )
 
-        let outcome = try await CompanionClient.pairFirstReachable(
-            connection: connection,
-            credential: Self.credential,
-            deviceName: "iPhone",
-            session: session
-        )
+        await XCTAssertThrowsErrorAsync(
+            try await CompanionClient.pairFirstReachable(
+                connection: connection,
+                credential: Self.credential,
+                deviceName: "iPhone",
+                session: session
+            )
+        ) { error in
+            XCTAssertEqual(
+                (error as? PairingRouteError)?.attemptedHosts,
+                ["http://mac.tail1234.ts.net:8810"]
+            )
+        }
 
-        XCTAssertEqual(outcome.connection.host, "192.168.1.42")
-        let pairRequests = PairingRequestStub.captured().filter { $0.url?.path == "/api/pair" }
-        XCTAssertEqual(pairRequests.count, 1)
-        XCTAssertEqual(pairRequests.first?.url?.host, "192.168.1.42")
-        let data = try XCTUnwrap(pairRequests.first.flatMap(PairingRequestStub.body))
-        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(body["credential"] as? String, Self.credential)
-        XCTAssertNotNil(body["pairRequestId"] as? String)
+        let requests = PairingRequestStub.captured()
+        XCTAssertEqual(requests.map(\.url?.host), ["mac.tail1234.ts.net"])
+        XCTAssertTrue(requests.allSatisfy { $0.url?.path == "/api/health" })
     }
 
     func testAQuickLANResponseDoesNotOutrankThePreferredTailnetRoute() async throws {
@@ -162,20 +164,32 @@ final class PairingTests: XCTestCase {
             PairingRequestStub.captured().filter { $0.url?.path == "/api/pair" }.first?.url?.host,
             "mac.tail1234.ts.net"
         )
+        XCTAssertFalse(PairingRequestStub.captured().contains { $0.url?.host == "192.168.1.42" })
     }
 
-    func testTransportFailureRetriesAHealthyFallbackWithTheSameRequestID() async throws {
+    func testTransportFailureRetriesAProtectedFallbackWithTheSameRequestID() async throws {
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example",
+            kind: .hosted,
+            priority: 0
+        ))
+        let tailnet = try XCTUnwrap(CompanionEndpoint(
+            url: "http://mac.tail1234.ts.net:8810",
+            kind: .tailnet,
+            priority: 100
+        ))
         PairingRequestStub.reset { request in
             if request.url?.path == "/api/health" { return .response(200, Self.health) }
-            return request.url?.host == "mac.tail1234.ts.net"
+            return request.url?.host == "mac.companion.example"
                 ? .failure(.networkConnectionLost)
                 : .response(201, Self.paired)
         }
         let connection = Connection(
             name: "Mac",
-            host: "mac.tail1234.ts.net",
-            port: 8810,
-            hosts: ["192.168.1.42"]
+            host: hosted.host,
+            port: hosted.port,
+            activeEndpoint: hosted,
+            endpoints: [hosted, tailnet]
         )
         let requestId = "4c825d5b-cf40-4db7-aac5-2455f805a8ec"
 
@@ -187,9 +201,9 @@ final class PairingTests: XCTestCase {
             session: session
         )
 
-        XCTAssertEqual(outcome.connection.host, "192.168.1.42")
+        XCTAssertEqual(outcome.connection.activeEndpoint, tailnet)
         let pairRequests = PairingRequestStub.captured().filter { $0.url?.path == "/api/pair" }
-        XCTAssertEqual(pairRequests.map(\.url?.host), ["mac.tail1234.ts.net", "192.168.1.42"])
+        XCTAssertEqual(pairRequests.map(\.url?.host), ["mac.companion.example", "mac.tail1234.ts.net"])
         let ids = try pairRequests.map { request in
             let data = try XCTUnwrap(PairingRequestStub.body(of: request))
             let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -198,7 +212,7 @@ final class PairingTests: XCTestCase {
         XCTAssertEqual(ids, [requestId, requestId])
     }
 
-    func testTypedHostedRouteUsesHTTPSBeforeFallingBackToDirectHTTP() async throws {
+    func testHostedRouteFailureNeverFallsBackToDirectHTTP() async throws {
         let hosted = try XCTUnwrap(CompanionEndpoint(
             url: "https://mac.companion.example",
             kind: .hosted,
@@ -225,23 +239,27 @@ final class PairingTests: XCTestCase {
             endpoints: [lan, hosted]
         )
 
-        let outcome = try await CompanionClient.pairFirstReachable(
-            connection: connection,
-            credential: Self.credential,
-            deviceName: "iPhone",
-            session: session
-        )
-
-        XCTAssertEqual(outcome.connection.activeEndpoint, lan)
+        await XCTAssertThrowsErrorAsync(
+            try await CompanionClient.pairFirstReachable(
+                connection: connection,
+                credential: Self.credential,
+                deviceName: "iPhone",
+                session: session
+            )
+        ) { error in
+            XCTAssertEqual(
+                (error as? PairingRouteError)?.attemptedHosts,
+                ["https://mac.companion.example"]
+            )
+        }
         let requests = PairingRequestStub.captured()
-        XCTAssertTrue(requests.contains {
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertTrue(requests.allSatisfy {
             $0.url?.scheme == "https" && $0.url?.host == "mac.companion.example" && $0.url?.path == "/api/health"
         })
-        let pair = try XCTUnwrap(requests.first { $0.url?.path == "/api/pair" })
-        XCTAssertEqual(pair.url?.absoluteString, "http://192.168.1.42:8810/api/pair")
     }
 
-    func testHostedGatewayFailureRetriesPairingOverLANWithTheSameRequestID() async throws {
+    func testHostedGatewayFailureRetriesPairingOverTailnetButNeverLAN() async throws {
         let hosted = try XCTUnwrap(CompanionEndpoint(
             url: "https://mac.companion.example",
             kind: .hosted,
@@ -251,6 +269,11 @@ final class PairingTests: XCTestCase {
             url: "http://192.168.1.42:8810",
             kind: .lan,
             priority: 200
+        ))
+        let tailnet = try XCTUnwrap(CompanionEndpoint(
+            url: "http://mac.tail1234.ts.net:8810",
+            kind: .tailnet,
+            priority: 100
         ))
         PairingRequestStub.reset { request in
             if request.url?.path == "/api/health" { return .response(200, Self.health) }
@@ -263,7 +286,7 @@ final class PairingTests: XCTestCase {
             host: hosted.host,
             port: hosted.port,
             activeEndpoint: hosted,
-            endpoints: [hosted, lan]
+            endpoints: [hosted, tailnet, lan]
         )
         let requestId = "d350b2ac-7f92-4f30-bf80-21e040c1494b"
 
@@ -275,9 +298,11 @@ final class PairingTests: XCTestCase {
             session: session
         )
 
-        XCTAssertEqual(outcome.connection.activeEndpoint, lan)
+        XCTAssertEqual(outcome.connection.activeEndpoint, tailnet)
         let pairRequests = PairingRequestStub.captured().filter { $0.url?.path == "/api/pair" }
         XCTAssertEqual(pairRequests.map(\.url?.scheme), ["https", "http"])
+        XCTAssertEqual(pairRequests.map(\.url?.host), ["mac.companion.example", "mac.tail1234.ts.net"])
+        XCTAssertFalse(PairingRequestStub.captured().contains { $0.url?.host == "192.168.1.42" })
         let ids = try pairRequests.map { request in
             let data = try XCTUnwrap(PairingRequestStub.body(of: request))
             let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -346,7 +371,6 @@ final class PairingTests: XCTestCase {
         } catch let error as PairingRouteError {
             XCTAssertEqual(error.attemptedHosts, [
                 "http://mac.tail1234.ts.net:8810",
-                "http://192.168.1.42:8810",
             ])
         }
         XCTAssertTrue(PairingRequestStub.captured().allSatisfy { $0.url?.path == "/api/health" })
@@ -397,7 +421,7 @@ final class PairingTests: XCTestCase {
         XCTAssertEqual(PairingRequestStub.captured().filter { $0.url?.path == "/api/pair" }.count, 1)
     }
 
-    func testLegacySingleHostConnectionStillPairs() async throws {
+    func testExplicitManualLANConnectionStillPairs() async throws {
         PairingRequestStub.reset { request in
             request.url?.path == "/api/health"
                 ? .response(200, Self.health)
@@ -413,6 +437,7 @@ final class PairingTests: XCTestCase {
 
         XCTAssertEqual(outcome.connection.host, "192.168.1.42")
         XCTAssertEqual(outcome.response.token, "omb_device")
+        XCTAssertTrue(PairingRequestStub.captured().allSatisfy { $0.url?.host == "192.168.1.42" })
     }
 
     private static let credential = "omb_pair_" + String(repeating: "a", count: 43)

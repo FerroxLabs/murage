@@ -75,9 +75,16 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowercased = trimmed.lowercased()
         if lowercased.hasPrefix("http://") || lowercased.hasPrefix("https://") {
+            let kind: CompanionEndpointKind
+            if lowercased.hasPrefix("https://") {
+                kind = .hosted
+            } else {
+                let parsedHost = URLComponents(string: trimmed)?.host ?? ""
+                kind = CompanionEndpoint.inferredDirectKind(parsedHost)
+            }
             guard let endpoint = CompanionEndpoint(
                 url: trimmed,
-                kind: lowercased.hasPrefix("https://") ? .hosted : .lan,
+                kind: kind,
                 priority: 0
             ) else { return nil }
             return Connection(
@@ -445,8 +452,12 @@ public struct CompanionClient: Sendable {
 
     /// Resolve the multi-address invite before consuming its credential.
     ///
-    /// Health probes are non-mutating and run together, so a dead MagicDNS
-    /// name cannot sit in front of a working LAN address for twenty seconds.
+    /// Health probes are non-mutating and run together, so a dead protected
+    /// route cannot sit in front of another protected route for twenty
+    /// seconds. Cleartext LAN/Bonjour routes are deliberately excluded unless
+    /// that exact route is the user's preferred, explicit choice; neither a
+    /// pairing credential nor the later bearer token is sprayed onto the
+    /// current wifi merely because a private address was once advertised.
     /// Only the first response that identifies itself as OpenMausBot receives
     /// the one-time pairing POST. The request id makes that redemption safely
     /// replayable by newer desktop builds if its response is lost in transit.
@@ -457,8 +468,9 @@ public struct CompanionClient: Sendable {
         pairRequestId: String = UUID().uuidString,
         session: URLSession = .shared
     ) async throws -> PairingOutcome {
-        let candidates = connection.orderedEndpoints.map(connection.dialing)
-        let attemptedRoutes = connection.orderedEndpoints.map(\.url)
+        let automaticEndpoints = connection.automaticEndpoints
+        let candidates = automaticEndpoints.map(connection.dialing)
+        let attemptedRoutes = automaticEndpoints.map(\.url)
         var remaining = candidates
         while !remaining.isEmpty {
             guard let winner = await firstHealthy(in: remaining, session: session) else {
@@ -546,6 +558,16 @@ public struct CompanionClient: Sendable {
     }
 
     // MARK: - Reading
+
+    /// Refresh the routes this already-paired phone can use. The sidecar owns
+    /// this small authenticated response; it is not forwarded to the harness
+    /// and it contains no account or pairing credential.
+    public func connectionMetadata() async throws -> CompanionConnectionMetadata {
+        try await send(
+            try makeRequest("GET", "/api/companion/endpoints"),
+            as: CompanionConnectionMetadata.self
+        )
+    }
 
     /// Hydrate. `messages` opts into the paged shape — the newest n per
     /// thread, with screen captures reduced to a flag.

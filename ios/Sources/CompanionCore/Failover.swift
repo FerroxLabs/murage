@@ -1,13 +1,16 @@
-// Reaching the same computer at whichever of its addresses still works.
+// Reaching the same computer through another credential-safe route still
+// works.
 //
 // Pairing stores one host, and one host is one point of failure: a phone
 // paired over the tailnet keeps a MagicDNS name that stops resolving the
-// moment either device leaves the tailnet — while the same computer sits
-// reachable on the LAN right there. The fix is late binding: the connection
-// carries every address the computer answered on at pairing time, and the
-// dial walks that list when a failure is about the *address* rather than the
-// pairing. Both halves are pure — no sockets, no clocks — so the rules can
-// be tested without a network; `Session` owns when they run.
+// moment either device leaves the tailnet. The connection still carries every
+// address the computer advertised, but a bearer credential cannot safely be
+// sprayed onto whatever LAN happens to use the same private address later.
+// Automatic walking is therefore a trust ratchet: protected routes can walk
+// to other protected routes, while a user-selected cleartext route can be
+// tried exactly once and can only move to a stronger transport. Both halves
+// are pure — no sockets, no clocks — so the rules can be tested without a
+// network; `Session` owns when they run.
 import Foundation
 
 /// The ordered walk through a connection's stored hosts.
@@ -20,14 +23,13 @@ public struct CandidateRotation: Equatable, Sendable {
     private var index: Int
 
     public init(hosts: [String]) {
-        endpoints = hosts.enumerated().compactMap { offset, host in
+        self.init(endpoints: hosts.enumerated().compactMap { offset, host in
             CompanionEndpoint.direct(host: host, port: 8810, priority: offset)
-        }
-        index = 0
+        })
     }
 
     public init(endpoints: [CompanionEndpoint]) {
-        self.endpoints = endpoints
+        self.endpoints = CompanionEndpoint.automaticCandidates(from: endpoints)
         index = 0
     }
 
@@ -58,6 +60,16 @@ public struct CandidateRotation: Equatable, Sendable {
     public mutating func advanceEndpoint() -> CompanionEndpoint? {
         guard !endpoints.isEmpty else { return nil }
         index = (index + 1) % endpoints.count
+        guard let next = currentEndpoint else { return nil }
+        // An explicit local route may upgrade to a protected route, but that
+        // upgrade is one-way. Pruning the local route prevents a later wrap
+        // from silently downgrading the bearer transport again.
+        if next.protectsCredentials,
+           endpoints.contains(where: { !$0.protectsCredentials }) {
+            let selectedURL = next.url
+            endpoints.removeAll { !$0.protectsCredentials }
+            index = endpoints.firstIndex(where: { $0.url == selectedURL }) ?? 0
+        }
         return currentEndpoint
     }
 
@@ -199,6 +211,65 @@ extension Connection {
         }
         var seen = Set<String>()
         return candidates.filter { seen.insert($0.url).inserted }.prefix(8).map { $0 }
+    }
+
+    /// The subset an automatic pairing or authenticated reconnect may try.
+    /// The complete advertised list remains persisted in `orderedEndpoints`
+    /// so a person can explicitly choose a local route later.
+    public var automaticEndpoints: [CompanionEndpoint] {
+        CompanionEndpoint.automaticCandidates(from: orderedEndpoints)
+    }
+
+    /// Apply an authenticated endpoint snapshot. The caller owns the exact
+    /// client carrying the current live stream; this value chooses what a
+    /// future reconnect or launch may dial.
+    ///
+    /// The advertised version of the active route is retained when present.
+    /// If it disappeared, a new protected route is a safe upgrade. With no
+    /// protected replacement, the exact old route remains the first candidate
+    /// instead of silently authorizing some other cleartext LAN address.
+    public mutating func reconcile(_ metadata: CompanionConnectionMetadata) {
+        let cleanedName = metadata.serverName.trimmingCharacters(in: .whitespacesAndNewlines)
+            .filter { (!$0.isASCII && !$0.isNewline) || $0.asciiValue.map { $0 >= 32 && $0 != 127 } == true }
+        if !cleanedName.isEmpty { name = String(cleanedName.prefix(80)) }
+
+        if let advertisedHosts = metadata.hosts {
+            var seen = Set<String>()
+            hosts = advertisedHosts.compactMap { raw -> String? in
+                let candidate = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !candidate.isEmpty,
+                      candidate.utf8.count <= 253,
+                      !candidate.contains(where: { $0.isWhitespace || "/?#".contains($0) })
+                else { return nil }
+                let normalized = Self.urlHost(candidate)
+                return seen.insert(normalized).inserted ? normalized : nil
+            }.prefix(8).map { $0 }
+        }
+
+        let previousActive = activeEndpoint
+        endpoints = metadata.endpoints
+        if let previousActive,
+           let refreshedActive = metadata.endpoints.first(where: { $0.url == previousActive.url }) {
+            activeEndpoint = refreshedActive
+        } else if let protectedReplacement = metadata.endpoints.first(where: \.protectsCredentials) {
+            activeEndpoint = protectedReplacement
+        } else if let previousActive,
+                  let retained = CompanionEndpoint(
+                      url: previousActive.url,
+                      kind: previousActive.kind,
+                      priority: 0
+                  ) {
+            activeEndpoint = retained
+            endpoints = [retained] + metadata.endpoints
+                .filter { $0.url != retained.url }
+                .prefix(7)
+        } else {
+            activeEndpoint = metadata.endpoints.first
+        }
+        if let activeEndpoint {
+            host = activeEndpoint.host
+            port = activeEndpoint.port
+        }
     }
 
     /// A copy dialing `candidate` — same pairing, same port, different

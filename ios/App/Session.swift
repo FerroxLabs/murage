@@ -55,6 +55,9 @@ final class Session: ObservableObject {
     /// and persisted — when a stream goes live.
     private var rotation = CandidateRotation(hosts: [])
     private var streamTask: Task<Void, Never>?
+    /// Best-effort authenticated route refresh started by the latest live SSE
+    /// hello. Kept separate so endpoint discovery never stalls event delivery.
+    private var endpointRefreshTask: Task<Void, Never>?
     /// Identifies the task currently stored in `streamTask`. A cancelled task
     /// can finish after its replacement starts; its cleanup must not clear
     /// the replacement's handle.
@@ -146,9 +149,9 @@ final class Session: ObservableObject {
 
         connection = saved
         token = stored
-        // New connections honor the desktop's transport policy (hosted HTTPS,
-        // tailnet, LAN, Bonjour). Older saved connections retain their
-        // last-working-host-first behavior through the legacy list.
+        // New connections honor the desktop's transport policy. Automatic
+        // walking is credential-safe: protected routes stay protected, while
+        // a legacy/local route is only tried when it was the exact saved route.
         rotation = CandidateRotation(endpoints: saved.orderedEndpoints)
         let first = rotation.currentEndpoint.map(saved.dialing) ?? saved
         client = CompanionClient(connection: first, token: stored)
@@ -231,6 +234,8 @@ final class Session: ObservableObject {
     func signOut() {
         streamTask?.cancel()
         streamTask = nil
+        endpointRefreshTask?.cancel()
+        endpointRefreshTask = nil
         restorePending = false
         pendingNotification = nil
         if let id = connection?.id { Keychain.remove(id) }
@@ -324,6 +329,8 @@ final class Session: ObservableObject {
     func disconnect() {
         streamTask?.cancel()
         streamTask = nil
+        endpointRefreshTask?.cancel()
+        endpointRefreshTask = nil
         endLinger()
     }
 
@@ -385,6 +392,7 @@ final class Session: ObservableObject {
                         // display and legacy ordering. Typed routes retain
                         // their explicit security priority next launch.
                         rememberWorkingRoute()
+                        refreshConnectionMetadata(using: client)
                         continue
                     }
                     state.apply(frame)
@@ -475,6 +483,49 @@ final class Session: ObservableObject {
         UserDefaults.standard.set(try? JSONEncoder().encode(updated), forKey: Self.connectionKey)
     }
 
+    /// Learn routes enabled after this phone originally paired. The endpoint
+    /// response is authenticated with the existing device token and is a
+    /// replacement snapshot, but failure is deliberately non-fatal: older
+    /// sidecars return 404 and a transient refresh error must not tear down a
+    /// perfectly healthy event stream.
+    private func refreshConnectionMetadata(using sourceClient: CompanionClient) {
+        guard let connectionID = connection?.id else { return }
+        let workingEndpoint = rotation.currentEndpoint ?? sourceClient.connection.activeEndpoint
+        endpointRefreshTask?.cancel()
+        endpointRefreshTask = Task { [weak self] in
+            do {
+                let metadata = try await sourceClient.connectionMetadata()
+                try Task.checkCancellation()
+                guard let self,
+                      self.connection?.id == connectionID,
+                      self.client?.connection.baseURL == sourceClient.connection.baseURL,
+                      var updated = self.connection
+                else { return }
+
+                updated.reconcile(metadata)
+                self.connection = updated
+                UserDefaults.standard.set(
+                    try? JSONEncoder().encode(updated),
+                    forKey: Self.connectionKey
+                )
+
+                // Keep the currently live route first until this stream ends.
+                // CandidateRotation applies the same no-downgrade policy used
+                // by pairing, while the saved connection uses advertised
+                // security priorities on the next launch.
+                let liveRoutes = workingEndpoint.map { route in
+                    [route] + updated.orderedEndpoints.filter { $0.url != route.url }
+                } ?? updated.orderedEndpoints
+                self.rotation = CandidateRotation(endpoints: liveRoutes)
+                log.info("refreshed \(metadata.endpoints.count, privacy: .public) companion routes")
+            } catch is CancellationError {
+                return
+            } catch {
+                log.debug("endpoint refresh unavailable: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     /// Replace the stored address by hand, keeping the pairing and its token.
     /// False when the text does not parse as a host or host:port.
     @discardableResult
@@ -490,7 +541,9 @@ final class Session: ObservableObject {
         updated.endpoints = [endpoint] + existingRoutes.filter { $0.url != endpoint.url }
         connection = updated
         UserDefaults.standard.set(try? JSONEncoder().encode(updated), forKey: Self.connectionKey)
-        rotation = CandidateRotation(endpoints: updated.orderedEndpoints)
+        rotation = CandidateRotation(
+            endpoints: [endpoint] + updated.orderedEndpoints.filter { $0.url != endpoint.url }
+        )
         if let token {
             client = CompanionClient(connection: updated.dialing(endpoint), token: token)
         }
