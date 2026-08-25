@@ -98,6 +98,23 @@ const readJson = (req: IncomingMessage, limit = 64 * 1024): Promise<Record<strin
  * with nothing to catch it. Dropping the socket is the only honest ending
  * left there: the device sees a truncated response and reconnects, which is
  * what it already does for any dropped connection. */
+const PRIVATE_RESPONSE_HEADERS = {
+  "cache-control": "private, no-store",
+  "cdn-cache-control": "no-store",
+  "cloudflare-cdn-cache-control": "no-store",
+  pragma: "no-cache",
+  vary: "Authorization",
+} as const;
+
+/** Device responses can cross a public CDN when the managed HTTPS endpoint
+ * is enabled. Never let chat JSON, images, audio, pairing responses, or even
+ * authorization failures become shared cache entries. These values override
+ * anything the loopback harness supplied. */
+const privateHeaders = (headers: IncomingMessage["headers"] = {}): IncomingMessage["headers"] => ({
+  ...headers,
+  ...PRIVATE_RESPONSE_HEADERS,
+});
+
 const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
   if (res.headersSent) {
     res.destroy();
@@ -107,6 +124,7 @@ const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
   res.writeHead(status, {
     "content-type": "application/json",
     "content-length": Buffer.byteLength(text),
+    ...PRIVATE_RESPONSE_HEADERS,
   });
   res.end(text);
 };
@@ -161,6 +179,14 @@ export function createProxyHandler(options: ProxyOptions) {
       return sendJson(res, 403, {
         error: "cloud desktop access is off for this phone — enable it in OpenMausBot → Settings → Companion",
       });
+    }
+
+    // The public liveness route identifies only this narrow companion
+    // boundary. Forwarding the harness's health payload leaked its PID and
+    // packaged/static mode through every managed tunnel. Mobile clients only
+    // use `app` to reject a wrong host, so keep that stable and nothing more.
+    if (method === "GET" && path === "/api/health") {
+      return sendJson(res, 200, { app: "openmausbot" });
     }
 
     // Pairing terminates here. Forwarding it would hand the harness a route
@@ -219,7 +245,8 @@ export function createProxyHandler(options: ProxyOptions) {
           // content-encoding would be a lie once we rewrite the bytes.
           res.writeHead(harness.statusCode ?? 200, {
             "content-type": "text/event-stream",
-            "cache-control": "no-cache, no-transform",
+            ...PRIVATE_RESPONSE_HEADERS,
+            "cache-control": "private, no-store, no-transform",
             connection: "keep-alive",
             // Nagle would hold a small frame back waiting for company. On a
             // stream whose frames are small and whose whole value is being
@@ -272,7 +299,7 @@ export function createProxyHandler(options: ProxyOptions) {
           // never sends accept-encoding, so this is a guard rather than a
           // path: if it ever fires, the body passes through unscrubbed and
           // intact rather than scrubbed and broken.
-          res.writeHead(harness.statusCode ?? 200, harness.headers);
+          res.writeHead(harness.statusCode ?? 200, privateHeaders(harness.headers));
           // `pipe` does not carry a failure from source to destination. An
           // upstream that dies part-way through an image would otherwise
           // leave the phone holding an open connection and a content-length
@@ -342,7 +369,7 @@ export function createProxyHandler(options: ProxyOptions) {
           delete headers["content-encoding"];
           delete headers["transfer-encoding"];
           res.writeHead(status, {
-            ...headers,
+            ...privateHeaders(headers),
             "content-length": Buffer.byteLength(text),
           });
           res.end(text);

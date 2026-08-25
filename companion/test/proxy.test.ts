@@ -78,7 +78,7 @@ const device = async (
   method: string,
   path: string,
   opts: { token?: string | null; body?: unknown; headers?: Record<string, string> } = {},
-): Promise<{ status: number; body: any }> => {
+): Promise<{ status: number; body: any; headers: Headers }> => {
   const token = opts.token === undefined ? TOKEN : opts.token;
   const res = await fetch(`${SIDECAR}${path}`, {
     method,
@@ -96,7 +96,7 @@ const device = async (
   } catch {
     /* not JSON */
   }
-  return { status: res.status, body };
+  return { status: res.status, body, headers: res.headers };
 };
 
 /** raw request with a chosen Host header — fetch will not let us set one */
@@ -230,9 +230,22 @@ describe("the sidecar in front of an unmodified harness", () => {
   });
 
   it("requires a paired token", async () => {
-    expect((await device("GET", "/api/bots", { token: null })).status).toBe(401);
+    const unauthenticated = await device("GET", "/api/bots", { token: null });
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers.get("cache-control")).toContain("no-store");
+    expect(unauthenticated.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     expect((await device("GET", "/api/bots", { token: "omb_wrong" })).status).toBe(401);
     expect((await device("GET", "/api/bots")).status).toBe(200);
+  });
+
+  it("serves a minimal, non-cacheable companion health identity", async () => {
+    const health = await device("GET", "/api/health", { token: null });
+    expect(health.status).toBe(200);
+    expect(health.body).toEqual({ app: "openmausbot" });
+    expect(health.headers.get("cache-control")).toBe("private, no-store");
+    expect(health.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(JSON.stringify(health.body)).not.toContain("pid");
+    expect(JSON.stringify(health.body)).not.toContain("static");
   });
 
   it("refuses what a device has no business doing, by default", async () => {
@@ -319,6 +332,7 @@ describe("the sidecar in front of an unmodified harness", () => {
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
+    expect(res.headers.get("cache-control")).toContain("no-store");
 
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();

@@ -34,12 +34,15 @@ const close = (server: Server | undefined): Promise<void> =>
   new Promise((resolve) => (server ? server.close(() => resolve()) : resolve()));
 
 /** A request as a paired device makes it. */
-const device = async (path = "/api/bots", method = "GET"): Promise<{ status: number; text: string }> => {
+const device = async (
+  path = "/api/bots",
+  method = "GET",
+): Promise<{ status: number; text: string; headers: Headers }> => {
   const res = await fetch(`http://127.0.0.1:${sidecarPort}${path}`, {
     method,
     headers: { authorization: `Bearer ${TOKEN}` },
   });
-  return { status: res.status, text: await res.text() };
+  return { status: res.status, text: await res.text(), headers: res.headers };
 };
 
 beforeAll(async () => {
@@ -143,13 +146,36 @@ describe("preparing a harness response for a device", () => {
 
   it("scrubs a well-formed body and re-frames it", async () => {
     respond = (res) => {
-      res.writeHead(200, { "content-type": "application/json", "transfer-encoding": "chunked" });
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "transfer-encoding": "chunked",
+        "cache-control": "public, max-age=3600",
+      });
       res.end(JSON.stringify({ bots: [{ id: "b1" }], resumeCursors: { agent: "cursor-value" } }));
     };
 
-    const { status, text } = await device();
+    const { status, text, headers } = await device();
     expect(status).toBe(200);
     expect(JSON.parse(text)).toEqual({ bots: [{ id: "b1" }] });
     expect(text).not.toContain("cursor-value");
+    expect(headers.get("cache-control")).toBe("private, no-store");
+    expect(headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+  });
+
+  it("overrides cacheable upstream headers on byte responses", async () => {
+    respond = (res) => {
+      res.writeHead(200, {
+        "content-type": "image/png",
+        "cache-control": "public, max-age=86400",
+        etag: '"private-image"',
+      });
+      res.end("image-bytes");
+    };
+
+    const response = await device("/api/threads/thread-1/messages/message-1/image");
+    expect(response.status).toBe(200);
+    expect(response.text).toBe("image-bytes");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("cdn-cache-control")).toBe("no-store");
   });
 });
