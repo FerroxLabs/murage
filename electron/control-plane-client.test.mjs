@@ -105,6 +105,47 @@ describe("control-plane desktop client", () => {
     })).resolves.toMatchObject({ credential: rotated, installation: { id: INSTALL_ID } });
   });
 
+  it("lists validated active installations for response-loss cleanup", async () => {
+    const fetchImpl = vi.fn(async (url, init) => {
+      expect(url).toBe("https://accounts.openmausbot.com/v1/installations");
+      expect(init.headers.get("authorization")).toBe(`Bearer ${ACCOUNT}`);
+      return jsonResponse({
+        installations: [{
+          id: INSTALL_ID,
+          clientInstanceId: "client-1",
+          name: "Mac",
+          platform: "darwin",
+          appVersion: "1.0.0",
+        }],
+      });
+    });
+    const client = createControlPlaneClient({
+      baseURL: "https://accounts.openmausbot.com",
+      fetchImpl,
+    });
+
+    await expect(client.listInstallations(ACCOUNT)).resolves.toEqual([{
+      id: INSTALL_ID,
+      clientInstanceId: "client-1",
+      name: "Mac",
+      platform: "darwin",
+      appVersion: "1.0.0",
+    }]);
+  });
+
+  it("rejects malformed installation lists instead of skipping cleanup targets", async () => {
+    const client = createControlPlaneClient({
+      baseURL: "https://accounts.openmausbot.com",
+      fetchImpl: vi.fn(async () => jsonResponse({
+        installations: [{ id: "not-an-installation", clientInstanceId: "client-1" }],
+      })),
+    });
+
+    await expect(client.listInstallations(ACCOUNT)).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+  });
+
   it("validates endpoint material without leaking the connector token into the URL", async () => {
     const connectorToken = `eyJ${"x".repeat(80)}`;
     const fetchImpl = vi.fn(async (url, init) => {

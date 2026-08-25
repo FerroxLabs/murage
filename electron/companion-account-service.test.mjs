@@ -19,6 +19,7 @@ import {
 
 const UUID = "11111111-1111-4111-8111-111111111111";
 const INSTALLATION_ID = "22222222-2222-4222-8222-222222222222";
+const DUPLICATE_INSTALLATION_ID = "33333333-3333-4333-8333-333333333333";
 const ACCOUNT_TOKEN = `signed.${"a".repeat(80)}`;
 const INSTALLATION_CREDENTIAL = `omb_install_${"b".repeat(22)}.${"c".repeat(43)}`;
 const CONNECTOR_TOKEN = `eyJ${"d".repeat(100)}`;
@@ -59,6 +60,7 @@ function readyClient(overrides = {}) {
       endpoint: { url: ENDPOINT },
       connectorToken: CONNECTOR_TOKEN,
     })),
+    listInstallations: vi.fn(async () => []),
     deleteEndpoint: vi.fn(async () => {}),
     revokeInstallation: vi.fn(async () => {}),
     signOut: vi.fn(async () => {}),
@@ -325,12 +327,138 @@ describe("Companion account service", () => {
     });
   });
 
-  it("stops locally and preserves every cleanup credential until revocation succeeds", async () => {
-    const revokeInstallation = vi
+  it("revokes an installation whose create response was lost before sign-out clears locally", async () => {
+    const client = readyClient({
+      ensureInstallation: vi.fn(async () => {
+        throw new ControlPlaneError("network_unavailable");
+      }),
+      listInstallations: vi.fn(async () => [{
+        id: INSTALLATION_ID,
+        clientInstanceId: UUID,
+        name: "Test Mac",
+        platform: "darwin",
+        appVersion: "1.2.3",
+      }, {
+        id: DUPLICATE_INSTALLATION_ID,
+        clientInstanceId: UUID,
+        name: "Lost duplicate",
+        platform: "darwin",
+        appVersion: "1.2.3",
+      }]),
+    });
+    const { service, store } = serviceFixture({ client });
+
+    await service.verifyCode("ada@example.com", "12345678");
+    await expect(service.signOut()).resolves.toEqual({ available: true, status: "signed-out" });
+
+    expect(client.listInstallations).toHaveBeenCalledWith(ACCOUNT_TOKEN);
+    expect(client.revokeInstallation).toHaveBeenCalledWith(ACCOUNT_TOKEN, INSTALLATION_ID);
+    expect(client.revokeInstallation).toHaveBeenCalledWith(
+      ACCOUNT_TOKEN,
+      DUPLICATE_INSTALLATION_ID,
+    );
+    expect(store.read()).toEqual({ [COMPANION_CLIENT_INSTANCE_FIELD]: UUID });
+  });
+
+  it("retains a response-lost session and cleanup intent when reconciliation is offline", async () => {
+    const client = readyClient({
+      ensureInstallation: vi.fn(async () => {
+        throw new ControlPlaneError("network_unavailable");
+      }),
+      listInstallations: vi.fn(async () => {
+        throw new ControlPlaneError("network_unavailable");
+      }),
+    });
+    const { service, store } = serviceFixture({ client });
+
+    await service.verifyCode("ada@example.com", "12345678");
+    await expect(service.signOut()).resolves.toMatchObject({
+      status: "error",
+      email: "ada@example.com",
+    });
+
+    expect(store.read()).toMatchObject({
+      [COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD]: true,
+      [COMPANION_ACCOUNT_TOKEN_FIELD]: ACCOUNT_TOKEN,
+      [COMPANION_ACCOUNT_USER_ID_FIELD]: "user-1",
+      [COMPANION_CLIENT_INSTANCE_FIELD]: UUID,
+    });
+  });
+
+  it("revokes an endpoint-ready installation whose provision response was lost", async () => {
+    const client = readyClient({
+      ensureEndpoint: vi.fn(async () => {
+        throw new ControlPlaneError("network_unavailable");
+      }),
+      listInstallations: vi.fn(async () => [{
+        id: INSTALLATION_ID,
+        clientInstanceId: UUID,
+        name: "Test Mac",
+        platform: "darwin",
+        appVersion: "1.2.3",
+      }]),
+    });
+    const { service, store } = serviceFixture({ client });
+
+    await service.verifyCode("ada@example.com", "12345678");
+    await expect(service.signOut()).resolves.toEqual({ available: true, status: "signed-out" });
+
+    expect(client.revokeInstallation).toHaveBeenCalledWith(ACCOUNT_TOKEN, INSTALLATION_ID);
+    expect(store.read()).toEqual({ [COMPANION_CLIENT_INSTANCE_FIELD]: UUID });
+  });
+
+  it("cleans a response-lost endpoint before switching its stable UUID to another account", async () => {
+    const nextAccountToken = `signed.${"n".repeat(80)}`;
+    const verifyOTP = vi
+      .fn()
+      .mockResolvedValueOnce({
+        accountToken: ACCOUNT_TOKEN,
+        user: { id: "user-1", email: "ada@example.com" },
+      })
+      .mockResolvedValueOnce({
+        accountToken: nextAccountToken,
+        user: { id: "user-2", email: "grace@example.com" },
+      });
+    const ensureEndpoint = vi
       .fn()
       .mockRejectedValueOnce(new ControlPlaneError("network_unavailable"))
-      .mockResolvedValueOnce(undefined);
-    const client = readyClient({ revokeInstallation });
+      .mockResolvedValueOnce({ endpoint: { url: ENDPOINT }, connectorToken: CONNECTOR_TOKEN });
+    const client = readyClient({
+      verifyOTP,
+      ensureEndpoint,
+      listInstallations: vi.fn(async (token) => token === ACCOUNT_TOKEN
+        ? [{
+            id: INSTALLATION_ID,
+            clientInstanceId: UUID,
+            name: "Test Mac",
+            platform: "darwin",
+            appVersion: "1.2.3",
+          }]
+        : []),
+    });
+    const { service, store } = serviceFixture({ client });
+
+    await service.verifyCode("ada@example.com", "12345678");
+    await expect(service.verifyCode("grace@example.com", "87654321")).resolves.toEqual({
+      available: true,
+      status: "ready",
+      email: "grace@example.com",
+      endpoint: ENDPOINT,
+    });
+
+    expect(client.revokeInstallation).toHaveBeenCalledWith(ACCOUNT_TOKEN, INSTALLATION_ID);
+    expect(store.read()).toMatchObject({
+      [COMPANION_ACCOUNT_TOKEN_FIELD]: nextAccountToken,
+      [COMPANION_ACCOUNT_USER_ID_FIELD]: "user-2",
+    });
+  });
+
+  it("stops locally and preserves every cleanup credential until revocation succeeds", async () => {
+    const listInstallations = vi
+      .fn()
+      .mockRejectedValueOnce(new ControlPlaneError("network_unavailable"))
+      .mockResolvedValueOnce([]);
+    const client = readyClient({ listInstallations });
     const stopManagedEndpoint = vi.fn(async () => {});
     const { service, store } = serviceFixture({
       initial: signedCredentials(),
@@ -352,7 +480,7 @@ describe("Companion account service", () => {
     const recovered = await service.retry();
     expect(recovered).toEqual({ available: true, status: "signed-out" });
     expect(store.read()).toEqual({ [COMPANION_CLIENT_INSTANCE_FIELD]: UUID });
-    expect(revokeInstallation).toHaveBeenCalledTimes(2);
+    expect(listInstallations).toHaveBeenCalledTimes(2);
   });
 
   it("uses a same-account reauthentication to finish pending cleanup instead of reprovisioning", async () => {
@@ -387,6 +515,9 @@ describe("Companion account service", () => {
         user: { id: "user-2", email: "grace@example.com" },
       })),
       revokeInstallation: vi.fn(async () => {
+        throw new ControlPlaneError("network_unavailable");
+      }),
+      listInstallations: vi.fn(async () => {
         throw new ControlPlaneError("network_unavailable");
       }),
     });

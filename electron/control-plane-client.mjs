@@ -147,6 +147,19 @@ export function createControlPlaneClient({
     return { response, payload };
   };
 
+  const accountInstallations = async (accountToken) => {
+    if (!boundedSecret(accountToken)) throw new ControlPlaneError("signed_out", 401);
+    const { payload } = await request("/v1/installations", { token: accountToken });
+    if (!Array.isArray(payload.installations)) {
+      throw new ControlPlaneError("invalid_response");
+    }
+    const installations = payload.installations.map(validatedInstallation);
+    if (installations.some((installation) => !installation)) {
+      throw new ControlPlaneError("invalid_response");
+    }
+    return installations;
+  };
+
   return {
     origin,
 
@@ -190,6 +203,10 @@ export function createControlPlaneClient({
       return user;
     },
 
+    async listInstallations(accountToken) {
+      return accountInstallations(accountToken);
+    },
+
     async ensureInstallation({ accountToken, currentCredential, clientInstanceId, name, platform, appVersion }) {
       if (
         !clientInstanceSchema.safeParse(clientInstanceId).success
@@ -217,10 +234,7 @@ export function createControlPlaneClient({
       }
 
       if (!boundedSecret(accountToken)) throw new ControlPlaneError("signed_out", 401);
-      const { payload: listPayload } = await request("/v1/installations", { token: accountToken });
-      const installations = Array.isArray(listPayload.installations)
-        ? listPayload.installations.map(validatedInstallation).filter(Boolean)
-        : [];
+      const installations = await accountInstallations(accountToken);
       const existing = installations.find((item) => item.clientInstanceId === clientInstanceId);
       const result = existing
         ? await request(`/v1/installations/${encodeURIComponent(existing.id)}/credentials/rotate`, {

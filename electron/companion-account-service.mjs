@@ -291,18 +291,6 @@ export function createCompanionAccountService({
       await clearAfterCleanup();
       return true;
     }
-    const access = managedCompanionTunnelAccess(document);
-    if (!account.installationId && !account.installationCredential && !access) {
-      // OTP verification is persisted before provisioning so a transient
-      // setup failure can be retried without consuming another code. If setup
-      // failed before returning any installation or endpoint material, there
-      // is no connector credential to revoke and no hosted route to remove.
-      // The account bearer can be signed out best-effort and forgotten now.
-      await stopManagedEndpoint();
-      await client.signOut(account.accountToken).catch(() => {});
-      await clearAfterCleanup();
-      return true;
-    }
     if (markPending && !companionAccountCleanupPending(document)) await markCleanupPending();
     await stopManagedEndpoint();
 
@@ -316,16 +304,39 @@ export function createCompanionAccountService({
         // Revocation below is the authoritative cleanup schedule.
       }
     }
-    if (!account.installationId || !account.accountToken) {
+    if (!account.accountToken) {
       throw new ControlPlaneError("signed_out", 401);
     }
-    try {
-      await client.revokeInstallation(account.accountToken, account.installationId);
-    } catch (error) {
-      // A missing installation is already revoked for our purposes. The
-      // server's cleanup sweep also treats a missing owner row as work to
-      // finish, so retaining a now-useless local bearer would be less safe.
-      if (!(error instanceof ControlPlaneError) || error.status !== 404) throw error;
+
+    // A request can create an installation (and even its endpoint) while its
+    // response is lost, leaving no local ID or connector material. The stable
+    // computer UUID is therefore the cleanup authority: list the account's
+    // active installations and revoke every matching record before forgetting
+    // the bearer. Revocation marks the owner row and durably schedules the
+    // server-side endpoint sweep.
+    const clientInstanceId = ownString(document, COMPANION_CLIENT_INSTANCE_FIELD);
+    if (!UUID.test(clientInstanceId)) {
+      throw new ControlPlaneError("invalid_client_identity");
+    }
+
+    // The known ID is a fast path. Its result is not trusted on its own: the
+    // authoritative list below also catches a response-lost duplicate.
+    if (account.installationId) {
+      await client.revokeInstallation(account.accountToken, account.installationId).catch(() => {});
+    }
+    const installations = await client.listInstallations(account.accountToken);
+    for (const installation of installations) {
+      if (
+        installation.clientInstanceId !== clientInstanceId &&
+        installation.id !== account.installationId
+      ) {
+        continue;
+      }
+      try {
+        await client.revokeInstallation(account.accountToken, installation.id);
+      } catch (error) {
+        if (!(error instanceof ControlPlaneError) || error.status !== 404) throw error;
+      }
     }
     try {
       await client.signOut(account.accountToken);
