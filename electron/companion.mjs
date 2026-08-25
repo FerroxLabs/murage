@@ -25,6 +25,7 @@ const COMPANION_PORT = 8810;
 
 let proc = null;
 let lastError = null;
+let advertisedHostedUrl = null;
 
 /** Where the sidecar's entry lives, and the Node flags it needs.
  *
@@ -100,6 +101,13 @@ export function companionRunning() {
   return proc !== null;
 }
 
+/** The hosted route the owned sidecar is currently advertising. This is
+ * process-local public state only; the connector credential never enters
+ * this module. */
+export function companionAdvertisedHostedUrl() {
+  return proc ? advertisedHostedUrl : null;
+}
+
 // Every lifecycle transition runs to completion before the next one begins.
 //
 // Without this the guards below look sufficient and are not, because each one
@@ -135,7 +143,7 @@ export function stopCompanion() {
 }
 
 /** startCompanion's body, run inside the transition queue. */
-async function start({ resourcesPath, harnessPort, log }) {
+async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
   if (proc) return companionState();
   lastError = null;
   const resolved = entryPoint(resourcesPath);
@@ -150,9 +158,17 @@ async function start({ resourcesPath, harnessPort, log }) {
   }
   log?.(`companion fork ${resolved.entry}`);
 
+  // Never inherit an endpoint from the launch environment. The main process
+  // passes this value only after it has verified the managed connector, and
+  // an inherited value would bypass that gate and make Settings claim a dead
+  // or attacker-selected route is ready.
+  const childEnvironment = { ...process.env };
+  delete childEnvironment.OMB_COMPANION_HOSTED_URL;
+  if (hostedUrl) childEnvironment.OMB_COMPANION_HOSTED_URL = hostedUrl;
+
   const child = utilityProcess.fork(resolved.entry, [], {
     env: {
-      ...process.env,
+      ...childEnvironment,
       OMB_PORT: String(harnessPort),
       OMB_COMPANION_PORT: String(COMPANION_PORT),
       OMB_CONTROL_PORT: String(CONTROL_PORT),
@@ -171,7 +187,10 @@ async function start({ resourcesPath, harnessPort, log }) {
     // A non-zero exit before we saw it answer is the interesting case: the
     // usual cause is the port already being taken, and the sidecar's own
     // message says which one and why.
-    if (proc === child) proc = null;
+    if (proc === child) {
+      proc = null;
+      advertisedHostedUrl = null;
+    }
     log?.(`companion exited code=${code}`);
   });
 
@@ -200,6 +219,7 @@ async function start({ resourcesPath, harnessPort, log }) {
         return companionState();
       }
       proc = child;
+      advertisedHostedUrl = hostedUrl;
       return companionState();
     } catch {
       await new Promise((r) => setTimeout(r, 150));
@@ -218,6 +238,7 @@ async function start({ resourcesPath, harnessPort, log }) {
 async function stop() {
   const child = proc;
   proc = null;
+  advertisedHostedUrl = null;
   lastError = null;
   if (!child) return companionState();
   try {
@@ -246,7 +267,9 @@ async function stop() {
  * than an absence — the panel should never have to guess. */
 export async function companionState() {
   if (!proc) {
-    return { enabled: false, port: COMPANION_PORT, devices: [], pairing: null, ...(lastError ? { error: lastError } : {}) };
+    const state = { enabled: false, port: COMPANION_PORT, devices: [], pairing: null };
+    if (lastError) state.error = lastError;
+    return state;
   }
   try {
     const state = await control("GET", "/state");
