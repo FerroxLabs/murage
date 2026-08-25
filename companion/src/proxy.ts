@@ -14,6 +14,7 @@
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 
 import { bearerToken } from "./devices.ts";
+import type { CompanionEndpoint } from "./endpoints.ts";
 import { denyReason, isCloudDesktopJoin } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
@@ -38,6 +39,9 @@ export interface ProxyOptions {
    * stops resolving. Optional and advisory: a phone that never receives it
    * simply keeps dialing the one host it paired with. */
   hosts?: () => string[];
+  /** Complete connection URLs for current mobile clients. `hosts` remains
+   * alongside this field for builds that predate typed endpoints. */
+  endpoints?: () => CompanionEndpoint[];
   /** How long the harness may take to produce response *headers*. Optional,
    * and only ever set by tests — the default is the one that ships. */
   headersTimeoutMs?: number;
@@ -178,11 +182,17 @@ export function createProxyHandler(options: ProxyOptions) {
           // empty, when there is nothing to offer: absent is what a sidecar
           // predating the field sends, and one decode path beats two.
           const hosts = options.hosts?.() ?? [];
-          const response: typeof result & { serverName: string; hosts?: string[] } = {
+          const endpoints = options.endpoints?.() ?? [];
+          const response: typeof result & {
+            serverName: string;
+            hosts?: string[];
+            endpoints?: CompanionEndpoint[];
+          } = {
             ...result,
             serverName: options.serverName(),
           };
           if (hosts.length) response.hosts = hosts;
+          if (endpoints.length) response.endpoints = endpoints;
           return sendJson(res, 201, response);
         },
         (error: Error) => sendJson(res, 400, { error: error.message }),

@@ -15,6 +15,7 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 
 import type { DeviceRegistry } from "./devices.ts";
+import { companionEndpointCandidates } from "./endpoints.ts";
 import { lanAddresses, tailnetName, tailscaleAddress } from "./listener.ts";
 import { defaultHostName } from "./mdns.ts";
 
@@ -23,6 +24,8 @@ export interface ControlOptions {
   devices: DeviceRegistry;
   /** Where a phone connects — for display, and for the pairing instructions. */
   companionPort: number;
+  /** Stable HTTPS route provisioned for this computer, when available. */
+  hostedUrl?: string | null;
   /** Whether Bonjour came up, and under what name. */
   discovery: () => { advertising: boolean; name: string };
 }
@@ -130,6 +133,9 @@ export function companionState(options: ControlOptions) {
     // The ordered fallback list the pairing QR hands the phone, so it can
     // walk to the next address when the first stops resolving.
     hosts: hostCandidates(addresses, name),
+    // Complete URLs for new clients. Unlike `hosts`, this can represent an
+    // HTTPS route on its natural port without teaching the client to guess.
+    endpoints: companionEndpointCandidates(options.companionPort, addresses, name, options.hostedUrl),
     pairing: pairing ? { code: pairing.code, token: pairing.token, expiresAt: pairing.expiresAt } : null,
     devices: options.devices.list(),
     discovery: options.discovery(),

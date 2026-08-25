@@ -22,6 +22,7 @@ import { createServer } from "node:http";
 import { createAddressWatcher } from "./advertise-watch.ts";
 import { createControlServer, hostCandidates } from "./control.ts";
 import { DeviceRegistry } from "./devices.ts";
+import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
 import { lanAddresses, refreshTailnetName, tailnetName, tailscaleAddress } from "./listener.ts";
 import {
   advertisableAddresses,
@@ -45,6 +46,7 @@ const WEBHOOK_PORT = num(process.env.OMB_WEBHOOK_PORT, HARNESS_PORT + 1);
 const COMPANION_PORT = num(process.env.OMB_COMPANION_PORT, 8810);
 const CONTROL_PORT = num(process.env.OMB_CONTROL_PORT, 8811);
 const SERVICE_TYPE = "_openmausbot._tcp";
+const HOSTED_URL = hostedCompanionUrl(process.env.OMB_COMPANION_HOSTED_URL);
 
 /** Ports the harness takes for itself, and what it uses each for.
  *
@@ -137,12 +139,14 @@ const companion = createServer(
     // machine joins another network, and a pairing is exactly the moment the
     // list has to be right.
     hosts: () => hostCandidates(),
+    endpoints: () => companionEndpointCandidates(COMPANION_PORT, undefined, undefined, HOSTED_URL),
   }),
 );
 
 const control = createControlServer({
   devices,
   companionPort: COMPANION_PORT,
+  hostedUrl: HOSTED_URL,
   discovery: () => ({ advertising: mdns.advertising, name: service().name }),
 });
 

@@ -552,6 +552,10 @@ describe("pairing, end to end", () => {
         redeem: (code, deviceName, pairRequestId) => registry.redeem(code, deviceName, pairRequestId),
         serverName: () => "Ada's computer",
         hosts: () => ["macbook.tail1234.ts.net", "192.168.1.42", "openmausbot-abcd1234.local"],
+        endpoints: () => [
+          { url: "https://device-123.companion.example", kind: "hosted", priority: 0 },
+          { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
+        ],
       }),
     );
     await new Promise<void>((r) => paired.listen(0, "127.0.0.1", r));
@@ -605,12 +609,21 @@ describe("pairing, end to end", () => {
       expect(res.status).toBe(201);
       // SAFETY: a 201 from /api/pair carries exactly this shape — the
       // sidecar's own contract, pinned by the expects that follow.
-      const body = (await res.json()) as { token: string; serverName: string; hosts: string[] };
+      const body = (await res.json()) as {
+        token: string;
+        serverName: string;
+        hosts: string[];
+        endpoints: Array<{ url: string; kind: string; priority: number }>;
+      };
       expect(body.serverName).toBe("Ada's computer");
       expect(body.token).toMatch(/^omb_/);
       // The fallback list rides on the redeem response so a phone that paired
       // by typed address learns the other ways to reach this computer too.
       expect(body.hosts).toEqual(["macbook.tail1234.ts.net", "192.168.1.42", "openmausbot-abcd1234.local"]);
+      expect(body.endpoints).toEqual([
+        { url: "https://device-123.companion.example", kind: "hosted", priority: 0 },
+        { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
+      ]);
 
       // Losing the first response after it reached the Mac must not strand an
       // orphan device. The same logical request can arrive through a fallback

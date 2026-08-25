@@ -4,6 +4,13 @@ import { companionPairingLink } from "./companion-pairing";
 describe("companionPairingLink", () => {
   const token = `omb_pair_${"a".repeat(43)}`;
 
+  const decodedEndpoints = (link: string) => {
+    const encoded = new URL(link).searchParams.get("endpoints");
+    if (!encoded) return null;
+    const padded = encoded.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(encoded.length / 4) * 4, "=");
+    return JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+  };
+
   it("carries the dialable address, one-time token, fallback code, and display name", () => {
     const link = companionPairingLink({
       address: "macbook.tail1234.ts.net",
@@ -45,6 +52,49 @@ describe("companionPairingLink", () => {
     expect(new URL(link!).searchParams.get("hosts")).toBe(
       "macbook.tail1234.ts.net,192.168.1.42,openmausbot-abcd1234.local",
     );
+  });
+
+  it("carries sorted typed endpoints as URL-safe base64 JSON while preserving legacy fields", () => {
+    const link = companionPairingLink({
+      address: "192.168.1.42",
+      port: 8810,
+      code: "004209",
+      token,
+      hosts: ["192.168.1.42", "openmausbot-abcd1234.local"],
+      endpoints: [
+        { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
+        { url: "https://Device-123.Companion.Example/", kind: "hosted", priority: 0 },
+        { url: "http://openmausbot-abcd1234.local:8810", kind: "bonjour", priority: 300 },
+      ],
+    });
+
+    const url = new URL(link!);
+    expect(url.searchParams.get("address")).toBe("192.168.1.42:8810");
+    expect(url.searchParams.get("hosts")).toBe("192.168.1.42,openmausbot-abcd1234.local");
+    expect(url.searchParams.get("endpoints")).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(decodedEndpoints(link!)).toEqual([
+      { url: "https://device-123.companion.example", kind: "hosted", priority: 0 },
+      { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
+      { url: "http://openmausbot-abcd1234.local:8810", kind: "bonjour", priority: 300 },
+    ]);
+  });
+
+  it("filters malformed or transport-mismatched typed endpoints", () => {
+    const link = companionPairingLink({
+      address: "mac.local",
+      port: 8810,
+      code: "004209",
+      token,
+      endpoints: [
+        { url: "http://hosted.example", kind: "hosted", priority: 0 },
+        { url: "https://192.168.1.42:8810", kind: "lan", priority: 200 },
+        { url: "http://mac.local:8810/path", kind: "bonjour", priority: 300 },
+        { url: "http://mac.local:8810", kind: "bonjour", priority: 300 },
+      ],
+    });
+    expect(decodedEndpoints(link!)).toEqual([
+      { url: "http://mac.local:8810", kind: "bonjour", priority: 300 },
+    ]);
   });
 
   it("drops unusable fallback hosts without breaking the link", () => {
