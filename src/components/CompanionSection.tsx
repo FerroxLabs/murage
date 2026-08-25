@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Cloud, Loader2, LogOut, Smartphone, Trash2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { companionPairingLink, type CompanionEndpoint } from "../lib/companion-pairing";
+import type { CompanionAccountState } from "../types/ogb";
 import { Card } from "./SettingsPrimitives";
 
 interface Device {
@@ -64,21 +65,7 @@ type Bridge = {
   revoke: (deviceId: string) => Promise<CompanionState>;
 };
 
-interface CompanionAccountState {
-  available: boolean;
-  status: "signed-out" | "connecting" | "ready" | "error";
-  email?: string;
-  endpoint?: string;
-  message?: string;
-}
-
-type AccountBridge = {
-  state: () => Promise<CompanionAccountState>;
-  requestCode: (email: string) => Promise<CompanionAccountState>;
-  verifyCode: (email: string, code: string) => Promise<CompanionAccountState>;
-  retry: () => Promise<CompanionAccountState>;
-  signOut: () => Promise<CompanionAccountState>;
-};
+type AccountBridge = NonNullable<NonNullable<Window["ogb"]>["companionAccount"]>;
 
 const bridge = (): Bridge | null =>
   // SAFETY: the preload owns `ogb.companion`; every call is still guarded for browser builds where it is absent.
@@ -105,6 +92,14 @@ const endpointHost = (url: string): string => {
   } catch {
     return url;
   }
+};
+
+export const companionAccountActionError = (
+  account: CompanionAccountState | null,
+  actionError: string | null,
+): string | null => {
+  if (actionError) return actionError;
+  return account?.status === "signed-out" ? account.message ?? null : null;
 };
 
 export function CompanionSection() {
@@ -220,6 +215,7 @@ export function CompanionSection() {
   // HTTP, so fall back to LAN instead of putting a broken address in the QR.
   const tailnet = state.tailnetName;
   const hosted = state.endpoints?.find((endpoint) => endpoint.kind === "hosted");
+  const accountActionError = companionAccountActionError(account, accountError);
   // `address` is deliberately still a direct host. Older iOS builds assume
   // this field means host:port over HTTP and would corrupt an HTTPS URL.
   const address =
@@ -443,10 +439,8 @@ export function CompanionSection() {
               </button>
             </div>
           )}
-          {(accountError || account?.message) && account.status === "signed-out" && (
-            <div className="mt-3 text-[13px] text-danger">
-              {accountError ?? account.message}
-            </div>
+          {accountActionError && (
+            <div className="mt-3 text-[13px] text-danger">{accountActionError}</div>
           )}
         </Card>
       )}

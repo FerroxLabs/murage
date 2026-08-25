@@ -21,6 +21,6 @@ Pair with a short-lived code from OpenMausBot’s Companion panel. The computer 
 
 USE IT AT HOME OR AWAY
 
-Bonjour finds your computer on a trusted local network. For remote access, use Tailscale on both devices or enable the optional passwordless HTTPS connection in OpenMausBot’s desktop Companion settings.
+Bonjour finds your computer on a trusted local network. For remote access, use Tailscale on both devices or enable the optional email-verified HTTPS connection in OpenMausBot’s desktop Companion settings.
 
 Requires OpenMausBot running on a Mac, Windows, or Linux computer. Tailscale is optional and is not affiliated with OpenMausBot.

@@ -7,10 +7,11 @@ production hosted service still match this repository.
 - Data used for third-party advertising, developer advertising, or marketing:
   **None**
 - Third-party advertising or analytics SDKs: **None**
-- Data linked to the user, for **App Functionality** and **Account Management**:
-  - Contact Info: **Email Address**
-  - Identifiers: **User ID** and **Device ID** (opaque account and computer
-    installation identifiers)
+- Data linked to the user, for **App Functionality**:
+  - Contact Info: **Email Address** (the profile email exposed by the paired
+    computer)
+  - Identifiers: **Device ID** (the opaque paired-device identifier returned
+    by the user's computer)
 - Data used for **Security/Fraud Prevention** and service reliability:
   computer platform/app version, security timestamps, rate-limit state,
   redacted operational errors, and connection/request metadata processed by
@@ -24,12 +25,13 @@ production hosted service still match this repository.
 - Privacy policy URL:
   `https://github.com/milind-soni/OpenMausBot/blob/main/docs/ios-privacy.md`
 
-The email is entered on the companion computer, not in the iOS app. Local Wi-Fi
-and Tailscale pairing require no OpenMausBot account. If the desktop user opts
-into **Use your phone anywhere**, OpenMausBot stores the account and installation
-metadata above in Cloudflare D1 and Cloudflare proxies the encrypted phone
-traffic to that user's computer. The computer remains the only transcript
-store; the control plane does not receive a persistent cloud copy.
+The iOS app does not receive the hosted account's user ID or the computer's
+hosted installation ID. Email sign-in for optional hosted access happens on the
+companion computer, and local Wi-Fi and Tailscale pairing require no OpenMausBot
+account. If the desktop user opts into **Use your phone anywhere**, Cloudflare
+proxies the encrypted phone traffic to that user's computer. The computer
+remains the only transcript store; the control plane does not receive a
+persistent cloud copy.
 
 Re-evaluate these answers and `PrivacyInfo.xcprivacy` before every upload,
 especially if analytics, push delivery, crash reporting, or content retention
