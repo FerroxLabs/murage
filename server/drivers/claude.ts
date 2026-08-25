@@ -704,6 +704,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               approvalScope:
                 controlsHost && typeof askTools.get(resolved.id) === "string" && askTools.get(resolved.id)!.startsWith("mcp__computer") ? "local-computer" : undefined,
             });
+            askTools.delete(resolved.id);
           },
         });
       }
