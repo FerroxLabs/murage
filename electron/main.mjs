@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
@@ -643,6 +643,42 @@ function createWindow() {
     return { action: "deny" };
   });
   win.webContents.on("did-finish-load", () => deliverPackageInstall(win));
+
+  // Native context menu for text inputs — without this, right-click does
+  // nothing in the Electron window (no Cut/Copy/Paste/Select All).
+  win.webContents.on("context-menu", (_event, params) => {
+    // nothing actionable here — no menu at all, rather than a wall of
+    // disabled items
+    if (!params.isEditable && !params.linkURL && !params.misspelledWord && !params.selectionText) return;
+    const menuItems = [];
+    if (params.misspelledWord) {
+      for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+        menuItems.push({
+          label: suggestion,
+          click: () => win.webContents.replaceMisspelling(suggestion),
+        });
+      }
+      if (menuItems.length) menuItems.push({ type: "separator" });
+    }
+    if (params.linkURL) {
+      menuItems.push(
+        { label: "Copy Link", click: () => clipboard.writeText(params.linkURL) },
+        { type: "separator" },
+      );
+    }
+    menuItems.push(
+      { label: "Undo", role: "undo", enabled: params.editFlags.canUndo },
+      { label: "Redo", role: "redo", enabled: params.editFlags.canRedo },
+      { type: "separator" },
+      { label: "Cut", role: "cut", enabled: params.editFlags.canCut },
+      { label: "Copy", role: "copy", enabled: params.editFlags.canCopy },
+      { label: "Paste", role: "paste", enabled: params.editFlags.canPaste },
+      { label: "Paste and Match Style", role: "pasteAndMatchStyle", enabled: params.editFlags.canPaste },
+      { type: "separator" },
+      { label: "Select All", role: "selectAll", enabled: params.editFlags.canSelectAll },
+    );
+    Menu.buildFromTemplate(menuItems).popup({ window: win, frame: params.frame });
+  });
 
   // Packaged CI smoke hook. It validates the real renderer/preload bridge and
   // same-origin embedded server, then follows the normal window-close path.
