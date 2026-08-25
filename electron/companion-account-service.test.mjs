@@ -539,6 +539,38 @@ describe("Companion account service", () => {
     expect(listInstallations).toHaveBeenCalledTimes(2);
   });
 
+  it("stops hosted access before remote cleanup when the control plane is offline", async () => {
+    const offline = async () => {
+      throw new ControlPlaneError("network_unavailable");
+    };
+    const client = readyClient({
+      health: vi.fn(offline),
+      deleteEndpoint: vi.fn(offline),
+      listInstallations: vi.fn(offline),
+      revokeInstallation: vi.fn(offline),
+    });
+    const stopManagedEndpoint = vi.fn(async () => {});
+    const { service, store } = serviceFixture({
+      initial: signedCredentials(),
+      client,
+      stopManagedEndpoint,
+    });
+
+    await expect(service.signOut()).resolves.toMatchObject({
+      status: "error",
+      email: "ada@example.com",
+    });
+
+    expect(client.health).not.toHaveBeenCalled();
+    expect(stopManagedEndpoint).toHaveBeenCalledOnce();
+    expect(store.read()).toMatchObject({
+      [COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD]: true,
+      [COMPANION_ACCOUNT_TOKEN_FIELD]: ACCOUNT_TOKEN,
+      [COMPANION_INSTALLATION_CREDENTIAL_FIELD]: INSTALLATION_CREDENTIAL,
+      [MANAGED_COMPANION_TOKEN_FIELD]: CONNECTOR_TOKEN,
+    });
+  });
+
   it("uses a same-account reauthentication to finish pending cleanup instead of reprovisioning", async () => {
     const refreshedToken = `signed.${"r".repeat(80)}`;
     const client = readyClient({

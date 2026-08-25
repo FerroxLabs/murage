@@ -575,8 +575,16 @@ export function createCompanionAccountService({
     const email = storedAccount(credentials())?.email;
     phase = { status: "connecting", email };
     try {
-      await requireHealthyControlPlane();
+      // Local access must stop even when the hosted control plane is down.
+      // cleanupCurrentAccount first persists durable cleanup intent and stops
+      // the connector, then attempts remote deletion/revocation with the
+      // retained credentials. A failed remote step is retryable; a health
+      // preflight here would leave paired-phone access live after Sign out.
       await cleanupCurrentAccount();
+      // Successful owner-scoped reconciliation is stronger evidence than a
+      // separate health probe and keeps the signed-out setup card available.
+      healthy = true;
+      lastHealthCheck = now();
       return settledState();
     } catch (error) {
       failAction(error, { email });
