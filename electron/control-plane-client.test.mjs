@@ -33,6 +33,7 @@ describe("control-plane desktop client", () => {
   });
 
   it("requires the exact healthy control-plane identity before onboarding", async () => {
+    const timeoutSignal = vi.fn(() => new AbortController().signal);
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ ok: true, service: "openmausbot-control-plane" }))
@@ -40,6 +41,7 @@ describe("control-plane desktop client", () => {
     const client = createControlPlaneClient({
       baseURL: "https://accounts.openmausbot.com",
       fetchImpl,
+      timeoutSignal,
     });
 
     await expect(client.health()).resolves.toBe(true);
@@ -48,6 +50,7 @@ describe("control-plane desktop client", () => {
     });
     expect(fetchImpl.mock.calls[0][0]).toBe("https://accounts.openmausbot.com/healthz");
     expect(fetchImpl.mock.calls[0][1].redirect).toBe("error");
+    expect(timeoutSignal).toHaveBeenNthCalledWith(1, 3_000);
   });
 
   it("uses the signed Better Auth bearer header, never its raw JSON token", async () => {

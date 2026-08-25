@@ -108,11 +108,15 @@ export function createControlPlaneClient({
   fetchImpl = globalThis.fetch,
   timeoutSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
   timeoutMs = 15_000,
+  healthTimeoutMs = 3_000,
 }) {
   const origin = normalizeControlPlaneURL(baseURL);
   if (!origin) throw new ControlPlaneError("control_plane_unavailable");
 
-  const request = async (path, { method = "GET", token, body, allowEmpty = false } = {}) => {
+  const request = async (
+    path,
+    { method = "GET", token, body, allowEmpty = false, deadlineMs = timeoutMs } = {},
+  ) => {
     const headers = new Headers({ accept: "application/json" });
     if (token) headers.set("authorization", `Bearer ${token}`);
     if (body !== undefined) headers.set("content-type", "application/json");
@@ -122,7 +126,7 @@ export function createControlPlaneClient({
         method,
         headers,
         redirect: "error",
-        signal: timeoutSignal(timeoutMs),
+        signal: timeoutSignal(deadlineMs),
       };
       if (body !== undefined) init.body = JSON.stringify(body);
       response = await fetchImpl(`${origin}${path}`, init);
@@ -164,7 +168,9 @@ export function createControlPlaneClient({
     origin,
 
     async health() {
-      const { payload } = await request("/healthz");
+      const { payload } = await request("/healthz", {
+        deadlineMs: Math.min(timeoutMs, healthTimeoutMs),
+      });
       if (
         payload.ok !== true ||
         payload.service !== "openmausbot-control-plane"
