@@ -13,7 +13,6 @@
 // else would hand away the control plane the design just took care to
 // withhold.
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { z } from "zod";
 
 import type { DeviceRegistry } from "./devices.ts";
 import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
@@ -88,11 +87,25 @@ const json = (res: ServerResponse, status: number, body: unknown) => {
   res.end(text);
 };
 
-const hostedEndpointPayload = z.object({ url: z.string().nullable() }).strict();
+interface HostedEndpointPayload {
+  url: string | null;
+}
+
+/** The control socket is also used by the packaged Electron app, where the
+ * sidecar runs directly from its compiled output without a node_modules tree.
+ * Keep this tiny wire contract dependency-free and deliberately exact: one
+ * own enumerable `url` property, with no silently discarded extras. */
+const isHostedEndpointPayload = (value: unknown): value is HostedEndpointPayload => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== "url") return false;
+  const url = (value as { url?: unknown }).url;
+  return url === null || typeof url === "string";
+};
 
 const readHostedEndpoint = (
   req: import("node:http").IncomingMessage,
-): Promise<z.infer<typeof hostedEndpointPayload>> =>
+): Promise<HostedEndpointPayload> =>
   new Promise((resolve, reject) => {
     let size = 0;
     const chunks: Buffer[] = [];
@@ -108,7 +121,9 @@ const readHostedEndpoint = (
     req.on("error", reject);
     req.on("end", () => {
       try {
-        resolve(hostedEndpointPayload.parse(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
+        const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        if (!isHostedEndpointPayload(parsed)) throw new Error("invalid shape");
+        resolve(parsed);
       } catch {
         reject(new Error("invalid JSON body"));
       }

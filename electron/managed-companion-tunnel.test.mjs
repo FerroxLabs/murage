@@ -138,18 +138,26 @@ describe("managed companion credentials", () => {
 
 describe("cloudflared binary resolution", () => {
   it("requires the bundled Resources binary in production", () => {
+    const resourcesPath = path.join(
+      path.parse(process.cwd()).root,
+      "Applications",
+      "OpenMausBot",
+      "Contents",
+      "Resources",
+    );
+    const bundledBinary = path.join(resourcesPath, "cloudflared", "cloudflared");
     expect(
       resolveCloudflaredBinary({
         isPackaged: true,
-        resourcesPath: "/Applications/OpenMausBot/Contents/Resources",
+        resourcesPath,
         platform: "darwin",
-        exists: (candidate) => candidate.endsWith("/cloudflared/cloudflared"),
+        exists: (candidate) => candidate === bundledBinary,
       }),
-    ).toBe("/Applications/OpenMausBot/Contents/Resources/cloudflared/cloudflared");
+    ).toBe(bundledBinary);
     expect(
       resolveCloudflaredBinary({
         isPackaged: true,
-        resourcesPath: "/Applications/OpenMausBot/Contents/Resources",
+        resourcesPath,
         platform: "darwin",
         exists: () => false,
       }),

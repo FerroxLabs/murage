@@ -209,6 +209,40 @@ describe("hosted endpoint advertisement", () => {
     expect(withdrawn.status).toBe(200);
     expect(withdrawn.body.endpoints.some((endpoint: { kind: string }) => endpoint.kind === "hosted")).toBe(false);
   });
+
+  it("accepts exactly one string-or-null url field", async () => {
+    const headers = { "content-type": "application/json" };
+    for (const body of [
+      {},
+      { url: null, extra: true },
+      { url: 42 },
+      { url: false },
+      [],
+      null,
+      "https://c-opaque.openmausbot.test",
+    ]) {
+      const result = await ask("PUT", "/hosted-endpoint", headers, JSON.stringify(body));
+      expect(result).toEqual({ status: 400, body: { error: "invalid JSON body" } });
+    }
+
+    expect((await ask("PUT", "/hosted-endpoint", headers, JSON.stringify({ url: null }))).status).toBe(200);
+  });
+
+  it("refuses a hosted-endpoint body larger than 4096 bytes", async () => {
+    const request = ask(
+      "PUT",
+      "/hosted-endpoint",
+      { "content-type": "application/json" },
+      JSON.stringify({ url: `https://${"a".repeat(4096)}.example` }),
+    );
+    // The server deliberately tears down an oversized upload as soon as the
+    // byte limit is crossed, so native fetch reports a transport failure
+    // rather than waiting for (or parsing) the remainder of the body.
+    await expect(request).rejects.toThrow();
+    expect((await ask("GET", "/state")).body.endpoints.some(
+      (endpoint: { kind: string }) => endpoint.kind === "hosted",
+    )).toBe(false);
+  });
 });
 
 describe("originIsLoopback", () => {
