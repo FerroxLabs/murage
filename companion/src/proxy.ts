@@ -181,14 +181,6 @@ export function createProxyHandler(options: ProxyOptions) {
       });
     }
 
-    // The public liveness route identifies only this narrow companion
-    // boundary. Forwarding the harness's health payload leaked its PID and
-    // packaged/static mode through every managed tunnel. Mobile clients only
-    // use `app` to reject a wrong host, so keep that stable and nothing more.
-    if (method === "GET" && path === "/api/health") {
-      return sendJson(res, 200, { app: "openmausbot" });
-    }
-
     // Pairing terminates here. Forwarding it would hand the harness a route
     // it does not have, and the 404 would read to a phone as "wrong address".
     if (method === "POST" && path === "/api/pair") {
@@ -236,6 +228,56 @@ export function createProxyHandler(options: ProxyOptions) {
       },
       (harness) => {
         clearTimeout(headersDeadline);
+        // Keep liveness tied to the actual harness. Answering from the
+        // sidecar alone made a dead bot server look healthy and caused the
+        // desktop to advertise a hosted route that could not serve chats.
+        // The harness response is inspected under a tiny bound, then replaced
+        // completely so its pid/static fields never cross the public tunnel.
+        if (method === "GET" && path === "/api/health") {
+          const chunks: Buffer[] = [];
+          let size = 0;
+          let finished = false;
+          const fail = () => {
+            if (finished) return;
+            finished = true;
+            sendJson(res, 502, { error: "OpenMausBot is not ready on this computer" });
+          };
+          harness.on("data", (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > 4_096) {
+              harness.destroy();
+              fail();
+              return;
+            }
+            chunks.push(chunk);
+          });
+          harness.on("error", fail);
+          harness.on("end", () => {
+            if (finished) return;
+            let identity: unknown;
+            try {
+              identity = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+            } catch {
+              fail();
+              return;
+            }
+            // SAFETY: identity came from untrusted JSON, and this assertion
+            // grants no domain behavior; it permits one optional property
+            // read whose value must equal a fixed literal before success.
+            if (
+              (harness.statusCode ?? 500) < 200 ||
+              (harness.statusCode ?? 500) >= 300 ||
+              (identity as { app?: unknown } | null)?.app !== "openmausbot"
+            ) {
+              fail();
+              return;
+            }
+            finished = true;
+            sendJson(res, 200, { app: "openmausbot" });
+          });
+          return;
+        }
+
         const contentType = harness.headers["content-type"];
         const isStream = String(contentType ?? "").includes("text/event-stream");
 
