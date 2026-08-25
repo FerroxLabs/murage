@@ -1,0 +1,5 @@
+# Local-only placeholders. Copy this file to .dev.vars and replace the secret.
+BETTER_AUTH_URL=https://auth.openmausbot.test
+BETTER_AUTH_SECRET=replace-with-at-least-32-random-bytes
+EMAIL_FROM=noreply@openmausbot.test
+ALLOWED_ORIGINS=https://app.openmausbot.test
