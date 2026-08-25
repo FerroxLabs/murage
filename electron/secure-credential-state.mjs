@@ -49,4 +49,3 @@ export function createSecureCredentialState(initialCredentials, persist) {
     },
   };
 }
-
