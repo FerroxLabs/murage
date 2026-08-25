@@ -18,11 +18,17 @@ The first version includes:
   state.
 - Approvals and questions, including narrow “always allow” grants.
 - Resumable SSE, streamed reply text, reconnect hydration, and an opt-in live
-  computer view.
+  Box computer view. The loopback-only VPS SSH viewer remains desktop-only.
 - Markdown rendering and Keychain storage for the device token.
 
 It is foreground-only. Push notifications, background delivery, voice, App
 Store release automation, and a hosted relay are not part of this version.
+
+The Mac must be running OpenMausBot and must not be asleep. Companion Settings
+offers an off-by-default **Keep this computer awake** switch that prevents
+system sleep while Companion is on; the display may still turn off. Without a
+hosted relay, a sleeping or powered-off Mac cannot receive phone requests or
+run its local routines.
 
 ## Runtime architecture
 

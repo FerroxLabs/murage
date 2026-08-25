@@ -16,6 +16,7 @@ import {
   VPS_CONTAINER_LABEL,
   VPS_IMAGE,
   VPS_MANAGED_LABEL,
+  VPS_VIEWER_LABEL,
   vpsComputerAction,
   vpsComputerScreenshot,
   vpsComputerStatus,
@@ -25,6 +26,7 @@ import {
   vpsContainerRunArgs,
   vpsDockerArgs,
   vpsDriverError,
+  vpsSshTunnelArgs,
   reuseVps,
   type VpsCommandRunner,
 } from "./vps-computer.ts";
@@ -127,6 +129,7 @@ function fixture({
         stdout: JSON.stringify([{
           Config: {
             Image: state.image ? VPS_IMAGE : "old-image",
+            Env: [`VNC_PW=${argValue("VNC_PW") || "viewer-secret"}`],
             Labels: {
               [VPS_MANAGED_LABEL]: managed ? "1" : "0",
               [VPS_CONTAINER_LABEL]: managed ? name : "other-container",
@@ -134,6 +137,7 @@ function fixture({
               [DRIVER_LABEL]: CUA_DRIVER_VERSION,
               [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
               [IMAGE_LAYER_LABEL]: IMAGE_LAYER_VERSION,
+              [VPS_VIEWER_LABEL]: "1",
             },
           },
            Id: containerId,
@@ -165,7 +169,7 @@ function fixture({
             RestartPolicy: { Name: restartPolicyName, MaximumRetryCount: 0 },
           },
           NetworkSettings: {
-            Networks: { [networkMode === "default" ? "bridge" : networkMode]: {} },
+            Networks: { [networkMode === "default" ? "bridge" : networkMode]: { IPAddress: "172.17.0.5" } },
           },
           Mounts: mounts ? [{ Source: "/host", Destination: "/container" }] : [],
           State: { Running: state.running },
@@ -238,6 +242,15 @@ describe("VPS computer", () => {
       expect(() => vpsDockerArgs(alias, ["info"])).toThrow(/alias/);
     }
     expect(() => vpsContainerMcpArgs("production-vps", "not a container")).toThrow(/connection/);
+  });
+
+  it("keeps the live desktop behind a validated loopback SSH forward", () => {
+    const args = vpsSshTunnelArgs("production-vps", 45678, "172.17.0.5");
+    expect(args).toContain("127.0.0.1:45678:172.17.0.5:6901");
+    expect(args.at(-1)).toBe("production-vps");
+    expect(args).toContain("ExitOnForwardFailure=yes");
+    expect(() => vpsSshTunnelArgs("production-vps", 80, "172.17.0.5")).toThrow(/port/);
+    expect(() => vpsSshTunnelArgs("production-vps", 45678, "203.0.113.8")).toThrow(/private/);
   });
 
   it("reports a ready container only when image, labels, limits, mounts, network, and Cua pass", async () => {
@@ -371,7 +384,10 @@ describe("VPS computer", () => {
     expect(run.at(-1)).toBe(IMAGE_ID);
     expect(run.join(" ")).toContain(`--label ${VPS_MANAGED_LABEL}=1`);
     expect(run.join(" ")).toContain(`--label ${IMAGE_LAYER_LABEL}=${IMAGE_LAYER_VERSION}`);
+    expect(run.join(" ")).toContain(`--label ${VPS_VIEWER_LABEL}=1`);
     expect(run.join(" ")).toContain("--restart unless-stopped");
+    expect(run).toContain("-e");
+    expect(run.some((arg) => /^VNC_PW=[A-Za-z0-9_-]{8,}$/.test(arg))).toBe(true);
     expect(run).not.toContain("--mount");
     expect(run).not.toContain("-p");
     expect(provision.calls.some(({ args }) => args[2] === "build")).toBe(true);

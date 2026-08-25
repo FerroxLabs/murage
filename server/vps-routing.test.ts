@@ -27,7 +27,7 @@ import {
   IMAGE_LAYER_VERSION,
   MANAGED_LABEL,
 } from "./container-computer.ts";
-import { VPS_CONTAINER_LABEL, VPS_IMAGE, VPS_MANAGED_LABEL } from "./vps-computer.ts";
+import { VPS_CONTAINER_LABEL, VPS_IMAGE, VPS_MANAGED_LABEL, VPS_VIEWER_LABEL } from "./vps-computer.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -65,6 +65,7 @@ function containerInspectTemplate(): string {
       Image: IMAGE_ID,
       Config: {
         Image: VPS_IMAGE,
+        Env: ["VNC_PW=test-viewer-secret"],
         Labels: {
           [VPS_MANAGED_LABEL]: "1",
           [VPS_CONTAINER_LABEL]: "__NAME__",
@@ -72,10 +73,11 @@ function containerInspectTemplate(): string {
           [DRIVER_LABEL]: CUA_DRIVER_VERSION,
           [BASE_IMAGE_LABEL]: BASE_IMAGE_DIGEST,
           [IMAGE_LAYER_LABEL]: IMAGE_LAYER_VERSION,
+          [VPS_VIEWER_LABEL]: "1",
         },
       },
       State: { Running: true },
-      NetworkSettings: { Networks: { bridge: {} } },
+      NetworkSettings: { Networks: { bridge: { IPAddress: "172.17.0.5" } } },
       Mounts: [],
       HostConfig: {
         Binds: [],

@@ -109,6 +109,11 @@ function Shell() {
           if (snap) dispatch({ type: "computerControl", botId, held: snap.held === true, helpReason: snap.helpReason ?? null });
         })
         .catch(() => {});
+      void fetch(`/api/bots/${botId}/computer/viewer-close`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }).catch(() => {});
     });
   }, [dispatch]);
 

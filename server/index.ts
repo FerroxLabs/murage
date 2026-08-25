@@ -1535,6 +1535,7 @@ async function startTurn(
       const mountsLocalComputer = instance.adapter.capabilities.localComputerMcp === true;
       let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
       let computerKind: "box" | "vps" | "vm" | "local" | null = null;
+      let autoVpsProblem: string | null = null;
 
       // Explicit destinations are strict. In particular, Local VM must never
       // fall through to host CUA and accidentally click on the user's Mac.
@@ -1580,16 +1581,17 @@ async function startTurn(
       }
 
       // A VPS is a local-agent computer mount, never a remote agent runner.
-      // Explicit Cloud may prepare/start it; Auto is read-only and can only
-      // attach to an already-running, verified container.
+      // Explicit Cloud may prepare/start it. Auto remains read-only unless
+      // the person explicitly opted this bot into remote lifecycle actions.
       if ((wants === "cloud" || wants === undefined) && cloudBackend === "vps") {
         const unsupported = vps.vpsDriverError(instance.driverKind, mountsComputerMcp);
         if (unsupported && wants === "cloud") throw new Error(unsupported);
+        if (unsupported && wants === undefined) autoVpsProblem = unsupported;
         if (!unsupported) {
           activeVpsThreads.set(bot.id, threadId);
-          const remote = wants === "cloud"
+          const remote = wants === "cloud" || bot.autoStartVps
             ? await vps.vpsComputerAction("provision", cfg, bot.id)
-            : await vps.reuseVps(cfg, bot.id);
+            : await vps.inspectVpsForAuto(cfg, bot.id);
           if (remote?.ready && remote.sshAlias) {
             const targetCfg = { ...cfg, vps: { sshAlias: remote.sshAlias } };
             const vpsMcp = vps.vpsComputerMcp(targetCfg, bot.id, remote.container_id ?? undefined);
@@ -1605,6 +1607,7 @@ async function startTurn(
             if (wants === "cloud") {
               throw new Error(remote?.problem ?? "the VPS computer could not be created or reached");
             }
+            autoVpsProblem = remote?.problem ?? "the VPS computer could not be reached";
           }
         }
       }
@@ -1668,6 +1671,18 @@ async function startTurn(
           integrations.localComputer = cua;
           computerKind = "local";
         }
+      }
+      if (
+        wants === undefined &&
+        cloudBackend === "vps" &&
+        !integrations.computer &&
+        !integrations.localComputer &&
+        autoVpsProblem
+      ) {
+        const hint = bot.autoStartVps
+          ? "Check the VPS connection in App Settings → Connections."
+          : "Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.";
+        throw new Error(`${autoVpsProblem}. ${hint}`);
       }
       // Agent control tools include peer comms and the secure credential
       // request card. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
@@ -4039,6 +4054,10 @@ const server = createServer(async (req, res) => {
       if (body.cloudBackend !== undefined && !["box", "vps"].includes(String(body.cloudBackend))) {
         return json(res, 400, { error: "cloudBackend must be box or vps" });
       }
+      if (body.autoStartVps !== undefined) {
+        if (typeof body.autoStartVps !== "boolean") return json(res, 400, { error: "autoStartVps must be true or false" });
+        patch.autoStartVps = body.autoStartVps;
+      }
       if (body.chiefOfStaff !== undefined && typeof body.chiefOfStaff !== "boolean") {
         return json(res, 400, { error: "chiefOfStaff must be true or false" });
       }
@@ -5048,6 +5067,15 @@ const server = createServer(async (req, res) => {
       }
       return json(res, 405, { error: "method not allowed" });
     }
+    m = path.match(/^\/api\/bots\/([\w-]+)\/computer\/viewer-close$/);
+    if (m && method === "POST") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      return json(res, 200, bot.cloudBackend === "vps" ? vps.closeVpsDesktopTunnel(bot.id) : { closed: false });
+    }
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer\/(provision|join|sleep|exec|screenshot|remove)$/);
     if (m && method === "POST") {
       const botId = m[1];
@@ -5062,14 +5090,22 @@ const server = createServer(async (req, res) => {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       if (bot.cloudBackend === "vps") {
-        if (m[2] === "join" || m[2] === "exec") {
-          return json(res, 409, { error: "interactive VPS desktop access is not supported" });
+        if (m[2] === "exec") {
+          return json(res, 409, { error: "the VPS console is available to the bot through its scoped computer tools" });
         }
-        if (m[2] === "provision" && bot.computer !== "cloud") {
-          return json(res, 409, { error: "Auto mode will not provision a VPS; choose Cloud for this bot first" });
+        if (m[2] === "provision" && bot.computer !== "cloud" && !bot.autoStartVps) {
+          return json(res, 409, { error: "Auto may start this VPS only after Start VPS automatically is enabled" });
         }
         if ((m[2] === "sleep" || m[2] === "remove") && (bot.busy || activeVpsThreads.has(botId))) {
           return json(res, 409, { error: "the VPS computer is being used by this bot — interrupt the turn first" });
+        }
+        if (m[2] === "join") {
+          if (req.headers["x-openmausbot-companion"] === "1") {
+            return json(res, 409, {
+              error: "VPS live desktop control is currently available in the desktop app; the SSH viewer is loopback-only",
+            });
+          }
+          return json(res, 200, await vps.vpsComputerJoin(cfg, botId));
         }
         if (m[2] === "screenshot") return json(res, 200, await vps.vpsComputerScreenshot(cfg, botId));
         const action = m[2] === "provision" ? "provision" : m[2] === "remove" ? "remove" : "stop";
@@ -5130,6 +5166,7 @@ server.listen(PORT, "127.0.0.1", () => {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     for (const idle of localVmIdles.values()) idle.cancel();
+    vps.closeAllVpsDesktopTunnels();
     watchdog.stop();
     routines?.stop();
     webhookIngress?.server.close();

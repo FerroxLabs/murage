@@ -344,7 +344,11 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             return;
           }
           setBoxState(status.container ?? null);
-          setError(`${status.problem ?? "No ready VPS container"}. Auto will not create or start it; choose Cloud to provision it.`);
+          setError(
+            bot.autoStartVps
+              ? `${status.problem ?? "No ready VPS container"}. Auto will prepare or wake it when this bot next works.`
+              : `${status.problem ?? "No ready VPS container"}. Enable Start VPS automatically below, or choose Cloud to provision it.`,
+          );
           setPhase(status.container === "stopped" ? "vps-stopped" : "vps-unconfigured");
         })
         .catch((e) => {
@@ -392,6 +396,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   }, [
     bot.id,
     bot.computer,
+    bot.autoStartVps,
     cloudBackend,
     retry,
     capabilitiesReady,
@@ -503,7 +508,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         : null;
   const previewOpensDesktop = Boolean(
     frameSrc &&
-      ((phase === "vm" && vmViewerUrl) || (phase === "ready" && cloudBackend === "box")),
+      ((phase === "vm" && vmViewerUrl) || phase === "ready"),
   );
 
   // who-is-driving: SSE keeps this fresh; the mount fetch covers a panel
@@ -586,6 +591,9 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       }
     } catch (e) {
       fallbackTab?.close();
+      if (phase === "ready" && cloudBackend === "vps") {
+        await api(`/api/bots/${bot.id}/computer/viewer-close`, { method: "POST", body: "{}" }).catch(() => {});
+      }
       // A failed viewer must not leave the bot's hands paused indefinitely.
       if (tookControl) await requestControl("release").catch(() => {});
       setError(e instanceof Error ? e.message : String(e));
@@ -849,17 +857,19 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                   Open VPS settings
                 </button>
               )}
-              {phase === "vps-stopped" && bot.computer === "cloud" && (
+              {(phase === "vps-stopped" || (phase === "vps-unconfigured" && vpsStatus?.configured)) &&
+                (bot.computer === "cloud" || bot.autoStartVps) && (
                 <button
                   onClick={() => run("provision")}
                   disabled={pending === "provision"}
                   className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover disabled:opacity-50"
                 >
                   {pending === "provision" && <Loader2 size={13} className="mr-1.5 inline animate-spin" />}
-                  Start VPS computer
+                  {phase === "vps-stopped" ? "Start VPS computer" : "Prepare VPS computer"}
                 </button>
               )}
-              {phase === "vps-incompatible" && vpsStatus?.managed && (
+              {phase === "vps-incompatible" && vpsStatus?.managed &&
+                (bot.computer === "cloud" || bot.autoStartVps) && (
                 <button
                   onClick={() => void replaceVpsComputer()}
                   disabled={pending === "vps-replace"}
@@ -912,7 +922,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             <div className="mt-2 flex gap-2">
               <button
                 onClick={() =>
-                  phase === "vm" || cloudBackend === "box" ? void openDesktop() : controlAction("take")
+                  phase === "vm" || phase === "ready" ? void openDesktop() : controlAction("take")
                 }
                 disabled={controlPending || pending === "join"}
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-accent py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-50"
@@ -934,7 +944,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           <div className="mt-3 rounded-xl border border-accent/25 bg-accent/10 p-4">
             <div className="text-[13px] leading-relaxed text-ink">
               You have the wheel — the bot's clicks and keystrokes are refused until you hand it back.
-              {phase === "ready" && cloudBackend === "box" && " Use Open desktop to drive."}
+              {phase === "ready" && " Use Open desktop to drive."}
               {phase === "vm" && " Use Open desktop to drive — the preview here is watch-only."}
             </div>
             <button
@@ -989,7 +999,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             {!control.held && !control.helpReason && (
               <button
                 onClick={() =>
-                  cloudBackend === "box" ? void openDesktop() : controlAction("take")
+                  void openDesktop()
                 }
                 disabled={controlPending || pending === "join"}
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
@@ -999,7 +1009,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                 Take control
               </button>
             )}
-            {cloudBackend === "box" && control.held && (
+            {control.held && (
               <button
                 onClick={() => void openDesktop()}
                 disabled={pending === "join"}
@@ -1091,11 +1101,44 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             ))}
           </div>
           {(!bot.computer || bot.computer === "cloud") && (
-            <CloudBackendPicker
-              value={cloudBackend}
-              vpsSupported={vpsSupported}
-              onChange={(backend) => dispatch({ type: "updateBot", botId: bot.id, patch: { cloudBackend: backend } })}
-            />
+            <>
+              <CloudBackendPicker
+                value={cloudBackend}
+                vpsSupported={vpsSupported}
+                onChange={(backend) => dispatch({ type: "updateBot", botId: bot.id, patch: { cloudBackend: backend } })}
+              />
+              {!bot.computer && cloudBackend === "vps" && (
+                <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="text-[13px] text-ink">Start VPS automatically</div>
+                    <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+                      Off by default. When enabled, Auto may create or wake this bot's managed container.
+                    </div>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={Boolean(bot.autoStartVps)}
+                    aria-label="Start VPS automatically"
+                    onClick={() => dispatch({
+                      type: "updateBot",
+                      botId: bot.id,
+                      patch: { autoStartVps: !bot.autoStartVps },
+                    })}
+                    className={cn(
+                      "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+                      bot.autoStartVps ? "bg-accent" : "bg-control",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "absolute top-[3px] size-[18px] rounded-full bg-white transition-all",
+                        bot.autoStartVps ? "left-[22px]" : "left-[4px]",
+                      )}
+                    />
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
 
