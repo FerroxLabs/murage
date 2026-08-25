@@ -346,7 +346,9 @@ describe("managed companion endpoints", () => {
     }>();
     expect(firstPayload.connectorToken).toBe(CONNECTOR_TOKEN);
     expect(firstPayload.endpoint).toMatchObject({ status: "ready" });
-    expect(firstPayload.endpoint.hostname).toMatch(/^c-[0-9a-f]{32}\.openmausbot\.test$/);
+    const [opaqueLabel, ...suffixLabels] = firstPayload.endpoint.hostname.split(".");
+    expect(opaqueLabel).toMatch(/^c-[0-9a-f]{32}$/);
+    expect(suffixLabels.join(".")).toBe(readConfig(env).cloudflare.companionHostSuffix);
     expect(firstPayload.endpoint.url).toBe(`https://${firstPayload.endpoint.hostname}`);
 
     const tunnel = [...cloudflare.tunnels.values()][0];
