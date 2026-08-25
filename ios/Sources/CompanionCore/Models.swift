@@ -353,6 +353,47 @@ public struct PairResponse: Codable, Sendable {
     }
 }
 
+/// The authenticated, refreshable connection identity advertised by the
+/// companion sidecar at `GET /api/companion/endpoints`.
+///
+/// This intentionally mirrors only the non-secret routing subset of a pair
+/// response. Existing paired phones can learn that hosted access was enabled
+/// later without minting another device token or scanning another QR code.
+public struct CompanionConnectionMetadata: Decodable, Sendable {
+    public var serverName: String
+    public var hosts: [String]?
+    public var endpoints: [CompanionEndpoint]
+
+    private enum CodingKeys: String, CodingKey { case serverName, hosts, endpoints }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        serverName = try container.decode(String.self, forKey: .serverName)
+        hosts = try container.decodeIfPresent([String].self, forKey: .hosts)
+
+        // Endpoint metadata is a replacement snapshot, not an optional hint.
+        // Keep a future malformed kind from discarding valid routes beside it,
+        // but reject a response with no usable route so the caller retains its
+        // last known-good snapshot.
+        let decoded = try container.decode([Lossy<CompanionEndpoint>].self, forKey: .endpoints)
+            .compactMap(\.value)
+        let stable = decoded.enumerated().sorted {
+            $0.element.priority == $1.element.priority
+                ? $0.offset < $1.offset
+                : $0.element.priority < $1.element.priority
+        }.map(\.element)
+        var seen = Set<String>()
+        endpoints = stable.filter { seen.insert($0.url).inserted }.prefix(8).map { $0 }
+        guard !endpoints.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .endpoints,
+                in: container,
+                debugDescription: "Companion endpoint metadata must contain at least one valid route."
+            )
+        }
+    }
+}
+
 /// A freshly minted provider viewer. It is deliberately not Codable for
 /// persistence: the URL is a short-lived bearer credential and belongs only
 /// in memory for the browser session that requested it.

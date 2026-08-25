@@ -8,10 +8,13 @@
   "vars": {
     "BETTER_AUTH_URL": "https://auth.openmausbot.test",
     "EMAIL_FROM": "noreply@openmausbot.test",
-    "ALLOWED_ORIGINS": ""
+    "ALLOWED_ORIGINS": "",
+    "CLOUDFLARE_ACCOUNT_ID": "00000000000000000000000000000000",
+    "CLOUDFLARE_ZONE_ID": "00000000000000000000000000000000",
+    "COMPANION_HOST_SUFFIX": "openmausbot.test"
   },
   "secrets": {
-    "required": ["BETTER_AUTH_SECRET"]
+    "required": ["BETTER_AUTH_SECRET", "CLOUDFLARE_API_TOKEN"]
   },
   "d1_databases": [
     {
@@ -27,6 +30,9 @@
       "allowed_sender_addresses": ["noreply@openmausbot.test"]
     }
   ],
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "observability": {
     "enabled": true,
     "logs": { "enabled": true, "head_sampling_rate": 1 },

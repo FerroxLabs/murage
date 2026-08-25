@@ -36,6 +36,7 @@ describe("what the app may do", () => {
     ["GET", "/api/config"],
     ["GET", "/api/events"],
     ["GET", "/api/instances"],
+    ["GET", "/api/companion/endpoints"],
     ["GET", "/api/bots"],
     ["POST", "/api/bots"],
     ["POST", "/api/bots/bot_123/messages"],
@@ -96,6 +97,13 @@ describe("what it may not", () => {
       expect(denial?.status, `${method} ${path}`).toBe(403);
       expect(denial?.error, `${method} ${path}`).toMatch(/on your computer/);
     }
+  });
+
+  it("keeps endpoint refresh authenticated and exact-method only", () => {
+    expect(ask("GET", "/api/companion/endpoints", false)?.status).toBe(401);
+    expect(ask("GET", "/api/companion/endpoints")).toBeNull();
+    expect(ask("POST", "/api/companion/endpoints")?.status).toBe(403);
+    expect(ask("GET", "/api/companion/endpoints/extra")?.status).toBe(403);
   });
 
   it("describes only refused routine operations as computer-only", () => {

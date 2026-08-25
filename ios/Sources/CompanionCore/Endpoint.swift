@@ -10,6 +10,18 @@ public enum CompanionEndpointKind: String, Codable, CaseIterable, Sendable {
     case bonjour
 }
 
+/// The credential-handling boundary for a route.
+///
+/// Hosted HTTPS is authenticated by Web PKI. A Tailscale MagicDNS name is
+/// authenticated and encrypted by the tailnet even though the local URL is
+/// HTTP. LAN and Bonjour routes are deliberately cleartext and therefore
+/// require an exact, explicit choice by the user; they are never generic
+/// automatic fallbacks for a bearer token or a one-time pairing credential.
+public enum CompanionEndpointSecurityClass: Sendable {
+    case protected
+    case explicitLocal
+}
+
 /// One validated route to the desktop companion.
 public struct CompanionEndpoint: Codable, Hashable, Sendable {
     public let url: String
@@ -41,6 +53,15 @@ public struct CompanionEndpoint: Codable, Hashable, Sendable {
         URLComponents(string: url)?.scheme?.lowercased() == "https"
     }
 
+    public var securityClass: CompanionEndpointSecurityClass {
+        switch kind {
+        case .hosted, .tailnet: return .protected
+        case .lan, .bonjour: return .explicitLocal
+        }
+    }
+
+    public var protectsCredentials: Bool { securityClass == .protected }
+
     /// Host-only for the old direct routes, full HTTPS authority for hosted
     /// routes. Used in status copy, never for dialing.
     public var displayAddress: String {
@@ -52,15 +73,45 @@ public struct CompanionEndpoint: Codable, Hashable, Sendable {
     public static func direct(
         host: String,
         port: Int,
-        kind: CompanionEndpointKind = .lan,
+        kind: CompanionEndpointKind? = nil,
         priority: Int
     ) -> CompanionEndpoint? {
+        let resolvedKind = kind ?? inferredDirectKind(host)
         var components = URLComponents()
         components.scheme = "http"
         components.host = Connection.urlHost(host)
         components.port = port
         guard let value = components.url?.absoluteString else { return nil }
-        return CompanionEndpoint(url: value, kind: kind, priority: priority)
+        return CompanionEndpoint(url: value, kind: resolvedKind, priority: priority)
+    }
+
+    /// Older saved connections only carry host strings. Recover the security
+    /// class from names whose ownership has a useful transport meaning rather
+    /// than treating a protected Tailscale name as arbitrary LAN cleartext.
+    public static func inferredDirectKind(_ host: String) -> CompanionEndpointKind {
+        let canonical = canonicalDNSHost(host)
+        if validTailnetHost(canonical) { return .tailnet }
+        if canonical.hasSuffix(".local") { return .bonjour }
+        return .lan
+    }
+
+    /// The candidates a credential may walk automatically, in caller order.
+    ///
+    /// When the preferred route is protected, every cleartext candidate is
+    /// removed. When it is local, that *one exact route* is the user's explicit
+    /// choice and may be tried, followed only by routes which strengthen the
+    /// transport. Other LAN/Bonjour addresses remain stored for display and a
+    /// future manual choice, but never receive a token speculatively.
+    public static func automaticCandidates(
+        from candidates: [CompanionEndpoint]
+    ) -> [CompanionEndpoint] {
+        guard let preferred = candidates.first else { return [] }
+        var seen = Set<String>()
+        return candidates.filter { candidate in
+            guard seen.insert(candidate.url).inserted else { return false }
+            if preferred.protectsCredentials { return candidate.protectsCredentials }
+            return candidate.url == preferred.url || candidate.protectsCredentials
+        }
     }
 
     private static func normalizedURL(_ raw: String, kind: CompanionEndpointKind) -> String? {
@@ -75,15 +126,36 @@ public struct CompanionEndpoint: Codable, Hashable, Sendable {
               components.password == nil,
               components.query == nil,
               components.fragment == nil,
-              components.path.isEmpty || components.path == "/",
-              kind == .hosted ? scheme == "https" : scheme == "http"
+              components.path.isEmpty || components.path == "/"
         else { return nil }
+
+        switch kind {
+        case .hosted:
+            guard scheme == "https" else { return nil }
+        case .tailnet:
+            guard scheme == "http", validTailnetHost(canonicalDNSHost(host)) else { return nil }
+        case .lan, .bonjour:
+            guard scheme == "http" else { return nil }
+        }
 
         components.scheme = scheme
         components.host = host.lowercased()
         components.path = ""
         if let port = components.port, !(1...65_535).contains(port) { return nil }
         return components.url?.absoluteString
+    }
+
+    private static func canonicalDNSHost(_ host: String) -> String {
+        var canonical = host.lowercased()
+        if canonical.hasPrefix("[") && canonical.hasSuffix("]") {
+            canonical = String(canonical.dropFirst().dropLast())
+        }
+        while canonical.hasSuffix(".") { canonical.removeLast() }
+        return canonical
+    }
+
+    private static func validTailnetHost(_ host: String) -> Bool {
+        host.count > ".ts.net".count && host.hasSuffix(".ts.net")
     }
 
     private enum CodingKeys: String, CodingKey { case url, kind, priority }
@@ -97,7 +169,7 @@ public struct CompanionEndpoint: Codable, Hashable, Sendable {
             throw DecodingError.dataCorruptedError(
                 forKey: .url,
                 in: values,
-                debugDescription: "Companion endpoints must be absolute HTTP(S) authorities; hosted routes require HTTPS."
+                debugDescription: "Companion endpoints must be absolute authorities; hosted routes require HTTPS and tailnet routes require an HTTP .ts.net name."
             )
         }
         self = accepted

@@ -14,6 +14,11 @@ import { app, utilityProcess } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveCompanionEntry } from "./companion-entry.mjs";
+import {
+  cleanupCompanionOriginEndpoint,
+  companionOriginHealth,
+  createCompanionOriginEndpoint,
+} from "./companion-origin-gateway.mjs";
 
 // Passed to the fork rather than left to the sidecar's own defaults, so the
 // port this file fetches the control API on cannot drift from the port the
@@ -25,6 +30,10 @@ const COMPANION_PORT = 8810;
 
 let proc = null;
 let lastError = null;
+let advertisedHostedUrl = null;
+let originTarget = null;
+let lifecycleListener = () => {};
+const expectedStops = new WeakSet();
 
 /** Where the sidecar's entry lives, and the Node flags it needs.
  *
@@ -105,11 +114,16 @@ export function rememberCompanionKeepAwake(keepAwake) {
 /** Ask the sidecar's own control server, which is the same API the standalone
  * page uses. Short timeout: this is loopback, and a spinner in Settings that
  * never resolves is worse than an error. */
-async function control(method, urlPath) {
-  const res = await fetch(`http://127.0.0.1:${CONTROL_PORT}${urlPath}`, {
+async function control(method, urlPath, body) {
+  const options = {
     method,
     signal: AbortSignal.timeout(4000),
-  });
+  };
+  if (body !== undefined) {
+    options.body = JSON.stringify(body);
+    options.headers = { "content-type": "application/json" };
+  }
+  const res = await fetch(`http://127.0.0.1:${CONTROL_PORT}${urlPath}`, options);
   if (!res.ok && res.status !== 404) throw new Error(`companion control ${res.status}`);
   return res.json();
 }
@@ -117,6 +131,25 @@ async function control(method, urlPath) {
 /** Whether this process owns a running sidecar. */
 export function companionRunning() {
   return proc !== null;
+}
+
+/** The hosted route the owned sidecar is currently advertising. This is
+ * process-local public state only; the connector credential never enters
+ * this module. */
+export function companionAdvertisedHostedUrl() {
+  return proc ? advertisedHostedUrl : null;
+}
+
+/** Exact private origin belonging to the currently owned sidecar. This value
+ * is main-process-only and must never cross IPC into the renderer. */
+export function companionOriginTarget() {
+  return proc && originTarget ? { ...originTarget } : null;
+}
+
+/** Main installs one synchronous exit observer. It invalidates the guardian
+ * before this module cleans up the generation's socket path. */
+export function setCompanionLifecycleListener(listener = () => {}) {
+  lifecycleListener = listener;
 }
 
 // Every lifecycle transition runs to completion before the next one begins.
@@ -154,7 +187,7 @@ export function stopCompanion() {
 }
 
 /** startCompanion's body, run inside the transition queue. */
-async function start({ resourcesPath, harnessPort, log }) {
+async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
   if (proc) return companionState();
   lastError = null;
   const resolved = entryPoint(resourcesPath);
@@ -169,18 +202,49 @@ async function start({ resourcesPath, harnessPort, log }) {
   }
   log?.(`companion fork ${resolved.entry}`);
 
-  const child = utilityProcess.fork(resolved.entry, [], {
-    env: {
-      ...process.env,
-      OMB_PORT: String(harnessPort),
-      OMB_COMPANION_PORT: String(COMPANION_PORT),
-      OMB_CONTROL_PORT: String(CONTROL_PORT),
-    },
-    // how the TS-source fallback gets --experimental-strip-types; empty for
-    // compiled entries
-    execArgv: resolved.execArgv,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  let allocatedOrigin;
+  try {
+    allocatedOrigin = createCompanionOriginEndpoint();
+  } catch {
+    lastError = "the private companion origin could not be created";
+    return companionState();
+  }
+  let cleanedOrigin = false;
+  const cleanupOrigin = () => {
+    if (cleanedOrigin) return;
+    cleanedOrigin = true;
+    cleanupCompanionOriginEndpoint(allocatedOrigin);
+  };
+
+  // Never inherit an endpoint from the launch environment. The main process
+  // passes this value only after it has verified the managed connector, and
+  // an inherited value would bypass that gate and make Settings claim a dead
+  // or attacker-selected route is ready.
+  const childEnvironment = { ...process.env };
+  delete childEnvironment.OMB_COMPANION_HOSTED_URL;
+  delete childEnvironment.OMB_COMPANION_INTERNAL_ORIGIN;
+  if (hostedUrl) childEnvironment.OMB_COMPANION_HOSTED_URL = hostedUrl;
+  childEnvironment.OMB_COMPANION_INTERNAL_ORIGIN = allocatedOrigin.socketPath;
+
+  let child;
+  try {
+    child = utilityProcess.fork(resolved.entry, [], {
+      env: {
+        ...childEnvironment,
+        OMB_PORT: String(harnessPort),
+        OMB_COMPANION_PORT: String(COMPANION_PORT),
+        OMB_CONTROL_PORT: String(CONTROL_PORT),
+      },
+      // how the TS-source fallback gets --experimental-strip-types; empty for
+      // compiled entries
+      execArgv: resolved.execArgv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    cleanupOrigin();
+    lastError = "the companion process could not be started";
+    return companionState();
+  }
   child.stdout?.on("data", (d) => log?.(`[companion] ${String(d).trimEnd()}`));
   child.stderr?.on("data", (d) => log?.(`[companion err] ${String(d).trimEnd()}`));
 
@@ -190,7 +254,17 @@ async function start({ resourcesPath, harnessPort, log }) {
     // A non-zero exit before we saw it answer is the interesting case: the
     // usual cause is the port already being taken, and the sidecar's own
     // message says which one and why.
-    if (proc === child) proc = null;
+    if (proc === child) {
+      proc = null;
+      advertisedHostedUrl = null;
+      originTarget = null;
+      lifecycleListener({
+        type: "exit",
+        expected: expectedStops.has(child),
+        pid: child.pid,
+      });
+    }
+    cleanupOrigin();
     log?.(`companion exited code=${code}`);
   });
 
@@ -218,7 +292,14 @@ async function start({ resourcesPath, harnessPort, log }) {
         lastError = `port ${CONTROL_PORT} is already serving another companion — stop it and try again`;
         return companionState();
       }
+      if (!Number.isSafeInteger(child.pid) || child.pid <= 0) {
+        throw new Error("child pid unavailable");
+      }
+      const target = { pid: child.pid, socketPath: allocatedOrigin.socketPath };
+      if (!(await companionOriginHealth(target))) throw new Error("private origin not ready");
       proc = child;
+      advertisedHostedUrl = hostedUrl;
+      originTarget = Object.freeze(target);
       return companionState();
     } catch {
       await new Promise((r) => setTimeout(r, 150));
@@ -237,8 +318,11 @@ async function start({ resourcesPath, harnessPort, log }) {
 async function stop() {
   const child = proc;
   proc = null;
+  advertisedHostedUrl = null;
+  originTarget = null;
   lastError = null;
   if (!child) return companionState();
+  expectedStops.add(child);
   try {
     child.kill();
   } catch {
@@ -259,6 +343,18 @@ async function stop() {
     setTimeout(finish, 5_000).unref?.();
   });
   return companionState();
+}
+
+/** Publish or withdraw the hosted route without replacing the sidecar (and
+ * therefore without changing the exact private origin the guardian owns).
+ * Callers publish only after public health verification succeeds. */
+export function setCompanionHostedUrl(endpoint) {
+  return serialize(async () => {
+    if (!proc) return companionState();
+    const state = await control("PUT", "/hosted-endpoint", { url: endpoint || null });
+    advertisedHostedUrl = endpoint || null;
+    return state;
+  });
 }
 
 /** Everything the panel renders. Shaped so "off" is a complete answer rather

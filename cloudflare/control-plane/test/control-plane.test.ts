@@ -101,6 +101,8 @@ describe("control-plane migrations and health", () => {
       "account",
       "control_action_rate_limits",
       "installation_credentials",
+      "installation_action_rate_limits",
+      "installation_endpoints",
       "installations",
       "otp_recipient_rate_limits",
       "rateLimit",
@@ -124,6 +126,13 @@ describe("control-plane migrations and health", () => {
 
     const fk = await env.DB.prepare("PRAGMA foreign_key_list(installation_credentials)").all<{ table: string }>();
     expect(fk.results.some((row) => row.table === "installations")).toBe(true);
+
+    const endpointColumns = await env.DB.prepare("PRAGMA table_info(installation_endpoints)")
+      .all<{ name: string }>();
+    expect(endpointColumns.results.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "cleanup_attempts",
+      "last_cleanup_attempt_at",
+    ]));
   });
 
   it("serves a no-store health response without CORS wildcards", async () => {
@@ -141,6 +150,10 @@ describe("control-plane migrations and health", () => {
       BETTER_AUTH_URL: env.BETTER_AUTH_URL,
       EMAIL_FROM: env.EMAIL_FROM,
       ALLOWED_ORIGINS: env.ALLOWED_ORIGINS,
+      CLOUDFLARE_ACCOUNT_ID: env.CLOUDFLARE_ACCOUNT_ID,
+      CLOUDFLARE_ZONE_ID: env.CLOUDFLARE_ZONE_ID,
+      COMPANION_HOST_SUFFIX: env.COMPANION_HOST_SUFFIX,
+      CLOUDFLARE_API_TOKEN: env.CLOUDFLARE_API_TOKEN,
       BETTER_AUTH_SECRET: "too-short",
     };
     const request = new Request(`${BASE_URL}/healthz`);
@@ -151,6 +164,14 @@ describe("control-plane migrations and health", () => {
     const body = await response.text();
     expect(body).toBe('{"error":"misconfigured"}');
     expect(body).not.toContain("too-short");
+  });
+
+  it("reports a missing companion hostname suffix with a stable configuration error", () => {
+    const missingSuffixEnv = { ...env };
+    Reflect.deleteProperty(missingSuffixEnv, "COMPANION_HOST_SUFFIX");
+    expect(() => readConfig(missingSuffixEnv)).toThrow(
+      "COMPANION_HOST_SUFFIX must be a lowercase DNS suffix",
+    );
   });
 });
 
@@ -510,7 +531,7 @@ describe("installation lifecycle", () => {
     expect((await call(`/v1/installations/${created.installation.id}`, {
       method: "DELETE",
       token: owner.token,
-    })).status).toBe(404);
+    })).status).toBe(204);
   });
 
   it("serializes concurrent credential rotations", async () => {
