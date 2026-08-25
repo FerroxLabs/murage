@@ -12,19 +12,29 @@ import {
   type ImageAttachment,
 } from "./composer-attachments";
 
-describe("appendPastedText", () => {
-  it("adds pasted content after an existing draft", () => {
+/** Exercises the spacing and empty-draft cases for pasted text insertion. */
+function appendPastedTextTests() {
+  /** Keeps an existing draft ahead of newly inserted pasted content. */
+  function addsPastedContentAfterDraft() {
     expect(appendPastedText("Keep this", "Edit this too")).toBe("Keep this\n\nEdit this too");
-  });
+  }
 
-  it("does not add a second separator when the draft ends with a newline", () => {
+  /** Avoids duplicating a separator when the draft already ends with a newline. */
+  function preservesExistingTrailingNewline() {
     expect(appendPastedText("Keep this\n", "Edit this too")).toBe("Keep this\nEdit this too");
-  });
+  }
 
-  it("uses the pasted content directly for an empty draft", () => {
+  /** Inserts pasted content directly when no draft exists yet. */
+  function insertsIntoEmptyDraft() {
     expect(appendPastedText("", "Edit this too")).toBe("Edit this too");
-  });
-});
+  }
+
+  it("adds pasted content after an existing draft", addsPastedContentAfterDraft);
+  it("does not add a second separator when the draft ends with a newline", preservesExistingTrailingNewline);
+  it("uses the pasted content directly for an empty draft", insertsIntoEmptyDraft);
+}
+
+describe("appendPastedText", appendPastedTextTests);
 
 /** Builds a stable image attachment fixture for prompt and preview tests. */
 function image(path: string): ImageAttachment {
