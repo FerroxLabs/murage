@@ -31,6 +31,15 @@ contextBridge.exposeInMainWorld("ogb", {
     cloudDesktop: (deviceId, allowed) => ipcRenderer.invoke("companion:cloud-desktop", deviceId, allowed),
     revoke: (deviceId) => ipcRenderer.invoke("companion:revoke", deviceId),
   },
+  /** Optional account-backed HTTPS access for Companion. Secrets stay in the
+   * main process; the renderer sees only status and narrow user actions. */
+  companionAccount: {
+    state: () => ipcRenderer.invoke("companion-account:state"),
+    requestCode: (email) => ipcRenderer.invoke("companion-account:request-code", email),
+    verifyCode: (email, code) => ipcRenderer.invoke("companion-account:verify-code", email, code),
+    retry: () => ipcRenderer.invoke("companion-account:retry"),
+    signOut: () => ipcRenderer.invoke("companion-account:sign-out"),
+  },
   localControl: {
     status: () => ipcRenderer.invoke("cua:linux-status"),
     enable: () => ipcRenderer.invoke("cua:linux-enable"),

@@ -99,6 +99,13 @@ type SkillRecordingPayload = {
       platform: NodeJS.Platform;
       getCapabilities(): Promise<DesktopCapabilities>;
       onCapabilitiesChanged(cb: (capabilities: DesktopCapabilities) => void): () => void;
+      companionAccount?: {
+        state(): Promise<CompanionAccountState>;
+        requestCode(email: string): Promise<CompanionAccountState>;
+        verifyCode(email: string, code: string): Promise<CompanionAccountState>;
+        retry(): Promise<CompanionAccountState>;
+        signOut(): Promise<CompanionAccountState>;
+      };
       localControl: {
         status(): Promise<LinuxLocalControlStatus>;
         enable(): Promise<LinuxLocalControlStatus>;
@@ -212,6 +219,14 @@ export interface UpdaterState {
     | "error";
   version?: string;
   percent?: number;
+  message?: string;
+}
+
+export interface CompanionAccountState {
+  available: boolean;
+  status: "signed-out" | "connecting" | "ready" | "error";
+  email?: string;
+  endpoint?: string;
   message?: string;
 }
 
