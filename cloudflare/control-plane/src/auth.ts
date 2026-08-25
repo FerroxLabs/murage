@@ -56,7 +56,7 @@ export function createAuth(
             async send(message) {
               await env.EMAIL.send(message);
             },
-          }, env.EMAIL_FROM, input, requestId);
+          }, config.emailFrom, input, requestId);
         },
       }),
       bearer({ requireSignature: true }),

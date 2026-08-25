@@ -133,6 +133,25 @@ describe("control-plane migrations and health", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
+
+  it("reports an unhealthy deployment without exposing invalid configuration", async () => {
+    const misconfiguredEnv: Env = {
+      DB: env.DB,
+      EMAIL: env.EMAIL,
+      BETTER_AUTH_URL: env.BETTER_AUTH_URL,
+      EMAIL_FROM: env.EMAIL_FROM,
+      ALLOWED_ORIGINS: env.ALLOWED_ORIGINS,
+      BETTER_AUTH_SECRET: "too-short",
+    };
+    const request = new Request(`${BASE_URL}/healthz`);
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(request, misconfiguredEnv, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(503);
+    const body = await response.text();
+    expect(body).toBe('{"error":"misconfigured"}');
+    expect(body).not.toContain("too-short");
+  });
 });
 
 describe("Better Auth email OTP and bearer boundary", () => {

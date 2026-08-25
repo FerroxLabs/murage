@@ -30,21 +30,18 @@ interface InstallationCredentialRow {
   expires_at: number;
 }
 
-const printableName = z.string().trim().min(1).max(80).refine((value) => {
-  for (const character of value) {
-    const point = character.codePointAt(0);
-    if (point === undefined || point < 32 || point === 127) return false;
-  }
-  return true;
-});
+function printableString(maxLength: number) {
+  return z.string().trim().min(1).max(maxLength).refine((value) => {
+    for (const character of value) {
+      const point = character.codePointAt(0);
+      if (point === undefined || point < 32 || point === 127) return false;
+    }
+    return true;
+  });
+}
 
-const printableVersion = z.string().trim().min(1).max(64).refine((value) => {
-  for (const character of value) {
-    const point = character.codePointAt(0);
-    if (point === undefined || point < 32 || point === 127) return false;
-  }
-  return true;
-});
+const printableName = printableString(80);
+const printableVersion = printableString(64);
 
 const createInstallationSchema = z.strictObject({
   name: printableName,

@@ -63,6 +63,11 @@ export default {
     const requestId = crypto.randomUUID();
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/healthz") {
+      try {
+        readConfig(env);
+      } catch {
+        return secureResponse(errorResponse(503, "misconfigured"), request, null, requestId);
+      }
       return secureResponse(json({ ok: true, service: "openmausbot-control-plane" }), request, null, requestId);
     }
 
