@@ -61,6 +61,17 @@ public struct CandidateRotation: Equatable, Sendable {
         return currentEndpoint
     }
 
+    /// Move only when the failure belongs to this route rather than to the
+    /// pairing or the phone as a whole. Keeping that decision beside the
+    /// rotation makes reconnects handle URL and HTTP gateway failures alike.
+    @discardableResult
+    public mutating func advanceEndpoint(after error: Error) -> CompanionEndpoint? {
+        guard endpoints.count > 1,
+              ConnectionAdvice.shouldTryAnotherRoute(after: error)
+        else { return nil }
+        return advanceEndpoint()
+    }
+
     public func promotedEndpoints() -> [CompanionEndpoint] {
         guard endpoints.indices.contains(index) else { return endpoints }
         return [endpoints[index]] + endpoints.enumerated()
@@ -82,11 +93,34 @@ public enum ConnectionAdvice {
     /// "offline" fails identically wherever the dial points.
     public static func shouldTryAnotherHost(_ code: URLError.Code) -> Bool {
         switch code {
-        case .cannotFindHost, .cannotConnectToHost, .timedOut, .secureConnectionFailed:
+        case .cannotFindHost,
+             .cannotConnectToHost,
+             .timedOut,
+             .secureConnectionFailed,
+             .serverCertificateHasBadDate,
+             .serverCertificateUntrusted,
+             .serverCertificateHasUnknownRoot,
+             .serverCertificateNotYetValid,
+             .clientCertificateRejected,
+             .clientCertificateRequired:
             return true
         default:
             return false
         }
+    }
+
+    /// Classify errors which another advertised route can actually repair.
+    /// 502–504 are ordinary reverse-proxy failures; 520–530 are the gateway
+    /// family Cloudflare can return when a tunnel or its origin is unhealthy.
+    /// Application errors such as 400/401/500 deliberately stay put.
+    public static func shouldTryAnotherRoute(after error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            return shouldTryAnotherHost(urlError.code)
+        }
+        guard let apiError = error as? APIError,
+              case let .status(code, _) = apiError
+        else { return false }
+        return (502...504).contains(code) || (520...530).contains(code)
     }
 
     /// The offline banner as advice rather than an NSURLError string.
@@ -116,6 +150,16 @@ public enum ConnectionAdvice {
         }
         let fallback = next.map { " Trying \($0) next." } ?? ""
         return advice + fallback + " The app keeps retrying automatically."
+    }
+
+    public static func message(
+        forGatewayStatus code: Int,
+        host: String,
+        tryingNext next: String? = nil
+    ) -> String {
+        let fallback = next.map { " Trying \($0) next." } ?? ""
+        return "The route through \(host) is temporarily unavailable (HTTP \(code))." +
+            fallback + " The app keeps retrying automatically."
     }
 }
 

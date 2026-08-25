@@ -436,26 +436,33 @@ final class Session: ObservableObject {
     /// A 401 never reaches here: the unauthorized path returns above, which
     /// is what keeps a token problem from masquerading as an address walk.
     private func failureMessage(for error: Error) -> String {
-        guard let urlError = error as? URLError, let connection else {
-            return error.localizedDescription
-        }
+        guard let connection else { return error.localizedDescription }
         let failed = rotation.currentEndpoint ?? connection.activeEndpoint ??
             CompanionEndpoint.direct(host: connection.host, port: connection.port, priority: 10_000)
         var next: String?
-        if ConnectionAdvice.shouldTryAnotherHost(urlError.code), rotation.count > 1 {
-            let candidate = rotation.advanceEndpoint()
-            if let candidate, let token {
-                client = CompanionClient(connection: connection.dialing(candidate), token: token)
-                next = candidate.displayAddress
-                log.info("advancing to companion route \(candidate.url, privacy: .public)")
-            }
+        if let candidate = rotation.advanceEndpoint(after: error), let token {
+            client = CompanionClient(connection: connection.dialing(candidate), token: token)
+            next = candidate.displayAddress
+            log.info("advancing to companion route \(candidate.url, privacy: .public)")
         }
-        return ConnectionAdvice.message(
-            for: urlError.code,
-            host: failed?.displayAddress ?? connection.host,
-            port: failed?.port ?? connection.port,
-            tryingNext: next
-        )
+        if let urlError = error as? URLError {
+            return ConnectionAdvice.message(
+                for: urlError.code,
+                host: failed?.displayAddress ?? connection.host,
+                port: failed?.port ?? connection.port,
+                tryingNext: next
+            )
+        }
+        if let apiError = error as? APIError,
+           case let .status(code, _) = apiError,
+           ConnectionAdvice.shouldTryAnotherRoute(after: error) {
+            return ConnectionAdvice.message(
+                forGatewayStatus: code,
+                host: failed?.displayAddress ?? connection.host,
+                tryingNext: next
+            )
+        }
+        return error.localizedDescription
     }
 
     /// Persist the route that carried a live stream. Legacy host lists promote

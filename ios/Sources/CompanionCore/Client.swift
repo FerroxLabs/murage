@@ -475,12 +475,13 @@ public struct CompanionClient: Sendable {
                 )
                 return PairingOutcome(response: response, connection: winner.connection)
             } catch let error as APIError {
-                // An HTTP response is authoritative: a rejected or expired
-                // credential must not be sprayed at another address. A
-                // transport failure is ambiguous, though — the Mac may have
-                // committed the device before the route died. New desktops
+                // Credential/client errors are authoritative and must not be
+                // sprayed at another address. Transport failures and gateway
+                // errors belong to this route, though — the Mac may even have
+                // committed the device before the proxy failed. New desktops
                 // replay this exact request id safely through a fallback.
                 if case .transport = error { continue }
+                if ConnectionAdvice.shouldTryAnotherRoute(after: error) { continue }
                 throw error
             } catch {
                 // URL loading and decoding failures are likewise ambiguous.
