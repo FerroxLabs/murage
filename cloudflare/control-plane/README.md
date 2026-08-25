@@ -93,7 +93,7 @@ identifiers and contain no account email, display name, or client-supplied ID.
 
 Endpoint provisioning is limited to 20 attempts per installation per hour;
 deletion is limited to 30. A 60-second D1 lease and monotonically increasing
-generation serialize concurrent requests. Cloudflare calls have a five-second
+generation serialize concurrent requests. Cloudflare calls have an eight-second
 per-request timeout, reject redirects, bound response bodies, and validate the
 response shape before persisting an ID. A newly created partial resource is
 rolled back; an adopted resource is never deleted by a failed reconciliation.
