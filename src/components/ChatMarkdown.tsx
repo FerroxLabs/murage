@@ -125,6 +125,48 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
   );
 }
 
+// A bot handing over a file it created renders as a button, not an anchor.
+// An <a href="file://…"> would still reach setWindowOpenHandler on a middle
+// or modifier click, and that path calls shell.openExternal without the main
+// process' containment check — so the href is simply never set.
+function LocalFileLink({ filePath, children }: { filePath: string; children?: ReactNode }) {
+  const [state, setState] = useState<"idle" | "saved" | "failed">("idle");
+  const [reason, setReason] = useState("");
+
+  const save = async () => {
+    const saveFile = window.ogb?.saveFile;
+    if (!saveFile) return;
+    try {
+      await saveFile(filePath);
+      setState("saved");
+      setTimeout(() => setState("idle"), 2000);
+    } catch (error) {
+      // the bug being fixed here was a click that failed silently, so a
+      // failed save says why rather than doing nothing
+      setReason(error instanceof Error ? error.message : "That file could not be saved");
+      setState("failed");
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void save()}
+        title={`Save to Downloads — ${filePath}`}
+        className="break-words text-left text-accent underline decoration-accent/40 hover:decoration-accent"
+      >
+        {children}
+      </button>
+      {state !== "idle" && (
+        <span className={`ml-1.5 text-[12px] ${state === "saved" ? "text-success" : "text-danger"}`}>
+          {state === "saved" ? "Saved to Downloads" : reason}
+        </span>
+      )}
+    </>
+  );
+}
+
 // Spoiler spans: GFM parses ~~text~~ to <del>; in bot messages that content
 // is usually a spoiler (answers, plot points, surprises), not a deletion —
 // hide it behind a tap-to-reveal chip instead of striking it through.
@@ -202,23 +244,7 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
           },
           a({ href, children }: { href?: string; children?: ReactNode }) {
             const localPath = localFilePath(href);
-            if (localPath) {
-              return (
-                <a
-                  href={href}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    void window.ogb?.saveFile?.(localPath).catch(() => {
-                      // the file is gone or outside the bot home — do nothing
-                      // rather than opening a dead dialog
-                    });
-                  }}
-                  className="break-words text-accent underline decoration-accent/40 hover:decoration-accent"
-                >
-                  {children}
-                </a>
-              );
-            }
+            if (localPath) return <LocalFileLink filePath={localPath}>{children}</LocalFileLink>;
             return (
               <a
                 href={href}

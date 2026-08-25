@@ -143,8 +143,14 @@ contextBridge.exposeInMainWorld("ogb", {
    * the path, or null when the save dialog was cancelled. */
   exportDiagnostics: () => ipcRenderer.invoke("desktop:export-diagnostics"),
   /** Copy a bot-created file (inside ~/.openmausbot) to ~/Downloads and
-   * reveal it. Returns the destination path. */
-  saveFile: (filePath) => ipcRenderer.invoke("desktop:save-file", filePath),
+   * reveal it. Returns the destination path. The chat bubble shows the
+   * rejection text verbatim, so strip the "Error invoking remote method"
+   * wrapper ipcRenderer adds around a main-process throw. */
+  saveFile: (filePath) =>
+    ipcRenderer.invoke("desktop:save-file", filePath).catch((error) => {
+      const message = String(error?.message ?? error);
+      throw new Error(message.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, ""));
+    }),
   /** Store a provider credential with OS-backed encryption. */
   setCredential: (name, value) => ipcRenderer.invoke("credential:set", name, value),
 

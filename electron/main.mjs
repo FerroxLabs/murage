@@ -21,6 +21,7 @@ import { buildDiagnosticsReport, decodeLogTail, diagnosticsFileName } from "./di
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
+import { availableDestination, resolveSavablePath } from "./save-file.mjs";
 import {
   ensureManagedComposioCredentials,
   managedComposioAccess,
@@ -1158,26 +1159,9 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
 // renderer-controlled, so it must resolve inside ~/.openmausbot and be a
 // regular file — never a symlink escape or a directory.
 ipcMain.handle("desktop:save-file", async (_event, rawPath) => {
-  if (typeof rawPath !== "string" || !rawPath.trim()) throw new Error("A file path is required");
-  const root = path.join(os.homedir(), ".openmausbot");
-  let real;
-  try {
-    real = fs.realpathSync(rawPath);
-  } catch {
-    throw new Error("That file no longer exists");
-  }
-  if (real !== root && !real.startsWith(root + path.sep)) {
-    throw new Error("Only files created by your bots can be saved");
-  }
-  const stat = fs.lstatSync(real);
-  if (!stat.isFile()) throw new Error("That path is not a file");
-
-  const downloads = app.getPath("downloads");
-  const ext = path.extname(real);
-  const stem = path.basename(real, ext);
-  let dest = path.join(downloads, path.basename(real));
-  for (let n = 2; fs.existsSync(dest); n++) dest = path.join(downloads, `${stem} (${n})${ext}`);
-  fs.copyFileSync(real, dest);
+  const source = await resolveSavablePath(rawPath, { home: os.homedir() });
+  const dest = await availableDestination(app.getPath("downloads"), source);
+  await fs.promises.copyFile(source, dest);
   shell.showItemInFolder(dest);
   return dest;
 });
