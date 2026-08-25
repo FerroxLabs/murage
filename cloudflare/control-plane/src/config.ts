@@ -84,6 +84,10 @@ export function readConfig(env: Env): ControlPlaneConfig {
   if (!cloudflareTokenSchema.safeParse(env.CLOUDFLARE_API_TOKEN).success) {
     throw new Error("CLOUDFLARE_API_TOKEN is missing or invalid");
   }
+  const hostSuffix = z.string().min(1).max(218).safeParse(env.COMPANION_HOST_SUFFIX);
+  if (!hostSuffix.success) {
+    throw new Error("COMPANION_HOST_SUFFIX must be a lowercase DNS suffix");
+  }
 
   return {
     authBaseURL,
@@ -91,7 +95,7 @@ export function readConfig(env: Env): ControlPlaneConfig {
     cloudflare: {
       accountId: env.CLOUDFLARE_ACCOUNT_ID,
       apiToken: env.CLOUDFLARE_API_TOKEN,
-      companionHostSuffix: hostnameSuffix(env.COMPANION_HOST_SUFFIX),
+      companionHostSuffix: hostnameSuffix(hostSuffix.data),
       zoneId: env.CLOUDFLARE_ZONE_ID,
     },
     emailFrom: emailFrom.data,

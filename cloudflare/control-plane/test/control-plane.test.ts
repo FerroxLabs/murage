@@ -126,6 +126,13 @@ describe("control-plane migrations and health", () => {
 
     const fk = await env.DB.prepare("PRAGMA foreign_key_list(installation_credentials)").all<{ table: string }>();
     expect(fk.results.some((row) => row.table === "installations")).toBe(true);
+
+    const endpointColumns = await env.DB.prepare("PRAGMA table_info(installation_endpoints)")
+      .all<{ name: string }>();
+    expect(endpointColumns.results.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "cleanup_attempts",
+      "last_cleanup_attempt_at",
+    ]));
   });
 
   it("serves a no-store health response without CORS wildcards", async () => {
@@ -157,6 +164,14 @@ describe("control-plane migrations and health", () => {
     const body = await response.text();
     expect(body).toBe('{"error":"misconfigured"}');
     expect(body).not.toContain("too-short");
+  });
+
+  it("reports a missing companion hostname suffix with a stable configuration error", () => {
+    const missingSuffixEnv = { ...env };
+    Reflect.deleteProperty(missingSuffixEnv, "COMPANION_HOST_SUFFIX");
+    expect(() => readConfig(missingSuffixEnv)).toThrow(
+      "COMPANION_HOST_SUFFIX must be a lowercase DNS suffix",
+    );
   });
 });
 

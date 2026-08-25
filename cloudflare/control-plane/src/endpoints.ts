@@ -24,6 +24,8 @@ interface EndpointRow {
   last_reconciled_at: number | null;
   delete_requested_at: number | null;
   last_error_code: string | null;
+  cleanup_attempts: number;
+  last_cleanup_attempt_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -37,7 +39,16 @@ const LEASE_MS = 60_000;
 const ENDPOINT_ACTION_WINDOW_MS = 60 * 60 * 1_000;
 const ENDPOINT_RECONCILE_LIMIT = 20;
 const ENDPOINT_DELETE_LIMIT = 30;
-const CLEANUP_SWEEP_LIMIT = 8;
+// A cleanup can make at most ten external Cloudflare API calls when it must
+// rediscover both provider IDs. Four concurrent candidates stay below the
+// Workers Free plan's 50-external-subrequest ceiling and six-connection limit.
+const CLEANUP_SWEEP_LIMIT = 4;
+const CLEANUP_BACKOFF_1_MS = 5 * 60 * 1_000;
+const CLEANUP_BACKOFF_2_MS = 15 * 60 * 1_000;
+const CLEANUP_BACKOFF_3_MS = 60 * 60 * 1_000;
+const CLEANUP_BACKOFF_4_MS = 6 * 60 * 60 * 1_000;
+const CLEANUP_BACKOFF_MAX_MS = 24 * 60 * 60 * 1_000;
+const MANUAL_CLEANUP_THRESHOLD_MS = 24 * 60 * 60 * 1_000;
 
 class EndpointOperationError extends Error {
   constructor(public readonly code: string) {
@@ -74,7 +85,7 @@ async function endpointRow(env: Env, installationId: string): Promise<EndpointRo
     `SELECT installation_id, hostname, tunnel_name, tunnel_id, dns_record_id,
             status, generation, lease_owner, lease_expires_at,
             last_reconciled_at, delete_requested_at, last_error_code,
-            created_at, updated_at
+            cleanup_attempts, last_cleanup_attempt_at, created_at, updated_at
        FROM installation_endpoints
       WHERE installation_id = ?`,
   ).bind(installationId).first<EndpointRow>();
@@ -139,6 +150,8 @@ async function claimEndpoint(
         SET status = ?, generation = generation + 1,
             lease_owner = ?, lease_expires_at = ?, updated_at = ?,
             delete_requested_at = CASE WHEN ? = 'deleting' THEN COALESCE(delete_requested_at, ?) ELSE NULL END,
+            cleanup_attempts = CASE WHEN ? = 'deleting' THEN cleanup_attempts + 1 ELSE 0 END,
+            last_cleanup_attempt_at = CASE WHEN ? = 'deleting' THEN ? ELSE NULL END,
             last_error_code = NULL
       WHERE installation_id = ?
         AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
@@ -148,6 +161,9 @@ async function claimEndpoint(
     leaseOwner,
     now + LEASE_MS,
     now,
+    nextStatus,
+    now,
+    nextStatus,
     nextStatus,
     now,
     row.installation_id,
@@ -763,8 +779,9 @@ export async function sweepManagedEndpointCleanup(
   fetcher: CloudflareFetch,
   requestId: string,
 ): Promise<number> {
+  const now = Date.now();
   const candidates = await env.DB.prepare(
-    `SELECT e.installation_id
+    `SELECT e.installation_id, e.cleanup_attempts, e.delete_requested_at, e.last_error_code
        FROM installation_endpoints e
        LEFT JOIN installations i ON i.id = e.installation_id
       WHERE e.status != 'deleted'
@@ -774,9 +791,50 @@ export async function sweepManagedEndpointCleanup(
           OR i.id IS NULL
         )
         AND (e.lease_expires_at IS NULL OR e.lease_expires_at <= ?)
-      ORDER BY e.updated_at ASC, e.installation_id ASC
+        AND (
+          e.cleanup_attempts = 0
+          OR e.last_cleanup_attempt_at IS NULL
+          OR e.last_cleanup_attempt_at <= CASE
+            WHEN e.cleanup_attempts = 1 THEN ?
+            WHEN e.cleanup_attempts = 2 THEN ?
+            WHEN e.cleanup_attempts = 3 THEN ?
+            WHEN e.cleanup_attempts = 4 THEN ?
+            ELSE ?
+          END
+        )
+      ORDER BY COALESCE(e.delete_requested_at, e.last_cleanup_attempt_at, e.updated_at) ASC,
+               e.installation_id ASC
       LIMIT ?`,
-  ).bind(Date.now(), CLEANUP_SWEEP_LIMIT).all<{ installation_id: string }>();
+  ).bind(
+    now,
+    now - CLEANUP_BACKOFF_1_MS,
+    now - CLEANUP_BACKOFF_2_MS,
+    now - CLEANUP_BACKOFF_3_MS,
+    now - CLEANUP_BACKOFF_4_MS,
+    now - CLEANUP_BACKOFF_MAX_MS,
+    CLEANUP_SWEEP_LIMIT,
+  ).all<{
+    cleanup_attempts: number;
+    delete_requested_at: number | null;
+    installation_id: string;
+    last_error_code: string | null;
+  }>();
+
+  const staleCandidates = candidates.results.filter((candidate) => (
+    candidate.delete_requested_at !== null
+    && candidate.delete_requested_at <= now - MANUAL_CLEANUP_THRESHOLD_MS
+  ));
+  if (staleCandidates.length > 0) {
+    console.error(JSON.stringify({
+      message: "managed endpoint cleanup requires operator attention",
+      requestId,
+      staleCandidateCount: staleCandidates.length,
+      maxCleanupAttempts: Math.max(...staleCandidates.map((candidate) => candidate.cleanup_attempts)),
+      errorCodes: [...new Set(staleCandidates.map((candidate) => (
+        candidate.last_error_code ?? "endpoint_cleanup_pending"
+      )))].sort(),
+    }));
+  }
 
   await Promise.all(candidates.results.map(async (candidate) => {
     try {

@@ -32,7 +32,8 @@ contains only cloud ownership and credential metadata. `0003` adds a
 recipient-scoped OTP limiter whose keys are HMACs rather than email addresses,
 plus an authenticated installation-creation limiter. `0004` adds managed
 endpoint resource IDs, lifecycle state, generation leases, redacted error
-codes, and installation-scoped action limits. Endpoint rows deliberately do not
+codes, and installation-scoped action limits. `0005` adds the cleanup-attempt
+counter used for scheduled retry backoff. Endpoint rows deliberately do not
 cascade away with a hard installation deletion: losing the tunnel and DNS IDs
 would make operator cleanup impossible.
 
@@ -96,7 +97,7 @@ Endpoint provisioning is limited to 20 attempts per installation per hour;
 deletion is limited to 30. A 60-second D1 lease and monotonically increasing
 generation serialize concurrent requests. The owner renews and fences that
 lease before every provider call, so an expired request cannot roll back a
-resource adopted by its successor. Cloudflare calls have an eight-second
+resource adopted by its successor. Cloudflare calls have a five-second
 per-request timeout, reject redirects, bound response bodies, and validate the
 response shape before persisting an ID. Ambiguous create/update responses are
 reconciled by the stable tunnel name and exact DNS identity. Before any
@@ -109,10 +110,15 @@ Revoking an installation first revokes its local installation credentials, then
 schedules best-effort endpoint cleanup. Cloud cleanup failure cannot restore or
 delay credential revocation. Repeating the owner-scoped installation DELETE is
 safe and retries retained cleanup state. A five-minute cron also processes at
-most eight expired-lease rows per run when they are already deleting, belong to
-a revoked installation, or outlive a hard-deleted installation. This bounded
-sweep prevents a transient provider failure from orphaning resources forever
-without creating an unbounded scheduled invocation.
+most four expired-lease rows per run when they are already deleting, belong to
+a revoked installation, or outlive a hard-deleted installation. The four-row
+bound leaves the worst-case 40 external provider calls below the Workers Free
+plan's 50-subrequest ceiling. Failed scheduled cleanups back off from five
+minutes through 15 minutes, one hour, six hours, and then 24 hours. Once a
+deletion has been pending for 24 hours, each eligible sweep emits a distinct
+aggregate operator-attention log without installation or account identifiers.
+This bounded sweep prevents a transient provider failure from orphaning
+resources forever without creating an unbounded scheduled invocation.
 
 ## Local checks
 

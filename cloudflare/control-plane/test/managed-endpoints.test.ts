@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext, createScheduledController, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 
-import type { CloudflareFetch } from "../src/cloudflare-api";
+import { CloudflareAPI, CloudflareAPIError, type CloudflareFetch } from "../src/cloudflare-api";
 import { createAuth } from "../src/auth";
 import { readConfig } from "../src/config";
 import { createWorker } from "../src/index";
@@ -43,7 +43,7 @@ async function runScheduledCleanup(worker: TestWorker): Promise<void> {
     scheduledTime: Date.now(),
   });
   const ctx = createExecutionContext();
-  worker.scheduled(controller, env, ctx);
+  await worker.scheduled(controller, env, ctx);
   await waitOnExecutionContext(ctx);
 }
 
@@ -275,7 +275,7 @@ class FakeCloudflare {
       for (const [name, record] of this.dns) {
         if (record.id === id) this.dns.delete(name);
       }
-      return jsonResult({ id });
+      return Response.json({ result: { id } });
     }
     if (method === "DELETE" && url.pathname.includes("/cfd_tunnel/")) {
       const failed = await this.before("delete_tunnel");
@@ -289,6 +289,42 @@ class FakeCloudflare {
     throw new Error(`unexpected Cloudflare request: ${method} ${url.pathname}`);
   };
 }
+
+describe("Cloudflare API response contracts", () => {
+  it("accepts the documented result-only DNS delete response and validates its ID", async () => {
+    const api = new CloudflareAPI(readConfig(env).cloudflare, async () => (
+      Response.json({ result: { id: "dns-record-1" } })
+    ));
+    await expect(api.deleteDNSRecord("dns-record-1")).resolves.toBeUndefined();
+
+    const mismatched = new CloudflareAPI(readConfig(env).cloudflare, async () => (
+      Response.json({ result: { id: "other-record" } })
+    ));
+    const mismatchError = await mismatched.deleteDNSRecord("dns-record-1")
+      .then(() => null, (error: unknown) => error);
+    expect(mismatchError).toBeInstanceOf(CloudflareAPIError);
+    expect(mismatchError).toMatchObject({
+      code: "cf_invalid_response",
+    });
+  });
+
+  it("keeps result-only success narrow and preserves provider error parsing", async () => {
+    const resultOnly = new CloudflareAPI(readConfig(env).cloudflare, async () => (
+      Response.json({ result: { id: "10000000-0000-4000-8000-000000000001" } })
+    ));
+    await expect(resultOnly.deleteTunnel("10000000-0000-4000-8000-000000000001"))
+      .rejects.toMatchObject({ code: "cf_http_200" });
+
+    const failed = new CloudflareAPI(readConfig(env).cloudflare, async () => Response.json({
+      errors: [{ code: 10_000 }],
+      result: null,
+    }, { status: 500 }));
+    await expect(failed.deleteDNSRecord("dns-record-1")).rejects.toMatchObject({
+      code: "cf_api_10000",
+      status: 500,
+    });
+  });
+});
 
 describe("managed companion endpoints", () => {
   it("allocates an opaque one-label endpoint, returns a raw connector token, and reconciles idempotently", async () => {
@@ -816,6 +852,11 @@ describe("managed companion endpoints", () => {
     expect(retained).toMatchObject({ dns_record_id: expect.any(String), status: "deleting" });
 
     cloudflare.failures.clear();
+    await env.DB.prepare(
+      `UPDATE installation_endpoints
+          SET last_cleanup_attempt_at = ?
+        WHERE installation_id = ?`,
+    ).bind(Date.now() - 6 * 60 * 1_000, installation.installation.id).run();
     await runScheduledCleanup(worker);
     const cleaned = await env.DB.prepare(
       "SELECT dns_record_id, tunnel_id, status FROM installation_endpoints WHERE installation_id = ?",
@@ -828,23 +869,34 @@ describe("managed companion endpoints", () => {
     vi.restoreAllMocks();
   });
 
-  it("bounds each scheduled cleanup sweep", async () => {
+  it("bounds each scheduled cleanup sweep beneath the free-plan external subrequest limit", async () => {
     const cloudflare = new FakeCloudflare();
     const worker = createWorker(cloudflare.fetch);
     const now = Date.now();
-    await env.DB.batch(Array.from({ length: 9 }, (_, index) => {
+    await env.DB.batch(Array.from({ length: 5 }, (_, index) => {
       const opaque = index.toString(16).padStart(32, "0");
+      const hostname = `c-${opaque}.openmausbot.test`;
+      const tunnelName = `omb-c-${opaque}`;
+      const tunnelId = `10000000-0000-4000-8000-${(index + 1).toString(16).padStart(12, "0")}`;
+      cloudflare.tunnels.set(tunnelName, { id: tunnelId, name: tunnelName });
+      cloudflare.dns.set(hostname, {
+        content: `${tunnelId}.cfargotunnel.com`,
+        id: `dns-budget-${index}`,
+        name: hostname,
+        proxied: true,
+        type: "CNAME",
+      });
       return env.DB.prepare(
         `INSERT INTO installation_endpoints
           (installation_id, hostname, tunnel_name, status, delete_requested_at, created_at, updated_at)
          VALUES (?, ?, ?, 'deleting', ?, ?, ?)`,
       ).bind(
         `orphan-${index}`,
-        `c-${opaque}.openmausbot.test`,
-        `omb-c-${opaque}`,
+        hostname,
+        tunnelName,
+        now - index,
         now,
-        now,
-        now + index,
+        now - index,
       );
     }));
 
@@ -853,9 +905,57 @@ describe("managed companion endpoints", () => {
       "SELECT status, COUNT(*) AS count FROM installation_endpoints GROUP BY status ORDER BY status",
     ).all<{ count: number; status: string }>();
     expect(counts.results).toEqual([
-      { count: 8, status: "deleted" },
+      { count: 4, status: "deleted" },
       { count: 1, status: "deleting" },
     ]);
+    expect(cloudflare.calls).toHaveLength(40);
+  });
+
+  it("backs off scheduled cleanup retries and flags old rows for operator attention", async () => {
+    const cloudflare = new FakeCloudflare();
+    const worker = createWorker(cloudflare.fetch);
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO installation_endpoints
+        (installation_id, hostname, tunnel_name, status, cleanup_attempts,
+         last_cleanup_attempt_at, delete_requested_at, last_error_code, created_at, updated_at)
+       VALUES (?, ?, ?, 'deleting', 2, ?, ?, 'dns_record_identity_conflict', ?, ?)`,
+    ).bind(
+      "orphan-backoff",
+      `c-${"a".repeat(32)}.openmausbot.test`,
+      `omb-c-${"a".repeat(32)}`,
+      now - 14 * 60 * 1_000,
+      now - 25 * 60 * 60 * 1_000,
+      now - 25 * 60 * 60 * 1_000,
+      now - 14 * 60 * 1_000,
+    ).run();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await runScheduledCleanup(worker);
+    expect(cloudflare.calls).toHaveLength(0);
+    expect(logged).not.toHaveBeenCalled();
+
+    await env.DB.prepare(
+      "UPDATE installation_endpoints SET last_cleanup_attempt_at = ? WHERE installation_id = ?",
+    ).bind(now - 16 * 60 * 1_000, "orphan-backoff").run();
+    await runScheduledCleanup(worker);
+
+    expect(cloudflare.calls).toHaveLength(2);
+    const row = await env.DB.prepare(
+      "SELECT status, cleanup_attempts FROM installation_endpoints WHERE installation_id = ?",
+    ).bind("orphan-backoff").first<{ cleanup_attempts: number; status: string }>();
+    expect(row).toEqual({ cleanup_attempts: 3, status: "deleted" });
+    const attentionLog = logged.mock.calls
+      .flat()
+      .find((entry) => typeof entry === "string" && entry.includes("requires operator attention"));
+    expect(attentionLog).toBeTruthy();
+    expect(JSON.parse(attentionLog ?? "{}")).toMatchObject({
+      message: "managed endpoint cleanup requires operator attention",
+      staleCandidateCount: 1,
+      maxCleanupAttempts: 2,
+      errorCodes: ["dns_record_identity_conflict"],
+    });
+    logged.mockRestore();
   });
 
   it("enforces endpoint action limits and the global body bound before Cloudflare calls", async () => {

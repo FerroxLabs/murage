@@ -22,6 +22,10 @@ const dnsRecordSchema = z.object({
   proxied: z.boolean(),
 });
 
+const deleteDNSRecordResultSchema = z.object({
+  id: z.string().min(1).max(64),
+});
+
 const configurationSchema = z.object({
   config: z.object({
     ingress: z.array(z.object({
@@ -33,7 +37,7 @@ const configurationSchema = z.object({
 
 const errorEnvelopeSchema = z.object({
   errors: z.array(z.object({ code: z.number().int().optional() })).optional(),
-  success: z.boolean(),
+  success: z.boolean().optional(),
 });
 
 const connectorTokenSchema = z.string().min(20).max(4_096).regex(/^[\x21-\x7e]+$/);
@@ -132,7 +136,7 @@ export class CloudflareAPI {
   private async request<T>(
     path: string,
     schema: z.ZodType<T>,
-    init: { body?: unknown; method?: string } = {},
+    init: { acceptResultOnlySuccess?: boolean; body?: unknown; method?: string } = {},
   ): Promise<T> {
     const headers = new Headers({
       accept: "application/json",
@@ -178,7 +182,16 @@ export class CloudflareAPI {
     }
 
     const envelope = errorEnvelopeSchema.safeParse(value);
-    if (!response.ok || !envelope.success || !envelope.data.success) {
+    const resultOnlySuccess = init.acceptResultOnlySuccess === true
+      && response.ok
+      && envelope.success
+      && envelope.data.success === undefined
+      && (envelope.data.errors?.length ?? 0) === 0;
+    if (
+      !response.ok
+      || !envelope.success
+      || (envelope.data.success !== true && !resultOnlySuccess)
+    ) {
       throw new CloudflareAPIError(providerErrorCode(value, response.status), response.status);
     }
     if (!value || typeof value !== "object" || !("result" in value)) {
@@ -339,11 +352,12 @@ export class CloudflareAPI {
 
   async deleteDNSRecord(recordId: string): Promise<void> {
     try {
-      await this.request(
+      const result = await this.request(
         `zones/${encodeURIComponent(this.config.zoneId)}/dns_records/${encodeURIComponent(recordId)}`,
-        z.unknown(),
-        { method: "DELETE" },
+        deleteDNSRecordResultSchema,
+        { acceptResultOnlySuccess: true, method: "DELETE" },
       );
+      if (result.id !== recordId) throw new CloudflareAPIError("cf_invalid_response");
     } catch (error) {
       if (!isNotFound(error)) throw error;
     }
