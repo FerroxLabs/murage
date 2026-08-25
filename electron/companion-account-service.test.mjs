@@ -262,6 +262,69 @@ describe("Companion account service", () => {
     expect(client.verifyOTP).toHaveBeenCalledOnce();
   });
 
+  it("clears a verified-only session when setup failed before any remote material existed", async () => {
+    const client = readyClient({
+      ensureInstallation: vi.fn(async () => {
+        throw new ControlPlaneError("network_unavailable");
+      }),
+    });
+    const { service, store } = serviceFixture({ client });
+
+    await expect(service.verifyCode("ada@example.com", "12345678")).resolves.toMatchObject({
+      status: "error",
+    });
+    expect(store.read()).toMatchObject({
+      [COMPANION_ACCOUNT_TOKEN_FIELD]: ACCOUNT_TOKEN,
+      [COMPANION_ACCOUNT_USER_ID_FIELD]: "user-1",
+    });
+
+    await expect(service.signOut()).resolves.toEqual({ available: true, status: "signed-out" });
+    expect(client.signOut).toHaveBeenCalledWith(ACCOUNT_TOKEN);
+    expect(store.read()).toEqual({ [COMPANION_CLIENT_INSTANCE_FIELD]: UUID });
+  });
+
+  it("can switch accounts after setup failed before creating an installation", async () => {
+    const nextAccountToken = `signed.${"z".repeat(80)}`;
+    const ensureInstallation = vi
+      .fn()
+      .mockRejectedValueOnce(new ControlPlaneError("network_unavailable"))
+      .mockResolvedValueOnce({
+        installation: {
+          id: INSTALLATION_ID,
+          clientInstanceId: UUID,
+          name: "Test Mac",
+          platform: "darwin",
+        },
+        credential: INSTALLATION_CREDENTIAL,
+      });
+    const verifyOTP = vi
+      .fn()
+      .mockResolvedValueOnce({
+        accountToken: ACCOUNT_TOKEN,
+        user: { id: "user-1", email: "ada@example.com" },
+      })
+      .mockResolvedValueOnce({
+        accountToken: nextAccountToken,
+        user: { id: "user-2", email: "grace@example.com" },
+      });
+    const client = readyClient({ ensureInstallation, verifyOTP });
+    const { service, store } = serviceFixture({ client });
+
+    await service.verifyCode("ada@example.com", "12345678");
+    await expect(service.verifyCode("grace@example.com", "87654321")).resolves.toEqual({
+      available: true,
+      status: "ready",
+      email: "grace@example.com",
+      endpoint: ENDPOINT,
+    });
+    expect(client.signOut).toHaveBeenCalledWith(ACCOUNT_TOKEN);
+    expect(store.read()).toMatchObject({
+      [COMPANION_ACCOUNT_TOKEN_FIELD]: nextAccountToken,
+      [COMPANION_ACCOUNT_USER_ID_FIELD]: "user-2",
+      [COMPANION_ACCOUNT_EMAIL_FIELD]: "grace@example.com",
+    });
+  });
+
   it("stops locally and preserves every cleanup credential until revocation succeeds", async () => {
     const revokeInstallation = vi
       .fn()
@@ -290,6 +353,30 @@ describe("Companion account service", () => {
     expect(recovered).toEqual({ available: true, status: "signed-out" });
     expect(store.read()).toEqual({ [COMPANION_CLIENT_INSTANCE_FIELD]: UUID });
     expect(revokeInstallation).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses a same-account reauthentication to finish pending cleanup instead of reprovisioning", async () => {
+    const refreshedToken = `signed.${"r".repeat(80)}`;
+    const client = readyClient({
+      verifyOTP: vi.fn(async () => ({
+        accountToken: refreshedToken,
+        user: { id: "user-1", email: "ada@example.com" },
+      })),
+    });
+    const initial = signedCredentials({
+      [COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD]: true,
+    });
+    const { service, store } = serviceFixture({ initial, client });
+
+    await expect(service.verifyCode("ada@example.com", "12345678")).resolves.toEqual({
+      available: true,
+      status: "signed-out",
+    });
+    expect(client.revokeInstallation).toHaveBeenCalledWith(refreshedToken, INSTALLATION_ID);
+    expect(client.signOut).toHaveBeenCalledWith(refreshedToken);
+    expect(client.ensureInstallation).not.toHaveBeenCalled();
+    expect(client.ensureEndpoint).not.toHaveBeenCalled();
+    expect(store.read()).toEqual({ [COMPANION_CLIENT_INSTANCE_FIELD]: UUID });
   });
 
   it("does not overwrite a previous account when switching cleanup fails", async () => {

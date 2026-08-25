@@ -102,7 +102,10 @@ function withProvisionedAccount(credentials, { accountToken, user, installation,
   return next;
 }
 
-function withAuthenticatedAccount(credentials, { accountToken, user, clientInstanceId }) {
+function withAuthenticatedAccount(
+  credentials,
+  { accountToken, user, clientInstanceId, preserveCleanupPending = false },
+) {
   const next = {
     ...credentials,
     [COMPANION_ACCOUNT_TOKEN_FIELD]: accountToken,
@@ -112,7 +115,11 @@ function withAuthenticatedAccount(credentials, { accountToken, user, clientInsta
   if (!UUID.test(ownString(next, COMPANION_CLIENT_INSTANCE_FIELD))) {
     next[COMPANION_CLIENT_INSTANCE_FIELD] = clientInstanceId;
   }
-  delete next[COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD];
+  if (preserveCleanupPending) {
+    next[COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD] = true;
+  } else {
+    delete next[COMPANION_ACCOUNT_CLEANUP_PENDING_FIELD];
+  }
   return next;
 }
 
@@ -284,6 +291,18 @@ export function createCompanionAccountService({
       await clearAfterCleanup();
       return true;
     }
+    const access = managedCompanionTunnelAccess(document);
+    if (!account.installationId && !account.installationCredential && !access) {
+      // OTP verification is persisted before provisioning so a transient
+      // setup failure can be retried without consuming another code. If setup
+      // failed before returning any installation or endpoint material, there
+      // is no connector credential to revoke and no hosted route to remove.
+      // The account bearer can be signed out best-effort and forgotten now.
+      await stopManagedEndpoint();
+      await client.signOut(account.accountToken).catch(() => {});
+      await clearAfterCleanup();
+      return true;
+    }
     if (markPending && !companionAccountCleanupPending(document)) await markCleanupPending();
     await stopManagedEndpoint();
 
@@ -412,6 +431,11 @@ export function createCompanionAccountService({
     }
 
     const previous = storedAccount(credentials());
+    const refreshingPendingCleanup = Boolean(
+      previous &&
+      previous.userId === verified.user.id &&
+      companionAccountCleanupPending(credentials()),
+    );
     let authenticatedPersisted = false;
     try {
       if (previous && previous.userId !== verified.user.id) {
@@ -428,9 +452,17 @@ export function createCompanionAccountService({
         withAuthenticatedAccount(document, {
           ...verified,
           clientInstanceId,
+          preserveCleanupPending: refreshingPendingCleanup,
         }),
       );
       authenticatedPersisted = true;
+      if (refreshingPendingCleanup) {
+        // The user supplied a fresh bearer to finish an interrupted sign-out.
+        // Keep that intent and retry revocation; do not silently turn the
+        // sign-out action into a new endpoint provisioning operation.
+        await cleanupCurrentAccount({ markPending: false });
+        return settledState();
+      }
       return await provision(verified);
     } catch (error) {
       if (!authenticatedPersisted) await client.signOut(verified.accountToken).catch(() => {});
