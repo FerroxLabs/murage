@@ -8,6 +8,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createProxyHandler } from "../src/proxy.ts";
+import type { CompanionEndpoint } from "../src/endpoints.ts";
 import { scrub } from "../src/wire.ts";
 
 const TOKEN = "omb_test_token";
@@ -25,6 +26,7 @@ let sidecar: Server;
 let sidecarPort = 0;
 let cloudDesktopAccess = true;
 let companionMarker = "";
+let endpointCandidates: CompanionEndpoint[] = [];
 /** What the stub harness answers with next. Set per test. */
 let respond: (res: ServerResponse) => void = (res) => res.end();
 
@@ -59,6 +61,7 @@ beforeAll(async () => {
       authenticate: (t) => (t === TOKEN ? { cloudDesktopAccess } : null),
       redeem: () => ({ error: "not used here" }),
       serverName: () => "Test computer",
+      endpoints: () => endpointCandidates,
     }),
   );
   sidecarPort = await listen(sidecar);
@@ -70,6 +73,19 @@ afterAll(async () => {
 });
 
 describe("preparing a harness response for a device", () => {
+  it("drops an endpoint whose runtime URL is not a string", async () => {
+    const malformed: CompanionEndpoint = { kind: "hosted", priority: 0, url: "https://ok.example" };
+    Object.defineProperty(malformed, "url", { value: 42 });
+    endpointCandidates = [malformed];
+    try {
+      const { status, text } = await device("/api/companion/endpoints");
+      expect(status).toBe(200);
+      expect(JSON.parse(text)).toMatchObject({ endpoints: [] });
+    } finally {
+      endpointCandidates = [];
+    }
+  });
+
   it("requires the Mac to enable cloud desktop for this phone", async () => {
     cloudDesktopAccess = false;
     try {

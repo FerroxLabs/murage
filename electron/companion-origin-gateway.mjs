@@ -120,6 +120,64 @@ export function cleanupCompanionOriginEndpoint(
   }
 }
 
+/** Verify that the exact private sidecar origin is answering with the
+ * companion identity. Every terminal request/response event settles the
+ * promise: this probe runs inside the serialized Companion lifecycle, so a
+ * request left pending would wedge both start and stop for the app session. */
+export function companionOriginHealth(
+  target,
+  { request = http.request, timeoutMs = 1_000 } = {},
+) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const outgoing = request(
+      {
+        headers: { accept: "application/json" },
+        method: "GET",
+        path: "/api/health",
+        socketPath: target.socketPath,
+        timeout: timeoutMs,
+      },
+      (response) => {
+        const chunks = [];
+        let size = 0;
+        response.on("data", (chunk) => {
+          size += chunk.length;
+          if (size > 4096) {
+            finish(false);
+            response.destroy();
+          } else {
+            chunks.push(chunk);
+          }
+        });
+        response.on("end", () => {
+          if (response.statusCode !== 200) return finish(false);
+          try {
+            finish(JSON.parse(Buffer.concat(chunks).toString("utf8"))?.app === "openmausbot");
+          } catch {
+            finish(false);
+          }
+        });
+        response.once("aborted", () => finish(false));
+        response.once("error", () => finish(false));
+        response.once("close", () => finish(false));
+      },
+    );
+    outgoing.once("timeout", () => {
+      finish(false);
+      outgoing.destroy();
+    });
+    outgoing.once("error", () => finish(false));
+    outgoing.once("close", () => finish(false));
+    outgoing.end();
+  });
+}
+
 function unavailable(response) {
   if (response.headersSent) return response.destroy();
   const body = JSON.stringify({ error: "companion origin unavailable" });
@@ -186,6 +244,15 @@ export function createCompanionOriginGateway({
           return unavailable(outgoing);
         }
         outgoing.writeHead(response.statusCode ?? 502, endToEndHeaders(response.headers));
+        // `pipe` does not carry source failures to the destination. A
+        // sidecar restart in the middle of a response must tear down the
+        // client response instead of leaving it waiting forever for bytes
+        // (and possibly a content-length) that will never arrive.
+        response.once("error", () => outgoing.destroy());
+        response.once("aborted", () => outgoing.destroy());
+        response.once("close", () => {
+          if (!response.complete) outgoing.destroy();
+        });
         response.pipe(outgoing);
       },
     );

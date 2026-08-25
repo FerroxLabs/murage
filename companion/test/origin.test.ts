@@ -58,4 +58,28 @@ describe("private managed origin", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects and closes the socket when its permissions cannot be restricted",
+    async () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "omb-companion-origin-test-"));
+      directories.push(directory);
+      fs.chmodSync(directory, 0o700);
+      const socketPath = path.join(directory, "origin.sock");
+      const server = createServer();
+      const closed = new Promise<void>((resolve) => server.once("close", () => resolve()));
+      const fileSystem = {
+        ...fs,
+        chmodSync() {
+          throw new Error("permissions unavailable");
+        },
+      };
+
+      await expect(
+        listenCompanionOrigin(server, socketPath, { platform: "linux", fileSystem }),
+      ).rejects.toThrow("permissions unavailable");
+      await closed;
+      expect(server.listening).toBe(false);
+    },
+  );
 });

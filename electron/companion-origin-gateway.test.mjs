@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { createServer as createHttpServer, request as httpRequest } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -5,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   cleanupCompanionOriginEndpoint,
+  companionOriginHealth,
   createCompanionOriginEndpoint,
   createCompanionOriginGateway,
   validCompanionOriginTarget,
@@ -63,6 +65,33 @@ describe("managed Companion origin endpoint", () => {
     cleanupCompanionOriginEndpoint(allocated);
     expect(fs.readFileSync(foreign, "utf8")).toBe("safe");
     fs.unlinkSync(foreign);
+  });
+
+  it("settles an origin health probe when its request times out or closes", async () => {
+    const probe = (terminalEvent) => {
+      const outgoing = new EventEmitter();
+      outgoing.destroy = () => {};
+      outgoing.end = () => queueMicrotask(() => outgoing.emit(terminalEvent));
+      return companionOriginHealth(
+        { socketPath: "/unused/private-origin.sock" },
+        { request: () => outgoing, timeoutMs: 10 },
+      );
+    };
+
+    await expect(probe("timeout")).resolves.toBe(false);
+    await expect(probe("close")).resolves.toBe(false);
+  });
+
+  it("accepts the exact identity from a healthy private origin", async () => {
+    const allocated = endpoint();
+    const target = createHttpServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ app: "openmausbot" }));
+    });
+    servers.push(target);
+    await listen(target, allocated.socketPath);
+
+    await expect(companionOriginHealth(allocated)).resolves.toBe(true);
   });
 });
 
@@ -171,5 +200,42 @@ describe("managed Companion loopback gateway", () => {
     await gateway.close();
     const rebound = await listen(competitor, { host: "127.0.0.1", port: address.port });
     expect(rebound.port).toBe(address.port);
+  });
+
+  it("ends downstream traffic when the private origin closes mid-response", async () => {
+    const allocated = endpoint();
+    const target = createHttpServer((_request, response) => {
+      response.writeHead(200, {
+        "content-length": "100000",
+        "content-type": "application/octet-stream",
+      });
+      response.write(Buffer.alloc(1000, 1));
+      setTimeout(() => response.socket?.destroy(), 20);
+    });
+    servers.push(target);
+    await listen(target, allocated.socketPath);
+
+    const gateway = createCompanionOriginGateway({
+      target: { pid: process.pid, socketPath: allocated.socketPath },
+      originPort: 0,
+    });
+    const address = await gateway.start();
+    const outcome = await Promise.race([
+      new Promise((resolve) => {
+        const outgoing = httpRequest({ host: "127.0.0.1", port: address.port }, (incoming) => {
+          incoming.resume();
+          incoming.once("aborted", () => resolve("aborted"));
+          incoming.once("error", () => resolve("error"));
+          incoming.once("end", () => resolve("ended"));
+          incoming.once("close", () => resolve("closed"));
+        });
+        outgoing.once("error", () => resolve("request-error"));
+        outgoing.end();
+      }),
+      new Promise((resolve) => setTimeout(() => resolve("hung"), 2_000)),
+    ]);
+
+    expect(outcome).not.toBe("hung");
+    await gateway.close();
   });
 });

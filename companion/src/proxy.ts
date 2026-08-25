@@ -148,7 +148,9 @@ const endpointSnapshot = (options: ProxyOptions): CompanionEndpointSnapshot => {
   for (const candidate of options.endpoints?.() ?? []) {
     if (endpoints.length >= MAX_COMPANION_ENDPOINTS) break;
     if (
+      !candidate ||
       !COMPANION_ENDPOINT_KINDS.includes(candidate.kind) ||
+      typeof candidate.url !== "string" ||
       !Number.isSafeInteger(candidate.priority) ||
       candidate.priority < 0 ||
       candidate.priority > 10_000 ||

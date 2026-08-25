@@ -43,7 +43,18 @@ export function listenCompanionOrigin(
     };
     const onListening = () => {
       server.removeListener("error", onError);
-      if (platform !== "win32") fileSystem.chmodSync(socketPath, 0o600);
+      if (platform !== "win32") {
+        try {
+          fileSystem.chmodSync(socketPath, 0o600);
+        } catch (error) {
+          // A socket whose permissions could not be restricted must not stay
+          // reachable, and startup must receive the failure rather than wait
+          // forever on a promise whose listening callback threw.
+          server.close();
+          reject(error);
+          return;
+        }
+      }
       server.on("error", (error: Error) => {
         console.warn(`companion: private origin error — ${error.message}`);
       });

@@ -12,11 +12,11 @@
 // place rather than implied by whatever the control server happens to serve.
 import { app, utilityProcess } from "electron";
 import fs from "node:fs";
-import http from "node:http";
 import path from "node:path";
 import { resolveCompanionEntry } from "./companion-entry.mjs";
 import {
   cleanupCompanionOriginEndpoint,
+  companionOriginHealth,
   createCompanionOriginEndpoint,
 } from "./companion-origin-gateway.mjs";
 
@@ -150,52 +150,6 @@ export function companionOriginTarget() {
  * before this module cleans up the generation's socket path. */
 export function setCompanionLifecycleListener(listener = () => {}) {
   lifecycleListener = listener;
-}
-
-function originHealth(target) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    const request = http.request(
-      {
-        headers: { accept: "application/json" },
-        method: "GET",
-        path: "/api/health",
-        socketPath: target.socketPath,
-        timeout: 1_000,
-      },
-      (response) => {
-        const chunks = [];
-        let size = 0;
-        response.on("data", (chunk) => {
-          size += chunk.length;
-          if (size > 4096) {
-            finish(false);
-            response.destroy();
-          }
-          else chunks.push(chunk);
-        });
-        response.on("end", () => {
-          if (response.statusCode !== 200) return finish(false);
-          try {
-            finish(JSON.parse(Buffer.concat(chunks).toString("utf8"))?.app === "openmausbot");
-          } catch {
-            finish(false);
-          }
-        });
-        response.once("aborted", () => finish(false));
-        response.once("error", () => finish(false));
-        response.once("close", () => finish(false));
-      },
-    );
-    request.once("timeout", () => request.destroy());
-    request.once("error", () => finish(false));
-    request.end();
-  });
 }
 
 // Every lifecycle transition runs to completion before the next one begins.
@@ -342,7 +296,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
         throw new Error("child pid unavailable");
       }
       const target = { pid: child.pid, socketPath: allocatedOrigin.socketPath };
-      if (!(await originHealth(target))) throw new Error("private origin not ready");
+      if (!(await companionOriginHealth(target))) throw new Error("private origin not ready");
       proc = child;
       advertisedHostedUrl = hostedUrl;
       originTarget = Object.freeze(target);
