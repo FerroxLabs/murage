@@ -5,7 +5,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { copyHandleTo, defaultSaveName, openSavableFile, resolveSavablePath } from "./save-file.mjs";
+import { defaultSaveName, resolveSavablePath, withSavableFile } from "./save-file.mjs";
 
 // Creating a symlink on Windows needs elevation or developer mode, so the
 // symlink cases only run where the runner can actually make one.
@@ -114,12 +114,7 @@ describe("save-file source handles", () => {
   it("copies from the validated open handle", async () => {
     const source = path.join(botHome, "workspaces", "bot", "report.docx");
     const destination = path.join(home, "copied-report.docx");
-    const { handle } = await openSavableFile(source, { home });
-    try {
-      await copyHandleTo(handle, destination);
-    } finally {
-      await handle.close();
-    }
+    await withSavableFile(source, { home }, ({ copyTo }) => copyTo(destination));
     assert.equal(fs.readFileSync(destination, "utf8"), "docx");
     fs.rmSync(destination);
   });
@@ -128,17 +123,38 @@ describe("save-file source handles", () => {
     const source = path.join(botHome, "workspaces", "bot", "report.docx");
     const moved = `${source}.moved`;
     const destination = path.join(home, "swapped-report.docx");
-    const { handle } = await openSavableFile(source, { home });
-    try {
+    await withSavableFile(source, { home }, async ({ copyTo }) => {
       fs.renameSync(source, moved);
       fs.symlinkSync(path.join(home, "secret.txt"), source);
-      await copyHandleTo(handle, destination);
+      await copyTo(destination);
       assert.equal(fs.readFileSync(destination, "utf8"), "docx");
-    } finally {
-      await handle.close();
+    }).finally(() => {
       if (fs.existsSync(source)) fs.rmSync(source);
       if (fs.existsSync(moved)) fs.renameSync(moved, source);
       if (fs.existsSync(destination)) fs.rmSync(destination);
-    }
+    });
+  });
+
+  it("rejects a validation-to-open identity swap on Windows", async () => {
+    const source = path.join(botHome, "workspaces", "bot", "report.docx");
+    const expected = { dev: 1, ino: 1, isFile: () => true };
+    const opened = { dev: 1, ino: 2, isFile: () => true };
+    let closed = false;
+    const fsp = {
+      realpath: async (target) => target,
+      stat: async () => expected,
+      open: async () => ({
+        stat: async () => opened,
+        close: async () => {
+          closed = true;
+        },
+      }),
+    };
+
+    await assert.rejects(
+      withSavableFile(source, { home, fsp, platform: "win32" }, async () => {}),
+      { message: "That file changed while it was being opened" },
+    );
+    assert.equal(closed, true);
   });
 });

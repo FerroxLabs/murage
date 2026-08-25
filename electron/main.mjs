@@ -21,7 +21,7 @@ import { buildDiagnosticsReport, decodeLogTail, diagnosticsFileName } from "./di
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
-import { defaultSaveName, openSavableFile, copyHandleTo } from "./save-file.mjs";
+import { defaultSaveName, withSavableFile } from "./save-file.mjs";
 import {
   ensureManagedComposioCredentials,
   managedComposioAccess,
@@ -1162,10 +1162,9 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
 // renderer-controlled, so it must resolve inside ~/.openmausbot and be a
 // regular file — never a symlink escape or directory.
 ipcMain.handle("desktop:save-file", async (event, rawPath) => {
-  const { handle, filePath: source } = await openSavableFile(rawPath, { home: os.homedir() });
-  try {
+  return withSavableFile(rawPath, { home: os.homedir() }, async ({ defaultName, copyTo }) => {
     const parent = BrowserWindow.fromWebContents(event.sender);
-    const defaultPath = await defaultSaveName(app.getPath("downloads"), source);
+    const defaultPath = await defaultSaveName(app.getPath("downloads"), defaultName);
     const choice = await dialog.showSaveDialog(parent ?? undefined, {
       title: "Where do you want to save it?",
       message: "Where do you want to save it?",
@@ -1175,12 +1174,10 @@ ipcMain.handle("desktop:save-file", async (event, rawPath) => {
     });
     // Cancelling is a decision, not a failure — the bubble stays quiet.
     if (choice.canceled || !choice.filePath) return null;
-    await copyHandleTo(handle, choice.filePath);
+    await copyTo(choice.filePath);
     shell.showItemInFolder(choice.filePath);
     return choice.filePath;
-  } finally {
-    await handle.close();
-  }
+  });
 });
 
 ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {
