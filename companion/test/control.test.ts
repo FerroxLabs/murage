@@ -164,9 +164,12 @@ describe("hostCandidates", () => {
     const { status, body } = await ask("GET", "/state");
     expect(status).toBe(200);
     expect(Array.isArray(body.hosts)).toBe(true);
+    expect(Array.isArray(body.endpoints)).toBe(true);
     // Whatever this machine's interfaces are, the mDNS fallback is always
     // present and always last.
     expect(body.hosts.at(-1)).toMatch(/^openmausbot-[0-9a-f]{8}\.local$/);
+    expect(body.endpoints.at(-1)).toMatchObject({ kind: "bonjour", priority: 300 });
+    expect(body.endpoints.at(-1).url).toMatch(/^http:\/\/openmausbot-[0-9a-f]{8}\.local:8810$/);
   });
 });
 

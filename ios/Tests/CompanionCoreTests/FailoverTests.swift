@@ -41,11 +41,68 @@ final class FailoverTests: XCTestCase {
         XCTAssertTrue(ConnectionAdvice.shouldTryAnotherHost(.cannotConnectToHost)) // -1004
         XCTAssertTrue(ConnectionAdvice.shouldTryAnotherHost(.timedOut)) // -1001
         XCTAssertTrue(ConnectionAdvice.shouldTryAnotherHost(.secureConnectionFailed)) // -1200
+        XCTAssertTrue(ConnectionAdvice.shouldTryAnotherHost(.serverCertificateHasBadDate)) // -1201
+        XCTAssertTrue(ConnectionAdvice.shouldTryAnotherHost(.serverCertificateUntrusted)) // -1202
+        XCTAssertTrue(ConnectionAdvice.shouldTryAnotherHost(.serverCertificateHasUnknownRoot)) // -1203
+        XCTAssertTrue(ConnectionAdvice.shouldTryAnotherHost(.serverCertificateNotYetValid)) // -1204
 
         // Offline fails on every address, and cancellation is deliberate.
         XCTAssertFalse(ConnectionAdvice.shouldTryAnotherHost(.notConnectedToInternet)) // -1009
         XCTAssertFalse(ConnectionAdvice.shouldTryAnotherHost(.cancelled))
         XCTAssertFalse(ConnectionAdvice.shouldTryAnotherHost(.networkConnectionLost))
+    }
+
+    func testRotatesPastTunnelGatewayFailuresButNotApplicationErrors() {
+        for code in [502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 528, 529, 530] {
+            XCTAssertTrue(ConnectionAdvice.shouldTryAnotherRoute(
+                after: APIError.status(code: code, message: nil)
+            ), "expected HTTP \(code) to move to another route")
+        }
+        for code in [400, 401, 403, 404, 409, 500, 501] {
+            XCTAssertFalse(ConnectionAdvice.shouldTryAnotherRoute(
+                after: APIError.status(code: code, message: nil)
+            ), "expected HTTP \(code) to stay on the current route")
+        }
+    }
+
+    func testTunnelGatewayFailureAdvancesFromHostedToLAN() throws {
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example",
+            kind: .hosted,
+            priority: 0
+        ))
+        let lan = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.42:8810",
+            kind: .lan,
+            priority: 200
+        ))
+        var rotation = CandidateRotation(endpoints: [hosted, lan])
+
+        let next = rotation.advanceEndpoint(
+            after: APIError.status(code: 502, message: nil)
+        )
+
+        XCTAssertEqual(next, lan)
+        XCTAssertEqual(rotation.currentEndpoint, lan)
+    }
+
+    func testAuthenticationFailureDoesNotAdvanceTheRoute() throws {
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example",
+            kind: .hosted,
+            priority: 0
+        ))
+        let lan = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.42:8810",
+            kind: .lan,
+            priority: 200
+        ))
+        var rotation = CandidateRotation(endpoints: [hosted, lan])
+
+        XCTAssertNil(rotation.advanceEndpoint(
+            after: APIError.status(code: 401, message: nil)
+        ))
+        XCTAssertEqual(rotation.currentEndpoint, hosted)
     }
 
     // MARK: - The advice strings
@@ -81,6 +138,16 @@ final class FailoverTests: XCTestCase {
             port: 8810,
             tryingNext: "192.168.1.42"
         )
+        XCTAssertTrue(message.contains("Trying 192.168.1.42 next."))
+    }
+
+    func testGatewayAdviceNamesTheFallbackRoute() {
+        let message = ConnectionAdvice.message(
+            forGatewayStatus: 502,
+            host: "https://mac.companion.example",
+            tryingNext: "192.168.1.42"
+        )
+        XCTAssertTrue(message.contains("HTTP 502"))
         XCTAssertTrue(message.contains("Trying 192.168.1.42 next."))
     }
 
@@ -132,5 +199,69 @@ final class FailoverTests: XCTestCase {
         connection.promote("10.0.0.7")
         XCTAssertEqual(connection.hosts?.first, "10.0.0.7")
         XCTAssertEqual(connection.hosts?.count, 4)
+    }
+
+    func testTypedRoutesKeepHostedHTTPSAheadOfAnActiveLANFallback() throws {
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example",
+            kind: .hosted,
+            priority: 0
+        ))
+        let lan = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.42:8810",
+            kind: .lan,
+            priority: 200
+        ))
+        var connection = Connection(
+            name: "Mac",
+            host: hosted.host,
+            port: hosted.port,
+            activeEndpoint: hosted,
+            endpoints: [lan, hosted]
+        )
+
+        connection.promote(lan)
+
+        XCTAssertEqual(connection.baseURL?.absoluteString, lan.url)
+        XCTAssertEqual(connection.orderedEndpoints.map(\.url), [hosted.url, lan.url])
+    }
+
+    func testPromotingAWorkingLegacyEndpointKeepsEveryLegacyFallback() throws {
+        var connection = Connection(
+            name: "Mac",
+            host: "mac.tail1234.ts.net",
+            port: 8810,
+            hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"]
+        )
+        let lan = try XCTUnwrap(CompanionEndpoint.direct(
+            host: "192.168.1.42",
+            port: 8810,
+            priority: 1
+        ))
+
+        connection.promote(lan)
+
+        XCTAssertNil(connection.endpoints)
+        XCTAssertEqual(connection.orderedEndpoints.map(\.host), [
+            "192.168.1.42", "mac.tail1234.ts.net", "openmausbot-aa.local",
+        ])
+    }
+
+    func testTypedRotationPreservesSchemesAndPorts() throws {
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example",
+            kind: .hosted,
+            priority: 0
+        ))
+        let direct = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.42:9910",
+            kind: .lan,
+            priority: 200
+        ))
+        var rotation = CandidateRotation(endpoints: [hosted, direct])
+
+        XCTAssertEqual(rotation.currentEndpoint, hosted)
+        XCTAssertEqual(rotation.advanceEndpoint(), direct)
+        XCTAssertEqual(rotation.promotedEndpoints(), [direct, hosted])
     }
 }

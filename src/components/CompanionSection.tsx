@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, Smartphone, Trash2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { companionPairingLink } from "../lib/companion-pairing";
+import { companionPairingLink, type CompanionEndpoint } from "../lib/companion-pairing";
 import { Card } from "./SettingsPrimitives";
 
 interface Device {
@@ -43,6 +43,8 @@ interface CompanionState {
   lan?: string | null;
   /** Ordered fallback hosts for the phone — tailnet name, LAN, mDNS last. */
   hosts?: string[];
+  /** Complete URLs for current mobile builds, hosted HTTPS first. */
+  endpoints?: CompanionEndpoint[];
   /** Bonjour: when advertising, the phone finds this computer by name. */
   discovery?: { advertising: boolean; name: string };
   /** Why it is not running, or not answering. */
@@ -72,6 +74,14 @@ const relative = (at: number) => {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `${hours} h ago`;
   return `${Math.round(hours / 24)} d ago`;
+};
+
+const endpointHost = (url: string): string => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 };
 
 export function CompanionSection() {
@@ -155,7 +165,14 @@ export function CompanionSection() {
   // clients. A bare 100.64/10 address is not dialable by the iOS app over
   // HTTP, so fall back to LAN instead of putting a broken address in the QR.
   const tailnet = state.tailnetName;
-  const address = tailnet ?? state.lan ?? state.addresses?.find((candidate) => candidate !== state.tailscale);
+  const hosted = state.endpoints?.find((endpoint) => endpoint.kind === "hosted");
+  // `address` is deliberately still a direct host. Older iOS builds assume
+  // this field means host:port over HTTP and would corrupt an HTTPS URL.
+  const address =
+    tailnet ??
+    state.lan ??
+    state.addresses?.find((candidate) => candidate !== state.tailscale) ??
+    state.hosts?.[0];
   const pairingLink =
     state.pairing && address
       ? companionPairingLink({
@@ -165,6 +182,7 @@ export function CompanionSection() {
           token: state.pairing.token,
           name: state.discovery?.name,
           hosts: state.hosts,
+          endpoints: state.endpoints,
         })
       : null;
 
@@ -187,6 +205,8 @@ export function CompanionSection() {
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {!state.enabled
                 ? "Nothing on this computer is reachable from the network."
+                : hosted
+                  ? `Secure connection ready at ${endpointHost(hosted.url)} — your phone can connect from any network.`
                 : !address
                   ? `Listening on port ${state.port} — no network address yet.`
                   : tailnet
@@ -221,7 +241,7 @@ export function CompanionSection() {
         {/* A tailnet address with no name is workable on a laptop and not on
             a phone, so say so rather than letting pairing fail with an
             unexplained policy error. */}
-        {state.enabled && state.tailscale && !state.tailnetName && (
+        {state.enabled && !hosted && state.tailscale && !state.tailnetName && (
           <div className="mt-3 text-[13px] text-ink-secondary">
             You're on a tailnet, but this computer's MagicDNS name couldn't be read from the
             Tailscale app — either MagicDNS is off, or the Tailscale command line tool isn't
@@ -229,7 +249,7 @@ export function CompanionSection() {
             OpenMausBot log for which paths were tried.
           </div>
         )}
-        {state.enabled && !state.tailscale && (
+        {state.enabled && !hosted && !state.tailscale && (
           <div className="mt-3 text-[13px] text-ink-secondary">
             Only reachable on this network. Install Tailscale on both this computer and your phone
             to reach it from anywhere — including networks that stop devices from seeing each other.
