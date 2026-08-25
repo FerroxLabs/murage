@@ -10,6 +10,7 @@ import {
   CalendarClock,
   Hand,
   Loader2,
+  Maximize2,
   Monitor,
   Moon,
   Plus,
@@ -500,6 +501,10 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       : phase === "ready" || phase === "starting"
         ? cloudFrame && `data:${cloudFrame.mime};base64,${cloudFrame.png}`
         : null;
+  const previewOpensDesktop = Boolean(
+    frameSrc &&
+      ((phase === "vm" && vmViewerUrl) || (phase === "ready" && cloudBackend === "box")),
+  );
 
   // who-is-driving: SSE keeps this fresh; the mount fetch covers a panel
   // opened after the last frame (e.g. an app reload mid-hold)
@@ -549,7 +554,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     setError(null);
     let tookControl = false;
     // A plain-web development session still needs a synchronous blank tab;
-    // the packaged app uses the reliable Electron modal below.
+    // the packaged app uses the reliable Electron viewer window below.
     let fallbackTab: Window | null = null;
     if (!window.ogb?.desktopViewer && !window.ogb?.openExternal) {
       fallbackTab = window.open("", "_blank");
@@ -759,12 +764,31 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             {cloudBackend === "vps" && (phase === "ready" || phase === "starting") && <span className="text-[11px]">self-hosted VPS</span>}
         </div>
         <div className="flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-xl bg-card">
-          {frameSrc ? (
+          {frameSrc && previewOpensDesktop ? (
+            <button
+              type="button"
+              onClick={() => void openDesktop()}
+              disabled={controlPending || pending === "join"}
+              className="group relative flex h-full w-full cursor-pointer items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-wait"
+              aria-label={`Open ${bot.name}'s live desktop`}
+              title="Open live desktop"
+            >
+              <img
+                src={frameSrc}
+                alt={`${bot.name}'s screen`}
+                className="h-full w-full object-contain transition group-hover:brightness-75 group-focus-visible:brightness-75"
+              />
+              <span className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-[11px] font-medium text-white opacity-80 shadow-sm transition group-hover:opacity-100 group-focus-visible:opacity-100">
+                {pending === "join" ? <Loader2 size={12} className="animate-spin" /> : <Maximize2 size={12} />}
+                Open
+              </span>
+            </button>
+          ) : frameSrc ? (
             <img
               src={frameSrc}
               alt={`${bot.name}'s screen`}
               className="h-full w-full object-contain"
-              title={phase === "vm" ? "Watch-only preview — use Open desktop to click and type" : undefined}
+              title={phase === "vm" ? "Watch-only preview" : undefined}
             />
           ) : (
             <div className="flex flex-col items-center gap-2 px-6 text-center text-ink-secondary">
