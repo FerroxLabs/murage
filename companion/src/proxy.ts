@@ -29,6 +29,7 @@ export interface ProxyOptions {
   redeem: (
     code: string,
     deviceName: unknown,
+    pairRequestId?: unknown,
   ) => { token: string; device: unknown } | { error: string };
   /** What the phone should call this computer in its connection list. */
   serverName: () => string;
@@ -165,7 +166,11 @@ export function createProxyHandler(options: ProxyOptions) {
         (body) => {
           // New clients redeem the high-entropy credential carried by the QR.
           // `code` remains accepted for manual entry and older mobile builds.
-          const result = options.redeem(String(body.credential ?? body.code ?? ""), body.deviceName);
+          const result = options.redeem(
+            String(body.credential ?? body.code ?? ""),
+            body.deviceName,
+            body.pairRequestId,
+          );
           if ("error" in result) return sendJson(res, 401, { error: result.error });
           // `hosts` rides along whichever way the phone paired — QR, typed
           // address, or discovery — so every paired device learns the full

@@ -45,6 +45,20 @@ export interface PairingWindow {
   attemptsLeft: number;
 }
 
+/** A successful redemption kept only long enough for the *same* phone request
+ * to recover from a lost HTTP response on another advertised address.
+ *
+ * The device token remains memory-only here (the durable file still contains
+ * only its digest), and a replay needs both the original high-entropy pairing
+ * credential and the client-generated request id. Older clients that omit a
+ * request id retain the original exactly-once behaviour. */
+interface PairingReplay {
+  requestId: string;
+  credentialHash: string;
+  expiresAt: number;
+  result: { device: PublicDevice; token: string };
+}
+
 const DEVICES_FILE = join(DATA_DIR, "devices.json");
 export const PAIRING_TTL_MS = 120_000;
 export const MAX_PAIRING_ATTEMPTS = 5;
@@ -113,6 +127,8 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
 export class DeviceRegistry {
   private devices: DeviceRecord[] = [];
   private window: PairingWindow | null = null;
+  private replay: PairingReplay | null = null;
+  private replayExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSeenWrites = new Map<string, number>();
 
   /** Load the paired fleet, normalising as it goes.
@@ -167,6 +183,7 @@ export class DeviceRegistry {
   /** Open a fresh window, replacing any that was already open. The code is
    * from `randomInt`, not `Math.random` — it is a credential for two minutes. */
   openPairing(): PairingWindow {
+    this.clearReplay();
     this.window = {
       code: String(randomInt(0, 1_000_000)).padStart(6, "0"),
       token: `omb_pair_${randomBytes(32).toString("base64url")}`,
@@ -178,16 +195,52 @@ export class DeviceRegistry {
 
   closePairing() {
     this.window = null;
+    this.clearReplay();
+  }
+
+  /** Erase the only in-memory copy of a successfully issued device token.
+   * The timer matters even if nobody ever calls `redeem` again: an expired
+   * recovery window must not leave a raw bearer sitting in a long-lived
+   * desktop process. */
+  private clearReplay() {
+    this.replay = null;
+    if (this.replayExpiryTimer) clearTimeout(this.replayExpiryTimer);
+    this.replayExpiryTimer = null;
   }
 
   /** Redeem either pairing credential for a device token.
    *
-   * The token is returned exactly once, here. There is no endpoint that can
-   * read it back — a phone that loses it pairs again. */
-  redeem(credential: string, name: unknown): { device: PublicDevice; token: string } | { error: string } {
+   * Old clients receive the token exactly once. A client that supplies a
+   * request id may repeat that same logical redemption until the pairing
+   * window's original expiry, which is just enough to survive losing the
+   * response while changing routes. There is no general token-read endpoint. */
+  redeem(
+    credential: string,
+    name: unknown,
+    pairRequestId?: unknown,
+  ): { device: PublicDevice; token: string } | { error: string } {
+    const presented = String(credential ?? "");
+    const requestId =
+      typeof pairRequestId === "string" && /^[A-Za-z0-9._-]{16,128}$/.test(pairRequestId)
+        ? pairRequestId
+        : null;
+
+    // A route can die after the registry committed the device but before the
+    // phone received the response. Retrying the same logical request through
+    // another advertised address must return the same device, not burn a
+    // second slot or turn a successful pairing into a misleading 401.
+    if (this.replay && this.replay.expiresAt <= Date.now()) this.clearReplay();
+    if (
+      requestId &&
+      this.replay &&
+      sameCredential(this.replay.requestId, requestId) &&
+      sameDigest(this.replay.credentialHash, sha256(presented))
+    ) {
+      return this.replay.result;
+    }
+
     const window = this.pairing();
     if (!window) return { error: "no pairing is in progress — open Companion settings on your computer" };
-    const presented = String(credential ?? "");
     if (!sameCredential(window.code, presented) && !sameCredential(window.token, presented)) {
       window.attemptsLeft -= 1;
       // A burned window is the whole point: without this, six digits is a
@@ -204,7 +257,9 @@ export class DeviceRegistry {
     // attempts. The window survives, so removing a phone and retyping the
     // same code still works.
     if (this.devices.length >= MAX_DEVICES) return { error: "too many paired devices — remove one first" };
-    this.closePairing();
+    // Consume the window without clearing a possible replay. `closePairing`
+    // is the explicit cancel operation and intentionally clears both.
+    this.window = null;
 
     const token = `omb_${randomBytes(32).toString("base64url")}`;
     const device: DeviceRecord = {
@@ -228,7 +283,23 @@ export class DeviceRegistry {
       return { error: `could not save the pairing: ${(e as Error).message}` };
     }
     const { tokenHash, ...pub } = device;
-    return { device: pub, token };
+    const result = { device: pub, token };
+    if (requestId) {
+      this.replay = {
+        requestId,
+        credentialHash: sha256(presented),
+        expiresAt: window.expiresAt,
+        result,
+      };
+      this.replayExpiryTimer = setTimeout(
+        () => this.clearReplay(),
+        Math.max(0, window.expiresAt - Date.now()),
+      );
+      // A two-minute recovery window is not a reason for a deliberately
+      // stopped companion process to stay alive.
+      this.replayExpiryTimer.unref?.();
+    }
+    return result;
   }
 
   /** Resolve a bearer token to its device, or null. */

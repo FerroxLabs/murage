@@ -20,6 +20,10 @@ struct PairingView: View {
     @State private var manualAddress = ""
     @State private var code = ""
     @State private var scannedCredential: String?
+    /// Stable across Retry. If the Mac committed a device but the response
+    /// was lost, repeating this same logical request recovers its token
+    /// instead of creating an orphan device.
+    @State private var pairRequestId: String?
     @State private var chosen: Connection?
     @State private var pairing = false
     @State private var failure: String?
@@ -365,6 +369,7 @@ struct PairingView: View {
                         }
                         choiceGeneration += 1
                         scannedCredential = nil
+                        pairRequestId = nil
                         chosen = connection
                     } label: {
                         Text("Connect to Address")
@@ -493,6 +498,7 @@ struct PairingView: View {
                 chosen = nil
                 code = ""
                 scannedCredential = nil
+                pairRequestId = nil
                 failure = nil
             }
             .font(.caption.weight(.semibold))
@@ -536,6 +542,7 @@ struct PairingView: View {
         choiceGeneration += 1
         let generation = choiceGeneration
         failure = nil
+        pairRequestId = nil
         do {
             let resolved = try await discovery.resolve(service)
             guard generation == choiceGeneration else { return }
@@ -551,20 +558,35 @@ struct PairingView: View {
         failure = nil
         defer { pairing = false }
         let cameFromScanner = scannedCredential != nil
+        let requestId = pairRequestId ?? UUID().uuidString
+        pairRequestId = requestId
         do {
             try await session.pair(
                 with: connection,
                 credential: credential,
-                deviceName: Self.deviceName()
+                deviceName: Self.deviceName(),
+                pairRequestId: requestId
             )
+            pairRequestId = nil
         } catch {
             if cameFromScanner {
-                failure = "\(error.localizedDescription) Start pairing again on your computer and rescan the new QR code."
-                chosen = nil
-                scannedCredential = nil
+                if error is PairingRouteError {
+                    // The same request id makes Retry safe whether no route
+                    // was reached or the Mac committed the device and its
+                    // response was lost while the route changed.
+                    failure = error.localizedDescription
+                } else {
+                    failure = "\(error.localizedDescription) Start pairing again on your computer and rescan the new QR code."
+                    chosen = nil
+                    scannedCredential = nil
+                    pairRequestId = nil
+                }
             } else {
                 failure = error.localizedDescription
-                code = ""
+                if !(error is PairingRouteError) {
+                    code = ""
+                    pairRequestId = nil
+                }
             }
         }
     }
@@ -574,6 +596,7 @@ struct PairingView: View {
         choiceGeneration += 1
         chosen = invite.connection
         scannedCredential = invite.credential
+        pairRequestId = UUID().uuidString
         code = ""
         failure = nil
         session.consumePairingInvite()

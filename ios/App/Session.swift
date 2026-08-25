@@ -156,20 +156,28 @@ final class Session: ObservableObject {
     /// Redeem a one-time pairing credential. On success the device token goes
     /// to the keychain and the connection to defaults — deliberately apart,
     /// so the thing that gets backed up is never the credential.
-    func pair(with connection: Connection, credential: String, deviceName: String) async throws {
-        let paired = try await CompanionClient.pair(
+    func pair(
+        with connection: Connection,
+        credential: String,
+        deviceName: String,
+        pairRequestId: String
+    ) async throws {
+        let outcome = try await CompanionClient.pairFirstReachable(
             connection: connection,
             credential: credential,
-            deviceName: deviceName
+            deviceName: deviceName,
+            pairRequestId: pairRequestId
         )
+        let paired = outcome.response
         // prefer the name the computer calls itself over the Bonjour label
-        var stored = connection
+        var stored = outcome.connection
         if !paired.serverName.isEmpty { stored.name = paired.serverName }
         // The computer knows every address it answers on, and what it says at
         // redeem time beats whatever the invite carried. Then the host that
         // just redeemed the code leads: it demonstrably works from here.
-        if let hosts = paired.hosts, !hosts.isEmpty { stored.hosts = hosts }
-        stored.promote(stored.host)
+        if let hosts = paired.hosts, !hosts.isEmpty { stored.hosts = Array(hosts.prefix(8)) }
+        stored.promote(outcome.connection.host)
+        stored.hosts = Array(stored.orderedHosts.prefix(8))
 
         try Keychain.save(paired.token, for: stored.id)
         UserDefaults.standard.set(try? JSONEncoder().encode(stored), forKey: Self.connectionKey)
