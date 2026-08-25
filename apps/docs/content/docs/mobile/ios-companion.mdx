@@ -12,7 +12,7 @@ The native iOS companion is a thin client. Your computer remains the only machin
 - List bots and rooms, read paged transcripts, send messages, and interrupt work
 - Answer approvals and questions, including narrow always-allow grants
 - Search, manage tasks, react, share, and navigate message versions
-- Follow resumable live updates and optionally view a bot's cloud computer
+- Follow resumable live updates and optionally view a bot's managed Box cloud computer. The loopback-only VPS SSH viewer currently opens in the desktop app.
 
 ## Pairing
 
@@ -26,6 +26,8 @@ The computer stores only a digest of the device token. Revoking the phone from d
 - **Away from home:** Tailscale on both devices with the computer's MagicDNS name.
 
 There is no hosted OpenMausBot relay. Bonjour does not cross Tailscale, so remote connections use manual address entry.
+
+Your computer must remain on, awake, and running OpenMausBot. In desktop Companion Settings, **Keep this computer awake** can prevent system sleep while Companion is enabled; it is off by default, allows the screen to turn off, and may use more battery. A sleeping or powered-off computer cannot be reached without a future hosted relay.
 
 ## Security boundary
 

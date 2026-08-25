@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
@@ -283,14 +283,28 @@ const LOG_DIR = app.getPath("logs");
 let logStream = null;
 import {
   companionEnabledAtRest,
+  companionKeepAwakeAtRest,
   companionPairing,
   companionCloudDesktopAccess,
   companionRevoke,
   companionState,
   rememberCompanionEnabled,
+  rememberCompanionKeepAwake,
   startCompanion,
   stopCompanion,
 } from "./companion.mjs";
+
+let companionPowerBlocker = null;
+
+function syncCompanionKeepAwake(companionEnabled, keepAwake) {
+  const shouldBlock = companionEnabled && keepAwake;
+  if (shouldBlock && companionPowerBlocker === null) {
+    companionPowerBlocker = powerSaveBlocker.start("prevent-app-suspension");
+  } else if (!shouldBlock && companionPowerBlocker !== null) {
+    if (powerSaveBlocker.isStarted(companionPowerBlocker)) powerSaveBlocker.stop(companionPowerBlocker);
+    companionPowerBlocker = null;
+  }
+}
 
 function slog(line) {
   try {
@@ -966,7 +980,13 @@ ipcMain.handle("skill-recorder:save", (_event, payload) => saveSkillRecording(pa
 // The renderer gets these five and nothing else: it can turn the companion
 // on and off, look at it, open or cancel a pairing window, and remove a
 // device. It cannot reach the sidecar's control port itself.
-ipcMain.handle("companion:state", () => companionState());
+ipcMain.handle("companion:state", async () => {
+  const state = await companionState();
+  // The panel polls this state, so a sidecar that exited on its own releases
+  // the blocker within one poll instead of keeping the computer awake forever.
+  syncCompanionKeepAwake(state.enabled && !state.error, state.keepAwake === true);
+  return state;
+});
 ipcMain.handle("companion:start", async () => {
   const state = await startCompanion({
     resourcesPath: process.resourcesPath,
@@ -977,11 +997,20 @@ ipcMain.handle("companion:start", async () => {
   // one would greet every launch with the same error for a toggle the panel
   // showed as off.
   if (state.enabled && !state.error) rememberCompanionEnabled(true);
+  syncCompanionKeepAwake(state.enabled && !state.error, state.keepAwake === true);
   return state;
 });
-ipcMain.handle("companion:stop", () => {
+ipcMain.handle("companion:stop", async () => {
   rememberCompanionEnabled(false);
+  syncCompanionKeepAwake(false, false);
   return stopCompanion();
+});
+ipcMain.handle("companion:keep-awake", async (_event, enabled) => {
+  const keepAwake = Boolean(enabled);
+  rememberCompanionKeepAwake(keepAwake);
+  const state = await companionState();
+  syncCompanionKeepAwake(state.enabled && !state.error, keepAwake);
+  return companionState();
 });
 ipcMain.handle("companion:pairing", (_event, open) => companionPairing(Boolean(open)));
 ipcMain.handle("companion:cloud-desktop", (_event, deviceId, allowed) =>
@@ -1169,7 +1198,9 @@ app.whenReady().then(async () => {
   // (the panel shows the error) rather than retrying; and it never delays
   // the window.
   if (serverReady && companionEnabledAtRest()) {
-    void startCompanion({ resourcesPath: process.resourcesPath, harnessPort: SERVER_PORT, log: slog });
+    void startCompanion({ resourcesPath: process.resourcesPath, harnessPort: SERVER_PORT, log: slog }).then((state) => {
+      syncCompanionKeepAwake(state.enabled && !state.error, companionKeepAwakeAtRest());
+    });
   }
   const win = createWindow();
   // Registration is optional network work. Start it only after the local
@@ -1225,6 +1256,7 @@ app.on("before-quit", (e) => {
   // the sidecar holds a socket that is reachable from off this machine —
   // it should not outlive the window by even a moment
   void stopCompanion();
+  syncCompanionKeepAwake(false, false);
   // a live dictation session runs its own helper child that holds the mic —
   // stop it here so quitting never orphans a recording process
   if (nativeActions.appleSpeech) stopSpeech();

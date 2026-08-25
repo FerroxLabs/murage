@@ -191,6 +191,8 @@ export interface Bot {
   computer?: "cloud" | "vm" | "local" | "off";
   /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
   cloudBackend?: CloudBackend;
+  /** Allow Auto to prepare/start the managed VPS container. Off by default. */
+  autoStartVps?: boolean;
   /** where new tasks run their shell tools; absent = the private bot workspace */
   cwd?: string;
   /** auto mode: the bot approves its own tool permissions */
@@ -1368,6 +1370,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             modelSelection: source.modelSelection,
             computer: source.computer,
             cloudBackend: source.cloudBackend,
+            autoStartVps: source.autoStartVps,
             avatarUrl: source.avatarUrl,
             avatarCrop: source.avatarCrop,
           };

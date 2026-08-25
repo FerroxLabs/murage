@@ -54,25 +54,35 @@ const entryPoint = (resourcesPath) =>
 
 const settingsFile = () => path.join(app.getPath("userData"), "companion-settings.json");
 
+function companionSettings() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    return { enabled: parsed?.enabled === true, keepAwake: parsed?.keepAwake === true };
+  } catch {
+    return { enabled: false, keepAwake: false };
+  }
+}
+
 /** Whether the user left the companion on. Anything unreadable is "off" —
  * the flag opens a network listener, so it fails closed. */
 export function companionEnabledAtRest() {
-  try {
-    return JSON.parse(fs.readFileSync(settingsFile(), "utf8"))?.enabled === true;
-  } catch {
-    return false;
-  }
+  return companionSettings().enabled;
+}
+
+export function companionKeepAwakeAtRest() {
+  return companionSettings().keepAwake;
 }
 
 /** Remember the toggle's position. Written via temp-and-rename so a crash
  * mid-write cannot leave a truncated file; a failed write costs auto-start
  * on the next launch, never the toggle itself. */
-export function rememberCompanionEnabled(enabled) {
+function rememberCompanionSettings(patch) {
   const file = settingsFile();
   const temporary = `${file}.${process.pid}.tmp`;
   try {
+    const next = { ...companionSettings(), ...patch };
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(temporary, JSON.stringify({ enabled }, null, 2));
+    fs.writeFileSync(temporary, JSON.stringify(next, null, 2));
     fs.renameSync(temporary, file);
   } catch {
     try {
@@ -81,6 +91,15 @@ export function rememberCompanionEnabled(enabled) {
       /* never created, or already renamed */
     }
   }
+}
+
+
+export function rememberCompanionEnabled(enabled) {
+  rememberCompanionSettings({ enabled });
+}
+
+export function rememberCompanionKeepAwake(keepAwake) {
+  rememberCompanionSettings({ keepAwake });
 }
 
 /** Ask the sidecar's own control server, which is the same API the standalone
@@ -245,15 +264,18 @@ async function stop() {
 /** Everything the panel renders. Shaped so "off" is a complete answer rather
  * than an absence — the panel should never have to guess. */
 export async function companionState() {
+  const keepAwake = companionKeepAwakeAtRest();
   if (!proc) {
-    return { enabled: false, port: COMPANION_PORT, devices: [], pairing: null, ...(lastError ? { error: lastError } : {}) };
+    const state = { enabled: false, keepAwake, port: COMPANION_PORT, devices: [], pairing: null };
+    if (lastError) state.error = lastError;
+    return state;
   }
   try {
     const state = await control("GET", "/state");
-    return { enabled: true, ...state };
+    return { enabled: true, keepAwake, ...state };
   } catch {
     // running but unreachable: report it rather than claiming health
-    return { enabled: true, port: COMPANION_PORT, devices: [], pairing: null, error: "the companion is not responding" };
+    return { enabled: true, keepAwake, port: COMPANION_PORT, devices: [], pairing: null, error: "the companion is not responding" };
   }
 }
 
