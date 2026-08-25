@@ -21,7 +21,7 @@ import { buildDiagnosticsReport, decodeLogTail, diagnosticsFileName } from "./di
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
-import { availableDestination, resolveSavablePath } from "./save-file.mjs";
+import { copyIntoDirectory, resolveSavablePath } from "./save-file.mjs";
 import {
   ensureManagedComposioCredentials,
   managedComposioAccess,
@@ -1153,15 +1153,15 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
 });
 
 // Bots hand users files as markdown links to paths inside the OpenMausBot
-// home (workspaces, attachments). Clicking those used to route through
-// shell.openExternal, which only handles web links, so the click did
-// nothing. Copy the reviewed file to ~/Downloads and reveal it. The path is
-// renderer-controlled, so it must resolve inside ~/.openmausbot and be a
-// regular file — never a symlink escape or a directory.
+// home (workspaces, attachments). As plain anchors those resolved against the
+// page origin, so the click opened http://127.0.0.1:8799<path> in the default
+// browser and the server's SPA fallback answered with index.html — a second
+// copy of the chat UI instead of the file. Copy it to ~/Downloads and reveal
+// it instead. The path is renderer-controlled, so it must resolve inside
+// ~/.openmausbot and be a regular file — never a symlink escape or directory.
 ipcMain.handle("desktop:save-file", async (_event, rawPath) => {
   const source = await resolveSavablePath(rawPath, { home: os.homedir() });
-  const dest = await availableDestination(app.getPath("downloads"), source);
-  await fs.promises.copyFile(source, dest);
+  const dest = await copyIntoDirectory(app.getPath("downloads"), source);
   shell.showItemInFolder(dest);
   return dest;
 });

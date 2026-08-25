@@ -46,7 +46,8 @@ const absolutePath = (value: string): string | null => {
 
 const localFilePath = (href?: string): string | null => {
   if (!href) return null;
-  if (href.startsWith("file://")) {
+  // URL schemes are case-insensitive, so FILE:// is as valid as file://
+  if (/^file:\/\//i.test(href)) {
     try {
       return absolutePath(decodeURIComponent(new URL(href).pathname));
     } catch {
@@ -134,16 +135,25 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
 }
 
 // A bot handing over a file it created renders as a button, not an anchor.
-// An <a href="file://…"> would still reach setWindowOpenHandler on a middle
-// or modifier click, and that path calls shell.openExternal without the main
-// process' containment check — so the href is simply never set.
+// Two reasons the href is dropped rather than merely preventDefault()ed:
+// an absolute path in an href resolves against the page origin, so the link
+// pointed at http://127.0.0.1:8799<path> and opened the chat UI in a browser;
+// and an <a href="file://…"> would still reach setWindowOpenHandler on a
+// middle or modifier click, which calls shell.openExternal without the main
+// process' containment check.
 function LocalFileLink({ filePath, children }: { filePath: string; children?: ReactNode }) {
   const [state, setState] = useState<"idle" | "saved" | "failed">("idle");
   const [reason, setReason] = useState("");
 
   const save = async () => {
     const saveFile = window.ogb?.saveFile;
-    if (!saveFile) return;
+    if (!saveFile) {
+      // an older shell has no save bridge; saying so beats the silent click
+      // this change exists to remove
+      setReason("Saving files needs a newer version of the desktop app");
+      setState("failed");
+      return;
+    }
     try {
       await saveFile(filePath);
       setState("saved");

@@ -5,7 +5,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { availableDestination, resolveSavablePath } from "./save-file.mjs";
+import { copyIntoDirectory, resolveSavablePath } from "./save-file.mjs";
 
 // Creating a symlink on Windows needs elevation or developer mode, so the
 // symlink cases only run where the runner can actually make one.
@@ -85,16 +85,26 @@ describe("save-file path validation", () => {
   });
 });
 
-describe("save-file destination naming", () => {
+describe("save-file copying", () => {
   it("suffixes rather than overwriting an existing download", async () => {
     const downloads = fs.mkdtempSync(path.join(os.tmpdir(), "omb-downloads-"));
     const source = path.join(botHome, "workspaces", "bot", "report.docx");
 
-    assert.equal(await availableDestination(downloads, source), path.join(downloads, "report.docx"));
-    fs.writeFileSync(path.join(downloads, "report.docx"), "");
-    assert.equal(await availableDestination(downloads, source), path.join(downloads, "report (2).docx"));
-    fs.writeFileSync(path.join(downloads, "report (2).docx"), "");
-    assert.equal(await availableDestination(downloads, source), path.join(downloads, "report (3).docx"));
+    assert.equal(await copyIntoDirectory(downloads, source), path.join(downloads, "report.docx"));
+    assert.equal(await copyIntoDirectory(downloads, source), path.join(downloads, "report (2).docx"));
+    assert.equal(await copyIntoDirectory(downloads, source), path.join(downloads, "report (3).docx"));
+    assert.equal(fs.readFileSync(path.join(downloads, "report.docx"), "utf8"), "docx");
+
+    fs.rmSync(downloads, { recursive: true, force: true });
+  });
+
+  it("never overwrites when saves race for the same name", async () => {
+    const downloads = fs.mkdtempSync(path.join(os.tmpdir(), "omb-downloads-race-"));
+    const source = path.join(botHome, "workspaces", "bot", "report.docx");
+
+    const results = await Promise.all(Array.from({ length: 8 }, () => copyIntoDirectory(downloads, source)));
+    assert.equal(new Set(results).size, 8, "each concurrent save must claim its own name");
+    assert.equal(fs.readdirSync(downloads).length, 8);
 
     fs.rmSync(downloads, { recursive: true, force: true });
   });
