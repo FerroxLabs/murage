@@ -36,18 +36,19 @@ routines, including through the optional hosted transport.
 ## Runtime architecture
 
 ```text
- iPhone
-   SwiftUI UI + CompanionCore
-   bearer token in Keychain
-            │
-            │ HTTP over trusted LAN/Tailscale, or HTTPS
-            │ through an optional Cloudflare Tunnel
-            ▼
- companion sidecar :8810
-   pairing authentication
-   default-deny route allowlist
-   response and SSE scrubbing
-            │
+ iPhone (bearer token in Keychain)
+       │                         │
+       │ trusted LAN/Tailscale   │ optional hosted HTTPS
+       ▼                         ▼
+ sidecar :8810          Cloudflare Tunnel (outbound connector)
+                                 │
+                                 ▼
+                        guardian gateway 127.0.0.1:8812
+                                 │ exact per-launch socket/pipe
+                                 └──────────────┐
+                                                ▼
+ companion sidecar (pairing auth, default-deny allowlist,
+ response/SSE scrubbing, authenticated endpoint refresh)
             │ loopback only
             ▼
  OpenMausBot harness :8799
@@ -65,6 +66,7 @@ There are three deliberately separate trust surfaces:
 | Harness | `127.0.0.1:8799` | Existing app API; remains loopback-only |
 | Companion | `0.0.0.0:8810` | Paired native devices; authenticated and allowlisted |
 | Companion control | `127.0.0.1:8811` | Start pairing, cancel pairing, list devices, revoke |
+| Hosted gateway | `127.0.0.1:8812` | Guardian-owned route to one exact sidecar generation |
 
 The desktop app owns the sidecar lifecycle through
 `electron/companion.mjs`. The renderer only receives narrow IPC operations; it
@@ -101,6 +103,12 @@ LAN traffic is plain HTTP. Use it only on a network you trust. Device tokens
 are bearer credentials, so someone able to observe that LAN traffic could copy
 one until the device is revoked.
 
+Choosing a LAN or Bonjour address is therefore explicit. Once the app is using
+a hosted or Tailscale route, automatic reconnection stays within those
+protected transports and never sends a pairing credential or device bearer to
+an old private address on the current Wi-Fi. Moving back to cleartext LAN
+requires choosing that computer/address again.
+
 ### Tailscale
 
 Tailscale is the recommended route away from home and on Wi-Fi networks that
@@ -133,6 +141,13 @@ opaque tunnel/DNS identifiers in D1, but not bots, transcripts, approvals,
 screen frames, pairing tokens, or connector tokens. See `docs/ios-privacy.md`
 for data and deletion details.
 
+The connector does not point at the reusable LAN port. Electron launches one
+private sidecar socket (or Windows pipe) and a guardian that owns both the
+fixed loopback gateway and `cloudflared`. If Electron or that sidecar exits,
+the guardian first makes forwarding unavailable, confirms the connector is
+dead, and only then releases the gateway. Another process that later binds a
+local port cannot inherit the public route.
+
 ## Pairing and device security
 
 1. The user enables Companion in desktop Settings and starts pairing.
@@ -150,6 +165,12 @@ for data and deletion details.
    It never persists the QR credential or manual code.
 7. Revoking the device on the Mac invalidates future requests and sends the
    phone back to pairing.
+
+After pairing, the phone periodically reads the authenticated, sidecar-owned
+`GET /api/companion/endpoints` snapshot. This lets an existing phone learn a
+new hosted address—or its withdrawal—without another pairing ceremony. The
+route never reaches the harness and returns only the computer name plus a
+bounded list of connection origins.
 
 This mirrors the direct-pairing security shape used by T3 Code: a high-entropy
 bootstrap credential, explicit confirmation of the scanned target, and a
@@ -216,6 +237,7 @@ companion/
   src/routes.ts       device-facing allowlist
   src/devices.ts      pairing and token registry
   src/proxy.ts        HTTP/SSE forwarding and scrubbing
+  src/origin.ts       private per-launch hosted origin listener
   src/control.ts      loopback-only control plane
   src/mdns.ts         Bonjour advertisement
 

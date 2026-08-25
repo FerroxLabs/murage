@@ -18,7 +18,8 @@ tool output.
 - Exact-origin CORS, bounded JSON bodies, redacted errors, and `no-store` on
   every response.
 - One remotely managed Cloudflare Tunnel per installation. Its opaque public
-  hostname routes to `http://127.0.0.1:8810` and is followed by a mandatory
+  hostname routes to the Electron-owned gateway at `http://127.0.0.1:8812`
+  (never the reusable LAN listener on `8810`) and is followed by a mandatory
   `http_status:404` catch-all. A proxied CNAME points to
   `<tunnel-id>.cfargotunnel.com`.
 - D1-backed generation/lease claims, recovery by stable opaque tunnel name, and
@@ -93,10 +94,16 @@ identifiers and contain no account email, display name, or client-supplied ID.
 
 Endpoint provisioning is limited to 20 attempts per installation per hour;
 deletion is limited to 30. A 60-second D1 lease and monotonically increasing
-generation serialize concurrent requests. Cloudflare calls have an eight-second
+generation serialize concurrent requests. The owner renews and fences that
+lease before every provider call, so an expired request cannot roll back a
+resource adopted by its successor. Cloudflare calls have an eight-second
 per-request timeout, reject redirects, bound response bodies, and validate the
-response shape before persisting an ID. A newly created partial resource is
-rolled back; an adopted resource is never deleted by a failed reconciliation.
+response shape before persisting an ID. Ambiguous create/update responses are
+reconciled by the stable tunnel name and exact DNS identity. Before any
+destructive cleanup, both stored IDs and provider-side names/targets are
+revalidated; a renamed or repurposed resource is retained for an operator
+instead of being guessed at. A newly created partial resource is rolled back;
+an adopted resource is never deleted by a failed reconciliation.
 
 Revoking an installation first revokes its local installation credentials, then
 schedules best-effort endpoint cleanup. Cloud cleanup failure cannot restore or
@@ -160,6 +167,11 @@ Before a production deployment, an operator must:
    tunnel/DNS resources during build or tests.
 7. Replace `ALLOWED_ORIGINS` with a comma-separated allow-list of exact HTTPS
    application origins. Wildcards are deliberately unsupported.
+8. Deploy the Worker and verify that `GET <BETTER_AUTH_URL>/healthz` returns
+   exactly `{ "ok": true, "service": "openmausbot-control-plane" }` over
+   HTTPS before shipping the desktop build. Electron probes this endpoint and
+   keeps new hosted onboarding hidden until it is healthy; an already signed-in
+   user remains visible so cleanup and recovery are not stranded.
 
 The control-plane API token is never handed to a desktop. A desktop receives
 only its tunnel connector token, which can run that one remotely managed tunnel.
