@@ -312,6 +312,13 @@ the composer mic) — see [`docs/voice-mode.md`](docs/voice-mode.md) for the des
 Contributions welcome — the driver SPI in [`server/contracts.ts`](server/contracts.ts) is deliberately
 small; adding a provider is one file in [`server/drivers/`](server/drivers/) plus a one-line registration.
 
+## Support the project
+
+OpenMausBot is free and open source. If it does real work for you, you can
+[buy the project a coffee or become a monthly supporter](https://buy.polar.sh/polar_cl_EEzWmormSVBD151HkmkyId9j0GPXina0KurfS1fYYcO) —
+one-time any amount, or monthly. Payments are handled by [Polar](https://polar.sh/supamaus),
+which takes care of receipts and taxes; nothing about the app ever sits behind a paywall.
+
 ## License
 
 [Apache License 2.0](LICENSE) © 2026 Milind Soni and OpenMausBot contributors.
