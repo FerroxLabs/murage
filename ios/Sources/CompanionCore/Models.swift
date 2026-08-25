@@ -321,6 +321,36 @@ public struct PairResponse: Codable, Sendable {
     /// Full HTTPS/HTTP routes from newer sidecars. Absent during a staggered
     /// rollout; `hosts` remains the compatibility path for older builds.
     public var endpoints: [CompanionEndpoint]?
+
+    private enum CodingKeys: String, CodingKey {
+        case token, device, serverName, hosts, endpoints
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        token = try container.decode(String.self, forKey: .token)
+        device = try container.decode(PairedDevice.self, forKey: .device)
+        serverName = try container.decode(String.self, forKey: .serverName)
+        hosts = try container.decodeIfPresent([String].self, forKey: .hosts)
+        if container.contains(.endpoints) {
+            // These routes are advisory and the credential may already have
+            // been redeemed. One malformed or future-kind entry must not
+            // discard the valid token and legacy host fallback with it.
+            endpoints = (try? container.decode([Lossy<CompanionEndpoint>].self, forKey: .endpoints))?
+                .compactMap(\.value) ?? []
+        } else {
+            endpoints = nil
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(token, forKey: .token)
+        try container.encode(device, forKey: .device)
+        try container.encode(serverName, forKey: .serverName)
+        try container.encodeIfPresent(hosts, forKey: .hosts)
+        try container.encodeIfPresent(endpoints, forKey: .endpoints)
+    }
 }
 
 /// A freshly minted provider viewer. It is deliberately not Codable for

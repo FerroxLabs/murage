@@ -288,6 +288,28 @@ final class DecodingTests: XCTestCase {
         XCTAssertFalse(paired.serverName.isEmpty)
     }
 
+    func testMalformedAdvisoryEndpointDoesNotDiscardAPairedToken() throws {
+        let json = """
+        {
+          "token":"omb_device",
+          "device":{"id":"d1","name":"Ada's iPhone","createdAt":1,"lastSeenAt":1},
+          "serverName":"Ada's Mac",
+          "hosts":["192.168.1.42"],
+          "endpoints":[
+            {"url":"https://mac.example","kind":"hosted","priority":0},
+            {"url":"https://future.example","kind":"future-transport","priority":10},
+            {"url":"http://192.168.1.42:8810","kind":"lan","priority":200}
+          ]
+        }
+        """
+
+        let paired = try JSONDecoder().decode(PairResponse.self, from: Data(json.utf8))
+
+        XCTAssertEqual(paired.token, "omb_device")
+        XCTAssertEqual(paired.hosts, ["192.168.1.42"])
+        XCTAssertEqual(paired.endpoints?.map(\.kind), [.hosted, .lan])
+    }
+
     func testDecodesTheHarnessErrorBodies() throws {
         // these strings are written for people, and the client shows them
         // rather than inventing its own

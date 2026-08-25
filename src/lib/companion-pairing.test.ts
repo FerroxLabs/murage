@@ -89,6 +89,8 @@ describe("companionPairingLink", () => {
         { url: "http://hosted.example", kind: "hosted", priority: 0 },
         { url: "https://192.168.1.42:8810", kind: "lan", priority: 200 },
         { url: "http://mac.local:8810/path", kind: "bonjour", priority: 300 },
+        { url: "http://mac.local:0", kind: "bonjour", priority: 300 },
+        { url: "http://mac.local:65536", kind: "bonjour", priority: 300 },
         { url: "http://mac.local:8810", kind: "bonjour", priority: 300 },
       ],
     });

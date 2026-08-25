@@ -49,8 +49,10 @@ function qrEndpoints(endpoints: CompanionEndpoint[] | undefined): CompanionEndpo
     try {
       const parsed = new URL(endpoint.url);
       const expectedProtocol = endpoint.kind === "hosted" ? "https:" : "http:";
+      const explicitPort = parsed.port ? Number(parsed.port) : null;
       if (
         parsed.protocol !== expectedProtocol ||
+        (explicitPort !== null && (!Number.isInteger(explicitPort) || explicitPort < 1 || explicitPort > 65_535)) ||
         parsed.username ||
         parsed.password ||
         parsed.pathname !== "/" ||
