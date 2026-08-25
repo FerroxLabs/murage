@@ -26,6 +26,7 @@ describe("appendPastedText", () => {
   });
 });
 
+/** Builds a stable image attachment fixture for prompt and preview tests. */
 const image = (path: string): ImageAttachment => ({
   kind: "image",
   id: "i1",

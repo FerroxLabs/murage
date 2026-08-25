@@ -133,6 +133,7 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
   );
 }
 
+/** Renders the editable message composer and its pending attachments. */
 export function Composer({
   bot,
   group,
@@ -187,6 +188,7 @@ export function Composer({
     (id: string) => setAttachments((prev) => prev.filter((a) => a.id !== id)),
     [setAttachments],
   );
+  /** Moves one pasted attachment into the editable draft and restores focus. */
   const displayPasteInChatBox = useCallback(
     (attachment: PasteAttachment) => {
       const nextText = appendPastedText(text, attachment.text);

@@ -21,6 +21,7 @@ export function pathForFile(file: File): string {
   return window.ogb?.getPathForFile?.(file) ?? "";
 }
 
+/** Renders pending attachments and their composer actions. */
 export function ComposerAttachments({
   items,
   onAdd,
