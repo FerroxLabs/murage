@@ -116,7 +116,23 @@ describe("Companion account service", () => {
       isPackaged: true,
       environment: { OMB_CONTROL_PLANE_URL: "http://accounts.openmausbot.com" },
     })).toBe("");
+    expect(resolveCompanionControlPlaneURL({
+      isPackaged: true,
+      environment: { OMB_CONTROL_PLANE_URL: new String("https://accounts.openmausbot.com") },
+    })).toBe("");
     expect(resolveCompanionControlPlaneURL({ isPackaged: false, environment: {} })).toBe("");
+  });
+
+  it("does not coerce boxed credential fields into an account", async () => {
+    const initial = signedCredentials({
+      [COMPANION_ACCOUNT_EMAIL_FIELD]: new String("ada@example.com"),
+    });
+    const { service } = serviceFixture({ initial });
+
+    await expect(service.state()).resolves.toEqual({
+      available: true,
+      status: "signed-out",
+    });
   });
 
   it("hides account onboarding until the configured control plane is healthy", async () => {

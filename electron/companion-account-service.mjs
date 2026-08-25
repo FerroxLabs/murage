@@ -8,7 +8,6 @@ import {
   withManagedCompanionTunnelAccess,
   withoutManagedCompanionTunnelAccess,
 } from "./managed-companion-tunnel.mjs";
-import { z } from "zod";
 
 export const DEFAULT_COMPANION_CONTROL_PLANE_URL = "https://accounts.openmausbot.com";
 
@@ -26,7 +25,8 @@ const INSTALLATION_ID = UUID;
 const INSTALLATION_CREDENTIAL = /^omb_install_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/;
 const DEFAULT_HEALTH_CACHE_MS = 30_000;
 
-const ownString = (document, field) => z.string().safeParse(document?.[field]).data ?? "";
+const ownString = (document, field) =>
+  typeof document?.[field] === "string" ? document[field] : "";
 
 /** Packaged builds have a safe hosted default. Development must opt into an
  * exact HTTPS origin (or HTTP loopback Worker) so a contributor never sends
@@ -152,6 +152,7 @@ function publicState({ available, status, email, endpoint, message }) {
   const normalizedEmail = normalizeAccountEmail(email);
   if (normalizedEmail) state.email = normalizedEmail;
   const accessEndpoint = (() => {
+    if (typeof endpoint !== "string") return "";
     try {
       const parsed = new URL(endpoint);
       return parsed.protocol === "https:" && parsed.pathname === "/" && !parsed.search && !parsed.hash
@@ -162,7 +163,9 @@ function publicState({ available, status, email, endpoint, message }) {
     }
   })();
   if (accessEndpoint) state.endpoint = accessEndpoint;
-  const safeMessage = z.string().min(1).max(280).safeParse(message).data;
+  const safeMessage = typeof message === "string" && message.length >= 1 && message.length <= 280
+    ? message
+    : null;
   if (safeMessage) state.message = safeMessage;
   return Object.freeze(state);
 }

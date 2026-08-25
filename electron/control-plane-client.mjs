@@ -1,20 +1,55 @@
-import { z } from "zod";
-
 const INSTALLATION_CREDENTIAL =
   /^omb_install_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/;
 const INSTALLATION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CLIENT_INSTANCE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
-const recordSchema = z.record(z.string(), z.unknown());
-const stringSchema = z.string();
-const emailInputSchema = z.string().max(254);
-const otpInputSchema = z.string().max(32);
-const clientInstanceSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+const stringValue = (value) => (typeof value === "string" ? value : null);
 
-const plainObject = (value) => recordSchema.safeParse(value).data ?? null;
+const isPlainRecord = (value) => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  try {
+    const constructor = value.constructor;
+    if (constructor === undefined || typeof constructor !== "function") return true;
+    const prototype = constructor.prototype;
+    return (
+      typeof prototype === "object" &&
+      prototype !== null &&
+      Object.prototype.hasOwnProperty.call(prototype, "isPrototypeOf")
+    );
+  } catch {
+    return false;
+  }
+};
+
+const plainObject = (value) => {
+  if (!isPlainRecord(value)) return null;
+  const record = {};
+  try {
+    for (const key of Reflect.ownKeys(value)) {
+      if (!Object.prototype.propertyIsEnumerable.call(value, key)) continue;
+      if (typeof key !== "string") return null;
+      if (key === "__proto__") continue;
+      record[key] = value[key];
+    }
+  } catch {
+    return null;
+  }
+  return record;
+};
+
+const validClientInstance = (value) => {
+  const input = stringValue(value);
+  return input !== null && CLIENT_INSTANCE.test(input);
+};
 
 const boundedSecret = (value, maximum = 8_192) =>
-  z.string().min(20).max(maximum).regex(/^\S+$/).safeParse(value).data ?? null;
+  typeof value === "string" &&
+  value.length >= 20 &&
+  value.length <= maximum &&
+  /^\S+$/.test(value)
+    ? value
+    : null;
 
 export class ControlPlaneError extends Error {
   constructor(code, status = 0) {
@@ -29,7 +64,7 @@ export class ControlPlaneError extends Error {
  * for an explicitly configured development Worker. Paths, credentials, and
  * query strings are rejected so every request stays under the audited API. */
 export function normalizeControlPlaneURL(value) {
-  const input = stringSchema.safeParse(value).data?.trim() ?? "";
+  const input = stringValue(value)?.trim() ?? "";
   if (!input) return "";
   let parsed;
   try {
@@ -52,7 +87,8 @@ export function normalizeControlPlaneURL(value) {
 }
 
 export function normalizeAccountEmail(value) {
-  const email = emailInputSchema.safeParse(value).data?.trim().toLowerCase() ?? "";
+  const input = stringValue(value);
+  const email = input !== null && input.length <= 254 ? input.trim().toLowerCase() : "";
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "";
   return email;
 }
@@ -60,33 +96,42 @@ export function normalizeAccountEmail(value) {
 function validatedUser(value) {
   const user = plainObject(value);
   const email = normalizeAccountEmail(user?.email);
-  const id = z.string().min(1).max(256).safeParse(user?.id).data;
+  const idInput = stringValue(user?.id);
+  const id = idInput !== null && idInput.length >= 1 && idInput.length <= 256
+    ? idInput
+    : null;
   if (!email || !id) return null;
   return { id, email };
 }
 
 function validatedInstallation(value) {
   const installation = plainObject(value);
+  const id = stringValue(installation?.id);
+  const clientInstanceId = stringValue(installation?.clientInstanceId);
   if (
-    !INSTALLATION_ID.test(installation?.id ?? "") ||
-    !clientInstanceSchema.safeParse(installation?.clientInstanceId).success
+    id === null ||
+    !INSTALLATION_ID.test(id) ||
+    clientInstanceId === null ||
+    !validClientInstance(clientInstanceId)
   ) {
     return null;
   }
   return {
-    id: installation.id,
-    clientInstanceId: clientInstanceSchema.parse(installation.clientInstanceId),
-    name: z.string().safeParse(installation.name).data ?? "This computer",
+    id,
+    clientInstanceId,
+    name: stringValue(installation.name) ?? "This computer",
     platform: installation.platform,
-    appVersion: z.string().safeParse(installation.appVersion).data ?? null,
+    appVersion: stringValue(installation.appVersion),
   };
 }
 
 function validatedEndpoint(value) {
   const endpoint = plainObject(value);
+  const endpointURL = stringValue(endpoint?.url);
+  if (endpointURL === null) return null;
   let url;
   try {
-    url = new URL(endpoint?.url);
+    url = new URL(endpointURL);
   } catch {
     return null;
   }
@@ -139,7 +184,10 @@ export function createControlPlaneClient({
       payload = await response.json().catch(() => null);
     }
     if (!response.ok) {
-      const code = z.string().regex(/^[a-z0-9_]{1,64}$/).safeParse(plainObject(payload)?.error).data;
+      const rawCode = stringValue(plainObject(payload)?.error);
+      const code = rawCode !== null && /^[a-z0-9_]{1,64}$/.test(rawCode)
+        ? rawCode
+        : null;
       throw new ControlPlaneError(
         code ?? "request_failed",
         response.status,
@@ -194,7 +242,10 @@ export function createControlPlaneClient({
 
     async verifyOTP(rawEmail, rawOTP) {
       const email = normalizeAccountEmail(rawEmail);
-      const otp = otpInputSchema.safeParse(rawOTP).data?.replaceAll(/\s|-/g, "") ?? "";
+      const otpInput = stringValue(rawOTP);
+      const otp = otpInput !== null && otpInput.length <= 32
+        ? otpInput.replaceAll(/\s|-/g, "")
+        : "";
       if (!email) throw new ControlPlaneError("invalid_email");
       if (!/^\d{8}$/.test(otp)) throw new ControlPlaneError("invalid_otp");
       const { response, payload } = await request("/api/auth/sign-in/email-otp", {
@@ -226,12 +277,15 @@ export function createControlPlaneClient({
 
     async ensureInstallation({ accountToken, currentCredential, clientInstanceId, name, platform, appVersion }) {
       if (
-        !clientInstanceSchema.safeParse(clientInstanceId).success
+        !validClientInstance(clientInstanceId)
       ) {
         throw new ControlPlaneError("invalid_client_identity");
       }
 
-      if (INSTALLATION_CREDENTIAL.test(currentCredential ?? "")) {
+      if (
+        typeof currentCredential === "string" &&
+        INSTALLATION_CREDENTIAL.test(currentCredential)
+      ) {
         try {
           const { payload } = await request("/v1/installations/self", { token: currentCredential });
           const installation = validatedInstallation(payload.installation);
@@ -264,8 +318,8 @@ export function createControlPlaneClient({
             body: { clientInstanceId, name, platform, appVersion },
           });
       const installation = existing ?? validatedInstallation(result.payload.installation);
-      const credential = result.payload.credential;
-      if (!installation || !INSTALLATION_CREDENTIAL.test(credential ?? "")) {
+      const credential = stringValue(result.payload.credential);
+      if (!installation || credential === null || !INSTALLATION_CREDENTIAL.test(credential)) {
         throw new ControlPlaneError("invalid_response");
       }
       return {
@@ -279,7 +333,10 @@ export function createControlPlaneClient({
     },
 
     async ensureEndpoint(installationCredential) {
-      if (!INSTALLATION_CREDENTIAL.test(installationCredential ?? "")) {
+      if (
+        typeof installationCredential !== "string" ||
+        !INSTALLATION_CREDENTIAL.test(installationCredential)
+      ) {
         throw new ControlPlaneError("signed_out", 401);
       }
       const { payload } = await request("/v1/installations/self/endpoint", {
@@ -293,7 +350,10 @@ export function createControlPlaneClient({
     },
 
     async deleteEndpoint(installationCredential) {
-      if (!INSTALLATION_CREDENTIAL.test(installationCredential ?? "")) {
+      if (
+        typeof installationCredential !== "string" ||
+        !INSTALLATION_CREDENTIAL.test(installationCredential)
+      ) {
         throw new ControlPlaneError("signed_out", 401);
       }
       await request("/v1/installations/self/endpoint", {
@@ -304,7 +364,11 @@ export function createControlPlaneClient({
     },
 
     async revokeInstallation(accountToken, installationId) {
-      if (!boundedSecret(accountToken) || !INSTALLATION_ID.test(installationId ?? "")) {
+      if (
+        !boundedSecret(accountToken) ||
+        typeof installationId !== "string" ||
+        !INSTALLATION_ID.test(installationId)
+      ) {
         throw new ControlPlaneError("signed_out", 401);
       }
       await request(`/v1/installations/${encodeURIComponent(installationId)}`, {

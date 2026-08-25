@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -30,6 +32,47 @@ describe("control-plane desktop client", () => {
   it("normalizes an email without accepting malformed input", () => {
     expect(normalizeAccountEmail(" Ada@Example.COM ")).toBe("ada@example.com");
     expect(normalizeAccountEmail("not-an-email")).toBe("");
+    expect(normalizeAccountEmail(new String("ada@example.com"))).toBe("");
+    expect(normalizeControlPlaneURL({ toString: () => "https://accounts.openmausbot.com" })).toBe("");
+  });
+
+  it("accepts plain cross-realm response records", async () => {
+    const payload = runInNewContext(
+      "({ user: { id: 'user-1', email: 'ada@example.com' } })",
+    );
+    const client = createControlPlaneClient({
+      baseURL: "https://accounts.openmausbot.com",
+      fetchImpl: vi.fn(async () => ({
+        status: 200,
+        ok: true,
+        headers: new Headers({ "set-auth-token": ACCOUNT }),
+        json: async () => payload,
+      })),
+    });
+
+    await expect(client.verifyOTP("ada@example.com", "12345678")).resolves.toEqual({
+      accountToken: ACCOUNT,
+      user: { id: "user-1", email: "ada@example.com" },
+    });
+  });
+
+  it("rejects non-plain response records instead of coercing them", async () => {
+    class Payload {
+      constructor() {
+        this.user = { id: "user-1", email: "ada@example.com" };
+      }
+    }
+    const client = createControlPlaneClient({
+      baseURL: "https://accounts.openmausbot.com",
+      fetchImpl: vi.fn(async () => ({
+        status: 200,
+        ok: true,
+        headers: new Headers(),
+        json: async () => new Payload(),
+      })),
+    });
+
+    await expect(client.me(ACCOUNT)).rejects.toMatchObject({ code: "invalid_response" });
   });
 
   it("requires the exact healthy control-plane identity before onboarding", async () => {

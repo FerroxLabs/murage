@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
@@ -30,6 +32,24 @@ describe("serialized secure credential state", () => {
     const snapshot = state.read();
     snapshot.nested.value = "changed";
     expect(state.read()).toEqual({ nested: { value: "safe" } });
+  });
+
+  it("accepts a cross-realm plain record and normalizes it to a local copy", () => {
+    const foreign = runInNewContext("({ nested: { value: 'safe' } })");
+    const state = createSecureCredentialState(foreign, vi.fn());
+
+    expect(state.read()).toEqual({ nested: { value: "safe" } });
+    expect(Object.getPrototypeOf(state.read())).toBe(Object.prototype);
+  });
+
+  it("rejects non-record documents and enumerable symbol keys", () => {
+    class CredentialBag {}
+    const symbolKeyed = { value: "safe" };
+    symbolKeyed[Symbol("secret")] = "not-a-string-key";
+
+    for (const invalid of [null, [], new Date(), new CredentialBag(), symbolKeyed]) {
+      expect(() => createSecureCredentialState(invalid, vi.fn())).toThrow(TypeError);
+    }
   });
 
   it("restores the encrypted document when the second phase fails", async () => {
