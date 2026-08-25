@@ -415,7 +415,9 @@ export function CompanionSection() {
                   <div className="truncate text-[14px] text-ink">{account.email}</div>
                   <div className="mt-0.5 text-[13px] text-ink-secondary">
                     {account.status === "ready" && account.endpoint
-                      ? `Secure connection ready at ${endpointHost(account.endpoint)}.`
+                      ? state.enabled
+                        ? `Secure connection ready at ${endpointHost(account.endpoint)}.`
+                        : `Secure address configured at ${endpointHost(account.endpoint)}. Turn Companion on to make it reachable.`
                       : account.status === "connecting"
                         ? "Setting up this computer's secure connection…"
                         : account.message ?? "The secure connection needs attention; local pairing still works."}
