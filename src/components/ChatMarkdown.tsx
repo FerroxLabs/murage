@@ -144,6 +144,7 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
 function LocalFileLink({ filePath, children }: { filePath: string; children?: ReactNode }) {
   const [state, setState] = useState<"idle" | "saved" | "failed">("idle");
   const [reason, setReason] = useState("");
+  const [savedTo, setSavedTo] = useState("");
 
   const save = async () => {
     const saveFile = window.ogb?.saveFile;
@@ -155,9 +156,13 @@ function LocalFileLink({ filePath, children }: { filePath: string; children?: Re
       return;
     }
     try {
-      await saveFile(filePath);
+      const saved = await saveFile(filePath);
+      // null means the user closed the save dialog, which is a decision
+      // rather than a failure — say nothing
+      if (!saved) return;
+      setSavedTo(saved);
       setState("saved");
-      setTimeout(() => setState("idle"), 2000);
+      setTimeout(() => setState("idle"), 4000);
     } catch (error) {
       // the bug being fixed here was a click that failed silently, so a
       // failed save says why rather than doing nothing
@@ -171,14 +176,14 @@ function LocalFileLink({ filePath, children }: { filePath: string; children?: Re
       <button
         type="button"
         onClick={() => void save()}
-        title={`Save to Downloads — ${filePath}`}
+        title={`Save a copy — ${filePath}`}
         className="break-words text-left text-accent underline decoration-accent/40 hover:decoration-accent"
       >
         {children}
       </button>
       {state !== "idle" && (
         <span className={`ml-1.5 text-[12px] ${state === "saved" ? "text-success" : "text-danger"}`}>
-          {state === "saved" ? "Saved to Downloads" : reason}
+          {state === "saved" ? `Saved to ${savedTo}` : reason}
         </span>
       )}
     </>

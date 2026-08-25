@@ -142,8 +142,9 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Writes the redacted diagnostics report to a user-chosen file; resolves
    * the path, or null when the save dialog was cancelled. */
   exportDiagnostics: () => ipcRenderer.invoke("desktop:export-diagnostics"),
-  /** Copy a bot-created file (inside ~/.openmausbot) to ~/Downloads and
-   * reveal it. Returns the destination path. The chat bubble shows the
+  /** Ask where to save a bot-created file (inside ~/.openmausbot), copy it
+   * there and reveal it. Returns the chosen path, or null if the user
+   * cancelled the dialog. The chat bubble shows the
    * rejection text verbatim, so strip the "Error invoking remote method"
    * wrapper ipcRenderer adds around a main-process throw. */
   saveFile: (filePath) =>

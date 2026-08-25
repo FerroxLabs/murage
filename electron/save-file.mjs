@@ -42,23 +42,21 @@ export async function resolveSavablePath(rawPath, { home, fsp = fs.promises } = 
   return real;
 }
 
-// "report.docx" -> "report (2).docx" so saving twice never overwrites an
-// existing download. Claiming the name and writing it is a single COPYFILE_EXCL
-// call rather than an access() check followed by a copy: the gap between those
-// two lets concurrent saves pick the same name, and copyFile overwrites by
-// default, so the second click would silently replace the first file. Bounded
-// so a directory full of collisions cannot spin forever.
-export async function copyIntoDirectory(dir, sourcePath, { fsp = fs.promises } = {}) {
+// The name the save dialog opens on: "report.docx", or "report (2).docx" when
+// that already exists, so accepting the default never quietly replaces an
+// earlier download. Only a suggestion — the user can type over it, and the
+// dialog's own overwrite confirmation covers the final choice. Bounded so a
+// directory full of collisions cannot spin forever.
+export async function defaultSaveName(dir, sourcePath, { fsp = fs.promises } = {}) {
   const ext = path.extname(sourcePath);
   const stem = path.basename(sourcePath, ext);
   for (let n = 1; n < 1000; n += 1) {
-    const dest = path.join(dir, n === 1 ? `${stem}${ext}` : `${stem} (${n})${ext}`);
+    const candidate = path.join(dir, n === 1 ? `${stem}${ext}` : `${stem} (${n})${ext}`);
     try {
-      await fsp.copyFile(sourcePath, dest, fs.constants.COPYFILE_EXCL);
-      return dest;
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
+      await fsp.access(candidate);
+    } catch {
+      return candidate;
     }
   }
-  throw new Error("Too many copies of that file are already in your downloads");
+  return path.join(dir, `${stem}${ext}`);
 }
