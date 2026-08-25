@@ -101,6 +101,8 @@ describe("control-plane migrations and health", () => {
       "account",
       "control_action_rate_limits",
       "installation_credentials",
+      "installation_action_rate_limits",
+      "installation_endpoints",
       "installations",
       "otp_recipient_rate_limits",
       "rateLimit",
@@ -141,6 +143,10 @@ describe("control-plane migrations and health", () => {
       BETTER_AUTH_URL: env.BETTER_AUTH_URL,
       EMAIL_FROM: env.EMAIL_FROM,
       ALLOWED_ORIGINS: env.ALLOWED_ORIGINS,
+      CLOUDFLARE_ACCOUNT_ID: env.CLOUDFLARE_ACCOUNT_ID,
+      CLOUDFLARE_ZONE_ID: env.CLOUDFLARE_ZONE_ID,
+      COMPANION_HOST_SUFFIX: env.COMPANION_HOST_SUFFIX,
+      CLOUDFLARE_API_TOKEN: env.CLOUDFLARE_API_TOKEN,
       BETTER_AUTH_SECRET: "too-short",
     };
     const request = new Request(`${BASE_URL}/healthz`);
@@ -510,7 +516,7 @@ describe("installation lifecycle", () => {
     expect((await call(`/v1/installations/${created.installation.id}`, {
       method: "DELETE",
       token: owner.token,
-    })).status).toBe(404);
+    })).status).toBe(204);
   });
 
   it("serializes concurrent credential rotations", async () => {

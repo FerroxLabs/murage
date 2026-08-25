@@ -16,6 +16,10 @@ interface InstallationRow {
   last_seen_at: number | null;
 }
 
+interface OwnedInstallationRow extends InstallationRow {
+  revoked_at: number | null;
+}
+
 interface InstallationCredentialRow {
   installation_id: string;
   lookup_id: string;
@@ -227,6 +231,16 @@ async function ownedActiveInstallation(id: string, ownerUserId: string, env: Env
   ).bind(id, ownerUserId).first<InstallationRow>();
 }
 
+async function ownedInstallation(id: string, ownerUserId: string, env: Env) {
+  if (!INSTALLATION_ID.test(id)) return null;
+  return env.DB.prepare(
+    `SELECT id, client_instance_id, display_name, platform, app_version,
+            created_at, updated_at, last_seen_at, revoked_at
+       FROM installations
+      WHERE id = ? AND owner_user_id = ?`,
+  ).bind(id, ownerUserId).first<OwnedInstallationRow>();
+}
+
 export async function rotateInstallationCredential(
   request: Request,
   installationId: string,
@@ -283,17 +297,19 @@ export async function revokeInstallation(
   auth: ControlPlaneAuth,
 ): Promise<Response> {
   const session = await requireAccount(request, auth);
-  const installation = await ownedActiveInstallation(installationId, session.user.id, env);
+  const installation = await ownedInstallation(installationId, session.user.id, env);
   if (!installation) throw new HTTPError(404, "not_found");
 
-  const now = Date.now();
-  await env.DB.batch([
-    env.DB.prepare("UPDATE installations SET revoked_at = ?, updated_at = ? WHERE id = ?")
-      .bind(now, now, installationId),
-    env.DB.prepare(
-      "UPDATE installation_credentials SET revoked_at = ? WHERE installation_id = ? AND revoked_at IS NULL",
-    ).bind(now, installationId),
-  ]);
+  if (installation.revoked_at === null) {
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE installations SET revoked_at = ?, updated_at = ? WHERE id = ? AND revoked_at IS NULL")
+        .bind(now, now, installationId),
+      env.DB.prepare(
+        "UPDATE installation_credentials SET revoked_at = ? WHERE installation_id = ? AND revoked_at IS NULL",
+      ).bind(now, installationId),
+    ]);
+  }
   return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
 }
 
@@ -323,7 +339,10 @@ async function authenticateInstallation(request: Request, env: Env): Promise<Ins
   return row;
 }
 
-export async function installationSelf(request: Request, env: Env): Promise<Response> {
+export async function requireInstallation(
+  request: Request,
+  env: Env,
+): Promise<InstallationCredentialRow> {
   const installation = await authenticateInstallation(request, env);
   if (!installation) throw new HTTPError(401, "unauthorized");
 
@@ -340,6 +359,12 @@ export async function installationSelf(request: Request, env: Env): Promise<Resp
         WHERE id = ? AND revoked_at IS NULL`,
     ).bind(now, installation.installation_id),
   ]);
+  installation.last_seen_at = now;
+  return installation;
+}
+
+export async function installationSelf(request: Request, env: Env): Promise<Response> {
+  const installation = await requireInstallation(request, env);
   return json({
     installation: {
       id: installation.installation_id,
@@ -349,7 +374,7 @@ export async function installationSelf(request: Request, env: Env): Promise<Resp
       appVersion: installation.app_version,
       createdAt: installation.created_at,
       updatedAt: installation.updated_at,
-      lastSeenAt: now,
+      lastSeenAt: installation.last_seen_at,
     },
     credentialExpiresAt: installation.expires_at,
   });

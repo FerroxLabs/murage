@@ -1,8 +1,9 @@
 # OpenMausBot control plane
 
-This directory is an isolated Cloudflare Worker for cloud account identity and
-installation ownership. It does **not** store or move local bots, chats, SQLite
-state, prompts, tool output, or tunnel configuration.
+This directory is an isolated Cloudflare Worker for cloud account identity,
+installation ownership, and per-installation managed companion endpoints. It
+does **not** store or move local bots, chats, desktop SQLite state, prompts, or
+tool output.
 
 ## What is included
 
@@ -16,12 +17,23 @@ state, prompts, tool output, or tunnel configuration.
   installation credentials, or vice versa.
 - Exact-origin CORS, bounded JSON bodies, redacted errors, and `no-store` on
   every response.
+- One remotely managed Cloudflare Tunnel per installation. Its opaque public
+  hostname routes to `http://127.0.0.1:8810` and is followed by a mandatory
+  `http_status:404` catch-all. A proxied CNAME points to
+  `<tunnel-id>.cfargotunnel.com`.
+- D1-backed generation/lease claims, recovery by stable opaque tunnel name, and
+  retryable partial cleanup. Cloudflare API credentials and raw connector
+  tokens are never written to D1 or logs.
 
 The D1 schema is pinned in `migrations/`. `0001_better_auth_1_7_1.sql` was
 generated from the exact Better Auth configuration. `0002_installations.sql`
 contains only cloud ownership and credential metadata. `0003` adds a
 recipient-scoped OTP limiter whose keys are HMACs rather than email addresses,
-plus an authenticated installation-creation limiter.
+plus an authenticated installation-creation limiter. `0004` adds managed
+endpoint resource IDs, lifecycle state, generation leases, redacted error
+codes, and installation-scoped action limits. Endpoint rows deliberately do not
+cascade away with a hard installation deletion: losing the tunnel and DNS IDs
+would make operator cleanup impossible.
 
 ## API surface
 
@@ -34,6 +46,7 @@ plus an authenticated installation-creation limiter.
 | `POST` | `/v1/installations/:id/credentials/rotate` | owning account bearer |
 | `DELETE` | `/v1/installations/:id` | owning account bearer |
 | `GET` | `/v1/installations/self` | installation credential |
+| `GET`, `POST`, `DELETE` | `/v1/installations/self/endpoint` | installation credential |
 
 Installation registration requires a stable `clientInstanceId`, a display
 `name`, and a `platform` of `darwin`, `windows`, or `linux`; `appVersion` is
@@ -52,6 +65,48 @@ expired credentials and records both credential use and installation
 `lastSeenAt`. Rotations are serialized with a one-minute cooldown, so concurrent
 requests cannot both return credentials while one invalidates the other.
 
+### Managed endpoint contract
+
+All three endpoint methods require `Authorization: Bearer <omb_install_…>`.
+Account bearer tokens are rejected.
+
+- `GET` returns `{ "endpoint": null }` before allocation or after deletion.
+  Otherwise it returns the HTTPS URL, hostname, lifecycle status, generation,
+  timestamps, and a redacted `lastErrorCode`. It never returns a connector
+  token.
+- `POST` has no required body. It idempotently reserves or reconciles the
+  endpoint, adopts a tunnel/DNS record created by an interrupted earlier run,
+  and returns `{ endpoint, connectorToken }`. The raw token is obtained only
+  after tunnel configuration and DNS are ready. The caller must place it
+  directly in the operating system's secure credential store; it is not
+  recoverable from GET or D1.
+- `DELETE` removes DNS first and then the tunnel. It returns `204` when done or
+  when already deleted. A partial Cloudflare failure returns
+  `503 endpoint_cleanup_pending` and retains only the IDs needed for a retry.
+  A concurrent mutation returns `409 endpoint_busy` with `Retry-After: 2`.
+
+Hostnames have exactly one opaque label in front of the configured suffix:
+`c-<32-lowercase-hex>.<COMPANION_HOST_SUFFIX>`. Set the suffix to a zone name
+covered by the zone's edge certificate (normally the zone apex) so the endpoint
+does not depend on deep-subdomain TLS coverage. Tunnel names are stable opaque
+identifiers and contain no account email, display name, or client-supplied ID.
+
+Endpoint provisioning is limited to 20 attempts per installation per hour;
+deletion is limited to 30. A 60-second D1 lease and monotonically increasing
+generation serialize concurrent requests. Cloudflare calls have a five-second
+per-request timeout, reject redirects, bound response bodies, and validate the
+response shape before persisting an ID. A newly created partial resource is
+rolled back; an adopted resource is never deleted by a failed reconciliation.
+
+Revoking an installation first revokes its local installation credentials, then
+schedules best-effort endpoint cleanup. Cloud cleanup failure cannot restore or
+delay credential revocation. Repeating the owner-scoped installation DELETE is
+safe and retries retained cleanup state. A five-minute cron also processes at
+most eight expired-lease rows per run when they are already deleting, belong to
+a revoked installation, or outlive a hard-deleted installation. This bounded
+sweep prevents a transient provider failure from orphaning resources forever
+without creating an unbounded scheduled invocation.
+
 ## Local checks
 
 Install from the repository root, then run:
@@ -63,8 +118,9 @@ pnpm control-plane:dry-run
 ```
 
 For local manual development, copy `.dev.vars.example` to `.dev.vars`, replace
-`BETTER_AUTH_SECRET` with at least 32 cryptographically random bytes, apply the
-migrations locally, and start Wrangler:
+`BETTER_AUTH_SECRET` with at least 32 cryptographically random bytes, provide a
+non-production scoped `CLOUDFLARE_API_TOKEN`, apply the migrations locally, and
+start Wrangler:
 
 ```sh
 pnpm --filter @openmausbot/control-plane exec wrangler d1 migrations apply DB --local --config wrangler.jsonc
@@ -82,8 +138,9 @@ Before a production deployment, an operator must:
 1. Choose and route an HTTPS hostname, then replace `BETTER_AUTH_URL`. The
    Worker has `workers_dev` disabled and no production route in this PR.
 2. Generate a strong production `BETTER_AUTH_SECRET` and add it with Wrangler's
-   interactive secret command. The `secrets.required` declaration validates the
-   binding name and generates its type; it does not contain or upload a value.
+   interactive secret command. Add `CLOUDFLARE_API_TOKEN` the same way. The
+   checked-in `secrets.required` names validate local configuration and generate
+   binding types; they do not contain or upload values.
 3. Create the D1 database, replace the all-zero `database_id`, review the pinned
    migrations, and apply them to that database.
 4. Complete Cloudflare Email Sending domain onboarding, replace the placeholder
@@ -91,8 +148,21 @@ Before a production deployment, an operator must:
    deployment identity access to the binding. The Cloudflare session used while
    preparing this code could not list Email Sending (`2036 Unauthorized`), so no
    domain or binding activation was attempted.
-5. Replace `ALLOWED_ORIGINS` with a comma-separated allow-list of exact HTTPS
+5. Create a least-privilege Cloudflare API token scoped to the selected account
+   and zone. It needs a Cloudflare Tunnel/`cloudflared` connector **Write**
+   permission plus DNS **Read** and **Write** for that zone. Set
+   `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, and add the token through
+   `wrangler secret put CLOUDFLARE_API_TOKEN`. Never put the token in `vars`,
+   `.dev.vars.example`, logs, or CI output.
+6. Set `COMPANION_HOST_SUFFIX` to the certificate-covered DNS suffix where
+   opaque `c-*` records may be created. The configured zone must contain that
+   suffix. This change does not create the zone, certificate, or any remote
+   tunnel/DNS resources during build or tests.
+7. Replace `ALLOWED_ORIGINS` with a comma-separated allow-list of exact HTTPS
    application origins. Wildcards are deliberately unsupported.
 
-This foundation does not provision a Cloudflare Tunnel and does not collect
-marketing consent. Those are separate, explicitly scoped changes.
+The control-plane API token is never handed to a desktop. A desktop receives
+only its tunnel connector token, which can run that one remotely managed tunnel.
+The public companion service still enforces its own pairing and application
+authentication; the tunnel is transport, not user authentication. This control
+plane does not collect marketing consent.
