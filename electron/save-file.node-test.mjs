@@ -39,7 +39,10 @@ after(() => {
 describe("save-file path validation", () => {
   it("accepts a file inside the bot home, as a path or a file:// URL", async () => {
     const file = path.join(botHome, "workspaces", "bot", "report.docx");
-    const expected = fs.realpathSync(file);
+    // must be fs.promises.realpath, the same call the module makes: on Windows
+    // the callback API leaves 8.3 short names ("RUNNER~1") that the promises
+    // API expands ("runneradmin"), so mixing the two compares different strings
+    const expected = await fs.promises.realpath(file);
     assert.equal(await resolveSavablePath(file, { home }), expected);
     assert.equal(await resolveSavablePath(pathToFileURL(file).href, { home }), expected);
   });
@@ -53,7 +56,7 @@ describe("save-file path validation", () => {
     fs.symlinkSync(realBotHome, path.join(linkedHome, ".openmausbot"));
 
     const viaLink = path.join(linkedHome, ".openmausbot", "report.docx");
-    assert.equal(await resolveSavablePath(viaLink, { home: linkedHome }), fs.realpathSync(viaLink));
+    assert.equal(await resolveSavablePath(viaLink, { home: linkedHome }), await fs.promises.realpath(viaLink));
 
     fs.rmSync(realHome, { recursive: true, force: true });
     fs.rmSync(linkedHome, { recursive: true, force: true });
