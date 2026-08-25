@@ -250,11 +250,17 @@ async function terminateChild(child, graceMs) {
   await waitForExit(child, Math.min(graceMs, 500));
 }
 
-async function verifyHostedEndpoint(endpoint, { fetchImpl, timeoutSignal, timeoutMs }) {
+async function verifyHostedEndpoint(
+  endpoint,
+  { fetchImpl, timeoutSignal, timeoutMs, cancellationSignal },
+) {
+  const requestSignal = timeoutSignal(timeoutMs);
   const response = await fetchImpl(`${endpoint}/api/health`, {
     headers: { accept: "application/json" },
     redirect: "error",
-    signal: timeoutSignal(timeoutMs),
+    signal: cancellationSignal
+      ? AbortSignal.any([requestSignal, cancellationSignal])
+      : requestSignal,
   });
   if (!response.ok) return false;
   const text = await response.text();
@@ -290,8 +296,10 @@ export function createManagedCompanionTunnel({
 } = {}) {
   let desired = false;
   let generation = 0;
+  let intentRevision = 0;
   let child = null;
   let tokenFile = null;
+  let activeAttempt = null;
   let access = null;
   let retryAttempt = 0;
   let retryTimer = null;
@@ -316,10 +324,9 @@ export function createManagedCompanionTunnel({
     return state;
   };
 
-  const removeTokenFile = () => {
-    const file = tokenFile;
-    tokenFile = null;
+  const removeTokenFile = (file = tokenFile) => {
     if (!file) return;
+    if (tokenFile === file) tokenFile = null;
     try {
       fileSystem.unlinkSync(file);
     } catch (error) {
@@ -361,6 +368,8 @@ export function createManagedCompanionTunnel({
     }
 
     publish({ status: "starting", ready: false });
+    let attemptHandle = null;
+    let attemptTokenFile = null;
     try {
       tokenFile = writePrivateToken(runtimeRoot, access.token, {
         fileSystem,
@@ -368,6 +377,7 @@ export function createManagedCompanionTunnel({
         identifier,
         currentUid,
       });
+      attemptTokenFile = tokenFile;
       const spawned = spawnProcess(
         binaryPath,
         [
@@ -389,6 +399,22 @@ export function createManagedCompanionTunnel({
         },
       );
       child = spawned;
+      const cancellationController = new AbortController();
+      let resolveCancellation;
+      const cancellation = new Promise((resolve) => {
+        resolveCancellation = resolve;
+      });
+      let cancelled = false;
+      attemptHandle = {
+        generation: ownedGeneration,
+        cancel() {
+          if (cancelled) return;
+          cancelled = true;
+          cancellationController.abort();
+          resolveCancellation(false);
+        },
+      };
+      activeAttempt = attemptHandle;
       let terminated = false;
       let expectedStop = false;
       let resolveExit;
@@ -400,7 +426,7 @@ export function createManagedCompanionTunnel({
         terminated = true;
         resolveExit();
         if (child === spawned) child = null;
-        removeTokenFile();
+        removeTokenFile(attemptTokenFile);
         if (!expectedStop && desired && ownedGeneration === generation) {
           scheduleRetry("The secure connection stopped unexpectedly.", ownedGeneration);
         }
@@ -418,11 +444,13 @@ export function createManagedCompanionTunnel({
             fetchImpl,
             timeoutSignal,
             timeoutMs: verifyRequestTimeoutMs,
+            cancellationSignal: cancellationController.signal,
           }).catch(() => false),
           exit.then(() => false),
+          cancellation,
         ]);
         if (verified && child === spawned && desired && ownedGeneration === generation) {
-          removeTokenFile();
+          removeTokenFile(attemptTokenFile);
           retryAttempt = 0;
           publish({ status: "ready", ready: true });
           return state;
@@ -434,6 +462,7 @@ export function createManagedCompanionTunnel({
             timer.unref?.();
           }),
           exit,
+          cancellation,
         ]);
       }
 
@@ -444,7 +473,7 @@ export function createManagedCompanionTunnel({
         child = null;
         await terminateChild(spawned, stopGraceMs);
       }
-      removeTokenFile();
+      removeTokenFile(attemptTokenFile);
       if (desired && ownedGeneration === generation) {
         scheduleRetry("The secure connection could not be verified.", ownedGeneration);
       }
@@ -452,12 +481,14 @@ export function createManagedCompanionTunnel({
     } catch {
       const spawned = child;
       child = null;
-      removeTokenFile();
+      removeTokenFile(attemptTokenFile);
       if (spawned) await terminateChild(spawned, stopGraceMs);
       if (desired && ownedGeneration === generation) {
         scheduleRetry("The secure connection could not start.", ownedGeneration);
       }
       return state;
+    } finally {
+      if (activeAttempt === attemptHandle) activeAttempt = null;
     }
   };
 
@@ -467,7 +498,12 @@ export function createManagedCompanionTunnel({
     },
 
     start(rawAccess) {
+      const requestedRevision = ++intentRevision;
       return serialize(async () => {
+        // A stop requested before this queued start began wins. This matters
+        // during app shutdown, when start and quit can land in one event-loop
+        // turn before either transition has acquired the queue.
+        if (requestedRevision !== intentRevision) return state;
         const normalized = managedCompanionTunnelAccess({
           [MANAGED_COMPANION_ENDPOINT_FIELD]: rawAccess?.endpoint,
           [MANAGED_COMPANION_TOKEN_FIELD]: rawAccess?.token,
@@ -503,15 +539,26 @@ export function createManagedCompanionTunnel({
     },
 
     stop() {
+      // Stop intent must not wait behind a 15-second startup probe. Invalidate
+      // the attempt, wake its verification race, and signal cloudflared now;
+      // the serialized tail only publishes the final stable state.
+      const requestedRevision = ++intentRevision;
+      desired = false;
+      generation += 1;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = null;
+      activeAttempt?.cancel();
+      const existing = child;
+      child = null;
+      const existingTokenFile = tokenFile;
+      removeTokenFile(existingTokenFile);
+      const terminated = existing
+        ? terminateChild(existing, stopGraceMs)
+        : Promise.resolve();
+
       return serialize(async () => {
-        desired = false;
-        generation += 1;
-        if (retryTimer) clearTimeout(retryTimer);
-        retryTimer = null;
-        const existing = child;
-        child = null;
-        if (existing) await terminateChild(existing, stopGraceMs);
-        removeTokenFile();
+        await terminated;
+        if (requestedRevision !== intentRevision) return state;
         return publish({ status: "stopped", ready: false });
       });
     },

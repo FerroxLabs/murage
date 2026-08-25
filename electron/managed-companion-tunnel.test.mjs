@@ -232,6 +232,54 @@ describe("managed connector lifecycle", () => {
     await manager.stop();
   });
 
+  it("preempts a hanging startup probe and kills cloudflared before the start queue settles", async () => {
+    const child = fakeChild();
+    const spawnProcess = vi.fn(() => child);
+    const states = [];
+    const manager = createManagedCompanionTunnel({
+      binaryPath: "/trusted/cloudflared",
+      runtimeRoot: path.join(temporaryDirectory(), "runtime"),
+      spawnProcess,
+      // Deliberately ignore AbortSignal: cancellation must wake the lifecycle
+      // even if a fetch implementation or network stack never settles.
+      fetchImpl: vi.fn(() => new Promise(() => {})),
+      onChange: (state) => states.push(state),
+    });
+
+    const starting = manager.start({ endpoint: ENDPOINT, token: TOKEN });
+    await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledOnce());
+
+    const stopping = manager.stop();
+    // This assertion is intentionally before either lifecycle promise is
+    // awaited: stop intent must signal the owned process synchronously rather
+    // than sitting behind the 15-second verification transition.
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    await expect(stopping).resolves.toMatchObject({ status: "stopped", ready: false });
+    await expect(starting).resolves.toBeDefined();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(manager.getStatus()).toMatchObject({ status: "stopped", ready: false });
+    expect(states.map((state) => state.status)).toEqual(["starting", "stopped"]);
+    expect(spawnProcess).toHaveBeenCalledOnce();
+  });
+
+  it("lets stop supersede a queued start before it can spawn", async () => {
+    const spawnProcess = vi.fn(() => fakeChild());
+    const manager = createManagedCompanionTunnel({
+      binaryPath: "/trusted/cloudflared",
+      runtimeRoot: path.join(temporaryDirectory(), "runtime"),
+      spawnProcess,
+      fetchImpl: vi.fn(async () => healthyResponse()),
+    });
+
+    const starting = manager.start({ endpoint: ENDPOINT, token: TOKEN });
+    const stopping = manager.stop();
+    await Promise.all([starting, stopping]);
+
+    expect(spawnProcess).not.toHaveBeenCalled();
+    expect(manager.getStatus()).toMatchObject({ status: "stopped", ready: false });
+  });
+
   it("backs off after an unexpected exit, restarts, and cancels future work on stop", async () => {
     vi.useFakeTimers();
     const children = [fakeChild(1), fakeChild(2)];
