@@ -11,7 +11,8 @@ contract as the desktop client through a restricted sidecar.
 The first version includes:
 
 - Bonjour discovery on the same LAN and manual address entry.
-- Remote access through a Tailscale MagicDNS name.
+- Remote access through a Tailscale MagicDNS name or an optional
+  account-provisioned HTTPS address.
 - QR-first pairing with a short-lived, single-use credential and a six-digit
   manual fallback, plus per-device tokens, device listing, and revocation.
 - Bot and room lists, paged transcripts, sending, interruption, and unread
@@ -21,14 +22,16 @@ The first version includes:
   Box computer view. The loopback-only VPS SSH viewer remains desktop-only.
 - Markdown rendering and Keychain storage for the device token.
 
-It is foreground-only. Push notifications, background delivery, voice, App
-Store release automation, and a hosted relay are not part of this version.
+It is foreground-only. Push notifications, closed-app background delivery,
+voice, and App Store release automation are not part of this version. The
+optional hosted transport connects to the user's own computer; it is not a
+cloud transcript store and cannot wake a terminated iOS app.
 
 The Mac must be running OpenMausBot and must not be asleep. Companion Settings
 offers an off-by-default **Keep this computer awake** switch that prevents
-system sleep while Companion is on; the display may still turn off. Without a
-hosted relay, a sleeping or powered-off Mac cannot receive phone requests or
-run its local routines.
+system sleep while Companion is on; the display may still turn off. A sleeping
+or powered-off computer cannot receive phone requests or run its local
+routines, including through the optional hosted transport.
 
 ## Runtime architecture
 
@@ -37,8 +40,8 @@ run its local routines.
    SwiftUI UI + CompanionCore
    bearer token in Keychain
             │
-            │ HTTP + resumable SSE
-            │ LAN or Tailscale
+            │ HTTP over trusted LAN/Tailscale, or HTTPS
+            │ through an optional Cloudflare Tunnel
             ▼
  companion sidecar :8810
    pairing authentication
@@ -111,8 +114,24 @@ and `ios/project.yml` narrowly allows insecure HTTP for `ts.net` subdomains.
 Bonjour does not cross the tailnet, so remote pairing uses manual address
 entry.
 
-Tailscale is optional. There is no OpenMausBot-operated relay or cloud copy of
-the local data in this design.
+Tailscale is optional. The direct path does not use an OpenMausBot-operated
+relay or create a cloud copy of local transcript data.
+
+### Optional hosted HTTPS
+
+In desktop **Settings → Companion**, **Use your phone anywhere** accepts a
+passwordless email code and provisions one opaque HTTPS address for that
+computer. The desktop runs a pinned `cloudflared` connector outbound to
+Cloudflare; no inbound router configuration or Tailscale installation is
+required. The sidecar advertises the hosted address in pairing invitations only
+after the route has passed an end-to-end health check. LAN, Bonjour, manual
+addresses, and Tailscale continue to work without signing in.
+
+Cloudflare terminates and proxies the encrypted connection to the connector.
+The OpenMausBot control plane stores account and installation metadata plus
+opaque tunnel/DNS identifiers in D1, but not bots, transcripts, approvals,
+screen frames, pairing tokens, or connector tokens. See `docs/ios-privacy.md`
+for data and deletion details.
 
 ## Pairing and device security
 
@@ -135,8 +154,9 @@ the local data in this design.
 This mirrors the direct-pairing security shape used by T3 Code: a high-entropy
 bootstrap credential, explicit confirmation of the scanned target, and a
 one-time exchange for a securely stored long-lived credential. An OpenMausBot
-account is not required because the phone connects directly to the user's Mac;
-authentication would only become necessary for a future hosted relay.
+account is not required for LAN or Tailscale. The optional hosted route requires
+the desktop owner to authenticate before provisioning, while the phone still
+uses the same per-computer pairing credential.
 
 The device-facing socket rejects browser `Origin` headers before reading a
 token. Its route policy in `companion/src/routes.ts` is default-deny: a new
@@ -248,5 +268,5 @@ distribution scope:
 4. **Distribution:** signing, bundle ownership, privacy declarations,
    TestFlight, and App Store review material. Swift tests and an unsigned
    simulator build already run in the repository CI.
-5. **Optional expansion:** voice/call mode, Local VM or host-computer
-   interaction, or a hosted relay. Each requires its own threat-model review.
+5. **Optional expansion:** voice/call mode or Local VM/host-computer
+   interaction. Each requires its own threat-model review.

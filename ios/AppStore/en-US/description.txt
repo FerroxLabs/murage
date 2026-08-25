@@ -13,7 +13,7 @@ Keep your AI team moving when you step away from your desk:
 
 YOUR COMPUTER STAYS IN CHARGE
 
-OpenMausMobile connects directly to the companion service on your own computer. Your bot transcripts remain in OpenMausBot’s local storage; this app does not upload a cloud copy to the developer.
+OpenMausMobile connects to the companion service on your own computer. Your bot transcripts remain in OpenMausBot’s local storage; the optional hosted connection transports them to your computer without creating a developer-hosted transcript copy.
 
 PAIR ONCE, REVOKE ANY TIME
 
@@ -21,6 +21,6 @@ Pair with a short-lived code from OpenMausBot’s Companion panel. The computer 
 
 USE IT AT HOME OR AWAY
 
-Bonjour finds your computer on a trusted local network. For private remote access, install Tailscale on both devices and connect with the computer’s MagicDNS name.
+Bonjour finds your computer on a trusted local network. For remote access, use Tailscale on both devices or enable the optional passwordless HTTPS connection in OpenMausBot’s desktop Companion settings.
 
 Requires OpenMausBot running on a Mac, Windows, or Linux computer. Tailscale is optional and is not affiliated with OpenMausBot.
