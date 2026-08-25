@@ -133,13 +133,20 @@ function processIsAlive(pid) {
   }
 }
 
+// Node reports synthetic, non-matching uid values for Windows directory
+// stats and os.userInfo(). ACLs on Electron's per-user data directory are the
+// ownership boundary there; applying the Unix uid comparison would reject
+// every valid Windows runtime directory.
+const currentUserId = () =>
+  process.platform === "win32" ? undefined : (process.getuid?.() ?? os.userInfo().uid);
+
 /** Remove only token files created by a dead OpenMausBot process. Suspicious
  * paths are preserved instead of broadening cleanup around a secret. */
 export function cleanupStaleManagedCompanionTokens(
   runtimeRoot,
   {
     fileSystem = fs,
-    currentUid = process.getuid?.() ?? os.userInfo().uid,
+    currentUid = currentUserId(),
     isProcessAlive = processIsAlive,
   } = {},
 ) {
@@ -271,7 +278,7 @@ export function createManagedCompanionTunnel({
   timeoutSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
   identifier = randomUUID,
   processId = process.pid,
-  currentUid = process.getuid?.() ?? os.userInfo().uid,
+  currentUid = currentUserId(),
   isProcessAlive = processIsAlive,
   verifyTimeoutMs = 15_000,
   verifyRequestTimeoutMs = 2_500,
