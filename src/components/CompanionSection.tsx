@@ -12,7 +12,7 @@
 // The panel is deliberately blunt about what it does. "Your bots can run
 // shell commands" is the honest reason a network switch here deserves a
 // sentence of explanation rather than a bare toggle.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Cloud, Loader2, LogOut, Smartphone, Trash2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { companionPairingLink, type CompanionEndpoint } from "../lib/companion-pairing";
@@ -67,6 +67,8 @@ type Bridge = {
 
 type AccountBridge = NonNullable<NonNullable<Window["ogb"]>["companionAccount"]>;
 
+type StateBridge<T> = { state: () => Promise<T> };
+
 const bridge = (): Bridge | null =>
   // SAFETY: the preload owns `ogb.companion`; every call is still guarded for browser builds where it is absent.
   (globalThis as { ogb?: { companion?: Bridge } }).ogb?.companion ?? null;
@@ -75,6 +77,25 @@ const accountBridge = (): AccountBridge | null =>
   // SAFETY: Electron exposes only these five account operations. Account,
   // installation, and connector credentials never enter the renderer.
   (globalThis as { ogb?: { companionAccount?: AccountBridge } }).ogb?.companionAccount ?? null;
+
+export const loadCompanionBridgeState = async (
+  companion: StateBridge<CompanionState> | null,
+  remote: StateBridge<CompanionAccountState> | null,
+): Promise<{ companion: CompanionState | null; account: CompanionAccountState | null }> => {
+  const [companionResult, accountResult] = await Promise.allSettled([
+    companion ? Promise.resolve().then(() => companion.state()) : Promise.resolve(null),
+    remote ? Promise.resolve().then(() => remote.state()) : Promise.resolve(null),
+  ]);
+  return {
+    companion: companionResult.status === "fulfilled" ? companionResult.value : null,
+    account: accountResult.status === "fulfilled" ? accountResult.value : null,
+  };
+};
+
+export const shouldHydrateCompanionEmail = (
+  userEdited: boolean,
+  account: CompanionAccountState,
+): boolean => !userEdited && Boolean(account.email);
 
 const relative = (at: number) => {
   const seconds = Math.round((Date.now() - at) / 1000);
@@ -113,23 +134,19 @@ export function CompanionSection() {
   const [error, setError] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const emailEdited = useRef(false);
 
   const load = useCallback(async () => {
     const companion = bridge();
     const remote = accountBridge();
     if (!companion && !remote) return;
-    try {
-      const [nextCompanion, nextAccount] = await Promise.all([
-        companion?.state() ?? null,
-        remote?.state() ?? null,
-      ]);
-      if (nextCompanion) setState(nextCompanion);
-      if (nextAccount) {
-        setAccount(nextAccount);
-        if (nextAccount.email) setEmail(nextAccount.email);
+    const next = await loadCompanionBridgeState(companion, remote);
+    if (next.companion) setState(next.companion);
+    if (next.account) {
+      setAccount(next.account);
+      if (shouldHydrateCompanionEmail(emailEdited.current, next.account)) {
+        setEmail(next.account.email ?? "");
       }
-    } catch {
-      /* the main process is gone; the rest of the app already says so */
     }
   }, []);
 
@@ -342,7 +359,10 @@ export function CompanionSection() {
                   inputMode="email"
                   value={email}
                   disabled={accountBusy || codeSent}
-                  onChange={(event) => setEmail(event.target.value)}
+                  onChange={(event) => {
+                    emailEdited.current = true;
+                    setEmail(event.target.value);
+                  }}
                   placeholder="you@example.com"
                   className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none placeholder:text-ink-secondary/60 focus:border-accent disabled:opacity-50"
                 />
