@@ -3,8 +3,23 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { availableDestination, resolveSavablePath } from "./save-file.mjs";
+
+// Creating a symlink on Windows needs elevation or developer mode, so the
+// symlink cases only run where the runner can actually make one.
+const canSymlink = (() => {
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), "omb-symlink-probe-"));
+  try {
+    fs.symlinkSync(probe, path.join(probe, "link"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
 let home;
 let botHome;
@@ -26,10 +41,10 @@ describe("save-file path validation", () => {
     const file = path.join(botHome, "workspaces", "bot", "report.docx");
     const expected = fs.realpathSync(file);
     assert.equal(await resolveSavablePath(file, { home }), expected);
-    assert.equal(await resolveSavablePath(`file://${file}`, { home }), expected);
+    assert.equal(await resolveSavablePath(pathToFileURL(file).href, { home }), expected);
   });
 
-  it("accepts a file under a symlinked bot home", async () => {
+  it("accepts a file under a symlinked bot home", { skip: !canSymlink }, async () => {
     const realHome = fs.mkdtempSync(path.join(os.tmpdir(), "omb-real-home-"));
     const linkedHome = fs.mkdtempSync(path.join(os.tmpdir(), "omb-linked-home-"));
     const realBotHome = path.join(realHome, "bot-data");
@@ -44,14 +59,18 @@ describe("save-file path validation", () => {
     fs.rmSync(linkedHome, { recursive: true, force: true });
   });
 
-  it("rejects paths outside the bot home, including via traversal and symlinks", async () => {
-    const escape = path.join(botHome, "escape.txt");
-    fs.symlinkSync(path.join(home, "secret.txt"), escape);
+  it("rejects paths outside the bot home, including via traversal", async () => {
     const rejected = "Only files created by your bots can be saved";
-
     await assert.rejects(resolveSavablePath(path.join(home, "secret.txt"), { home }), { message: rejected });
     await assert.rejects(resolveSavablePath(path.join(botHome, "..", "secret.txt"), { home }), { message: rejected });
-    await assert.rejects(resolveSavablePath(escape, { home }), { message: rejected });
+  });
+
+  it("rejects a symlink inside the bot home pointing outside it", { skip: !canSymlink }, async () => {
+    const escape = path.join(botHome, "escape.txt");
+    fs.symlinkSync(path.join(home, "secret.txt"), escape);
+    await assert.rejects(resolveSavablePath(escape, { home }), {
+      message: "Only files created by your bots can be saved",
+    });
     fs.rmSync(escape);
   });
 

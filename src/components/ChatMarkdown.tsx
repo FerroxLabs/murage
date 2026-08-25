@@ -35,17 +35,25 @@ const hash = (s: string) => {
 // A markdown link whose target is a file on this machine: bots hand over
 // bot-created documents as absolute paths or file:// URLs. Web links stay
 // ordinary anchors handled by the shell's window-open policy.
+// A leading slash covers macOS and Linux; "C:\…" and "C:/…" cover Windows,
+// where a file:// URL's pathname also arrives as "/C:/…".
+const WINDOWS_PATH = /^[a-zA-Z]:[\\/]/;
+const absolutePath = (value: string): string | null => {
+  if (value.startsWith("/") && WINDOWS_PATH.test(value.slice(1))) return value.slice(1);
+  if (value.startsWith("/") || WINDOWS_PATH.test(value)) return value;
+  return null;
+};
+
 const localFilePath = (href?: string): string | null => {
   if (!href) return null;
   if (href.startsWith("file://")) {
     try {
-      const p = decodeURIComponent(new URL(href).pathname);
-      return p.startsWith("/") ? p : null;
+      return absolutePath(decodeURIComponent(new URL(href).pathname));
     } catch {
       return null;
     }
   }
-  return href.startsWith("/") ? href : null;
+  return absolutePath(href);
 };
 
 function CodeBlock({ code, lang, streaming }: { code: string; lang: string; streaming: boolean }) {
