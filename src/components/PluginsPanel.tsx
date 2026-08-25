@@ -128,6 +128,18 @@ export function mergeCompleteConnectorStatus(
   return mergeCurrentConnectorStatus(next, incoming, latestGenerations, requestGenerations);
 }
 
+export function onlyLatestConnectorResponses(
+  incoming: Record<string, ConnectorStatus>,
+  latestRequests: ReadonlyMap<string, number>,
+  requestIds: ReadonlyMap<string, number>,
+) {
+  return Object.fromEntries(
+    Object.entries(incoming).filter(
+      ([slug]) => (latestRequests.get(slug) ?? 0) === (requestIds.get(slug) ?? 0),
+    ),
+  );
+}
+
 function ServiceIcon({ card }: { card: ToolkitCard }) {
   // 0 = official logo, 1 = favicon by domain, 2 = monogram
   const [stage, setStage] = useState(card.logo ? 0 : card.domain ? 1 : 2);
@@ -175,14 +187,23 @@ export function PluginsPanel() {
 
   const pollTimers = useRef(new Map<string, ReturnType<typeof setInterval>>());
   const statusGenerations = useRef(new Map<string, number>());
+  const latestStatusRequests = useRef(new Map<string, number>());
 
   const refreshStatus = useCallback((slugs: string[]): Promise<Record<string, ConnectorStatus>> => {
     if (!slugs.length) return Promise.resolve({});
     const requestGenerations = new Map(slugs.map((slug) => [slug, statusGenerations.current.get(slug) ?? 0]));
-    setRefreshing(true);
+    const requestIds = new Map(slugs.map((slug) => {
+      const requestId = (latestStatusRequests.current.get(slug) ?? 0) + 1;
+      latestStatusRequests.current.set(slug, requestId);
+      return [slug, requestId];
+    }));
     return api(`/api/connectors?services=${slugs.join(",")}`)
       .then((r) => {
-        const services: Record<string, ConnectorStatus> = r.services ?? {};
+        const services = onlyLatestConnectorResponses(
+          r.services ?? {},
+          latestStatusRequests.current,
+          requestIds,
+        );
         // A one-service OAuth poll must not erase every other app's state.
         // A request that began before Connect must also not erase the newer
         // local INITIATED state when its stale not_connected result arrives.
@@ -203,8 +224,7 @@ export function PluginsPanel() {
         }
         return services;
       })
-      .catch(() => ({}))
-      .finally(() => setRefreshing(false));
+      .catch(() => ({}));
   }, []);
 
   const refreshConnectedStatus = useCallback((force = false): Promise<Record<string, ConnectorStatus>> => {
@@ -431,7 +451,8 @@ export function PluginsPanel() {
           <div className="flex items-center gap-1">
             <button
               onClick={() => void loadConnectionInventory(true)}
-              className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"
+              disabled={refreshing}
+              className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
               title="Refresh connection status"
             >
               <RefreshCw size={17} className={cn(refreshing && "animate-spin")} />
@@ -657,9 +678,11 @@ export function PluginsPanel() {
               {tab === "connected" && inventoryPhase === "error" && (
                 <button
                   type="button"
+                  disabled={refreshing}
                   onClick={() => void loadConnectionInventory(true)}
-                  className="mt-3 rounded-lg bg-raised px-3 py-2 text-[12px] text-ink hover:bg-raised-hover"
+                  className="mt-4 flex items-center gap-1.5 rounded-lg bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-50"
                 >
+                  <RefreshCw size={13} className={cn(refreshing && "animate-spin")} />
                   Retry
                 </button>
               )}
