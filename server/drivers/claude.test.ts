@@ -715,18 +715,38 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       tool: "Bash",
       summary: "rm -rf scratch",
       requestId: "ask-1",
-      approvalScope: "local-computer",
     });
+    // a plain CLI tool never carries the desktop-control approval scope,
+    // so the UI can offer a remembered grant for it
+    expect(opened).toHaveProperty("approvalScope", undefined);
 
     // the outcome names exactly what was granted: this action, once
     await expect(instance.adapter.respondToRequest("t-perm-abc", "ask-1", { behavior: "allow" })).resolves.toBe("allowed-once");
     expect(await answered).toMatchObject({ behavior: "allow" });
     const resolved = await recorder.until((e) => e.type === "request.resolved");
-    expect(resolved).toMatchObject({
-      behavior: "allow",
-      source: "user",
-      approvalScope: "local-computer",
+    expect(resolved).toMatchObject({ behavior: "allow", source: "user" });
+    expect(resolved).toHaveProperty("approvalScope", undefined);
+
+    // a real desktop-control tool keeps the local-computer scope, which
+    // suppresses remembered grants — desktop actions must be approved
+    // one at a time
+    const answered2 = new Promise<{ behavior: string }>((resolve) => {
+      let buf = "";
+      conn.on("data", (c) => {
+        buf += c;
+        const nl = buf.indexOf("\n");
+        if (nl !== -1) resolve(JSON.parse(buf.slice(0, nl)));
+      });
     });
+    conn.write(
+      JSON.stringify({ t: "ask", id: "ask-2", tool: "mcp__computer__screenshot", input: {} }) + "\n",
+    );
+    const opened2 = await recorder.until((e) => e.requestId === "ask-2" && e.type === "request.opened");
+    expect(opened2).toHaveProperty("approvalScope", "local-computer");
+    await expect(instance.adapter.respondToRequest("t-perm-abc", "ask-2", { behavior: "allow" })).resolves.toBe("allowed-once");
+    expect(await answered2).toMatchObject({ behavior: "allow" });
+    const resolved2 = await recorder.until((e) => e.requestId === "ask-2" && e.type === "request.resolved");
+    expect(resolved2).toHaveProperty("approvalScope", "local-computer");
 
     conn.end();
     await instance.adapter.interruptTurn("t-perm-abc");
