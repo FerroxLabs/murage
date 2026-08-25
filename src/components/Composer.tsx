@@ -188,9 +188,9 @@ export function Composer({
     (id: string) => setAttachments((prev) => prev.filter((a) => a.id !== id)),
     [setAttachments],
   );
-  /** Moves one pasted attachment into the editable draft and restores focus. */
   const displayPasteInChatBox = useCallback(
-    (attachment: PasteAttachment) => {
+    /** Moves one pasted attachment into the editable draft and restores focus. */
+    function displayPasteInChatBox(attachment: PasteAttachment) {
       const nextText = appendPastedText(text, attachment.text);
       setText(nextText);
       setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));

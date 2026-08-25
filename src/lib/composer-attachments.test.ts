@@ -27,14 +27,16 @@ describe("appendPastedText", () => {
 });
 
 /** Builds a stable image attachment fixture for prompt and preview tests. */
-const image = (path: string): ImageAttachment => ({
-  kind: "image",
-  id: "i1",
-  path,
-  name: "shot.png",
-  size: 1234,
-  mime: "image/png",
-});
+function image(path: string): ImageAttachment {
+  return {
+    kind: "image",
+    id: "i1",
+    path,
+    name: "shot.png",
+    size: 1234,
+    mime: "image/png",
+  };
+}
 
 describe("composeMessage with images", () => {
   it("emits an attached-image tag carrying the server path", () => {
