@@ -21,7 +21,7 @@ import { buildDiagnosticsReport, decodeLogTail, diagnosticsFileName } from "./di
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
-import { defaultSaveName, resolveSavablePath } from "./save-file.mjs";
+import { defaultSaveName, openSavableFile, copyHandleTo } from "./save-file.mjs";
 import {
   ensureManagedComposioCredentials,
   managedComposioAccess,
@@ -1162,21 +1162,25 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
 // renderer-controlled, so it must resolve inside ~/.openmausbot and be a
 // regular file — never a symlink escape or directory.
 ipcMain.handle("desktop:save-file", async (event, rawPath) => {
-  const source = await resolveSavablePath(rawPath, { home: os.homedir() });
-  const parent = BrowserWindow.fromWebContents(event.sender);
-  const defaultPath = await defaultSaveName(app.getPath("downloads"), source);
-  const choice = await dialog.showSaveDialog(parent ?? undefined, {
-    title: "Where do you want to save it?",
-    message: "Where do you want to save it?",
-    defaultPath,
-    buttonLabel: "Save",
-    properties: ["createDirectory", "showOverwriteConfirmation"],
-  });
-  // Cancelling is a decision, not a failure — the bubble stays quiet.
-  if (choice.canceled || !choice.filePath) return null;
-  await fs.promises.copyFile(source, choice.filePath);
-  shell.showItemInFolder(choice.filePath);
-  return choice.filePath;
+  const { handle, filePath: source } = await openSavableFile(rawPath, { home: os.homedir() });
+  try {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const defaultPath = await defaultSaveName(app.getPath("downloads"), source);
+    const choice = await dialog.showSaveDialog(parent ?? undefined, {
+      title: "Where do you want to save it?",
+      message: "Where do you want to save it?",
+      defaultPath,
+      buttonLabel: "Save",
+      properties: ["createDirectory", "showOverwriteConfirmation"],
+    });
+    // Cancelling is a decision, not a failure — the bubble stays quiet.
+    if (choice.canceled || !choice.filePath) return null;
+    await copyHandleTo(handle, choice.filePath);
+    shell.showItemInFolder(choice.filePath);
+    return choice.filePath;
+  } finally {
+    await handle.close();
+  }
 });
 
 ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {

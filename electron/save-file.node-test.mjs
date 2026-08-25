@@ -5,7 +5,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { defaultSaveName, resolveSavablePath } from "./save-file.mjs";
+import { copyHandleTo, defaultSaveName, openSavableFile, resolveSavablePath } from "./save-file.mjs";
 
 // Creating a symlink on Windows needs elevation or developer mode, so the
 // symlink cases only run where the runner can actually make one.
@@ -107,5 +107,38 @@ describe("save-file dialog default name", () => {
     assert.equal(path.extname(await defaultSaveName(downloads, source)), ".docx");
 
     fs.rmSync(downloads, { recursive: true, force: true });
+  });
+});
+
+describe("save-file source handles", () => {
+  it("copies from the validated open handle", async () => {
+    const source = path.join(botHome, "workspaces", "bot", "report.docx");
+    const destination = path.join(home, "copied-report.docx");
+    const { handle } = await openSavableFile(source, { home });
+    try {
+      await copyHandleTo(handle, destination);
+    } finally {
+      await handle.close();
+    }
+    assert.equal(fs.readFileSync(destination, "utf8"), "docx");
+    fs.rmSync(destination);
+  });
+
+  it("does not follow a symlink swap after the source is opened", { skip: !canSymlink || process.platform === "win32" }, async () => {
+    const source = path.join(botHome, "workspaces", "bot", "report.docx");
+    const moved = `${source}.moved`;
+    const destination = path.join(home, "swapped-report.docx");
+    const { handle } = await openSavableFile(source, { home });
+    try {
+      fs.renameSync(source, moved);
+      fs.symlinkSync(path.join(home, "secret.txt"), source);
+      await copyHandleTo(handle, destination);
+      assert.equal(fs.readFileSync(destination, "utf8"), "docx");
+    } finally {
+      await handle.close();
+      if (fs.existsSync(source)) fs.rmSync(source);
+      if (fs.existsSync(moved)) fs.renameSync(moved, source);
+      if (fs.existsSync(destination)) fs.rmSync(destination);
+    }
   });
 });
