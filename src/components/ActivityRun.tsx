@@ -24,8 +24,8 @@ export function ActivityRun({
   const failed = messages.some((message) => message.tool?.ok === false);
   const [open, setOpen] = useState(failed || forceOpen);
   useEffect(() => {
-    if (forceOpen) setOpen(true);
-  }, [forceOpen]);
+    if (failed || forceOpen) setOpen(true);
+  }, [failed, forceOpen]);
   if (open) {
     return (
       <div className="flex flex-col gap-1">

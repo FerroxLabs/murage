@@ -34,6 +34,15 @@ export function groupActivityRuns(messages: Message[]): TranscriptItem[] {
   };
   for (const message of messages) {
     if (foldable(message)) {
+      const first = run[0];
+      if (
+        first &&
+        (first.role !== message.role ||
+          first.from?.botId !== message.from?.botId ||
+          new Date(first.at).toDateString() !== new Date(message.at).toDateString())
+      ) {
+        flush();
+      }
       run.push(message);
       continue;
     }

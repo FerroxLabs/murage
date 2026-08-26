@@ -5,12 +5,12 @@ import type { Message } from "@/state/store";
 
 let seq = 0;
 const tool = (name: string, ok = true): Message =>
-  ({ id: `t${++seq}`, at: seq, kind: "activity", tool: { name, ok } }) as Message;
+  ({ id: `t${++seq}`, at: seq, role: "bot", kind: "activity", tool: { name, ok } });
 /** a step with no verdict yet — `ok` absent, not `ok: undefined`, which a
  * default parameter would quietly turn back into a finished step */
 const running = (name: string): Message =>
-  ({ id: `t${++seq}`, at: seq, kind: "activity", tool: { name } }) as Message;
-const text = (body: string): Message => ({ id: `m${++seq}`, at: seq, kind: "text", text: body }) as Message;
+  ({ id: `t${++seq}`, at: seq, role: "bot", kind: "activity", tool: { name } });
+const text = (body: string): Message => ({ id: `m${++seq}`, at: seq, role: "bot", kind: "text", text: body });
 
 describe("groupActivityRuns", () => {
   it("folds consecutive tool steps into one run", () => {
@@ -45,6 +45,37 @@ describe("groupActivityRuns", () => {
     const steps = [tool("Edit"), tool("Edit")];
     const items = groupActivityRuns(steps);
     expect(items[0].kind === "run" && items[0].id).toBe(`run:${steps[0].id}`);
+  });
+
+  it("does not attribute consecutive room steps from different bots to one sender", () => {
+    const roomTool = (name: string, botId: string): Message => ({
+      ...tool(name),
+      from: { botId, name: botId, color: "blue" },
+    });
+
+    expect(
+      groupActivityRuns([
+        roomTool("Read", "alice"),
+        roomTool("Edit", "alice"),
+        roomTool("Write", "bob"),
+        roomTool("Bash", "bob"),
+      ]).map((item) => item.kind),
+    ).toEqual(["run", "run"]);
+  });
+
+  it("keeps local calendar-day boundaries between activity runs", () => {
+    const beforeMidnight = new Date(2026, 0, 1, 23, 59).getTime();
+    const afterMidnight = new Date(2026, 0, 2, 0, 1).getTime();
+    const stepAt = (name: string, at: number): Message => ({ ...tool(name), at });
+
+    expect(
+      groupActivityRuns([
+        stepAt("Read", beforeMidnight),
+        stepAt("Edit", beforeMidnight),
+        stepAt("Write", afterMidnight),
+        stepAt("Bash", afterMidnight),
+      ]).map((item) => item.kind),
+    ).toEqual(["run", "run"]);
   });
 });
 
