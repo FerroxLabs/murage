@@ -196,16 +196,143 @@ export function shouldArmPhoneSetupProvisioningTimeout(
   return flow.active && snapshot.provisioning && !snapshot.provisioningTimedOut;
 }
 
+export interface PhonePairingAttemptLock {
+  generation: number | null;
+}
+
+/** Pairing attempts may be replaced after cancellation or timeout. Only the
+ * generation which still owns the lock may release the visible busy state. */
+export function claimPhonePairingAttempt(
+  lock: PhonePairingAttemptLock,
+  generation: number,
+): boolean {
+  if (lock.generation === generation) return false;
+  lock.generation = generation;
+  return true;
+}
+
+export function releasePhonePairingAttempt(
+  lock: PhonePairingAttemptLock,
+  generation: number,
+): boolean {
+  if (lock.generation !== generation) return false;
+  lock.generation = null;
+  return true;
+}
+
+export interface PhonePairingQueuedRequest {
+  generation: number;
+}
+
+export interface PhonePairingAttemptQueue<TRequest extends PhonePairingQueuedRequest> {
+  active: TRequest | null;
+  pending: TRequest | null;
+}
+
+export type PhonePairingQueueDecision = "start" | "queued" | "duplicate";
+
+/** Only one pairing mutation may reach the sidecar at a time. A newer request
+ * replaces the pending request, never the active one, so a late POST cannot
+ * replace a newer QR or close it during stale cleanup. */
+export function queuePhonePairingAttempt<TRequest extends PhonePairingQueuedRequest>(
+  queue: PhonePairingAttemptQueue<TRequest>,
+  request: TRequest,
+): PhonePairingQueueDecision {
+  if (queue.active?.generation === request.generation
+    || queue.pending?.generation === request.generation) return "duplicate";
+  if (!queue.active) {
+    queue.active = request;
+    return "start";
+  }
+  queue.pending = request;
+  return "queued";
+}
+
+export function completePhonePairingAttempt<TRequest extends PhonePairingQueuedRequest>(
+  queue: PhonePairingAttemptQueue<TRequest>,
+  generation: number,
+): TRequest | null {
+  if (queue.active?.generation !== generation) return null;
+  const next = queue.pending;
+  queue.active = next;
+  queue.pending = null;
+  return next;
+}
+
+/** Invalidation removes work that has not started, but deliberately retains
+ * an in-flight request until its own cleanup and finally block complete. */
+export function invalidatePhonePairingAttempt(
+  queue: PhonePairingAttemptQueue<PhonePairingQueuedRequest>,
+  generation: number,
+): void {
+  if (queue.pending?.generation === generation) queue.pending = null;
+}
+
+interface PhonePairingWindowSnapshot {
+  pairing: { code?: string; expiresAt?: number; token: string } | null;
+}
+
+const PAIRING_OPEN_FAILURE_MESSAGE =
+  "Phone pairing did not open. Open Advanced & troubleshooting, confirm Phone access is on, then try again.";
+
+export function companionPairingOpenFailure(
+  companion: PhonePairingWindowSnapshot & { enabled: boolean; error?: string },
+  previousToken: string | null = null,
+  now = Date.now(),
+): string | null {
+  const stateFailure = companionStartFailure(companion);
+  if (stateFailure) return stateFailure;
+  const pairing = companion.pairing;
+  if (
+    !pairing
+    || pairing.token === previousToken
+    || !/^omb_pair_[A-Za-z0-9_-]{43}$/.test(pairing.token)
+    || !/^\d{6}$/.test(pairing.code ?? "")
+    || !Number.isFinite(pairing.expiresAt)
+    || (pairing.expiresAt ?? 0) <= now
+  ) {
+    return PAIRING_OPEN_FAILURE_MESSAGE;
+  }
+  return null;
+}
+
+/** Close a stale attempt only when its exact token is still the live window.
+ * The second ownership check runs after the state read and immediately before
+ * the close call, so a newer generation can take ownership without an older
+ * completion cancelling its QR. */
+export async function closePhonePairingIfOwned<TClosed>(
+  opened: PhonePairingWindowSnapshot,
+  current: () => Promise<PhonePairingWindowSnapshot>,
+  close: () => Promise<TClosed>,
+  mayClose: () => boolean,
+): Promise<boolean> {
+  const token = opened.pairing?.token;
+  if (!token || !mayClose()) return false;
+  let latest: PhonePairingWindowSnapshot;
+  try {
+    latest = await current();
+  } catch {
+    return false;
+  }
+  if (!mayClose() || latest.pairing?.token !== token) return false;
+  try {
+    await close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Resolve one pairing-open request, but close a window that completed after
  * the setup which requested it was cancelled or replaced. */
 export async function keepPhonePairingIfCurrent<T, TClosed>(
   open: () => Promise<T>,
-  close: () => Promise<TClosed>,
+  close: (opened: T) => Promise<TClosed>,
   isCurrent: () => boolean,
 ): Promise<T | null> {
   const result = await open();
   if (isCurrent()) return result;
-  await close().catch(() => {});
+  await close(result).catch(() => {});
   return null;
 }
 

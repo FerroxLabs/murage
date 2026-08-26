@@ -43,6 +43,17 @@ describe("DeviceRegistry", () => {
     expect(registry.list()[0]).not.toHaveProperty("tokenHash");
   });
 
+  it("closes only the pairing window named by an expected token", () => {
+    const registry = new DeviceRegistry();
+    const first = registry.openPairing();
+    const second = registry.openPairing();
+
+    expect(registry.closePairing(first.token)).toBe(false);
+    expect(registry.pairing()?.token).toBe(second.token);
+    expect(registry.closePairing(second.token)).toBe(true);
+    expect(registry.pairing()).toBeNull();
+  });
+
   it("survives a restart", () => {
     const { token } = pair(new DeviceRegistry());
     expect(new DeviceRegistry().authenticate(token)).not.toBeNull();

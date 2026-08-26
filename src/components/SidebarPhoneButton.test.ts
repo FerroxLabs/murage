@@ -30,6 +30,30 @@ describe("sidebar phone status", () => {
     });
   });
 
+  it("reports off and failed sidecars before offering to pair an empty device list", () => {
+    expect(deriveSidebarPhoneStatus({
+      enabled: false,
+      devices: [],
+      connectedDeviceIds: [],
+    }, now)).toEqual({
+      kind: "unavailable",
+      label: "Phone access off",
+      pairedCount: 0,
+      connectedCount: 0,
+    });
+    expect(deriveSidebarPhoneStatus({
+      enabled: true,
+      devices: [],
+      connectedDeviceIds: [],
+      error: "sidecar unavailable",
+    }, now)).toEqual({
+      kind: "unavailable",
+      label: "Phone status unavailable",
+      pairedCount: 0,
+      connectedCount: 0,
+    });
+  });
+
   it("turns green only for a paired phone with a live authenticated stream", () => {
     const recent = device(now - SIDEBAR_PHONE_RECENT_MS);
     expect(deriveSidebarPhoneStatus({
@@ -44,13 +68,13 @@ describe("sidebar phone status", () => {
       enabled: false,
       devices: [recent],
       connectedDeviceIds: ["phone-1"],
-    }, now).kind).toBe("disconnected");
+    }, now).kind).toBe("unavailable");
     expect(deriveSidebarPhoneStatus({
       enabled: true,
       devices: [recent],
       connectedDeviceIds: ["phone-1"],
       error: "not responding",
-    }, now).kind).toBe("disconnected");
+    }, now).kind).toBe("unavailable");
   });
 
   it("reports partial live connectivity without implying every paired phone is online", () => {

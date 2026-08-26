@@ -390,11 +390,32 @@ export async function companionState() {
   }
 }
 
-/** Open or close a pairing window on the running sidecar. */
-export async function companionPairing(open) {
+/** Open or close a pairing window on the running sidecar. A conditional close
+ * cannot erase a newer code created after the renderer began cancelling. */
+export async function companionPairing(open, expectedToken) {
   if (!proc) return companionState();
-  await control(open ? "POST" : "DELETE", "/pairing").catch(() => {});
-  return companionState();
+  const conditionalClose = !open && expectedToken !== undefined;
+  const candidate = String(expectedToken ?? "");
+  const token = /^omb_pair_[A-Za-z0-9_-]{43}$/.test(candidate)
+    ? candidate
+    : "invalid-pairing-token";
+  const path = conditionalClose
+    ? `/pairing?expectedToken=${encodeURIComponent(token)}`
+    : "/pairing";
+  try {
+    const state = await control(open ? "POST" : "DELETE", path);
+    return {
+      enabled: true,
+      keepAwake: companionKeepAwakeAtRest(),
+      ...state,
+    };
+  } catch {
+    const state = await companionState();
+    return {
+      ...state,
+      error: state.error ?? "Phone pairing could not be updated.",
+    };
+  }
 }
 
 /** Unpair one device. Ignores an id the renderer should not have sent. */

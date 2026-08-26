@@ -193,9 +193,11 @@ export class DeviceRegistry {
     return this.window;
   }
 
-  closePairing() {
+  closePairing(expectedToken?: string): boolean {
+    if (expectedToken !== undefined && this.pairing()?.token !== expectedToken) return false;
     this.window = null;
     this.clearReplay();
+    return true;
   }
 
   /** Erase the only in-memory copy of a successfully issued device token.

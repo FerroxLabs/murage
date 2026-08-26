@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CompanionAccountState } from "../types/ogb";
 import {
+  claimPhonePairingAttempt,
+  closePhonePairingIfOwned,
+  completePhonePairingAttempt,
+  companionPairingOpenFailure,
   companionStartFailure,
   derivePhoneSetupPhase,
   initialPhoneSetupFlowState,
@@ -11,8 +15,13 @@ import {
   phonePairingGate,
   phoneSetupBaseline,
   phoneSetupReducer,
+  invalidatePhonePairingAttempt,
+  queuePhonePairingAttempt,
+  releasePhonePairingAttempt,
   shouldArmPhoneSetupProvisioningTimeout,
   startNonOverlappingPhoneSetupPoll,
+  type PhonePairingAttemptLock,
+  type PhonePairingAttemptQueue,
 } from "./phone-setup";
 
 const account = (status: CompanionAccountState["status"]): CompanionAccountState => ({
@@ -169,6 +178,66 @@ describe("phone setup flow", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("lets a timed-out generation release the UI without a late completion releasing its replacement", () => {
+    const lock: PhonePairingAttemptLock = { generation: null };
+    expect(claimPhonePairingAttempt(lock, 1)).toBe(true);
+    expect(releasePhonePairingAttempt(lock, 1)).toBe(true);
+    expect(claimPhonePairingAttempt(lock, 2)).toBe(true);
+
+    expect(releasePhonePairingAttempt(lock, 1)).toBe(false);
+    expect(lock.generation).toBe(2);
+    expect(releasePhonePairingAttempt(lock, 2)).toBe(true);
+  });
+
+  it("keeps the active mutation serialized and promotes only the newest pending generation", () => {
+    const queue: PhonePairingAttemptQueue<{ generation: number }> = {
+      active: null,
+      pending: null,
+    };
+    expect(queuePhonePairingAttempt(queue, { generation: 1 })).toBe("start");
+    expect(queuePhonePairingAttempt(queue, { generation: 2 })).toBe("queued");
+    expect(queuePhonePairingAttempt(queue, { generation: 3 })).toBe("queued");
+    expect(queue).toEqual({ active: { generation: 1 }, pending: { generation: 3 } });
+
+    invalidatePhonePairingAttempt(queue, 1);
+    expect(queue.active?.generation).toBe(1);
+    expect(completePhonePairingAttempt(queue, 2)).toBeNull();
+    expect(completePhonePairingAttempt(queue, 1)).toEqual({ generation: 3 });
+    expect(queue).toEqual({ active: { generation: 3 }, pending: null });
+  });
+
+  it("drops a cancelled pending generation without releasing the active mutation", () => {
+    const queue = {
+      active: { generation: 1 },
+      pending: { generation: 2 },
+    };
+    invalidatePhonePairingAttempt(queue, 2);
+    expect(queue).toEqual({ active: { generation: 1 }, pending: null });
+    expect(completePhonePairingAttempt(queue, 1)).toBeNull();
+    expect(queue).toEqual({ active: null, pending: null });
+  });
+
+  it("closes only the stale attempt's exact pairing window", async () => {
+    const close = vi.fn(async () => undefined);
+    const opened = { pairing: { token: "old-token" } };
+
+    await expect(closePhonePairingIfOwned(
+      opened,
+      async () => ({ pairing: { token: "new-token" } }),
+      close,
+      () => true,
+    )).resolves.toBe(false);
+    expect(close).not.toHaveBeenCalled();
+
+    await expect(closePhonePairingIfOwned(
+      opened,
+      async () => opened,
+      close,
+      () => true,
+    )).resolves.toBe(true);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it("does not overlap a slow poll with later timer ticks", async () => {
     vi.useFakeTimers();
     try {
@@ -272,6 +341,35 @@ describe("phone setup flow", () => {
     expect(companionStartFailure({ enabled: false, error: "Port 8811 is already in use" })).toBe(
       "Port 8811 is already in use",
     );
+  });
+
+  it("requires pairing(true) to return a healthy live pairing window", () => {
+    const token = `omb_pair_${"a".repeat(43)}`;
+    const fresh = {
+      code: "123456",
+      token,
+      expiresAt: 2_000,
+    };
+    expect(companionPairingOpenFailure({
+      enabled: true,
+      pairing: fresh,
+    }, null, 1_000)).toBeNull();
+    expect(companionPairingOpenFailure({ enabled: true, pairing: null }, null, 1_000)).toContain(
+      "Phone pairing did not open",
+    );
+    expect(companionPairingOpenFailure({
+      enabled: true,
+      pairing: fresh,
+      error: "the companion stopped responding",
+    }, null, 1_000)).toBe("the companion stopped responding");
+    expect(companionPairingOpenFailure({
+      enabled: true,
+      pairing: fresh,
+    }, token, 1_000)).toContain("Phone pairing did not open");
+    expect(companionPairingOpenFailure({
+      enabled: true,
+      pairing: { ...fresh, expiresAt: 999 },
+    }, null, 1_000)).toContain("Phone pairing did not open");
   });
 
   it("unwraps Electron IPC account errors without exposing channel machinery", () => {

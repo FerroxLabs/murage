@@ -204,7 +204,8 @@ export function companionState(options: ControlOptions) {
  * and it refuses anything suggesting it was reached from anywhere else. */
 export function createControlServer(options: ControlOptions): Server {
   return createServer((req, res) => {
-    const path = (req.url ?? "/").split("?")[0];
+    const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
+    const path = requestUrl.pathname;
     const method = req.method ?? "GET";
 
     // Belt and braces: this server binds 127.0.0.1, so a non-loopback Host
@@ -268,7 +269,8 @@ export function createControlServer(options: ControlOptions): Server {
       });
     }
     if (method === "DELETE" && path === "/pairing") {
-      options.devices.closePairing();
+      const expectedToken = requestUrl.searchParams.get("expectedToken") ?? undefined;
+      options.devices.closePairing(expectedToken);
       return json(res, 200, companionState(options));
     }
     const updateHostedUrl = options.setHostedUrl;

@@ -132,6 +132,16 @@ describe("origins the control server will change state for", () => {
     await ask("DELETE", "/pairing");
   });
 
+  it("does not let a stale conditional close cancel a replacement code", async () => {
+    const first = await ask("POST", "/pairing");
+    const second = await ask("POST", "/pairing");
+
+    await ask("DELETE", `/pairing?expectedToken=${encodeURIComponent(first.body.pairing.token)}`);
+    expect((await ask("GET", "/state")).body.pairing.token).toBe(second.body.pairing.token);
+    await ask("DELETE", `/pairing?expectedToken=${encodeURIComponent(second.body.pairing.token)}`);
+    expect((await ask("GET", "/state")).body.pairing).toBeNull();
+  });
+
   it("refuses a foreign origin on a safe method too", async () => {
     // This line used to expect 200, on the argument that a GET changes
     // nothing and the same-origin policy already hides the reply. The

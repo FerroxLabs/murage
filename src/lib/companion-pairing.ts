@@ -42,6 +42,13 @@ export interface CompanionPairingRoute {
   endpoints?: CompanionEndpoint[];
 }
 
+export interface CompanionPairingRoutePin {
+  route: CompanionPairingRoute;
+  /** The exact protected transport selected when the QR was created. A
+   * local-only route has no protected transport to retain. */
+  protectedEndpoint: CompanionEndpoint | null;
+}
+
 /** How many fallback hosts a link will carry. The list is tiny in practice
  * (tailnet name, a LAN address or two, the mDNS name); the cap only keeps a
  * pathological interface list from bloating the QR code. */
@@ -212,6 +219,47 @@ export function companionPairingRoute(
     hosts: deduplicatedHosts([address, ...(source.hosts ?? [])]),
     endpoints,
   };
+}
+
+/** Freeze the route represented by one pairing QR. Automatic setup must have
+ * a validated hosted or tailnet endpoint; otherwise a later state refresh can
+ * reinterpret the same one-time credential as a plain LAN QR. */
+export function companionPairingRoutePin(
+  source: CompanionPairingRouteSource,
+  mode: CompanionPairingRouteMode,
+): CompanionPairingRoutePin | null {
+  const route = companionPairingRoute(source, mode);
+  if (!route) return null;
+
+  const endpoints = qrEndpoints(route.endpoints);
+  const firstEndpoint = endpoints[0] ?? null;
+  const protectedEndpoint = mode === "local"
+    ? null
+    : mode === "tailscale"
+      ? endpoints.find((endpoint) => endpoint.kind === "tailnet") ?? null
+      : firstEndpoint && (firstEndpoint.kind === "hosted" || firstEndpoint.kind === "tailnet")
+        ? firstEndpoint
+        : null;
+  if (mode !== "local" && !protectedEndpoint) return null;
+
+  return {
+    route: { ...route, endpoints },
+    protectedEndpoint,
+  };
+}
+
+/** A pinned secure QR remains valid only while its exact chosen transport is
+ * still advertised. Another protected endpoint is not silently substituted:
+ * changing transport requires a fresh pairing attempt and credential. */
+export function companionPairingRoutePinAvailable(
+  source: Pick<CompanionPairingRouteSource, "endpoints">,
+  pin: CompanionPairingRoutePin,
+): boolean {
+  if (!pin.protectedEndpoint) return true;
+  return qrEndpoints(source.endpoints).some(
+    (endpoint) => endpoint.kind === pin.protectedEndpoint?.kind
+      && endpoint.url === pin.protectedEndpoint.url,
+  );
 }
 
 /** URL-safe, unpadded base64 keeps the structured JSON smaller than query

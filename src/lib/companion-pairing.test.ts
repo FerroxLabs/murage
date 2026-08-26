@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { companionPairingLink, companionPairingRoute } from "./companion-pairing";
+import {
+  companionPairingLink,
+  companionPairingRoute,
+  companionPairingRoutePin,
+  companionPairingRoutePinAvailable,
+} from "./companion-pairing";
 
 describe("companionPairingLink", () => {
   const token = `omb_pair_${"a".repeat(43)}`;
@@ -139,6 +144,59 @@ describe("companionPairingLink", () => {
     });
     const link = companionPairingLink({ ...route!, code: "004209", token });
     expect(decodedEndpoints(link!)).toEqual(endpoints);
+  });
+
+  it("pins the protected automatic transport instead of downgrading the live QR to LAN", () => {
+    const opened = {
+      port: 8810,
+      lan: "192.168.1.42",
+      hosts: ["192.168.1.42"],
+      endpoints: [
+        { url: "https://device.openmausbot.com", kind: "hosted" as const, priority: 0 },
+        { url: "http://192.168.1.42:8810", kind: "lan" as const, priority: 200 },
+      ],
+    };
+    const pin = companionPairingRoutePin(opened, "automatic");
+    expect(pin?.protectedEndpoint).toEqual({
+      url: "https://device.openmausbot.com",
+      kind: "hosted",
+      priority: 0,
+    });
+
+    const withdrawn = {
+      ...opened,
+      endpoints: [{ url: "http://192.168.1.42:8810", kind: "lan" as const, priority: 200 }],
+    };
+    expect(companionPairingRoute(withdrawn, "automatic")?.address).toBe("192.168.1.42");
+    expect(companionPairingRoutePinAvailable(withdrawn, pin!)).toBe(false);
+    expect(pin?.route.endpoints?.map((endpoint) => endpoint.kind)).toEqual(["hosted", "lan"]);
+  });
+
+  it("does not substitute a different protected transport for the pinned one", () => {
+    const opened = {
+      port: 8810,
+      tailnetName: "mac.tail1234.ts.net",
+      endpoints: [
+        { url: "https://device.openmausbot.com", kind: "hosted" as const, priority: 0 },
+        { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet" as const, priority: 100 },
+      ],
+    };
+    const pin = companionPairingRoutePin(opened, "automatic");
+    expect(pin?.protectedEndpoint?.kind).toBe("hosted");
+    expect(companionPairingRoutePinAvailable({
+      endpoints: [opened.endpoints[1]],
+    }, pin!)).toBe(false);
+  });
+
+  it("fails automatic pinning closed when a LAN endpoint would be encoded first", () => {
+    expect(companionPairingRoutePin({
+      port: 8810,
+      lan: "192.168.1.42",
+      endpoints: [
+        { url: "http://192.168.1.42:8810", kind: "lan", priority: 0 },
+        { url: "https://device.openmausbot.com", kind: "hosted", priority: 100 },
+      ],
+    }, "automatic")).toBeNull();
   });
 
   it("makes the explicitly selected LAN route first without losing protected upgrades", () => {

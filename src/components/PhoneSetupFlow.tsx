@@ -20,24 +20,36 @@ import { QRCodeSVG } from "qrcode.react";
 import {
   companionPairingLink,
   companionPairingRoute,
+  companionPairingRoutePin,
+  companionPairingRoutePinAvailable,
   type CompanionEndpoint,
+  type CompanionPairingRoutePin,
   type CompanionPairingRouteMode,
 } from "../lib/companion-pairing";
 import {
   PHONE_SETUP_PROVISIONING_TIMEOUT_MS,
+  claimPhonePairingAttempt,
+  closePhonePairingIfOwned,
+  completePhonePairingAttempt,
   companionPairingMode,
+  companionPairingOpenFailure,
   companionStartFailure,
   derivePhoneSetupPhase,
   initialPhoneSetupFlowState,
   keepPhonePairingIfCurrent,
+  invalidatePhonePairingAttempt,
   newlyPairedDeviceForFlow,
   normalizePhoneSetupActionError,
   phonePairingGate,
   phoneSetupBaseline,
   phoneSetupReducer,
+  queuePhonePairingAttempt,
+  releasePhonePairingAttempt,
   shouldArmPhoneSetupProvisioningTimeout,
   startNonOverlappingPhoneSetupPoll,
   type PhoneSetupPhase,
+  type PhonePairingAttemptLock,
+  type PhonePairingAttemptQueue,
 } from "../lib/phone-setup";
 import type { CompanionAccountState } from "../types/ogb";
 import { ConnectionDetail } from "./ConnectionDetail";
@@ -72,7 +84,7 @@ export type CompanionBridge = {
   start: () => Promise<CompanionState>;
   stop: () => Promise<CompanionState>;
   keepAwake: (enabled: boolean) => Promise<CompanionState>;
-  pairing: (open: boolean) => Promise<CompanionState>;
+  pairing: (open: boolean, expectedToken?: string) => Promise<CompanionState>;
   cloudDesktop: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
   revoke: (deviceId: string) => Promise<CompanionState>;
 };
@@ -81,6 +93,19 @@ type AccountBridge = NonNullable<NonNullable<Window["ogb"]>["companionAccount"]>
 type StateBridge<T> = { state: () => Promise<T> };
 const DIRECT_PAIRING_UNAVAILABLE =
   "Direct Wi-Fi pairing isn’t available on this computer right now. Connect this computer to Wi-Fi, then try again.";
+const PROTECTED_PAIRING_UNAVAILABLE =
+  "The protected pairing route became unavailable. Check your secure connection or Tailscale, then create a new code.";
+
+interface OwnedCompanionPairingRoutePin extends CompanionPairingRoutePin {
+  generation: number;
+  token: string;
+}
+
+interface PhonePairingRequest {
+  routeMode: CompanionPairingRouteMode;
+  accountOverride?: CompanionAccountState | null;
+  generation: number;
+}
 
 export const companionBridge = (): CompanionBridge | null =>
   // SAFETY: the preload owns this narrow bridge; browser builds are guarded by the optional lookup.
@@ -161,7 +186,8 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   const [email, setEmailState] = useState(profileEmail);
   const [code, setCodeState] = useState("");
   const [codeSent, setCodeSent] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [pairingBusy, setPairingBusy] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
   const [setupTimedOut, setSetupTimedOut] = useState(false);
@@ -170,10 +196,25 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   const [now, setNow] = useState(() => Date.now());
   const [flow, dispatchFlow] = useReducer(phoneSetupReducer, initialPhoneSetupFlowState);
   const emailEdited = useRef(false);
-  const openingPairing = useRef(false);
+  const pairingUiOwner = useRef<PhonePairingAttemptLock>({ generation: null });
+  const pairingAttemptQueue = useRef<PhonePairingAttemptQueue<PhonePairingRequest>>({
+    active: null,
+    pending: null,
+  });
+  const runPairingAttemptRef = useRef<(request: PhonePairingRequest) => Promise<void>>(
+    async () => {},
+  );
+  const pairingRoutePinRef = useRef<OwnedCompanionPairingRoutePin | null>(null);
+  const [pairingRoutePinState, setPairingRoutePinState] =
+    useState<OwnedCompanionPairingRoutePin | null>(null);
   const setupGeneration = useRef(0);
   const mounted = useRef(true);
   const loadInFlight = useRef<Promise<void> | null>(null);
+
+  const publishPairingRoutePin = useCallback((pin: OwnedCompanionPairingRoutePin | null) => {
+    pairingRoutePinRef.current = pin;
+    setPairingRoutePinState(pin);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -213,7 +254,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   const act = useCallback(async (call: (companion: CompanionBridge) => Promise<CompanionState>) => {
     const companion = companionBridge();
     if (!companion) return;
-    setBusy(true);
+    setActionBusy(true);
     setError(null);
     try {
       const next = await call(companion);
@@ -226,7 +267,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         ),
       );
     } finally {
-      if (mounted.current) setBusy(false);
+      if (mounted.current) setActionBusy(false);
     }
   }, []);
 
@@ -253,20 +294,40 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     [load],
   );
 
-  const openPairing = useCallback(
-    async (
-      routeMode: CompanionPairingRouteMode,
-      accountOverride?: CompanionAccountState | null,
-      generation = setupGeneration.current,
-    ) => {
-      const companion = companionBridge();
-      if (!companion || openingPairing.current) {
-        if (!companion) setError("Phone setup is only available in the desktop app.");
+  const runPairingAttempt = useCallback(
+    async ({ routeMode, accountOverride, generation }: PhonePairingRequest) => {
+      const isCurrent = () => mounted.current && setupGeneration.current === generation;
+      if (!isCurrent()) {
+        if (releasePhonePairingAttempt(pairingUiOwner.current, generation) && mounted.current) {
+          setPairingBusy(false);
+        }
+        const next = completePhonePairingAttempt(pairingAttemptQueue.current, generation);
+        if (next) void runPairingAttemptRef.current(next);
         return;
       }
-      const isCurrent = () => mounted.current && setupGeneration.current === generation;
-      openingPairing.current = true;
-      setBusy(true);
+      const companion = companionBridge();
+      if (!companion) {
+        if (mounted.current && setupGeneration.current === generation) {
+          setError("Phone setup is only available in the desktop app.");
+        }
+        if (releasePhonePairingAttempt(pairingUiOwner.current, generation) && mounted.current) {
+          setPairingBusy(false);
+        }
+        const next = completePhonePairingAttempt(pairingAttemptQueue.current, generation);
+        if (next) void runPairingAttemptRef.current(next);
+        return;
+      }
+      const staleAttemptMayClose = () => {
+        const activePin = pairingRoutePinRef.current;
+        return !activePin || activePin.generation === generation;
+      };
+      const previousPin = pairingRoutePinRef.current;
+      if (previousPin && previousPin.generation !== generation) {
+        publishPairingRoutePin(null);
+        setState((current) => current?.pairing?.token === previousPin.token
+          ? { ...current, pairing: null }
+          : current);
+      }
       setError(null);
       try {
         const started = state?.enabled ? await companion.state() : await companion.start();
@@ -295,21 +356,46 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         }
         const paired = await keepPhonePairingIfCurrent(
           () => companion.pairing(true),
-          () => companion.pairing(false),
+          (opened) => closePhonePairingIfOwned(
+            opened,
+            () => companion.state(),
+            () => companion.pairing(false, opened.pairing?.token),
+            staleAttemptMayClose,
+          ),
           isCurrent,
         );
         if (!paired) return;
-        if (explicitRoute && !companionPairingRoute(paired, routeMode)) {
-          const closed = await companion.pairing(false);
+
+        const pairingWindow = paired.pairing;
+        const pairingFailure = companionPairingOpenFailure(
+          paired,
+          started.pairing?.token ?? null,
+        );
+        const routePin = pairingFailure ? null : companionPairingRoutePin(paired, routeMode);
+        if (pairingFailure || !routePin || !pairingWindow) {
+          await closePhonePairingIfOwned(
+            paired,
+            () => companion.state(),
+            () => companion.pairing(false, paired.pairing?.token),
+            isCurrent,
+          );
           if (!isCurrent()) return;
-          setState(closed);
+          publishPairingRoutePin(null);
+          setState({ ...paired, pairing: null });
           setProvisioning(false);
-          setError(routeMode === "tailscale"
-            ? "Tailscale pairing isn’t available right now. Make sure Tailscale is connected and MagicDNS is on."
-            : DIRECT_PAIRING_UNAVAILABLE);
+          setError(pairingFailure ?? (routeMode === "local"
+            ? DIRECT_PAIRING_UNAVAILABLE
+            : routeMode === "tailscale"
+              ? "Tailscale pairing isn’t available right now. Make sure Tailscale is connected and MagicDNS is on."
+              : PROTECTED_PAIRING_UNAVAILABLE));
           dispatchFlow({ type: "reset" });
           return;
         }
+        publishPairingRoutePin({
+          ...routePin,
+          generation,
+          token: pairingWindow.token,
+        });
         setState(paired);
         setProvisioning(false);
         setSetupTimedOut(false);
@@ -319,6 +405,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         });
       } catch (cause) {
         if (!isCurrent()) return;
+        publishPairingRoutePin(null);
         setProvisioning(false);
         setError(normalizePhoneSetupActionError(
           cause,
@@ -326,12 +413,30 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         ));
         dispatchFlow({ type: "reset" });
       } finally {
-        if (mounted.current) setBusy(false);
-        openingPairing.current = false;
+        if (releasePhonePairingAttempt(pairingUiOwner.current, generation) && mounted.current) {
+          setPairingBusy(false);
+        }
+        const next = completePhonePairingAttempt(pairingAttemptQueue.current, generation);
+        if (next) void runPairingAttemptRef.current(next);
       }
     },
-    [account, state],
+    [account, publishPairingRoutePin, state],
   );
+
+  runPairingAttemptRef.current = runPairingAttempt;
+
+  const openPairing = useCallback((
+    routeMode: CompanionPairingRouteMode,
+    accountOverride?: CompanionAccountState | null,
+    generation = setupGeneration.current,
+  ) => {
+    const request = { routeMode, accountOverride, generation };
+    const decision = queuePhonePairingAttempt(pairingAttemptQueue.current, request);
+    if (decision === "duplicate") return;
+    claimPhonePairingAttempt(pairingUiOwner.current, generation);
+    setPairingBusy(true);
+    if (decision === "start") void runPairingAttemptRef.current(request);
+  }, []);
 
   const start = useCallback(() => {
     const baseline = phoneSetupBaseline(state?.devices ?? null);
@@ -471,7 +576,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     accountBusy,
     provisioning,
     provisioningTimedOut: setupTimedOut,
-    pairingOpen: Boolean(state?.pairing),
+    pairingOpen: Boolean(
+      state?.pairing
+      && pairingRoutePinState?.token === state.pairing.token,
+    ),
   });
 
   useEffect(() => {
@@ -493,13 +601,56 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       provisioningTimedOut: setupTimedOut,
     })) return;
     const timer = window.setTimeout(() => {
+      const timedOutGeneration = setupGeneration.current;
       setupGeneration.current += 1;
+      invalidatePhonePairingAttempt(pairingAttemptQueue.current, timedOutGeneration);
+      releasePhonePairingAttempt(pairingUiOwner.current, timedOutGeneration);
+      setPairingBusy(false);
       setAccountBusy(false);
       setProvisioning(false);
       setSetupTimedOut(true);
     }, PHONE_SETUP_PROVISIONING_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [flow, provisioning, setupTimedOut]);
+
+  useEffect(() => {
+    const pin = pairingRoutePinState;
+    if (!pin || !state) return;
+    if (!state.pairing) {
+      publishPairingRoutePin(null);
+      return;
+    }
+
+    const tokenMatches = state.pairing.token === pin.token;
+    const routeAvailable = companionPairingRoutePinAvailable(state, pin);
+    if (tokenMatches && routeAvailable) return;
+
+    const companion = companionBridge();
+    if (setupGeneration.current === pin.generation) setupGeneration.current += 1;
+    invalidatePhonePairingAttempt(pairingAttemptQueue.current, pin.generation);
+    releasePhonePairingAttempt(pairingUiOwner.current, pin.generation);
+    setPairingBusy(false);
+    publishPairingRoutePin(null);
+    setState((current) => current ? { ...current, pairing: null } : current);
+    setProvisioning(false);
+    setSetupTimedOut(false);
+    setError(tokenMatches
+      ? PROTECTED_PAIRING_UNAVAILABLE
+      : "The pairing code changed before setup finished. Create a new code and try again.");
+    dispatchFlow({ type: "reset" });
+
+    if (tokenMatches && companion) {
+      void closePhonePairingIfOwned(
+        state,
+        () => companion.state(),
+        () => companion.pairing(false, state.pairing?.token),
+        () => {
+          const activePin = pairingRoutePinRef.current;
+          return !activePin || activePin.generation === pin.generation;
+        },
+      );
+    }
+  }, [pairingRoutePinState, publishPairingRoutePin, state]);
 
   useEffect(() => {
     if (!state) return;
@@ -539,10 +690,16 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       ? "tailscale"
       : "automatic";
   const pairingRoute = useMemo(
-    () => state
-      ? companionPairingRoute(state, pairingRouteMode)
-      : null,
-    [pairingRouteMode, state],
+    () => {
+      if (!state) return null;
+      if (state.pairing) {
+        return pairingRoutePinState?.token === state.pairing.token
+          ? pairingRoutePinState.route
+          : null;
+      }
+      return companionPairingRoute(state, pairingRouteMode);
+    },
+    [pairingRouteMode, pairingRoutePinState, state],
   );
   const pairingLink = useMemo(() => {
     if (!state?.pairing || !pairingRoute) return null;
@@ -555,16 +712,30 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   }, [pairingRoute, state]);
 
   const cancel = useCallback(() => {
+    const cancelledGeneration = setupGeneration.current;
     setupGeneration.current += 1;
+    invalidatePhonePairingAttempt(pairingAttemptQueue.current, cancelledGeneration);
+    releasePhonePairingAttempt(pairingUiOwner.current, cancelledGeneration);
+    setPairingBusy(false);
+    const snapshot = state;
     const companion = companionBridge();
-    if (companion && state?.pairing) void act((current) => current.pairing(false));
+    publishPairingRoutePin(null);
+    setState((current) => current ? { ...current, pairing: null } : current);
+    if (companion && snapshot?.pairing) {
+      void closePhonePairingIfOwned(
+        snapshot,
+        () => companion.state(),
+        () => companion.pairing(false, snapshot.pairing?.token),
+        () => pairingRoutePinRef.current === null,
+      );
+    }
     setProvisioning(false);
     setAccountBusy(false);
     setSetupTimedOut(false);
     setCodeSent(false);
     setCodeState("");
     dispatchFlow({ type: "reset" });
-  }, [act, state?.pairing]);
+  }, [publishPairingRoutePin, state]);
 
   return {
     state,
@@ -573,7 +744,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     email,
     code,
     codeSent,
-    busy,
+    busy: actionBusy || pairingBusy,
     accountBusy,
     error,
     accountError,
@@ -611,12 +782,22 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       void openPairing(pairingRouteMode, undefined, generation);
     },
     finish: () => {
+      const generation = setupGeneration.current;
       setupGeneration.current += 1;
+      invalidatePhonePairingAttempt(pairingAttemptQueue.current, generation);
+      releasePhonePairingAttempt(pairingUiOwner.current, generation);
+      setPairingBusy(false);
+      publishPairingRoutePin(null);
       setSetupTimedOut(false);
       dispatchFlow({ type: "reset" });
     },
     skip: () => {
+      const generation = setupGeneration.current;
       setupGeneration.current += 1;
+      invalidatePhonePairingAttempt(pairingAttemptQueue.current, generation);
+      releasePhonePairingAttempt(pairingUiOwner.current, generation);
+      setPairingBusy(false);
+      publishPairingRoutePin(null);
       dispatchFlow({ type: "skip" });
     },
     act,

@@ -45,15 +45,29 @@ export function deriveSidebarPhoneStatus(
   }
 
   const pairedCount = snapshot.devices.length;
+  if (snapshot.error) {
+    return {
+      kind: "unavailable",
+      label: "Phone status unavailable",
+      pairedCount,
+      connectedCount: 0,
+    };
+  }
+  if (!snapshot.enabled) {
+    return {
+      kind: "unavailable",
+      label: "Phone access off",
+      pairedCount,
+      connectedCount: 0,
+    };
+  }
   if (!pairedCount) {
     return { kind: "unpaired", label: "Pair a phone", pairedCount: 0, connectedCount: 0 };
   }
 
   if (Array.isArray(snapshot.connectedDeviceIds)) {
     const live = new Set(snapshot.connectedDeviceIds);
-    const connectedCount = snapshot.enabled && !snapshot.error
-      ? snapshot.devices.filter((device) => live.has(device.id)).length
-      : 0;
+    const connectedCount = snapshot.devices.filter((device) => live.has(device.id)).length;
     if (connectedCount) {
       const label = pairedCount === 1
         ? "Phone connected"
@@ -72,12 +86,10 @@ export function deriveSidebarPhoneStatus(
 
   // Compatibility with a sidecar from an older unpackaged development build.
   // Recent activity stays neutral because it is not proof of a live stream.
-  const recentCount = snapshot.enabled && !snapshot.error
-    ? snapshot.devices.filter((device) => {
-        const age = now - device.lastSeenAt;
-        return Number.isFinite(device.lastSeenAt) && age >= 0 && age <= SIDEBAR_PHONE_RECENT_MS;
-      }).length
-    : 0;
+  const recentCount = snapshot.devices.filter((device) => {
+    const age = now - device.lastSeenAt;
+    return Number.isFinite(device.lastSeenAt) && age >= 0 && age <= SIDEBAR_PHONE_RECENT_MS;
+  }).length;
   if (recentCount) {
     const label = pairedCount === 1
       ? "Phone active recently"

@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld("ogb", {
     start: () => ipcRenderer.invoke("companion:start"),
     stop: () => ipcRenderer.invoke("companion:stop"),
     keepAwake: (enabled) => ipcRenderer.invoke("companion:keep-awake", enabled),
-    pairing: (open) => ipcRenderer.invoke("companion:pairing", open),
+    pairing: (open, expectedToken) => ipcRenderer.invoke("companion:pairing", open, expectedToken),
     cloudDesktop: (deviceId, allowed) => ipcRenderer.invoke("companion:cloud-desktop", deviceId, allowed),
     revoke: (deviceId) => ipcRenderer.invoke("companion:revoke", deviceId),
   },
