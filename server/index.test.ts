@@ -317,6 +317,140 @@ describe("harness HTTP API", () => {
     expect(body.bots[0].messages.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("projects privacy-safe live team-map metadata", async () => {
+    const response = await api("GET", "/api/team-map");
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ collaborations: expect.any(Array), queued: [], running: [] });
+    for (const collaboration of response.body.collaborations) {
+      expect(collaboration).toEqual({
+        groupId: expect.any(String),
+        botIds: [expect.any(String), expect.any(String)],
+        lastAt: expect.any(Number),
+      });
+    }
+    expect(JSON.stringify(response.body)).not.toContain("messages");
+    expect(JSON.stringify(response.body)).not.toContain("prompt");
+  });
+
+  it("adds and removes room members through PATCH", async () => {
+    const [first, second, third] = await Promise.all([
+      api("POST", "/api/bots"),
+      api("POST", "/api/bots"),
+      api("POST", "/api/bots"),
+    ]).then((created) => created.map((response) => response.body.bot));
+    const room = (await api("POST", "/api/groups", { name: "Roster", memberIds: [first.id, second.id] })).body.group;
+    try {
+      const added = await api("PATCH", `/api/groups/${room.id}`, { memberIds: [first.id, second.id, third.id] });
+      expect(added.status).toBe(200);
+      expect(added.body.group.memberIds).toEqual([first.id, second.id, third.id]);
+
+      const removed = await api("PATCH", `/api/groups/${room.id}`, { memberIds: [third.id] });
+      expect(removed.status).toBe(200);
+      expect(removed.body.group.memberIds).toEqual([third.id]);
+
+      const state = (await api("GET", "/api/bots")).body;
+      expect(state.groups.find((group: { id: string }) => group.id === room.id).memberIds).toEqual([third.id]);
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      for (const bot of [first, second, third]) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("refuses to empty a room's roster", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const room = (await api("POST", "/api/groups", { name: "Never empty", memberIds: [bot.id] })).body.group;
+    try {
+      for (const memberIds of [[], ["no-such-bot"]]) {
+        const attempted = await api("PATCH", `/api/groups/${room.id}`, { memberIds });
+        expect(attempted.status).toBe(400);
+        expect(attempted.body.error).toMatch(/at least one bot/i);
+      }
+      const state = (await api("GET", "/api/bots")).body;
+      expect(state.groups.find((group: { id: string }) => group.id === room.id).memberIds).toEqual([bot.id]);
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("deduplicates repeated room members while preserving their first-seen order", async () => {
+    const [first, second] = await Promise.all([api("POST", "/api/bots"), api("POST", "/api/bots")]).then(
+      (created) => created.map((response) => response.body.bot),
+    );
+    const room = (await api("POST", "/api/groups", { name: "Unique roster", memberIds: [first.id] })).body.group;
+    try {
+      const patched = await api("PATCH", `/api/groups/${room.id}`, {
+        memberIds: [second.id, first.id, second.id, first.id],
+      });
+      expect(patched.status).toBe(200);
+      expect(patched.body.group.memberIds).toEqual([second.id, first.id]);
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      for (const bot of [first, second]) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("keeps direct-message channels a fixed pair at the API boundary", async () => {
+    const attempted = await api("PATCH", "/api/groups/test-dm", { memberIds: ["test-bot-a"] });
+    expect(attempted.status).toBe(400);
+    expect(attempted.body.error).toMatch(/direct-message.*members/i);
+    const state = await api("GET", "/api/bots");
+    const dm = state.body.groups.find((group: { id: string }) => group.id === "test-dm");
+    expect(dm.memberIds).toEqual(["test-bot-a", "test-bot-b"]);
+  });
+
+  it("hands the lead to a remaining member when the lead leaves the room", async () => {
+    const [lead, other] = await Promise.all([api("POST", "/api/bots"), api("POST", "/api/bots")]).then((created) =>
+      created.map((response) => response.body.bot),
+    );
+    const room = (await api("POST", "/api/groups", { name: "Handover", memberIds: [lead.id, other.id] })).body.group;
+    try {
+      expect(room.defaultResponder).toEqual({ kind: "member", botId: lead.id });
+      const patched = await api("PATCH", `/api/groups/${room.id}`, { memberIds: [other.id] });
+      expect(patched.status).toBe(200);
+      expect(patched.body.group.defaultResponder).toEqual({ kind: "member", botId: other.id });
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      for (const bot of [lead, other]) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("persists room setup and blocks the first message until it is finished", async () => {
+    const bot = (await api("GET", "/api/bots")).body.bots[0];
+    const created = await api("POST", "/api/groups", { name: "Setup probe", memberIds: [bot.id] });
+    expect(created.status).toBe(201);
+    const group = created.body.group;
+    try {
+      expect(group).toMatchObject({ setupCompletedAt: null, setupSkippedAt: null, messages: [] });
+      const blocked = await api("POST", `/api/groups/${group.id}/messages`, { text: "before setup" });
+      expect(blocked.status).toBe(409);
+      expect((await api("GET", "/api/bots")).body.groups.find((candidate: { id: string }) => candidate.id === group.id).messages).toHaveLength(0);
+
+      const invalid = await api("PATCH", `/api/groups/${group.id}/setup`, {
+        action: "complete",
+        cwd: null,
+        bulletin: "",
+        defaultResponder: { kind: "member", botId: "missing" },
+      });
+      expect(invalid.status).toBe(400);
+
+      const completed = await api("PATCH", `/api/groups/${group.id}/setup`, {
+        action: "complete",
+        cwd: null,
+        bulletin: "shared brief",
+        defaultResponder: { kind: "member", botId: bot.id },
+      });
+      expect(completed.status).toBe(200);
+      expect(completed.body.group).toMatchObject({ bulletin: "shared brief", setupCompletedAt: expect.any(Number) });
+      expect((await api("GET", "/api/bots")).body.groups.find((candidate: { id: string }) => candidate.id === group.id)).toMatchObject({
+        bulletin: "shared brief",
+        setupSkippedAt: null,
+      });
+    } finally {
+      await api("DELETE", `/api/groups/${group.id}`);
+    }
+  });
+
   it("keeps direct-message channels folderless at the API boundary", async () => {
     const attempted = await api("PATCH", "/api/groups/test-dm", { cwd: home });
     expect(attempted.status).toBe(400);
@@ -389,6 +523,10 @@ describe("harness HTTP API", () => {
     expect(hit.snippet.toLowerCase()).toContain("nice to meet");
     expect(hit.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength).toLowerCase()).toBe("nice to meet");
     expect((await api("GET", "/api/search?q=")).body.hits).toEqual([]);
+    const scoped = await api("GET", `/api/search?q=nice%20to%20meet&threadId=${bot.threadId}`);
+    expect(scoped.status).toBe(200);
+    expect(scoped.body.hits.every((candidate: { threadId: string }) => candidate.threadId === bot.threadId)).toBe(true);
+    expect((await api("GET", "/api/search?q=hello&threadId=missing-thread")).status).toBe(404);
 
     const markdown = await fetch(`${BASE}/api/threads/${bot.threadId}/export`);
     expect(markdown.status).toBe(200);
@@ -435,6 +573,37 @@ describe("harness HTTP API", () => {
     expect(after.body.hits.find((h: { botId?: string }) => h.botId === bot.id)).toBeUndefined();
   });
 
+  it("stores a room reply as a flat reference and rejects foreign targets", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const foreign = (await api("POST", "/api/bots")).body.bot;
+    const room = (await api("POST", "/api/groups", { name: "Reply room", memberIds: [bot.id] })).body.group;
+    try {
+      await api("PATCH", `/api/groups/${room.id}/setup`, { action: "skip" });
+      await api("PATCH", `/api/groups/${room.id}`, { defaultResponder: { kind: "mentions" } });
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "First thought" })).status).toBe(202);
+      let current = (await api("GET", "/api/bots?messages=20")).body.groups.find(
+        (candidate: { id: string }) => candidate.id === room.id,
+      );
+      const original = current.messages.at(-1);
+      expect((await api("POST", `/api/groups/${room.id}/messages`, {
+        text: "Following up",
+        replyToId: original.id,
+      })).status).toBe(202);
+      current = (await api("GET", "/api/bots?messages=20")).body.groups.find(
+        (candidate: { id: string }) => candidate.id === room.id,
+      );
+      expect(current.messages.at(-1)).toMatchObject({ text: "Following up", replyToId: original.id });
+      expect((await api("POST", `/api/groups/${room.id}/messages`, {
+        text: "Wrong conversation",
+        replyToId: foreign.messages[0].id,
+      })).status).toBe(404);
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${bot.id}`);
+      await api("DELETE", `/api/bots/${foreign.id}`);
+    }
+  });
+
   it("creates, patches, and deletes a bot", async () => {
     const created = await api("POST", "/api/bots");
     expect(created.status).toBe(201);
@@ -475,6 +644,33 @@ describe("harness HTTP API", () => {
     const clearedEmpty = await api("PATCH", `/api/bots/${bot.id}`, { section: "   " });
     expect(clearedEmpty.status).toBe(200);
     expect(clearedEmpty.body.bot).not.toHaveProperty("section");
+
+    // Channels can be born inside a Work/Personal/project context, and can
+    // later move through the same context contract as bots.
+    const createdInContext = await api("POST", "/api/groups", {
+      name: "Filed",
+      memberIds: [bot.id, bot.id],
+      section: "  Work  ",
+    });
+    expect(createdInContext.status).toBe(201);
+    expect(createdInContext.body.group).toMatchObject({ section: "Work", memberIds: [bot.id] });
+    expect((await api("POST", "/api/groups", { name: 7, memberIds: [bot.id] })).status).toBe(400);
+    expect((await api("POST", "/api/groups", { name: "N".repeat(101), memberIds: [bot.id] })).status).toBe(400);
+    expect((await api("POST", "/api/groups", { name: "Bad context", memberIds: [bot.id], section: 7 })).status).toBe(400);
+    expect((await api("POST", "/api/groups", { name: "Long context", memberIds: [bot.id], section: "S".repeat(61) })).status).toBe(400);
+    const sectionRoom = createdInContext.body.group;
+    const roomSectioned = await api("PATCH", `/api/groups/${sectionRoom.id}`, { section: "  Clients  " });
+    expect(roomSectioned.status).toBe(200);
+    expect(roomSectioned.body.group).toMatchObject({ section: "Clients" });
+    expect((await api("PATCH", `/api/groups/${sectionRoom.id}`, { section: 7 })).status).toBe(400);
+    expect((await api("PATCH", `/api/groups/${sectionRoom.id}`, { section: "S".repeat(61) })).status).toBe(400);
+    const roomSectionCleared = await api("PATCH", `/api/groups/${sectionRoom.id}`, { section: null });
+    expect(roomSectionCleared.status).toBe(200);
+    expect(roomSectionCleared.body.group).not.toHaveProperty("section");
+    const roomSectionEmpty = await api("PATCH", `/api/groups/${sectionRoom.id}`, { section: "   " });
+    expect(roomSectionEmpty.status).toBe(200);
+    expect(roomSectionEmpty.body.group).not.toHaveProperty("section");
+    expect((await api("DELETE", `/api/groups/${sectionRoom.id}`)).status).toBe(200);
     expect(gated.body.bot.composio).toBe(false);
     expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: true })).body.bot.composio).toBe(true);
 
@@ -482,6 +678,121 @@ describe("harness HTTP API", () => {
     expect(deleted.status).toBe(200);
     const after = await api("GET", "/api/bots");
     expect(after.body.bots.find((b: { id: string }) => b.id === bot.id)).toBeUndefined();
+  });
+
+  it("elects one Chief of Staff per section and preserves other section Chiefs", async () => {
+    const workA = (await api("POST", "/api/bots")).body.bot;
+    const workB = (await api("POST", "/api/bots")).body.bot;
+    const personal = (await api("POST", "/api/bots")).body.bot;
+    try {
+      await api("PATCH", `/api/bots/${workA.id}`, { section: "Work", chiefOfStaff: true });
+      await api("PATCH", `/api/bots/${workB.id}`, { section: "Work" });
+      await api("PATCH", `/api/bots/${personal.id}`, { section: "Personal", chiefOfStaff: true });
+
+      let bots = (await api("GET", "/api/bots")).body.bots;
+      expect(bots.find((bot: { id: string }) => bot.id === workA.id).chiefOfStaff).toBe(true);
+      expect(bots.find((bot: { id: string }) => bot.id === personal.id).chiefOfStaff).toBe(true);
+
+      await api("PATCH", `/api/bots/${workB.id}`, { chiefOfStaff: true });
+      bots = (await api("GET", "/api/bots")).body.bots;
+      expect(bots.find((bot: { id: string }) => bot.id === workA.id).chiefOfStaff).toBe(false);
+      expect(bots.find((bot: { id: string }) => bot.id === workB.id).chiefOfStaff).toBe(true);
+      expect(bots.find((bot: { id: string }) => bot.id === personal.id).chiefOfStaff).toBe(true);
+
+      // Moving a Chief keeps its role and hands off only in the destination.
+      await api("PATCH", `/api/bots/${workB.id}`, { section: "Personal" });
+      bots = (await api("GET", "/api/bots")).body.bots;
+      expect(bots.find((bot: { id: string }) => bot.id === workB.id).chiefOfStaff).toBe(true);
+      expect(bots.find((bot: { id: string }) => bot.id === personal.id).chiefOfStaff).toBe(false);
+    } finally {
+      for (const bot of [workA, workB, personal]) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("explains when archived room members cannot respond", async () => {
+    const archived = (await api("POST", "/api/bots")).body.bot;
+    const active = (await api("POST", "/api/bots")).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Archived member feedback",
+      memberIds: [archived.id, active.id],
+    })).body.group;
+
+    try {
+      expect((await api("PATCH", `/api/groups/${room.id}/setup`, { action: "skip" })).status).toBe(200);
+      const archivedBot = await api("PATCH", `/api/bots/${archived.id}`, {
+        name: "Quill",
+        hidden: true,
+        chiefOfStaff: false,
+      });
+      expect(archivedBot.status).toBe(200);
+      await api("PATCH", `/api/bots/${active.id}`, {
+        name: "Atlas",
+        modelSelection: { instanceId: "ghost" },
+      });
+      await api("PATCH", `/api/groups/${room.id}`, { defaultResponder: { kind: "mentions" } });
+
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "@Quill take this" })).status).toBe(202);
+      let state = (await api("GET", "/api/bots?messages=20")).body;
+      let messages = state.groups.find((group: { id: string }) => group.id === room.id).messages;
+      expect(messages.at(-1)).toMatchObject({
+        kind: "activity",
+        tool: {
+          name: "Quill is archived and can't respond — restore it or mention an active room member.",
+          ok: false,
+        },
+      });
+
+      const archivedError = "Quill is archived and can't respond — restore it or mention an active room member.";
+      const beforeMixedMention = messages.filter((message: { tool?: { name?: string } }) =>
+        message.tool?.name === archivedError
+      ).length;
+      await api("POST", `/api/groups/${room.id}/messages`, { text: "@Quill and @Atlas take this" });
+      await expect.poll(async () => {
+        state = (await api("GET", "/api/bots?messages=20")).body;
+        messages = state.groups.find((group: { id: string }) => group.id === room.id).messages;
+        return {
+          archivedErrors: messages.filter((message: { tool?: { name?: string } }) =>
+            message.tool?.name === archivedError
+          ).length,
+          activeDispatched: messages.some((message: { tool?: { name?: string } }) =>
+            message.tool?.name === "error: Atlas's model is unavailable"
+          ),
+        };
+      }).toEqual({ archivedErrors: beforeMixedMention + 1, activeDispatched: true });
+
+      await api("PATCH", `/api/groups/${room.id}`, {
+        defaultResponder: { kind: "member", botId: archived.id },
+      });
+      await api("POST", `/api/groups/${room.id}/messages`, { text: "use the default responder" });
+      state = (await api("GET", "/api/bots?messages=20")).body;
+      messages = state.groups.find((group: { id: string }) => group.id === room.id).messages;
+      expect(messages.at(-1)?.tool).toEqual({ name: archivedError, ok: false });
+
+      await api("PATCH", `/api/groups/${room.id}`, { defaultResponder: { kind: "mentions" } });
+
+      const beforeUnmentioned = messages.length;
+      await api("POST", `/api/groups/${room.id}/messages`, { text: "no mention" });
+      state = (await api("GET", "/api/bots?messages=20")).body;
+      messages = state.groups.find((group: { id: string }) => group.id === room.id).messages;
+      expect(messages).toHaveLength(beforeUnmentioned + 1);
+      expect(messages.at(-1)).toMatchObject({ kind: "text", role: "user", text: "no mention" });
+
+      await api("PATCH", `/api/bots/${active.id}`, { hidden: true });
+      await api("POST", `/api/groups/${room.id}/messages`, { text: "hello everyone" });
+      state = (await api("GET", "/api/bots?messages=20")).body;
+      messages = state.groups.find((group: { id: string }) => group.id === room.id).messages;
+      expect(messages.at(-1)).toMatchObject({
+        kind: "activity",
+        tool: {
+          name: "No active room members can respond — restore an archived bot or add an active member.",
+          ok: false,
+        },
+      });
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${archived.id}`);
+      await api("DELETE", `/api/bots/${active.id}`);
+    }
   });
 
   it("saves, serves, and guards image attachments", async () => {
@@ -653,6 +964,12 @@ describe("harness HTTP API", () => {
     ]));
     expect(exported.body.team).not.toHaveProperty("room");
     expect(JSON.stringify(exported.body)).not.toMatch(/Archived|autoApprove|alwaysAllow|modelSelection|threadId/);
+    const markdownExport = await api("POST", "/api/teams/export", { name: "Field Team", format: "package" });
+    expect(markdownExport.status).toBe(200);
+    expect(markdownExport.body).toMatchObject({ name: "Field Team", members: visibleNames.length });
+    expect(markdownExport.body.markdown).toContain("## Activation");
+    expect(markdownExport.body.markdown).toContain("Give this file to your Chief of Staff");
+    expect(markdownExport.body.markdown).not.toMatch(/Archived|autoApprove|alwaysAllow|modelSelection|threadId/);
     expect((await api("GET", "/api/bots")).body.groups).toHaveLength(roomsBefore);
     expect((await api("POST", "/api/teams/export", {})).body.team.name).toBe("My OpenMaus Team");
 
@@ -778,6 +1095,153 @@ describe("harness HTTP API", () => {
     } finally {
       stream.close();
     }
+  });
+
+  it("installs a complete bot package with a Chief, room, playbook, connector intent, and paused routine", async () => {
+    const packageFile = {
+      format: "openmaus.package",
+      version: 1,
+      package: {
+        id: "signal-desk",
+        release: "1.0.0",
+        name: "Signal Desk",
+        tagline: "Find and explain the signal.",
+        summary: "A complete two-bot signal workflow.",
+        category: "Research",
+        author: { name: "OpenMausBot" },
+        license: "MIT",
+        outcomes: ["Produce a concise signal brief."],
+        setupMinutes: 4,
+        requirements: {
+          apps: [{ slug: "reddit", label: "Reddit", reason: "Read approved communities." }],
+          capabilities: ["computer"],
+        },
+        agents: [
+          {
+            key: "scout",
+            name: "Package Scout",
+            title: "Researcher",
+            description: "Find evidence.",
+            appearance: { color: "cyan" },
+            playbooks: ["signal-check"],
+            autoApprove: true,
+          },
+          {
+            key: "editor",
+            name: "Package Editor",
+            title: "Editor",
+            description: "Explain the result.",
+            appearance: { color: "green" },
+          },
+        ],
+        chiefOfStaff: "scout",
+        rooms: [{
+          key: "signals",
+          name: "Signal Room",
+          members: ["scout", "editor"],
+          bulletin: "Separate direct evidence from inference.",
+          defaultResponder: { kind: "agent", agent: "scout" },
+        }],
+        routines: [{
+          key: "morning-signals",
+          name: "Morning signals",
+          agent: "scout",
+          prompt: "Prepare the approved morning signal brief.",
+          runOn: "maus",
+          schedule: { type: "daily", time: "09:00", weekdays: [1, 2, 3, 4, 5] },
+          durationMinutes: 30,
+          enabledAfterInstall: false,
+        }],
+        playbooks: [{
+          key: "signal-check",
+          name: "Signal Check",
+          summary: "Verify a public signal.",
+          triggers: ["signal brief"],
+          instructions: "Keep the source URL and confidence.",
+        }],
+      },
+    };
+
+    const installed = await api("POST", "/api/teams/import", packageFile);
+    expect(installed.status).toBe(201);
+    expect(installed.body.bots).toHaveLength(2);
+    expect(installed.body.groups).toHaveLength(1);
+    expect(installed.body.routines).toHaveLength(1);
+
+    const scout = installed.body.bots.find((bot: { name: string }) => bot.name.startsWith("Package Scout"));
+    const editor = installed.body.bots.find((bot: { name: string }) => bot.name.startsWith("Package Editor"));
+    expect(scout).toMatchObject({
+      chiefOfStaff: true,
+      composio: false,
+      playbooks: [{ key: "signal-check", instructions: "Keep the source URL and confidence." }],
+      installedPackage: {
+        id: "signal-desk",
+        release: "1.0.0",
+        requiredApps: [{ slug: "reddit", label: "Reddit" }],
+      },
+    });
+    expect(scout).not.toHaveProperty("autoApprove");
+    expect(editor.playbooks).toBeUndefined();
+    expect(scout.section).toBe(editor.section);
+    expect(installed.body.groups[0]).toMatchObject({
+      name: "Signal Room",
+      memberIds: expect.arrayContaining([scout.id, editor.id]),
+      defaultResponder: { kind: "member", botId: scout.id },
+      bulletin: "Separate direct evidence from inference.",
+      setupCompletedAt: expect.any(Number),
+    });
+    expect(installed.body.routines[0]).toMatchObject({
+      name: "Morning signals",
+      botId: scout.id,
+      enabled: false,
+      nextRunAt: null,
+    });
+
+    await api("DELETE", `/api/routines/${installed.body.routines[0].id}`);
+    await api("DELETE", `/api/groups/${installed.body.groups[0].id}`);
+    for (const bot of installed.body.bots) await api("DELETE", `/api/bots/${bot.id}`);
+  });
+
+  it("the scout reads a folder, proposes an importable team, and creates nothing until the human imports", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "omb-scout-"));
+    writeFileSync(join(folder, "README.md"), "# Demo Shop\n\nA storefront demo.\n");
+    writeFileSync(
+      join(folder, "package.json"),
+      JSON.stringify({ dependencies: { react: "^19" }, devDependencies: { vitest: "^3" } }),
+    );
+
+    const before = (await api("GET", "/api/bots")).body;
+
+    expect((await api("GET", "/api/teams/scout")).status).toBe(400);
+    expect((await api("GET", `/api/teams/scout?cwd=${encodeURIComponent(join(folder, "nope"))}`)).status).toBe(400);
+
+    const scouted = await api("GET", `/api/teams/scout?cwd=${encodeURIComponent(folder)}`);
+    expect(scouted.status).toBe(200);
+    expect(scouted.body.profile).toMatchObject({ name: "Demo Shop", summary: "A storefront demo." });
+    expect(scouted.body.profile.stacks).toContain("React");
+    expect(scouted.body.suggestion.roomName).toBe("Demo Shop");
+    const keys = scouted.body.suggestion.manifest.team.members.map((member: { key: string }) => member.key);
+    expect(keys).toEqual(["lead", "frontend", "testing"]);
+    expect(Object.keys(scouted.body.suggestion.reasons).sort()).toEqual(keys.slice().sort());
+
+    // scouting is read-only: no bot and no room exists until the import
+    const after = (await api("GET", "/api/bots")).body;
+    expect(after.bots).toHaveLength(before.bots.length);
+    expect(after.groups).toHaveLength(before.groups.length);
+
+    // and the suggestion goes through the real importer verbatim
+    const imported = await api(
+      "POST",
+      `/api/teams/import?mode=project&cwd=${encodeURIComponent(folder)}&room=${encodeURIComponent(scouted.body.suggestion.roomName)}`,
+      scouted.body.suggestion.manifest,
+    );
+    expect(imported.status).toBe(201);
+    expect(imported.body.group).toMatchObject({ name: "Demo Shop", cwd: folder });
+    expect(imported.body.bots).toHaveLength(3);
+
+    expect((await api("DELETE", `/api/groups/${imported.body.group.id}`)).status).toBe(200);
+    for (const bot of imported.body.bots) await api("DELETE", `/api/bots/${bot.id}`);
+    rmSync(folder, { recursive: true, force: true });
   });
 
   it("team import is additive-only: smuggled grants, claimed ids, and re-imports never touch existing records", async () => {
@@ -1116,6 +1580,9 @@ describe("harness HTTP API", () => {
     const send = await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello?" });
     expect(send.status).toBe(409);
     expect(send.body.error).toContain("unavailable");
+    // a failed send never landed a user message, so the first-run quiz stays
+    const afterFail = (await api("GET", "/api/bots")).body.bots.find((candidate: { id: string }) => candidate.id === bot.id);
+    expect(afterFail.messages.find((m: { kind: string }) => m.kind === "options")?.card.dismissed).toBeFalsy();
   });
 
   it("refuses to fork a message when the provider is unavailable, without mutating", async () => {
@@ -1205,6 +1672,23 @@ describe("harness HTTP API", () => {
     await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
   });
 
+  it("keeps Teach a skill off by default and persists an explicit opt-in", async () => {
+    const before = await api("GET", "/api/config");
+    expect(before.status).toBe(200);
+    expect(before.body.features).toEqual({ skillRecorder: false });
+
+    const saved = await api("PATCH", "/api/config", {
+      features: { skillRecorder: true },
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.features).toEqual({ skillRecorder: true });
+
+    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    expect(disk.features).toEqual({ skillRecorder: true });
+
+    await api("PATCH", "/api/config", { features: { skillRecorder: false } });
+  });
+
   it("keeps shared Local VM mode by default and resolves isolated targets per bot when enabled", async () => {
     const first = (await api("POST", "/api/bots")).body.bot;
     const second = (await api("POST", "/api/bots")).body.bot;
@@ -1247,6 +1731,8 @@ describe("harness HTTP API", () => {
       name: "Room timeout capture",
       memberIds: [botId],
     })).body.group;
+    const ready = await api("PATCH", `/api/groups/${room.id}/setup`, { action: "skip" });
+    expect(ready.status).toBe(200);
     try {
       const selected = await api("PATCH", `/api/bots/${botId}`, {
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
@@ -1303,6 +1789,10 @@ describe("harness HTTP API", () => {
     const patched = await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps" });
     expect(patched.status).toBe(200);
     expect(patched.body.bot.cloudBackend).toBe("vps");
+    const autoStart = await api("PATCH", `/api/bots/${bot.id}`, { autoStartVps: true });
+    expect(autoStart.status).toBe(200);
+    expect(autoStart.body.bot.autoStartVps).toBe(true);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { autoStartVps: "yes" })).status).toBe(400);
     const invalid = await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "daytona" });
     expect(invalid.status).toBe(400);
   });
@@ -1503,6 +1993,43 @@ describe("harness HTTP API", () => {
   });
 });
 
+describe("section context API", () => {
+  it("keeps user-managed briefs isolated by live section and clears them explicitly", async () => {
+    const work = (await api("POST", "/api/bots")).body.bot;
+    const personal = (await api("POST", "/api/bots")).body.bot;
+    try {
+      await api("PATCH", `/api/bots/${work.id}`, { section: "Work" });
+      await api("PATCH", `/api/bots/${personal.id}`, { section: "Personal" });
+
+      const saved = await api("PUT", "/api/section-context?section=Work", { text: "# Goals\n- Ship Friday" });
+      expect(saved.status).toBe(200);
+      expect(saved.body).toMatchObject({ section: "Work", label: "Work", text: "# Goals\n- Ship Friday" });
+      expect(saved.body.updatedAt).toEqual(expect.any(Number));
+
+      const read = await api("GET", "/api/section-context?section=%20Work%20");
+      expect(read.body.text).toBe("# Goals\n- Ship Friday");
+      expect((await api("GET", "/api/section-context?section=Personal")).body.text).toBe("");
+      expect((await api("GET", "/api/section-context?section=")).body.label).toBe("General");
+
+      const cleared = await api("PUT", "/api/section-context?section=Work", { text: "  " });
+      expect(cleared.body).toMatchObject({ text: "", updatedAt: null });
+      expect((await api("GET", "/api/section-context?section=Work")).body.text).toBe("");
+    } finally {
+      await api("DELETE", `/api/bots/${work.id}`);
+      await api("DELETE", `/api/bots/${personal.id}`);
+    }
+  });
+
+  it("rejects missing, unknown, invalid, and oversized section context writes", async () => {
+    expect((await api("GET", "/api/section-context")).status).toBe(400);
+    expect((await api("PUT", "/api/section-context?section=Missing", { text: "x" })).status).toBe(404);
+    expect((await api("PUT", "/api/section-context?section=", { text: 7 })).status).toBe(400);
+    const oversized = await api("PUT", "/api/section-context?section=", { text: "x".repeat(24_001) });
+    expect(oversized.status).toBe(400);
+    expect(oversized.body.error).toContain("24KB");
+  });
+});
+
 // The memory routes expose plain files in the bot's workspace. The
 // traversal cases matter more than the happy path here: a topic name in a
 // URL is hostile-adjacent input, and the only defensible answer to "../"
@@ -1630,7 +2157,12 @@ describe("message pages", () => {
     const created = await api("POST", "/api/groups", { name: "Paging", memberIds: [body.bots[0].id] });
     expect(created.status).toBe(201);
     const groupId = created.body.group.id;
-    const quiet = await api("PATCH", `/api/groups/${groupId}`, { defaultResponder: { kind: "mentions" } });
+    // finish room setup with a mentions-only responder so no bot answers the probes
+    const quiet = await api("PATCH", `/api/groups/${groupId}/setup`, {
+      action: "complete",
+      defaultResponder: { kind: "mentions" },
+      bulletin: "",
+    });
     expect(quiet.status).toBe(200);
 
     for (let i = 0; i < count; i++) {

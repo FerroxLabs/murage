@@ -17,15 +17,19 @@
 // `get_available_models` and every entry is flagged `custom` because pi is a
 // custom-only (BYOK) engine — the model picker's Local pane only lists
 // `custom` options for custom-only engines.
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { PROVIDER_CREDENTIAL_ENV, stripWorkspaceCredentialEnv } from "../config.ts";
+import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
 import { describeSpawnFailure, killCliTree, spawnCli } from "../procs.ts";
+import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
 import type {
   DriverCreateInput,
+  EffortLevel,
   ModelCatalog,
   ProviderDriver,
   ProviderInstance,
@@ -34,11 +38,54 @@ import type {
   RuntimeEventListener,
   SendTurnInput,
 } from "../contracts.ts";
-import { newEventId, newId } from "../contracts.ts";
+import { EFFORT_LEVELS, newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "piAgent";
 const PI_ARGS = ["--mode", "rpc", "--no-session"];
+const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
+
+/** Harness effort → pi thinking level (`set_thinking_level`). The sets match
+ * one-for-one except for the name of the lowest rung: the harness calls it
+ * "none", pi calls it "off". Exported for the test. */
+export function piThinkingLevel(effort: EffortLevel): (typeof EFFORT_LEVELS)[number] | "off" {
+  return effort === "none" ? "off" : effort;
+}
+
+/** Mirror of the Claude driver's integration → stdio MCP mount: every entry is
+ * a JSON-RPC 2.0 stdio server the pi-mcp-extension consumes. Returns null when
+ * there is nothing to mount (the common case). */
+export function buildMcpServers(turn: SendTurnInput): Record<string, unknown> | null {
+  const servers: Record<string, unknown> = {};
+  if (turn.integrations?.composio) servers.composio = { ...turn.integrations.composio };
+  if (turn.integrations?.computer) {
+    servers.computer = {
+      command: process.execPath,
+      args: [SPAWNED_PROXIES.computer],
+      env: { ...NODE_ENV_FLAG, ...computerProxyEnv(turn.integrations.computer) },
+    };
+  } else if (turn.integrations?.localComputer) {
+    const local = turn.integrations.localComputer;
+    servers.computer = {
+      command: local.command,
+      args: local.args,
+      env: local.env,
+      // Host control carries scope so the extension gates every call behind
+      // a permission card; isolated computers deliberately omit it.
+      ...(local.scope ? { scope: local.scope } : {}),
+    };
+  }
+  if (turn.integrations?.agents) servers.agents = { ...turn.integrations.agents };
+  if (turn.integrations?.phone) servers.phone = { ...turn.integrations.phone };
+  if (turn.integrations?.dweb) {
+    servers.dweb = {
+      command: process.execPath,
+      args: [SPAWNED_PROXIES.dweb],
+      env: { ...NODE_ENV_FLAG, DWEB_URL: turn.integrations.dweb.url },
+    };
+  }
+  return Object.keys(servers).length ? servers : null;
+}
 
 /** A pi `get_available_models` response payload, parsed at its I/O boundary. */
 interface PiModelEntry {
@@ -148,14 +195,22 @@ export async function fetchPiModels(
 
 export interface PiConfig {
   cli: string;
+  /** Full-auto: never ask before an action. Host control is unavailable in
+   * this mode — the same knob as Claude's `bypassPermissions` and the ACP
+   * engines' `fullAuto`. */
+  fullAuto: boolean;
 }
 
 function decodeConfig(raw: unknown): PiConfig {
-  if (raw === null || raw === undefined) return { cli: "pi" };
+  if (raw === null || raw === undefined) return { cli: "pi", fullAuto: false };
   if (typeof raw !== "object") throw new Error("pi config must be an object");
-  const obj = raw as { cli?: unknown };
+  const obj = raw as { cli?: unknown; fullAuto?: unknown };
   if (obj.cli !== undefined && typeof obj.cli !== "string") throw new Error("pi config `cli` must be a string");
-  return { cli: obj.cli && obj.cli.trim() ? obj.cli.trim() : "pi" };
+  if (obj.fullAuto !== undefined && typeof obj.fullAuto !== "boolean") throw new Error("pi config `fullAuto` must be a boolean");
+  return {
+    cli: obj.cli && obj.cli.trim() ? obj.cli.trim() : "pi",
+    fullAuto: obj.fullAuto === true,
+  };
 }
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
@@ -249,15 +304,64 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      // Host control always routes through the permission card; full-auto must
+      // never get unapproved hands on the user's machine (same guard as the
+      // Claude and ACP drivers).
+      const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
+      if (controlsHost && config.fullAuto) {
+        throw new Error("local computer control requires the interactive approval broker");
+      }
       const turnId = newId();
       const pending = new Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>();
       let settled = false;
 
-      const child = spawnCli(config.cli, PI_ARGS, {
-        stdio: ["pipe", "pipe", "pipe"],
-        cwd: turn.cwd,
-        env: piEnvironment({ ...process.env, ...input.environment }),
-      });
+      // integrations → stdio MCP servers for the pi-mcp-extension. The config
+      // carries credentials (box token, composio key, comms token), so it goes
+      // into a 0600 temp file removed when the turn settles — never on argv.
+      const mcpServers = buildMcpServers(turn);
+      let mcpTempDir: string | null = null;
+      if (mcpServers) {
+        mcpTempDir = mkdtempSync(join(tmpdir(), "omb-pi-mcp-"));
+        try {
+          writeFileSync(join(mcpTempDir, "mcp.json"), JSON.stringify({ mcpServers }), { mode: 0o600 });
+        } catch (err) {
+          // A failed write must not leave the temp dir behind — a partial file
+          // could still hold the box token / composio key / comms token.
+          try {
+            rmSync(mcpTempDir, { recursive: true, force: true });
+          } catch {
+            /* best effort */
+          }
+          throw err;
+        }
+      }
+      const childArgs = mcpServers ? [...PI_ARGS, "-e", SPAWNED_PROXIES.piMcpExtension] : PI_ARGS;
+
+      // spawnCli can throw synchronously (unresolvable CLI); if it does, the
+      // 0600 temp file with the box token / composio key / comms token must
+      // not be left on disk — settle() never runs because no child existed.
+      const child = (() => {
+        try {
+          return spawnCli(config.cli, childArgs, {
+            stdio: ["pipe", "pipe", "pipe"],
+            cwd: turn.cwd,
+            env: piEnvironment({
+              ...process.env,
+              ...input.environment,
+              ...(mcpServers && mcpTempDir ? { OMB_MCP_CONFIG: join(mcpTempDir, "mcp.json") } : {}),
+            }),
+          });
+        } catch (err) {
+          if (mcpTempDir) {
+            try {
+              rmSync(mcpTempDir, { recursive: true, force: true });
+            } catch {
+              /* best effort */
+            }
+          }
+          throw err;
+        }
+      })();
       let buf = "";
       let assistantText = "";
       // resolve one-shot RPC responses (new_session / switch_session / set_model)
@@ -284,12 +388,18 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         child.stdin.write(JSON.stringify(obj) + "\n");
       };
 
+      /** Emit buffered assistant text as its own item, then clear it. */
+      const flushAssistantText = () => {
+        const text = assistantText;
+        assistantText = "";
+        if (!text.trim()) return;
+        emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
+      };
+
       const settle = (ok: boolean, stopReason?: string | null, usage?: { input?: number; output?: number }) => {
         if (settled) return;
         settled = true;
-        if (assistantText.trim()) {
-          emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: assistantText });
-        }
+        flushAssistantText();
         emit({
           ...base(threadId, turnId),
           type: "turn.completed",
@@ -306,6 +416,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           killCliTree(child);
         } catch {
           /* already gone */
+        }
+        if (mcpTempDir) {
+          try {
+            rmSync(mcpTempDir, { recursive: true, force: true });
+          } catch {
+            /* best effort */
+          }
         }
         active.delete(threadId);
       };
@@ -350,6 +467,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             return;
           }
           case "tool_execution_start": {
+            flushAssistantText();
             emit({
               ...base(threadId, turnId),
               type: "item.started",
@@ -373,6 +491,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             // pi floods setWidget/setStatus for TUI bookkeeping; only
             // select/confirm/input are questions that wait for an answer.
             if (evt.method === "select" || evt.method === "confirm" || evt.method === "input") {
+              flushAssistantText();
               const reqId = evt.id ?? newId();
               const isQuestion = evt.method === "input";
               emit({
@@ -470,6 +589,18 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
       }
 
+      // pin reasoning effort after the model (the supported level set is
+      // model-dependent); a rejection keeps the engine default
+      if (turn.effort) {
+        try {
+          const levelPromise = awaitResponse("set_thinking_level");
+          send({ type: "set_thinking_level", level: piThinkingLevel(turn.effort) });
+          await levelPromise;
+        } catch {
+          /* keep going on the engine default */
+        }
+      }
+
       const message = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
       try {
         send({ type: "prompt", message });
@@ -528,12 +659,25 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         capabilities: {
           // model is set per turn via set_model before prompt
           sessionModelSwitch: "in-session",
-          // pi's own tools are first-party; the harness MCP integrations are
-          // not mounted in this driver yet.
-          agentsMcp: false,
-          computerMcp: false,
-          composioMcp: false,
-          images: false,
+          // Integrations arrive as stdio MCP servers mounted by the
+          // pi-mcp-extension (pi core has no MCP client of its own).
+          agentsMcp: true,
+          computerMcp: true,
+          composioMcp: true,
+          phoneMcp: true,
+          // Host control (the user's real Mac) rides the pi-native permission
+          // card (`ctx.ui.confirm` → extension_ui_request) gated in the
+          // extension, so it is offered exactly when the other engines offer
+          // it: enabled unless the bot is in full-auto.
+          localComputerMcp: !config.fullAuto,
+          // Images ride the ordinary prompt as <attached-image path> refs the
+          // agent opens with its read tool — no native image blocks needed,
+          // same as every other CLI engine.
+          images: true,
+          // Reasoning effort pins pi's thinking level per turn (none → off).
+          // xhigh/max only land on models that expose them; pi rejects an
+          // unsupported level and the turn keeps the engine default.
+          effortLevels: EFFORT_LEVELS,
         },
         sendTurn,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),

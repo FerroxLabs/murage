@@ -64,7 +64,7 @@ const connectedAccountsPageSchema = z.object({
 const toolkitItemSchema = z.object({
   slug: z.string().optional(),
   is_no_auth: z.boolean().optional(),
-  connected_account: z.object({ id: z.string().optional(), status: z.string().optional() }).optional(),
+  connected_account: z.object({ id: z.string().optional(), status: z.string().optional() }).nullable().optional(),
 });
 type ToolkitItem = z.infer<typeof toolkitItemSchema>;
 const toolkitPageSchema = z.object({
@@ -113,15 +113,52 @@ interface IntegrationContext {
   threadId: string;
 }
 
-function brokerAccess(): { url: string; token: string } | null {
-  const url = process.env.OMB_COMPOSIO_BROKER_URL?.trim().replace(/\/$/, "");
-  const token = process.env.OMB_COMPOSIO_BROKER_TOKEN?.trim();
-  if (!url || !token) return null;
-  const parsed = new URL(url);
-  if (parsed.protocol !== "https:" && parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") {
+let managedBrokerAccess: { url: string; token: string } | null | undefined;
+
+const managedBrokerMessageSchema = z.record(z.string(), z.unknown());
+const managedBrokerToken = /^[0-9a-f]{64}$/;
+
+function normalizeManagedBrokerUrl(value: string): string {
+  const url = new URL(value);
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("The connected-apps service URL must not include credentials, a query, or a fragment");
+  }
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
     throw new Error("The connected-apps service must use HTTPS");
   }
-  return { url, token };
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+export function applyManagedBrokerMessage(message: unknown): boolean {
+  const parsed = managedBrokerMessageSchema.safeParse(message);
+  if (
+    !parsed.success ||
+    parsed.data.type !== "openmausbot:managed-composio" ||
+    !Object.hasOwn(parsed.data, "access")
+  ) {
+    return false;
+  }
+  setManagedBrokerAccess(parsed.data.access);
+  return true;
+}
+
+export function setManagedBrokerAccess(access: unknown): void {
+  if (access === null) {
+    managedBrokerAccess = null;
+    return;
+  }
+  const parsed = z.object({ url: z.string().url(), token: z.string().regex(managedBrokerToken) }).strict().parse(access);
+  managedBrokerAccess = { url: normalizeManagedBrokerUrl(parsed.url), token: parsed.token };
+}
+
+function brokerAccess(): { url: string; token: string } | null {
+  if (managedBrokerAccess !== undefined) return managedBrokerAccess;
+  const url = process.env.OMB_COMPOSIO_BROKER_URL?.trim();
+  const token = process.env.OMB_COMPOSIO_BROKER_TOKEN?.trim();
+  if (!url || !token) return null;
+  if (!managedBrokerToken.test(token)) throw new Error("The connected-apps service token is invalid");
+  return { url: normalizeManagedBrokerUrl(url), token };
 }
 
 export function connectionMode(cfg: AppConfig): "managed" | "self-hosted" | "unavailable" {
@@ -131,6 +168,20 @@ export function connectionMode(cfg: AppConfig): "managed" | "self-hosted" | "una
 
 export function configured(cfg: AppConfig): boolean {
   return connectionMode(cfg) !== "unavailable";
+}
+
+/** Three answers, not two. The desktop shell sets OMB_CREDENTIAL_STORE to
+ * "unavailable" when it could not read credentials.bin this launch; without
+ * that signal an unreadable store is indistinguishable from a user who never
+ * connected anything, and the UI wipes a list it should have kept. */
+export type ConnectorAvailability = "configured" | "unconfigured" | "unreadable";
+
+export function connectorAvailability(
+  cfg: AppConfig,
+  storeState: string | undefined = process.env.OMB_CREDENTIAL_STORE,
+): ConnectorAvailability {
+  if (configured(cfg)) return "configured";
+  return storeState === "unavailable" ? "unreadable" : "unconfigured";
 }
 
 async function brokerRequest(path: string, init?: RequestInit): Promise<Response> {
@@ -399,7 +450,10 @@ async function listSessionToolkits(
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; page < MAX_CONNECTED_ACCOUNT_PAGES; page += 1) {
-    const params = new URLSearchParams({ limit: "50" });
+    // The unfiltered endpoint contains the entire Composio marketplace and is
+    // cursor-paginated in 50-item pages. The Connected tab only needs the
+    // user's connected toolkits, so avoid scanning hundreds of unrelated apps.
+    const params = new URLSearchParams({ limit: "50", is_connected: "true" });
     if (cursor) params.set("cursor", cursor);
     const response = await fetch(
       `${apiBase()}/tool_router/session/${encodeURIComponent(sessionId)}/toolkits?${params}`,
@@ -673,6 +727,8 @@ export interface ToolkitCard {
   label: string;
   blurb: string;
   logo: string | null;
+  /** Toolkits such as public search need no user authorization. */
+  noAuth?: boolean;
   /** used for the client-side favicon fallback when logo is null/broken */
   domain: string | null;
 }
@@ -735,6 +791,7 @@ export async function listToolkits(cfg: AppConfig): Promise<{ cards: ToolkitCard
             label: t.name ?? t.slug ?? "",
             blurb: (t.meta?.description ?? t.description ?? "").slice(0, 90),
             logo: t.meta?.logo ?? t.logo ?? null,
+            noAuth: t.no_auth === true,
             domain: null,
           }));
           toolkitCache = { at: Date.now(), cards };

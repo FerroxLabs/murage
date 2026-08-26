@@ -20,6 +20,8 @@ let lastAskBody: any = null;
 let askResponse: unknown = { botName: "Helper", text: "hi from helper" };
 let lastDelegateBody: any = null;
 let delegateResponse: unknown = { queued: true, message: "Delegation queued." };
+let lastCreateBody: any = null;
+let lastCredentialBody: any = null;
 
 let child: ChildProcess;
 const pending = new Map<number, (msg: any) => void>();
@@ -72,6 +74,26 @@ beforeAll(async () => {
       });
       return;
     }
+    if (req.method === "POST" && req.url === "/api/internal/create-bot") {
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        lastCreateBody = JSON.parse(data);
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(JSON.stringify({ id: "bot-designer", name: "Pixel", section: "Work" }));
+      });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/internal/request-credential") {
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        lastCredentialBody = JSON.parse(data);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ messageId: "msg-key", label: "OpenCode API key" }));
+      });
+      return;
+    }
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "unknown" }));
   });
@@ -110,11 +132,17 @@ afterAll(async () => {
 });
 
 describe("agents-proxy MCP surface", () => {
-  it("answers the MCP handshake and lists all three tools", async () => {
+  it("answers the MCP handshake and lists all five tools", async () => {
     const init = await rpc("initialize", { protocolVersion: "2024-11-05" });
     expect(init.result.serverInfo.name).toContain("agents");
     const list = await rpc("tools/list");
-    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(["list_bots", "ask_bot", "delegate_bot"]);
+    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([
+      "list_bots",
+      "ask_bot",
+      "delegate_bot",
+      "create_bot",
+      "request_credential",
+    ]);
   });
 
   it("list_bots renders the roster and authenticates with the shared token", async () => {
@@ -176,6 +204,45 @@ describe("agents-proxy MCP surface", () => {
     const res = await callTool("delegate_bot", { bot_id: "bot-helper", message: "take this" });
     expect(res.result.isError).toBe(true);
     expect(res.result.content[0].text).toContain("do this one yourself");
+  });
+
+  it("lets a Chief create a bounded specialist through the harness", async () => {
+    const res = await callTool("create_bot", {
+      name: "Pixel",
+      role: "Product designer",
+      instructions: "Design and review the user experience.",
+    });
+    expect(res.result.content[0].text).toContain("Created @Pixel in Work");
+    expect(lastCreateBody).toEqual({
+      fromBotId: "bot-asker",
+      fromThreadId: "thread-asker-routine",
+      name: "Pixel",
+      role: "Product designer",
+      instructions: "Design and review the user experience.",
+    });
+  });
+
+  it("requests an allowlisted credential without putting a secret in the request", async () => {
+    const res = await callTool("request_credential", {
+      credential_id: "opencodeGoApiKey",
+      reason: "The selected model needs it.",
+    });
+    expect(res.result.content[0].text).toContain("secure OpenCode API key card");
+    expect(res.result.content[0].text).toContain("End this turn");
+    expect(lastCredentialBody).toEqual({
+      fromBotId: "bot-asker",
+      fromThreadId: "thread-asker-routine",
+      credentialId: "opencodeGoApiKey",
+      reason: "The selected model needs it.",
+    });
+    expect(JSON.stringify(lastCredentialBody)).not.toContain("secret");
+  });
+
+  it("rejects credential ids outside the fixed allowlist locally", async () => {
+    lastCredentialBody = null;
+    const res = await callTool("request_credential", { credential_id: "arbitrary.config.path" });
+    expect(res.result.isError).toBe(true);
+    expect(lastCredentialBody).toBeNull();
   });
 
   it("rejects unknown tools with -32602", async () => {

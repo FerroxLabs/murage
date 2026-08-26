@@ -8,6 +8,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createProxyHandler } from "../src/proxy.ts";
+import type { CompanionEndpoint } from "../src/endpoints.ts";
 import { scrub } from "../src/wire.ts";
 
 const TOKEN = "omb_test_token";
@@ -24,6 +25,8 @@ let harness: Server;
 let sidecar: Server;
 let sidecarPort = 0;
 let cloudDesktopAccess = true;
+let companionMarker = "";
+let endpointCandidates: CompanionEndpoint[] = [];
 /** What the stub harness answers with next. Set per test. */
 let respond: (res: ServerResponse) => void = (res) => res.end();
 
@@ -34,16 +37,22 @@ const close = (server: Server | undefined): Promise<void> =>
   new Promise((resolve) => (server ? server.close(() => resolve()) : resolve()));
 
 /** A request as a paired device makes it. */
-const device = async (path = "/api/bots", method = "GET"): Promise<{ status: number; text: string }> => {
+const device = async (
+  path = "/api/bots",
+  method = "GET",
+): Promise<{ status: number; text: string; headers: Headers }> => {
   const res = await fetch(`http://127.0.0.1:${sidecarPort}${path}`, {
     method,
     headers: { authorization: `Bearer ${TOKEN}` },
   });
-  return { status: res.status, text: await res.text() };
+  return { status: res.status, text: await res.text(), headers: res.headers };
 };
 
 beforeAll(async () => {
-  harness = createServer((_req, res) => respond(res));
+  harness = createServer((req, res) => {
+    companionMarker = String(req.headers["x-openmausbot-companion"] ?? "");
+    respond(res);
+  });
   const harnessPort = await listen(harness);
 
   sidecar = createServer(
@@ -52,6 +61,7 @@ beforeAll(async () => {
       authenticate: (t) => (t === TOKEN ? { cloudDesktopAccess } : null),
       redeem: () => ({ error: "not used here" }),
       serverName: () => "Test computer",
+      endpoints: () => endpointCandidates,
     }),
   );
   sidecarPort = await listen(sidecar);
@@ -63,12 +73,26 @@ afterAll(async () => {
 });
 
 describe("preparing a harness response for a device", () => {
+  it("drops an endpoint whose runtime URL is not a string", async () => {
+    const malformed: CompanionEndpoint = { kind: "hosted", priority: 0, url: "https://ok.example" };
+    Object.defineProperty(malformed, "url", { value: 42 });
+    endpointCandidates = [malformed];
+    try {
+      const { status, text } = await device("/api/companion/endpoints");
+      expect(status).toBe(200);
+      expect(JSON.parse(text)).toMatchObject({ endpoints: [] });
+    } finally {
+      endpointCandidates = [];
+    }
+  });
+
   it("requires the Mac to enable cloud desktop for this phone", async () => {
     cloudDesktopAccess = false;
     try {
       const { status, text } = await device("/api/bots/b1/computer/join", "POST");
       expect(status).toBe(403);
       expect(text).toContain("enable it in OpenMausBot");
+      expect(text).toContain("Settings → Phone");
     } finally {
       cloudDesktopAccess = true;
     }
@@ -82,6 +106,7 @@ describe("preparing a harness response for a device", () => {
     const { status, text } = await device("/api/bots/b1/computer/join", "POST");
     expect(status).toBe(200);
     expect(JSON.parse(text).joinUrl).toBe("https://desktop.example/session/fresh");
+    expect(companionMarker).toBe("1");
   });
 
   it("never forwards a body it could not scrub", async () => {
@@ -143,13 +168,36 @@ describe("preparing a harness response for a device", () => {
 
   it("scrubs a well-formed body and re-frames it", async () => {
     respond = (res) => {
-      res.writeHead(200, { "content-type": "application/json", "transfer-encoding": "chunked" });
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "transfer-encoding": "chunked",
+        "cache-control": "public, max-age=3600",
+      });
       res.end(JSON.stringify({ bots: [{ id: "b1" }], resumeCursors: { agent: "cursor-value" } }));
     };
 
-    const { status, text } = await device();
+    const { status, text, headers } = await device();
     expect(status).toBe(200);
     expect(JSON.parse(text)).toEqual({ bots: [{ id: "b1" }] });
     expect(text).not.toContain("cursor-value");
+    expect(headers.get("cache-control")).toBe("private, no-store");
+    expect(headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+  });
+
+  it("overrides cacheable upstream headers on byte responses", async () => {
+    respond = (res) => {
+      res.writeHead(200, {
+        "content-type": "image/png",
+        "cache-control": "public, max-age=86400",
+        etag: '"private-image"',
+      });
+      res.end("image-bytes");
+    };
+
+    const response = await device("/api/threads/thread-1/messages/message-1/image");
+    expect(response.status).toBe(200);
+    expect(response.text).toBe("image-bytes");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("cdn-cache-control")).toBe("no-store");
   });
 });

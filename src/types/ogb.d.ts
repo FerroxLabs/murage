@@ -1,7 +1,63 @@
 // The narrow bridge the Electron preload exposes. Absent in the browser.
 
-
 declare global {
+type NativeSkillRecordingEvent = {
+  type: "app" | "click" | "scroll" | "key" | "typing" | "clipboard" | "download";
+  atMs: number;
+  app?: string;
+  windowTitle?: string;
+  x?: number;
+  y?: number;
+  button?: "left" | "right" | "other";
+  deltaY?: number;
+  keycode?: number;
+  meta?: boolean;
+  control?: boolean;
+  option?: boolean;
+  shift?: boolean;
+  /** Element identity for a click, from the accessibility tree. */
+  role?: string;
+  name?: string;
+  identifier?: string;
+  ancestry?: string[];
+  /** Typed keystroke count (never the characters themselves). */
+  keyCount?: number;
+  /** Clipboard action kind — never its contents. */
+  op?: "copy" | "cut" | "paste";
+  /** Downloaded file name and its origin URLs. */
+  filename?: string;
+  whereFroms?: string[];
+};
+
+type SkillRecordingPayload = {
+  name: string;
+  description: string;
+  durationMs: number;
+  transcript: string;
+  transcription?: { provider: "assemblyai"; model: string };
+  audio?: string;
+  events: Array<{
+    type: "app" | "click" | "scroll" | "shortcut" | "typing" | "clipboard" | "download";
+    atMs: number;
+    app?: string;
+    windowTitle?: string;
+    direction?: "up" | "down";
+    shortcut?: string;
+    keyCount?: number;
+    screenshot?: string;
+    /** Element identity for a click. */
+    role?: string;
+    name?: string;
+    identifier?: string;
+    ancestry?: string[];
+    /** Clipboard action kind — never its contents. */
+    op?: "copy" | "cut" | "paste";
+    /** Downloaded file name and its origin URLs. */
+    filename?: string;
+    whereFroms?: string[];
+  }>;
+};
+
   type DesktopCapabilities = {
     host: {
       platform: "darwin" | "linux" | "win32" | "other";
@@ -58,6 +114,13 @@ declare global {
       platform: NodeJS.Platform;
       getCapabilities(): Promise<DesktopCapabilities>;
       onCapabilitiesChanged(cb: (capabilities: DesktopCapabilities) => void): () => void;
+      companionAccount?: {
+        state(): Promise<CompanionAccountState>;
+        requestCode(email: string): Promise<CompanionAccountState>;
+        verifyCode(email: string, code: string): Promise<CompanionAccountState>;
+        retry(): Promise<CompanionAccountState>;
+        signOut(): Promise<CompanionAccountState>;
+      };
       localControl: {
         status(): Promise<LinuxLocalControlStatus>;
         enable(): Promise<LinuxLocalControlStatus>;
@@ -82,6 +145,19 @@ declare global {
         cb: (line: { partial?: boolean; text?: string; error?: string }) => void,
       ): () => void;
       onSpeechEnd(cb: (info: { code: number | null; reason?: string }) => void): () => void;
+      skillRecorder?: {
+        permissions(): Promise<{ supported: boolean; reason?: string }>;
+        start(): Promise<{ recording: boolean }>;
+        stop(): Promise<{ recording: boolean }>;
+        save(payload: SkillRecordingPayload): Promise<{ id: string; path: string; events: number }>;
+        onEvent(cb: (event: NativeSkillRecordingEvent) => void): () => void;
+        onEnd(cb: (info: { code: number | null; reason?: string }) => void): () => void;
+      };
+      transcription?: {
+        status(): Promise<{ configured: boolean }>;
+        setKey(value: string): Promise<{ configured: boolean }>;
+        streamingToken(): Promise<{ token: string; expiresInSeconds: number }>;
+      };
       /** Absolute path of a dropped File ("" when the drag carried no
        * file on disk). Absent in older builds of the shell. */
       getPathForFile?(file: File): string;
@@ -98,9 +174,17 @@ declare global {
       openInstallTerminal?(command: string): Promise<boolean>;
       /** Opens an http(s) link in the user's default browser. */
       openExternal?(url: string): Promise<boolean>;
-      /** Opens a live desktop as a sandboxed modal owned by OpenMausBot. */
+      /** Receives a GitHub package URL opened through openmausbot://install. */
+      onPackageInstall?(cb: (url: string) => void): () => void;
+      /** Updates the native Dock/taskbar unread indicator. */
+      setUnreadCount?(count: number): void;
+      /** Opens a live desktop as a sandboxed window owned by OpenMausBot. */
       desktopViewer?: {
         open(url: string, title: string, contextId: string): Promise<boolean>;
+        /** Closes the live-desktop window, but only when it belongs to this bot. */
+        close(contextId: string): Promise<boolean>;
+        /** The current viewer state, for a panel to initialize from on mount. */
+        currentState(): Promise<{ open: boolean; contextId: string | null }>;
         onState(cb: (state: { open: boolean; contextId: string | null }) => void): () => void;
       };
       /** Two Local VM viewers embedded in one app window. URLs are accepted
@@ -123,6 +207,13 @@ declare global {
       };
       /** Native folder picker; resolves null when the user cancels. */
       pickFolder?(current?: string): Promise<string | null>;
+      /** Writes the redacted diagnostics report to a user-chosen file;
+       * resolves the path, or null when cancelled. */
+      exportDiagnostics?(): Promise<string | null>;
+      /** Asks where to save a bot-created file (inside ~/.openmausbot), copies
+       * it there and reveals it. Resolves the chosen path, or null if the
+       * user cancelled the dialog. */
+      saveFile?(filePath: string): Promise<string | null>;
       /** Save a provider credential through Electron's OS-backed store. */
       setCredential?(
         name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey",
@@ -165,6 +256,14 @@ export interface UpdaterState {
     | "error";
   version?: string;
   percent?: number;
+  message?: string;
+}
+
+export interface CompanionAccountState {
+  available: boolean;
+  status: "signed-out" | "connecting" | "ready" | "error";
+  email?: string;
+  endpoint?: string;
   message?: string;
 }
 

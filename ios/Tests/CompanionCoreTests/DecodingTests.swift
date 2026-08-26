@@ -131,6 +131,50 @@ final class DecodingTests: XCTestCase {
         XCTAssertNil(fleet.bots.last?.cloudBackend)
     }
 
+    func testDecodesMultipleConnectedAccountsAndNoAuthToolkit() throws {
+        let payload = #"""
+        {
+          "configured": true,
+          "services": {
+            "gmail": {
+              "connected": true,
+              "pending": false,
+              "status": "ACTIVE",
+              "accounts": [
+                {"id": "ca_work", "alias": "Work", "status": "ACTIVE"},
+                {"id": "ca_personal", "status": "INACTIVE"}
+              ]
+            },
+            "weather": {
+              "connected": true,
+              "pending": false,
+              "status": "ACTIVE",
+              "accounts": []
+            },
+            "slack": {
+              "connected": false,
+              "pending": true
+            }
+          }
+        }
+        """#
+        let statuses = try JSONDecoder().decode(ConnectorStatuses.self, from: Data(payload.utf8))
+        let gmail = try XCTUnwrap(statuses.services["gmail"])
+        XCTAssertEqual(gmail.accounts?.map(\.id), ["ca_work", "ca_personal"])
+        XCTAssertEqual(gmail.accounts?.first?.alias, "Work")
+        XCTAssertNil(gmail.accounts?.last?.alias)
+        XCTAssertTrue(try XCTUnwrap(gmail.accounts?.first).isActive)
+        XCTAssertFalse(try XCTUnwrap(gmail.accounts?.last).isActive)
+
+        let noAuth = try XCTUnwrap(statuses.services["weather"])
+        XCTAssertTrue(noAuth.connected)
+        XCTAssertEqual(noAuth.accounts?.isEmpty, true)
+
+        let pending = try XCTUnwrap(statuses.services["slack"])
+        XCTAssertEqual(pending.pending, true)
+        XCTAssertNil(pending.accounts)
+    }
+
     func testOneMalformedBotDoesNotHideTheRestOfTheFleet() throws {
         let json = """
         {
@@ -244,12 +288,40 @@ final class DecodingTests: XCTestCase {
         XCTAssertFalse(paired.serverName.isEmpty)
     }
 
+    func testMalformedAdvisoryEndpointDoesNotDiscardAPairedToken() throws {
+        let json = """
+        {
+          "token":"omb_device",
+          "device":{"id":"d1","name":"Ada's iPhone","createdAt":1,"lastSeenAt":1},
+          "serverName":"Ada's Mac",
+          "hosts":["192.168.1.42"],
+          "endpoints":[
+            {"url":"https://mac.example","kind":"hosted","priority":0},
+            {"url":"https://future.example","kind":"future-transport","priority":10},
+            {"url":"http://192.168.1.42:8810","kind":"lan","priority":200}
+          ]
+        }
+        """
+
+        let paired = try JSONDecoder().decode(PairResponse.self, from: Data(json.utf8))
+
+        XCTAssertEqual(paired.token, "omb_device")
+        XCTAssertEqual(paired.hosts, ["192.168.1.42"])
+        XCTAssertEqual(paired.endpoints?.map(\.kind), [.hosted, .lan])
+    }
+
     func testDecodesTheHarnessErrorBodies() throws {
-        // these strings are written for people, and the client shows them
-        // rather than inventing its own
-        XCTAssertTrue(try decode(APIErrorBody.self, "unauthorized").error.contains("pair"))
+        // These are captured server contracts. Keep them verbatim until the
+        // desktop changes in lockstep; the client passes them through.
+        XCTAssertEqual(
+            try decode(APIErrorBody.self, "unauthorized").error,
+            "pair this device from Phone settings in OpenMausBot on your computer"
+        )
         XCTAssertFalse(try decode(APIErrorBody.self, "forbidden").error.isEmpty)
-        XCTAssertFalse(try decode(APIErrorBody.self, "pair-rejected").error.isEmpty)
+        XCTAssertEqual(
+            try decode(APIErrorBody.self, "pair-rejected").error,
+            "no pairing is in progress — open Phone settings on your computer"
+        )
     }
 
     func testDecodesInstancesAndConfig() throws {

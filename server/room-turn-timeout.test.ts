@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  RoomTurnDeadline,
   RoomTurnStallRegistry,
   roomTurnTimeoutMessage,
   roomTurnTimeoutMs,
-  scheduleRoomTurnTimeout,
 } from "./room-turn-timeout.ts";
 
 afterEach(() => vi.useRealTimers());
@@ -17,23 +17,121 @@ describe("room turn timeout", () => {
   it("fires exactly at the configured absolute deadline", async () => {
     vi.useFakeTimers();
     const onTimeout = vi.fn();
-    const timer = scheduleRoomTurnTimeout(20, onTimeout);
+    const deadline = new RoomTurnDeadline(20, onTimeout);
+    deadline.start();
 
     await vi.advanceTimersByTimeAsync(20 * 60_000 - 1);
     expect(onTimeout).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1);
     expect(onTimeout).toHaveBeenCalledOnce();
-    clearTimeout(timer);
+    deadline.stop();
   });
 
   it("can be cancelled when the room turn settles", async () => {
     vi.useFakeTimers();
     const onTimeout = vi.fn();
-    const timer = scheduleRoomTurnTimeout(5, onTimeout);
-    clearTimeout(timer);
+    const deadline = new RoomTurnDeadline(5, onTimeout);
+    deadline.start();
+    deadline.stop();
 
     await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  it("holds the clock while a human decides and resumes where it left off", async () => {
+    vi.useFakeTimers();
+    const onTimeout = vi.fn();
+    const deadline = new RoomTurnDeadline(20, onTimeout);
+    deadline.start();
+
+    // fifteen real minutes of work, then an approval card opens
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    deadline.setWaitingOnHuman(true);
+
+    // however long the person takes, none of it counts
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(onTimeout).not.toHaveBeenCalled();
+
+    // answered: only the remaining five work-minutes are left
+    deadline.setWaitingOnHuman(false);
+    await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
+    expect(onTimeout).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onTimeout).toHaveBeenCalledOnce();
+    deadline.stop();
+  });
+
+  it("only resumes after the last of several approvals resolves", async () => {
+    vi.useFakeTimers();
+    const onTimeout = vi.fn();
+    const deadline = new RoomTurnDeadline(10, onTimeout);
+    deadline.start();
+
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    deadline.setWaitingOnHuman(true); // first card
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    deadline.setWaitingOnHuman(true); // a second card while deciding again
+    deadline.setWaitingOnHuman(false); // first answered — still holding
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(onTimeout).not.toHaveBeenCalled();
+
+    deadline.setWaitingOnHuman(false); // last answer → resume with 6m left
+    await vi.advanceTimersByTimeAsync(6 * 60_000 - 1);
+    expect(onTimeout).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onTimeout).toHaveBeenCalledOnce();
+    deadline.stop();
+  });
+
+  it("expires immediately when a card opens after the budget already ran out", async () => {
+    vi.useFakeTimers();
+    const onTimeout = vi.fn();
+    const deadline = new RoomTurnDeadline(5, onTimeout);
+    deadline.start();
+
+    // a stalled event loop delivers the card event past the deadline, before
+    // the timer callback had its turn — the exhausted budget must still fire
+    vi.setSystemTime(Date.now() + 5 * 60_000 + 1);
+    deadline.setWaitingOnHuman(true);
+    expect(onTimeout).toHaveBeenCalledOnce();
+
+    // and nothing afterwards re-arms or double-fires
+    deadline.setWaitingOnHuman(false);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(onTimeout).toHaveBeenCalledOnce();
+  });
+
+  it("ignores resolves for cards it never saw open", async () => {
+    vi.useFakeTimers();
+    const onTimeout = vi.fn();
+    const deadline = new RoomTurnDeadline(5, onTimeout);
+    deadline.start();
+
+    deadline.setWaitingOnHuman(false);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    deadline.setWaitingOnHuman(false); // stale cleanup after an interrupt
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000 - 1);
+    expect(onTimeout).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onTimeout).toHaveBeenCalledOnce();
+    deadline.stop();
+  });
+
+  it("does not fire while held even past the budget, and stop() cancels a held clock", async () => {
+    vi.useFakeTimers();
+    const onTimeout = vi.fn();
+    const deadline = new RoomTurnDeadline(5, onTimeout);
+    deadline.start();
+
+    await vi.advanceTimersByTimeAsync(1 * 60_000);
+    deadline.setWaitingOnHuman(true);
+    deadline.stop(); // the turn settled while the card was still open
+    deadline.setWaitingOnHuman(false); // late resolve must not re-arm
+
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(onTimeout).not.toHaveBeenCalled();
   });
 
@@ -46,19 +144,20 @@ describe("room turn timeout", () => {
       resolveFinished = resolve;
     });
     let completions = 0;
-    let timer!: ReturnType<typeof setTimeout>;
+    let deadline!: RoomTurnDeadline;
     let unregister = () => {};
     const finish = () => {
       if (completions > 0) return;
       completions += 1;
-      clearTimeout(timer);
+      deadline.stop();
       unregister();
       resolveFinished();
     };
-    timer = scheduleRoomTurnTimeout(20, () => {
+    deadline = new RoomTurnDeadline(20, () => {
       onTimeout();
       finish();
     });
+    deadline.start();
     unregister = stalls.register("room-thread", finish);
 
     expect(stalls.stall("room-thread")).toBe(true);

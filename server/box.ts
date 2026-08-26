@@ -16,6 +16,8 @@ import { ensureRemoteCuaCommand, remoteComputerBootstrapCommand } from "./remote
 // overridable so tests can point at a stub instead of the live provider
 const BOX_API = process.env.OMB_BOX_API || "https://ascii.dev/api/box/v1";
 const READY = new Set(["idle", "ready", "running"]);
+const DEFAULT_BOX_TTL_SECONDS = 8 * 60 * 60;
+const TRIAL_BOX_TTL_SECONDS = 2 * 60 * 60;
 
 function boxFetch(cfg: AppConfig, path: string, opts: RequestInit = {}) {
   return fetch(`${BOX_API}${path}`, {
@@ -171,6 +173,35 @@ export function boxErrorMessage(status: number, what: string, body?: any): strin
   return theirs ? `${what} failed: ${theirs}` : `${what} failed (${status})`;
 }
 
+/** ascii.dev trial accounts reject the normal eight-hour auto-stop with a
+ * structured `trial_auto_stop_required` refusal. Retry that one condition
+ * once at the provider's advertised maximum (or the documented two-hour
+ * trial ceiling). Other create failures must retain their original error. */
+function trialBoxTtlSeconds(body: any): number | null {
+  const code = body?.error?.code ?? body?.code;
+  if (code !== "trial_auto_stop_required") return null;
+  const details = body?.error?.details ?? body?.details ?? {};
+  for (const value of [details.maxTtlSeconds, details.maximumTtlSeconds, details.maxAutoStopSeconds]) {
+    if (Number.isInteger(value) && value > 0 && value <= DEFAULT_BOX_TTL_SECONDS) return value;
+  }
+  return TRIAL_BOX_TTL_SECONDS;
+}
+
+async function createBox(cfg: AppConfig) {
+  const request = (ttlSeconds: number) =>
+    boxJson(cfg, "/boxes", {
+      method: "POST",
+      // The computer needs the user's desktop session, not the account
+      // owner's host credentials. Keep provider-side env injection off so
+      // API keys cannot silently appear inside the guest.
+      body: JSON.stringify({ ttlSeconds, noEnv: true }),
+    });
+  const first = await request(DEFAULT_BOX_TTL_SECONDS);
+  if (first.ok) return first;
+  const trialTtl = trialBoxTtlSeconds(first.body);
+  return trialTtl === null ? first : request(trialTtl);
+}
+
 /** Box state for the Computer panel. */
 export async function boxStatus(cfg: AppConfig, botId: string) {
   if (!boxConfigured(cfg)) return { configured: false, box: null };
@@ -195,15 +226,10 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
   let created = false;
   try {
     if (!box) {
-      const createRes = await boxJson(cfg, "/boxes", {
-        method: "POST",
-        // substrate-side backstop: archives itself (billing pauses, disk
-        // survives) if every stop path dies
-        // The computer needs the user's desktop session, not the account
-        // owner's host credentials. Keep provider-side env injection off so
-        // API keys cannot silently appear inside the guest.
-        body: JSON.stringify({ ttlSeconds: 8 * 60 * 60, noEnv: true }),
-      });
+      // Provider-side backstop: archives itself (billing pauses, disk
+      // survives) if every stop path dies. Trial accounts get one narrower
+      // retry when ascii.dev reports their shorter TTL ceiling.
+      const createRes = await createBox(cfg);
       if (!createRes.ok || !createRes.body?.box?.id) {
         throw new Error(boxErrorMessage(createRes.status, "box create", createRes.body));
       }

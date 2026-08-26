@@ -164,17 +164,15 @@ struct ChatListView: View {
 
     // MARK: - Header
 
-    /// You (the computer you are paired with) on the left, settings on the
-    /// right, and where you are in between. Glass tiles, like the system's.
+    /// The paired computer's profile on the left, one settings action on the
+    /// right, and where you are in between. The avatar is identity, not a
+    /// second hidden route to the same screen.
     private var header: some View {
         HStack(alignment: .center) {
-            NavigationLink { SettingsView() } label: {
-                ProfileAvatar(name: session.connection?.name ?? "You", size: 30)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .glassCapsule()
-            .accessibilityLabel("Settings")
+            ProfileAvatar(name: session.connection?.name ?? "You", size: 30)
+                .frame(width: 44, height: 44)
+                .glassCapsule(interactive: false)
+                .accessibilityLabel("Connected to \(session.connection?.name ?? "your computer")")
 
             Spacer(minLength: 8)
 
@@ -412,7 +410,7 @@ struct ChatRow: View {
             .frame(maxHeight: .infinity)
 
             HStack(alignment: .top, spacing: 14) {
-                ChatAvatarView(chat: chat, size: 52, state: state)
+                ChatAvatarView(chat: chat, size: 52, state: state, animated: state.showsActivity)
                     .padding(.top, 12)
 
                 VStack(alignment: .leading, spacing: 4) {

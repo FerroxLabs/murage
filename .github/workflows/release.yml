@@ -106,6 +106,17 @@ jobs:
         run: |
           for app in release/mac-arm64/OpenMausBot.app release/mac/OpenMausBot.app; do
             codesign --verify --deep --strict "$app"
+            bin="$app/Contents/Resources/cloudflared/cloudflared"
+            test -x "$bin" || { echo "::error::missing executable $bin"; exit 1; }
+            test -f "$app/Contents/Resources/licenses/cloudflared-LICENSE.txt" \
+              || { echo "::error::missing cloudflared license in $app"; exit 1; }
+            test -f "$app/Contents/Resources/licenses/cloudflared-README.md" \
+              || { echo "::error::missing cloudflared provenance in $app"; exit 1; }
+            codesign --verify --strict "$bin"
+            app_team=$(codesign -dv --verbose=4 "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            bin_team=$(codesign -dv --verbose=4 "$bin" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            test -n "$app_team" && test "$bin_team" = "$app_team" || {
+              echo "::error::cloudflared is not signed by the app's Developer ID team in $app"; exit 1; }
             echo "ok: $app"
           done
 
@@ -133,6 +144,15 @@ jobs:
               lipo -archs "$bin" | grep -q "x86_64" || { echo "::error::$bin lacks x86_64"; exit 1; }
               lipo -archs "$bin" | grep -q "arm64" || { echo "::error::$bin lacks arm64"; exit 1; }
             done
+            cloudflared="$res/cloudflared/cloudflared"
+            expected_arch=x86_64
+            case "$app" in *mac-arm64*) expected_arch=arm64 ;; esac
+            test "$(lipo -archs "$cloudflared")" = "$expected_arch" || {
+              echo "::error::$cloudflared is not the expected $expected_arch executable"; exit 1; }
+            if [ "$(uname -m)" = "$expected_arch" ]; then
+              "$cloudflared" version | grep -Fq "cloudflared version 2026.8.2 " || {
+                echo "::error::$cloudflared has the wrong version"; exit 1; }
+            fi
           done
 
       - name: Notarize all four artifacts
@@ -213,6 +233,14 @@ jobs:
           res=release/win-unpacked/resources
           [ -f "$res/server/index.js" ] || { echo "::error::missing server/index.js"; exit 1; }
           [ -f "$res/ui/index.html" ] || { echo "::error::missing ui/index.html"; exit 1; }
+          [ -f "$res/cloudflared/cloudflared.exe" ] || { echo "::error::missing cloudflared.exe"; exit 1; }
+          [ -f "$res/licenses/cloudflared-LICENSE.txt" ] || { echo "::error::missing cloudflared license"; exit 1; }
+          [ -f "$res/licenses/cloudflared-README.md" ] || { echo "::error::missing cloudflared provenance"; exit 1; }
+          expected=c29eee2b121f5436a642eed69fd9767da7e7b8c510fa50aaa130337f931357b5
+          actual=$(sha256sum "$res/cloudflared/cloudflared.exe" | cut -d' ' -f1)
+          [ "$actual" = "$expected" ] || { echo "::error::cloudflared hash is $actual"; exit 1; }
+          "$res/cloudflared/cloudflared.exe" version | grep -Fq "cloudflared version 2026.8.2 " || {
+            echo "::error::cloudflared has the wrong version"; exit 1; }
           [ -f "$res/app-update.yml" ] || { echo "::error::missing app-update.yml"; exit 1; }
           grep -q "openmausbot-releases" "$res/app-update.yml" || { echo "::error::wrong update repo"; exit 1; }
           if grep -q "publisherName" "$res/app-update.yml"; then
@@ -262,13 +290,32 @@ jobs:
       - name: Install package validation and native smoke tools
         run: >-
           sudo apt-get update && sudo apt-get install -y
-          at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools xvfb
+          at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
       - run: pnpm install --frozen-lockfile
       - name: Clean generated output
         run: pnpm clean
       - name: Stage the pinned CUA runtime
         run: pnpm build:cua:linux
+      - name: Prove overlay-free X11 input routing
+        run: dbus-run-session -- xvfb-run -a pnpm smoke:cua-x11-input
       - run: pnpm package:linux
+      - name: Verify package contents and metadata
+        run: node scripts/verify-linux-package.mjs
+      - name: Match a normal Ubuntu package parent on the ephemeral runner
+        run: |
+          test ! -L /opt
+          test "$(stat -c '%F %U:%G' /opt)" = "directory root:root"
+          case "$(stat -c '%a' /opt)" in
+            755) ;;
+            775|777) sudo chmod 0755 /opt ;;
+            *) echo "Unexpected /opt mode: $(stat -c '%a' /opt)" >&2; exit 1 ;;
+          esac
+          test "$(stat -c '%U:%G %a' /opt)" = "root:root 755"
+      - name: Reproduce and verify an in-place DEB upgrade
+        run: |
+          deb=(release/*.deb)
+          test "${#deb[@]}" -eq 1
+          sudo --preserve-env=CI,RUNNER_TEMP node scripts/smoke-deb-upgrade.mjs "${deb[0]}"
       - name: Configure Chromium sandbox for the unpacked app
         run: |
           sudo chown root:root release/linux-unpacked/chrome-sandbox
@@ -277,7 +324,11 @@ jobs:
       - name: Smoke the packages
         env:
           OMB_KEEP_SMOKE_DIR: "1"
+          OMB_SMOKE_INSTALLED_DEB: "1"
         run: pnpm smoke:linux-package
+      - name: Remove the installed upgrade fixture
+        if: always()
+        run: sudo dpkg --purge openmausbot || true
       - name: Stable-named copies and checksums
         run: |
           v=$(node -p "require('./package.json').version")

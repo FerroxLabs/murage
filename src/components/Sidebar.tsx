@@ -15,6 +15,7 @@ import {
   FolderPlus,
   Library,
   Loader2,
+  Network,
   Pencil,
   PanelLeftClose,
   PanelLeftOpen,
@@ -23,6 +24,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Sparkles,
   Settings,
   Puzzle,
   Trash2,
@@ -35,17 +37,20 @@ import { BotAvatar, InitialsAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
+import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { nextRename } from "@/lib/rename";
 import { downloadAllBots } from "@/lib/team-files";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
 import { TeamLibraryPanel, type TeamImportResult } from "./TeamLibraryPanel";
 import { RenameTitle } from "./RenameTitle";
+import { BotPickerList } from "./BotPickerList";
 import {
   loadSidebarDensity,
   saveSidebarDensity,
   type SidebarDensity,
 } from "@/lib/sidebar-preferences";
+import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
 function profileInitials(profile?: { name?: string; email?: string }): string {
@@ -176,7 +181,7 @@ function StackedMauses({ members, density }: { members: Bot[]; density: SidebarD
     const b = members[0];
     return (
       <div className={cn("flex shrink-0 items-center justify-center", slotSize)}>
-        {b ? <BotAvatar bot={b} state="happy" size={singleSize} /> : <Users size={24} className="text-ink-secondary" />}
+        {b ? <BotAvatar bot={b} state="happy" size={singleSize} animated={false} /> : <Users size={24} className="text-ink-secondary" />}
       </div>
     );
   }
@@ -186,7 +191,7 @@ function StackedMauses({ members, density }: { members: Bot[]; density: SidebarD
     <div className={cn("flex shrink-0 items-center justify-center", slotSize)}>
       <div className="flex items-center -space-x-3">
         {shown.map((b) => (
-          <BotAvatar key={b.id} bot={b} state="happy" size={30} />
+          <BotAvatar key={b.id} bot={b} state="happy" size={30} animated={false} />
         ))}
         {extra > 0 && (
           <span className="z-10 flex size-[22px] items-center justify-center rounded-full border border-hairline/40 bg-raised text-[10px] font-medium text-ink-secondary">
@@ -220,6 +225,15 @@ function GroupListItem({
         e.preventDefault();
         onMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
       }}
+      // the menu must be reachable without a pointer: Shift+F10, and the
+      // dedicated ContextMenu key (whose native event carries no useful
+      // coordinates) both open it centered on the row
+      onKeyDown={(e) => {
+        if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        onMenu({ groupId: group.id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+      }}
       className={cn(
         "relative flex w-full items-center rounded-xl text-left",
         density === "icons" ? "justify-center px-1 py-1.5" : density === "compact" ? "gap-2 px-2 py-1.5" : "gap-3 px-3 py-2.5",
@@ -249,9 +263,11 @@ function GroupListItem({
 function RoomContextMenu({
   menu,
   onClose,
+  onMoveToSection,
 }: {
   menu: { groupId: string; x: number; y: number };
   onClose: () => void;
+  onMoveToSection: (groupId: string) => void;
 }) {
   const { state, dispatch } = useStore();
   const group = state.groups.find((g) => g.id === menu.groupId);
@@ -279,7 +295,7 @@ function RoomContextMenu({
     if (name) dispatch({ type: "patchGroup", groupId: group.id, patch: { name } });
     onClose();
   };
-  const top = Math.min(menu.y, window.innerHeight - 164);
+  const top = Math.min(menu.y, window.innerHeight - 204);
   const left = Math.min(menu.x, window.innerWidth - 240);
   return createPortal(
     <div
@@ -311,7 +327,7 @@ function RoomContextMenu({
           <button
             type="button"
             onClick={saveRename}
-            aria-label="Save room name"
+            aria-label="Save channel name"
             title="Save"
             className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
           >
@@ -320,7 +336,7 @@ function RoomContextMenu({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Cancel room rename"
+            aria-label="Cancel channel rename"
             title="Cancel"
             className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
           >
@@ -336,9 +352,19 @@ function RoomContextMenu({
           className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
         >
           <Pencil size={16} className="text-ink-secondary" />
-          Rename Room
+          Rename Channel
         </button>
       )}
+      <button
+        onClick={() => {
+          onClose();
+          onMoveToSection(group.id);
+        }}
+        className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+      >
+        <FolderPlus size={16} className="text-ink-secondary" />
+        Move to context
+      </button>
       <button
         onClick={() => {
           void navigator.clipboard?.writeText(group.threadId);
@@ -357,17 +383,18 @@ function RoomContextMenu({
         className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger hover:bg-raised/70"
       >
         <Trash2 size={16} />
-        Delete Room
+        Delete Channel
       </button>
     </div>,
     document.body,
   );
 }
 
-/** Pick members → Create. The room name is optional; the server defaults it. */
+/** Pick members and an optional Work/Personal/project context, then create. */
 function NewRoomPanel({ onClose }: { onClose: () => void }) {
   const { state, dispatch } = useStore();
   const [name, setName] = useState("");
+  const [section, setSection] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const bots = state.bots.filter((b) => !b.hidden);
   const toggle = (id: string) =>
@@ -379,8 +406,13 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
     });
   const create = () => {
     if (!picked.size) return;
-    dispatch({ type: "createGroup", memberIds: [...picked], name: name.trim() || undefined });
-    track("room_created", { members: picked.size });
+    dispatch({
+      type: "createGroup",
+      memberIds: [...picked],
+      name: name.trim() || undefined,
+      section: section.trim() || undefined,
+    });
+    track("room_created", { members: picked.size, context: Boolean(section.trim()) });
     onClose();
   };
   return (
@@ -389,47 +421,43 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="w-[340px] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
-        <div className="mb-3 text-[15px] font-semibold text-ink">New Room</div>
+        <div className="mb-3 text-[15px] font-semibold text-ink">New Channel</div>
         <input
           autoFocus
+          maxLength={100}
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") create();
             if (e.key === "Escape") onClose();
           }}
-          placeholder="Room name (optional)"
+          placeholder="Channel name (for example, Website launch)"
           className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
-        <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">
-          {bots.length === 0 && (
-            <div className="px-2 py-4 text-center text-[13px] text-ink-secondary">Create a bot first — rooms are made of bots.</div>
-          )}
-          {bots.map((b) => (
-            <button
-              key={b.id}
-              onClick={() => toggle(b.id)}
-              className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-raised/50"
-            >
-              <BotAvatar bot={b} state="happy" size={28} />
-              <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{b.name}</span>
-              <span
-                className={cn(
-                  "flex size-[18px] shrink-0 items-center justify-center rounded-full border",
-                  picked.has(b.id) ? "border-accent bg-accent text-white" : "border-hairline/60",
-                )}
-              >
-                {picked.has(b.id) && <Check size={12} />}
-              </span>
-            </button>
-          ))}
-        </div>
+        <input
+          value={section}
+          maxLength={60}
+          onChange={(e) => setSection(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") create();
+            if (e.key === "Escape") onClose();
+          }}
+          placeholder="Context (optional): Work, Personal, Client…"
+          aria-label="Channel context"
+          className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
+        />
+        <BotPickerList
+          bots={bots}
+          picked={picked}
+          onToggle={toggle}
+          emptyHint="Create a bot first — channels are made of bots."
+        />
         <button
           onClick={create}
           disabled={!picked.size}
           className="mt-3 w-full rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
         >
-          Create Room{picked.size ? ` · ${picked.size} ${picked.size === 1 ? "bot" : "bots"}` : ""}
+          Create Channel{picked.size ? ` · ${picked.size} ${picked.size === 1 ? "bot" : "bots"}` : ""}
         </button>
       </div>
     </div>
@@ -450,20 +478,24 @@ function SectionDivider({ name }: { name: string }) {
 }
 
 /** Move-to-section popover: existing sections as chips (checkmark on the
- * bot's current one), a create field, and a remove action. Mirrors the
+ * target's current one), a create field, and a remove action. Serves bots
+ * and channels alike — the caller supplies the assignment. Mirrors the
  * context menu's fixed positioning + dismiss-on-outside-click contract. */
 function SectionPicker({
-  botId,
+  current,
   anchor,
   onClose,
+  onAssign,
 }: {
-  botId: string;
-  anchor: MenuState;
+  /** the target's current section; undefined = none */
+  current: string | undefined;
+  anchor: { x: number; y: number };
   onClose: () => void;
+  /** "" clears — the server drops an empty section */
+  onAssign: (section: string) => void;
 }) {
-  const { state, dispatch } = useStore();
+  const { state } = useStore();
   const [name, setName] = useState("");
-  const bot = state.bots.find((b) => b.id === botId);
   const trimmed = name.trim();
 
   useEffect(() => {
@@ -481,12 +513,17 @@ function SectionPicker({
     };
   }, [onClose]);
 
-  if (!bot) return null;
-  // hidden bots can carry a stale assignment; don't offer it as a section
-  const sections = [...new Set(state.bots.filter((b) => !b.hidden && b.section).map((b) => b.section!))];
+  // Hidden bots can carry a stale assignment; don't offer it as a context.
+  // Channels and bots share one namespace, so Work or Personal can hold both.
+  const sections = [
+    ...new Set([
+      ...state.bots.filter((b) => !b.hidden && b.section).map((b) => b.section!),
+      ...state.groups.filter((g) => g.section).map((g) => g.section!),
+    ]),
+  ];
 
   const assign = (section: string) => {
-    dispatch({ type: "updateBot", botId, patch: { section } });
+    onAssign(section);
     onClose();
   };
 
@@ -500,7 +537,7 @@ function SectionPicker({
       className="fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-2 shadow-2xl shadow-black/60"
     >
       <div className="px-3.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-        Move to section
+        Move to context
       </div>
       {sections.length > 0 && (
         <div className="flex flex-col gap-0.5 px-1.5 py-1">
@@ -510,11 +547,11 @@ function SectionPicker({
               onClick={() => assign(section)}
               className={cn(
                 "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
-                section === bot.section ? "bg-raised text-ink" : "text-ink hover:bg-raised/70",
+                section === current ? "bg-raised text-ink" : "text-ink hover:bg-raised/70",
               )}
             >
               <span className="truncate">{section}</span>
-              {section === bot.section && <Check size={14} className="shrink-0 text-accent" />}
+              {section === current && <Check size={14} className="shrink-0 text-accent" />}
             </button>
           ))}
         </div>
@@ -532,8 +569,8 @@ function SectionPicker({
           maxLength={60}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="New section…"
-          aria-label="New section name"
+          placeholder="New context…"
+          aria-label="New context name"
           className="w-full rounded-lg bg-raised/70 px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         <button
@@ -547,18 +584,15 @@ function SectionPicker({
           Add
         </button>
       </form>
-      {bot.section && (
+      {current && (
         <>
           <div className="mx-2 my-1 border-t border-hairline/40" />
           <button
-            onClick={() => {
-              dispatch({ type: "updateBot", botId, patch: { section: "" } });
-              onClose();
-            }}
+            onClick={() => assign("")}
             className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[13px] text-danger hover:bg-raised/70"
           >
             <FolderMinus size={15} />
-            Remove from section
+            Remove from context
           </button>
         </>
       )}
@@ -741,6 +775,11 @@ function BotListItem({
         size={avatarSize}
         motion={mascotMotion?.kind ?? "none"}
         motionKey={mascotMotion?.nonce ?? 0}
+        // Motion means something is happening. A resting bot holds a resting
+        // pose — N idle rows bobbing at display rate was most of the app's
+        // visible-idle CPU (states are keyword-derived, so "working" can be
+        // decorative; busy/unread/motion are the real signals).
+        animated={Boolean(bot.busy) || Boolean(bot.unread) || (mascotMotion?.kind ?? "none") !== "none"}
       />
       <div className={cn("min-w-0 flex-1", iconOnly && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
@@ -945,7 +984,7 @@ function ArchivedBotsPanel({
           <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
             {bots.map((bot) => (
               <div key={bot.id} className="flex min-h-[82px] items-center gap-3 border-b border-hairline/35 px-1 py-3">
-                <BotAvatar bot={bot} state="happy" size={42} />
+                <BotAvatar bot={bot} state="happy" size={42} animated={false} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] font-medium text-ink">{bot.name}</div>
                   <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{bot.title || "Bot"}</div>
@@ -976,9 +1015,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [sectionPicker, setSectionPicker] = useState<MenuState | null>(null);
   const [roomMenu, setRoomMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
+  const [roomSectionPicker, setRoomSectionPicker] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
   const [teamLibraryOpen, setTeamLibraryOpen] = useState(false);
+  const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [exportingTeam, setExportingTeam] = useState(false);
   const [teamFeedback, setTeamFeedback] = useState<{
@@ -1036,6 +1077,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   }, [densityOpen]);
 
   useEffect(() => {
+    return window.ogb?.onPackageInstall?.((url) => {
+      setTeamInstallUrl(url);
+      setTeamLibraryOpen(true);
+    });
+  }, []);
+
+  useEffect(() => {
     if (!teamFeedback) return;
     const timer = window.setTimeout(() => setTeamFeedback(null), 5000);
     return () => window.clearTimeout(timer);
@@ -1061,6 +1109,18 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const undoTeamLoad = async (result: TeamImportResult) => {
     setTeamFeedback(null);
     try {
+      await Promise.all([
+        ...result.importedRoutineIds.map((routineId) =>
+          api(`/api/routines/${routineId}`, { method: "DELETE" }).then(() =>
+            dispatch({ type: "routineDeleted", routineId }),
+          ),
+        ),
+        ...result.importedGroupIds.map((groupId) =>
+          api(`/api/groups/${groupId}`, { method: "DELETE" }).then(() =>
+            dispatch({ type: "groupDeleted", groupId }),
+          ),
+        ),
+      ]);
       const archiveNew = await Promise.all(
         result.importedBotIds.map((botId) =>
           api(`/api/bots/${botId}`, {
@@ -1071,7 +1131,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       );
       for (const response of archiveNew) dispatch({ type: "botPatched", bot: response.bot });
 
-      const previousChief = result.archived.find((bot) => bot.chiefOfStaff);
+      const previousChiefs = result.archived.filter((bot) => bot.chiefOfStaff);
       const restoreOthers = await Promise.all(
         result.archived
           .filter((bot) => !bot.chiefOfStaff)
@@ -1083,13 +1143,15 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           ),
       );
       for (const response of restoreOthers) dispatch({ type: "botPatched", bot: response.bot });
-      if (previousChief) {
-        const response = await api(`/api/bots/${previousChief.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ hidden: false, chiefOfStaff: true }),
-        });
-        dispatch({ type: "botPatched", bot: response.bot });
-      }
+      const restoredChiefs = await Promise.all(
+        previousChiefs.map((previousChief) =>
+          api(`/api/bots/${previousChief.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ hidden: false, chiefOfStaff: true }),
+          }),
+        ),
+      );
+      for (const response of restoredChiefs) dispatch({ type: "botPatched", bot: response.bot });
       const first = result.archived[0];
       if (first) dispatch({ type: "select", id: first.id });
       setTeamFeedback({ error: false, text: "Previous team restored" });
@@ -1165,20 +1227,29 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         (b.title ?? "").toLowerCase().includes(q) ||
         preview(b).toLowerCase().includes(q),
     );
-  const chiefBot = matchingBots.find((bot) => bot.chiefOfStaff);
+  const unsectionedChief = matchingBots.find((bot) => bot.chiefOfStaff && !bot.section);
+  const sectionChiefs = matchingBots.filter((bot) => bot.chiefOfStaff && bot.section);
   const sectionedBots = matchingBots
     .filter((bot) => !bot.chiefOfStaff && bot.section)
     .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
   const visibleBots = matchingBots
     .filter((bot) => !bot.chiefOfStaff && !bot.section)
     .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
+  const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
+  const sectionedGroups = visibleGroups.filter((g) => g.section);
+  const unsectionedGroups = visibleGroups.filter((g) => !g.section);
   // sections keep first-appearance order within the current list; a section
-  // whose bots all moved away (or fell out of the filter) simply vanishes
+  // whose members all moved away (or fell out of the filter) simply vanishes
   const sectionNames: string[] = [];
   for (const bot of sectionedBots) {
     if (!sectionNames.includes(bot.section!)) sectionNames.push(bot.section!);
   }
-  const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
+  for (const bot of sectionChiefs) {
+    if (!sectionNames.includes(bot.section!)) sectionNames.push(bot.section!);
+  }
+  for (const group of sectionedGroups) {
+    if (!sectionNames.includes(group.section!)) sectionNames.push(group.section!);
+  }
   const activeBotCount = state.bots.filter((bot) => !bot.hidden).length;
   const archivedBots = state.bots.filter((bot) => bot.hidden);
   const pendingTeamUndo = teamFeedback?.undo;
@@ -1304,7 +1375,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <Users size={16} className="text-ink-secondary" />
-                  New Room
+                  New Channel
                 </button>
                 <button
                   onClick={() => {
@@ -1364,13 +1435,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       {/* Bot list */}
       <div className="flex-1 overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5">
-          {!chiefBot && visibleBots.length === 0 && sectionedBots.length === 0 && visibleGroups.length === 0 && q && q.length < MIN_QUERY && (
+          {!unsectionedChief && sectionChiefs.length === 0 && visibleBots.length === 0 && sectionedBots.length === 0 && visibleGroups.length === 0 && q && q.length < MIN_QUERY && (
             <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">Nothing matches “{query}”</div>
           )}
-          {chiefBot && (
+          {unsectionedChief && (
             <div className="mb-1.5">
               <BotListItem
-                bot={chiefBot}
+                bot={unsectionedChief}
                 density={density}
                 onMenu={setMenu}
                 onArchive={(bot) => void archiveBot(bot)}
@@ -1378,9 +1449,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               />
             </div>
           )}
-          {visibleGroups.map((g) => (
+          {unsectionedGroups.length > 0 && density !== "icons" && <SectionDivider name="Channels" />}
+          {unsectionedGroups.map((g) => (
             <GroupListItem key={g.id} group={g} density={density} onMenu={setRoomMenu} />
           ))}
+          {visibleBots.length > 0 && density !== "icons" && <SectionDivider name="Bots" />}
           {visibleBots.map((b) => (
             <BotListItem
               key={b.id}
@@ -1394,6 +1467,23 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           {sectionNames.map((name) => (
             <Fragment key={name}>
               {density !== "icons" && <SectionDivider name={name} />}
+              {sectionChiefs
+                .filter((bot) => bot.section === name)
+                .map((bot) => (
+                  <BotListItem
+                    key={bot.id}
+                    bot={bot}
+                    density={density}
+                    onMenu={setMenu}
+                    onArchive={(candidate) => void archiveBot(candidate)}
+                    archiveDisabled
+                  />
+                ))}
+              {sectionedGroups
+                .filter((g) => g.section === name)
+                .map((g) => (
+                  <GroupListItem key={g.id} group={g} density={density} onMenu={setRoomMenu} />
+                ))}
               {sectionedBots
                 .filter((b) => b.section === name)
                 .map((b) => (
@@ -1414,6 +1504,34 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 
       {/* Footer */}
       <div className={cn("pb-3 pt-2", density === "icons" ? "px-2" : "px-3")}>
+        <button
+          onClick={() => dispatch({ type: "showTeamMap" })}
+          aria-label={density === "icons" ? "Team map" : undefined}
+          title={density === "icons" ? "Team map" : undefined}
+          className={cn(
+            "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
+            density === "icons" ? "justify-center px-2" : "gap-3 px-3",
+            state.activeView === "team-map" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+          )}
+        >
+          <Network size={20} className={state.activeView === "team-map" ? "text-accent" : "text-ink-secondary"} />
+          <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Team map</span>
+        </button>
+        {skillRecorderEnabled(state.config) && (
+          <button
+            onClick={() => dispatch({ type: "showSkillRecorder" })}
+            aria-label={density === "icons" ? "Teach a skill" : undefined}
+            title={density === "icons" ? "Teach a skill" : undefined}
+            className={cn(
+              "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
+              density === "icons" ? "justify-center px-2" : "gap-3 px-3",
+              state.activeView === "skill-recorder" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+            )}
+          >
+            <Sparkles size={20} className={state.activeView === "skill-recorder" ? "text-accent" : "text-ink-secondary"} />
+            <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Teach a skill</span>
+          </button>
+        )}
         <button
           onClick={() => dispatch({ type: "showRoutines" })}
           aria-label={density === "icons" ? "Tasks and routines" : undefined}
@@ -1439,6 +1557,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <Puzzle size={20} className="text-ink-secondary" />
           <span className={cn("text-[14px] text-ink", density === "icons" && "hidden")}>Connected apps</span>
         </button>
+        {density === "icons" && (
+          <SidebarPhoneButton
+            density={density}
+            onOpen={() => dispatch(phoneSettingsAction())}
+          />
+        )}
         <div className={cn("flex items-center", density === "icons" && "justify-center")}>
           <button
             onClick={() => dispatch({ type: "toggleAppSettings" })}
@@ -1451,6 +1575,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               {state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || "You"}
             </span>
           </button>
+          {density !== "icons" && (
+            <SidebarPhoneButton
+              density={density}
+              onOpen={() => dispatch(phoneSettingsAction())}
+            />
+          )}
           {density !== "icons" && <UpdateButton />}
           {density !== "icons" && <button
             onClick={() => dispatch({ type: "toggleAppSettings" })}
@@ -1471,13 +1601,29 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         />
       )}
       {sectionPicker && (
-        <SectionPicker botId={sectionPicker.botId} anchor={sectionPicker} onClose={() => setSectionPicker(null)} />
+        <SectionPicker
+          current={state.bots.find((b) => b.id === sectionPicker.botId)?.section}
+          anchor={sectionPicker}
+          onClose={() => setSectionPicker(null)}
+          onAssign={(section) => dispatch({ type: "updateBot", botId: sectionPicker.botId, patch: { section } })}
+        />
       )}
       {roomMenu && (
         <RoomContextMenu
           key={roomMenu.groupId}
           menu={roomMenu}
           onClose={() => setRoomMenu(null)}
+          onMoveToSection={(groupId) => setRoomSectionPicker({ groupId, x: roomMenu.x, y: roomMenu.y })}
+        />
+      )}
+      {roomSectionPicker && (
+        <SectionPicker
+          current={state.groups.find((g) => g.id === roomSectionPicker.groupId)?.section}
+          anchor={roomSectionPicker}
+          onClose={() => setRoomSectionPicker(null)}
+          onAssign={(section) =>
+            dispatch({ type: "patchGroup", groupId: roomSectionPicker.groupId, patch: { section } })
+          }
         />
       )}
       {newRoom && <NewRoomPanel onClose={() => setNewRoom(false)} />}
@@ -1491,9 +1637,14 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       {teamLibraryOpen && (
         <TeamLibraryPanel
           returnFocusRef={importReturnRef}
-          onClose={() => setTeamLibraryOpen(false)}
+          initialUrl={teamInstallUrl ?? undefined}
+          onClose={() => {
+            setTeamLibraryOpen(false);
+            setTeamInstallUrl(null);
+          }}
           onImported={(result) => {
             setTeamLibraryOpen(false);
+            setTeamInstallUrl(null);
             setTeamFeedback(
               result.archived.length > 0
                 ? {

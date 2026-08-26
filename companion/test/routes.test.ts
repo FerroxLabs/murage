@@ -17,7 +17,10 @@ const allowed = (method: string, path: string) => ask(method, path) === null;
 describe("credentials", () => {
   it("lets an unpaired device pair, and do nothing else", () => {
     expect(ask("POST", "/api/pair", false)).toBeNull();
-    expect(ask("GET", "/api/bots", false)?.status).toBe(401);
+    expect(ask("GET", "/api/bots", false)).toEqual({
+      status: 401,
+      error: "pair this device from Phone settings in OpenMausBot on your computer",
+    });
   });
 
   it("lets anyone curl liveness — it is the unauthenticated smoke test", () => {
@@ -36,6 +39,7 @@ describe("what the app may do", () => {
     ["GET", "/api/config"],
     ["GET", "/api/events"],
     ["GET", "/api/instances"],
+    ["GET", "/api/companion/endpoints"],
     ["GET", "/api/bots"],
     ["POST", "/api/bots"],
     ["POST", "/api/bots/bot_123/messages"],
@@ -96,6 +100,21 @@ describe("what it may not", () => {
       expect(denial?.status, `${method} ${path}`).toBe(403);
       expect(denial?.error, `${method} ${path}`).toMatch(/on your computer/);
     }
+    expect(ask("GET", "/api/devices")).toEqual({
+      status: 403,
+      error: "Phone settings are managed on your computer",
+    });
+    expect(ask("GET", "/api/companion")).toEqual({
+      status: 403,
+      error: "Phone settings are managed on your computer",
+    });
+  });
+
+  it("keeps endpoint refresh authenticated and exact-method only", () => {
+    expect(ask("GET", "/api/companion/endpoints", false)?.status).toBe(401);
+    expect(ask("GET", "/api/companion/endpoints")).toBeNull();
+    expect(ask("POST", "/api/companion/endpoints")?.status).toBe(403);
+    expect(ask("GET", "/api/companion/endpoints/extra")?.status).toBe(403);
   });
 
   it("describes only refused routine operations as computer-only", () => {

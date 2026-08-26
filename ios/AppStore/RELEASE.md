@@ -5,7 +5,7 @@ The app is native Swift and uses XcodeGen; EAS commands do not apply.
 ## One-time Apple setup
 
 1. Enrol in the Apple Developer Program.
-2. Register the bundle ID `com.openmausbot.companion` (or change it in `project.yml` before the first upload).
+2. Register the bundle IDs `com.openmausbot.app` and `com.openmausbot.app.widgets` (or change them in `project.yml` before the first upload).
 3. Create the matching app in App Store Connect with the name **OpenMaus Mobile**, primary category **Productivity**, and a unique SKU.
 4. Create or select an Apple Distribution certificate and App Store provisioning profile.
 5. Add the review contact details in App Store Connect; do not commit private contact data or App Store Connect keys.
@@ -18,7 +18,7 @@ The app is native Swift and uses XcodeGen; EAS commands do not apply.
 4. Increment `CURRENT_PROJECT_VERSION` for every upload. Update `MARKETING_VERSION` only for a new App Store version.
 5. Archive a generic iOS device build and validate it in Xcode Organizer.
 6. Upload to App Store Connect and distribute to internal TestFlight testers first.
-7. Complete a real-iPhone pass for pairing, Bonjour permission, Keychain restore, Tailscale, approvals, background/foreground reconciliation, and transcript sharing.
+7. Complete a real-iPhone pass for pairing, Bonjour permission, Keychain restore, Tailscale, optional hosted HTTPS, approvals, background/foreground reconciliation, sign-out/revocation, and transcript sharing.
 8. After internal testing, submit to an external TestFlight group before App Review.
 
 ## App Store Connect

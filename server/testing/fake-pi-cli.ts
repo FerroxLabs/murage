@@ -5,12 +5,12 @@
 // / set_model, and streams a scripted turn in response to `prompt`. Failure
 // modes mirror how the real CLI misbehaves:
 //
-//   FAKE_PI_MODE   happy (default) | tooluse | permission | no-models | exit-early
+//   FAKE_PI_MODE   happy (default) | tooluse | permission | interleave | no-models | exit-early
 //   FAKE_PI_MODELS comma-separated provider/model pairs (default "ollama-cloud/glm-5.2,openai/gpt-4o")
 //   FAKE_PI_DUMP   path to append {argv, env} JSON, so a test can assert argv shape
 //                  and env hygiene (no leaked secrets into the pi child).
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 
 const mode = process.env.FAKE_PI_MODE ?? "happy";
 const modelPairs = (process.env.FAKE_PI_MODELS ?? "ollama-cloud/glm-5.2,openai/gpt-4o")
@@ -31,6 +31,18 @@ if (argv.includes("--version") || argv.includes("-v")) {
 
 if (process.env.FAKE_PI_DUMP) {
   try {
+    // When the driver mounts integrations it hands the MCP config through
+    // OMB_MCP_CONFIG; read it here so a test can assert the mount contract
+    // (servers, proxy wrap, credential hygiene) without racing the temp file
+    // cleanup the driver runs at turn settle.
+    let mcpConfig: unknown = null;
+    if (process.env.OMB_MCP_CONFIG) {
+      try {
+        mcpConfig = JSON.parse(readFileSync(process.env.OMB_MCP_CONFIG, "utf8"));
+      } catch {
+        /* unreadable config dumps as null */
+      }
+    }
     appendFileSync(
       process.env.FAKE_PI_DUMP,
       JSON.stringify({
@@ -38,6 +50,7 @@ if (process.env.FAKE_PI_DUMP) {
         envConfigured: ["PATH", "HOME", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "BOX_TOKEN"].filter(
           (k) => process.env[k] !== undefined,
         ),
+        mcpConfig,
       }) + "\n",
     );
   } catch {
@@ -91,6 +104,21 @@ const streamPermissionTurn = () => {
   // wait for the answer before finishing
 };
 
+/** Scripted text → tool → text → tool → text turn for order-contract tests. */
+const streamInterleaveTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "before one" } });
+  send({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "echo one" } });
+  send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
+  send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "before two" } });
+  send({ type: "tool_execution_start", toolCallId: "call_2", toolName: "bash", args: { command: "echo two" } });
+  send({ type: "tool_execution_end", toolCallId: "call_2", toolName: "bash", isError: false });
+  send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "after" } });
+  send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
+  send({ type: "agent_end" });
+};
+
 const finishPermissionTurn = () => {
   send({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "echo hi" } });
   send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
@@ -142,11 +170,23 @@ function handle(cmd: any) {
       send({ type: "response", command: "set_model", success: true, data: { id: cmd.modelId, provider: cmd.provider } });
       return;
     }
+    case "set_thinking_level":
+      // record the level so a test can assert what the driver pinned
+      if (process.env.FAKE_PI_DUMP) {
+        try {
+          appendFileSync(process.env.FAKE_PI_DUMP, JSON.stringify({ thinkingLevel: cmd.level }) + "\n");
+        } catch {
+          /* never let dumping break a run */
+        }
+      }
+      send({ type: "response", command: "set_thinking_level", success: true });
+      return;
     case "prompt":
       // acknowledge acceptance; the completion comes via events
       send({ type: "response", command: "prompt", success: true });
       if (mode === "tooluse") streamToolTurn();
       else if (mode === "permission") streamPermissionTurn();
+      else if (mode === "interleave") streamInterleaveTurn();
       else streamTurn();
       return;
     case "extension_ui_response":

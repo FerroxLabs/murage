@@ -602,6 +602,21 @@ describe("Cua integration", () => {
     expect(dockerfile).not.toContain("while ! DISPLAY=:1 xset q");
   });
 
+  it("rejects a zero-byte OpenSSL base image before the wheel download needs curl", () => {
+    const dockerfile = managedImageDockerfile();
+    // both multiarch triplets, both OpenSSL libraries
+    expect(dockerfile).toContain('"/lib/$lib_triplet/libssl.so.3"');
+    expect(dockerfile).toContain('"/lib/$lib_triplet/libcrypto.so.3"');
+    expect(dockerfile).toContain("[ ! -s \"$ssl_lib\" ]");
+    expect(dockerfile).toContain("is zero bytes, so curl cannot start");
+    // the gate runs in the same RUN as the fetch, ahead of it — a defective
+    // layer must be named before curl has any chance to fail confusingly
+    const gate = dockerfile.indexOf('[ ! -s "$ssl_lib" ]');
+    const fetch = dockerfile.indexOf("curl -fsSL");
+    expect(gate).toBeGreaterThan(-1);
+    expect(fetch).toBeGreaterThan(gate);
+  });
+
   it("captures the preview through Cua Driver rather than xdotool or VNC", async () => {
     const screenshotCall =
       `${driverExec} call get_desktop_state {} --socket ${CUA_SOCKET} ` +

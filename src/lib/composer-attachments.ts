@@ -122,6 +122,13 @@ export function pasteAttachment(text: string): PasteAttachment {
   return { kind: "paste", id, text, size: byteLength(text), lines: countLines(text) };
 }
 
+/** Move a pasted attachment into the editable composer draft without
+ * running the text back through the paste threshold. */
+export function appendPastedText(text: string, pasted: string): string {
+  if (!text) return pasted;
+  return `${text}${text.endsWith("\n") ? "" : "\n\n"}${pasted}`;
+}
+
 export const INLINE_DROP_LIMIT = 512 * 1024;
 
 export type DroppedFile = Pick<File, "name" | "size" | "type" | "text">;
@@ -237,4 +244,57 @@ export function splitAttachedImages(text: string): { display: string; images: st
 export function attachmentBasename(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] ?? "";
+}
+
+/** The renderer never loads a transcript-provided URL directly. Only names
+ * the attachment server itself can have generated become same-origin image
+ * URLs; malformed and executable-image paths render nothing, while a string
+ * that looks remote can at most resolve to a local generated filename. */
+export function attachmentImageUrl(path: string): string | null {
+  const name = attachmentBasename(path);
+  if (!/^[A-Za-z0-9-]+\.(png|jpg|gif|webp)$/.test(name)) return null;
+  return `/api/attachments/${encodeURIComponent(name)}`;
+}
+
+/** One intake path for files arriving by drop OR by the composer's attach
+ * button, so a picked file and a dropped one can never behave differently.
+ * The image uploader is injected: the caller owns the network, this owns
+ * the ordering and the sentence the user reads when something is refused. */
+export async function intakeFiles<T extends DroppedFile & { type: string }>(
+  _files: readonly T[],
+  _opts: {
+    allowImages: boolean;
+    getPath: (file: T) => string;
+    uploadImage: (file: T) => Promise<Attachment | null>;
+  },
+): Promise<{ attachments: Attachment[]; notice: string | null }> {
+  const files = [..._files];
+  const { allowImages, getPath, uploadImage } = _opts;
+  const attachments: Attachment[] = [];
+  const rejectedNames: string[] = [];
+  const imageErrors: string[] = [];
+  // Finish each selected file in sequence so the chips retain the order in
+  // which the user chose or dropped them.
+  for (const file of files) {
+    if (allowImages && isImageFile(file)) {
+      try {
+        const attachment = await uploadImage(file);
+        if (attachment) attachments.push(attachment);
+      } catch (err) {
+        imageErrors.push(`${file.name}: ${err instanceof Error ? err.message : "upload failed"}`);
+      }
+      continue;
+    }
+    const result = await attachmentsFromDroppedFiles([file], getPath);
+    attachments.push(...result.attachments);
+    rejectedNames.push(...result.rejectedNames);
+  }
+  const pathless = rejectedNames.length
+    ? `${rejectedNames.join(", ")} — that file has no path on disk. Save it first, then attach it from Finder.`
+    : null;
+  const failed = imageErrors.length ? imageErrors.join("; ") : null;
+  return {
+    attachments,
+    notice: pathless && failed ? `${pathless} (${failed})` : (pathless ?? failed),
+  };
 }

@@ -3,21 +3,50 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appendPastedText,
   attachmentBasename,
+  attachmentImageUrl,
   composeMessage,
   isImageFile,
   splitAttachedImages,
   type ImageAttachment,
 } from "./composer-attachments";
 
-const image = (path: string): ImageAttachment => ({
-  kind: "image",
-  id: "i1",
-  path,
-  name: "shot.png",
-  size: 1234,
-  mime: "image/png",
-});
+/** Exercises the spacing and empty-draft cases for pasted text insertion. */
+function appendPastedTextTests() {
+  /** Keeps an existing draft ahead of newly inserted pasted content. */
+  function addsPastedContentAfterDraft() {
+    expect(appendPastedText("Keep this", "Edit this too")).toBe("Keep this\n\nEdit this too");
+  }
+
+  /** Avoids duplicating a separator when the draft already ends with a newline. */
+  function preservesExistingTrailingNewline() {
+    expect(appendPastedText("Keep this\n", "Edit this too")).toBe("Keep this\nEdit this too");
+  }
+
+  /** Inserts pasted content directly when no draft exists yet. */
+  function insertsIntoEmptyDraft() {
+    expect(appendPastedText("", "Edit this too")).toBe("Edit this too");
+  }
+
+  it("adds pasted content after an existing draft", addsPastedContentAfterDraft);
+  it("does not add a second separator when the draft ends with a newline", preservesExistingTrailingNewline);
+  it("uses the pasted content directly for an empty draft", insertsIntoEmptyDraft);
+}
+
+describe("appendPastedText", appendPastedTextTests);
+
+/** Builds a stable image attachment fixture for prompt and preview tests. */
+function image(path: string): ImageAttachment {
+  return {
+    kind: "image",
+    id: "i1",
+    path,
+    name: "shot.png",
+    size: 1234,
+    mime: "image/png",
+  };
+}
 
 describe("composeMessage with images", () => {
   it("emits an attached-image tag carrying the server path", () => {
@@ -64,6 +93,16 @@ describe("attachmentBasename", () => {
     expect(attachmentBasename("/a/b/c.png")).toBe("c.png");
     expect(attachmentBasename("C:\\a\\b\\c.png")).toBe("c.png");
   });
+
+  it("turns only generated image names into same-origin preview URLs", () => {
+    expect(attachmentImageUrl("/a/b/123e4567-e89b-12d3-a456-426614174000.png")).toBe(
+      "/api/attachments/123e4567-e89b-12d3-a456-426614174000.png",
+    );
+    expect(attachmentImageUrl("C:\\a\\b\\photo.webp")).toBe("/api/attachments/photo.webp");
+    expect(attachmentImageUrl("https://attacker.example/tracker.png?cookie=1")).toBeNull();
+    expect(attachmentImageUrl("/a/b/payload.svg")).toBeNull();
+    expect(attachmentImageUrl("/a/b/not%2Fan-image.png")).toBeNull();
+  });
 });
 
 describe("isImageFile", () => {
@@ -75,4 +114,3 @@ describe("isImageFile", () => {
     expect(isImageFile({ type: "text/plain", size: 10 })).toBe(false);
   });
 });
-

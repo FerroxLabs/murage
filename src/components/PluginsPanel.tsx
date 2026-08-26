@@ -3,15 +3,17 @@
 // Composio API key is configured, a curated set otherwise. Icons resolve
 // logo → favicon → monogram.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { Check, Loader2, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
 
 interface ToolkitCard {
   slug: string;
   label: string;
   blurb: string;
   logo: string | null;
+  noAuth?: boolean;
   domain: string | null;
 }
 
@@ -26,12 +28,94 @@ export interface ConnectorStatus {
   }>;
 }
 
+// The panel is a modal and unmounts whenever it closes. Keep the last known
+// account inventory at module scope so reopening never flashes every service
+// as disconnected while a fresh secure status check runs in the background.
+let cachedConnectorStatus: Record<string, ConnectorStatus> | null = null;
+let cachedConnectorStatusAt = 0;
+let cachedConnectorStatusAuthoritative = true;
+let connectorStatusRequest: Promise<ConnectorInventory> | null = null;
+const CONNECTOR_STATUS_CACHE_MS = 30_000;
+
+export interface ConnectorInventory {
+  services: Record<string, ConnectorStatus>;
+  /** false when the server could not read the credential store: the list is
+   * then "we do not know", and nothing may be cleared on the strength of it */
+  authoritative: boolean;
+}
+
+/** Warm the account inventory once the app server is ready. Concurrent panel
+ * opens share the same request, and recent data survives modal unmounts. */
+export function preloadConnectedApps(force = false): Promise<ConnectorInventory> {
+  if (!force && cachedConnectorStatus !== null && Date.now() - cachedConnectorStatusAt < CONNECTOR_STATUS_CACHE_MS) {
+    return Promise.resolve({
+      services: cachedConnectorStatus,
+      authoritative: cachedConnectorStatusAuthoritative,
+    });
+  }
+  if (connectorStatusRequest) return connectorStatusRequest;
+  connectorStatusRequest = api("/api/connectors/connected")
+    .then((response) => {
+      const services: Record<string, ConnectorStatus> = response.services ?? {};
+      // An unreadable credential store tells us nothing about what is
+      // connected. Keep the last inventory we were sure about instead.
+      if (response.credentialStore === "unavailable") {
+        return { services: readCachedInventory()?.services ?? {}, authoritative: false };
+      }
+      cachedConnectorStatus = services;
+      cachedConnectorStatusAt = Date.now();
+      cachedConnectorStatusAuthoritative = true;
+      writeCachedInventory(services, Date.now());
+      return { services, authoritative: true };
+    })
+    .catch(() => ({ services: readCachedInventory()?.services ?? {}, authoritative: false }))
+    .finally(() => {
+      connectorStatusRequest = null;
+    });
+  return connectorStatusRequest;
+}
+
 export function disconnectAccountConfirmation(
   service: string,
   account: { id: string; alias?: string },
 ) {
   const identity = account.alias ? `“${account.alias}” (${account.id})` : `“${account.id}”`;
   return `Disconnect ${identity} from ${service}? Only this ${service} account will be revoked. Your other ${service} accounts will stay connected.`;
+}
+
+export function requiresAccountAlias(message: string) {
+  return /account alias.*existing connection.*not replaced/i.test(message);
+}
+
+export type ConnectorInventoryPhase = "loading" | "ready" | "error";
+
+export function connectorActionLabel(
+  phase: ConnectorInventoryPhase,
+  state: { busy: boolean; included: boolean; canContinue: boolean; hasAccounts: boolean; failed: boolean },
+) {
+  if (state.busy) return null;
+  if (state.included) return "Included";
+  if (phase === "loading") return "Checking…";
+  if (phase === "error") return "Unavailable";
+  if (state.canContinue) return "Continue";
+  if (state.hasAccounts) return "Add account";
+  if (state.failed) return "Retry";
+  return "Connect";
+}
+
+export function connectedInventoryCopy(phase: ConnectorInventoryPhase) {
+  if (phase === "loading") return {
+    title: "Checking connected apps…",
+    description: "Your accounts will appear here as soon as the secure connection check finishes.",
+  };
+  if (phase === "error") return {
+    title: "Couldn’t load connected apps",
+    description: "Retry the connection check before adding another account.",
+  };
+  return {
+    title: "No connected apps yet",
+    description: "Connect an app from Marketplace and it will appear here.",
+  };
 }
 
 export function mergeCurrentConnectorStatus(
@@ -53,8 +137,15 @@ export function mergeCompleteConnectorStatus(
   incoming: Record<string, ConnectorStatus>,
   latestGenerations: ReadonlyMap<string, number>,
   requestGenerations: ReadonlyMap<string, number>,
+  /** Did the server actually KNOW the full picture? A response sent while the
+   * credential store was unreadable carries no information about what is
+   * connected, so it must not be allowed to clear anything — an empty list
+   * from an ignorant server is exactly how a connected app became a Connect
+   * button. Disconnection still shows up on the next authoritative answer. */
+  authoritative = true,
 ) {
   const next = { ...current };
+  if (!authoritative) return mergeCurrentConnectorStatus(next, incoming, latestGenerations, requestGenerations);
   for (const [slug, state] of Object.entries(current)) {
     if (incoming[slug]) continue;
     if (!state.connected && !state.accounts?.length) continue;
@@ -62,6 +153,18 @@ export function mergeCompleteConnectorStatus(
     next[slug] = { connected: false, pending: false, status: "not_connected", accounts: [] };
   }
   return mergeCurrentConnectorStatus(next, incoming, latestGenerations, requestGenerations);
+}
+
+export function onlyLatestConnectorResponses(
+  incoming: Record<string, ConnectorStatus>,
+  latestRequests: ReadonlyMap<string, number>,
+  requestIds: ReadonlyMap<string, number>,
+) {
+  return Object.fromEntries(
+    Object.entries(incoming).filter(
+      ([slug]) => (latestRequests.get(slug) ?? 0) === (requestIds.get(slug) ?? 0),
+    ),
+  );
 }
 
 function ServiceIcon({ card }: { card: ToolkitCard }) {
@@ -94,26 +197,47 @@ export function PluginsPanel() {
   const [source, setSource] = useState<"api" | "curated">("curated");
   const [configured, setConfigured] = useState(true);
   const [mode, setMode] = useState<"managed" | "self-hosted" | "unavailable">("unavailable");
-  const [status, setStatus] = useState<Record<string, ConnectorStatus>>({});
+  // Paint what we last knew before any request goes out: the module cache if
+  // this window already fetched, otherwise the inventory saved on disk. An
+  // empty panel is never the first thing a connected user sees.
+  const [status, setStatus] = useState<Record<string, ConnectorStatus>>(
+    () => cachedConnectorStatus ?? readCachedInventory()?.services ?? {},
+  );
+  /** true when what is on screen is remembered rather than confirmed */
+  const [stale, setStale] = useState(
+    cachedConnectorStatus !== null && !cachedConnectorStatusAuthoritative,
+  );
   const [pendingUrls, setPendingUrls] = useState<Record<string, string>>({});
   const [aliasSlug, setAliasSlug] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [inventoryPhase, setInventoryPhase] = useState<ConnectorInventoryPhase>(
+    cachedConnectorStatus === null ? "loading" : "ready",
+  );
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"marketplace" | "connected">("marketplace");
 
   const pollTimers = useRef(new Map<string, ReturnType<typeof setInterval>>());
   const statusGenerations = useRef(new Map<string, number>());
+  const latestStatusRequests = useRef(new Map<string, number>());
 
   const refreshStatus = useCallback((slugs: string[]): Promise<Record<string, ConnectorStatus>> => {
     if (!slugs.length) return Promise.resolve({});
     const requestGenerations = new Map(slugs.map((slug) => [slug, statusGenerations.current.get(slug) ?? 0]));
-    setRefreshing(true);
+    const requestIds = new Map(slugs.map((slug) => {
+      const requestId = (latestStatusRequests.current.get(slug) ?? 0) + 1;
+      latestStatusRequests.current.set(slug, requestId);
+      return [slug, requestId];
+    }));
     return api(`/api/connectors?services=${slugs.join(",")}`)
       .then((r) => {
-        const services: Record<string, ConnectorStatus> = r.services ?? {};
+        const services = onlyLatestConnectorResponses(
+          r.services ?? {},
+          latestStatusRequests.current,
+          requestIds,
+        );
         // A one-service OAuth poll must not erase every other app's state.
         // A request that began before Connect must also not erase the newer
         // local INITIATED state when its stale not_connected result arrives.
@@ -134,21 +258,21 @@ export function PluginsPanel() {
         }
         return services;
       })
-      .catch(() => ({}))
-      .finally(() => setRefreshing(false));
+      .catch(() => ({}));
   }, []);
 
-  const refreshConnectedStatus = useCallback((): Promise<Record<string, ConnectorStatus>> => {
+  const refreshConnectedStatus = useCallback((force = false): Promise<Record<string, ConnectorStatus>> => {
     const requestGenerations = new Map(statusGenerations.current);
     setRefreshing(true);
-    return api("/api/connectors/connected")
-      .then((r) => {
-        const services: Record<string, ConnectorStatus> = r.services ?? {};
+    return preloadConnectedApps(force)
+      .then(({ services, authoritative }) => {
+        setStale(!authoritative);
         setStatus((current) => mergeCompleteConnectorStatus(
           current,
           services,
           statusGenerations.current,
           requestGenerations,
+          authoritative,
         ));
         for (const [slug, state] of Object.entries(services)) {
           const isCurrent = (statusGenerations.current.get(slug) ?? 0) === (requestGenerations.get(slug) ?? 0);
@@ -161,9 +285,24 @@ export function PluginsPanel() {
         }
         return services;
       })
-      .catch(() => ({}))
       .finally(() => setRefreshing(false));
   }, []);
+
+  const loadConnectionInventory = useCallback((force = false) => {
+    const hadCachedInventory = cachedConnectorStatus !== null;
+    if (!hadCachedInventory) setInventoryPhase("loading");
+    setError(null);
+    return refreshConnectedStatus(force)
+      .then((services) => {
+        setInventoryPhase("ready");
+        return services;
+      })
+      .catch((cause) => {
+        if (!hadCachedInventory) setInventoryPhase("error");
+        setError(cause instanceof Error ? cause.message : String(cause));
+        return {};
+      });
+  }, [refreshConnectedStatus]);
 
   useEffect(() => () => {
     for (const timer of pollTimers.current.values()) clearInterval(timer);
@@ -171,7 +310,15 @@ export function PluginsPanel() {
   }, []);
 
   useEffect(() => {
+    if (inventoryPhase !== "ready") return;
+    cachedConnectorStatus = status;
+    cachedConnectorStatusAt = Date.now();
+    cachedConnectorStatusAuthoritative = !stale;
+  }, [inventoryPhase, stale, status]);
+
+  useEffect(() => {
     let alive = true;
+    void loadConnectionInventory();
     api("/api/connectors/catalog")
       .then((r) => {
         if (!alive) return;
@@ -179,13 +326,15 @@ export function PluginsPanel() {
         setSource(r.source ?? "curated");
         setConfigured(Boolean(r.configured));
         setMode(r.mode ?? "unavailable");
-        if (r.configured) void refreshConnectedStatus();
       })
-      .catch((e) => alive && setError(e.message));
+      .catch((e) => {
+        if (!alive) return;
+        setError(e.message);
+      });
     return () => {
       alive = false;
     };
-  }, [refreshConnectedStatus]);
+  }, [loadConnectionInventory]);
 
   useEffect(() => {
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -284,7 +433,17 @@ export function PluginsPanel() {
       startPolling(slug);
       await openConnectUrl(url);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      if (requiresAccountAlias(message)) {
+        // Recover gracefully if an existing account was discovered after the
+        // button rendered. Show the label field and refresh only this app.
+        setAliasSlug(slug);
+        setAliasDraft("");
+        setError("This app already has an account. Add a label such as work or personal to connect another.");
+        void refreshStatus([slug]);
+      } else {
+        setError(message);
+      }
     } finally {
       setBusySlug(null);
     }
@@ -305,6 +464,7 @@ export function PluginsPanel() {
     tab === "marketplace" || status[card.slug]?.connected || Boolean(status[card.slug]?.accounts?.length)
   );
   const connectedCount = Object.values(status).filter((service) => service.connected || service.accounts?.length).length;
+  const connectedEmptyCopy = connectedInventoryCopy(inventoryPhase);
   const close = () => dispatch({ type: "togglePlugins", open: false });
 
   return (
@@ -327,8 +487,9 @@ export function PluginsPanel() {
           </div>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => refreshConnectedStatus()}
-              className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"
+              onClick={() => void loadConnectionInventory(true)}
+              disabled={refreshing}
+              className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
               title="Refresh connection status"
             >
               <RefreshCw size={17} className={cn(refreshing && "animate-spin")} />
@@ -342,6 +503,18 @@ export function PluginsPanel() {
             </button>
           </div>
         </header>
+
+        {stale && (
+          // Say which of the two things is true. Silence here is what makes a
+          // remembered list indistinguishable from a confirmed one.
+          <div className="mx-6 mb-1 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning sm:mx-8">
+            <TriangleAlert size={14} className="mt-px shrink-0" />
+            <span>
+              Showing what was connected last time — this Mac's credential store could not be opened just now, so these
+              could not be re-checked. Your apps are still connected; restarting OpenMausBot usually clears this.
+            </span>
+          </div>
+        )}
 
         <div className="flex flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
           <div className="flex w-fit rounded-xl bg-raised/70 p-1" role="tablist" aria-label="Connected apps view">
@@ -380,7 +553,10 @@ export function PluginsPanel() {
           </label>
         </div>
 
-        {!configured && (
+        {/* Two notices about the same fact is one too many: the stale banner
+            above already explains this launch, and "configure your own
+            connection service" is advice for someone who never set one up. */}
+        {!configured && !stale && (
           <div className="mx-6 mb-1 rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning sm:mx-8">
             Connected apps are temporarily unavailable. You can retry after restarting, or configure your own connection service.{" "}
             <button
@@ -430,7 +606,8 @@ export function PluginsPanel() {
               // connected with no accounts and nothing in flight = a no-auth
               // toolkit: there is no OAuth to run, so "Connect" would mint a
               // pointless authorize. It ships included.
-              const included = serviceStatus?.connected === true && !accounts.length && !pending && !failed;
+              const included = card.noAuth === true
+                || (serviceStatus?.connected === true && !accounts.length && !pending && !failed);
               const addingAccount = aliasSlug === card.slug;
               const busy = busySlug === card.slug;
               return (
@@ -448,7 +625,7 @@ export function PluginsPanel() {
                     </div>
                     <button
                       type="button"
-                      disabled={!configured || busy || included}
+                      disabled={!configured || inventoryPhase !== "ready" || busy || included}
                       onClick={() => {
                         if (pending && pendingUrls[card.slug]) {
                           setError(null);
@@ -462,16 +639,14 @@ export function PluginsPanel() {
                     >
                       {busy ? (
                         <Loader2 size={13} className="mx-auto animate-spin" />
-                      ) : pending && pendingUrls[card.slug] ? (
-                        "Continue"
-                      ) : accounts.length ? (
-                        "Add account"
-                      ) : included ? (
-                        "Included"
-                      ) : failed ? (
-                        "Retry"
                       ) : (
-                        "Connect"
+                        connectorActionLabel(inventoryPhase, {
+                          busy,
+                          included,
+                          canContinue: Boolean(pending && pendingUrls[card.slug]),
+                          hasAccounts: accounts.length > 0,
+                          failed: Boolean(failed),
+                        })
                       )}
                     </button>
                   </div>
@@ -547,11 +722,22 @@ export function PluginsPanel() {
           {cards !== null && visible.length === 0 && (
             <div className="flex min-h-56 flex-col items-center justify-center text-center">
               <div className="text-[14px] font-medium text-ink">
-                {tab === "connected" ? "No connected apps yet" : "No apps found"}
+                {tab === "connected" ? connectedEmptyCopy.title : "No apps found"}
               </div>
               <div className="mt-1 text-[12.5px] text-ink-secondary">
-                {tab === "connected" ? "Connect an app from Marketplace and it will appear here." : "Try a different search."}
+                {tab === "connected" ? connectedEmptyCopy.description : "Try a different search."}
               </div>
+              {tab === "connected" && inventoryPhase === "error" && (
+                <button
+                  type="button"
+                  disabled={refreshing}
+                  onClick={() => void loadConnectionInventory(true)}
+                  className="mt-4 flex items-center gap-1.5 rounded-lg bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-50"
+                >
+                  <RefreshCw size={13} className={cn(refreshing && "animate-spin")} />
+                  Retry
+                </button>
+              )}
             </div>
           )}
         </div>

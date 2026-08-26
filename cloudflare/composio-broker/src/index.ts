@@ -66,7 +66,7 @@ const connectedAccountsPageSchema = z.object({
 const toolkitItemSchema = z.object({
   slug: z.string().optional(),
   is_no_auth: z.boolean().optional(),
-  connected_account: z.object({ id: z.string().optional(), status: z.string().optional() }).optional(),
+  connected_account: z.object({ id: z.string().optional(), status: z.string().optional() }).nullable().optional(),
 });
 type ToolkitItem = z.infer<typeof toolkitItemSchema>;
 const toolkitPageSchema = z.object({
@@ -335,7 +335,9 @@ async function listSessionToolkits(
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; page < MAX_CONNECTED_ACCOUNT_PAGES; page += 1) {
-    const params = new URLSearchParams({ limit: "50" });
+    // Avoid walking the full marketplace just to render the Connected tab.
+    // Composio supports a server-side connected-only filter on this route.
+    const params = new URLSearchParams({ limit: "50", is_connected: "true" });
     if (cursor) params.set("cursor", cursor);
     const response = await composioRequest(
       env,
@@ -550,6 +552,10 @@ async function requestAlias(request: Request) {
     if (new TextEncoder().encode(raw).byteLength > 2048) {
       throw new Response(JSON.stringify({ error: "request body is too large" }), { status: 413, headers: JSON_HEADERS });
     }
+    // Some Fetch implementations expose a zero-length POST as a non-null
+    // ReadableStream. First-account authorization intentionally has no alias,
+    // so accept that wire representation exactly like a missing body.
+    if (!raw.trim()) return undefined;
     body = aliasRequestSchema.parse(JSON.parse(raw));
   } catch (error) {
     if (error instanceof Response) throw error;
@@ -605,5 +611,6 @@ export {
   ensureSession,
   normalizeAccountAlias,
   parseSession,
+  requestAlias,
   sha256,
 };

@@ -1,13 +1,21 @@
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
-import { api, useStore, type Bot } from "@/state/store";
+import type { Routine } from "@/lib/routines";
+import { api, useStore, type Bot, type Group } from "@/state/store";
 import {
   ArrowLeft,
+  BookOpen,
+  CalendarClock,
   Check,
+  Compass,
+  Crown,
   ExternalLink,
+  FolderOpen,
   Github,
   Loader2,
+  MessageSquare,
+  Plug,
   Search,
   UploadCloud,
   Users,
@@ -24,6 +32,10 @@ interface TeamCatalogEntry {
   name: string;
   summary: string;
   category: string;
+  outcome?: string;
+  setupMinutes?: number;
+  featured?: boolean;
+  package?: string;
   manifest: string;
   readme: string;
   members: number;
@@ -45,12 +57,40 @@ export interface TeamImportResult {
   name: string;
   members: number;
   importedBotIds: string[];
+  importedGroupIds: string[];
+  importedRoutineIds: string[];
   archived: ArchivedTeamBot[];
 }
 
 type ImportSource = "library" | "file" | "github";
-type TeamTab = "explore" | "import";
+type TeamTab = "explore" | "import" | "scout";
 type ImportMode = "replace" | "add";
+
+/** the scout endpoint's answer, as far as this panel renders it — the
+ * manifest itself stays opaque and goes back to the server verbatim */
+interface ScoutResult {
+  profile: { name: string; summary: string; stacks: string[] };
+  suggestion: {
+    roomName: string;
+    manifest: {
+      team: { members: Array<{ key: string; name: string; title: string; description: string; appearance: { color: string } }> };
+    };
+    reasons: Record<string, string>;
+  };
+}
+
+interface DirectoryCandidate {
+  slug: string;
+  name: string;
+  category: string;
+  integrations: string[];
+  prompt: string;
+  detailUrl: string;
+  matched: string[];
+}
+
+/** appearance colors for community bots folded into a scouted team */
+const DIRECTORY_COLORS = ["cyan", "red", "purple", "green", "orange"] as const;
 
 const TEAM_GLYPHS = [
   "bg-purple-500/15 text-purple-300",
@@ -80,10 +120,12 @@ export function TeamLibraryPanel({
   onClose,
   onImported,
   returnFocusRef,
+  initialUrl,
 }: {
   onClose: () => void;
   onImported: (result: TeamImportResult) => void;
   returnFocusRef: React.RefObject<HTMLButtonElement | null>;
+  initialUrl?: string;
 }) {
   const { state, dispatch } = useStore();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -102,6 +144,21 @@ export function TeamLibraryPanel({
   const [importMode, setImportMode] = useState<ImportMode>("replace");
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
+  const [scoutFolder, setScoutFolder] = useState("");
+  const [scouting, setScouting] = useState(false);
+  const [scouted, setScouted] = useState<ScoutResult | null>(null);
+  // the folder the current `scouted` result was actually read from — the
+  // import must pin the room to THIS, not to whatever the input says now
+  const [scoutedFolder, setScoutedFolder] = useState("");
+  // null = not asked yet or still loading; [] = asked, nothing (or offline)
+  const [directory, setDirectory] = useState<DirectoryCandidate[] | null>(null);
+  const [pickedDirectory, setPickedDirectory] = useState<Set<string>>(new Set());
+  const [roomName, setRoomName] = useState("");
+  const [creating, setCreating] = useState(false);
+  // monotonically increasing scout token: a late response from an older
+  // scout (including its lazy directory call) must never overwrite state
+  // that belongs to a newer one
+  const scoutRequest = useRef(0);
 
   const currentBotCount = state.bots.filter((bot) => !bot.hidden).length;
 
@@ -167,12 +224,15 @@ export function TeamLibraryPanel({
 
   const readFile = async (file: File) => {
     if (file.size > MAX_TEAM_FILE_BYTES) throw new Error("That team file is too large.");
-    let manifest: unknown;
-    try {
-      manifest = JSON.parse(await file.text());
-    } catch (cause) {
-      if (cause instanceof SyntaxError) throw new Error("That team file is not valid JSON.");
-      throw cause;
+    const raw = await file.text();
+    let manifest: unknown = raw;
+    if (!file.name.toLowerCase().endsWith(".md")) {
+      try {
+        manifest = JSON.parse(raw);
+      } catch (cause) {
+        if (cause instanceof SyntaxError) throw new Error("That legacy team file is not valid JSON.");
+        throw cause;
+      }
     }
     previewManifest(teamImportPreview(manifest), "file");
   };
@@ -190,13 +250,17 @@ export function TeamLibraryPanel({
   };
 
   const loadGithubTeam = async () => {
-    if (!githubUrl.trim()) return;
+    await loadGithubUrl(githubUrl);
+  };
+
+  const loadGithubUrl = async (requestedUrl: string) => {
+    if (!requestedUrl.trim()) return;
     setGithubLoading(true);
     setError("");
     try {
       const manifest = await api("/api/team-library/github", {
         method: "POST",
-        body: JSON.stringify({ url: githubUrl.trim() }),
+        body: JSON.stringify({ url: requestedUrl.trim() }),
       });
       previewManifest(teamImportPreview(manifest), "github");
     } catch (cause) {
@@ -205,6 +269,16 @@ export function TeamLibraryPanel({
       setGithubLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!initialUrl) return;
+    setTab("import");
+    setGithubUrl(initialUrl);
+    void loadGithubUrl(initialUrl);
+    // A deep link is immutable for this panel instance; reloading it on
+    // every callback identity change would duplicate the preview request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialUrl]);
 
   const importTeam = async () => {
     if (!pending) return;
@@ -215,9 +289,17 @@ export function TeamLibraryPanel({
       const response = (await api(`/api/teams/import?mode=${importMode}`, {
         method: "POST",
         body: JSON.stringify(pending.manifest),
-      })) as { bots: Bot[]; archivedBots?: Bot[]; archived?: ArchivedTeamBot[] };
+      })) as {
+        bots: Bot[];
+        groups?: Group[];
+        routines?: Routine[];
+        archivedBots?: Bot[];
+        archived?: ArchivedTeamBot[];
+      };
       for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", bot });
       for (const bot of response.bots) dispatch({ type: "botAdded", bot });
+      for (const group of response.groups ?? []) dispatch({ type: "groupPatched", group });
+      for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
       const first = response.bots[0];
       if (first) dispatch({ type: "select", id: first.id });
       track("team_imported", { members: response.bots.length, source, mode: importMode });
@@ -225,12 +307,108 @@ export function TeamLibraryPanel({
         name: pending.name,
         members: response.bots.length,
         importedBotIds: response.bots.map((bot) => bot.id),
+        importedGroupIds: (response.groups ?? []).map((group) => group.id),
+        importedRoutineIds: (response.routines ?? []).map((routine) => routine.id),
         archived: response.archived ?? [],
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setImporting(false);
+    }
+  };
+
+  const scoutTarget = scoutFolder.trim();
+
+  const runScout = async (folder: string) => {
+    const request = ++scoutRequest.current;
+    setScouting(true);
+    setError("");
+    setScouted(null);
+    setDirectory(null);
+    setPickedDirectory(new Set());
+    try {
+      // SAFETY: this endpoint is owned by the app and returns ScoutResult.
+      const result = (await api(`/api/teams/scout?cwd=${encodeURIComponent(folder)}`)) as ScoutResult;
+      if (request !== scoutRequest.current) return;
+      setScouted(result);
+      setScoutedFolder(folder);
+      setRoomName(result.suggestion.roomName);
+      track("team_scouted", { signals: result.suggestion.manifest.team.members.length - 1 });
+      // community candidates arrive lazily; an unreachable directory just
+      // leaves this section empty
+      void api(`/api/teams/scout/directory?cwd=${encodeURIComponent(folder)}`)
+        // SAFETY: this endpoint is owned by the app and returns candidates.
+        .then((extra) => {
+          if (request === scoutRequest.current) setDirectory((extra as { directory: DirectoryCandidate[] }).directory);
+        })
+        .catch(() => {
+          if (request === scoutRequest.current) setDirectory([]);
+        });
+    } catch (cause) {
+      if (request !== scoutRequest.current) return;
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (request === scoutRequest.current) setScouting(false);
+    }
+  };
+
+  const pickScoutFolder = async () => {
+    const chosen = await window.ogb?.pickFolder?.(scoutTarget || undefined);
+    if (!chosen) return;
+    setScoutFolder(chosen);
+    await runScout(chosen);
+  };
+
+  const createProject = async () => {
+    if (!scouted || creating) return;
+    setCreating(true);
+    setError("");
+    try {
+      // the confirmed suggestion, plus any community bots the user ticked —
+      // folded in as ordinary manifest members so the import boundary
+      // (persona only, no grants) applies to them like to everything else
+      const extras = (directory ?? [])
+        .filter((candidate) => pickedDirectory.has(candidate.slug))
+        .map((candidate, index) => ({
+          key: `dir-${candidate.slug}`,
+          name: candidate.name,
+          title: candidate.category || "Community bot",
+          description: candidate.prompt,
+          appearance: { color: DIRECTORY_COLORS[index % DIRECTORY_COLORS.length] },
+        }));
+      const manifest = {
+        ...scouted.suggestion.manifest,
+        team: {
+          ...scouted.suggestion.manifest.team,
+          members: [...scouted.suggestion.manifest.team.members, ...extras],
+        },
+      };
+      const room = roomName.trim() || scouted.suggestion.roomName;
+      // SAFETY: this endpoint is owned by the app and returns imported bots.
+      const response = (await api(
+        `/api/teams/import?mode=project&cwd=${encodeURIComponent(scoutedFolder)}&room=${encodeURIComponent(room)}`,
+        { method: "POST", body: JSON.stringify(manifest) },
+      )) as { bots: Bot[]; group?: Group };
+      for (const bot of response.bots) dispatch({ type: "botAdded", bot });
+      if (response.group) {
+        // upsert now instead of waiting for the SSE frame, then land in the room
+        dispatch({ type: "groupPatched", group: { ...response.group, messages: [] } });
+        dispatch({ type: "select", id: response.group.id });
+      }
+      track("team_imported", { members: response.bots.length, source: "scout", mode: "project" });
+      onImported({
+        name: room,
+        members: response.bots.length,
+        importedBotIds: response.bots.map((bot) => bot.id),
+        importedGroupIds: response.group ? [response.group.id] : [],
+        importedRoutineIds: [],
+        archived: [],
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -276,7 +454,11 @@ export function TeamLibraryPanel({
               </h2>
             </div>
             <p className={cn("mt-1 text-[13px] text-ink-secondary", pending && "ml-9")}>
-              {pending ? `${pending.members.length} ready-to-load bots` : "Start with a complete team or bring your own."}
+                {pending
+                  ? pending.kind === "package"
+                    ? `${pending.members.length} bots · portable Markdown playbook`
+                    : `${pending.members.length} ready-to-load bots`
+                  : "Start with a complete playbook or bring your own."}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -308,6 +490,15 @@ export function TeamLibraryPanel({
               {pending.description && (
                 <p className="max-w-2xl text-[13.5px] leading-relaxed text-ink-secondary">{pending.description}</p>
               )}
+              {pending.kind === "package" && (
+                <div className="mt-5 flex flex-wrap gap-2 text-[11.5px] text-ink-secondary">
+                  {pending.chiefOfStaff && <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Crown size={13} />{pending.chiefOfStaff} leads</span>}
+                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><MessageSquare size={13} />{pending.rooms} {pending.rooms === 1 ? "room" : "rooms"}</span>
+                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><BookOpen size={13} />{pending.playbooks} playbooks</span>
+                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><CalendarClock size={13} />{pending.routines} paused routines</span>
+                  <span className="flex items-center gap-1.5 rounded-full bg-raised px-3 py-1.5"><Plug size={13} />{pending.apps.length} connections</span>
+                </div>
+              )}
               <div className="mt-6 text-[12px] font-medium text-ink-secondary">Team members</div>
               <div className="mt-2 grid grid-cols-1 gap-x-10 md:grid-cols-2">
                 {pending.members.map((member, index) => (
@@ -325,8 +516,9 @@ export function TeamLibraryPanel({
               <div className="mt-6 flex items-start gap-2.5 rounded-xl bg-raised/45 px-4 py-3 text-[12.5px] leading-relaxed text-ink-secondary">
                 <Check size={15} className="mt-0.5 shrink-0 text-success" />
                 <p>
-                  Only roles and appearance are loaded. Your conversations, account connections, permissions, and computer access stay private.
-                  {source === "library" && " Playbooks remain available in the community repo for review."}
+                  {pending.kind === "package"
+                    ? "Bots, Chief of Staff, rooms, and reviewed playbooks are loaded. Suggested routines arrive paused, and connected apps stay off until you approve them. Conversations, credentials, permissions, and computer access stay private."
+                    : "Only roles and appearance are loaded. Your conversations, account connections, permissions, and computer access stay private."}
                 </p>
               </div>
               {error && <div role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
@@ -347,7 +539,7 @@ export function TeamLibraryPanel({
                     </>
                   )
                 ) : (
-                  "No room is created—you can make one later if you want."
+                  pending.kind === "package" ? "Review the complete setup, then activate the playbook." : "No channel is created—you can make one later if you want."
                 )}
               </div>
               <button
@@ -358,7 +550,9 @@ export function TeamLibraryPanel({
                 {importing && <Loader2 size={15} className="animate-spin" />}
                 {importing
                   ? "Loading…"
-                  : currentBotCount === 0
+                  : pending.kind === "package" && currentBotCount === 0
+                    ? "Activate playbook"
+                    : currentBotCount === 0
                     ? "Load team"
                     : importMode === "replace"
                       ? "Replace team"
@@ -397,6 +591,20 @@ export function TeamLibraryPanel({
                   )}
                 >
                   Import
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={tab === "scout"}
+                  onClick={() => {
+                    setTab("scout");
+                    setError("");
+                  }}
+                  className={cn(
+                    "rounded-lg px-4 py-2 text-[13.5px] transition-colors",
+                    tab === "scout" ? "bg-card text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
+                  )}
+                >
+                  From a folder
                 </button>
               </div>
               {tab === "explore" && (
@@ -437,8 +645,12 @@ export function TeamLibraryPanel({
                           <TeamGlyph index={index} />
                           <div className="min-w-0 flex-1">
                             <h3 className="truncate text-[14px] font-medium text-ink">{entry.name}</h3>
-                            <p className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{entry.summary}</p>
-                            <p className="mt-1 text-[11.5px] text-ink-secondary/80">{entry.members} bots · {entry.skills.length} playbooks</p>
+                            <p className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{entry.outcome ?? entry.summary}</p>
+                            <p className="mt-1 truncate text-[11.5px] text-ink-secondary/80">
+                              {entry.members} bots · {entry.skills.length} playbooks
+                              {entry.requires.apps.length > 0 && ` · ${entry.requires.apps.join(", ")}`}
+                              {entry.setupMinutes && ` · ~${entry.setupMinutes} min`}
+                            </p>
                           </div>
                           <button
                             onClick={() => void loadLibraryTeam(entry)}
@@ -466,7 +678,7 @@ export function TeamLibraryPanel({
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".json,.mausteam.json,application/json"
+                    accept=".md,.json,.mausteam.json,text/markdown,application/json"
                     className="hidden"
                     onChange={(event) => {
                       const file = event.currentTarget.files?.[0];
@@ -498,7 +710,7 @@ export function TeamLibraryPanel({
                     >
                       <UploadCloud size={27} className="text-accent" />
                       <span className="mt-3 text-[14px] font-medium text-ink">Choose a team file</span>
-                      <span className="mt-1 text-[12.5px] text-ink-secondary">or drop a .mausteam.json here</span>
+                      <span className="mt-1 text-[12.5px] text-ink-secondary">or drop a BotMRR .md / legacy .mausteam.json here</span>
                     </button>
 
                     <div className="flex min-h-56 flex-col justify-center rounded-2xl bg-raised/25 px-6">
@@ -525,6 +737,148 @@ export function TeamLibraryPanel({
                       </div>
                     </div>
                   </div>
+                  {error && <div role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
+                </div>
+              )}
+
+              {tab === "scout" && (
+                <div>
+                  <div className="mb-3 text-[12px] font-medium text-ink-secondary">Start from a project folder</div>
+                  <p className="max-w-2xl text-[12.5px] leading-relaxed text-ink-secondary">
+                    Point the scout at a folder. It reads what&apos;s in there — README, dependencies, layout — and
+                    suggests a team for it. Nothing is created until you say so.
+                  </p>
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <input
+                      value={scoutFolder}
+                      onChange={(event) => setScoutFolder(event.target.value)}
+                      onKeyDown={(event) => event.key === "Enter" && scoutTarget && void runScout(scoutTarget)}
+                      placeholder="/path/to/your/project"
+                      aria-label="Project folder to scout"
+                      className="min-w-0 flex-1 rounded-xl bg-raised/80 px-3 py-2.5 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
+                    />
+                    {Boolean(window.ogb?.pickFolder) && (
+                      <button
+                        onClick={() => void pickScoutFolder()}
+                        disabled={scouting}
+                        className="flex items-center justify-center gap-1.5 rounded-full bg-raised px-4 py-2.5 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-40"
+                      >
+                        <FolderOpen size={14} />
+                        Browse
+                      </button>
+                    )}
+                    <button
+                      onClick={() => void runScout(scoutTarget)}
+                      disabled={!scoutTarget || scouting}
+                      className="flex items-center justify-center gap-1.5 rounded-full bg-accent px-4 py-2.5 text-[13px] font-medium text-white hover:bg-accent/90 disabled:opacity-40"
+                    >
+                      {scouting ? <Loader2 size={14} className="animate-spin" /> : <Compass size={14} />}
+                      {scouting ? "Scouting…" : "Scout"}
+                    </button>
+                  </div>
+
+                  {scouted && (
+                    <div className="mt-6">
+                      <div className="rounded-2xl bg-raised/25 px-5 py-4">
+                        <div className="text-[15px] font-semibold text-ink">{scouted.profile.name}</div>
+                        {scouted.profile.summary && (
+                          <p className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">{scouted.profile.summary}</p>
+                        )}
+                        {scouted.profile.stacks.length > 0 && (
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
+                            {scouted.profile.stacks.map((stack) => (
+                              <span key={stack} className="rounded-full bg-raised px-2.5 py-1 text-[11.5px] text-ink-secondary">
+                                {stack}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-5 text-[12px] font-medium text-ink-secondary">Suggested team</div>
+                      <div className="mt-1 grid grid-cols-1 gap-x-10 md:grid-cols-2">
+                        {scouted.suggestion.manifest.team.members.map((member, index) => (
+                          <div key={member.key} className="flex min-h-[64px] items-center gap-3 border-b border-hairline/35 px-1 py-3">
+                            <div className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg text-[13px] font-semibold", TEAM_GLYPHS[index % TEAM_GLYPHS.length])}>
+                              {member.name.slice(0, 1).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="truncate text-[14px] font-medium text-ink">
+                                {member.name} <span className="font-normal text-ink-secondary">· {member.title}</span>
+                              </div>
+                              <div className="mt-0.5 truncate text-[12px] text-ink-secondary">
+                                {scouted.suggestion.reasons[member.key] ?? ""}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {directory && directory.length > 0 && (
+                        <>
+                          <div className="mt-5 text-[12px] font-medium text-ink-secondary">From the community directory — tick to add</div>
+                          <div className="mt-1 flex flex-col">
+                            {directory.map((candidate) => (
+                              <div key={candidate.slug} className="flex items-center gap-3 border-b border-hairline/35 px-1 py-3">
+                                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={pickedDirectory.has(candidate.slug)}
+                                    onChange={() =>
+                                      setPickedDirectory((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(candidate.slug)) next.delete(candidate.slug);
+                                        else next.add(candidate.slug);
+                                        return next;
+                                      })
+                                    }
+                                    className="size-4 accent-accent"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate text-[13.5px] font-medium text-ink">
+                                      {candidate.name}
+                                      {candidate.category && <span className="font-normal text-ink-secondary"> · {candidate.category}</span>}
+                                    </div>
+                                    <div className="mt-0.5 truncate text-[12px] text-ink-secondary">
+                                      Matches {candidate.matched.join(", ")}
+                                    </div>
+                                  </div>
+                                </label>
+                                <button
+                                  onClick={() => void openExternal(candidate.detailUrl)}
+                                  aria-label={`Open ${candidate.name} on botdirectory.ai`}
+                                  title="Read this bot's page before adding it"
+                                  className="rounded-lg p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+                                >
+                                  <ExternalLink size={14} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+
+                      <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+                        <input
+                          value={roomName}
+                          onChange={(event) => setRoomName(event.target.value)}
+                          aria-label="Project channel name"
+                          className="min-w-0 flex-1 rounded-xl bg-raised/80 px-3 py-2.5 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
+                        />
+                        <button
+                          onClick={() => void createProject()}
+                          disabled={creating}
+                          className="flex shrink-0 items-center justify-center gap-2 rounded-full bg-accent px-5 py-2.5 text-[13.5px] font-medium text-white hover:bg-accent/90 disabled:opacity-60"
+                        >
+                          {creating && <Loader2 size={15} className="animate-spin" />}
+                          {creating ? "Creating…" : "Create project channel"}
+                        </button>
+                      </div>
+                      <p className="mt-2 text-[12px] text-ink-secondary">
+                        Creates the team as new bots, opens a channel for them, and points the channel at this folder.
+                      </p>
+                    </div>
+                  )}
                   {error && <div role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
                 </div>
               )}

@@ -16,7 +16,16 @@
 import { homedir } from "node:os";
 
 import { PROVIDER_CREDENTIAL_ENV, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
+import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
+
+/**
+ * A `host::model` pick talks to a loopback server with its own key.
+ * Subscription ACP login (grok.com cached_token) must not fail that turn.
+ */
+export function skipSubscriptionAuthForLocalInject(model: string | undefined): boolean {
+  return Boolean(decodeInjectId(model));
+}
 
 import type {
   DriverCreateInput,
@@ -107,6 +116,9 @@ export interface AcpSupport {
   /** snapshot(): can this harness actually run a turn? (env already carries the
    *  merged config). May be async for harnesses that have to ask the CLI. */
   isAuthenticated(env: Record<string, string | undefined>, config: AcpConfig): boolean | Promise<boolean>;
+  /** Refuse a first-party cloud turn before spawning when snapshot auth is
+   * false. Local injected models deliberately bypass this subscription gate. */
+  requireAuthenticationBeforeSpawn?: boolean;
   /** Classify provider-native failures without coupling the core to messages. */
   classifyError?(error: unknown): ProviderErrorCode | undefined;
   /** Compose the session/prompt text. Default prepends the persona. */
@@ -127,6 +139,12 @@ export interface AcpSupport {
     sessionId: string;
     config: AcpConfig;
     turn: SendTurnInput;
+    /** `session/new` (or `session/load`) advertised model list, verbatim. Some
+     * CLIs namespace their ACP model ids differently from their argv `--model`
+     * slugs (Cursor answers `default[]` where the CLI calls it `auto`), so a
+     * driver that only knows the argv slug cannot form a valid set_model
+     * without this. Empty when the agent advertised none. */
+    sessionModels: Array<{ modelId?: string; name?: string }>;
   }): Promise<void>;
 }
 
@@ -146,6 +164,10 @@ function decodeAcpConfig(defaultCli: string) {
   };
 }
 
+/**
+ * ACP JSON-RPC-over-stdio driver. Harness differences (argv, auth, catalog)
+ * live in `support`; this is the shared handshake and turn runtime.
+ */
 export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> {
   const DRIVER_KIND = support.driverKind;
   const SOURCE = support.nativeSource;
@@ -270,6 +292,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const turnId = newId();
         const cwd = turn.cwd ?? config.workspace ?? homedir();
         const env = childEnv();
+        if (
+          support.requireAuthenticationBeforeSpawn
+          && !skipSubscriptionAuthForLocalInject(turn.model)
+          && !(await support.isAuthenticated(env, config))
+        ) {
+          emit({ ...base(threadId, turnId), type: "turn.started" });
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: support.loginNote, setup: true });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "auth_required", cost: null });
+          return { turnId };
+        }
         const resolvedModel = support.resolveTurnModel?.(turn.model, env);
         support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model });
         const cliTurn =
@@ -317,6 +349,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
         const stop = () => killCliTree(child);
 
+        /** Emit buffered assistant text as its own item, then clear it. */
+        const flushAssistantText = () => {
+          const text = state.text;
+          state.text = "";
+          if (!text.trim()) return;
+          emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
+        };
+
         const settle = (ok: boolean, stopReason: string | null) => {
           if (state.settled) return;
           state.settled = true;
@@ -328,9 +368,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           rpcPending.clear();
           active.delete(threadId);
-          if (state.text.trim()) {
-            emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: state.text });
-          }
+          flushAssistantText();
           emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null });
           stop(); // the agent process does not exit on its own
         };
@@ -342,6 +380,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             return send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
           }
           const params = msg.params ?? {};
+          flushAssistantText();
           const options: Array<{ optionId?: string; kind?: string }> = Array.isArray(params.options) ? params.options : [];
           const optionFor = (want: "allow" | "reject") =>
             options.find((o) => String(o.kind ?? "").startsWith(want) && typeof o.optionId === "string")?.optionId ?? null;
@@ -428,6 +467,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               break;
             }
             case "tool_call": {
+              flushAssistantText();
               emit({
                 ...base(threadId, turnId),
                 type: "item.started",
@@ -530,15 +570,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             );
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
             const methodId = support.pickAuthMethod(methods);
-            if (methodId) {
-              try {
-                await request("authenticate", { methodId }, INIT_TIMEOUT);
-              } catch {
-                if (support.authFailure === "fail") throw new Error(support.loginNote);
-                // else: proceed on an ambient login
+            if (!skipSubscriptionAuthForLocalInject(turn.model)) {
+              if (methodId) {
+                try {
+                  await request("authenticate", { methodId }, INIT_TIMEOUT);
+                } catch {
+                  if (support.authFailure === "fail") throw new Error(support.loginNote);
+                  // else: proceed on an ambient login
+                }
+              } else if (support.authFailure === "fail") {
+                throw new Error(support.loginNote);
               }
-            } else if (support.authFailure === "fail") {
-              throw new Error(support.loginNote);
             }
 
             const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
@@ -605,6 +647,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   sessionId,
                   config,
                   turn: cliTurn,
+                  sessionModels: Array.isArray(sessionResult?.models?.availableModels)
+                    ? sessionResult.models.availableModels
+                    : [],
                 });
                 // initialize's currentModelId is the CLI default (grok-4.6),
                 // not the model this turn asked for. After a successful pin,

@@ -13,6 +13,7 @@ import {
   parseConfigPatch,
   parseStoredConfig,
   roomTurnTimeoutMinutes,
+  skillRecorderEnabled,
   stripWorkspaceCredentialEnv,
   syncCredentialEnv,
   vpsSshAlias,
@@ -79,6 +80,17 @@ describe("configuration boundaries", () => {
     expect(localVmMaxInstances({ localVm: { maxInstances: 3 } })).toBe(3);
   });
 
+  it("keeps experimental features off by default and accepts an explicit opt-in", () => {
+    expect(skillRecorderEnabled({})).toBe(false);
+    expect(parseConfigPatch({ features: { skillRecorder: true } })).toEqual({
+      features: { skillRecorder: true },
+    });
+    expect(skillRecorderEnabled({ features: { skillRecorder: true } })).toBe(true);
+    expect(() => parseConfigPatch({ features: { skillRecorder: "yes" } })).toThrow(
+      "features.skillRecorder",
+    );
+  });
+
   it.each([0, 1.5, 5, "2", null])("rejects an invalid per-bot VM limit: %j", (maxInstances) => {
     expect(() => parseConfigPatch({ localVm: { maxInstances } })).toThrow("localVm.maxInstances");
   });
@@ -100,12 +112,58 @@ describe("default fleet", () => {
     expect(map.cursor).toEqual({ driver: "cursorAgent", environment: {} });
   });
 
+  it("carries the saved OpenAI-compatible URL into the live default instance", () => {
+    const map = instanceConfigs({
+      openaiCompat: { key: "secret", url: "https://models.example.test/v1" },
+    });
+    expect(map.openaiCompat.config).toEqual({ url: "https://models.example.test/v1" });
+    expect(map.openaiCompat.environment).toEqual({
+      OPENAI_COMPAT_API_KEY: "secret",
+      OPENAI_COMPAT_URL: "https://models.example.test/v1",
+    });
+  });
+
+  it("preserves a per-instance OpenAI-compatible URL override", () => {
+    const map = instanceConfigs({
+      openaiCompat: { url: "https://workspace.example.test/v1" },
+      instances: {
+        custom: {
+          driver: "openai-compat",
+          config: { url: "https://instance.example.test/v1", apiKeyEnv: "CUSTOM_KEY" },
+        },
+      },
+    });
+    expect(map.custom.config).toEqual({
+      url: "https://instance.example.test/v1",
+      apiKeyEnv: "CUSTOM_KEY",
+    });
+  });
+
+  it("does not retain an injected OpenAI-compatible URL across config refreshes", () => {
+    const config: AppConfig = {
+      openaiCompat: { url: "https://first.example.test/v1" },
+      instances: {
+        custom: { driver: "openai-compat" },
+      },
+    };
+
+    expect(instanceConfigs(config).custom.config).toEqual({
+      url: "https://first.example.test/v1",
+    });
+    config.openaiCompat = { url: "https://second.example.test/v1" };
+    expect(instanceConfigs(config).custom.config).toEqual({
+      url: "https://second.example.test/v1",
+    });
+    expect(config.instances?.custom.config).toBeUndefined();
+  });
+
   it("adds missing custom-only engines onto an existing product fleet", () => {
     const map = instanceConfigs({ instances: { claude: { driver: "claudeAgent" } } });
     expect(map.claude.driver).toBe("claudeAgent");
     expect(map.qwen?.driver).toBe("qwenAgent");
     expect(map.hermes?.driver).toBe("hermesAgent");
     expect(map.cursor?.driver).toBe("cursorAgent");
+    expect(map.openaiCompat?.driver).toBe("openai-compat");
   });
 
   it("does not expand a one-off shadow fleet", () => {
@@ -233,7 +291,16 @@ describe("credential env narrowing", () => {
 });
 
 describe("credential env preference", () => {
-  const VARS = ["XAI_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "OMB_TTS_KEY", "OMB_OPENAI_IMAGE_KEY", "COMPOSIO_API_KEY"] as const;
+  const VARS = [
+    "XAI_API_KEY",
+    "OPENAI_COMPAT_API_KEY",
+    "OPENAI_COMPAT_URL",
+    "BOX_TOKEN",
+    "OPENCODE_API_KEY",
+    "OMB_TTS_KEY",
+    "OMB_OPENAI_IMAGE_KEY",
+    "COMPOSIO_API_KEY",
+  ] as const;
   let saved: Record<string, string | undefined>;
 
   beforeEach(() => {

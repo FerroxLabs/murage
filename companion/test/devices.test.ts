@@ -43,6 +43,17 @@ describe("DeviceRegistry", () => {
     expect(registry.list()[0]).not.toHaveProperty("tokenHash");
   });
 
+  it("closes only the pairing window named by an expected token", () => {
+    const registry = new DeviceRegistry();
+    const first = registry.openPairing();
+    const second = registry.openPairing();
+
+    expect(registry.closePairing(first.token)).toBe(false);
+    expect(registry.pairing()?.token).toBe(second.token);
+    expect(registry.closePairing(second.token)).toBe(true);
+    expect(registry.pairing()).toBeNull();
+  });
+
   it("survives a restart", () => {
     const { token } = pair(new DeviceRegistry());
     expect(new DeviceRegistry().authenticate(token)).not.toBeNull();
@@ -126,6 +137,70 @@ describe("DeviceRegistry", () => {
     expect(registry.redeem(code, "iPhone")).toHaveProperty("token");
     expect(registry.redeem(code, "iPad")).toMatchObject({ error: expect.stringContaining("no pairing") });
     expect(registry.count()).toBe(1);
+  });
+
+  it("points an out-of-window pairing attempt to Phone settings", () => {
+    expect(new DeviceRegistry().redeem("000000", "iPhone")).toEqual({
+      error: "no pairing is in progress — open Phone settings on your computer",
+    });
+  });
+
+  it("replays one logical redemption without creating an orphan device", () => {
+    const registry = new DeviceRegistry();
+    const { token: credential } = registry.openPairing();
+    const requestId = "4c825d5b-cf40-4db7-aac5-2455f805a8ec";
+
+    const first = registry.redeem(credential, "iPhone", requestId);
+    const replay = registry.redeem(credential, "iPhone", requestId);
+
+    expect(first).toHaveProperty("token");
+    expect(replay).toEqual(first);
+    expect(registry.count()).toBe(1);
+    // Possessing only one half of the replay key is not enough.
+    expect(registry.redeem(credential, "iPhone", "different-request-id")).toMatchObject({
+      error: expect.stringContaining("no pairing"),
+    });
+    expect(registry.redeem("omb_pair_wrong", "iPhone", requestId)).toMatchObject({
+      error: expect.stringContaining("no pairing"),
+    });
+  });
+
+  it("forgets a redemption replay when a fresh pairing window opens", () => {
+    const registry = new DeviceRegistry();
+    const { token: firstCredential } = registry.openPairing();
+    const requestId = "4c825d5b-cf40-4db7-aac5-2455f805a8ec";
+    expect(registry.redeem(firstCredential, "iPhone", requestId)).toHaveProperty("token");
+
+    registry.openPairing();
+    expect(registry.redeem(firstCredential, "iPhone", requestId)).toMatchObject({
+      error: expect.stringContaining("not right"),
+    });
+  });
+
+  it("actively erases a redemption replay at the original window expiry", () => {
+    vi.useFakeTimers();
+    try {
+      const registry = new DeviceRegistry();
+      const { token: credential } = registry.openPairing();
+      const requestId = "4c825d5b-cf40-4db7-aac5-2455f805a8ec";
+      expect(registry.redeem(credential, "iPhone", requestId)).toHaveProperty("token");
+      const memory = registry as unknown as {
+        replay: unknown;
+        replayExpiryTimer: unknown;
+      };
+      expect(memory.replay).not.toBeNull();
+      expect(memory.replayExpiryTimer).not.toBeNull();
+
+      vi.advanceTimersByTime(PAIRING_TTL_MS + 1);
+      expect(memory.replay).toBeNull();
+      expect(memory.replayExpiryTimer).toBeNull();
+      expect(registry.redeem(credential, "iPhone", requestId)).toMatchObject({
+        error: expect.stringContaining("no pairing"),
+      });
+      expect(registry.count()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps cloud desktop access off until enabled for that device", () => {

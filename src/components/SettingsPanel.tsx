@@ -331,6 +331,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "notifications"
         | "computer"
         | "cloudBackend"
+        | "autoStartVps"
         | "color"
         | "mascotExpression"
         | "avatarUrl"
@@ -353,11 +354,16 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const canUseVps = engine?.capabilities?.computerMcp === true && engine.driverKind !== "boxAgent";
   const connectedAppsConfigured = state.config?.composio?.configured === true;
   const connectedAppsEnabled = bot.composio !== false;
-  const currentChief = state.bots.find((candidate) => candidate.chiefOfStaff);
+  const sectionName = bot.section?.trim() || "General";
+  const currentChief = state.bots.find(
+    (candidate) =>
+      candidate.chiefOfStaff &&
+      (candidate.section?.trim() || "") === (bot.section?.trim() || ""),
+  );
 
   return (
     <>
-    <aside className="animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
+    <aside className="animate-panel-in relative z-20 flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3">
         <button
@@ -428,7 +434,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="text-[15px] font-medium text-ink">Chief of Staff</div>
-                <div className="text-[11.5px] text-ink-secondary">One per workspace</div>
+                <div className="text-[11.5px] text-ink-secondary">One for {sectionName}</div>
               </div>
               <button
                 role="switch"
@@ -454,12 +460,12 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               {bot.chiefOfStaff && !canCoordinate
                 ? "This bot still holds the role, but its current engine cannot contact teammates. Choose a Claude or ACP engine to restore coordination."
                 : bot.chiefOfStaff
-                  ? "This is your primary contact. It can coordinate the other bots and combine their work into one answer."
+                  ? `This is the primary contact for ${sectionName}. It can create and coordinate specialists in this section, then combine their work into one answer.`
                 : !canCoordinate
                   ? "Choose a Claude or ACP engine to let this bot coordinate teammates."
                   : currentChief
-                    ? `Make this bot your primary contact and hand the role over from ${currentChief.name}.`
-                    : "Make this bot your primary contact for work that may involve several bots."}
+                    ? `Make this bot the ${sectionName} Chief and hand the role over from ${currentChief.name}.`
+                    : `Make this bot the primary contact for the ${sectionName} section.`}
             </div>
           </div>
 
@@ -537,14 +543,19 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             </button>
           </div>
 
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
-            <div>
-              <div className="text-[15px] font-medium text-ink">Model</div>
-              <div className="mt-0.5 text-[13px] text-ink-secondary">
-                Which provider and model this bot runs on
-              </div>
-            </div>
-            <ModelPicker bot={bot} />
+          <div className="rounded-xl bg-card p-4">
+            <ModelPicker
+              bot={bot}
+              contained
+              label={
+                <div>
+                  <div className="text-[15px] font-medium text-ink">Model</div>
+                  <div className="mt-0.5 text-[13px] text-ink-secondary">
+                    Which provider and model this bot runs on
+                  </div>
+                </div>
+              }
+            />
           </div>
 
           {!!engine?.capabilities?.effortLevels?.length && (
@@ -615,11 +626,40 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               ))}
             </div>
             {(!bot.computer || bot.computer === "cloud") && (
-              <CloudBackendPicker
-                value={bot.cloudBackend ?? "box"}
-                vpsSupported={canUseVps}
-                onChange={(backend) => patch({ cloudBackend: backend })}
-              />
+              <>
+                <CloudBackendPicker
+                  value={bot.cloudBackend ?? "box"}
+                  vpsSupported={canUseVps}
+                  onChange={(backend) => patch({ cloudBackend: backend })}
+                />
+                {!bot.computer && bot.cloudBackend === "vps" && (
+                  <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
+                    <div className="min-w-0">
+                      <div className="text-[13px] text-ink">Start VPS automatically</div>
+                      <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+                        Allow Auto to create or wake this bot's managed container when needed.
+                      </div>
+                    </div>
+                    <button
+                      role="switch"
+                      aria-checked={Boolean(bot.autoStartVps)}
+                      aria-label="Start VPS automatically"
+                      onClick={() => patch({ autoStartVps: !bot.autoStartVps })}
+                      className={cn(
+                        "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+                        bot.autoStartVps ? "bg-accent" : "bg-control",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "absolute top-[3px] size-[18px] rounded-full bg-white transition-all",
+                          bot.autoStartVps ? "left-[22px]" : "left-[4px]",
+                        )}
+                      />
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
 

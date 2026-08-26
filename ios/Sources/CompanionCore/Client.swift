@@ -18,16 +18,47 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     public var port: Int
     /// Every other address the computer answered on at pairing time, best
     /// first — the tailnet name, the LAN address, the sidecar's mDNS name.
-    /// Optional so connections saved before fallbacks existed still decode;
-    /// read through `orderedHosts`, which is never empty.
+    /// Optional so connections saved before fallbacks existed still decode.
+    /// Read through `orderedHosts`; policy-bound hosted connections may have
+    /// no legacy HTTP host because their complete route lives in `endpoints`.
     public var hosts: [String]?
+    /// Complete route currently being dialed. Absent on connections saved by
+    /// older app builds, where `host` + `port` still mean direct HTTP.
+    public var activeEndpoint: CompanionEndpoint?
+    /// Full routes advertised by a newer desktop. Each carries its own scheme
+    /// and port so hosted HTTPS can coexist with local HTTP fallbacks.
+    public var endpoints: [CompanionEndpoint]?
+    /// The route kinds this pairing explicitly authorized. `nil` is reserved
+    /// for connections saved by older app versions and retains their legacy
+    /// failover behavior. New pairings always persist a non-nil policy, with
+    /// hosted HTTPS included as the one universally safe future upgrade.
+    public var allowedRouteKinds: Set<CompanionEndpointKind>?
+    /// Exact cleartext origins the pairing consent screen authorized. New
+    /// policies persist an empty set for hosted/Tailscale and one selected
+    /// LAN or Bonjour origin for local pairing. Absent alongside a nil kind
+    /// policy on connections saved before route consent existed.
+    public var allowedLocalRouteURLs: Set<String>?
 
-    public init(id: String = UUID().uuidString, name: String, host: String, port: Int, hosts: [String]? = nil) {
+    public init(
+        id: String = UUID().uuidString,
+        name: String,
+        host: String,
+        port: Int,
+        hosts: [String]? = nil,
+        activeEndpoint: CompanionEndpoint? = nil,
+        endpoints: [CompanionEndpoint]? = nil,
+        allowedRouteKinds: Set<CompanionEndpointKind>? = nil,
+        allowedLocalRouteURLs: Set<String>? = nil
+    ) {
         self.id = id
         self.name = name
         self.host = Self.urlHost(host)
         self.port = port
         self.hosts = hosts
+        self.activeEndpoint = activeEndpoint
+        self.endpoints = endpoints
+        self.allowedRouteKinds = allowedRouteKinds
+        self.allowedLocalRouteURLs = allowedLocalRouteURLs
     }
 
     /// The representation `URLComponents.host` accepts for a literal IPv6
@@ -57,9 +88,27 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     /// same unambiguous form browsers and command-line tools use.
     public static func parse(_ text: String, defaultPort: Int = 8810) -> Connection? {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        for prefix in ["http://", "https://"] where trimmed.lowercased().hasPrefix(prefix) {
-            trimmed.removeFirst(prefix.count)
-            break
+        let lowercased = trimmed.lowercased()
+        if lowercased.hasPrefix("http://") || lowercased.hasPrefix("https://") {
+            let kind: CompanionEndpointKind
+            if lowercased.hasPrefix("https://") {
+                kind = .hosted
+            } else {
+                let parsedHost = URLComponents(string: trimmed)?.host ?? ""
+                kind = CompanionEndpoint.inferredDirectKind(parsedHost)
+            }
+            guard let endpoint = CompanionEndpoint(
+                url: trimmed,
+                kind: kind,
+                priority: 0
+            ) else { return nil }
+            return Connection(
+                name: endpoint.host,
+                host: endpoint.host,
+                port: endpoint.port,
+                activeEndpoint: endpoint,
+                endpoints: [endpoint]
+            )
         }
         while trimmed.hasSuffix("/") { trimmed.removeLast() }
         guard !trimmed.isEmpty else { return nil }
@@ -92,18 +141,20 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
         return Connection(name: host, host: host, port: port)
     }
 
-    /// Plain HTTP, and that is a real limitation rather than an oversight.
+    /// Hosted routes use ordinary certificate-validated HTTPS. A connection
+    /// saved by an older app still falls back to direct HTTP below.
     ///
     /// The bearer token goes out in a header on every request, so anyone who
     /// can observe the path between phone and computer can lift it and use it
     /// until the device is revoked. What that means in practice depends
-    /// entirely on how you reach the computer, and the two supported routes
-    /// are not equivalent:
+    /// entirely on how you reach the computer, and the supported routes are
+    /// not equivalent:
     ///
-    /// - **Over a tailnet** — the recommended route, and the only one that
-    ///   works away from home — the traffic is inside WireGuard before it
-    ///   reaches any network, so it is encrypted and authenticated end to end
-    ///   even though this URL says `http`.
+    /// - **Over hosted HTTPS** — the default remote route — ordinary TLS
+    ///   encrypts the connection and authenticates the public endpoint.
+    /// - **Over a tailnet**, the traffic is inside WireGuard before it reaches
+    ///   any network, so it is encrypted and authenticated end to end even
+    ///   though this URL says `http`.
     /// - **Over a LAN**, it is cleartext on that network. Trust it exactly as
     ///   far as you trust everyone on the wifi: fine at home, not fine on a
     ///   café or conference network — pair over the tailnet there instead.
@@ -112,18 +163,21 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     /// switched on. A self-signed certificate on a LAN address is a
     /// certificate nothing can validate, so it would have to be pinned at
     /// pairing time and re-pinned whenever the sidecar regenerates it — a
-    /// meaningful amount of machinery whose benefit, on the tailnet path, is
-    /// zero. The honest position is: the tailnet carries the encryption, the
-    /// LAN path is documented as trusted-network-only, and pinned TLS is what
-    /// this needs before it could claim otherwise. See `docs/ios-companion.md`.
+    /// meaningful amount of machinery. Hosted HTTPS and the tailnet carry
+    /// encryption; the LAN path is documented as trusted-network-only, and
+    /// pinned TLS is what it needs before it could claim otherwise. See
+    /// `docs/ios-companion.md`.
     public var baseURL: URL? {
-        var components = URLComponents()
-        components.scheme = "http"
-        // Normalize here too so connections saved by older builds with an
-        // unbracketed IPv6 host remain usable after an update.
-        components.host = Self.urlHost(host)
-        components.port = port
-        return components.url
+        if let activeEndpoint {
+            guard allowsEndpoint(activeEndpoint) else { return nil }
+            return activeEndpoint.baseURL
+        }
+        guard let direct = CompanionEndpoint.direct(
+            host: host,
+            port: port,
+            priority: 0
+        ), allowsEndpoint(direct) else { return nil }
+        return direct.baseURL
     }
 }
 
@@ -176,7 +230,44 @@ public struct PairingInvite: Equatable, Sendable {
                 }
             if !candidates.isEmpty { connection.hosts = Array(candidates.prefix(8)) }
         }
+        if let encoded = values["endpoints"] {
+            guard let endpoints = Self.decodeEndpoints(encoded) else { return nil }
+            connection.endpoints = endpoints
+            connection = connection.dialing(endpoints[0])
+        }
+        connection.establishRoutePolicyFromInvite()
         return PairingInvite(connection: connection, credential: credential)
+    }
+
+    /// Unpadded base64url JSON keeps the typed array in one unambiguous query
+    /// value. A present-but-invalid value rejects the invite instead of
+    /// quietly downgrading a hosted HTTPS QR to its legacy HTTP address.
+    private static func decodeEndpoints(_ encoded: String) -> [CompanionEndpoint]? {
+        guard !encoded.isEmpty,
+              encoded.utf8.count <= 8_192,
+              encoded.utf8.allSatisfy({
+                  (48...57).contains($0) || (65...90).contains($0) ||
+                  (97...122).contains($0) || $0 == 45 || $0 == 95
+              })
+        else { return nil }
+
+        var base64 = encoded.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+        guard let data = Data(base64Encoded: base64),
+              let decoded = try? JSONDecoder().decode([CompanionEndpoint].self, from: data),
+              !decoded.isEmpty,
+              decoded.count <= 8
+        else { return nil }
+
+        let stable = decoded.enumerated().sorted {
+            $0.element.priority == $1.element.priority
+                ? $0.offset < $1.offset
+                : $0.element.priority < $1.element.priority
+        }.map(\.element)
+        var seen = Set<String>()
+        let unique = stable.filter { seen.insert($0.url).inserted }
+        return unique.isEmpty ? nil : unique
     }
 
     private static func credential(from values: [String: String]) -> String? {
@@ -195,6 +286,35 @@ public struct PairingInvite: Equatable, Sendable {
               code.utf8.allSatisfy({ (48...57).contains($0) })
         else { return nil }
         return code
+    }
+}
+
+/// The server response together with the endpoint that actually answered.
+/// Pairing has to persist the winner, not merely the first address printed in
+/// a QR code, or the next launch repeats the same dead route.
+public struct PairingOutcome: Sendable {
+    public let response: PairResponse
+    public let connection: Connection
+
+    public init(response: PairResponse, connection: Connection) {
+        self.response = response
+        self.connection = connection
+    }
+}
+
+/// None of the addresses advertised for a computer answered the companion
+/// health check. Kept distinct from a pairing rejection: this invite is still
+/// valid and the UI can offer Retry without making someone scan it again.
+public struct PairingRouteError: Error, LocalizedError, Equatable, Sendable {
+    public let attemptedHosts: [String]
+
+    public init(attemptedHosts: [String]) {
+        self.attemptedHosts = attemptedHosts
+    }
+
+    public var errorDescription: String? {
+        let routes = attemptedHosts.joined(separator: ", ")
+        return "Couldn’t reach this computer through any available route (\(routes)). Keep Phone access turned on in OpenMausBot, then try again."
     }
 }
 
@@ -308,9 +428,9 @@ public struct CompanionClient: Sendable {
     }
 
     /// Turn a non-2xx into an `APIError` carrying the harness's own message.
-    /// Those messages are written for people ("pair this device in
-    /// OpenMausBot → Settings → Companion"), so passing them through beats
-    /// inventing a worse one here.
+    /// Those messages are written for people, so passing them through beats
+    /// inventing a different client-side explanation here. Captured fixtures
+    /// intentionally preserve the current server contract verbatim.
     static func check(_ response: URLResponse, _ data: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard !(200...299).contains(http.statusCode) else { return }
@@ -326,6 +446,7 @@ public struct CompanionClient: Sendable {
         connection: Connection,
         credential: String,
         deviceName: String,
+        pairRequestId: String? = nil,
         session: URLSession = .shared
     ) async throws -> PairResponse {
         let client = CompanionClient(connection: connection, token: nil, session: session)
@@ -335,15 +456,137 @@ public struct CompanionClient: Sendable {
         let key = credential.utf8.count == 6 && credential.utf8.allSatisfy({ (48...57).contains($0) })
             ? "code"
             : "credential"
-        let pairRequest = try client.makeRequest(
+        var body: [String: Any] = [key: credential, "deviceName": deviceName]
+        if let pairRequestId { body["pairRequestId"] = pairRequestId }
+        var pairRequest = try client.makeRequest(
             "POST",
             "/api/pair",
-            body: [key: credential, "deviceName": deviceName]
+            body: body
         )
+        // Pairing is allowed to move to another advertised route. One dead
+        // address must not consume the default twenty-second API deadline.
+        pairRequest.timeoutInterval = 8
         return try await client.send(pairRequest, as: PairResponse.self)
     }
 
+    /// Resolve the multi-address invite before consuming its credential.
+    ///
+    /// Health probes are non-mutating and run together, so a dead protected
+    /// route cannot sit in front of another protected route for twenty
+    /// seconds. Cleartext LAN/Bonjour routes are deliberately excluded unless
+    /// that exact route is the user's preferred, explicit choice; neither a
+    /// pairing credential nor the later bearer token is sprayed onto the
+    /// current wifi merely because a private address was once advertised.
+    /// Only the first response that identifies itself as OpenMausBot receives
+    /// the one-time pairing POST. The request id makes that redemption safely
+    /// replayable by newer desktop builds if its response is lost in transit.
+    public static func pairFirstReachable(
+        connection: Connection,
+        credential: String,
+        deviceName: String,
+        pairRequestId: String = UUID().uuidString,
+        session: URLSession = .shared
+    ) async throws -> PairingOutcome {
+        let automaticEndpoints = connection.automaticEndpoints
+        let candidates = automaticEndpoints.map(connection.dialing)
+        let attemptedRoutes = automaticEndpoints.map(\.url)
+        var remaining = candidates
+        while !remaining.isEmpty {
+            guard let winner = await firstHealthy(in: remaining, session: session) else {
+                throw PairingRouteError(attemptedHosts: attemptedRoutes)
+            }
+            remaining.remove(at: winner.offset)
+            do {
+                let response = try await pair(
+                    connection: winner.connection,
+                    credential: credential,
+                    deviceName: deviceName,
+                    pairRequestId: pairRequestId,
+                    session: session
+                )
+                return PairingOutcome(response: response, connection: winner.connection)
+            } catch let error as APIError {
+                // Credential/client errors are authoritative and must not be
+                // sprayed at another address. Transport failures and gateway
+                // errors belong to this route, though — the Mac may even have
+                // committed the device before the proxy failed. New desktops
+                // replay this exact request id safely through a fallback.
+                if case .transport = error { continue }
+                if ConnectionAdvice.shouldTryAnotherRoute(after: error) { continue }
+                throw error
+            } catch {
+                // URL loading and decoding failures are likewise ambiguous.
+                // Keep the logical request id and try another verified route.
+                continue
+            }
+        }
+        throw PairingRouteError(attemptedHosts: attemptedRoutes)
+    }
+
+    /// Probe every candidate together, but respect the advertised security
+    /// order. A quick cleartext LAN response must not outrank an encrypted
+    /// tailnet route that answers a moment later. A lower-priority result is
+    /// selected as soon as every route before it has conclusively failed.
+    private static func firstHealthy(
+        in candidates: [Connection],
+        session: URLSession
+    ) async -> (offset: Int, connection: Connection)? {
+        await withTaskGroup(
+            of: (Int, Bool).self,
+            returning: (offset: Int, connection: Connection)?.self
+        ) { group in
+            for (offset, candidate) in candidates.enumerated() {
+                group.addTask {
+                    (offset, await healthy(candidate, session: session))
+                }
+            }
+            var results = [Bool?](repeating: nil, count: candidates.count)
+            for await (offset, isHealthy) in group {
+                results[offset] = isHealthy
+                for priority in candidates.indices {
+                    guard let resolved = results[priority] else { break }
+                    if resolved {
+                        group.cancelAll()
+                        return (priority, candidates[priority])
+                    }
+                }
+            }
+            return nil
+        }
+    }
+
+    private struct HealthIdentity: Decodable {
+        let app: String
+    }
+
+    private static func healthy(_ connection: Connection, session: URLSession) async -> Bool {
+        do {
+            let client = CompanionClient(connection: connection, token: nil, session: session)
+            var request = try client.makeRequest("GET", "/api/health")
+            request.timeoutInterval = 4
+            let (data, response) = try await session.data(for: request)
+            guard !Task.isCancelled,
+                  let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode),
+                  try JSONDecoder().decode(HealthIdentity.self, from: data).app == "openmausbot"
+            else { return false }
+            return true
+        } catch {
+            return false
+        }
+    }
+
     // MARK: - Reading
+
+    /// Refresh the routes this already-paired phone can use. The sidecar owns
+    /// this small authenticated response; it is not forwarded to the harness
+    /// and it contains no account or pairing credential.
+    public func connectionMetadata() async throws -> CompanionConnectionMetadata {
+        try await send(
+            try makeRequest("GET", "/api/companion/endpoints"),
+            as: CompanionConnectionMetadata.self
+        )
+    }
 
     /// Hydrate. `messages` opts into the paged shape — the newest n per
     /// thread, with screen captures reduced to a flag.
@@ -407,6 +650,19 @@ public struct CompanionClient: Sendable {
 
     public func config() async throws -> ConfigStatus {
         try await send(try makeRequest("GET", "/api/config"), as: ConfigStatus.self)
+    }
+
+    public func connectorCatalog() async throws -> ConnectorCatalog {
+        try await send(try makeRequest("GET", "/api/connectors/catalog"), as: ConnectorCatalog.self)
+    }
+
+    /// Complete account-aware status in one request. This is the inventory
+    /// source for the phone; a catalog page is not an account list.
+    public func allConnectorStatuses() async throws -> ConnectorStatuses {
+        try await send(
+            try makeRequest("GET", "/api/connectors/connected"),
+            as: ConnectorStatuses.self
+        )
     }
 
     /// The pixels of one screen message.
@@ -591,6 +847,37 @@ public struct CompanionClient: Sendable {
     /// the key and puts it on the card; the phone never derives its own.
     public func alwaysAllow(botId: String, key: String) async throws {
         try await send(try makeRequest("POST", "/api/bots/\(botId)/always-allow", body: ["allowKey": key]))
+    }
+
+    /// Starts one more account authorization for a toolkit. Revocation is
+    /// intentionally absent: the paired-device boundary keeps that on the Mac.
+    public func authorizeConnector(slug: String, alias: String?) async throws -> URL {
+        guard Self.validConnectorSlug(slug) else { throw APIError.badURL }
+        let trimmed = alias?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body: [String: String]?
+        if let trimmed, !trimmed.isEmpty {
+            body = ["alias": trimmed]
+        } else {
+            body = nil
+        }
+        let response = try await send(
+            try makeRequest("POST", "/api/connectors/\(slug)/authorize", body: body),
+            as: ConnectorAuthorizationResponse.self
+        )
+        guard let url = URL(string: response.url),
+              url.scheme == "https",
+              url.host != nil
+        else { throw APIError.badURL }
+        return url
+    }
+
+    /// Matches the companion's `[\w-]+` toolkit route component. JavaScript
+    /// `\w` is ASCII here; Unicode letters must not become a confusing 404.
+    private static func validConnectorSlug(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) ||
+                (97...122).contains($0) || $0 == 95 || $0 == 45
+        }
     }
 
     public func toggleReaction(threadId: String, messageId: String, emoji: String) async throws -> Message {

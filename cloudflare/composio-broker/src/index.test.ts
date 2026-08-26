@@ -9,6 +9,7 @@ import {
   ensureSession,
   normalizeAccountAlias,
   parseSession,
+  requestAlias,
   sha256,
 } from "./index";
 
@@ -53,6 +54,17 @@ function testEnv(fetchCalls: Array<{ url: string; init?: RequestInit }>) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("connected-apps broker boundaries", () => {
+  it("accepts an empty authorize body as a first-account request", async () => {
+    await expect(requestAlias(new Request("https://broker.test/v1/connectors/gmail/authorize", {
+      method: "POST",
+      body: "",
+    }))).resolves.toBeUndefined();
+    await expect(requestAlias(new Request("https://broker.test/v1/connectors/gmail/authorize", {
+      method: "POST",
+      body: "  \n",
+    }))).resolves.toBeUndefined();
+  });
+
   it("accepts only HTTPS Composio MCP endpoints", () => {
     expect(parseSession({
       session_id: "session-1",
@@ -136,7 +148,10 @@ describe("connected-apps broker boundaries", () => {
           });
         }
         const body = {
-          items: [{ slug: "gmail", connected_account: { id: "ca_work", status: "ACTIVE" } }],
+          items: [
+            { slug: "gmail", connected_account: { id: "ca_work", status: "ACTIVE" } },
+            { slug: "unconnected", connected_account: null },
+          ],
           next_cursor: query.has("toolkits") ? undefined : "toolkits-page-2",
         };
         return Response.json(body);
@@ -223,6 +238,7 @@ describe("connected-apps broker boundaries", () => {
     expect(fetchCalls.some((call) =>
       call.url.includes("/tool_router/session/trs_multi/toolkits?")
         && !call.url.includes("toolkits=")
+        && call.url.includes("is_connected=true")
         && call.url.includes("cursor=toolkits-page-2")
     )).toBe(true);
 

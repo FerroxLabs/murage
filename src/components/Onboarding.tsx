@@ -5,10 +5,12 @@ import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { EngineSetup } from "./EngineSetup";
 import { ProviderMark } from "./ProviderIcons";
+import { PhoneSetupFlow } from "./PhoneSetupFlow";
 import type { InstanceInfo } from "@/state/store";
 
-// Three-step first-run onboarding: who you are (email), what's installed
-// (live engine checks from the harness), what the app may use (TCC).
+// First-run onboarding: who you are (email), what's installed (live engine
+// checks from the harness), what the app may use (TCC), then an optional
+// phone setup that can always be resumed from Settings → Phone.
 // Every check is skippable — onboarding must never brick the app.
 
 type InstanceRow = InstanceInfo;
@@ -188,7 +190,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           the engine list scrolls inside it, so the header and Continue stay
           put and nothing runs into the edges */}
       <div
-        className={`flex max-h-full w-full flex-col rounded-2xl border border-hairline/40 bg-panel p-8 ${step === 1 ? "max-w-[680px]" : "max-w-[460px]"}`}
+        className={`flex max-h-full w-full flex-col rounded-2xl border border-hairline/40 bg-panel p-8 ${step === 1 ? "max-w-[680px]" : step === 3 ? "max-w-[620px]" : "max-w-[460px]"}`}
       >
         {step === 0 && (
           <div className="flex flex-col items-center">
@@ -270,7 +272,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               )}
             </div>
             <button
-              onClick={() => (capabilities.dictation.available ? setStep(2) : finish())}
+              onClick={() => setStep(capabilities.dictation.available ? 2 : 3)}
               className="mt-5 w-full shrink-0 rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white"
             >
               Continue
@@ -321,13 +323,28 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   triggers on the first real capture in the Computer panel,
                   which is the moment the user has context for the dialog. */}
             </div>
-            <button onClick={finish} className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white">
-              Start using OpenMausBot
+            <button onClick={() => setStep(3)} className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white">
+              Continue
             </button>
-            <button onClick={finish} className="mt-3 text-[12px] text-ink-secondary hover:text-ink">
+            <button onClick={() => setStep(3)} className="mt-3 text-[12px] text-ink-secondary hover:text-ink">
               Skip for now
             </button>
           </div>
+        )}
+
+        {step === 3 && (
+          <PhoneSetupFlow
+            variant="onboarding"
+            profileEmail={email}
+            onSkip={() => {
+              track("phone_setup_skipped");
+              finish();
+            }}
+            onComplete={() => {
+              track("phone_setup_completed");
+              finish();
+            }}
+          />
         )}
 
       </div>

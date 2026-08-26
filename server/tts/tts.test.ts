@@ -74,7 +74,7 @@ describe("configuration", () => {
   it("never reports the key itself", async () => {
     const { describeVoice } = await voice();
     const described = describeVoice(cfg({ key: "sk-secret", voice: "v-1" }));
-    expect(described).toEqual({ configured: true, ready: true, voice: "v-1" });
+    expect(described).toEqual({ configured: true, ready: true, voice: "v-1", provider: "elevenlabs" });
     expect(JSON.stringify(described)).not.toContain("sk-secret");
   });
 
@@ -159,5 +159,84 @@ describe("ElevenLabs", () => {
     const message = await speak(cfg(ready), "hi").catch((e: Error) => e.message);
     refuse = null;
     expect(message).toContain("exceeded your quota");
+  });
+});
+
+describe("built-in macOS voices", () => {
+  // `say -v ?` output: name, locale, then a # sample sentence. The header
+  // above the table is localized, and some voice names contain spaces.
+  const LISTING = [
+    "Stimmen, die mit „say“ gesprochen werden können:", // localized header — must be ignored
+    "Albert              en_US    # Hello! My name is Albert.",
+    "Bad News            en_US    # The things I could tell you…",
+    "Amélie              fr_CA    # Bonjour! Je m’appelle Amélie.",
+    "", // trailing blank
+  ].join("\n");
+
+  /** A stand-in for `say`: records argv, writes a tiny WAV where -o points,
+   * and answers -v ? with the listing above. */
+  const fakeSay = (record: string[][]) => async (_file: string, args: string[]) => {
+    record.push(args);
+    if (args[0] === "-v" && args[1] === "?") return { stdout: LISTING };
+    const out = args[args.indexOf("-o") + 1];
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    await mkdir(dirname(out), { recursive: true });
+    await writeFile(out, Buffer.from("RIFF....WAVEfmt "));
+    return { stdout: "" };
+  };
+
+  const system = { provider: "system" as const, voice: "Albert" };
+  const onMac = process.platform === "darwin";
+
+  it("needs no key — only a picked voice — once selected", async () => {
+    const { voiceConfigured, voiceReady, describeVoice } = await voice();
+    expect(voiceConfigured(cfg(system))).toBe(onMac);
+    expect(voiceReady(cfg({ provider: "system" }), "Albert")).toBe(onMac);
+    expect(voiceReady(cfg(system))).toBe(onMac);
+    const described = describeVoice(cfg(system));
+    expect(described).toEqual({
+      configured: onMac,
+      ready: onMac,
+      voice: "Albert",
+      provider: "system",
+    });
+  });
+
+  it("parses the say voice table, header junk and all", async () => {
+    const { listVoices } = await voice();
+    const record: string[][] = [];
+    expect(await listVoices(cfg({ provider: "system" }), fakeSay(record))).toEqual([
+      { id: "Albert", label: "Albert", description: "en_US — Hello! My name is Albert." },
+      { id: "Bad News", label: "Bad News", description: "en_US — The things I could tell you…" },
+      { id: "Amélie", label: "Amélie", description: "fr_CA — Bonjour! Je m’appelle Amélie." },
+    ]);
+    expect(record[0].slice(0, 2)).toEqual(["-v", "?"]);
+  });
+
+  it("synthesizes to a WAV without any key or network", async () => {
+    const { speak } = await voice();
+    const record: string[][] = [];
+    const audio = await speak(cfg({ provider: "system" }), "hello there", "Albert", fakeSay(record));
+    expect(audio.mime).toBe("audio/wav");
+    expect(Buffer.from(audio.bytes).toString()).toContain("WAVE");
+
+    const args = record.find((argv) => argv[0] === "-o")!;
+    expect(args).toContain("--data-format=LEI16@22050");
+    expect(args[args.indexOf("-v") + 1]).toBe("Albert");
+    expect(args.at(-1)).toBe("hello there");
+
+    // the utterance temp dir does not outlive the call
+    const { access } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    await expect(access(dirname(args[1]))).rejects.toThrow();
+  });
+
+  it("still demands a picked voice, and says so", async () => {
+    const { speak, NoVoiceConfigured } = await voice();
+    expect(() => speak(cfg({ provider: "system" }), "hi", undefined, fakeSay([]))).toThrow(NoVoiceConfigured);
+    expect(() => speak(cfg({ provider: "system" }), "hi", undefined, fakeSay([]))).toThrow(
+      "Pick a voice in the agent profile.",
+    );
   });
 });
