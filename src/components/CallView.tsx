@@ -91,7 +91,7 @@ export function CallTargetButton({
       : !supported
         ? "Calls currently need the macOS desktop app"
         : !configured
-          ? "Add an ElevenLabs key in an agent profile to make calls"
+          ? "Set up a voice in an agent profile to make calls"
           : !voiceReady
             ? "Pick a voice in an agent profile to make calls"
             : `Call ${targetName}`;
@@ -103,11 +103,11 @@ export function CallTargetButton({
       : !window.ogb?.speechStart
         ? "The speech service is unavailable in this app build. Restart or update OpenMausBot."
         : !configured
-          ? "Add an ElevenLabs API key so the bot can speak during calls."
+          ? "Add an ElevenLabs API key — or switch to the built-in Mac voices — so the bot can speak during calls."
           : !voiceReady
             ? voices.length > 1
-              ? "Give every channel member an ElevenLabs voice before starting a channel call."
-              : "Choose an ElevenLabs voice before starting a call."
+              ? "Give every channel member a voice before starting a channel call."
+              : "Choose a voice before starting a call."
             : "";
 
   useEffect(() => {
