@@ -24,6 +24,9 @@ public struct CompanionOnboardingContext: Equatable, Sendable {
     public var hasSeenWelcome: Bool
     public var pairingRequested: Bool
     public var hasPendingPairingInvite: Bool
+    /// True only while the current UI flow is completing a new pairing.
+    /// Existing paired users must not see first-pair education on upgrade.
+    public var notificationOnboardingRequested: Bool
     public var hasSeenNotificationPrompt: Bool
     public var notificationPermissionIsUndetermined: Bool
 
@@ -32,6 +35,7 @@ public struct CompanionOnboardingContext: Equatable, Sendable {
         hasSeenWelcome: Bool,
         pairingRequested: Bool = false,
         hasPendingPairingInvite: Bool = false,
+        notificationOnboardingRequested: Bool = false,
         hasSeenNotificationPrompt: Bool = false,
         notificationPermissionIsUndetermined: Bool = true
     ) {
@@ -39,6 +43,7 @@ public struct CompanionOnboardingContext: Equatable, Sendable {
         self.hasSeenWelcome = hasSeenWelcome
         self.pairingRequested = pairingRequested
         self.hasPendingPairingInvite = hasPendingPairingInvite
+        self.notificationOnboardingRequested = notificationOnboardingRequested
         self.hasSeenNotificationPrompt = hasSeenNotificationPrompt
         self.notificationPermissionIsUndetermined = notificationPermissionIsUndetermined
     }
@@ -50,7 +55,8 @@ public enum CompanionOnboardingRouter {
         case .revoked:
             return .revoked
         case .paired:
-            if !context.hasSeenNotificationPrompt,
+            if context.notificationOnboardingRequested,
+               !context.hasSeenNotificationPrompt,
                context.notificationPermissionIsUndetermined {
                 return .notificationPrompt
             }

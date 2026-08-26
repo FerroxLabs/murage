@@ -68,11 +68,18 @@ struct RootView: View {
             case .notificationPrompt:
                 NotificationOnboardingView {
                     hasSeenNotificationPrompt = true
+                    pairingRequested = false
                 }
                 .onAppear { hasSeenWelcome = true }
             case .chats:
                 ChatListView()
-                    .onAppear { hasSeenWelcome = true }
+                    .onAppear {
+                        hasSeenWelcome = true
+                        // This is either an existing pairing or a new pairing
+                        // which needed no notification education. Do not let
+                        // a later voluntary unpair reopen Pairing by itself.
+                        pairingRequested = false
+                    }
             case .revoked:
                 UnpairedView {
                     session.signOut()
@@ -113,6 +120,7 @@ struct RootView: View {
             hasSeenWelcome: hasSeenWelcome,
             pairingRequested: pairingRequested,
             hasPendingPairingInvite: session.pairingInvite != nil,
+            notificationOnboardingRequested: pairingRequested,
             hasSeenNotificationPrompt: hasSeenNotificationPrompt,
             notificationPermissionIsUndetermined: shouldOfferNotificationOnboarding
         ))

@@ -134,7 +134,7 @@ struct UnpairedHomeView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    Text("On your computer, open OpenMausBot → Settings → Companion.")
+                    Text("On your computer, open OpenMausBot → Settings → Phone.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

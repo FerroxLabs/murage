@@ -295,7 +295,7 @@ public struct PairingRouteError: Error, LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         let routes = attemptedHosts.joined(separator: ", ")
-        return "Couldn’t reach this computer through any available route (\(routes)). Keep OpenMausBot’s Companion turned on, then try again."
+        return "Couldn’t reach this computer through any available route (\(routes)). Keep Phone access turned on in OpenMausBot, then try again."
     }
 }
 
@@ -410,7 +410,7 @@ public struct CompanionClient: Sendable {
 
     /// Turn a non-2xx into an `APIError` carrying the harness's own message.
     /// Those messages are written for people ("pair this device in
-    /// OpenMausBot → Settings → Companion"), so passing them through beats
+    /// OpenMausBot → Settings → Phone"), so passing them through beats
     /// inventing a worse one here.
     static func check(_ response: URLResponse, _ data: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }

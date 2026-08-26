@@ -125,7 +125,7 @@ struct PairingView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
 
-            Text("On your computer, open Settings → Companion → Set up a phone.")
+            Text("On your computer, open Settings → Phone → Set up a phone.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -179,7 +179,7 @@ struct PairingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else if discovery.found.isEmpty {
-                Text("Computers running Companion will appear here.")
+                Text("Computers ready to pair will appear here.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
@@ -220,7 +220,7 @@ struct PairingView: View {
                 .background(Color(uiColor: .tertiarySystemGroupedBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Text("Use the address shown in Companion settings on your computer.")
+            Text("Use the address shown in Phone settings on your computer.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -228,7 +228,7 @@ struct PairingView: View {
                 Haptics.selection()
                 failure = nil
                 guard let connection = Self.parse(manualAddress) else {
-                    failure = "That address doesn't look right. Copy it from Companion settings and try again."
+                    failure = "That address doesn't look right. Copy it from Phone settings and try again."
                     return
                 }
                 choiceGeneration += 1

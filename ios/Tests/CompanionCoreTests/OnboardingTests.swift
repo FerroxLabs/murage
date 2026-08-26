@@ -41,11 +41,22 @@ final class OnboardingTests: XCTestCase {
         )
     }
 
-    func testPairedUserSeesNotificationExplanationOnceThenChats() {
+    func testExistingPairedUserGoesStraightToChats() {
         XCTAssertEqual(
             CompanionOnboardingRouter.route(for: .init(
                 pairingState: .paired,
                 hasSeenWelcome: true
+            )),
+            .chats
+        )
+    }
+
+    func testJustPairedUserSeesNotificationExplanationOnceThenChats() {
+        XCTAssertEqual(
+            CompanionOnboardingRouter.route(for: .init(
+                pairingState: .paired,
+                hasSeenWelcome: true,
+                notificationOnboardingRequested: true
             )),
             .notificationPrompt
         )
@@ -53,6 +64,7 @@ final class OnboardingTests: XCTestCase {
             CompanionOnboardingRouter.route(for: .init(
                 pairingState: .paired,
                 hasSeenWelcome: true,
+                notificationOnboardingRequested: true,
                 hasSeenNotificationPrompt: true
             )),
             .chats
@@ -61,6 +73,7 @@ final class OnboardingTests: XCTestCase {
             CompanionOnboardingRouter.route(for: .init(
                 pairingState: .paired,
                 hasSeenWelcome: true,
+                notificationOnboardingRequested: true,
                 notificationPermissionIsUndetermined: false
             )),
             .chats

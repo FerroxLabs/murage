@@ -277,12 +277,12 @@ struct ConnectionSecurityView: View {
                 .autocorrectionDisabled()
             Button("Save") {
                 if !session.updateAddress(addressText) {
-                    session.actionError = "That address doesn't look right. Copy it from Companion settings and try again."
+                    session.actionError = "That address doesn't look right. Copy it from Phone settings and try again."
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Use the address shown in Companion settings on your computer. Your pairing is kept.")
+            Text("Use the address shown in Phone settings on your computer. Your pairing is kept.")
         }
         .confirmationDialog(
             "Unpair this phone?",
