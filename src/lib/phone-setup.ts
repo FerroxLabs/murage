@@ -16,7 +16,7 @@ export type PhoneSetupEvent =
   | { type: "start"; deviceIds: string[] }
   | { type: "resume"; deviceIds: string[] }
   | { type: "use-local" }
-  | { type: "pairing-opened" }
+  | { type: "pairing-opened"; deviceIds: string[] }
   | { type: "paired"; deviceName: string }
   | { type: "skip" }
   | { type: "reset" };
@@ -51,7 +51,11 @@ export function phoneSetupReducer(
     case "use-local":
       return { ...state, active: true, localFallback: true, pairingAttempted: false };
     case "pairing-opened":
-      return { ...state, pairingAttempted: true };
+      return {
+        ...state,
+        baselineDeviceIds: [...event.deviceIds],
+        pairingAttempted: true,
+      };
     case "paired":
       return { ...state, active: true, pairedDeviceName: event.deviceName };
     case "skip":
@@ -139,6 +143,14 @@ export function newlyPairedDevice<T extends { id: string; name: string }>(
 ): T | null {
   const baseline = new Set(baselineDeviceIds);
   return devices.find((device) => !baseline.has(device.id)) ?? null;
+}
+
+export function newlyPairedDeviceForFlow<T extends { id: string; name: string }>(
+  flow: Pick<PhoneSetupFlowState, "active" | "baselineDeviceIds" | "pairingAttempted" | "pairedDeviceName">,
+  devices: T[],
+): T | null {
+  if (!flow.active || !flow.pairingAttempted || flow.pairedDeviceName) return null;
+  return newlyPairedDevice(flow.baselineDeviceIds, devices);
 }
 
 /** Setup cannot establish its "before" snapshot until Companion has loaded.

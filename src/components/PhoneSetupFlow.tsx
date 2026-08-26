@@ -23,7 +23,7 @@ import {
   companionStartFailure,
   derivePhoneSetupPhase,
   initialPhoneSetupFlowState,
-  newlyPairedDevice,
+  newlyPairedDeviceForFlow,
   normalizePhoneSetupActionError,
   phonePairingGate,
   phoneSetupBaseline,
@@ -242,7 +242,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         const paired = await companion.pairing(true);
         setState(paired);
         setProvisioning(false);
-        dispatchFlow({ type: "pairing-opened" });
+        dispatchFlow({
+          type: "pairing-opened",
+          deviceIds: paired.devices.map((device) => device.id),
+        });
       } catch (cause) {
         setProvisioning(false);
         setError(normalizePhoneSetupActionError(
@@ -354,10 +357,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   });
 
   useEffect(() => {
-    if (!flow.active || flow.pairedDeviceName || !state) return;
-    const device = newlyPairedDevice(flow.baselineDeviceIds, state.devices);
+    if (!state) return;
+    const device = newlyPairedDeviceForFlow(flow, state.devices);
     if (device) dispatchFlow({ type: "paired", deviceName: device.name });
-  }, [flow.active, flow.baselineDeviceIds, flow.pairedDeviceName, state]);
+  }, [flow, state]);
 
   useEffect(() => {
     if (

@@ -5,6 +5,7 @@ import {
   derivePhoneSetupPhase,
   initialPhoneSetupFlowState,
   newlyPairedDevice,
+  newlyPairedDeviceForFlow,
   normalizePhoneSetupActionError,
   phonePairingGate,
   phoneSetupBaseline,
@@ -99,6 +100,44 @@ describe("phone setup flow", () => {
     const success = phoneSetupReducer(started, {
       type: "paired",
       deviceName: device?.name ?? "Phone",
+    });
+    expect(
+      derivePhoneSetupPhase(success, {
+        accountStatus: "ready",
+        accountBusy: false,
+        provisioning: false,
+        pairingOpen: false,
+      }),
+    ).toBe("success");
+  });
+
+  it("rebases on historical devices when pairing opens and waits for a later device", () => {
+    const preStart = phoneSetupReducer(initialPhoneSetupFlowState, {
+      type: "start",
+      deviceIds: [],
+    });
+    const historicalDevices = [
+      { id: "old-1", name: "Old iPhone" },
+      { id: "old-2", name: "Test iPhone" },
+      { id: "old-3", name: "Previous iPhone" },
+    ];
+
+    expect(newlyPairedDeviceForFlow(preStart, historicalDevices)).toBeNull();
+
+    const pairingOpen = phoneSetupReducer(preStart, {
+      type: "pairing-opened",
+      deviceIds: historicalDevices.map((device) => device.id),
+    });
+    expect(pairingOpen.pairingAttempted).toBe(true);
+    expect(pairingOpen.baselineDeviceIds).toEqual(["old-1", "old-2", "old-3"]);
+    expect(newlyPairedDeviceForFlow(pairingOpen, historicalDevices)).toBeNull();
+
+    const newPhone = { id: "new-1", name: "Milind’s iPhone" };
+    expect(newlyPairedDeviceForFlow(pairingOpen, [...historicalDevices, newPhone])).toBe(newPhone);
+
+    const success = phoneSetupReducer(pairingOpen, {
+      type: "paired",
+      deviceName: newPhone.name,
     });
     expect(
       derivePhoneSetupPhase(success, {
