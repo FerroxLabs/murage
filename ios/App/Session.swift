@@ -376,6 +376,7 @@ final class Session: ObservableObject {
     }
 
     private var lingerTask: UIBackgroundTaskIdentifier = .invalid
+    private var lingerSleep: Task<Void, Never>?
 
     /// Leaving the screen: keep the stream alive for the grace period iOS
     /// allows (~30 s) rather than cutting it at once, so an approval that
@@ -388,14 +389,16 @@ final class Session: ObservableObject {
             // time is up before our own timer — the system wants us gone now
             self?.disconnect()
         }
-        Task { [weak self] in
+        lingerSleep = Task { [weak self] in
             try? await Task.sleep(for: .seconds(25))
-            guard let self, self.lingerTask != .invalid else { return }
+            guard !Task.isCancelled, let self, self.lingerTask != .invalid else { return }
             self.disconnect()
         }
     }
 
     private func endLinger() {
+        lingerSleep?.cancel()
+        lingerSleep = nil
         guard lingerTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(lingerTask)
         lingerTask = .invalid
