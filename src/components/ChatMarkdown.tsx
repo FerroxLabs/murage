@@ -32,6 +32,31 @@ const hash = (s: string) => {
   return (h >>> 0).toString(36);
 };
 
+// A markdown link whose target is a file on this machine: bots hand over
+// bot-created documents as absolute paths or file:// URLs. Web links stay
+// ordinary anchors handled by the shell's window-open policy.
+// A leading slash covers macOS and Linux; "C:\…" and "C:/…" cover Windows,
+// where a file:// URL's pathname also arrives as "/C:/…".
+const WINDOWS_PATH = /^[a-zA-Z]:[\\/]/;
+const absolutePath = (value: string): string | null => {
+  if (value.startsWith("/") && WINDOWS_PATH.test(value.slice(1))) return value.slice(1);
+  if (value.startsWith("/") || WINDOWS_PATH.test(value)) return value;
+  return null;
+};
+
+const localFilePath = (href?: string): string | null => {
+  if (!href) return null;
+  // URL schemes are case-insensitive, so FILE:// is as valid as file://
+  if (/^file:\/\//i.test(href)) {
+    try {
+      return absolutePath(decodeURIComponent(new URL(href).pathname));
+    } catch {
+      return null;
+    }
+  }
+  return absolutePath(href);
+};
+
 function CodeBlock({ code, lang, streaming }: { code: string; lang: string; streaming: boolean }) {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -106,6 +131,62 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
         <pre className="overflow-x-auto p-3 text-[13px] leading-relaxed text-ink">{code}</pre>
       )}
     </div>
+  );
+}
+
+// A bot handing over a file it created renders as a button, not an anchor.
+// Two reasons the href is dropped rather than merely preventDefault()ed:
+// an absolute path in an href resolves against the page origin, so the link
+// pointed at http://127.0.0.1:8799<path> and opened the chat UI in a browser;
+// and an <a href="file://…"> would still reach setWindowOpenHandler on a
+// middle or modifier click, which calls shell.openExternal without the main
+// process' containment check.
+function LocalFileLink({ filePath, children }: { filePath: string; children?: ReactNode }) {
+  const [state, setState] = useState<"idle" | "saved" | "failed">("idle");
+  const [reason, setReason] = useState("");
+  const [savedTo, setSavedTo] = useState("");
+
+  const save = async () => {
+    const saveFile = window.ogb?.saveFile;
+    if (!saveFile) {
+      // an older shell has no save bridge; saying so beats the silent click
+      // this change exists to remove
+      setReason("Saving files needs a newer version of the desktop app");
+      setState("failed");
+      return;
+    }
+    try {
+      const saved = await saveFile(filePath);
+      // null means the user closed the save dialog, which is a decision
+      // rather than a failure — say nothing
+      if (!saved) return;
+      setSavedTo(saved);
+      setState("saved");
+      setTimeout(() => setState("idle"), 4000);
+    } catch (error) {
+      // the bug being fixed here was a click that failed silently, so a
+      // failed save says why rather than doing nothing
+      setReason(error instanceof Error ? error.message : "That file could not be saved");
+      setState("failed");
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void save()}
+        title={`Save a copy — ${filePath}`}
+        className="break-words text-left text-accent underline decoration-accent/40 hover:decoration-accent"
+      >
+        {children}
+      </button>
+      {state !== "idle" && (
+        <span className={`ml-1.5 text-[12px] ${state === "saved" ? "text-success" : "text-danger"}`}>
+          {state === "saved" ? `Saved to ${savedTo}` : reason}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -185,6 +266,8 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
             );
           },
           a({ href, children }: { href?: string; children?: ReactNode }) {
+            const localPath = localFilePath(href);
+            if (localPath) return <LocalFileLink filePath={localPath}>{children}</LocalFileLink>;
             return (
               <a
                 href={href}

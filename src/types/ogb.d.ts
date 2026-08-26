@@ -177,6 +177,10 @@ type SkillRecordingPayload = {
       /** Writes the redacted diagnostics report to a user-chosen file;
        * resolves the path, or null when cancelled. */
       exportDiagnostics?(): Promise<string | null>;
+      /** Asks where to save a bot-created file (inside ~/.openmausbot), copies
+       * it there and reveals it. Resolves the chosen path, or null if the
+       * user cancelled the dialog. */
+      saveFile?(filePath: string): Promise<string | null>;
       /** Save a provider credential through Electron's OS-backed store. */
       setCredential?(
         name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey",
