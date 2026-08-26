@@ -79,7 +79,9 @@ export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner): Pro
 export function speak(cfg: AppConfig, text: string, voiceId?: string, run?: systemVoices.Runner) {
   if (voiceProvider(cfg) === "system") {
     const voice = voiceId || cfg.tts?.voice;
-    if (!systemVoices.systemVoicesAvailable()) throw new NoVoiceConfigured("key");
+    // An injected runner is the cross-platform test seam for `/usr/bin/say`;
+    // production calls omit it and remain strictly Darwin-gated.
+    if (!systemVoices.systemVoicesAvailable() && !run) throw new NoVoiceConfigured("key");
     if (!voice) throw new NoVoiceConfigured("voice");
     return systemVoices.synthesizeSystem(text, voice, run);
   }
