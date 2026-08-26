@@ -34,14 +34,13 @@ export interface CompanionPanelStatus {
 
 export function deriveCompanionPanelStatus(
   state: Pick<CompanionState, "enabled" | "devices" | "error">,
-): CompanionPanelStatus {
+): CompanionPanelStatus | null {
   if (state.error) return { label: "Phone access needs attention", good: false };
   if (!state.enabled) return { label: "Phone access off", good: false };
   const pairedCount = state.devices.length;
+  if (!pairedCount) return null;
   return {
-    label: pairedCount
-      ? `${pairedCount} ${pairedCount === 1 ? "phone" : "phones"} paired`
-      : "Ready to pair",
+    label: `${pairedCount} ${pairedCount === 1 ? "phone" : "phones"} paired`,
     good: true,
   };
 }
@@ -86,7 +85,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   }
 
   const pairedCount = state.devices.length;
-  const { label: statusLabel, good: statusGood } = deriveCompanionPanelStatus(state);
+  const panelStatus = deriveCompanionPanelStatus(state);
   const accountActionError = companionAccountActionError(c.account, c.accountError);
   const hosted = state.endpoints?.find((endpoint) => endpoint.kind === "hosted");
   const localRoutes = [
@@ -103,21 +102,25 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   return (
     <div className="flex flex-col gap-4">
       <Card>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div
-            className={`flex items-center gap-2 rounded-full px-2.5 py-1 text-[11.5px] ${
-              statusGood ? "bg-success/10 text-success" : "bg-control text-ink-secondary"
-            }`}
-          >
-            <span className={`size-1.5 rounded-full ${statusGood ? "bg-success" : "bg-ink-secondary/50"}`} />
-            {statusLabel}
+        {(panelStatus || (pairedCount > 0 && c.hostedReady)) && (
+          <div className="mb-4 flex items-center justify-between gap-3">
+            {panelStatus && (
+              <div
+                className={`flex items-center gap-2 rounded-full px-2.5 py-1 text-[11.5px] ${
+                  panelStatus.good ? "bg-success/10 text-success" : "bg-control text-ink-secondary"
+                }`}
+              >
+                <span className={`size-1.5 rounded-full ${panelStatus.good ? "bg-success" : "bg-ink-secondary/50"}`} />
+                {panelStatus.label}
+              </div>
+            )}
+            {pairedCount > 0 && c.hostedReady && (
+              <div className="flex items-center gap-1.5 text-[11.5px] text-ink-secondary">
+                <ShieldCheck size={13} className="text-accent" /> Works away from home
+              </div>
+            )}
           </div>
-          {pairedCount > 0 && c.hostedReady && (
-            <div className="flex items-center gap-1.5 text-[11.5px] text-ink-secondary">
-              <ShieldCheck size={13} className="text-accent" /> Works away from home
-            </div>
-          )}
-        </div>
+        )}
         <PhoneSetupFlowView controller={c} variant="settings" />
       </Card>
 

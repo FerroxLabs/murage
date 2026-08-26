@@ -40,6 +40,13 @@ describe("companion account action errors", () => {
 });
 
 describe("companion status refresh", () => {
+  it("omits the redundant status pill when phone access is ready for its first pairing", () => {
+    expect(deriveCompanionPanelStatus({
+      enabled: true,
+      devices: [],
+    })).toBeNull();
+  });
+
   it("does not show a healthy status when the enabled sidecar reports an error", () => {
     expect(deriveCompanionPanelStatus({
       enabled: true,
