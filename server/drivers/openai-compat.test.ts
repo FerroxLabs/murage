@@ -118,4 +118,67 @@ describe("OpenAICompatDriver", () => {
     recorder.stop();
     await inst.dispose();
   });
+
+  it("streams reasoning separately and completes only actual assistant text", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith("/models")) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        return new Response(
+          'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n' +
+            'data: {"choices":[{"delta":{"content":"answer"}}]}\n' +
+            "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }),
+    );
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "test-reasoning-stream",
+      displayName: "Reasoning",
+      enabled: true,
+      config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" },
+      environment: { TEST_KEY: "secret" },
+    });
+    const recorder = recordEvents(inst.adapter);
+
+    await inst.adapter.sendTurn({ threadId: "reasoning-thread", text: "question", model: "vendor/model" });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    expect(recorder.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "content.delta", streamKind: "reasoning_text", delta: "thinking" }),
+      expect.objectContaining({ type: "content.delta", streamKind: "assistant_text", delta: "answer" }),
+      expect.objectContaining({ type: "item.completed", itemType: "assistant_text", text: "answer" }),
+    ]));
+    expect(recorder.events).not.toContainEqual(
+      expect.objectContaining({ type: "item.completed", itemType: "assistant_text", text: "thinking" }),
+    );
+    recorder.stop();
+    await inst.dispose();
+  });
+
+  it("uses reasoning as a helper-model fallback when normal content is whitespace", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith("/models")) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: "  ", reasoning_content: "usable result" } }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "test-reasoning-helper",
+      displayName: "Reasoning helper",
+      enabled: true,
+      config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" },
+      environment: { TEST_KEY: "secret" },
+    });
+
+    await expect(inst.generateText?.("question")).resolves.toBe("usable result");
+    await inst.dispose();
+  });
 });

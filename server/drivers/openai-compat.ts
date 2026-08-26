@@ -37,6 +37,8 @@ export interface OpenAICompatConfig {
   url: string;
   /** Env var (instance environment or process.env) carrying the API key. */
   apiKeyEnv: string;
+  /** Direct API key if configured */
+  key?: string;
 }
 
 function decodeConfig(raw: unknown): OpenAICompatConfig {
@@ -50,6 +52,7 @@ function decodeConfig(raw: unknown): OpenAICompatConfig {
           ? envUrl.replace(/\/+$/, "")
           : "https://openrouter.ai/api/v1",
     apiKeyEnv: typeof o.apiKeyEnv === "string" && o.apiKeyEnv ? o.apiKeyEnv : "OPENAI_COMPAT_API_KEY",
+    key: typeof o.key === "string" && o.key ? o.key : undefined,
   };
 }
 
@@ -81,7 +84,12 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
   async create(input: DriverCreateInput<OpenAICompatConfig>): Promise<ProviderInstance> {
     const { instanceId, config } = input;
     const apiKey =
-      input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "";
+      config.key ??
+      input.environment[config.apiKeyEnv] ??
+      input.environment["OPENAI_COMPAT_API_KEY"] ??
+      process.env[config.apiKeyEnv] ??
+      process.env["OPENAI_COMPAT_API_KEY"] ??
+      "";
     const listeners = new Set<RuntimeEventListener>();
     const active = new Map<string, { abort: AbortController; turnId: string }>();
     let catalog = DEFAULT_MODELS;
@@ -100,8 +108,16 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
     const complete = async (
       messages: Array<{ role: string; content: string }>,
       model: string,
-      opts: { stream: boolean; signal?: AbortSignal; onDelta?: (d: string) => void },
-    ): Promise<{ text: string; usage: { input: number; output: number } | null }> => {
+      opts: {
+        stream: boolean;
+        signal?: AbortSignal;
+        onDelta?: (d: string, streamKind?: "assistant_text" | "reasoning_text") => void;
+      },
+    ): Promise<{
+      text: string;
+      reasoning: string;
+      usage: { input: number; output: number } | null;
+    }> => {
       const res = await fetch(`${config.url}/chat/completions`, {
         method: "POST",
         headers: {
@@ -119,8 +135,12 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       }
       if (!opts.stream) {
         const json: any = await res.json();
+        const msg = json.choices?.[0]?.message;
+        const mainContent = typeof msg?.content === "string" ? msg.content : "";
+        const reasoningContent = typeof msg?.reasoning_content === "string" ? msg.reasoning_content : "";
         return {
-          text: json.choices?.[0]?.message?.content ?? "",
+          text: mainContent,
+          reasoning: reasoningContent,
           usage: json.usage
             ? {
                 input: json.usage.prompt_tokens ?? 0,
@@ -130,6 +150,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         };
       }
       let text = "";
+      let reasoning = "";
       let usage: { input: number; output: number } | null = null;
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
@@ -151,10 +172,16 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           } catch {
             continue;
           }
-          const delta = chunk.choices?.[0]?.delta?.content;
-          if (delta) {
-            text += delta;
-            opts.onDelta?.(delta);
+          const delta = chunk.choices?.[0]?.delta;
+          const contentDelta = typeof delta?.content === "string" ? delta.content : undefined;
+          const reasoningDelta = typeof delta?.reasoning_content === "string" ? delta.reasoning_content : undefined;
+          if (reasoningDelta) {
+            reasoning += reasoningDelta;
+            opts.onDelta?.(reasoningDelta, "reasoning_text");
+          }
+          if (contentDelta) {
+            text += contentDelta;
+            opts.onDelta?.(contentDelta, "assistant_text");
           }
           if (chunk.usage) {
             usage = {
@@ -164,7 +191,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           }
         }
       }
-      return { text, usage };
+      return { text, reasoning, usage };
     };
 
     const fetchModels = async (): Promise<void> => {
@@ -242,17 +269,17 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
 
       (async () => {
         try {
-          const { text, usage } = await complete(
+          const { text, reasoning, usage } = await complete(
             messages,
             turn.model || catalog.default,
             {
               stream: true,
               signal: abort.signal,
-              onDelta: (delta) =>
+              onDelta: (delta, streamKind = "assistant_text") =>
                 emit({
                   ...base(threadId, turnId),
                   type: "content.delta",
-                  streamKind: "assistant_text",
+                  streamKind,
                   delta,
                 }),
             },
@@ -260,7 +287,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           appendNative(threadId, {
             dir: "in",
             source: "openai-compat.chat.completions",
-            msg: { textLength: text.length, usage },
+            msg: { textLength: text.length, reasoningLength: reasoning.length, usage },
           });
           if (text.trim()) {
             emit({
@@ -345,12 +372,12 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         },
       },
       generateText: async (prompt: string) => {
-        const { text } = await complete(
+        const { text, reasoning } = await complete(
           [{ role: "user", content: prompt }],
           catalog.default,
           { stream: false },
         );
-        return text;
+        return text.trim() ? text : reasoning;
       },
       dispose: async () => {
         for (const { abort } of active.values()) abort.abort();
