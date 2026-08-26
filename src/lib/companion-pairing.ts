@@ -119,59 +119,35 @@ const directHTTPOrigin = (host: string, port: number): string => {
   return `http://${authority}:${port}`;
 };
 
-/** Select the route policy encoded into a QR. Automatic setup preserves the
- * sidecar's hosted/Tailscale-first order. Explicit local setup promotes one
- * exact LAN/Bonjour endpoint, followed only by protected upgrades; iOS then
+/** Select the route policy encoded into a QR. Automatic setup is deliberately
+ * hosted-HTTPS only: Tailscale must be chosen explicitly and never replaces a
+ * hosted route that is still provisioning. Explicit local setup promotes one
+ * exact LAN/Bonjour endpoint, followed only by hosted upgrades; iOS then
  * refuses to spray the pairing credential onto any other cleartext route. */
 export function companionPairingRoute(
   source: CompanionPairingRouteSource,
   mode: CompanionPairingRouteMode,
 ): CompanionPairingRoute | null {
   if (mode === "automatic") {
-    const advertised = qrEndpoints(source.endpoints);
-    const preferred = advertised[0] ?? null;
-    if (preferred?.kind === "hosted" || preferred?.kind === "tailnet") {
-      const parsed = new URL(preferred.url);
-      const address = parsed.hostname;
-      const port = parsed.port ? Number(parsed.port) : preferred.kind === "hosted" ? 443 : 80;
-      const tailnetHosts = deduplicatedHosts([
-        source.tailnetName ?? "",
-        ...(source.hosts ?? []),
-      ]).filter((host) => host.toLowerCase().replace(/\.$/, "").endsWith(".ts.net"));
-      const hosts = preferred.kind === "tailnet"
-        ? deduplicatedHosts([address, ...tailnetHosts])
-        : deduplicatedHosts([
-            address,
-            ...advertised
-              .filter((endpoint) => endpoint.kind === "hosted")
-              .map((endpoint) => new URL(endpoint.url).hostname),
-            ...tailnetHosts,
-          ]);
-      return {
-        address,
-        port,
-        // Older phone builds ignore typed endpoints and assume cleartext HTTP
-        // for every legacy host. A hosted authority on its TLS port therefore
-        // fails closed instead of replaying the six-digit credential to LAN;
-        // a tailnet-first QR retains only MagicDNS legacy fallbacks.
-        hosts,
-        endpoints: source.endpoints,
-      };
-    }
+    const hosted = qrEndpoints(source.endpoints).filter((endpoint) => endpoint.kind === "hosted");
+    const preferred = hosted[0] ?? null;
+    if (!preferred) return null;
 
-    const address =
-      source.tailnetName
-      ?? source.lan
-      ?? source.addresses?.find((candidate) => candidate !== source.tailscale)
-      ?? source.hosts?.[0];
-    return address
-      ? {
-          address,
-          port: source.port,
-          hosts: source.hosts,
-          endpoints: source.endpoints,
-        }
-      : null;
+    const parsed = new URL(preferred.url);
+    const address = parsed.hostname;
+    const port = parsed.port ? Number(parsed.port) : 443;
+    return {
+      address,
+      port,
+      // Older phone builds ignore typed endpoints and assume cleartext HTTP
+      // for every legacy host. A hosted authority on its TLS port therefore
+      // fails closed instead of replaying the credential to Tailscale or LAN.
+      hosts: deduplicatedHosts([
+        address,
+        ...hosted.map((endpoint) => new URL(endpoint.url).hostname),
+      ]),
+      endpoints: hosted,
+    };
   }
 
   const advertised = qrEndpoints(source.endpoints);
@@ -235,7 +211,7 @@ export function companionPairingRoute(
   const address = parsed.hostname;
   const port = parsed.port ? Number(parsed.port) : 80;
   const protectedRoutes = advertised.filter(
-    (endpoint) => endpoint.url !== preferred.url && ["hosted", "tailnet"].includes(endpoint.kind),
+    (endpoint) => endpoint.url !== preferred.url && endpoint.kind === "hosted",
   );
   const otherLocalRoutes = advertised.filter(
     (endpoint) => endpoint.url !== preferred.url && !["hosted", "tailnet"].includes(endpoint.kind),
@@ -247,14 +223,21 @@ export function companionPairingRoute(
   return {
     address,
     port,
-    hosts: deduplicatedHosts([address, ...(source.hosts ?? [])]),
+    // Choosing local must not smuggle a tailnet route into legacy clients.
+    // Tailscale has its own explicit mode and consent copy.
+    hosts: deduplicatedHosts([
+      address,
+      ...(source.hosts ?? []).filter((host) =>
+        !host.trim().toLowerCase().replace(/\.$/, "").endsWith(".ts.net")
+      ),
+    ]),
     endpoints,
   };
 }
 
 /** Freeze the route represented by one pairing QR. Automatic setup must have
- * a validated hosted or tailnet endpoint; otherwise a later state refresh can
- * reinterpret the same one-time credential as a plain LAN QR. */
+ * a validated hosted endpoint; otherwise a later state refresh cannot
+ * reinterpret the same one-time credential as Tailscale or plain LAN. */
 export function companionPairingRoutePin(
   source: CompanionPairingRouteSource,
   mode: CompanionPairingRouteMode,
@@ -268,7 +251,7 @@ export function companionPairingRoutePin(
     ? null
     : mode === "tailscale"
       ? endpoints.find((endpoint) => endpoint.kind === "tailnet") ?? null
-      : firstEndpoint && (firstEndpoint.kind === "hosted" || firstEndpoint.kind === "tailnet")
+      : firstEndpoint?.kind === "hosted"
         ? firstEndpoint
         : null;
   if (mode !== "local" && !protectedEndpoint) return null;

@@ -93,11 +93,21 @@ describe("phone setup flow", () => {
     ).toBe("sign-in");
   });
 
-  it("never opens local pairing while hosted access is provisioning", () => {
-    const companion = { enabled: true, endpoints: [] };
+  it("waits for hosted HTTPS even when Tailscale is already available", () => {
+    const companion = {
+      enabled: true,
+      endpoints: [{
+        kind: "tailnet" as const,
+        url: "http://mac.tail1234.ts.net:8810",
+        priority: 0,
+      }],
+    };
     expect(phonePairingGate(account("connecting"), companion, false)).toBe("wait");
     expect(phonePairingGate(account("ready"), companion, false)).toBe("wait");
     expect(phonePairingGate(account("signed-out"), companion, false)).toBe("account-required");
+    expect(
+      phonePairingGate({ available: false, status: "signed-out" }, companion, false),
+    ).toBe("account-required");
   });
 
   it("opens local pairing only after the explicit Wi-Fi fallback", () => {
@@ -130,7 +140,7 @@ describe("phone setup flow", () => {
     ).toBe("open");
   });
 
-  it("opens pairing over a protected tailnet without requiring a hosted account", () => {
+  it("opens Tailscale only after the explicit fallback is selected", () => {
     const tailnet = {
       enabled: true,
       endpoints: [{
@@ -139,10 +149,11 @@ describe("phone setup flow", () => {
         priority: 100,
       }],
     };
-    expect(phonePairingGate(account("signed-out"), tailnet, false)).toBe("open");
+    expect(phonePairingGate(account("signed-out"), tailnet, false)).toBe("account-required");
     expect(
       phonePairingGate({ available: false, status: "signed-out" }, tailnet, false),
-    ).toBe("open");
+    ).toBe("account-required");
+    expect(phonePairingGate(account("signed-out"), tailnet, true)).toBe("open");
   });
 
   it("arms the timeout during account IPC and explicit local setup", () => {

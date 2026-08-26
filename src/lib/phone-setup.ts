@@ -114,7 +114,6 @@ export function derivePhoneSetupPhase(
 
 export type CompanionPairingMode =
   | "local-only"
-  | "tailnet-ready"
   | "hosted-startable"
   | "hosted-connecting"
   | "hosted-ready";
@@ -124,19 +123,15 @@ export interface PhoneSetupCompanionSnapshot {
   endpoints?: CompanionEndpoint[];
 }
 
-/** Protected hosted and Tailscale endpoints are automatic routes. Plain
- * local pairing requires an explicit user choice, which prevents
- * provisioning races from showing a QR that cannot work on an isolated
- * Wi-Fi network. */
+/** Automatic setup is hosted-HTTPS only. Tailscale and plain local pairing
+ * remain explicit user choices, so a tailnet route cannot silently replace
+ * hosted access while the account connection is still being prepared. */
 export const companionPairingMode = (
   account: CompanionAccountState | null,
   companion: PhoneSetupCompanionSnapshot | null,
 ): CompanionPairingMode => {
   if (companion?.endpoints?.some((endpoint) => endpoint.kind === "hosted")) {
     return "hosted-ready";
-  }
-  if (companion?.endpoints?.some((endpoint) => endpoint.kind === "tailnet")) {
-    return "tailnet-ready";
   }
   if (!account?.available || account.status === "signed-out" || account.status === "error") {
     return "local-only";
@@ -150,12 +145,14 @@ export type PhonePairingGate = "open" | "start" | "wait" | "account-required";
 export function phonePairingGate(
   account: CompanionAccountState | null,
   companion: PhoneSetupCompanionSnapshot | null,
-  localFallback: boolean,
+  explicitRoute: boolean,
 ): PhonePairingGate {
-  if (localFallback) return "open";
+  // The caller already validated which explicit route the person selected.
+  // This bypass is shared by Wi-Fi and Tailscale; neither is an automatic
+  // alternative to the hosted route.
+  if (explicitRoute) return "open";
   switch (companionPairingMode(account, companion)) {
     case "hosted-ready":
-    case "tailnet-ready":
       return "open";
     case "hosted-startable":
       return "start";

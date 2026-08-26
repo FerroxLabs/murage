@@ -247,6 +247,7 @@ struct PairingView: View {
 
     @ViewBuilder
     private func confirmationView(for connection: Connection) -> some View {
+        let badge = connectionBadge(for: connection)
         VStack(spacing: 22) {
             ZStack {
                 Circle()
@@ -262,8 +263,7 @@ struct PairingView: View {
                 Text(connection.name)
                     .font(.title2.bold())
                     .multilineTextAlignment(.center)
-                Label(connectionIsProtected(connection) ? "Secure connection" : "Trusted local connection",
-                      systemImage: connectionIsProtected(connection) ? "lock.shield.fill" : "checkmark.shield.fill")
+                Label(badge.title, systemImage: badge.systemImage)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(MausPalette.color("green"))
             }
@@ -456,6 +456,17 @@ struct PairingView: View {
         connection.activeEndpoint?.protectsCredentials
             ?? connection.automaticEndpoints.first?.protectsCredentials
             ?? false
+    }
+
+    private func connectionBadge(for connection: Connection) -> (title: String, systemImage: String) {
+        let kind = connection.activeEndpoint?.kind ?? connection.automaticEndpoints.first?.kind
+        if kind == .hosted {
+            return ("HTTPS connection", "lock.shield.fill")
+        }
+        if kind == .tailnet {
+            return ("Tailscale connection", "lock.shield.fill")
+        }
+        return ("Trusted local connection", "checkmark.shield.fill")
     }
 
     static func deviceName() -> String {

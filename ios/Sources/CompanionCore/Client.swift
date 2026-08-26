@@ -18,8 +18,9 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     public var port: Int
     /// Every other address the computer answered on at pairing time, best
     /// first — the tailnet name, the LAN address, the sidecar's mDNS name.
-    /// Optional so connections saved before fallbacks existed still decode;
-    /// read through `orderedHosts`, which is never empty.
+    /// Optional so connections saved before fallbacks existed still decode.
+    /// Read through `orderedHosts`; policy-bound hosted connections may have
+    /// no legacy HTTP host because their complete route lives in `endpoints`.
     public var hosts: [String]?
     /// Complete route currently being dialed. Absent on connections saved by
     /// older app builds, where `host` + `port` still mean direct HTTP.
@@ -27,6 +28,16 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     /// Full routes advertised by a newer desktop. Each carries its own scheme
     /// and port so hosted HTTPS can coexist with local HTTP fallbacks.
     public var endpoints: [CompanionEndpoint]?
+    /// The route kinds this pairing explicitly authorized. `nil` is reserved
+    /// for connections saved by older app versions and retains their legacy
+    /// failover behavior. New pairings always persist a non-nil policy, with
+    /// hosted HTTPS included as the one universally safe future upgrade.
+    public var allowedRouteKinds: Set<CompanionEndpointKind>?
+    /// Exact cleartext origins the pairing consent screen authorized. New
+    /// policies persist an empty set for hosted/Tailscale and one selected
+    /// LAN or Bonjour origin for local pairing. Absent alongside a nil kind
+    /// policy on connections saved before route consent existed.
+    public var allowedLocalRouteURLs: Set<String>?
 
     public init(
         id: String = UUID().uuidString,
@@ -35,7 +46,9 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
         port: Int,
         hosts: [String]? = nil,
         activeEndpoint: CompanionEndpoint? = nil,
-        endpoints: [CompanionEndpoint]? = nil
+        endpoints: [CompanionEndpoint]? = nil,
+        allowedRouteKinds: Set<CompanionEndpointKind>? = nil,
+        allowedLocalRouteURLs: Set<String>? = nil
     ) {
         self.id = id
         self.name = name
@@ -44,6 +57,8 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
         self.hosts = hosts
         self.activeEndpoint = activeEndpoint
         self.endpoints = endpoints
+        self.allowedRouteKinds = allowedRouteKinds
+        self.allowedLocalRouteURLs = allowedLocalRouteURLs
     }
 
     /// The representation `URLComponents.host` accepts for a literal IPv6
@@ -132,13 +147,14 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     /// The bearer token goes out in a header on every request, so anyone who
     /// can observe the path between phone and computer can lift it and use it
     /// until the device is revoked. What that means in practice depends
-    /// entirely on how you reach the computer, and the two supported routes
-    /// are not equivalent:
+    /// entirely on how you reach the computer, and the supported routes are
+    /// not equivalent:
     ///
-    /// - **Over a tailnet** — the recommended route, and the only one that
-    ///   works away from home — the traffic is inside WireGuard before it
-    ///   reaches any network, so it is encrypted and authenticated end to end
-    ///   even though this URL says `http`.
+    /// - **Over hosted HTTPS** — the default remote route — ordinary TLS
+    ///   encrypts the connection and authenticates the public endpoint.
+    /// - **Over a tailnet**, the traffic is inside WireGuard before it reaches
+    ///   any network, so it is encrypted and authenticated end to end even
+    ///   though this URL says `http`.
     /// - **Over a LAN**, it is cleartext on that network. Trust it exactly as
     ///   far as you trust everyone on the wifi: fine at home, not fine on a
     ///   café or conference network — pair over the tailnet there instead.
@@ -147,19 +163,21 @@ public struct Connection: Codable, Hashable, Identifiable, Sendable {
     /// switched on. A self-signed certificate on a LAN address is a
     /// certificate nothing can validate, so it would have to be pinned at
     /// pairing time and re-pinned whenever the sidecar regenerates it — a
-    /// meaningful amount of machinery whose benefit, on the tailnet path, is
-    /// zero. The honest position is: the tailnet carries the encryption, the
-    /// LAN path is documented as trusted-network-only, and pinned TLS is what
-    /// this needs before it could claim otherwise. See `docs/ios-companion.md`.
+    /// meaningful amount of machinery. Hosted HTTPS and the tailnet carry
+    /// encryption; the LAN path is documented as trusted-network-only, and
+    /// pinned TLS is what it needs before it could claim otherwise. See
+    /// `docs/ios-companion.md`.
     public var baseURL: URL? {
-        if let endpoint = activeEndpoint?.baseURL { return endpoint }
-        var components = URLComponents()
-        components.scheme = "http"
-        // Normalize here too so connections saved by older builds with an
-        // unbracketed IPv6 host remain usable after an update.
-        components.host = Self.urlHost(host)
-        components.port = port
-        return components.url
+        if let activeEndpoint {
+            guard allowsEndpoint(activeEndpoint) else { return nil }
+            return activeEndpoint.baseURL
+        }
+        guard let direct = CompanionEndpoint.direct(
+            host: host,
+            port: port,
+            priority: 0
+        ), allowsEndpoint(direct) else { return nil }
+        return direct.baseURL
     }
 }
 
@@ -217,6 +235,7 @@ public struct PairingInvite: Equatable, Sendable {
             connection.endpoints = endpoints
             connection = connection.dialing(endpoints[0])
         }
+        connection.establishRoutePolicyFromInvite()
         return PairingInvite(connection: connection, credential: credential)
     }
 

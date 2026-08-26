@@ -12,9 +12,9 @@ The first version includes:
 
 - QR-first pairing from desktop **Settings → Phone**, with the computer name
   confirmed on the iPhone before it connects.
-- Automatic routing through the address carried by the QR. This can include a
-  Tailscale MagicDNS name when both devices share a tailnet, or hosted HTTPS
-  when the desktop owner has enabled it.
+- Hosted HTTPS for the default QR after the desktop owner enables it, with
+  dedicated Tailscale and trusted-local QR routes only after an explicit
+  choice.
 - Nearby computers, a manual address, and a six-digit code under **Other ways
   to connect** when the QR path is unavailable.
 - Secure per-device trust, device listing, and revocation.
@@ -116,11 +116,11 @@ direct LAN requires choosing that computer or address again.
 
 ### Tailscale
 
-Tailscale is the recommended route away from home and on Wi-Fi networks that
-isolate clients. When both devices share a tailnet, OpenMausBot can place the
-Mac's MagicDNS name in the pairing QR automatically. Scan the QR normally; no
-address entry is required. Manual entry remains available only as a fallback
-when a QR invitation is unavailable or does not contain that route.
+Tailscale is an optional route away from home and on Wi-Fi networks that
+isolate clients. When both devices share a tailnet, choose **Pair over
+Tailscale** in the desktop setup alternatives. OpenMausBot then places the
+Mac's MagicDNS name in that dedicated QR; it never silently replaces the
+default hosted HTTPS route. Manual entry remains available as a fallback.
 
 The URL is still `http`, but the path is encrypted and authenticated by
 WireGuard inside the tailnet. Use the MagicDNS name rather than the
@@ -140,7 +140,9 @@ connections continue to work without an account.
 
 The desktop runs an outbound connector to Cloudflare, so no inbound router
 configuration or Tailscale installation is required. The hosted address is
-included in a pairing invitation only after it is ready.
+included in a pairing invitation only after it is ready. The default setup
+waits for that HTTPS address instead of silently substituting Tailscale;
+Tailscale pairing remains an explicit choice under the alternative routes.
 
 Cloudflare terminates and proxies the encrypted connection to the connector.
 The OpenMausBot control plane stores account and installation metadata plus
@@ -160,8 +162,9 @@ local port cannot inherit the public route.
 1. On the Mac, open **Settings → Phone**, turn on phone access, and choose
    **Set up a phone**.
 2. On the iPhone, choose **Connect my computer** and scan the QR.
-3. Confirm the computer name and **Secure connection**. The phone stores its
-   trust securely in Keychain; no iPhone account is required.
+3. Confirm the computer name and the displayed transport — **HTTPS connection**,
+   **Tailscale connection**, or **Trusted local connection**. The phone stores
+   its trust securely in Keychain; no iPhone account is required.
 4. If scanning is unavailable, open **Other ways to connect** for a nearby
    computer, manual address, or six-digit code.
 5. Revoking the phone on the Mac removes its access and lets it pair again.

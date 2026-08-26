@@ -247,16 +247,17 @@ so this is also how the phone reaches the Mac over cellular.
    App Store build) and sign in.
 2. **On the phone:** install Tailscale from the App Store, sign in to the *same*
    account, and turn the VPN on.
-3. **In OpenMausBot → Settings → Companion:** with the toggle on, the panel now
+3. **In OpenMausBot → Settings → Phone:** with Phone access on, the panel now
    prints the tailnet name — something like `macbook.tail1234.ts.net:8810`, with
    the LAN address listed separately underneath. If it still only shows a
    `192.168.x.x` address, the sidecar could not find the Tailscale CLI — it
    asks once at startup, so turn the Companion toggle off and on again (or
    restart `pnpm companion` if running it by hand) after Tailscale is up.
-4. **On the phone:** scan the Companion panel's QR code, which carries that
-   MagicDNS name, or pair by typing the name. Discovery does not help here —
-   Bonjour is multicast and a tailnet does not carry it — so the QR/manual
-   address is the path, and it is the one path that works from anywhere.
+4. **In the desktop setup alternatives, choose Pair over Tailscale.** Scan its
+   dedicated QR, which carries that MagicDNS name, or pair by typing the name.
+   Discovery does not help here — Bonjour is multicast and a tailnet does not
+   carry it — so the Tailscale QR/manual address is the path, and it is the one
+   path that works from anywhere.
 
 **Use the name, not the address.** Both reach the harness, but only the name
 gets past App Transport Security. iOS exempts local networking, and `100.64/10`

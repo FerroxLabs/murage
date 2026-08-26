@@ -295,4 +295,43 @@ final class FailoverTests: XCTestCase {
             priority: 100
         ))
     }
+
+    func testManualAddressSelectionResetsInsteadOfWidensRoutePolicy() throws {
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example", kind: .hosted, priority: 0
+        ))
+        let tailnet = try XCTUnwrap(CompanionEndpoint(
+            url: "http://mac.tail1234.ts.net:8810", kind: .tailnet, priority: 0
+        ))
+        let local = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.42:8810", kind: .lan, priority: 0
+        ))
+        let otherLocal = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.99:8810", kind: .lan, priority: 0
+        ))
+        var connection = Connection(
+            name: "Mac",
+            host: hosted.host,
+            port: hosted.port,
+            activeEndpoint: hosted,
+            endpoints: [hosted],
+            allowedRouteKinds: [.hosted]
+        )
+
+        connection.resetRoutePolicy(selecting: tailnet)
+        XCTAssertEqual(connection.allowedRouteKinds, [.tailnet, .hosted])
+        XCTAssertEqual(connection.allowedLocalRouteURLs, [])
+        XCTAssertEqual(connection.orderedEndpoints.map(\.kind), [.tailnet, .hosted])
+
+        connection.resetRoutePolicy(selecting: local)
+        XCTAssertEqual(connection.allowedRouteKinds, [.lan, .hosted])
+        XCTAssertEqual(connection.allowedLocalRouteURLs, [local.url])
+        XCTAssertEqual(connection.orderedEndpoints.map(\.kind), [.lan, .hosted])
+        XCTAssertFalse(connection.orderedEndpoints.contains { $0.kind == .tailnet })
+
+        let refused = connection.dialing(tailnet)
+        XCTAssertEqual(refused.activeEndpoint, local)
+        XCTAssertEqual(refused.baseURL?.absoluteString, local.url)
+        XCTAssertEqual(connection.dialing(otherLocal).activeEndpoint, local)
+    }
 }
