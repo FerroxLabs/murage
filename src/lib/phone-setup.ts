@@ -140,3 +140,20 @@ export function newlyPairedDevice<T extends { id: string; name: string }>(
   const baseline = new Set(baselineDeviceIds);
   return devices.find((device) => !baseline.has(device.id)) ?? null;
 }
+
+/** Setup cannot establish its "before" snapshot until Companion has loaded.
+ * Returning null keeps the primary action inert instead of treating every
+ * already-paired phone as a new success. */
+export function phoneSetupBaseline<T extends { id: string }>(devices: T[] | null): string[] | null {
+  return devices ? devices.map((device) => device.id) : null;
+}
+
+const START_FAILURE_MESSAGE =
+  "Phone access could not start. Open Advanced & troubleshooting, then try turning Phone access on again.";
+
+export function companionStartFailure(
+  companion: Pick<PhoneSetupCompanionSnapshot, "enabled"> & { error?: string },
+): string | null {
+  if (companion.enabled && !companion.error) return null;
+  return companion.error?.trim() || START_FAILURE_MESSAGE;
+}

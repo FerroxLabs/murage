@@ -1,8 +1,5 @@
-import { useState } from "react";
 import {
-  Check,
   Cloud,
-  Copy,
   Loader2,
   LogOut,
   ShieldCheck,
@@ -19,6 +16,7 @@ import {
   usePhoneSetupController,
 } from "./PhoneSetupFlow";
 import { companionPairingMode } from "../lib/phone-setup";
+import { ConnectionDetail } from "./ConnectionDetail";
 import { Card } from "./SettingsPrimitives";
 
 export {
@@ -46,45 +44,6 @@ const endpointHost = (url: string): string => {
   }
 };
 
-function ConnectionDetail({ label, value }: { label: string; value: string }) {
-  const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const short = value.length > 30 ? `${value.slice(0, 18)}…${value.slice(-8)}` : value;
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_200);
-    } catch {
-      // Clipboard access is best effort; the Reveal action remains available.
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-3 rounded-lg bg-inset px-3 py-2">
-      <div className="min-w-0 flex-1">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-ink-secondary">{label}</div>
-        <div className="mt-0.5 truncate font-mono text-[11.5px] text-ink">
-          {revealed ? value : short}
-        </div>
-      </div>
-      <button
-        onClick={() => setRevealed((current) => !current)}
-        className="shrink-0 rounded px-2 py-1 text-[11px] text-ink-secondary hover:bg-control hover:text-ink"
-      >
-        {revealed ? "Hide" : "Reveal"}
-      </button>
-      <button
-        onClick={() => void copy()}
-        aria-label={`Copy ${label}`}
-        className="shrink-0 rounded p-1.5 text-ink-secondary hover:bg-control hover:text-ink"
-      >
-        {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
-      </button>
-    </div>
-  );
-}
-
 export function CompanionSection({ profileEmail = "" }: { profileEmail?: string }) {
   const c = usePhoneSetupController(profileEmail);
   const state = c.state;
@@ -107,12 +66,12 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   }
 
   const pairedCount = state.devices.length;
-  const statusLabel = pairedCount
-    ? `${pairedCount} ${pairedCount === 1 ? "phone" : "phones"} paired`
-    : state.enabled
-      ? "Ready to pair"
-      : "Not set up";
-  const statusGood = pairedCount > 0 || state.enabled;
+  const statusLabel = !state.enabled
+    ? "Phone access off"
+    : pairedCount
+      ? `${pairedCount} ${pairedCount === 1 ? "phone" : "phones"} paired`
+      : "Ready to pair";
+  const statusGood = state.enabled;
   const accountActionError = companionAccountActionError(c.account, c.accountError);
   const hosted = state.endpoints?.find((endpoint) => endpoint.kind === "hosted");
   const localRoutes = [

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { CompanionAccountState } from "../types/ogb";
 import {
+  companionStartFailure,
   derivePhoneSetupPhase,
   initialPhoneSetupFlowState,
   newlyPairedDevice,
   phonePairingGate,
+  phoneSetupBaseline,
   phoneSetupReducer,
 } from "./phone-setup";
 
@@ -105,5 +107,23 @@ describe("phone setup flow", () => {
         pairingOpen: false,
       }),
     ).toBe("success");
+  });
+
+  it("waits for the initial device snapshot before capturing the success baseline", () => {
+    expect(phoneSetupBaseline(null)).toBeNull();
+
+    const baseline = phoneSetupBaseline([{ id: "already-paired", name: "Existing iPhone" }]);
+    expect(baseline).toEqual(["already-paired"]);
+    expect(
+      newlyPairedDevice(baseline ?? [], [{ id: "already-paired", name: "Existing iPhone" }]),
+    ).toBeNull();
+  });
+
+  it("turns a disabled start result into a stable actionable error", () => {
+    expect(companionStartFailure({ enabled: true })).toBeNull();
+    expect(companionStartFailure({ enabled: false })).toContain("Advanced & troubleshooting");
+    expect(companionStartFailure({ enabled: false, error: "Port 8811 is already in use" })).toBe(
+      "Port 8811 is already in use",
+    );
   });
 });

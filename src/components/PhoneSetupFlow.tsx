@@ -20,14 +20,17 @@ import { QRCodeSVG } from "qrcode.react";
 import { companionPairingLink, type CompanionEndpoint } from "../lib/companion-pairing";
 import {
   companionPairingMode,
+  companionStartFailure,
   derivePhoneSetupPhase,
   initialPhoneSetupFlowState,
   newlyPairedDevice,
   phonePairingGate,
+  phoneSetupBaseline,
   phoneSetupReducer,
   type PhoneSetupPhase,
 } from "../lib/phone-setup";
 import type { CompanionAccountState } from "../types/ogb";
+import { ConnectionDetail } from "./ConnectionDetail";
 
 export interface PhoneDevice {
   id: string;
@@ -217,7 +220,13 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       try {
         const started = state?.enabled ? state : await companion.start();
         setState(started);
-        if (!started.enabled || started.error) return;
+        const startFailure = companionStartFailure(started);
+        if (startFailure) {
+          setProvisioning(false);
+          setError(startFailure);
+          dispatchFlow({ type: "reset" });
+          return;
+        }
         const gate = phonePairingGate(accountOverride ?? account, started, localFallback);
         if (gate !== "open") {
           setProvisioning(gate === "wait" || gate === "start");
@@ -230,6 +239,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       } catch (cause) {
         setProvisioning(false);
         setError(cause instanceof Error ? cause.message : String(cause));
+        dispatchFlow({ type: "reset" });
       } finally {
         setBusy(false);
         openingPairing.current = false;
@@ -239,7 +249,9 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   );
 
   const start = useCallback(() => {
-    dispatchFlow({ type: "start", deviceIds: state?.devices.map((device) => device.id) ?? [] });
+    const baseline = phoneSetupBaseline(state?.devices ?? null);
+    if (!baseline) return;
+    dispatchFlow({ type: "start", deviceIds: baseline });
     setError(null);
     setAccountError(null);
     if (account?.available && (account.status === "ready" || account.status === "connecting")) {
@@ -249,8 +261,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   }, [account, openPairing, state?.devices]);
 
   const useLocal = useCallback(() => {
+    const baseline = phoneSetupBaseline(state?.devices ?? null);
+    if (!baseline) return;
     if (!flow.active) {
-      dispatchFlow({ type: "start", deviceIds: state?.devices.map((device) => device.id) ?? [] });
+      dispatchFlow({ type: "start", deviceIds: baseline });
     }
     dispatchFlow({ type: "use-local" });
     setProvisioning(true);
@@ -471,7 +485,8 @@ export function PhoneSetupFlowView({
         <ValuePoints />
         <button
           onClick={c.start}
-          className="mt-5 w-full max-w-[320px] rounded-lg bg-accent py-2.5 text-[14px] font-medium text-white hover:opacity-90"
+          disabled={!c.state}
+          className="mt-5 w-full max-w-[320px] rounded-lg bg-accent py-2.5 text-[14px] font-medium text-white hover:opacity-90 disabled:cursor-wait disabled:opacity-40"
         >
           {variant === "settings"
             ? c.state?.devices.length
@@ -479,6 +494,7 @@ export function PhoneSetupFlowView({
               : "Pair a phone"
             : "Set up my phone"}
         </button>
+        {c.error && <p role="alert" className="mt-3 max-w-[390px] text-[12.5px] text-danger">{c.error}</p>}
         {variant === "onboarding" && (
           <>
             <button
@@ -660,7 +676,9 @@ export function PhoneSetupFlowView({
         {c.pairingExpired ? "That code expired" : "Scan with your iPhone"}
       </h2>
       <p className="mt-1 text-[13px] text-ink-secondary">
-        {c.pairingExpired ? "Create a fresh code when your phone is ready." : "Open Camera, scan the code, then tap Connect."}
+        {c.pairingExpired
+          ? "Create a fresh code when your phone is ready."
+          : "Open OpenMaus on your iPhone and scan this code."}
       </p>
       {!c.pairingExpired && c.pairingLink && (
         <div className="mt-4 rounded-2xl bg-white p-3.5" aria-label="Phone pairing QR code">
@@ -686,7 +704,11 @@ export function PhoneSetupFlowView({
           <div className="mt-3 text-[12px] text-ink-secondary">
             Manual code
             <div className="mt-1 font-mono text-[22px] tracking-[0.25em] text-ink">{c.state.pairing.code}</div>
-            {c.address && <div className="mt-2 break-all">Address: {c.address}:{c.state.port}</div>}
+            {c.address && (
+              <div className="mt-3">
+                <ConnectionDetail label="Pairing address" value={`${c.address}:${c.state.port}`} />
+              </div>
+            )}
           </div>
         </details>
       )}
