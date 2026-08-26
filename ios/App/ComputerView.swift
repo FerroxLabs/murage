@@ -86,7 +86,7 @@ struct ComputerView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(openingDesktop)
-                    Text("Interactive VNC session. Access must be enabled for this phone in the Mac's Companion settings.")
+                    Text("Interactive VNC session. Access must be enabled for this phone in the Mac's Phone settings.")
                         .font(.caption)
                         .foregroundStyle(Color.white.opacity(0.6))
                         .multilineTextAlignment(.center)

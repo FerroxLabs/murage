@@ -134,7 +134,7 @@ final class Discovery: ObservableObject {
            Int(code) == kDNSServiceErr_PolicyDenied {
             return "Local Network access is off. Enable it in iPhone Settings, or enter a Tailscale address below."
         }
-        return "Local discovery isn't available right now. Enter the address shown by Companion below."
+        return "Local discovery isn't available right now. Enter the address shown in Phone settings."
     }
 
     /// Resolve a browse result to something `Connection` can hold.

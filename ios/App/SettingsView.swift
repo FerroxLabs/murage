@@ -1,112 +1,338 @@
-// Paired-device settings and safe workspace feature entry points.
-//
-// Credentials, revocation, Local VM and execution policy still live only on
-// the computer. The phone can manage renderer-neutral routines and connected-
-// account inventory/authorization without widening that boundary.
+// Settings stays status-first. Network details and destructive pairing
+// controls live one level deeper so the everyday screen remains calm.
 import SwiftUI
 import CompanionCore
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var session: Session
-    @State private var confirmingSignOut = false
-    @State private var editingAddress = false
-    @State private var addressText = ""
+    @State private var enablingNotifications = false
+    private let onConnect: (() -> Void)?
+
+    init(onConnect: (() -> Void)? = nil) {
+        self.onConnect = onConnect
+    }
 
     var body: some View {
         Form {
             Section("Computer") {
                 if let connection = session.connection {
-                    LabeledContent("Name", value: connection.name)
-                    LabeledContent("Address", value: connection.displayAddress)
-                    // The stored address can simply go stale — a tailnet name
-                    // on a phone that left the tailnet, a LAN address after
-                    // the router reshuffled. Editing it here keeps the
-                    // pairing; the alternative is a walk to the computer for
-                    // a new code.
-                    Button("Edit address") {
-                        addressText = connection.displayAddress
-                        editingAddress = true
+                    NavigationLink {
+                        ConnectionSecurityView()
+                    } label: {
+                        ComputerSettingsRow(
+                            name: connection.name,
+                            status: statusText,
+                            connected: session.status == .live
+                        )
+                    }
+                } else {
+                    Button {
+                        onConnect?()
+                    } label: {
+                        ComputerSettingsRow(
+                            name: "Connect a computer",
+                            status: "Not connected",
+                            connected: false
+                        )
+                    }
+                    .disabled(onConnect == nil)
+                }
+            }
+
+            Section {
+                if notificationsAreEnabled {
+                    notificationRow
+                        .accessibilityHint(notificationAccessibilityHint)
+                } else {
+                    Button {
+                        enablingNotifications = true
+                        Task {
+                            await session.enableNotifications()
+                            enablingNotifications = false
+                        }
+                    } label: {
+                        notificationRow
+                    }
+                    .disabled(enablingNotifications)
+                    .accessibilityHint(notificationAccessibilityHint)
+                }
+            } footer: {
+                Text("Alerts arrive while OpenMausBot is open or was recently in the background. Closed-app delivery is not available yet.")
+            }
+
+            if session.connection != nil {
+                Section("Workspace") {
+                    NavigationLink {
+                        TasksRoutinesView()
+                    } label: {
+                        Label {
+                            Text("Tasks & Routines")
+                        } icon: {
+                            SettingsIcon(symbol: "calendar.badge.clock", color: .orange)
+                        }
+                    }
+
+                    NavigationLink {
+                        ConnectedAppsView()
+                    } label: {
+                        Label {
+                            Text("Connected Apps")
+                        } icon: {
+                            SettingsIcon(symbol: "link", color: .blue)
+                        }
                     }
                 }
-                LabeledContent("Connection", value: statusText)
-            }
-
-            Section {
-                LabeledContent("Status", value: session.notificationStatusText)
-                Button(session.notificationAuthorization == .denied ? "Open iPhone Settings" : "Enable notifications") {
-                    Task { await session.enableNotifications() }
-                }
-                .disabled(session.notificationAuthorization == .authorized)
-            } header: {
-                Text("Notifications")
-            } footer: {
-                Text("Approvals and finished work appear while OpenMausMobile is connected, including frames replayed after a short background pause. Closed-app push needs the separate APNs relay release.")
-            }
-
-            Section {
-                NavigationLink {
-                    TasksRoutinesView()
-                } label: {
-                    Label("Tasks & Routines", systemImage: "calendar.badge.clock")
-                }
-                NavigationLink {
-                    ConnectedAppsView()
-                } label: {
-                    Label("Connected Apps", systemImage: "link")
-                }
-            } header: {
-                Text("Workspace")
-            } footer: {
-                Text("Manage routine schedules, view connected accounts, and add Work, Personal, or client aliases here. Provider keys, webhook secrets, account revocation, pairing, Local VM, and agent execution policy stay on your computer.")
-            }
-
-            Section {
-                Button("Unpair this phone", role: .destructive) { confirmingSignOut = true }
-            } footer: {
-                Text("Removes the pairing from this phone only. To stop it reaching the computer at all, remove the device in OpenMausBot → Settings → Companion.")
-            }
-
-            Section("Not here") {
-                Text("API keys, pairing and the Local VM are managed on the computer. This phone is deliberately not allowed to change them.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .task { await session.refreshNotificationAuthorization() }
+    }
+
+    private var notificationsAreEnabled: Bool {
+        switch session.notificationAuthorization {
+        case .authorized, .provisional, .ephemeral: return true
+        default: return false
+        }
+    }
+
+    private var notificationAccessibilityHint: String {
+        if notificationsAreEnabled { return "Notifications are enabled" }
+        if session.notificationAuthorization == .denied { return "Opens iPhone Settings" }
+        return "Asks for permission to send notifications"
+    }
+
+    private var notificationRow: some View {
+        HStack(spacing: 12) {
+            SettingsIcon(symbol: "bell.fill", color: .red)
+            Text("Notifications")
+                .foregroundStyle(.primary)
+            Spacer()
+            if enablingNotifications {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Text(session.notificationStatusText)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var statusText: String { session.status.settingsText }
+}
+
+private struct ComputerSettingsRow: View {
+    let name: String
+    let status: String
+    let connected: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(MausPalette.color("blue").opacity(0.14))
+                    .frame(width: 38, height: 38)
+                Image(systemName: "laptopcomputer")
+                    .foregroundStyle(MausPalette.color("blue"))
+            }
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(connected ? Color.green : Color.secondary)
+                        .frame(width: 7, height: 7)
+                    Text(status)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct SettingsIcon: View {
+    let symbol: String
+    let color: Color
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 28, height: 28)
+            .background(color, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
+struct ConnectionSecurityView: View {
+    @EnvironmentObject private var session: Session
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmingSignOut = false
+    @State private var editingAddress = false
+    @State private var addressText = ""
+    @State private var showingFullAddress = false
+    @State private var copiedAddress = false
+    @State private var refreshing = false
+
+    var body: some View {
+        Form {
+            if let connection = session.connection {
+                Section {
+                    HStack(spacing: 14) {
+                        ProfileAvatar(name: connection.name, size: 46)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(connection.name)
+                                .font(.headline)
+                            Label(session.status.settingsText,
+                                  systemImage: session.status == .live ? "checkmark.circle.fill" : "circle.dotted")
+                                .font(.subheadline)
+                                .foregroundStyle(session.status == .live ? Color.green : Color.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .accessibilityElement(children: .combine)
+                }
+
+                Section {
+                    DisclosureGroup("Connection details") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Group {
+                                if showingFullAddress {
+                                    Text(connection.displayAddress)
+                                        .textSelection(.enabled)
+                                } else {
+                                    Text(shortened(connection.displayAddress))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                            }
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(.secondary)
+
+                            HStack(spacing: 16) {
+                                Button(showingFullAddress ? "Hide full address" : "Show full address") {
+                                    showingFullAddress.toggle()
+                                }
+                                Button(copiedAddress ? "Copied" : "Copy") {
+                                    UIPasteboard.general.string = connection.displayAddress
+                                    copiedAddress = true
+                                    Task {
+                                        try? await Task.sleep(for: .seconds(2))
+                                        copiedAddress = false
+                                    }
+                                }
+                            }
+                            .font(.subheadline.weight(.medium))
+                        }
+                        .padding(.top, 10)
+                    }
+
+                    Button("Edit address") {
+                        addressText = connection.displayAddress
+                        editingAddress = true
+                    }
+                }
+
+                Section("Troubleshooting") {
+                    Text(troubleshootingText)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        refreshing = true
+                        Task {
+                            await session.refresh()
+                            refreshing = false
+                        }
+                    } label: {
+                        HStack {
+                            Text("Try reconnecting")
+                            if refreshing {
+                                Spacer()
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                    }
+                    .disabled(refreshing)
+                }
+
+                Section {
+                    Button("Remove connection from this iPhone", role: .destructive) {
+                        confirmingSignOut = true
+                    }
+                }
+            } else {
+                ContentUnavailableView("No computer connected", systemImage: "laptopcomputer.slash")
+            }
+        }
+        .navigationTitle("Connection & Security")
+        .navigationBarTitleDisplayMode(.inline)
         .alert("Edit address", isPresented: $editingAddress) {
-            TextField("https://mac.example or 192.168.1.42:8810", text: $addressText)
+            TextField("Computer address", text: $addressText)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             Button("Save") {
                 if !session.updateAddress(addressText) {
-                    session.actionError = "Enter a secure https:// address, 192.168.1.42:8810, or a name like macbook.tail1234.ts.net."
+                    session.actionError = "That address doesn't look right. Copy it from Phone settings and try again."
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Enter whatever the Companion panel on your computer shows. The pairing itself is kept.")
+            Text("Use the address shown in Phone settings on your computer. Your pairing is kept.")
         }
         .confirmationDialog(
-            "Unpair this phone?",
+            "Remove this connection?",
             isPresented: $confirmingSignOut,
             titleVisibility: .visible
         ) {
-            Button("Unpair", role: .destructive) { session.signOut() }
+            Button("Remove from this iPhone", role: .destructive) {
+                session.signOut()
+                dismiss()
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You'll need a new pairing code to connect again.")
+            Text("This removes the connection from this iPhone only. It does not revoke this phone on your Mac. To remove Mac-side access, open OpenMausBot → Settings → Phone and remove this device.")
         }
     }
 
-    private var statusText: String {
+    private var troubleshootingText: String {
         switch session.status {
+        case .live:
+            return "This computer is connected and responding normally."
+        case .connecting:
+            return "OpenMausBot is trying the saved connection automatically."
+        case let .offline(reason):
+            return reason
+        case .unauthorized:
+            return "This phone was removed from the computer. Pair it again to reconnect."
+        case .unpaired:
+            return "This phone is not paired with a computer."
+        }
+    }
+
+    private func shortened(_ address: String) -> String {
+        guard address.count > 14 else { return address }
+        let leadingCount = min(20, max(8, address.count - 8))
+        return "\(address.prefix(leadingCount))…\(address.suffix(6))"
+    }
+}
+
+private extension Session.Status {
+    var settingsText: String {
+        switch self {
         case .live: return "Connected"
         case .connecting: return "Connecting…"
         case .unpaired: return "Not paired"
-        case .unauthorized: return "Unpaired on the computer"
-        case let .offline(reason): return reason
+        case .unauthorized: return "Needs pairing"
+        case .offline: return "Offline"
         }
     }
 }
