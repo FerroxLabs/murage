@@ -57,26 +57,30 @@ struct SettingsView: View {
                     .disabled(enablingNotifications)
                     .accessibilityHint(notificationAccessibilityHint)
                 }
+            } footer: {
+                Text("Alerts arrive while OpenMausBot is open or was recently in the background. Closed-app delivery is not available yet.")
             }
 
-            Section("Workspace") {
-                NavigationLink {
-                    TasksRoutinesView()
-                } label: {
-                    Label {
-                        Text("Tasks & Routines")
-                    } icon: {
-                        SettingsIcon(symbol: "calendar.badge.clock", color: .orange)
+            if session.connection != nil {
+                Section("Workspace") {
+                    NavigationLink {
+                        TasksRoutinesView()
+                    } label: {
+                        Label {
+                            Text("Tasks & Routines")
+                        } icon: {
+                            SettingsIcon(symbol: "calendar.badge.clock", color: .orange)
+                        }
                     }
-                }
 
-                NavigationLink {
-                    ConnectedAppsView()
-                } label: {
-                    Label {
-                        Text("Connected Apps")
-                    } icon: {
-                        SettingsIcon(symbol: "link", color: .blue)
+                    NavigationLink {
+                        ConnectedAppsView()
+                    } label: {
+                        Label {
+                            Text("Connected Apps")
+                        } icon: {
+                            SettingsIcon(symbol: "link", color: .blue)
+                        }
                     }
                 }
             }
@@ -261,7 +265,7 @@ struct ConnectionSecurityView: View {
                 }
 
                 Section {
-                    Button("Unpair this phone", role: .destructive) {
+                    Button("Remove connection from this iPhone", role: .destructive) {
                         confirmingSignOut = true
                     }
                 }
@@ -285,17 +289,17 @@ struct ConnectionSecurityView: View {
             Text("Use the address shown in Phone settings on your computer. Your pairing is kept.")
         }
         .confirmationDialog(
-            "Unpair this phone?",
+            "Remove this connection?",
             isPresented: $confirmingSignOut,
             titleVisibility: .visible
         ) {
-            Button("Unpair", role: .destructive) {
+            Button("Remove from this iPhone", role: .destructive) {
                 session.signOut()
                 dismiss()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You'll need to scan a new QR code to connect again.")
+            Text("This removes the connection from this iPhone only. It does not revoke this phone on your Mac. To remove Mac-side access, open OpenMausBot → Settings → Phone and remove this device.")
         }
     }
 

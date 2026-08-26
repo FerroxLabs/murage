@@ -409,9 +409,9 @@ public struct CompanionClient: Sendable {
     }
 
     /// Turn a non-2xx into an `APIError` carrying the harness's own message.
-    /// Those messages are written for people ("pair this device in
-    /// OpenMausBot → Settings → Phone"), so passing them through beats
-    /// inventing a worse one here.
+    /// Those messages are written for people, so passing them through beats
+    /// inventing a different client-side explanation here. Captured fixtures
+    /// intentionally preserve the current server contract verbatim.
     static func check(_ response: URLResponse, _ data: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard !(200...299).contains(http.statusCode) else { return }

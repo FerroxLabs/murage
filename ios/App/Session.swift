@@ -199,8 +199,28 @@ final class Session: ObservableObject {
         }
 
         try Keychain.save(paired.token, for: stored.id)
-        UserDefaults.standard.set(try? JSONEncoder().encode(stored), forKey: Self.connectionKey)
+        // Write the first-pair education marker before making the connection
+        // restorable. If the process stops between these writes, an orphan
+        // marker is harmless while unpaired; the reverse order could restore
+        // a pairing which permanently skipped this step.
+        // RootView may not have received iOS's notification status yet, and
+        // the app may be relaunched before that asynchronous lookup finishes.
+        CompanionPairingCommitSequence.persist {
+            UserDefaults.standard.set(
+                true,
+                forKey: CompanionOnboardingPreferences.pendingNotificationOnboardingKey
+            )
+        } saveConnection: {
+            UserDefaults.standard.set(
+                try? JSONEncoder().encode(stored),
+                forKey: Self.connectionKey
+            )
+        }
 
+        pairingInvite = CompanionPairingInvitePolicy.nextInvite(
+            current: pairingInvite,
+            after: .pairingSucceeded
+        )
         self.connection = stored
         self.token = paired.token
         let liveRoutes = winner.map { route in
@@ -219,7 +239,10 @@ final class Session: ObservableObject {
     }
 
     func receivePairingURL(_ url: URL) {
-        guard status == .unpaired else {
+        guard CompanionPairingInvitePolicy.allowsIncomingInvite(
+            hasConnection: connection != nil,
+            pairingStateIsUnpaired: status == .unpaired
+        ) else {
             actionError = "This phone is already paired. Unpair it in Settings before connecting it to another computer."
             return
         }
@@ -227,11 +250,17 @@ final class Session: ObservableObject {
             actionError = "That pairing invitation is not valid. Start pairing again on your computer."
             return
         }
-        pairingInvite = invite
+        pairingInvite = CompanionPairingInvitePolicy.nextInvite(
+            current: pairingInvite,
+            after: .received(invite)
+        )
     }
 
     func consumePairingInvite() {
-        pairingInvite = nil
+        pairingInvite = CompanionPairingInvitePolicy.nextInvite(
+            current: pairingInvite,
+            after: .consumed
+        )
     }
 
     func signOut() {
@@ -241,8 +270,15 @@ final class Session: ObservableObject {
         endpointRefreshTask = nil
         restorePending = false
         pendingNotification = nil
+        pairingInvite = CompanionPairingInvitePolicy.nextInvite(
+            current: pairingInvite,
+            after: .signedOut
+        )
         if let id = connection?.id { Keychain.remove(id) }
         UserDefaults.standard.removeObject(forKey: Self.connectionKey)
+        UserDefaults.standard.removeObject(
+            forKey: CompanionOnboardingPreferences.pendingNotificationOnboardingKey
+        )
         connection = nil
         client = nil
         token = nil

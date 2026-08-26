@@ -1,9 +1,10 @@
 // App entry, and the one place that decides when the event stream lives.
 //
 // A phone is not a desktop: the stream is torn down the moment the app
-// leaves the screen, because iOS is going to kill it anyway and doing it
-// deliberately means the cursor is written down at a known point. Coming
-// back asks the harness what was missed rather than asking for everything.
+// leaves the screen's short background grace period, because iOS is going to
+// suspend it anyway and doing it deliberately means the cursor is written
+// down at a known point. Coming back asks the harness what was missed rather
+// than asking for everything.
 import SwiftUI
 import CompanionCore
 import UserNotifications
@@ -41,6 +42,8 @@ struct RootView: View {
     @EnvironmentObject private var session: Session
     @AppStorage("companion.onboarding.welcomeSeen") private var hasSeenWelcome = false
     @AppStorage("companion.onboarding.notificationsSeen") private var hasSeenNotificationPrompt = false
+    @AppStorage(CompanionOnboardingPreferences.pendingNotificationOnboardingKey)
+    private var notificationOnboardingPending = false
     @State private var pairingRequested = false
 
     var body: some View {
@@ -68,6 +71,7 @@ struct RootView: View {
             case .notificationPrompt:
                 NotificationOnboardingView {
                     hasSeenNotificationPrompt = true
+                    notificationOnboardingPending = false
                     pairingRequested = false
                 }
                 .onAppear { hasSeenWelcome = true }
@@ -79,6 +83,7 @@ struct RootView: View {
                         // which needed no notification education. Do not let
                         // a later voluntary unpair reopen Pairing by itself.
                         pairingRequested = false
+                        reconcileNotificationOnboarding()
                     }
             case .revoked:
                 UnpairedView {
@@ -91,6 +96,16 @@ struct RootView: View {
             guard invite != nil else { return }
             hasSeenWelcome = true
             pairingRequested = true
+        }
+        .onAppear { reconcileNotificationOnboarding() }
+        .onChange(of: session.notificationAuthorizationResolved) { _, _ in
+            reconcileNotificationOnboarding()
+        }
+        .onChange(of: session.notificationAuthorization) { _, _ in
+            reconcileNotificationOnboarding()
+        }
+        .onChange(of: notificationOnboardingPending) { _, isPending in
+            if isPending { reconcileNotificationOnboarding() }
         }
         .alert(
             "Something went wrong",
@@ -120,20 +135,28 @@ struct RootView: View {
             hasSeenWelcome: hasSeenWelcome,
             pairingRequested: pairingRequested,
             hasPendingPairingInvite: session.pairingInvite != nil,
-            notificationOnboardingRequested: pairingRequested,
+            notificationOnboardingPending: notificationOnboardingPending,
             hasSeenNotificationPrompt: hasSeenNotificationPrompt,
-            notificationPermissionIsUndetermined: shouldOfferNotificationOnboarding
+            notificationAuthorization: notificationAuthorizationState
         ))
     }
 
-    private var shouldOfferNotificationOnboarding: Bool {
+    private var notificationAuthorizationState: CompanionNotificationAuthorizationState {
         #if DEBUG
         // Store-preview runs are deterministic screenshot fixtures, not a
         // first pairing, and must keep landing on the requested chat surface.
-        if ProcessInfo.processInfo.arguments.contains("-store-preview") { return false }
+        if ProcessInfo.processInfo.arguments.contains("-store-preview") { return .determined }
         #endif
-        return session.notificationAuthorizationResolved &&
-            session.notificationAuthorization == .notDetermined
+        guard session.notificationAuthorizationResolved else { return .unresolved }
+        return session.notificationAuthorization == .notDetermined ? .notDetermined : .determined
+    }
+
+    private func reconcileNotificationOnboarding() {
+        notificationOnboardingPending = CompanionNotificationOnboardingPolicy.shouldKeepPending(
+            isPending: notificationOnboardingPending,
+            hasCompletedStep: hasSeenNotificationPrompt,
+            authorization: notificationAuthorizationState
+        )
     }
 
     private func startPairing() {

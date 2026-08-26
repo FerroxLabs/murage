@@ -17,7 +17,7 @@ struct PairingView: View {
     /// was lost, repeating this same logical request recovers its token.
     @State private var pairRequestId: String?
     @State private var chosen: Connection?
-    @State private var pairing = false
+    @State private var submission = CompanionPairingSubmissionState()
     @State private var failure: String?
     @State private var showingScanner = false
     @State private var showingOtherWays = false
@@ -29,6 +29,8 @@ struct PairingView: View {
     init(onCancel: @escaping () -> Void = {}) {
         self.onCancel = onCancel
     }
+
+    private var pairing: Bool { submission.isInFlight }
 
     var body: some View {
         NavigationStack {
@@ -57,6 +59,7 @@ struct PairingView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Not now", action: onCancel)
+                        .disabled(!submission.allowsNavigation)
                 }
             }
             .onAppear {
@@ -83,6 +86,7 @@ struct PairingView: View {
                     return nil
                 }
             }
+            .interactiveDismissDisabled(pairing)
         }
     }
 
@@ -264,15 +268,23 @@ struct PairingView: View {
                     .foregroundStyle(MausPalette.color("green"))
             }
 
-            DisclosureGroup("Connection details") {
-                Text(connection.displayAddress)
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Computer address")
+                    .font(.subheadline.weight(.semibold))
+                Text(connection.pairingConsentOrigin)
                     .font(.footnote.monospaced())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 8)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Make sure this is the computer you expect before connecting.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-            .font(.subheadline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(Color(uiColor: .tertiarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .accessibilityElement(children: .combine)
 
             if let credential = scannedCredential {
                 if !connectionIsProtected(connection) {
@@ -285,7 +297,7 @@ struct PairingView: View {
 
                 Button {
                     Haptics.selection()
-                    Task { await submit(connection, credential: credential) }
+                    beginSubmission(connection, credential: credential)
                 } label: {
                     HStack {
                         if pairing { ProgressView().tint(.white) }
@@ -316,7 +328,7 @@ struct PairingView: View {
 
                     Button {
                         Haptics.selection()
-                        Task { await submit(connection, credential: code) }
+                        beginSubmission(connection, credential: code)
                     } label: {
                         HStack {
                             if pairing { ProgressView().tint(.white) }
@@ -339,6 +351,7 @@ struct PairingView: View {
                 failure = nil
             }
             .foregroundStyle(.secondary)
+            .disabled(!submission.allowsNavigation)
         }
         .padding(22)
         .background(Color(uiColor: .secondarySystemGroupedBackground))
@@ -377,10 +390,26 @@ struct PairingView: View {
         }
     }
 
+    @MainActor
+    private func beginSubmission(_ connection: Connection, credential: String) {
+        guard submission.begin() else { return }
+        Task { await submit(connection, credential: credential) }
+    }
+
+    @MainActor
     private func submit(_ connection: Connection, credential: String) async {
-        pairing = true
         failure = nil
-        defer { pairing = false }
+        defer {
+            submission.finish()
+            // A deep link received during the commit cannot replace the
+            // consent screen. If this request failed, present it only after
+            // the in-flight request has fully settled.
+            if session.connection == nil {
+                accept(session.pairingInvite)
+            } else {
+                session.consumePairingInvite()
+            }
+        }
         let cameFromScanner = scannedCredential != nil
         let requestId = pairRequestId ?? UUID().uuidString
         pairRequestId = requestId
@@ -413,7 +442,7 @@ struct PairingView: View {
     }
 
     private func accept(_ invite: PairingInvite?) {
-        guard let invite else { return }
+        guard submission.allowsNavigation, let invite else { return }
         choiceGeneration += 1
         chosen = invite.connection
         scannedCredential = invite.credential

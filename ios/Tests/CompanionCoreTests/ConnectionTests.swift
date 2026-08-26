@@ -75,6 +75,28 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(invite.credential, token)
     }
 
+    func testPairingConsentShowsNormalizedOriginInsteadOfTrustingQRName() throws {
+        let url = try XCTUnwrap(URL(string:
+            "openmausbot://pair?address=https%3A%2F%2FOTHER.Example%3A9443%2F" +
+            "&code=004209&name=Milind%27s%20Mac"))
+        let invite = try XCTUnwrap(PairingInvite.parse(url))
+
+        XCTAssertEqual(invite.connection.name, "Milind's Mac")
+        XCTAssertEqual(invite.connection.pairingConsentOrigin, "https://other.example:9443")
+        XCTAssertFalse(invite.connection.pairingConsentOrigin.contains("004209"))
+    }
+
+    func testPairingConsentNormalizesLegacyDNSAndIPv6Origins() throws {
+        let tailnet = try XCTUnwrap(Connection.parse("MacBook.Tail1234.TS.NET"))
+        XCTAssertEqual(
+            tailnet.pairingConsentOrigin,
+            "http://macbook.tail1234.ts.net:8810"
+        )
+
+        let ipv6 = try XCTUnwrap(Connection.parse("[2001:DB8::1]:9910"))
+        XCTAssertEqual(ipv6.pairingConsentOrigin, "http://[2001:db8::1]:9910")
+    }
+
     func testParsesAnOlderCodeOnlyPairingInvite() throws {
         let url = try XCTUnwrap(URL(string: "openmausbot://pair?address=mac.local&code=004209"))
         XCTAssertEqual(PairingInvite.parse(url)?.credential, "004209")

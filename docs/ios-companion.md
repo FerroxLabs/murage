@@ -25,10 +25,12 @@ The first version includes:
   Box computer view. The loopback-only VPS SSH viewer remains desktop-only.
 - Markdown rendering and Keychain storage for the phone's pairing trust.
 
-It is foreground-only. Push notifications, closed-app background delivery,
-voice, and App Store release automation are not part of this version. The
-optional hosted transport connects to the user's own computer; it is not a
-cloud transcript store and cannot wake a terminated iOS app.
+Alerts work while the app is open or for the short period it remains connected
+after moving to the background. Once iOS suspends or closes the app, new alerts
+cannot arrive. Closed-app push delivery, voice, and App Store release
+automation are not part of this version. The optional hosted transport connects
+to the user's own computer; it is not a cloud transcript store and cannot wake
+a terminated iOS app.
 
 The Mac must be running OpenMausBot and must not be asleep. Desktop
 **Settings → Phone** offers an off-by-default **Keep this computer awake**
@@ -223,10 +225,11 @@ the requested gap was replayed. The client:
 Unknown message and frame kinds degrade safely instead of failing an entire
 response, and one malformed fleet record does not hide every healthy chat.
 Screen frames are off by default and enabled only while a computer view is
-visible. Backgrounding deliberately closes the stream; foregrounding
-reconnects from the saved cursor. A hello cursor is committed only after a
-cold hydration succeeds; replayed streams advance it one folded frame at a
-time, so a disconnect during recovery cannot skip the remaining gap.
+visible. Backgrounding keeps the stream for only the short grace period iOS
+allows, then closes it; foregrounding reconnects from the saved cursor. A hello
+cursor is committed only after a cold hydration succeeds; replayed streams
+advance it one folded frame at a time, so a disconnect during recovery cannot
+skip the remaining gap.
 
 ## Source layout
 
@@ -282,9 +285,9 @@ distribution scope:
    search with exact-message landing, transcript export/share, reactions, and
    edit/version controls. Archived or hidden chat management remains desktop-only.
 3. **Notifications:** native permission, live/replayed alerts, time-sensitive
-   approvals, badges, and background reconciliation are in the app. Closed-app
-   delivery still requires project-owned APNs credentials and a hosted relay;
-   Tailscale cannot wake a terminated iOS process.
+   approvals, badges, and a brief background grace period are in the app.
+   Closed-app delivery still requires project-owned APNs credentials and a
+   hosted relay; Tailscale cannot wake a terminated iOS process.
 4. **Distribution:** signing, bundle ownership, privacy declarations,
    TestFlight, and App Store review material. Swift tests and an unsigned
    simulator build already run in the repository CI.
