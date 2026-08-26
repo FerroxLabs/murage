@@ -5,7 +5,7 @@ The app is native Swift and uses XcodeGen; EAS commands do not apply.
 ## One-time Apple setup
 
 1. Enrol in the Apple Developer Program.
-2. Register the bundle ID `com.openmausbot.companion` (or change it in `project.yml` before the first upload).
+2. Register the bundle IDs `com.openmausbot.app` and `com.openmausbot.app.widgets` (or change them in `project.yml` before the first upload).
 3. Create the matching app in App Store Connect with the name **OpenMaus Mobile**, primary category **Productivity**, and a unique SKU.
 4. Create or select an Apple Distribution certificate and App Store provisioning profile.
 5. Add the review contact details in App Store Connect; do not commit private contact data or App Store Connect keys.
