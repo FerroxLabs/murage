@@ -28,7 +28,7 @@ const SECTIONS: Array<{
   { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates"] },
   { id: "connections", label: "Connections", icon: KeyRound, keywords: ["keys", "api", "composio", "box", "xai", "vps"] },
   { id: "engines", label: "Engines", icon: Terminal, keywords: ["models", "claude", "grok", "providers", "cli"] },
-  { id: "companion", label: "Companion", icon: Smartphone, keywords: ["phone", "pair", "mobile"] },
+  { id: "companion", label: "Phone", icon: Smartphone, keywords: ["companion", "phone", "pair", "mobile"] },
   { id: "computer", label: "Local VM", icon: Monitor, keywords: ["vm", "virtual", "desktop"] },
   { id: "usage", label: "Usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
 ];
@@ -422,7 +422,7 @@ export function SettingsModal() {
               </Card>
             )}
 
-            {section === "companion" && <CompanionSection />}
+            {section === "companion" && <CompanionSection profileEmail={state.config?.profile?.email} />}
 
             {section === "computer" && <LocalComputerSection />}
 
