@@ -34,13 +34,49 @@ function store(explicit?: Storage): Storage | undefined {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+function parseConnectorStatus(value: unknown): ConnectorStatus | null {
+  if (!isRecord(value) || typeof value.connected !== "boolean") return null;
+  if (value.pending !== undefined && typeof value.pending !== "boolean") return null;
+  if (value.status !== undefined && typeof value.status !== "string") return null;
+
+  const status: ConnectorStatus = { connected: value.connected };
+  if (value.pending !== undefined) status.pending = value.pending;
+  if (value.status !== undefined) status.status = value.status;
+
+  if (value.accounts !== undefined) {
+    if (!Array.isArray(value.accounts)) return null;
+    const accounts = value.accounts.map((account) => {
+      if (
+        !isRecord(account) ||
+        typeof account.id !== "string" ||
+        typeof account.status !== "string" ||
+        (account.alias !== undefined && typeof account.alias !== "string")
+      ) return null;
+      return {
+        id: account.id,
+        status: account.status,
+        ...(account.alias === undefined ? {} : { alias: account.alias }),
+      };
+    });
+    if (accounts.some((account) => account === null)) return null;
+    status.accounts = accounts as NonNullable<ConnectorStatus["accounts"]>;
+  }
+  return status;
+}
+
 export function readCachedInventory(explicit?: Storage): CachedInventory | null {
   try {
     const raw = store(explicit)?.getItem(CONNECTED_APPS_CACHE_KEY);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || !isRecord(parsed.services)) return null;
-    return { at: typeof parsed.at === "number" ? parsed.at : 0, services: parsed.services as Record<string, ConnectorStatus> };
+    const services: Record<string, ConnectorStatus> = {};
+    for (const [slug, value] of Object.entries(parsed.services)) {
+      const status = parseConnectorStatus(value);
+      if (!status) return null;
+      services[slug] = status;
+    }
+    return { at: typeof parsed.at === "number" ? parsed.at : 0, services };
   } catch {
     // A cache we cannot read is the same as no cache; it must never be the
     // reason the panel fails to paint.

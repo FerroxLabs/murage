@@ -33,6 +33,7 @@ export interface ConnectorStatus {
 // as disconnected while a fresh secure status check runs in the background.
 let cachedConnectorStatus: Record<string, ConnectorStatus> | null = null;
 let cachedConnectorStatusAt = 0;
+let cachedConnectorStatusAuthoritative = true;
 let connectorStatusRequest: Promise<ConnectorInventory> | null = null;
 const CONNECTOR_STATUS_CACHE_MS = 30_000;
 
@@ -47,7 +48,10 @@ export interface ConnectorInventory {
  * opens share the same request, and recent data survives modal unmounts. */
 export function preloadConnectedApps(force = false): Promise<ConnectorInventory> {
   if (!force && cachedConnectorStatus !== null && Date.now() - cachedConnectorStatusAt < CONNECTOR_STATUS_CACHE_MS) {
-    return Promise.resolve({ services: cachedConnectorStatus, authoritative: true });
+    return Promise.resolve({
+      services: cachedConnectorStatus,
+      authoritative: cachedConnectorStatusAuthoritative,
+    });
   }
   if (connectorStatusRequest) return connectorStatusRequest;
   connectorStatusRequest = api("/api/connectors/connected")
@@ -60,6 +64,7 @@ export function preloadConnectedApps(force = false): Promise<ConnectorInventory>
       }
       cachedConnectorStatus = services;
       cachedConnectorStatusAt = Date.now();
+      cachedConnectorStatusAuthoritative = true;
       writeCachedInventory(services, Date.now());
       return { services, authoritative: true };
     })
@@ -199,7 +204,9 @@ export function PluginsPanel() {
     () => cachedConnectorStatus ?? readCachedInventory()?.services ?? {},
   );
   /** true when what is on screen is remembered rather than confirmed */
-  const [stale, setStale] = useState(false);
+  const [stale, setStale] = useState(
+    cachedConnectorStatus !== null && !cachedConnectorStatusAuthoritative,
+  );
   const [pendingUrls, setPendingUrls] = useState<Record<string, string>>({});
   const [aliasSlug, setAliasSlug] = useState<string | null>(null);
   const [aliasDraft, setAliasDraft] = useState("");
@@ -306,7 +313,8 @@ export function PluginsPanel() {
     if (inventoryPhase !== "ready") return;
     cachedConnectorStatus = status;
     cachedConnectorStatusAt = Date.now();
-  }, [inventoryPhase, status]);
+    cachedConnectorStatusAuthoritative = !stale;
+  }, [inventoryPhase, stale, status]);
 
   useEffect(() => {
     let alive = true;

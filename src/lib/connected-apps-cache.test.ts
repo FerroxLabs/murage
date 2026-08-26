@@ -40,6 +40,20 @@ describe("connected apps cache", () => {
     expect(readCachedInventory(fakeStorage({ [CONNECTED_APPS_CACHE_KEY]: '"a string"' }))).toBeNull();
   });
 
+  it("rejects malformed service and account records before the panel paints them", () => {
+    const cached = (services: unknown) => fakeStorage({
+      [CONNECTED_APPS_CACHE_KEY]: JSON.stringify({ at: 1, services }),
+    });
+    expect(readCachedInventory(cached({ gmail: { connected: "yes" } }))).toBeNull();
+    expect(readCachedInventory(cached({ gmail: { connected: true, accounts: "invalid" } }))).toBeNull();
+    expect(readCachedInventory(cached({
+      gmail: { connected: true, accounts: [{ id: "ca_1", status: 42 }] },
+    }))).toBeNull();
+    expect(readCachedInventory(cached({
+      gmail: { connected: true, accounts: [{ id: "ca_1", status: "ACTIVE", alias: 7 }] },
+    }))).toBeNull();
+  });
+
   it("survives storage that throws, which a private window does", () => {
     const throwing = {
       getItem: () => {

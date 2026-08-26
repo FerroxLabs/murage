@@ -220,6 +220,12 @@ async function loadSecureCredentials() {
 }
 
 async function saveSecureCredentials(credentials) {
+  // A failed read means we do not know what the existing encrypted document
+  // contains. Never derive a replacement from that incomplete view: boot
+  // migrations must leave plaintext in place so a later launch can retry.
+  if (credentialStoreUnavailable) {
+    throw new Error("The operating-system credential store could not be read this launch");
+  }
   if (!(await safeStorage.isAsyncEncryptionAvailable())) {
     throw new Error("The operating-system credential store is unavailable");
   }
