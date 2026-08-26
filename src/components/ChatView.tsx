@@ -58,6 +58,8 @@ import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
 import { useFocusMessage } from "@/lib/focus-message";
+import { groupActivityRuns } from "@/lib/activity-runs";
+import { ActivityRun } from "./ActivityRun";
 import { webhookMessageView } from "@/lib/webhook-message";
 import { splitAttachedImages } from "@/lib/composer-attachments";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
@@ -665,7 +667,14 @@ const MessagesList = memo(function MessagesList({
   onRegenerate: () => void;
   onReply: (message: Message) => void;
 }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
+  // Fold finished tool chips into runs, so a stretch of them cannot bury
+  // what the bot actually said.
+  const items = useMemo(() => groupActivityRuns(messages), [messages]);
+  // A search hit inside a folded run has to open it: the fold keeps the
+  // row out of the DOM, and there is nothing for the scroll to land on.
+  const focus = state.focusMessage;
+  const focusedId = focus && !focus.consumed && focus.threadId === bot.threadId ? focus.messageId : null;
   return (
     <>
       {messages.length === 0 && !bot.busy && (
@@ -682,9 +691,26 @@ const MessagesList = memo(function MessagesList({
           </div>
         </div>
       )}
-      {messages.map((m, i) => {
-        const prev = messages[i - 1];
-        const newDay = !prev || new Date(prev.at).toDateString() !== new Date(m.at).toDateString();
+      {items.map((item, i) => {
+        const previous = items[i - 1];
+        const prev = previous && (previous.kind === "run" ? previous.messages.at(-1) : previous.message);
+        const first = item.kind === "run" ? item.messages[0] : item.message;
+        const newDay = !prev || new Date(prev.at).toDateString() !== new Date(first.at).toDateString();
+        if (item.kind === "run") {
+          return (
+            <div key={item.id} className="contents">
+              {newDay && <DaySeparator at={first.at} />}
+              <ActivityRun messages={item.messages} forceOpen={item.messages.some((step) => step.id === focusedId)}>
+                {item.messages.map((step) => (
+                  <div key={step.id} className="contents" data-mid={step.id}>
+                    <ActivityChip message={step} />
+                  </div>
+                ))}
+              </ActivityRun>
+            </div>
+          );
+        }
+        const m = item.message;
         const row = (() => {
           switch (m.kind) {
             case "secret":

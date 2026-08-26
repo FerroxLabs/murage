@@ -28,6 +28,8 @@ import { GroupCallButton, GroupCallOverlay } from "./GroupCallView";
 import { ReactionBar, ReactionChips } from "./Reactions";
 import { ApprovalCard } from "./ApprovalCard";
 import { ManageMembersPanel } from "./ManageMembersPanel";
+import { groupActivityRuns } from "@/lib/activity-runs";
+import { ActivityRun } from "./ActivityRun";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { useFocusMessage } from "@/lib/focus-message";
@@ -51,6 +53,25 @@ function dayLabel(at: number): string {
   if (diffDays === 0) return "Today";
   if (diffDays === 1) return "Yesterday";
   return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
+
+/** One finished tool step in a room. Same pill the 1:1 chat uses, minus the
+ * status glyph — a room reads as a conversation, not a build log. */
+function RoomToolChip({ message }: { message: Message }) {
+  const tool = message.tool;
+  if (!tool) return null;
+  return (
+    <div className="flex justify-start">
+      <div
+        className={cn(
+          "flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px]",
+          tool.ok === false ? "text-danger" : "text-ink-secondary",
+        )}
+      >
+        <span className="max-w-[480px] truncate font-mono">{tool.name}</span>
+      </div>
+    </div>
+  );
 }
 
 /** 16px maus + name, shown once per sender cluster. */
@@ -107,14 +128,43 @@ const Transcript = memo(function Transcript({
   transcript: Message[];
   onReply: (message: Message) => void;
 }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const memberOf = (id?: string) => members.find((b) => b.id === id);
-  const textMessages = messages;
+  // Several bots working at once turn a room into a wall of chips; fold the
+  // finished ones the same way a 1:1 chat does.
+  const items = useMemo(() => groupActivityRuns(messages), [messages]);
+  const focus = state.focusMessage;
+  const focusedId = focus && !focus.consumed && focus.threadId === group.threadId ? focus.messageId : null;
   return (
     <>
-      {textMessages.map((m, i) => {
-        const prev = textMessages[i - 1];
-        const newDay = !prev || new Date(prev.at).toDateString() !== new Date(m.at).toDateString();
+      {items.map((item, i) => {
+        const previous = items[i - 1];
+        const prev = previous && (previous.kind === "run" ? previous.messages.at(-1) : previous.message);
+        const first = item.kind === "run" ? item.messages[0] : item.message;
+        const newDay = !prev || new Date(prev.at).toDateString() !== new Date(first.at).toDateString();
+        if (item.kind === "run") {
+          const cluster = !prev || prev.role !== first.role || prev.from?.botId !== first.from?.botId || newDay;
+          return (
+            <div key={item.id} className="contents">
+              {newDay && (
+                <div className="py-3 text-center text-[13px] text-ink-secondary">
+                  {dayLabel(first.at)} {formatTime(first.at)}
+                </div>
+              )}
+              {first.from && cluster && (
+                <ClusterLabel bot={memberOf(first.from.botId)} name={first.from.name} color={first.from.color} />
+              )}
+              <ActivityRun messages={item.messages} forceOpen={item.messages.some((step) => step.id === focusedId)}>
+                {item.messages.map((step) => (
+                  <div key={step.id} className="contents" data-mid={step.id}>
+                    <RoomToolChip message={step} />
+                  </div>
+                ))}
+              </ActivityRun>
+            </div>
+          );
+        }
+        const m = item.message;
         const user = m.role === "user";
         const attachedImages = user && m.text ? splitAttachedImages(m.text) : null;
         const newCluster = !prev || prev.role !== m.role || prev.from?.botId !== m.from?.botId || newDay;
@@ -133,16 +183,7 @@ const Transcript = memo(function Transcript({
               <ApprovalCard bot={memberOf(m.from?.botId)} message={m} />
             </div>
           ) : m.kind === "activity" && m.tool ? (
-            <div className="flex justify-start">
-              <div
-                className={cn(
-                  "flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px]",
-                  m.tool.ok === false ? "text-danger" : "text-ink-secondary",
-                )}
-              >
-                <span className="max-w-[480px] truncate font-mono">{m.tool.name}</span>
-              </div>
-            </div>
+            <RoomToolChip message={m} />
           ) : m.kind === "text" && m.text ? (
             <div className={cn("group flex w-full flex-col", user ? "items-end" : "items-start")}>
               <div className={cn("flex w-full items-end gap-1.5", user ? "justify-end" : "justify-start")}>
