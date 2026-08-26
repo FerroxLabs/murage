@@ -122,6 +122,13 @@ export function pasteAttachment(text: string): PasteAttachment {
   return { kind: "paste", id, text, size: byteLength(text), lines: countLines(text) };
 }
 
+/** Move a pasted attachment into the editable composer draft without
+ * running the text back through the paste threshold. */
+export function appendPastedText(text: string, pasted: string): string {
+  if (!text) return pasted;
+  return `${text}${text.endsWith("\n") ? "" : "\n\n"}${pasted}`;
+}
+
 export const INLINE_DROP_LIMIT = 512 * 1024;
 
 export type DroppedFile = Pick<File, "name" | "size" | "type" | "text">;

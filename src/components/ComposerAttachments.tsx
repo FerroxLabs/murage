@@ -3,7 +3,7 @@
 // first lines instead of flooding the composer; a file dropped anywhere
 // on the window attaches by path.
 import { useEffect, useRef, useState } from "react";
-import { ClipboardPaste, File as FileIcon, Image as ImageIcon, X } from "lucide-react";
+import { ClipboardPaste, File as FileIcon, Image as ImageIcon, MessageSquareText, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   attachmentImageUrl,
@@ -12,6 +12,7 @@ import {
   imageAttachmentFromFile,
   pasteSummary,
   type Attachment,
+  type PasteAttachment,
 } from "@/lib/composer-attachments";
 import { AttachmentPreviewDialog, previewImage, type PreviewImage } from "./AttachmentPreview";
 
@@ -20,10 +21,12 @@ export function pathForFile(file: File): string {
   return window.ogb?.getPathForFile?.(file) ?? "";
 }
 
+/** Renders pending attachments and their composer actions. */
 export function ComposerAttachments({
   items,
   onAdd,
   onRemove,
+  onDisplayInChatBox,
   allowImages = true,
   notice,
   onNotice,
@@ -31,6 +34,7 @@ export function ComposerAttachments({
   items: Attachment[];
   onAdd: (attachments: Attachment[]) => void;
   onRemove: (id: string) => void;
+  onDisplayInChatBox: (attachment: PasteAttachment) => void;
   allowImages?: boolean;
   notice: string | null;
   onNotice: (notice: string | null) => void;
@@ -133,6 +137,16 @@ export function ComposerAttachments({
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-raised" />
                 </div>
                 <div className="mt-1 text-[10.5px] text-ink-secondary/70">{pasteSummary(a)}</div>
+                <button
+                  type="button"
+                  onClick={() => onDisplayInChatBox(a)}
+                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/25 bg-accent/5 px-2 py-1.5 text-[10.5px] font-medium text-accent-text transition-colors hover:border-accent/50 hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/60"
+                  aria-label="Display pasted text in chat box"
+                  title="Display in chat box"
+                >
+                  <MessageSquareText size={12} aria-hidden="true" />
+                  <span>Display in chat box</span>
+                </button>
               </Chip>
             ) : a.kind === "image" ? (
               <Chip key={a.id} label="IMAGE" title={a.name} onRemove={() => onRemove(a.id)}>

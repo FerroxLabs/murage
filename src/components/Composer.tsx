@@ -8,6 +8,7 @@ import { MausAvatar } from "./Avatar";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import {
+  appendPastedText,
   composeMessage,
   imageAttachmentFromFile,
   intakeFiles,
@@ -15,6 +16,7 @@ import {
   isLongPaste,
   pasteAttachment,
   type Attachment,
+  type PasteAttachment,
 } from "@/lib/composer-attachments";
 import { normalizeState } from "@/lib/mascot";
 import { groupComposerHint, roomRespondersForComposer } from "@/lib/group-routing";
@@ -131,6 +133,7 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
   );
 }
 
+/** Renders the editable message composer and its pending attachments. */
 export function Composer({
   bot,
   group,
@@ -184,6 +187,23 @@ export function Composer({
   const removeAttachment = useCallback(
     (id: string) => setAttachments((prev) => prev.filter((a) => a.id !== id)),
     [setAttachments],
+  );
+  const displayPasteInChatBox = useCallback(
+    /** Moves one pasted attachment into the editable draft and restores focus. */
+    function displayPasteInChatBox(attachment: PasteAttachment) {
+      const nextText = appendPastedText(text, attachment.text);
+      setText(nextText);
+      setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+      setCaret(nextText.length);
+      setDismissedAt(null);
+      requestAnimationFrame(() => {
+        const input = inputRef.current;
+        if (!input) return;
+        input.focus();
+        input.setSelectionRange(nextText.length, nextText.length);
+      });
+    },
+    [text, setText, setAttachments],
   );
   const [recording, setRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
@@ -468,6 +488,7 @@ export function Composer({
           items={attachments}
           onAdd={addAttachments}
           onRemove={removeAttachment}
+          onDisplayInChatBox={displayPasteInChatBox}
           allowImages={engineSupportsImages}
           notice={attachmentNotice}
           onNotice={setAttachmentNotice}
