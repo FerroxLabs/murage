@@ -2,41 +2,45 @@
 
 The iOS app is a thin, native client for the OpenMausBot instance running on
 your Mac. The Mac remains the only machine that owns agent processes,
-credentials, SQLite data, transcripts, and computers. The phone discovers or
-is told how to reach the Mac, pairs once, and then uses the same HTTP and SSE
-contract as the desktop client through a restricted sidecar.
+credentials, SQLite data, transcripts, and computers. The iPhone trusts a Mac
+by scanning the QR code shown in desktop **Settings → Phone**; it does not need
+an OpenMausBot account of its own.
 
 ## Current status
 
 The first version includes:
 
-- Bonjour discovery on the same LAN and manual address entry.
-- Remote access through a Tailscale MagicDNS name or an optional
-  account-provisioned HTTPS address.
-- QR-first pairing with a short-lived, single-use credential and a six-digit
-  manual fallback, plus per-device tokens, device listing, and revocation.
+- QR-first pairing from desktop **Settings → Phone**, with the computer name
+  confirmed on the iPhone before it connects.
+- Automatic routing through the address carried by the QR. This can include a
+  Tailscale MagicDNS name when both devices share a tailnet, or hosted HTTPS
+  when the desktop owner has enabled it.
+- Nearby computers, a manual address, and a six-digit code under **Other ways
+  to connect** when the QR path is unavailable.
+- Secure per-device trust, device listing, and revocation.
 - Bot and room lists, paged transcripts, sending, interruption, and unread
   state.
 - Approvals and questions, including narrow “always allow” grants.
 - Resumable SSE, streamed reply text, reconnect hydration, and an opt-in live
   Box computer view. The loopback-only VPS SSH viewer remains desktop-only.
-- Markdown rendering and Keychain storage for the device token.
+- Markdown rendering and Keychain storage for the phone's pairing trust.
 
 It is foreground-only. Push notifications, closed-app background delivery,
 voice, and App Store release automation are not part of this version. The
 optional hosted transport connects to the user's own computer; it is not a
 cloud transcript store and cannot wake a terminated iOS app.
 
-The Mac must be running OpenMausBot and must not be asleep. Companion Settings
-offers an off-by-default **Keep this computer awake** switch that prevents
-system sleep while Companion is on; the display may still turn off. A sleeping
-or powered-off computer cannot receive phone requests or run its local
-routines, including through the optional hosted transport.
+The Mac must be running OpenMausBot and must not be asleep. Desktop
+**Settings → Phone** offers an off-by-default **Keep this computer awake**
+switch that prevents system sleep while phone access is on; the display may
+still turn off. A sleeping or powered-off computer cannot receive phone
+requests or run its local routines, including through the optional hosted
+transport.
 
 ## Runtime architecture
 
 ```text
- iPhone (bearer token in Keychain)
+ iPhone (pairing trust in Keychain)
        │                         │
        │ trusted LAN/Tailscale   │ optional hosted HTTPS
        ▼                         ▼
@@ -95,45 +99,46 @@ not belong in the message database.
 
 ### Same Wi-Fi
 
-The sidecar advertises `_openmausbot._tcp` over Bonjour. The app browses with
-`NWBrowser`, resolves the chosen service, and connects directly. If multicast
-is unavailable, the desktop shows the LAN address for manual entry.
+The QR code is still the primary path on the same Wi-Fi. If it is unavailable,
+the user can open **Other ways to connect** and choose a nearby computer or
+enter the address shown in desktop Phone settings. Nearby discovery does not
+run until the user opens that fallback.
 
-LAN traffic is plain HTTP. Use it only on a network you trust. Device tokens
-are bearer credentials, so someone able to observe that LAN traffic could copy
-one until the device is revoked.
+Nearby discovery uses Bonjour and direct LAN traffic. Use it only on a network
+you trust.
 
-Choosing a LAN or Bonjour address is therefore explicit. Once the app is using
-a hosted or Tailscale route, automatic reconnection stays within those
-protected transports and never sends a pairing credential or device bearer to
-an old private address on the current Wi-Fi. Moving back to cleartext LAN
-requires choosing that computer/address again.
+Choosing a nearby computer or manually entering a LAN address is therefore an
+explicit fallback. Once the app is using a hosted or Tailscale route,
+automatic reconnection stays within those protected transports. Moving back to
+direct LAN requires choosing that computer or address again.
 
 ### Tailscale
 
 Tailscale is the recommended route away from home and on Wi-Fi networks that
-isolate clients. Both devices join the same tailnet and the phone uses the
-Mac’s MagicDNS name, such as `macbook.example.ts.net:8810`.
+isolate clients. When both devices share a tailnet, OpenMausBot can place the
+Mac's MagicDNS name in the pairing QR automatically. Scan the QR normally; no
+address entry is required. Manual entry remains available only as a fallback
+when a QR invitation is unavailable or does not contain that route.
 
 The URL is still `http`, but the path is encrypted and authenticated by
 WireGuard inside the tailnet. Use the MagicDNS name rather than the
 `100.64.0.0/10` address: App Transport Security exceptions are domain-based,
 and `ios/project.yml` narrowly allows insecure HTTP for `ts.net` subdomains.
-Bonjour does not cross the tailnet, so remote pairing uses manual address
-entry.
 
 Tailscale is optional. The direct path does not use an OpenMausBot-operated
 relay or create a cloud copy of local transcript data.
 
 ### Optional hosted HTTPS
 
-In desktop **Settings → Companion**, **Use your phone anywhere** accepts a
-passwordless email code and provisions one opaque HTTPS address for that
-computer. The desktop runs a pinned `cloudflared` connector outbound to
-Cloudflare; no inbound router configuration or Tailscale installation is
-required. The sidecar advertises the hosted address in pairing invitations only
-after the route has passed an end-to-end health check. LAN, Bonjour, manual
-addresses, and Tailscale continue to work without signing in.
+In desktop **Settings → Phone**, **Use your phone anywhere** accepts a
+passwordless email code and provisions one HTTPS address for that computer.
+This desktop sign-in is only for hosted HTTPS. The iPhone never signs in; it
+trusts the computer through the same pairing QR. Nearby, manual, and Tailscale
+connections continue to work without an account.
+
+The desktop runs an outbound connector to Cloudflare, so no inbound router
+configuration or Tailscale installation is required. The hosted address is
+included in a pairing invitation only after it is ready.
 
 Cloudflare terminates and proxies the encrypted connection to the connector.
 The OpenMausBot control plane stores account and installation metadata plus
@@ -150,21 +155,17 @@ local port cannot inherit the public route.
 
 ## Pairing and device security
 
-1. The user enables Companion in desktop Settings and starts pairing.
-2. The desktop opens a two-minute pairing window. Its QR contains the reachable
-   address and a high-entropy, single-use credential; the visible six-digit code
-   remains available for manual entry and older app builds.
-3. The phone scans and validates the invitation, shows the computer and address,
-   and asks the user to confirm before it connects. Scanning never auto-pairs.
-4. The phone sends the one-time credential and a device name to `POST /api/pair`.
-   Redeeming either the QR credential or manual code closes the entire window,
-   so neither can be replayed.
-5. The sidecar returns a separate random device token once and stores only its
-   SHA-256 digest.
-6. The phone stores the device token in Keychain and sends it as a bearer token.
-   It never persists the QR credential or manual code.
-7. Revoking the device on the Mac invalidates future requests and sends the
-   phone back to pairing.
+1. On the Mac, open **Settings → Phone**, turn on phone access, and choose
+   **Set up a phone**.
+2. On the iPhone, choose **Connect my computer** and scan the QR.
+3. Confirm the computer name and **Secure connection**. The phone stores its
+   trust securely in Keychain; no iPhone account is required.
+4. If scanning is unavailable, open **Other ways to connect** for a nearby
+   computer, manual address, or six-digit code.
+5. Revoking the phone on the Mac removes its access and lets it pair again.
+
+The Mac must remain awake with OpenMausBot running for chats, approvals, and
+routines to work, including through hosted HTTPS or Tailscale.
 
 After pairing, the phone periodically reads the authenticated, sidecar-owned
 `GET /api/companion/endpoints` snapshot. This lets an existing phone learn a
@@ -172,12 +173,9 @@ new hosted address—or its withdrawal—without another pairing ceremony. The
 route never reaches the harness and returns only the computer name plus a
 bounded list of connection origins.
 
-This mirrors the direct-pairing security shape used by T3 Code: a high-entropy
-bootstrap credential, explicit confirmation of the scanned target, and a
-one-time exchange for a securely stored long-lived credential. An OpenMausBot
-account is not required for LAN or Tailscale. The optional hosted route requires
-the desktop owner to authenticate before provisioning, while the phone still
-uses the same per-computer pairing credential.
+An OpenMausBot account is not required for nearby, manual, or Tailscale
+connections. Only the desktop owner signs in when enabling the optional hosted
+HTTPS route; the iPhone always uses the same QR trust flow.
 
 The device-facing socket rejects browser `Origin` headers before reading a
 token. Its route policy in `companion/src/routes.ts` is default-deny: a new
