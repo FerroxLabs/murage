@@ -146,6 +146,131 @@ final class EndpointRefreshTests: XCTestCase {
         XCTAssertTrue(liveRotation.endpoints.allSatisfy(\.protectsCredentials))
     }
 
+    func testHostedInviteFiltersPairResponseAndRefreshToHTTPSOnly() throws {
+        let routes = try Self.routes()
+        var connection = Connection(
+            name: "Mac",
+            host: routes.hosted.host,
+            port: routes.hosted.port,
+            activeEndpoint: routes.hosted,
+            endpoints: [routes.hosted]
+        )
+        connection.establishRoutePolicyFromInvite()
+
+        connection.applyPairingAdvertisement(
+            hosts: [routes.tailnet.host, routes.local.host],
+            endpoints: [routes.hosted, routes.tailnet, routes.local]
+        )
+        XCTAssertEqual(connection.allowedRouteKinds, [.hosted])
+        XCTAssertEqual(connection.allowedLocalRouteURLs, [])
+        XCTAssertEqual(connection.orderedEndpoints.map(\.kind), [.hosted])
+        XCTAssertEqual(connection.hosts, [])
+
+        connection.reconcile(try Self.metadata())
+        XCTAssertEqual(connection.orderedEndpoints.map(\.kind), [.hosted])
+        XCTAssertEqual(connection.automaticEndpoints.map(\.kind), [.hosted])
+        XCTAssertEqual(connection.hosts, [])
+    }
+
+    func testExplicitTailscaleInviteAllowsTailnetAndHostedAfterRefresh() throws {
+        let routes = try Self.routes()
+        var connection = Connection(
+            name: "Mac",
+            host: routes.tailnet.host,
+            port: routes.tailnet.port,
+            activeEndpoint: routes.tailnet,
+            endpoints: [routes.tailnet, routes.hosted]
+        )
+        connection.establishRoutePolicyFromInvite()
+
+        connection.applyPairingAdvertisement(
+            hosts: [routes.tailnet.host, routes.local.host],
+            endpoints: [routes.hosted, routes.tailnet, routes.local]
+        )
+        connection.reconcile(try Self.metadata())
+
+        XCTAssertEqual(connection.allowedRouteKinds, [.tailnet, .hosted])
+        XCTAssertEqual(connection.allowedLocalRouteURLs, [])
+        XCTAssertEqual(connection.orderedEndpoints.map(\.kind), [.hosted, .tailnet])
+        XCTAssertEqual(connection.automaticEndpoints.map(\.kind), [.hosted, .tailnet])
+        XCTAssertEqual(connection.hosts, [routes.tailnet.host])
+    }
+
+    func testExplicitLocalInviteNeverLearnsTailscaleOrAnotherLANOrigin() throws {
+        let routes = try Self.routes()
+        var connection = Connection(
+            name: "Mac",
+            host: routes.local.host,
+            port: routes.local.port,
+            activeEndpoint: routes.local,
+            endpoints: [routes.local, routes.tailnet, routes.hosted, routes.otherLocal]
+        )
+        connection.establishRoutePolicyFromInvite()
+
+        connection.applyPairingAdvertisement(
+            hosts: [routes.tailnet.host, routes.local.host],
+            endpoints: [routes.hosted, routes.tailnet, routes.otherLocal, routes.local]
+        )
+        let refreshed = try JSONDecoder().decode(
+            CompanionConnectionMetadata.self,
+            from: Data(#"{"serverName":"Mac","hosts":["192.168.1.99","192.168.1.42","mac.tail1234.ts.net"],"endpoints":[{"url":"http://192.168.1.99:8810","kind":"lan","priority":50},{"url":"http://mac.tail1234.ts.net:8810","kind":"tailnet","priority":100},{"url":"http://192.168.1.42:8810","kind":"lan","priority":200},{"url":"https://mac.companion.example","kind":"hosted","priority":0}]}"#.utf8)
+        )
+        connection.reconcile(refreshed)
+
+        XCTAssertEqual(connection.allowedRouteKinds, [.lan, .hosted])
+        XCTAssertEqual(connection.allowedLocalRouteURLs, [routes.local.url])
+        XCTAssertFalse(connection.orderedEndpoints.contains { $0.kind == .tailnet })
+        XCTAssertEqual(connection.orderedEndpoints.map(\.kind), [.hosted, .lan])
+        XCTAssertFalse(connection.orderedEndpoints.contains { $0.url == routes.otherLocal.url })
+        XCTAssertEqual(connection.hosts, [routes.local.host])
+    }
+
+    func testSavedConnectionWithoutPolicyRetainsLegacyProtectedFailover() throws {
+        let data = Data(#"""
+        {
+          "id":"legacy","name":"Mac","host":"mac.companion.example","port":443,
+          "activeEndpoint":{"url":"https://mac.companion.example","kind":"hosted","priority":0},
+          "endpoints":[
+            {"url":"https://mac.companion.example","kind":"hosted","priority":0},
+            {"url":"http://mac.tail1234.ts.net:8810","kind":"tailnet","priority":100}
+          ]
+        }
+        """#.utf8)
+        var connection = try JSONDecoder().decode(Connection.self, from: data)
+        XCTAssertNil(connection.allowedRouteKinds)
+        XCTAssertNil(connection.allowedLocalRouteURLs)
+
+        connection.reconcile(try Self.metadata())
+
+        XCTAssertEqual(connection.automaticEndpoints.map(\.kind), [.hosted, .tailnet])
+    }
+
+    private static func metadata() throws -> CompanionConnectionMetadata {
+        try JSONDecoder().decode(CompanionConnectionMetadata.self, from: fullMetadata)
+    }
+
+    private static func routes() throws -> (
+        hosted: CompanionEndpoint,
+        tailnet: CompanionEndpoint,
+        local: CompanionEndpoint,
+        otherLocal: CompanionEndpoint
+    ) {
+        (
+            try XCTUnwrap(CompanionEndpoint(
+                url: "https://mac.companion.example", kind: .hosted, priority: 0
+            )),
+            try XCTUnwrap(CompanionEndpoint(
+                url: "http://mac.tail1234.ts.net:8810", kind: .tailnet, priority: 100
+            )),
+            try XCTUnwrap(CompanionEndpoint(
+                url: "http://192.168.1.42:8810", kind: .lan, priority: 200
+            )),
+            try XCTUnwrap(CompanionEndpoint(
+                url: "http://192.168.1.99:8810", kind: .lan, priority: 150
+            ))
+        )
+    }
+
     private static let fullMetadata = Data(
         #"{"serverName":"Milind's computer","hosts":["mac.tail1234.ts.net","192.168.1.42"],"endpoints":[{"url":"http://192.168.1.42:8810","kind":"lan","priority":200},{"url":"http://not-a-tailnet.example:8810","kind":"tailnet","priority":50},{"url":"http://mac.tail1234.ts.net:8810","kind":"tailnet","priority":100},{"url":"https://mac.companion.example","kind":"hosted","priority":0}]}"#.utf8
     )

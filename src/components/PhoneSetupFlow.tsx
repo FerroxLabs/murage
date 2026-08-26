@@ -95,7 +95,7 @@ type StateBridge<T> = { state: () => Promise<T> };
 const DIRECT_PAIRING_UNAVAILABLE =
   "Direct Wi-Fi pairing isn’t available on this computer right now. Connect this computer to Wi-Fi, then try again.";
 const PROTECTED_PAIRING_UNAVAILABLE =
-  "The protected pairing route became unavailable. Check your secure connection or Tailscale, then create a new code.";
+  "The HTTPS pairing route became unavailable. Check secure access, then create a new code.";
 
 interface OwnedCompanionPairingRoutePin extends CompanionPairingRoutePin {
   generation: number;
