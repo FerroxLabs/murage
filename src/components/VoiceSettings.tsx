@@ -58,7 +58,7 @@ export function VoiceSettings({
   }, [configured, provider]);
 
   const setProvider = (next: "elevenlabs" | "system") => {
-    if (next === provider || switching) return;
+    if (next === provider || switching || (next === "system" && !systemVoicesAvailable)) return;
     setSwitching(true);
     setError(null);
     // the provider is a setting, not a secret — it rides the ordinary
@@ -96,23 +96,28 @@ export function VoiceSettings({
       <div className="text-[15px] font-medium text-ink">Voice</div>
       <div className="mt-0.5 text-[13px] text-ink-secondary">
         Give this agent a voice for calls and spoken replies. The voice choice belongs to this agent;
-        {provider === "system" ? " the voices are the ones already installed on this Mac." : " the ElevenLabs key is shared by the workspace."}
+        {provider === "system"
+          ? systemVoicesAvailable
+            ? " the voices are the ones already installed on this Mac."
+            : " built-in Mac voices are unavailable here. Switch to ElevenLabs to keep using voice."
+          : " the ElevenLabs key is shared by the workspace."}
       </div>
 
-      {systemVoicesAvailable && (
+      {(systemVoicesAvailable || provider === "system") && (
         <div className="mt-4">
           <div className="mb-2 text-[13px] text-ink-secondary">Voice engine</div>
           <div className="inline-flex rounded-xl bg-inset p-1" role="radiogroup" aria-label="Voice engine">
             {([
-              { value: "elevenlabs", label: "ElevenLabs" },
-              { value: "system", label: "Built-in Mac voices" },
+              { value: "elevenlabs", label: "ElevenLabs", available: true },
+              { value: "system", label: "Built-in Mac voices", available: systemVoicesAvailable },
             ] as const).map((option) => (
               <button
                 key={option.value}
                 type="button"
                 role="radio"
                 aria-checked={provider === option.value}
-                disabled={switching}
+                disabled={switching || !option.available}
+                title={!option.available ? "Built-in voices are available only on macOS" : undefined}
                 onClick={() => setProvider(option.value)}
                 className={cn(
                   "rounded-lg px-3.5 py-1.5 text-[12.5px] transition-colors disabled:opacity-50",
