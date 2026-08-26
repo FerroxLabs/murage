@@ -4931,15 +4931,28 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { configured: composio.configured(cfg), mode: composio.connectionMode(cfg), source, cards });
     }
     if (method === "GET" && path === "/api/connectors/connected") {
-      if (!composio.configured(cfg)) {
-        return json(res, 200, { configured: false, services: {} });
+      const availability = composio.connectorAvailability(cfg);
+      if (availability !== "configured") {
+        // `credentialStore` is what stops the panel treating this empty list
+        // as authoritative: an unreadable store means we do not KNOW what is
+        // connected, which is not the same as knowing nothing is.
+        return json(res, 200, {
+          configured: false,
+          credentialStore: availability === "unreadable" ? "unavailable" : "ok",
+          services: {},
+        });
       }
-      return json(res, 200, { configured: true, services: await composio.connectedServices(cfg) });
+      return json(res, 200, { configured: true, credentialStore: "ok", services: await composio.connectedServices(cfg) });
     }
     if (method === "GET" && path === "/api/connectors") {
       const services = (url.searchParams.get("services") ?? "").split(",").filter(Boolean);
-      if (!composio.configured(cfg)) {
-        return json(res, 200, { configured: false, services: {} });
+      const availability = composio.connectorAvailability(cfg);
+      if (availability !== "configured") {
+        return json(res, 200, {
+          configured: false,
+          credentialStore: availability === "unreadable" ? "unavailable" : "ok",
+          services: {},
+        });
       }
       const status = await composio.connectionStatus(cfg, services.length ? services : composio.CURATED_SLUGS);
       return json(res, 200, { configured: true, services: status });

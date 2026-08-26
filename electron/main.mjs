@@ -37,6 +37,7 @@ import {
   withoutManagedCompanionTunnelAccess,
 } from "./managed-companion-tunnel.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
+import { readSecureCredentials } from "./secure-credentials.mjs";
 import { createControlPlaneClient } from "./control-plane-client.mjs";
 import {
   companionAccountCleanupPending,
@@ -195,25 +196,36 @@ let secureCredentialState = null;
 
 const CREDENTIALS_FILE = path.join(app.getPath("userData"), "credentials.bin");
 
+/** Set once per launch: true when the store could not be READ, which is not
+ * the same as the user having saved nothing. Everything downstream — the
+ * server's view of "configured", and whether we may register a fresh
+ * installation — keys off this rather than off an empty object. */
+let credentialStoreUnavailable = false;
+
 async function loadSecureCredentials() {
-  if (!fs.existsSync(CREDENTIALS_FILE)) return {};
-  if (!(await safeStorage.isAsyncEncryptionAvailable())) {
-    // Returning nothing here looks identical to "the user never saved keys".
-    // Say why, so an OS-store hiccup is diagnosable instead of reading as
-    // wiped credentials.
-    slog("OS credential store unavailable; saved credentials are not loaded this launch");
-    return {};
+  const result = await readSecureCredentials({
+    exists: () => fs.existsSync(CREDENTIALS_FILE),
+    isAvailable: () => safeStorage.isAsyncEncryptionAvailable(),
+    readFile: () => fs.readFileSync(CREDENTIALS_FILE),
+    decrypt: (buffer) => safeStorage.decryptStringAsync(buffer),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  });
+  credentialStoreUnavailable = result.status === "unavailable";
+  if (credentialStoreUnavailable) {
+    // Deliberately loud. A silent {} here is what made a keychain hiccup
+    // look like "your connected apps are gone".
+    slog(`credential store unreadable after retries (${result.error}); saved keys are not loaded this launch`);
   }
-  try {
-    const decrypted = await safeStorage.decryptStringAsync(fs.readFileSync(CREDENTIALS_FILE));
-    return JSON.parse(decrypted.result);
-  } catch (error) {
-    slog(`credential load failed: ${error?.message ?? error}`);
-    return {};
-  }
+  return result.credentials;
 }
 
 async function saveSecureCredentials(credentials) {
+  // A failed read means we do not know what the existing encrypted document
+  // contains. Never derive a replacement from that incomplete view: boot
+  // migrations must leave plaintext in place so a later launch can retry.
+  if (credentialStoreUnavailable) {
+    throw new Error("The operating-system credential store could not be read this launch");
+  }
   if (!(await safeStorage.isAsyncEncryptionAvailable())) {
     throw new Error("The operating-system credential store is unavailable");
   }
@@ -647,6 +659,8 @@ async function startServerOn(port) {
     ...(secureCredentials.composioApiKey
       ? { COMPOSIO_API_KEY: secureCredentials.composioApiKey }
       : {}),
+    // "we could not read your keys" must not reach the UI as "you have none"
+    OMB_CREDENTIAL_STORE: credentialStoreUnavailable ? "unavailable" : "ok",
     // one env var per stored workspace secret (xai/box/voice/OpenCode Go);
     // the server prefers these over config.json, whose plaintext fields
     // the boot migration has deleted
@@ -1415,7 +1429,10 @@ app.whenReady().then(async () => {
   }
   // Boot migrations above are deliberately sequential. From this point on,
   // every account/API-key writer must use the shared serialized state.
-  secureCredentialState = createSecureCredentialState(secureCredentials, saveSecureCredentials);
+  // An unreadable store must not become a WRITE of an empty document.
+  secureCredentialState = createSecureCredentialState(secureCredentials, saveSecureCredentials, {
+    writable: !credentialStoreUnavailable,
+  });
   secureCredentials = secureCredentialState.read();
   const hostedAccount = ensureCompanionAccountService();
   // Display capture remains user-initiated. The renderer first sends a
@@ -1499,7 +1516,13 @@ app.whenReady().then(async () => {
   // Registration is optional network work. Start it only after the local
   // server and first window are usable, then update the server child over its
   // private parent port so Connected Apps becomes available without restart.
-  if (app.isPackaged && composioBrokerUrl()) {
+  // Registering while the store is unreadable would mint a SECOND installation
+  // identity for a user who already has one — the first thing they would
+  // notice is every connected app gone, permanently.
+  if (credentialStoreUnavailable) {
+    slog("skipping connected-apps registration: the credential store was unreadable this launch");
+  }
+  if (app.isPackaged && composioBrokerUrl() && !credentialStoreUnavailable) {
     void updateSecureCredentialDocument(async (credentials) => {
       await ensureManagedComposioCredentials({
         brokerUrl: composioBrokerUrl(),

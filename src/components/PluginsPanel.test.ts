@@ -162,3 +162,30 @@ describe("connected-app status races", () => {
     })).toBe("Unavailable");
   });
 });
+
+describe("an answer the server was not sure about", () => {
+  const connectedGmail = {
+    gmail: { connected: true, pending: false, status: "ACTIVE", accounts: [{ id: "ca_1", status: "ACTIVE" }] },
+  } satisfies Record<string, ConnectorStatus>;
+
+  it("keeps a connected app when the response was not authoritative", () => {
+    // the credential store was unreadable, so the server sent {} — that is
+    // ignorance, and clearing on it is how a connected app turns into a
+    // Connect button the user never asked for
+    const merged = mergeCompleteConnectorStatus(connectedGmail, {}, new Map(), new Map(), false);
+    expect(merged.gmail.connected).toBe(true);
+  });
+
+  it("still clears an app the server authoritatively no longer lists", () => {
+    // disconnection has to remain possible: revoking from Composio's
+    // dashboard must show up here on the next successful check
+    const merged = mergeCompleteConnectorStatus(connectedGmail, {}, new Map(), new Map(), true);
+    expect(merged.gmail.connected).toBe(false);
+    expect(merged.gmail.status).toBe("not_connected");
+  });
+
+  it("treats a missing authority flag as authoritative, preserving today's behaviour", () => {
+    const merged = mergeCompleteConnectorStatus(connectedGmail, {}, new Map(), new Map());
+    expect(merged.gmail.connected).toBe(false);
+  });
+});
