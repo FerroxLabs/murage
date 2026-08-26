@@ -128,6 +128,37 @@ export function companionPairingRoute(
   mode: CompanionPairingRouteMode,
 ): CompanionPairingRoute | null {
   if (mode === "automatic") {
+    const advertised = qrEndpoints(source.endpoints);
+    const preferred = advertised[0] ?? null;
+    if (preferred?.kind === "hosted" || preferred?.kind === "tailnet") {
+      const parsed = new URL(preferred.url);
+      const address = parsed.hostname;
+      const port = parsed.port ? Number(parsed.port) : preferred.kind === "hosted" ? 443 : 80;
+      const tailnetHosts = deduplicatedHosts([
+        source.tailnetName ?? "",
+        ...(source.hosts ?? []),
+      ]).filter((host) => host.toLowerCase().replace(/\.$/, "").endsWith(".ts.net"));
+      const hosts = preferred.kind === "tailnet"
+        ? deduplicatedHosts([address, ...tailnetHosts])
+        : deduplicatedHosts([
+            address,
+            ...advertised
+              .filter((endpoint) => endpoint.kind === "hosted")
+              .map((endpoint) => new URL(endpoint.url).hostname),
+            ...tailnetHosts,
+          ]);
+      return {
+        address,
+        port,
+        // Older phone builds ignore typed endpoints and assume cleartext HTTP
+        // for every legacy host. A hosted authority on its TLS port therefore
+        // fails closed instead of replaying the six-digit credential to LAN;
+        // a tailnet-first QR retains only MagicDNS legacy fallbacks.
+        hosts,
+        endpoints: source.endpoints,
+      };
+    }
+
     const address =
       source.tailnetName
       ?? source.lan

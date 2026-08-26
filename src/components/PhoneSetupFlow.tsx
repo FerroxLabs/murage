@@ -129,6 +129,30 @@ export const loadCompanionBridgeState = async (
   };
 };
 
+export interface CompanionStateMutationEpoch {
+  current: number;
+}
+
+/** Polls capture the epoch before reading. A mutation advances it both before
+ * and after the IPC call, invalidating snapshots taken before or during that
+ * mutation while leaving the independently loaded account result usable. */
+export const mutateCompanionBridgeState = async <State,>(
+  epoch: CompanionStateMutationEpoch,
+  mutate: () => Promise<State>,
+): Promise<State> => {
+  epoch.current += 1;
+  try {
+    return await mutate();
+  } finally {
+    epoch.current += 1;
+  }
+};
+
+export const companionStateRefreshIsCurrent = (
+  epoch: CompanionStateMutationEpoch,
+  refreshEpoch: number,
+): boolean => epoch.current === refreshEpoch;
+
 export const shouldHydrateCompanionEmail = (
   userEdited: boolean,
   account: CompanionAccountState,
@@ -140,6 +164,14 @@ export const companionAccountActionError = (
 ): string | null => {
   if (actionError) return actionError;
   return account?.status === "signed-out" ? account.message ?? null : null;
+};
+
+export const phonePairingManualCodeMode = (
+  pairingOpen: boolean,
+  pairingLink: string | null,
+): "details" | "direct" | "hidden" => {
+  if (!pairingOpen) return "hidden";
+  return pairingLink ? "details" : "direct";
 };
 
 export interface PhoneSetupController {
@@ -209,6 +241,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     useState<OwnedCompanionPairingRoutePin | null>(null);
   const setupGeneration = useRef(0);
   const mounted = useRef(true);
+  const companionMutationEpoch = useRef(0);
   const loadInFlight = useRef<Promise<void> | null>(null);
 
   const publishPairingRoutePin = useCallback((pin: OwnedCompanionPairingRoutePin | null) => {
@@ -226,10 +259,16 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
 
   const load = useCallback((): Promise<void> => {
     if (loadInFlight.current) return loadInFlight.current;
+    const refreshEpoch = companionMutationEpoch.current;
     const pending = (async () => {
       const next = await loadCompanionBridgeState(companionBridge(), companionAccountBridge());
       if (!mounted.current) return;
-      if (next.companion) setState(next.companion);
+      if (
+        next.companion
+        && companionStateRefreshIsCurrent(companionMutationEpoch, refreshEpoch)
+      ) {
+        setState(next.companion);
+      }
       if (next.account) {
         setAccount(next.account);
         if (shouldHydrateCompanionEmail(emailEdited.current, next.account)) {
@@ -257,7 +296,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     setActionBusy(true);
     setError(null);
     try {
-      const next = await call(companion);
+      const next = await mutateCompanionBridgeState(
+        companionMutationEpoch,
+        () => call(companion),
+      );
       if (mounted.current) setState(next);
     } catch (cause) {
       if (mounted.current) setError(
@@ -278,7 +320,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       setAccountBusy(true);
       setAccountError(null);
       try {
-        const next = await call(remote);
+        const next = await mutateCompanionBridgeState(
+          companionMutationEpoch,
+          () => call(remote),
+        );
         if (!mounted.current) return;
         setAccount(next);
         await load();
@@ -330,7 +375,12 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       }
       setError(null);
       try {
-        const started = state?.enabled ? await companion.state() : await companion.start();
+        const started = state?.enabled
+          ? await companion.state()
+          : await mutateCompanionBridgeState(
+              companionMutationEpoch,
+              () => companion.start(),
+            );
         if (!isCurrent()) return;
         setState(started);
         const startFailure = companionStartFailure(started);
@@ -355,11 +405,17 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
           return;
         }
         const paired = await keepPhonePairingIfCurrent(
-          () => companion.pairing(true),
+          () => mutateCompanionBridgeState(
+            companionMutationEpoch,
+            () => companion.pairing(true),
+          ),
           (opened) => closePhonePairingIfOwned(
             opened,
             () => companion.state(),
-            () => companion.pairing(false, opened.pairing?.token),
+            () => mutateCompanionBridgeState(
+              companionMutationEpoch,
+              () => companion.pairing(false, opened.pairing?.token),
+            ),
             staleAttemptMayClose,
           ),
           isCurrent,
@@ -376,7 +432,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
           await closePhonePairingIfOwned(
             paired,
             () => companion.state(),
-            () => companion.pairing(false, paired.pairing?.token),
+            () => mutateCompanionBridgeState(
+              companionMutationEpoch,
+              () => companion.pairing(false, paired.pairing?.token),
+            ),
             isCurrent,
           );
           if (!isCurrent()) return;
@@ -517,8 +576,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     setProvisioning(true);
     setSetupTimedOut(false);
     setAccountError(null);
-    void remote
-      .verifyCode(normalized, code)
+    void mutateCompanionBridgeState(
+      companionMutationEpoch,
+      () => remote.verifyCode(normalized, code),
+    )
       .then(async (next) => {
         if (!mounted.current || setupGeneration.current !== generation) return;
         setAccount(next);
@@ -548,8 +609,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     setProvisioning(true);
     setSetupTimedOut(false);
     setAccountError(null);
-    void remote
-      .retry()
+    void mutateCompanionBridgeState(
+      companionMutationEpoch,
+      () => remote.retry(),
+    )
       .then(async (next) => {
         if (!mounted.current || setupGeneration.current !== generation) return;
         setAccount(next);
@@ -643,7 +706,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       void closePhonePairingIfOwned(
         state,
         () => companion.state(),
-        () => companion.pairing(false, state.pairing?.token),
+        () => mutateCompanionBridgeState(
+          companionMutationEpoch,
+          () => companion.pairing(false, state.pairing?.token),
+        ),
         () => {
           const activePin = pairingRoutePinRef.current;
           return !activePin || activePin.generation === pin.generation;
@@ -725,7 +791,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       void closePhonePairingIfOwned(
         snapshot,
         () => companion.state(),
-        () => companion.pairing(false, snapshot.pairing?.token),
+        () => mutateCompanionBridgeState(
+          companionMutationEpoch,
+          () => companion.pairing(false, snapshot.pairing?.token),
+        ),
         () => pairingRoutePinRef.current === null,
       );
     }
@@ -838,6 +907,7 @@ export function PhoneSetupFlowView({
   const c = controller;
   const actionError = companionAccountActionError(c.account, c.accountError);
   const canSubmitEmail = /^\S+@\S+\.\S+$/.test(c.email.trim());
+  const manualCodeMode = phonePairingManualCodeMode(Boolean(c.state?.pairing), c.pairingLink);
 
   if (c.phase === "intro") {
     return (
@@ -1077,12 +1147,15 @@ export function PhoneSetupFlowView({
           <QRCodeSVG value={c.pairingLink} size={180} level="M" bgColor="#ffffff" fgColor="#111111" />
         </div>
       )}
-      {!c.pairingExpired && !c.pairingLink && (
-        <div className="mt-4 rounded-xl bg-inset px-4 py-3 text-[12.5px] text-ink-secondary">
-          Open OpenMausMobile and enter the code below.
+      {!c.pairingExpired && manualCodeMode === "direct" && c.state?.pairing && (
+        <div className="mt-4 w-full max-w-[320px] rounded-xl bg-inset px-4 py-3 text-[12.5px] text-ink-secondary">
+          <div>Open OpenMausMobile and enter this manual code.</div>
+          <div className="mt-2 font-mono text-[22px] tracking-[0.25em] text-ink">
+            {c.state.pairing.code}
+          </div>
         </div>
       )}
-      {!c.pairingExpired && c.state?.pairing && (
+      {!c.pairingExpired && manualCodeMode === "details" && c.state?.pairing && (
         <p className="mt-3 text-[11.5px] text-ink-secondary">Code expires in {c.secondsLeft}s</p>
       )}
       {c.pairingExpired && (

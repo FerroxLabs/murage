@@ -159,6 +159,7 @@ const control = createControlServer({
   },
   discovery: () => ({ advertising: mdns.advertising, name: service().name }),
   connectedDeviceIds: connectedDevices.ids,
+  disconnectDevice: connectedDevices.disconnect,
 });
 
 /** Bind a server, turning a bind failure into a sentence rather than a stack

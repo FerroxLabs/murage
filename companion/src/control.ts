@@ -33,6 +33,8 @@ export interface ControlOptions {
   discovery: () => { advertising: boolean; name: string };
   /** Device ids with at least one live authenticated event stream. */
   connectedDeviceIds?: () => string[];
+  /** Terminate every authenticated event stream owned by a revoked device. */
+  disconnectDevice?: (deviceId: string) => void;
 }
 
 /** The host out of a `Host` header, port removed.
@@ -303,6 +305,7 @@ export function createControlServer(options: ControlOptions): Server {
     const revoke = path.match(/^\/devices\/([\w-]+)$/);
     if (revoke && method === "DELETE") {
       if (!options.devices.revoke(revoke[1])) return json(res, 404, { error: "no such device" });
+      options.disconnectDevice?.(revoke[1]);
       return json(res, 200, companionState(options));
     }
     return json(res, 404, { error: `no route: ${method} ${path}` });

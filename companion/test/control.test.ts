@@ -14,6 +14,7 @@ let control: Server;
 let port = 0;
 let devices: DeviceRegistry;
 let connectedDeviceIds: string[] = [];
+let disconnectedDeviceIds: string[] = [];
 
 const ask = async (
   method: string,
@@ -42,6 +43,10 @@ beforeAll(async () => {
     },
     discovery: () => ({ advertising: false, name: "Test computer" }),
     connectedDeviceIds: () => connectedDeviceIds,
+    disconnectDevice: (deviceId) => {
+      disconnectedDeviceIds.push(deviceId);
+      connectedDeviceIds = connectedDeviceIds.filter((connectedId) => connectedId !== deviceId);
+    },
   });
   port = await new Promise<number>((resolve) =>
     control.listen(0, "127.0.0.1", () => resolve((control.address() as { port: number }).port)),
@@ -197,6 +202,23 @@ describe("hostCandidates", () => {
     } finally {
       connectedDeviceIds = [];
     }
+  });
+
+  it("disconnects streams only after a device is successfully revoked", async () => {
+    const { code } = devices.openPairing();
+    const paired = devices.redeem(code, "Revoked phone");
+    if ("error" in paired) throw new Error(paired.error);
+    disconnectedDeviceIds = [];
+    connectedDeviceIds = [paired.device.id];
+
+    expect((await ask("DELETE", "/devices/missing-device")).status).toBe(404);
+    expect(disconnectedDeviceIds).toEqual([]);
+    expect(connectedDeviceIds).toEqual([paired.device.id]);
+
+    const revoked = await ask("DELETE", `/devices/${paired.device.id}`);
+    expect(revoked.status).toBe(200);
+    expect(disconnectedDeviceIds).toEqual([paired.device.id]);
+    expect(revoked.body.connectedDeviceIds).toEqual([]);
   });
 });
 

@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { CompanionAccountState } from "../types/ogb";
 import {
+  companionStateRefreshIsCurrent,
+  mutateCompanionBridgeState,
+  phonePairingManualCodeMode,
+  type CompanionState,
+} from "./PhoneSetupFlow";
+import {
   companionAccountActionError,
   companionPairingMode,
   deriveCompanionPanelStatus,
@@ -70,11 +76,71 @@ describe("companion status refresh", () => {
     expect(refreshed.account).toBeNull();
   });
 
+  it("does not let a pre-mutation poll overwrite a newly opened pairing", async () => {
+    const pairingToken = `omb_pair_${"a".repeat(43)}`;
+    const staleState: CompanionState = {
+      enabled: true,
+      keepAwake: false,
+      port: 8811,
+      devices: [],
+      pairing: null,
+    };
+    const pairedState: CompanionState = {
+      ...staleState,
+      pairing: { code: "004209", token: pairingToken, expiresAt: Date.now() + 60_000 },
+    };
+    let signalCompanionRead = () => {};
+    const companionRead = new Promise<void>((resolve) => {
+      signalCompanionRead = resolve;
+    });
+    let resolveAccount = (_value: CompanionAccountState) => {};
+    const accountRead = new Promise<CompanionAccountState>((resolve) => {
+      resolveAccount = resolve;
+    });
+    const epoch = { current: 0 };
+    const refreshEpoch = epoch.current;
+    let visibleState: CompanionState | null = null;
+    const refresh = loadCompanionBridgeState(
+      {
+        state: () => {
+          signalCompanionRead();
+          return Promise.resolve(staleState);
+        },
+      },
+      { state: () => accountRead },
+    ).then((next) => {
+      if (next.companion && companionStateRefreshIsCurrent(epoch, refreshEpoch)) {
+        visibleState = next.companion;
+      }
+      return next;
+    });
+
+    await companionRead;
+    visibleState = await mutateCompanionBridgeState(epoch, () => Promise.resolve(pairedState));
+    resolveAccount(account("ready"));
+    const refreshed = await refresh;
+
+    expect(refreshed.companion).toBe(staleState);
+    expect(visibleState).toBe(pairedState);
+    expect(epoch.current).toBe(2);
+  });
+
   it("hydrates an untouched email field but preserves user edits", () => {
     const remoteAccount = { ...account("signed-out"), email: "old@example.com" };
 
     expect(shouldHydrateCompanionEmail(false, remoteAccount)).toBe(true);
     expect(shouldHydrateCompanionEmail(true, remoteAccount)).toBe(false);
+  });
+});
+
+describe("manual pairing code placement", () => {
+  it("shows the code directly when no QR link can be built", () => {
+    expect(phonePairingManualCodeMode(true, null)).toBe("direct");
+  });
+
+  it("keeps the code in troubleshooting details when a QR is available", () => {
+    expect(phonePairingManualCodeMode(true, "openmausbot://pair?token=example")).toBe("details");
+    expect(phonePairingManualCodeMode(false, null)).toBe("hidden");
   });
 });
 

@@ -46,9 +46,10 @@ export interface ProxyOptions {
   /** Complete connection URLs for current mobile clients. `hosts` remains
    * alongside this field for builds that predate typed endpoints. */
   endpoints?: () => CompanionEndpoint[];
-  /** Register one authenticated, live event stream. The returned disposer is
+  /** Register one authenticated, live event stream. The tracker can terminate
+   * it synchronously when that device is revoked; the returned disposer is
    * called exactly once when either side closes it. */
-  connected?: (deviceId: string) => () => void;
+  connected?: (deviceId: string, disconnect: () => void) => () => void;
   /** How long the harness may take to produce response *headers*. Optional,
    * and only ever set by tests — the default is the one that ships. */
   headersTimeoutMs?: number;
@@ -359,13 +360,25 @@ export function createProxyHandler(options: ProxyOptions) {
 
         if (isStream) {
           const streamStatus = harness.statusCode ?? 500;
+          const tracksDeviceConnection = method === "GET"
+            && path === "/api/events"
+            && streamStatus >= 200
+            && streamStatus < 300
+            && Boolean(device?.id);
+          const currentDevice = tracksDeviceConnection ? options.authenticate(token) : device;
+          if (tracksDeviceConnection && currentDevice?.id !== device?.id) {
+            harness.destroy();
+            return sendJson(res, 401, {
+              error: "pair this device from Phone settings in OpenMausBot on your computer",
+            });
+          }
+          const disconnect = () => {
+            if (!harness.destroyed) harness.destroy();
+            if (!res.destroyed) res.destroy();
+          };
           let releaseConnection =
-            method === "GET"
-              && path === "/api/events"
-              && streamStatus >= 200
-              && streamStatus < 300
-              && device?.id
-              ? options.connected?.(device.id) ?? null
+            tracksDeviceConnection && currentDevice?.id
+              ? options.connected?.(currentDevice.id, disconnect) ?? null
               : null;
           const release = () => {
             releaseConnection?.();

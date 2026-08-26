@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 
-const addressPreview = (value: string): string => {
+export const addressPreview = (value: string): string => {
+  if (value.length <= 3) return "…";
   if (value.length < 10) return `${value.slice(0, 3)}…`;
+  if (value.length < 17) return `${value.slice(0, 4)}…${value.slice(-3)}`;
   return `${value.slice(0, 10)}…${value.slice(-6)}`;
 };
 

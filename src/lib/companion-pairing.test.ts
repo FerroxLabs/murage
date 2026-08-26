@@ -122,7 +122,7 @@ describe("companionPairingLink", () => {
     expect(new URL(none!).searchParams.get("hosts")).toBeNull();
   });
 
-  it("preserves hosted and Tailscale priority for normal automatic pairing", () => {
+  it("preserves protected priority without exposing a LAN legacy fallback", () => {
     const endpoints = [
       { url: "https://device.openmausbot.com", kind: "hosted" as const, priority: 0 },
       { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet" as const, priority: 100 },
@@ -137,13 +137,47 @@ describe("companionPairingLink", () => {
     }, "automatic");
 
     expect(route).toEqual({
-      address: "mac.tail1234.ts.net",
-      port: 8810,
-      hosts: ["mac.tail1234.ts.net", "192.168.1.42"],
+      address: "device.openmausbot.com",
+      port: 443,
+      hosts: ["device.openmausbot.com", "mac.tail1234.ts.net"],
       endpoints,
     });
     const link = companionPairingLink({ ...route!, code: "004209", token });
+    const url = new URL(link!);
+    expect(url.searchParams.get("address")).toBe("device.openmausbot.com:443");
+    expect(url.searchParams.get("hosts")).toBe(
+      "device.openmausbot.com,mac.tail1234.ts.net",
+    );
+    expect(url.searchParams.get("hosts")).not.toContain("192.168.1.42");
     expect(decodedEndpoints(link!)).toEqual(endpoints);
+    expect(companionPairingRoutePin({
+      port: 8810,
+      tailnetName: "mac.tail1234.ts.net",
+      lan: "192.168.1.42",
+      hosts: ["mac.tail1234.ts.net", "192.168.1.42"],
+      endpoints,
+    }, "automatic")?.protectedEndpoint?.kind).toBe("hosted");
+  });
+
+  it("keeps a tailnet-first automatic QR on MagicDNS legacy hosts", () => {
+    const route = companionPairingRoute({
+      port: 8810,
+      tailnetName: "mac.tail1234.ts.net",
+      lan: "192.168.1.42",
+      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"],
+      endpoints: [
+        { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet", priority: 0 },
+        { url: "http://192.168.1.42:8810", kind: "lan", priority: 100 },
+      ],
+    }, "automatic");
+
+    expect(route).toMatchObject({
+      address: "mac.tail1234.ts.net",
+      port: 8810,
+      hosts: ["mac.tail1234.ts.net"],
+    });
+    const link = companionPairingLink({ ...route!, code: "004209", token });
+    expect(new URL(link!).searchParams.get("hosts")).toBe("mac.tail1234.ts.net");
   });
 
   it("pins the protected automatic transport instead of downgrading the live QR to LAN", () => {
@@ -161,6 +195,11 @@ describe("companionPairingLink", () => {
       url: "https://device.openmausbot.com",
       kind: "hosted",
       priority: 0,
+    });
+    expect(pin?.route).toMatchObject({
+      address: "device.openmausbot.com",
+      port: 443,
+      hosts: ["device.openmausbot.com"],
     });
 
     const withdrawn = {
