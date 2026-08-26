@@ -6,7 +6,7 @@
 // never terminating an event, a resume cursor being dropped on the way
 // through, and the harness's loopback gate rejecting a proxied request.
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, request, type Server } from "node:http";
+import { createServer, request, type IncomingMessage, type Server } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createProxyHandler } from "../src/proxy.ts";
+import { createConnectedDeviceTracker } from "../src/connected-devices.ts";
 import type { CompanionEndpoint } from "../src/endpoints.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -73,6 +74,7 @@ let harness: ChildProcess;
 let sidecar: Server;
 let home: string;
 let stderr = "";
+const connectedDevices = createConnectedDeviceTracker();
 
 /** a request as a device makes it: a token, and a Host that is not loopback */
 const device = async (
@@ -168,12 +170,13 @@ beforeAll(async () => {
   sidecar = createServer(
     createProxyHandler({
       harnessPort: HARNESS_PORT,
-      authenticate: (t) => (t === TOKEN ? { cloudDesktopAccess: true } : null),
+      authenticate: (t) => (t === TOKEN ? { id: "d1", cloudDesktopAccess: true } : null),
       redeem: (code, deviceName) =>
         code === "424242"
           ? { token: TOKEN, device: { id: "d1", name: String(deviceName) } }
           : { error: "that code is not right" },
       serverName: () => "Test computer",
+      connected: connectedDevices.open,
     }),
   );
   // Not `listen(port, host, resolve)` alone: a bind failure emits `error` and
@@ -228,6 +231,51 @@ describe("the sidecar in front of an unmodified harness", () => {
     // even a loopback origin, which the harness itself would allow
     const local = await device("GET", "/api/bots", { headers: { origin: `http://127.0.0.1:${HARNESS_PORT}` } });
     expect(local.status).toBe(403);
+  });
+
+  it("rejects an event stream revoked while upstream headers are pending", async () => {
+    let valid = true;
+    let sendHeaders = () => {};
+    let signalUpstream = () => {};
+    const upstreamReached = new Promise<void>((resolve) => {
+      signalUpstream = resolve;
+    });
+    const delayedHarness = createServer((_req, res) => {
+      sendHeaders = () => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("data: {}\n\n");
+      };
+      signalUpstream();
+    });
+    await new Promise<void>((resolve) => delayedHarness.listen(0, "127.0.0.1", resolve));
+    const delayedHarnessPort = (delayedHarness.address() as { port: number }).port;
+    const connections = createConnectedDeviceTracker();
+    const delayedProxy = createServer(createProxyHandler({
+      harnessPort: delayedHarnessPort,
+      authenticate: () => valid ? { id: "phone-delayed", cloudDesktopAccess: false } : null,
+      redeem: () => ({ error: "not pairing" }),
+      serverName: () => "Test computer",
+      connected: connections.open,
+    }));
+    await new Promise<void>((resolve) => delayedProxy.listen(0, "127.0.0.1", resolve));
+    const delayedProxyPort = (delayedProxy.address() as { port: number }).port;
+
+    try {
+      const responsePending = fetch(`http://127.0.0.1:${delayedProxyPort}/api/events`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+      await upstreamReached;
+      valid = false;
+      connections.disconnect("phone-delayed");
+      sendHeaders();
+
+      const response = await responsePending;
+      expect(response.status).toBe(401);
+      expect(connections.ids()).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve) => delayedProxy.close(() => resolve()));
+      await new Promise<void>((resolve) => delayedHarness.close(() => resolve()));
+    }
   });
 
   it("requires a paired token", async () => {
@@ -334,6 +382,7 @@ describe("the sidecar in front of an unmodified harness", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     expect(res.headers.get("cache-control")).toContain("no-store");
+    expect(connectedDevices.ids()).toEqual(["d1"]);
 
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
@@ -376,6 +425,11 @@ describe("the sidecar in front of an unmodified harness", () => {
       expect(frame).not.toContain("resumeCursors");
     } finally {
       controller.abort();
+      const cleanupDeadline = Date.now() + 2_000;
+      while (connectedDevices.ids().length && Date.now() < cleanupDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(connectedDevices.ids()).toEqual([]);
     }
   });
 
@@ -642,6 +696,7 @@ describe("pairing, end to end", () => {
     const { createControlServer } = await import("../src/control.ts");
 
     const registry = new DeviceRegistry();
+    const connections = createConnectedDeviceTracker();
     const paired = createServer(
       createProxyHandler({
         harnessPort: HARNESS_PORT,
@@ -653,6 +708,7 @@ describe("pairing, end to end", () => {
           { url: "https://device-123.companion.example", kind: "hosted", priority: 0 },
           { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
         ],
+        connected: connections.open,
       }),
     );
     await new Promise<void>((r) => paired.listen(0, "127.0.0.1", r));
@@ -661,6 +717,8 @@ describe("pairing, end to end", () => {
       devices: registry,
       companionPort: port,
       discovery: () => ({ advertising: false, name: "OpenMausBot" }),
+      connectedDeviceIds: connections.ids,
+      disconnectDevice: connections.disconnect,
     });
     await new Promise<void>((r) => control.listen(0, "127.0.0.1", r));
     // SAFETY: address() is AddressInfo — an object with a port — for any
@@ -738,19 +796,36 @@ describe("pairing, end to end", () => {
       expect(bots.status).toBe(200);
       expect(await bots.text()).not.toContain("resumeCursors");
 
+      const eventStream = await new Promise<IncomingMessage>((resolve, reject) => {
+        const streamRequest = request(`${base}/api/events`, {
+          headers: {
+            accept: "text/event-stream",
+            authorization: `Bearer ${body.token}`,
+          },
+        }, resolve);
+        streamRequest.on("error", reject);
+        streamRequest.end();
+      });
+      eventStream.resume();
+      const eventStreamClosed = new Promise<void>((resolve) => eventStream.once("close", resolve));
+
       // the computer can see the phone, and take it away again
       // SAFETY: /state's shape is this sidecar's own API, asserted by the
       // control-server tests above; a drifted shape fails the expects below.
       const state = (await (await fetch(`${ctl}/state`)).json()) as {
         devices: Array<{ id: string; name: string }>;
+        connectedDeviceIds: string[];
       };
       expect(state.devices.map((d) => d.name)).toContain("Ada's iPhone");
       // By name, not by index: `devices[0]` is whichever record the registry
       // happens to have loaded first, and revoking the wrong one would leave
       // this test passing for the wrong reason.
       const ada = state.devices.find((d) => d.name === "Ada's iPhone")!;
+      expect(state.connectedDeviceIds).toContain(ada.id);
       const revoked = await fetch(`${ctl}/devices/${ada.id}`, { method: "DELETE" });
       expect(revoked.status).toBe(200);
+      expect((await revoked.json() as { connectedDeviceIds: string[] }).connectedDeviceIds).not.toContain(ada.id);
+      await eventStreamClosed;
       expect((await fetch(`${base}/api/bots`, { headers: { authorization: `Bearer ${body.token}` } })).status).toBe(401);
     } finally {
       await new Promise<void>((r) => paired.close(() => r()));

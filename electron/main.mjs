@@ -397,12 +397,15 @@ function publicManagedCompanionState() {
     : { status: "unconfigured", configured: false, ready: false };
 }
 
-async function desktopCompanionState() {
-  const state = await companionState();
+function decorateDesktopCompanionState(state) {
   // The panel polls this state, so a sidecar that exited on its own releases
   // the blocker within one poll instead of keeping the computer awake forever.
   syncCompanionKeepAwake(state.enabled && !state.error, state.keepAwake === true);
   return { ...state, managedConnection: publicManagedCompanionState() };
+}
+
+async function desktopCompanionState() {
+  return decorateDesktopCompanionState(await companionState());
 }
 
 function companionLaunchOptions(hostedUrl = null) {
@@ -1299,10 +1302,9 @@ ipcMain.handle("companion:keep-awake", async (_event, enabled) => {
   rememberCompanionKeepAwake(Boolean(enabled));
   return desktopCompanionState();
 });
-ipcMain.handle("companion:pairing", async (_event, open) => {
-  await companionPairing(Boolean(open));
-  return desktopCompanionState();
-});
+ipcMain.handle("companion:pairing", (_event, open, expectedToken) =>
+  companionPairing(Boolean(open), expectedToken).then(decorateDesktopCompanionState),
+);
 ipcMain.handle("companion:cloud-desktop", (_event, deviceId, allowed) =>
   companionCloudDesktopAccess(deviceId, Boolean(allowed)).then(() => desktopCompanionState()),
 );

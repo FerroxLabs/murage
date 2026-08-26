@@ -1,101 +1,50 @@
-// App Settings → Companion. Turning this on starts the companion sidecar: a
-// separate process that opens an authenticated port a paired phone can
-// reach. Everything else in the app keeps talking to 127.0.0.1 exactly as
-// before, and the harness itself is untouched.
-//
-// The sidecar is separate on purpose — it is the only thing here that
-// listens off this machine, and keeping it out of the harness is what lets
-// the harness stay loopback-only. That is an implementation detail from this
-// panel's point of view, which is the point: a toggle, a code, a list of
-// devices. Nobody should need a terminal to use their phone.
-//
-// The panel is deliberately blunt about what it does. "Your bots can run
-// shell commands" is the honest reason a network switch here deserves a
-// sentence of explanation rather than a bare toggle.
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Cloud, Loader2, LogOut, Smartphone, Trash2 } from "lucide-react";
-import { QRCodeSVG } from "qrcode.react";
-import { companionPairingLink, type CompanionEndpoint } from "../lib/companion-pairing";
-import type { CompanionAccountState } from "../types/ogb";
+import {
+  Cloud,
+  Loader2,
+  LogOut,
+  ShieldCheck,
+  Smartphone,
+  Trash2,
+  Wifi,
+} from "lucide-react";
+import {
+  PhoneSetupFlowView,
+  companionAccountActionError,
+  companionBridge,
+  loadCompanionBridgeState,
+  shouldHydrateCompanionEmail,
+  type CompanionState,
+  usePhoneSetupController,
+} from "./PhoneSetupFlow";
+import { companionPairingMode } from "../lib/phone-setup";
+import { ConnectionDetail } from "./ConnectionDetail";
 import { Card } from "./SettingsPrimitives";
 
-interface Device {
-  id: string;
-  name: string;
-  createdAt: number;
-  lastSeenAt: number;
-  cloudDesktopAccess: boolean;
-}
-
-interface CompanionState {
-  enabled: boolean;
-  keepAwake: boolean;
-  port: number;
-  devices: Device[];
-  pairing: { code: string; token: string; expiresAt: number } | null;
-  /** Every address a phone could dial, and which of them is which. */
-  addresses?: string[];
-  /** The tailnet address, when this machine is on one. */
-  tailscale?: string;
-  /** Its MagicDNS name. Preferred over the address for anything typed into
-   * a phone: iOS refuses plain HTTP to 100.64/10, which is CGNAT space and
-   * not one of the ranges its local-networking exemption covers, and ATS
-   * exceptions match by name rather than by subnet. */
-  tailnetName?: string;
-  lan?: string | null;
-  /** Ordered fallback hosts for the phone — tailnet name, LAN, mDNS last. */
-  hosts?: string[];
-  /** Complete URLs for current mobile builds, hosted HTTPS first. */
-  endpoints?: CompanionEndpoint[];
-  /** Bonjour: when advertising, the phone finds this computer by name. */
-  discovery?: { advertising: boolean; name: string };
-  /** Why it is not running, or not answering. */
-  error?: string;
-}
-
-/** The bridge the preload exposes. Absent in a browser tab — the companion
- * needs a process only the desktop app can start. */
-type Bridge = {
-  state: () => Promise<CompanionState>;
-  start: () => Promise<CompanionState>;
-  stop: () => Promise<CompanionState>;
-  keepAwake: (enabled: boolean) => Promise<CompanionState>;
-  pairing: (open: boolean) => Promise<CompanionState>;
-  cloudDesktop: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
-  revoke: (deviceId: string) => Promise<CompanionState>;
+export {
+  companionAccountActionError,
+  companionPairingMode,
+  loadCompanionBridgeState,
+  shouldHydrateCompanionEmail,
 };
 
-type AccountBridge = NonNullable<NonNullable<Window["ogb"]>["companionAccount"]>;
+export interface CompanionPanelStatus {
+  label: string;
+  good: boolean;
+}
 
-type StateBridge<T> = { state: () => Promise<T> };
-
-const bridge = (): Bridge | null =>
-  // SAFETY: the preload owns `ogb.companion`; every call is still guarded for browser builds where it is absent.
-  (globalThis as { ogb?: { companion?: Bridge } }).ogb?.companion ?? null;
-
-const accountBridge = (): AccountBridge | null =>
-  // SAFETY: Electron exposes only these five account operations. Account,
-  // installation, and connector credentials never enter the renderer.
-  (globalThis as { ogb?: { companionAccount?: AccountBridge } }).ogb?.companionAccount ?? null;
-
-export const loadCompanionBridgeState = async (
-  companion: StateBridge<CompanionState> | null,
-  remote: StateBridge<CompanionAccountState> | null,
-): Promise<{ companion: CompanionState | null; account: CompanionAccountState | null }> => {
-  const [companionResult, accountResult] = await Promise.allSettled([
-    companion ? Promise.resolve().then(() => companion.state()) : Promise.resolve(null),
-    remote ? Promise.resolve().then(() => remote.state()) : Promise.resolve(null),
-  ]);
+export function deriveCompanionPanelStatus(
+  state: Pick<CompanionState, "enabled" | "devices" | "error">,
+): CompanionPanelStatus {
+  if (state.error) return { label: "Phone access needs attention", good: false };
+  if (!state.enabled) return { label: "Phone access off", good: false };
+  const pairedCount = state.devices.length;
   return {
-    companion: companionResult.status === "fulfilled" ? companionResult.value : null,
-    account: accountResult.status === "fulfilled" ? accountResult.value : null,
+    label: pairedCount
+      ? `${pairedCount} ${pairedCount === 1 ? "phone" : "phones"} paired`
+      : "Ready to pair",
+    good: true,
   };
-};
-
-export const shouldHydrateCompanionEmail = (
-  userEdited: boolean,
-  account: CompanionAccountState,
-): boolean => !userEdited && Boolean(account.email);
+}
 
 const relative = (at: number) => {
   const seconds = Math.round((Date.now() - at) / 1000);
@@ -115,503 +64,262 @@ const endpointHost = (url: string): string => {
   }
 };
 
-export const companionAccountActionError = (
-  account: CompanionAccountState | null,
-  actionError: string | null,
-): string | null => {
-  if (actionError) return actionError;
-  return account?.status === "signed-out" ? account.message ?? null : null;
-};
+export function CompanionSection({ profileEmail = "" }: { profileEmail?: string }) {
+  const c = usePhoneSetupController(profileEmail);
+  const state = c.state;
 
-export type CompanionPairingMode =
-  | "local-only"
-  | "hosted-startable"
-  | "hosted-connecting"
-  | "hosted-ready";
-
-/** Pairing must not get ahead of a hosted connection the user has already
- * configured. On an access point that isolates wireless clients, a QR made
- * during that short gap contains only local routes and is guaranteed to time
- * out even though the managed route becomes usable moments later.
- *
- * A ready account with Companion off is intentionally startable: starting
- * Companion is what activates and publishes its persisted managed endpoint.
- * `beginSetup` checks the returned state before it opens the pairing window.
- * Signed-out, unavailable, and failed account states keep the local-first
- * behavior promised by the account card. */
-export const companionPairingMode = (
-  account: CompanionAccountState | null,
-  companion: Pick<CompanionState, "enabled" | "endpoints"> | null,
-): CompanionPairingMode => {
-  if (companion?.endpoints?.some((endpoint) => endpoint.kind === "hosted")) {
-    return "hosted-ready";
-  }
-  if (!account?.available || account.status === "signed-out" || account.status === "error") {
-    return "local-only";
-  }
-  if (account.status === "ready" && !companion?.enabled) return "hosted-startable";
-  return "hosted-connecting";
-};
-
-export function CompanionSection() {
-  const [state, setState] = useState<CompanionState | null>(null);
-  const [account, setAccount] = useState<CompanionAccountState | null>(null);
-  const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [codeSent, setCodeSent] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [accountBusy, setAccountBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [accountError, setAccountError] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const emailEdited = useRef(false);
-
-  const load = useCallback(async () => {
-    const companion = bridge();
-    const remote = accountBridge();
-    if (!companion && !remote) return;
-    const next = await loadCompanionBridgeState(companion, remote);
-    if (next.companion) setState(next.companion);
-    if (next.account) {
-      setAccount(next.account);
-      if (shouldHydrateCompanionEmail(emailEdited.current, next.account)) {
-        setEmail(next.account.email ?? "");
-      }
-    }
-  }, []);
-
-  const act = async (call: (companion: Bridge) => Promise<CompanionState>) => {
-    const companion = bridge();
-    if (!companion) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setState(await call(companion));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const accountAct = async (call: (remote: AccountBridge) => Promise<CompanionAccountState>) => {
-    const remote = accountBridge();
-    if (!remote) return;
-    setAccountBusy(true);
-    setAccountError(null);
-    try {
-      const next = await call(remote);
-      setAccount(next);
-      await load();
-    } catch (cause) {
-      setAccountError(cause instanceof Error ? cause.message : "Remote access could not be updated");
-    } finally {
-      setAccountBusy(false);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  // Two cadences, because the panel has two jobs.
-  //
-  // While a code is on screen it has to count down, and the same tick is what
-  // notices the phone on the other end finishing the handshake — one second.
-  // The rest of the time it still has to notice the sidecar going away, which
-  // it cannot do by sitting still: the process can exit on its own (port
-  // taken, crash, a stop from the standalone page) and nothing pushes that
-  // here. Polling only during pairing left the panel showing a companion that
-  // had not existed for hours. Ten seconds is cheap on loopback and well
-  // inside how long anyone looks at a settings pane before believing it.
-  const pairing = Boolean(state?.pairing);
-  const pairingMode = companionPairingMode(account, state);
-  // verifyCode() and retry() do not return until provisioning settles, so
-  // the last rendered account state can still be signed-out/error while the
-  // main process is already creating the endpoint. These are the two account
-  // actions that can cross that boundary.
-  const accountProvisioningHosted =
-    accountBusy && ((codeSent && code.length === 8) || account?.status === "error");
-  const pairingWaitingForHosted =
-    pairingMode === "hosted-connecting" || accountProvisioningHosted;
-  useEffect(() => {
-    const timer = window.setInterval(
-      () => {
-        setNow(Date.now());
-        void load();
-      },
-      pairing || pairingWaitingForHosted ? 1_000 : 10_000,
-    );
-    return () => window.clearInterval(timer);
-  }, [pairing, pairingWaitingForHosted, load]);
-
-  if (!bridge()) {
+  if (!companionBridge()) {
     return (
       <Card
-        title="Companion"
-        subtitle="The companion runs as its own process, which only the desktop app can start. Open OpenMausBot on this computer to turn it on."
-      >
-        <div />
-      </Card>
+        title="Use OpenMausBot from your phone"
+        subtitle="Open Settings in the OpenMausBot desktop app to set up a phone."
+      />
     );
   }
 
   if (!state) {
     return (
-      <Card title="Companion" subtitle="Loading…">
+      <Card title="Phone" subtitle="Checking phone access…">
         <Loader2 size={15} className="animate-spin text-ink-secondary" />
       </Card>
     );
   }
 
-  const secondsLeft = state.pairing ? Math.max(0, Math.round((state.pairing.expiresAt - now) / 1000)) : 0;
-  // Prefer a MagicDNS name when there is one: it survives changing wifi, works
-  // away from home, and gets through a guest network that isolates its
-  // clients. A bare 100.64/10 address is not dialable by the iOS app over
-  // HTTP, so fall back to LAN instead of putting a broken address in the QR.
-  const tailnet = state.tailnetName;
+  const pairedCount = state.devices.length;
+  const { label: statusLabel, good: statusGood } = deriveCompanionPanelStatus(state);
+  const accountActionError = companionAccountActionError(c.account, c.accountError);
   const hosted = state.endpoints?.find((endpoint) => endpoint.kind === "hosted");
-  const accountActionError = companionAccountActionError(account, accountError);
-  // `address` is deliberately still a direct host. Older iOS builds assume
-  // this field means host:port over HTTP and would corrupt an HTTPS URL.
-  const address =
-    tailnet ??
-    state.lan ??
-    state.addresses?.find((candidate) => candidate !== state.tailscale) ??
-    state.hosts?.[0];
-  const pairingLink =
-    state.pairing && address && !pairingWaitingForHosted
-      ? companionPairingLink({
-          address,
-          port: state.port,
-          code: state.pairing.code,
-          token: state.pairing.token,
-          name: state.discovery?.name,
-          hosts: state.hosts,
-          endpoints: state.endpoints,
-        })
-      : null;
-
-  const beginSetup = () =>
-    void act(async (companion) => {
-      const started = state.enabled ? state : await companion.start();
-      if (!started.enabled || started.error) return started;
-      // A persisted hosted account can become ready while its connector is
-      // still activating. Never mint a local-only QR during that gap.
-      if (
-        accountProvisioningHosted ||
-        companionPairingMode(account, started) === "hosted-connecting"
-      ) {
-        return started;
-      }
-      return companion.pairing(true);
-    });
+  const localRoutes = [
+    state.tailnetName ? { label: "Tailscale", value: `${state.tailnetName}:${state.port}` } : null,
+    state.lan ? { label: "Wi-Fi", value: `${state.lan}:${state.port}` } : null,
+    state.discovery?.name
+      ? { label: "Nearby discovery", value: `${state.discovery.name}:${state.port}` }
+      : null,
+    ...(state.addresses ?? [])
+      .filter((address) => address !== state.lan && address !== state.tailscale)
+      .map((address, index) => ({ label: `Local route ${index + 1}`, value: `${address}:${state.port}` })),
+  ].filter((route): route is { label: string; value: string } => Boolean(route));
 
   return (
     <div className="flex flex-col gap-4">
-      <Card
-        title="Companion"
-        subtitle="Let a phone open your chats, answer approvals, and send new work. Off by default: your bots run commands on this computer, so only pair a device you trust, on a network you trust."
-      >
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-[14px] text-ink">{state.enabled ? "On" : "Off"}</div>
-            <div className="mt-0.5 text-[13px] text-ink-secondary">
-              {!state.enabled
-                ? "Nothing on this computer is reachable from the network."
-                : hosted
-                  ? `Secure connection ready at ${endpointHost(hosted.url)} — your phone can connect from any network.`
-                : !address
-                  ? `Listening on port ${state.port} — no network address yet.`
-                  : tailnet
-                    ? `Enter ${tailnet}:${state.port} on your phone — that works from anywhere on your tailnet, on any network.`
-                    : state.discovery?.advertising
-                      ? // The address is shown even when Bonjour is working.
-                        // Discovery can be advertising happily and still not
-                        // reach the phone — a guest network that isolates its
-                        // clients blocks multicast — and when that happens the
-                        // typed address is the way out. Hiding it behind a
-                        // failure the panel cannot detect is no help at all.
-                        `Your phone will find this computer as "${state.discovery.name}", or you can enter ${address}:${state.port}.`
-                      : `Listening on ${address}:${state.port} — enter that on your phone.`}
-            </div>
-          </div>
-          <button
-            role="switch"
-            aria-checked={state.enabled}
-            aria-label="Companion"
-            disabled={busy}
-            onClick={() => void act((c) => (state.enabled ? c.stop() : c.start()))}
-            className={cnSwitch(state.enabled)}
+      <Card>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div
+            className={`flex items-center gap-2 rounded-full px-2.5 py-1 text-[11.5px] ${
+              statusGood ? "bg-success/10 text-success" : "bg-control text-ink-secondary"
+            }`}
           >
-            <span className={cnKnob(state.enabled)} />
-          </button>
-        </div>
-        {state.enabled && tailnet && state.lan && (
-          <div className="mt-3 text-[13px] text-ink-secondary">
-            On this network only: {state.lan}:{state.port}
+            <span className={`size-1.5 rounded-full ${statusGood ? "bg-success" : "bg-ink-secondary/50"}`} />
+            {statusLabel}
           </div>
-        )}
-        {/* A tailnet address with no name is workable on a laptop and not on
-            a phone, so say so rather than letting pairing fail with an
-            unexplained policy error. */}
-        {state.enabled && !hosted && state.tailscale && !state.tailnetName && (
-          <div className="mt-3 text-[13px] text-ink-secondary">
-            You're on a tailnet, but this computer's MagicDNS name couldn't be read from the
-            Tailscale app — either MagicDNS is off, or the Tailscale command line tool isn't
-            where we looked. iPhones can't connect to a bare tailnet address, so check the
-            OpenMausBot log for which paths were tried.
-          </div>
-        )}
-        {state.enabled && !hosted && !state.tailscale && (
-          <div className="mt-3 text-[13px] text-ink-secondary">
-            Only reachable on this network. Install Tailscale on both this computer and your phone
-            to reach it from anywhere — including networks that stop devices from seeing each other.
-          </div>
-        )}
-        {(error || state.error) && (
-          <div className="mt-3 text-[13px] text-danger">{error ?? state.error}</div>
-        )}
-        <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
-          <div className="min-w-0">
-            <div className="text-[13px] text-ink">Keep this computer awake</div>
-            <div className="mt-0.5 text-[11.5px] text-ink-secondary">
-              While Companion is on, prevent system sleep so your phone and scheduled work stay reachable. The screen may still turn off and battery use may increase.
-            </div>
-          </div>
-          <button
-            role="switch"
-            aria-checked={state.keepAwake}
-            aria-label="Keep this computer awake while Companion is on"
-            disabled={busy || !state.enabled}
-            onClick={() => void act((c) => c.keepAwake(!state.keepAwake))}
-            className={cnSwitch(state.keepAwake)}
-          >
-            <span className={cnKnob(state.keepAwake)} />
-          </button>
-        </div>
-      </Card>
-
-      {account?.available && (
-        <Card
-          title="Use your phone anywhere"
-          subtitle="Optional. Sign in once to give this computer a private HTTPS address. Wi-Fi, Bonjour, and Tailscale continue to work without an account."
-        >
-          {account.status === "signed-out" ? (
-            <div className="flex max-w-lg flex-col gap-3">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] font-medium text-ink-secondary">Email</span>
-                <input
-                  autoComplete="email"
-                  inputMode="email"
-                  value={email}
-                  disabled={accountBusy || codeSent}
-                  onChange={(event) => {
-                    emailEdited.current = true;
-                    setEmail(event.target.value);
-                  }}
-                  placeholder="you@example.com"
-                  className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none placeholder:text-ink-secondary/60 focus:border-accent disabled:opacity-50"
-                />
-              </label>
-              {codeSent && (
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-[12px] font-medium text-ink-secondary">8-digit code</span>
-                  <input
-                    autoComplete="one-time-code"
-                    inputMode="numeric"
-                    value={code}
-                    disabled={accountBusy}
-                    onChange={(event) => setCode(event.target.value.replaceAll(/\D/g, "").slice(0, 8))}
-                    placeholder="12345678"
-                    className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 font-mono text-[15px] tracking-[0.18em] text-ink outline-none placeholder:tracking-normal placeholder:text-ink-secondary/60 focus:border-accent disabled:opacity-50"
-                  />
-                </label>
-              )}
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  disabled={accountBusy || !email.trim() || (codeSent && code.length !== 8)}
-                  onClick={() => {
-                    if (!codeSent) {
-                      void accountAct(async (remote) => {
-                        const next = await remote.requestCode(email);
-                        setCodeSent(true);
-                        return next;
-                      });
-                      return;
-                    }
-                    void accountAct(async (remote) => {
-                      const next = await remote.verifyCode(email, code);
-                      setCode("");
-                      setCodeSent(false);
-                      return next;
-                    });
-                  }}
-                  className="rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-40"
-                >
-                  {accountBusy ? "Working…" : codeSent ? "Connect this computer" : "Email me a code"}
-                </button>
-                {codeSent && (
-                  <button
-                    disabled={accountBusy}
-                    onClick={() => {
-                      setCode("");
-                      setCodeSent(false);
-                    }}
-                    className="rounded-lg border border-hairline/40 px-3 py-2 text-[13px] text-ink hover:bg-control disabled:opacity-40"
-                  >
-                    Use another email
-                  </button>
-                )}
-              </div>
-              {codeSent && !accountError && (
-                <div className="text-[12px] text-ink-secondary">
-                  We sent a code if that address can receive mail. It expires in 10 minutes.
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex min-w-0 items-start gap-3">
-                <Cloud size={17} className="mt-0.5 shrink-0 text-accent" />
-                <div className="min-w-0">
-                  <div className="truncate text-[14px] text-ink">{account.email}</div>
-                  <div className="mt-0.5 text-[13px] text-ink-secondary">
-                    {account.status === "ready" && account.endpoint
-                      ? state.enabled
-                        ? `Secure connection ready at ${endpointHost(account.endpoint)}.`
-                        : `Secure address configured at ${endpointHost(account.endpoint)}. Turn Companion on to make it reachable.`
-                      : account.status === "connecting"
-                        ? "Setting up this computer's secure connection…"
-                        : account.message ?? "The secure connection needs attention; local pairing still works."}
-                  </div>
-                  {account.status === "error" && (
-                    <button
-                      disabled={accountBusy}
-                      onClick={() => void accountAct((remote) => remote.retry())}
-                      className="mt-2 rounded-lg border border-hairline/40 px-3 py-1.5 text-[12px] text-ink hover:bg-control disabled:opacity-40"
-                    >
-                      {accountBusy ? "Retrying…" : "Retry secure connection"}
-                    </button>
-                  )}
-                </div>
-              </div>
-              <button
-                disabled={accountBusy}
-                onClick={() => void accountAct((remote) => remote.signOut())}
-                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-hairline/40 px-3 py-1.5 text-[12px] text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-40"
-              >
-                <LogOut size={13} />
-                Sign out
-              </button>
+          {pairedCount > 0 && c.hostedReady && (
+            <div className="flex items-center gap-1.5 text-[11.5px] text-ink-secondary">
+              <ShieldCheck size={13} className="text-accent" /> Works away from home
             </div>
           )}
-          {accountActionError && (
-            <div className="mt-3 text-[13px] text-danger">{accountActionError}</div>
-          )}
-        </Card>
-      )}
-
-      <Card
-        title="Connect a phone"
-        subtitle={
-          pairingWaitingForHosted
-            ? "Finishing this computer's secure connection before showing a pairing code."
-            : state.pairing
-            ? pairingLink
-              ? "Scan with your phone's Camera, then confirm in OpenMausMobile. You can also use the code manually."
-              : "Open OpenMausMobile, choose this computer, and enter the code."
-            : state.enabled
-              ? "Open a short, single-use pairing window for a trusted phone."
-              : "This turns on Companion and opens a short, single-use pairing window in one step."
-        }
-      >
-        {pairingWaitingForHosted ? (
-          <div className="flex items-center gap-2 text-[13px] text-ink-secondary">
-            <Loader2 size={15} className="animate-spin text-accent" />
-            Waiting for the secure connection…
-          </div>
-        ) : state.pairing ? (
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-            {pairingLink && (
-              <div className="w-fit shrink-0 rounded-xl bg-white p-3" aria-label="Phone pairing QR code">
-                <QRCodeSVG value={pairingLink} size={144} level="M" bgColor="#ffffff" fgColor="#111111" />
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="text-[12px] font-medium uppercase tracking-wide text-ink-secondary">Manual code</div>
-              <div className="mt-1 font-mono text-[28px] tracking-[0.3em] text-ink">{state.pairing.code}</div>
-              <div className="mt-1 break-all text-[13px] text-ink-secondary">
-                Expires in {secondsLeft}s{address ? ` · ${address}:${state.port}` : ""}
-              </div>
-              {state.discovery?.advertising && (
-                <div className="mt-2 text-[13px] text-ink-secondary">
-                  Or open the mobile app and choose “{state.discovery.name}” under On this network.
-                </div>
-              )}
-              <button
-                disabled={busy}
-                onClick={() => void act((c) => c.pairing(false))}
-                className="mt-3 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            disabled={busy}
-            onClick={beginSetup}
-            className="rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-40"
-          >
-            {busy ? "Preparing…" : state.devices.length ? "Pair another phone" : "Set up a phone"}
-          </button>
-        )}
+        </div>
+        <PhoneSetupFlowView controller={c} variant="settings" />
       </Card>
 
       <Card
-        title="Paired devices"
-        subtitle={
-          state.devices.length
-            ? "Cloud desktop is full interactive access. Enable it only for a phone you trust; removing a device signs it out immediately."
-            : "No phones are paired yet."
-        }
+        title="Paired phones"
+        subtitle={pairedCount ? "Manage the phones that can use this OpenMausBot." : "No phones are paired yet."}
       >
-        {state.devices.length > 0 && (
+        {pairedCount > 0 && (
           <ul className="flex flex-col gap-2">
             {state.devices.map((device) => (
-              <li key={device.id} className="flex items-center gap-3 rounded-lg bg-inset px-3 py-2">
-                <Smartphone size={15} className="shrink-0 text-ink-secondary" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[14px] text-ink">{device.name}</div>
-                  <div className="text-[12px] text-ink-secondary">Last seen {relative(device.lastSeenAt)}</div>
+              <li key={device.id} className="rounded-xl bg-inset px-3 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-control text-ink-secondary">
+                    <Smartphone size={15} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13.5px] font-medium text-ink">{device.name}</div>
+                    <div className="text-[11.5px] text-ink-secondary">Last seen {relative(device.lastSeenAt)}</div>
+                  </div>
+                  <button
+                    disabled={c.busy}
+                    onClick={() => void c.act((companion) => companion.revoke(device.id))}
+                    aria-label={`Remove ${device.name}`}
+                    className="shrink-0 rounded p-1.5 text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-40"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[12px] text-ink-secondary">Cloud desktop</span>
+                <div className="mt-3 flex items-center justify-between gap-3 border-t border-hairline/30 pt-3">
+                  <div>
+                    <div className="text-[12px] text-ink">Allow computer view</div>
+                    <div className="mt-0.5 text-[11px] text-ink-secondary">Full interactive access from this phone.</div>
+                  </div>
                   <button
                     role="switch"
                     aria-checked={device.cloudDesktopAccess}
-                    aria-label={`Cloud desktop access for ${device.name}`}
-                    disabled={busy}
-                    onClick={() => void act((c) => c.cloudDesktop(device.id, !device.cloudDesktopAccess))}
+                    aria-label={`Computer view access for ${device.name}`}
+                    disabled={c.busy}
+                    onClick={() =>
+                      void c.act((companion) =>
+                        companion.cloudDesktop(device.id, !device.cloudDesktopAccess),
+                      )
+                    }
                     className={cnSwitch(device.cloudDesktopAccess)}
                   >
                     <span className={cnKnob(device.cloudDesktopAccess)} />
                   </button>
                 </div>
-                <button
-                  disabled={busy}
-                  onClick={() => void act((c) => c.revoke(device.id))}
-                  aria-label={`Remove ${device.name}`}
-                  className="shrink-0 rounded p-1 text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-40"
-                >
-                  <Trash2 size={14} />
-                </button>
               </li>
             ))}
           </ul>
         )}
       </Card>
+
+      <details className="rounded-xl border border-hairline/40 bg-card">
+        <summary className="cursor-pointer px-4 py-3.5 text-[13px] font-medium text-ink">
+          Advanced & troubleshooting
+        </summary>
+        <div className="flex flex-col gap-4 border-t border-hairline/30 px-4 py-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-[13px] text-ink">Phone access</div>
+              <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+                Turn off all phone connections to this computer.
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={state.enabled}
+              aria-label="Phone access"
+              disabled={c.busy}
+              onClick={() => void c.act((companion) => (state.enabled ? companion.stop() : companion.start()))}
+              className={cnSwitch(state.enabled)}
+            >
+              <span className={cnKnob(state.enabled)} />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
+            <div className="min-w-0">
+              <div className="text-[13px] text-ink">Keep this computer awake</div>
+              <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+                Keeps phone access and scheduled work available while the screen is off.
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={state.keepAwake}
+              aria-label="Keep this computer awake while Phone access is on"
+              disabled={c.busy || !state.enabled}
+              onClick={() => void c.act((companion) => companion.keepAwake(!state.keepAwake))}
+              className={cnSwitch(state.keepAwake)}
+            >
+              <span className={cnKnob(state.keepAwake)} />
+            </button>
+          </div>
+
+          <div className="border-t border-hairline/30 pt-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <Cloud size={15} className="mt-0.5 shrink-0 text-accent" />
+                <div className="min-w-0">
+                  <div className="text-[13px] text-ink">Secure phone account</div>
+                  <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+                    {c.account?.status === "ready"
+                      ? `Signed in as ${c.account.email ?? "your account"}.`
+                      : c.account?.status === "connecting"
+                        ? "Finishing secure access…"
+                        : c.account?.status === "error"
+                          ? c.account.message ?? "Secure access needs attention."
+                          : "You’ll be asked to sign in when you pair a phone."}
+                  </div>
+                </div>
+              </div>
+              {(c.account?.status === "ready" || c.account?.status === "connecting" || c.account?.status === "error") && (
+                <button
+                  disabled={c.accountBusy}
+                  onClick={() => void c.accountAct((remote) => remote.signOut())}
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-hairline/40 px-2.5 py-1.5 text-[11.5px] text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-40"
+                >
+                  <LogOut size={12} /> Sign out
+                </button>
+              )}
+            </div>
+            {c.account?.status === "error" && (
+              <button
+                disabled={c.accountBusy}
+                onClick={c.retryAccount}
+                className="mt-3 rounded-lg border border-hairline/40 px-3 py-1.5 text-[12px] text-ink hover:bg-control disabled:opacity-40"
+              >
+                {c.accountBusy ? "Trying again…" : "Retry secure access"}
+              </button>
+            )}
+            {accountActionError && <div className="mt-2 text-[12px] text-danger">{accountActionError}</div>}
+          </div>
+
+          <div className="border-t border-hairline/30 pt-4">
+            <div className="text-[13px] text-ink">Connection details</div>
+            <div className="mt-0.5 text-[11.5px] text-ink-secondary">
+              Reveal or copy an address only when troubleshooting manual pairing.
+            </div>
+            <div className="mt-3 flex flex-col gap-2">
+              {hosted && <ConnectionDetail label="Secure route" value={endpointHost(hosted.url)} />}
+              {localRoutes.map((route) => <ConnectionDetail key={`${route.label}:${route.value}`} {...route} />)}
+              {!hosted && localRoutes.length === 0 && (
+                <div className="text-[12px] text-ink-secondary">No reachable address is available yet.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="border-t border-hairline/30 pt-4">
+            {c.tailscaleAvailable && (
+              <div className="mb-4 border-b border-hairline/30 pb-4">
+                <div className="flex items-start gap-2.5">
+                  <ShieldCheck size={15} className="mt-0.5 shrink-0 text-accent" />
+                  <div>
+                    <div className="text-[13px] text-ink">Tailscale pairing</div>
+                    <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+                      Keep pairing on your private tailnet, even when a secure hosted route is available.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  disabled={c.busy || c.accountBusy}
+                  onClick={c.useTailscale}
+                  className="mt-3 rounded-lg border border-hairline/40 px-3 py-1.5 text-[12px] text-ink hover:bg-control disabled:opacity-40"
+                >
+                  Pair over Tailscale
+                </button>
+              </div>
+            )}
+            <div className="flex items-start gap-2.5">
+              <Wifi size={15} className="mt-0.5 shrink-0 text-ink-secondary" />
+              <div>
+                <div className="text-[13px] text-ink">Direct Wi-Fi pairing</div>
+                <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+                  Use this only when both devices are nearby and the network allows devices to see each other.
+                </div>
+              </div>
+            </div>
+            <button
+              disabled={c.busy || c.accountBusy}
+              onClick={c.useLocal}
+              className="mt-3 rounded-lg border border-hairline/40 px-3 py-1.5 text-[12px] text-ink hover:bg-control disabled:opacity-40"
+            >
+              Pair on this Wi-Fi
+            </button>
+          </div>
+
+          {state.enabled && !hosted && state.tailscale && !state.tailnetName && (
+            <div className="rounded-lg bg-warning/10 px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
+              Tailscale is connected, but its device name could not be read. Check MagicDNS in Tailscale or use the secure account above.
+            </div>
+          )}
+          {state.enabled && !hosted && !state.tailscale && (
+            <div className="rounded-lg bg-inset px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
+              Without secure phone access or Tailscale, this computer is reachable only on a compatible local network.
+            </div>
+          )}
+          {(c.error || state.error) && <div className="text-[12px] text-danger">{c.error ?? state.error}</div>}
+        </div>
+      </details>
     </div>
   );
 }

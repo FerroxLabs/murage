@@ -22,6 +22,33 @@ export interface CompanionEndpoint {
   priority: number;
 }
 
+export type CompanionPairingRouteMode = "automatic" | "local" | "tailscale";
+
+export interface CompanionPairingRouteSource {
+  port: number;
+  addresses?: string[];
+  tailscale?: string;
+  tailnetName?: string;
+  lan?: string | null;
+  hosts?: string[];
+  endpoints?: CompanionEndpoint[];
+  discovery?: { advertising: boolean; name: string };
+}
+
+export interface CompanionPairingRoute {
+  address: string;
+  port: number;
+  hosts?: string[];
+  endpoints?: CompanionEndpoint[];
+}
+
+export interface CompanionPairingRoutePin {
+  route: CompanionPairingRoute;
+  /** The exact protected transport selected when the QR was created. A
+   * local-only route has no protected transport to retain. */
+  protectedEndpoint: CompanionEndpoint | null;
+}
+
 /** How many fallback hosts a link will carry. The list is tiny in practice
  * (tailnet name, a LAN address or two, the mDNS name); the cap only keeps a
  * pathological interface list from bloating the QR code. */
@@ -50,8 +77,10 @@ function qrEndpoints(endpoints: CompanionEndpoint[] | undefined): CompanionEndpo
       const parsed = new URL(endpoint.url);
       const expectedProtocol = endpoint.kind === "hosted" ? "https:" : "http:";
       const explicitPort = parsed.port ? Number(parsed.port) : null;
+      const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
       if (
         parsed.protocol !== expectedProtocol ||
+        (endpoint.kind === "tailnet" && !hostname.endsWith(".ts.net")) ||
         (explicitPort !== null && (!Number.isInteger(explicitPort) || explicitPort < 1 || explicitPort > 65_535)) ||
         parsed.username ||
         parsed.password ||
@@ -71,6 +100,197 @@ function qrEndpoints(endpoints: CompanionEndpoint[] | undefined): CompanionEndpo
   }
 
   return valid.sort((left, right) => left.priority - right.priority).slice(0, MAX_HOSTS);
+}
+
+const deduplicatedHosts = (hosts: string[]): string[] => {
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const host of hosts) {
+    const normalized = host.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    values.push(normalized);
+  }
+  return values;
+};
+
+const directHTTPOrigin = (host: string, port: number): string => {
+  const authority = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${authority}:${port}`;
+};
+
+/** Select the route policy encoded into a QR. Automatic setup preserves the
+ * sidecar's hosted/Tailscale-first order. Explicit local setup promotes one
+ * exact LAN/Bonjour endpoint, followed only by protected upgrades; iOS then
+ * refuses to spray the pairing credential onto any other cleartext route. */
+export function companionPairingRoute(
+  source: CompanionPairingRouteSource,
+  mode: CompanionPairingRouteMode,
+): CompanionPairingRoute | null {
+  if (mode === "automatic") {
+    const advertised = qrEndpoints(source.endpoints);
+    const preferred = advertised[0] ?? null;
+    if (preferred?.kind === "hosted" || preferred?.kind === "tailnet") {
+      const parsed = new URL(preferred.url);
+      const address = parsed.hostname;
+      const port = parsed.port ? Number(parsed.port) : preferred.kind === "hosted" ? 443 : 80;
+      const tailnetHosts = deduplicatedHosts([
+        source.tailnetName ?? "",
+        ...(source.hosts ?? []),
+      ]).filter((host) => host.toLowerCase().replace(/\.$/, "").endsWith(".ts.net"));
+      const hosts = preferred.kind === "tailnet"
+        ? deduplicatedHosts([address, ...tailnetHosts])
+        : deduplicatedHosts([
+            address,
+            ...advertised
+              .filter((endpoint) => endpoint.kind === "hosted")
+              .map((endpoint) => new URL(endpoint.url).hostname),
+            ...tailnetHosts,
+          ]);
+      return {
+        address,
+        port,
+        // Older phone builds ignore typed endpoints and assume cleartext HTTP
+        // for every legacy host. A hosted authority on its TLS port therefore
+        // fails closed instead of replaying the six-digit credential to LAN;
+        // a tailnet-first QR retains only MagicDNS legacy fallbacks.
+        hosts,
+        endpoints: source.endpoints,
+      };
+    }
+
+    const address =
+      source.tailnetName
+      ?? source.lan
+      ?? source.addresses?.find((candidate) => candidate !== source.tailscale)
+      ?? source.hosts?.[0];
+    return address
+      ? {
+          address,
+          port: source.port,
+          hosts: source.hosts,
+          endpoints: source.endpoints,
+        }
+      : null;
+  }
+
+  const advertised = qrEndpoints(source.endpoints);
+  if (mode === "tailscale") {
+    let preferred = advertised.find((endpoint) => endpoint.kind === "tailnet") ?? null;
+    if (!preferred && source.tailnetName?.trim()) {
+      preferred = qrEndpoints([{
+        url: directHTTPOrigin(source.tailnetName.trim(), source.port),
+        kind: "tailnet",
+        priority: 0,
+      }])[0] ?? null;
+    }
+    if (!preferred) return null;
+
+    const parsed = new URL(preferred.url);
+    const address = parsed.hostname;
+    const port = parsed.port ? Number(parsed.port) : 80;
+    const protectedRoutes = advertised.filter(
+      (endpoint) => endpoint.url !== preferred.url && ["hosted", "tailnet"].includes(endpoint.kind),
+    );
+    const endpoints = [preferred, ...protectedRoutes].map((endpoint, index) => ({
+      ...endpoint,
+      priority: index * 100,
+    }));
+    return {
+      address,
+      port,
+      // Legacy clients walk `hosts` without typed transport policy. Keep a
+      // Tailscale-only QR from carrying LAN/Bonjour cleartext fallbacks where
+      // its one-time credential could otherwise be replayed.
+      hosts: deduplicatedHosts([
+        address,
+        ...(source.hosts ?? []).filter((host) =>
+          host.trim().toLowerCase().replace(/\.$/, "").endsWith(".ts.net")
+        ),
+      ]),
+      endpoints,
+    };
+  }
+
+  let preferred = advertised.find((endpoint) => endpoint.kind === "lan")
+    ?? (source.discovery?.advertising
+      ? advertised.find((endpoint) => endpoint.kind === "bonjour")
+      : null)
+    ?? null;
+  if (!preferred) {
+    const fallbackHost = source.lan?.trim()
+      || (source.discovery?.advertising
+        ? source.hosts?.find((host) => host.trim().toLowerCase().endsWith(".local"))
+        : null);
+    if (!fallbackHost) return null;
+    preferred = qrEndpoints([{
+      url: directHTTPOrigin(fallbackHost.trim(), source.port),
+      kind: fallbackHost.trim().toLowerCase().endsWith(".local") ? "bonjour" : "lan",
+      priority: 0,
+    }])[0] ?? null;
+  }
+  if (!preferred) return null;
+
+  const parsed = new URL(preferred.url);
+  const address = parsed.hostname;
+  const port = parsed.port ? Number(parsed.port) : 80;
+  const protectedRoutes = advertised.filter(
+    (endpoint) => endpoint.url !== preferred.url && ["hosted", "tailnet"].includes(endpoint.kind),
+  );
+  const otherLocalRoutes = advertised.filter(
+    (endpoint) => endpoint.url !== preferred.url && !["hosted", "tailnet"].includes(endpoint.kind),
+  );
+  const endpoints = [preferred, ...protectedRoutes, ...otherLocalRoutes].map((endpoint, index) => ({
+    ...endpoint,
+    priority: index * 100,
+  }));
+  return {
+    address,
+    port,
+    hosts: deduplicatedHosts([address, ...(source.hosts ?? [])]),
+    endpoints,
+  };
+}
+
+/** Freeze the route represented by one pairing QR. Automatic setup must have
+ * a validated hosted or tailnet endpoint; otherwise a later state refresh can
+ * reinterpret the same one-time credential as a plain LAN QR. */
+export function companionPairingRoutePin(
+  source: CompanionPairingRouteSource,
+  mode: CompanionPairingRouteMode,
+): CompanionPairingRoutePin | null {
+  const route = companionPairingRoute(source, mode);
+  if (!route) return null;
+
+  const endpoints = qrEndpoints(route.endpoints);
+  const firstEndpoint = endpoints[0] ?? null;
+  const protectedEndpoint = mode === "local"
+    ? null
+    : mode === "tailscale"
+      ? endpoints.find((endpoint) => endpoint.kind === "tailnet") ?? null
+      : firstEndpoint && (firstEndpoint.kind === "hosted" || firstEndpoint.kind === "tailnet")
+        ? firstEndpoint
+        : null;
+  if (mode !== "local" && !protectedEndpoint) return null;
+
+  return {
+    route: { ...route, endpoints },
+    protectedEndpoint,
+  };
+}
+
+/** A pinned secure QR remains valid only while its exact chosen transport is
+ * still advertised. Another protected endpoint is not silently substituted:
+ * changing transport requires a fresh pairing attempt and credential. */
+export function companionPairingRoutePinAvailable(
+  source: Pick<CompanionPairingRouteSource, "endpoints">,
+  pin: CompanionPairingRoutePin,
+): boolean {
+  if (!pin.protectedEndpoint) return true;
+  return qrEndpoints(source.endpoints).some(
+    (endpoint) => endpoint.kind === pin.protectedEndpoint?.kind
+      && endpoint.url === pin.protectedEndpoint.url,
+  );
 }
 
 /** URL-safe, unpadded base64 keeps the structured JSON smaller than query

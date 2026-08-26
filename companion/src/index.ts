@@ -23,6 +23,7 @@ import { createServer } from "node:http";
 
 import { createAddressWatcher } from "./advertise-watch.ts";
 import { createControlServer, hostCandidates } from "./control.ts";
+import { createConnectedDeviceTracker } from "./connected-devices.ts";
 import { DeviceRegistry } from "./devices.ts";
 import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
 import { lanAddresses, refreshTailnetName, tailnetName, tailscaleAddress } from "./listener.ts";
@@ -131,6 +132,7 @@ const service = (): ServiceInfo => ({
   txt: ["v=1", `name=${clampBytes(machineName(), 200)}`],
 });
 
+const connectedDevices = createConnectedDeviceTracker();
 const proxy = createProxyHandler({
     harnessPort: HARNESS_PORT,
     // `authenticate` also stamps lastSeenAt, which is what makes the control
@@ -143,6 +145,7 @@ const proxy = createProxyHandler({
     // list has to be right.
     hosts: () => hostCandidates(),
     endpoints: () => companionEndpointCandidates(COMPANION_PORT, undefined, undefined, hostedUrl),
+    connected: connectedDevices.open,
   });
 const companion = createServer(proxy);
 const managedOrigin = PRIVATE_ORIGIN ? createServer(proxy) : null;
@@ -155,6 +158,8 @@ const control = createControlServer({
     hostedUrl = next;
   },
   discovery: () => ({ advertising: mdns.advertising, name: service().name }),
+  connectedDeviceIds: connectedDevices.ids,
+  disconnectDevice: connectedDevices.disconnect,
 });
 
 /** Bind a server, turning a bind failure into a sentence rather than a stack

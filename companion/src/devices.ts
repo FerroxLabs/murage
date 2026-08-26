@@ -193,9 +193,11 @@ export class DeviceRegistry {
     return this.window;
   }
 
-  closePairing() {
+  closePairing(expectedToken?: string): boolean {
+    if (expectedToken !== undefined && this.pairing()?.token !== expectedToken) return false;
     this.window = null;
     this.clearReplay();
+    return true;
   }
 
   /** Erase the only in-memory copy of a successfully issued device token.
@@ -240,7 +242,7 @@ export class DeviceRegistry {
     }
 
     const window = this.pairing();
-    if (!window) return { error: "no pairing is in progress — open Companion settings on your computer" };
+    if (!window) return { error: "no pairing is in progress — open Phone settings on your computer" };
     if (!sameCredential(window.code, presented) && !sameCredential(window.token, presented)) {
       window.attemptsLeft -= 1;
       // A burned window is the whole point: without this, six digits is a

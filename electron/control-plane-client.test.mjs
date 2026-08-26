@@ -93,6 +93,7 @@ describe("control-plane desktop client", () => {
     });
     expect(fetchImpl.mock.calls[0][0]).toBe("https://accounts.openmausbot.com/healthz");
     expect(fetchImpl.mock.calls[0][1].redirect).toBe("error");
+    expect(fetchImpl.mock.calls[0][1].headers.get("origin")).toBeNull();
     expect(timeoutSignal).toHaveBeenNthCalledWith(1, 3_000);
   });
 
@@ -118,6 +119,31 @@ describe("control-plane desktop client", () => {
       user: { id: "user-1", email: "ada@example.com" },
     });
     expect(JSON.stringify(fetchImpl.mock.calls)).not.toContain("raw-database-token-must-not-be-used");
+  });
+
+  it("identifies native Better Auth mutations with the trusted control-plane origin", async () => {
+    const fetchImpl = vi.fn(async (_url, init) => {
+      // Undici adds Fetch Metadata after our request wrapper hands off the
+      // init object. Model Better Auth 1.7's form-CSRF decision here: a
+      // browser-shaped request without a trusted Origin is forbidden.
+      const wireHeaders = new Headers(init.headers);
+      wireHeaders.set("sec-fetch-mode", "cors");
+      if (wireHeaders.has("sec-fetch-mode") && wireHeaders.get("origin") !== "https://accounts.openmausbot.com") {
+        return jsonResponse({ error: "forbidden" }, { status: 403 });
+      }
+      return jsonResponse({ success: true });
+    });
+    const client = createControlPlaneClient({
+      baseURL: "https://accounts.openmausbot.com",
+      fetchImpl,
+    });
+
+    await expect(client.requestOTP("ada@example.com")).resolves.toEqual({
+      email: "ada@example.com",
+    });
+    expect(fetchImpl.mock.calls[0][1].headers.get("origin")).toBe(
+      "https://accounts.openmausbot.com",
+    );
   });
 
   it("keeps a valid installation credential without rotating it", async () => {

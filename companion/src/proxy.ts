@@ -27,7 +27,7 @@ export interface ProxyOptions {
   /** Where the harness is listening on loopback. */
   harnessPort: number;
   /** Does this bearer token belong to a paired device? */
-  authenticate: (token: string | undefined) => { cloudDesktopAccess: boolean } | null;
+  authenticate: (token: string | undefined) => { id?: string; cloudDesktopAccess: boolean } | null;
   /** Redeem a pairing code. Handled here and never forwarded: the harness
    * has no such route and no idea devices exist — pairing is the sidecar's
    * own concern, and the one thing a device does before it has a token. */
@@ -46,6 +46,10 @@ export interface ProxyOptions {
   /** Complete connection URLs for current mobile clients. `hosts` remains
    * alongside this field for builds that predate typed endpoints. */
   endpoints?: () => CompanionEndpoint[];
+  /** Register one authenticated, live event stream. The tracker can terminate
+   * it synchronously when that device is revoked; the returned disposer is
+   * called exactly once when either side closes it. */
+  connected?: (deviceId: string, disconnect: () => void) => () => void;
   /** How long the harness may take to produce response *headers*. Optional,
    * and only ever set by tests — the default is the one that ships. */
   headersTimeoutMs?: number;
@@ -243,7 +247,7 @@ export function createProxyHandler(options: ProxyOptions) {
     // The computer owner enables this capability per device, off by default.
     if (isCloudDesktopJoin(method, path) && !device?.cloudDesktopAccess) {
       return sendJson(res, 403, {
-        error: "cloud desktop access is off for this phone — enable it in OpenMausBot → Settings → Companion",
+        error: "cloud desktop access is off for this phone — enable it in OpenMausBot → Settings → Phone",
       });
     }
 
@@ -355,6 +359,31 @@ export function createProxyHandler(options: ProxyOptions) {
         const isStream = String(contentType ?? "").includes("text/event-stream");
 
         if (isStream) {
+          const streamStatus = harness.statusCode ?? 500;
+          const tracksDeviceConnection = method === "GET"
+            && path === "/api/events"
+            && streamStatus >= 200
+            && streamStatus < 300
+            && Boolean(device?.id);
+          const currentDevice = tracksDeviceConnection ? options.authenticate(token) : device;
+          if (tracksDeviceConnection && currentDevice?.id !== device?.id) {
+            harness.destroy();
+            return sendJson(res, 401, {
+              error: "pair this device from Phone settings in OpenMausBot on your computer",
+            });
+          }
+          const disconnect = () => {
+            if (!harness.destroyed) harness.destroy();
+            if (!res.destroyed) res.destroy();
+          };
+          let releaseConnection =
+            tracksDeviceConnection && currentDevice?.id
+              ? options.connected?.(currentDevice.id, disconnect) ?? null
+              : null;
+          const release = () => {
+            releaseConnection?.();
+            releaseConnection = null;
+          };
           // Headers first and flushed, or nothing downstream believes the
           // connection is live. content-length is meaningless here and
           // content-encoding would be a lie once we rewrite the bytes.
@@ -370,6 +399,11 @@ export function createProxyHandler(options: ProxyOptions) {
           });
           res.flushHeaders?.();
           res.socket?.setNoDelay(true);
+          // The harness writes an SSE keepalive every 25 seconds. TCP
+          // keepalive covers the other direction so a vanished phone cannot
+          // leave the desktop indicator green indefinitely on a half-open
+          // connection.
+          res.socket?.setKeepAlive(true, 30_000);
 
           const scrubStream = createSseScrubber();
           harness.setEncoding("utf8");
@@ -380,6 +414,7 @@ export function createProxyHandler(options: ProxyOptions) {
             } catch {
               // The buffer ceiling. Half an event cannot be forwarded safely,
               // so the stream ends here rather than growing without bound.
+              release();
               harness.destroy();
               res.end();
               return;
@@ -393,11 +428,20 @@ export function createProxyHandler(options: ProxyOptions) {
             if (!res.write(rewritten)) harness.pause();
           });
           res.on("drain", () => harness.resume());
-          harness.on("end", () => res.end());
-          harness.on("error", () => res.destroy());
+          harness.on("end", () => {
+            release();
+            res.end();
+          });
+          harness.on("error", () => {
+            release();
+            res.destroy();
+          });
           // A device that hangs up must take the upstream connection with
           // it, or the harness accumulates readers nobody is listening to.
-          res.on("close", () => harness.destroy());
+          res.on("close", () => {
+            release();
+            harness.destroy();
+          });
           return;
         }
 

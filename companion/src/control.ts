@@ -31,6 +31,10 @@ export interface ControlOptions {
   setHostedUrl?: (url: string | null) => void;
   /** Whether Bonjour came up, and under what name. */
   discovery: () => { advertising: boolean; name: string };
+  /** Device ids with at least one live authenticated event stream. */
+  connectedDeviceIds?: () => string[];
+  /** Terminate every authenticated event stream owned by a revoked device. */
+  disconnectDevice?: (deviceId: string) => void;
 }
 
 /** The host out of a `Host` header, port removed.
@@ -192,6 +196,7 @@ export function companionState(options: ControlOptions) {
     ),
     pairing: pairing ? { code: pairing.code, token: pairing.token, expiresAt: pairing.expiresAt } : null,
     devices: options.devices.list(),
+    connectedDeviceIds: options.connectedDeviceIds?.() ?? [],
     discovery: options.discovery(),
   };
 }
@@ -201,7 +206,8 @@ export function companionState(options: ControlOptions) {
  * and it refuses anything suggesting it was reached from anywhere else. */
 export function createControlServer(options: ControlOptions): Server {
   return createServer((req, res) => {
-    const path = (req.url ?? "/").split("?")[0];
+    const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
+    const path = requestUrl.pathname;
     const method = req.method ?? "GET";
 
     // Belt and braces: this server binds 127.0.0.1, so a non-loopback Host
@@ -265,7 +271,8 @@ export function createControlServer(options: ControlOptions): Server {
       });
     }
     if (method === "DELETE" && path === "/pairing") {
-      options.devices.closePairing();
+      const expectedToken = requestUrl.searchParams.get("expectedToken") ?? undefined;
+      options.devices.closePairing(expectedToken);
       return json(res, 200, companionState(options));
     }
     const updateHostedUrl = options.setHostedUrl;
@@ -298,6 +305,7 @@ export function createControlServer(options: ControlOptions): Server {
     const revoke = path.match(/^\/devices\/([\w-]+)$/);
     if (revoke && method === "DELETE") {
       if (!options.devices.revoke(revoke[1])) return json(res, 404, { error: "no such device" });
+      options.disconnectDevice?.(revoke[1]);
       return json(res, 200, companionState(options));
     }
     return json(res, 404, { error: `no route: ${method} ${path}` });

@@ -13,6 +13,8 @@ import { DeviceRegistry } from "../src/devices.ts";
 let control: Server;
 let port = 0;
 let devices: DeviceRegistry;
+let connectedDeviceIds: string[] = [];
+let disconnectedDeviceIds: string[] = [];
 
 const ask = async (
   method: string,
@@ -40,6 +42,11 @@ beforeAll(async () => {
       hostedUrl = next;
     },
     discovery: () => ({ advertising: false, name: "Test computer" }),
+    connectedDeviceIds: () => connectedDeviceIds,
+    disconnectDevice: (deviceId) => {
+      disconnectedDeviceIds.push(deviceId);
+      connectedDeviceIds = connectedDeviceIds.filter((connectedId) => connectedId !== deviceId);
+    },
   });
   port = await new Promise<number>((resolve) =>
     control.listen(0, "127.0.0.1", () => resolve((control.address() as { port: number }).port)),
@@ -130,6 +137,16 @@ describe("origins the control server will change state for", () => {
     await ask("DELETE", "/pairing");
   });
 
+  it("does not let a stale conditional close cancel a replacement code", async () => {
+    const first = await ask("POST", "/pairing");
+    const second = await ask("POST", "/pairing");
+
+    await ask("DELETE", `/pairing?expectedToken=${encodeURIComponent(first.body.pairing.token)}`);
+    expect((await ask("GET", "/state")).body.pairing.token).toBe(second.body.pairing.token);
+    await ask("DELETE", `/pairing?expectedToken=${encodeURIComponent(second.body.pairing.token)}`);
+    expect((await ask("GET", "/state")).body.pairing).toBeNull();
+  });
+
   it("refuses a foreign origin on a safe method too", async () => {
     // This line used to expect 200, on the argument that a GET changes
     // nothing and the same-origin policy already hides the reply. The
@@ -176,6 +193,32 @@ describe("hostCandidates", () => {
     expect(body.hosts.at(-1)).toMatch(/^openmausbot-[0-9a-f]{8}\.local$/);
     expect(body.endpoints.at(-1)).toMatchObject({ kind: "bonjour", priority: 300 });
     expect(body.endpoints.at(-1).url).toMatch(/^http:\/\/openmausbot-[0-9a-f]{8}\.local:8810$/);
+  });
+
+  it("reports only the device ids backed by live authenticated streams", async () => {
+    connectedDeviceIds = ["phone-live"];
+    try {
+      expect((await ask("GET", "/state")).body.connectedDeviceIds).toEqual(["phone-live"]);
+    } finally {
+      connectedDeviceIds = [];
+    }
+  });
+
+  it("disconnects streams only after a device is successfully revoked", async () => {
+    const { code } = devices.openPairing();
+    const paired = devices.redeem(code, "Revoked phone");
+    if ("error" in paired) throw new Error(paired.error);
+    disconnectedDeviceIds = [];
+    connectedDeviceIds = [paired.device.id];
+
+    expect((await ask("DELETE", "/devices/missing-device")).status).toBe(404);
+    expect(disconnectedDeviceIds).toEqual([]);
+    expect(connectedDeviceIds).toEqual([paired.device.id]);
+
+    const revoked = await ask("DELETE", `/devices/${paired.device.id}`);
+    expect(revoked.status).toBe(200);
+    expect(disconnectedDeviceIds).toEqual([paired.device.id]);
+    expect(revoked.body.connectedDeviceIds).toEqual([]);
   });
 });
 
