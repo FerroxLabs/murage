@@ -244,6 +244,59 @@ final class FailoverTests: XCTestCase {
         XCTAssertEqual(connection.orderedEndpoints.map(\.url), [hosted.url, lan.url])
     }
 
+    func testPromotingAProtectedRouteLeadsAfterRestartDespiteAPriorityZeroLocalRoute() throws {
+        let local = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.42:8810",
+            kind: .lan,
+            priority: 0
+        ))
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example",
+            kind: .hosted,
+            priority: 100
+        ))
+        var connection = Connection(
+            name: "Mac",
+            host: local.host,
+            port: local.port,
+            activeEndpoint: local,
+            endpoints: [local, hosted]
+        )
+
+        XCTAssertEqual(
+            connection.orderedEndpoints.map(\.kind),
+            [.lan, .hosted],
+            "a hand-typed local route leads until a protected route wins"
+        )
+
+        connection.promote(hosted)
+
+        XCTAssertEqual(connection.activeEndpoint, hosted)
+        XCTAssertEqual(
+            connection.orderedEndpoints.map(\.kind),
+            [.hosted, .lan],
+            "the upgrade must live in the stored order, not only this process's rotation"
+        )
+        XCTAssertEqual(
+            connection.automaticEndpoints.map(\.kind),
+            [.hosted],
+            "the next launch must not retry the superseded cleartext route"
+        )
+
+        var persisted = try JSONDecoder().decode(
+            Connection.self,
+            from: try JSONEncoder().encode(connection)
+        )
+        XCTAssertEqual(persisted.orderedEndpoints.map(\.kind), [.hosted, .lan])
+        let rotation = CandidateRotation(endpoints: persisted.orderedEndpoints)
+        XCTAssertEqual(rotation.currentEndpoint?.kind, .hosted)
+        XCTAssertTrue(rotation.endpoints.allSatisfy(\.protectsCredentials))
+
+        // Typing the LAN address again is the escape hatch when hosted is down.
+        persisted.resetRoutePolicy(selecting: local)
+        XCTAssertEqual(persisted.orderedEndpoints.map(\.kind), [.lan, .hosted])
+    }
+
     func testPromotingAWorkingLegacyEndpointKeepsEveryLegacyFallback() throws {
         var connection = Connection(
             name: "Mac",
