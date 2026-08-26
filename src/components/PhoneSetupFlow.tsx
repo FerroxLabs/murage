@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -341,13 +342,16 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
 
   const runPairingAttempt = useCallback(
     async ({ routeMode, accountOverride, generation }: PhonePairingRequest) => {
-      const isCurrent = () => mounted.current && setupGeneration.current === generation;
-      if (!isCurrent()) {
+      const finishAttempt = () => {
         if (releasePhonePairingAttempt(pairingUiOwner.current, generation) && mounted.current) {
           setPairingBusy(false);
         }
         const next = completePhonePairingAttempt(pairingAttemptQueue.current, generation);
         if (next) void runPairingAttemptRef.current(next);
+      };
+      const isCurrent = () => mounted.current && setupGeneration.current === generation;
+      if (!isCurrent()) {
+        finishAttempt();
         return;
       }
       const companion = companionBridge();
@@ -355,11 +359,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         if (mounted.current && setupGeneration.current === generation) {
           setError("Phone setup is only available in the desktop app.");
         }
-        if (releasePhonePairingAttempt(pairingUiOwner.current, generation) && mounted.current) {
-          setPairingBusy(false);
-        }
-        const next = completePhonePairingAttempt(pairingAttemptQueue.current, generation);
-        if (next) void runPairingAttemptRef.current(next);
+        finishAttempt();
         return;
       }
       const staleAttemptMayClose = () => {
@@ -472,17 +472,15 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         ));
         dispatchFlow({ type: "reset" });
       } finally {
-        if (releasePhonePairingAttempt(pairingUiOwner.current, generation) && mounted.current) {
-          setPairingBusy(false);
-        }
-        const next = completePhonePairingAttempt(pairingAttemptQueue.current, generation);
-        if (next) void runPairingAttemptRef.current(next);
+        finishAttempt();
       }
     },
     [account, publishPairingRoutePin, state],
   );
 
-  runPairingAttemptRef.current = runPairingAttempt;
+  useLayoutEffect(() => {
+    runPairingAttemptRef.current = runPairingAttempt;
+  }, [runPairingAttempt]);
 
   const openPairing = useCallback((
     routeMode: CompanionPairingRouteMode,
