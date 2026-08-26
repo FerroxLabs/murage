@@ -17,8 +17,13 @@ import {
   Wifi,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { companionPairingLink, type CompanionEndpoint } from "../lib/companion-pairing";
 import {
+  companionPairingLink,
+  companionPairingRoute,
+  type CompanionEndpoint,
+} from "../lib/companion-pairing";
+import {
+  PHONE_SETUP_PROVISIONING_TIMEOUT_MS,
   companionPairingMode,
   companionStartFailure,
   derivePhoneSetupPhase,
@@ -69,6 +74,8 @@ export type CompanionBridge = {
 
 type AccountBridge = NonNullable<NonNullable<Window["ogb"]>["companionAccount"]>;
 type StateBridge<T> = { state: () => Promise<T> };
+const DIRECT_PAIRING_UNAVAILABLE =
+  "Direct Wi-Fi pairing isn’t available on this computer right now. Connect this computer to Wi-Fi, then try again.";
 
 export const companionBridge = (): CompanionBridge | null =>
   // SAFETY: the preload owns this narrow bridge; browser builds are guarded by the optional lookup.
@@ -119,9 +126,11 @@ export interface PhoneSetupController {
   pairingLink: string | null;
   secondsLeft: number;
   address: string | undefined;
+  pairingPort: number;
   hostedReady: boolean;
   localFallback: boolean;
   pairingExpired: boolean;
+  setupTimedOut: boolean;
   setEmail: (email: string) => void;
   setCode: (code: string) => void;
   changeEmail: () => void;
@@ -147,6 +156,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   const [busy, setBusy] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
+  const [setupTimedOut, setSetupTimedOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -225,7 +235,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       setBusy(true);
       setError(null);
       try {
-        const started = state?.enabled ? state : await companion.start();
+        const started = state?.enabled ? await companion.state() : await companion.start();
         setState(started);
         const startFailure = companionStartFailure(started);
         if (startFailure) {
@@ -239,9 +249,23 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
           setProvisioning(gate === "wait" || gate === "start");
           return;
         }
+        if (localFallback && !companionPairingRoute(started, "local")) {
+          setProvisioning(false);
+          setError(DIRECT_PAIRING_UNAVAILABLE);
+          dispatchFlow({ type: "reset" });
+          return;
+        }
         const paired = await companion.pairing(true);
+        if (localFallback && !companionPairingRoute(paired, "local")) {
+          setState(await companion.pairing(false));
+          setProvisioning(false);
+          setError(DIRECT_PAIRING_UNAVAILABLE);
+          dispatchFlow({ type: "reset" });
+          return;
+        }
         setState(paired);
         setProvisioning(false);
+        setSetupTimedOut(false);
         dispatchFlow({
           type: "pairing-opened",
           deviceIds: paired.devices.map((device) => device.id),
@@ -267,6 +291,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     dispatchFlow({ type: "start", deviceIds: baseline });
     setError(null);
     setAccountError(null);
+    setSetupTimedOut(false);
     if (account?.available && (account.status === "ready" || account.status === "connecting")) {
       setProvisioning(true);
       void openPairing(false, account);
@@ -281,6 +306,8 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     }
     dispatchFlow({ type: "use-local" });
     setProvisioning(true);
+    setSetupTimedOut(false);
+    setAccountError(null);
     void openPairing(true);
   }, [flow.active, openPairing, state?.devices]);
 
@@ -310,6 +337,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     if (!remote || code.length !== 8) return;
     setAccountBusy(true);
     setProvisioning(true);
+    setSetupTimedOut(false);
     setAccountError(null);
     void remote
       .verifyCode(normalized, code)
@@ -333,6 +361,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     if (!remote) return;
     setAccountBusy(true);
     setProvisioning(true);
+    setSetupTimedOut(false);
     setAccountError(null);
     void remote
       .retry()
@@ -353,8 +382,30 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     accountStatus: account?.available ? account.status : "unavailable",
     accountBusy,
     provisioning,
+    provisioningTimedOut: setupTimedOut,
     pairingOpen: Boolean(state?.pairing),
   });
+
+  useEffect(() => {
+    if (
+      !flow.active
+      || flow.localFallback
+      || !account
+      || (account.available && account.status !== "signed-out" && account.status !== "error")
+    ) {
+      return;
+    }
+    setProvisioning(false);
+  }, [account, flow.active, flow.localFallback]);
+
+  useEffect(() => {
+    if (!flow.active || flow.localFallback || !provisioning || accountBusy || setupTimedOut) return;
+    const timer = window.setTimeout(() => {
+      setProvisioning(false);
+      setSetupTimedOut(true);
+    }, PHONE_SETUP_PROVISIONING_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [accountBusy, flow.active, flow.localFallback, provisioning, setupTimedOut]);
 
   useEffect(() => {
     if (!state) return;
@@ -367,13 +418,14 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       !flow.active ||
       flow.localFallback ||
       flow.pairingAttempted ||
+      setupTimedOut ||
       !state ||
       phonePairingGate(account, state, false) !== "open"
     ) {
       return;
     }
     void openPairing(false);
-  }, [account, flow.active, flow.localFallback, flow.pairingAttempted, openPairing, state]);
+  }, [account, flow.active, flow.localFallback, flow.pairingAttempted, openPairing, setupTimedOut, state]);
 
   const shouldPoll = flow.active || Boolean(state?.pairing);
   useEffect(() => {
@@ -387,28 +439,27 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     return () => window.clearInterval(timer);
   }, [load, shouldPoll]);
 
-  const address =
-    state?.tailnetName ??
-    state?.lan ??
-    state?.addresses?.find((candidate) => candidate !== state.tailscale) ??
-    state?.hosts?.[0];
+  const pairingRoute = useMemo(
+    () => state
+      ? companionPairingRoute(state, flow.localFallback ? "local" : "automatic")
+      : null,
+    [flow.localFallback, state],
+  );
   const pairingLink = useMemo(() => {
-    if (!state?.pairing || !address) return null;
+    if (!state?.pairing || !pairingRoute) return null;
     return companionPairingLink({
-      address,
-      port: state.port,
+      ...pairingRoute,
       code: state.pairing.code,
       token: state.pairing.token,
       name: state.discovery?.name,
-      hosts: state.hosts,
-      endpoints: state.endpoints,
     });
-  }, [address, state]);
+  }, [pairingRoute, state]);
 
   const cancel = useCallback(() => {
     const companion = companionBridge();
     if (companion && state?.pairing) void act((current) => current.pairing(false));
     setProvisioning(false);
+    setSetupTimedOut(false);
     setCodeSent(false);
     setCodeState("");
     dispatchFlow({ type: "reset" });
@@ -429,10 +480,12 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     secondsLeft: state?.pairing
       ? Math.max(0, Math.round((state.pairing.expiresAt - now) / 1000))
       : 0,
-    address,
+    address: pairingRoute?.address,
+    pairingPort: pairingRoute?.port ?? state?.port ?? 8810,
     hostedReady: Boolean(state?.endpoints?.some((endpoint) => endpoint.kind === "hosted")),
     localFallback: flow.localFallback,
     pairingExpired: flow.pairingAttempted && !state?.pairing,
+    setupTimedOut,
     setEmail: (next) => {
       emailEdited.current = true;
       setEmailState(next);
@@ -450,7 +503,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     retryAccount,
     cancel,
     refreshCode: () => void openPairing(flow.localFallback),
-    finish: () => dispatchFlow({ type: "reset" }),
+    finish: () => {
+      setSetupTimedOut(false);
+      dispatchFlow({ type: "reset" });
+    },
     skip: () => dispatchFlow({ type: "skip" }),
     act,
     accountAct,
@@ -536,7 +592,7 @@ export function PhoneSetupFlowView({
 
   if (c.phase === "sign-in") {
     const unavailable = !c.account?.available;
-    const failed = c.account?.status === "error";
+    const failed = c.account?.status === "error" || c.setupTimedOut;
     return (
       <div className="mx-auto flex w-full max-w-[430px] flex-col">
         <button onClick={c.cancel} className="mb-4 flex w-fit items-center gap-1.5 text-[12px] text-ink-secondary hover:text-ink">
@@ -548,9 +604,14 @@ export function PhoneSetupFlowView({
         <h2 className="mt-3 text-[18px] font-semibold text-ink">
           {unavailable || failed ? "Secure access needs attention" : "Sign in to pair securely"}
         </h2>
-        <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
+        <p
+          role={c.setupTimedOut ? "alert" : undefined}
+          className="mt-1 text-[13px] leading-relaxed text-ink-secondary"
+        >
           {unavailable
             ? "Online phone access is not available right now. You can still pair directly on the same Wi-Fi."
+            : c.setupTimedOut
+              ? "Secure access is taking longer than expected. You can try again or pair directly on this Wi-Fi."
             : failed
               ? c.account?.message ?? "We could not finish creating your private connection."
               : "We’ll email you a one-time code. No password needed."}
@@ -614,7 +675,7 @@ export function PhoneSetupFlowView({
           </div>
         )}
 
-        {failed && (
+        {(unavailable || failed) && (
           <button
             disabled={c.accountBusy}
             onClick={c.retryAccount}
@@ -725,7 +786,7 @@ export function PhoneSetupFlowView({
             <div className="mt-1 font-mono text-[22px] tracking-[0.25em] text-ink">{c.state.pairing.code}</div>
             {c.address && (
               <div className="mt-3">
-                <ConnectionDetail label="Pairing address" value={`${c.address}:${c.state.port}`} />
+                <ConnectionDetail label="Pairing address" value={`${c.address}:${c.pairingPort}`} />
               </div>
             )}
           </div>

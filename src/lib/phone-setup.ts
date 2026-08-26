@@ -71,8 +71,11 @@ export interface PhoneSetupSnapshot {
   accountStatus: PhoneSetupAccountStatus;
   accountBusy: boolean;
   provisioning: boolean;
+  provisioningTimedOut?: boolean;
   pairingOpen: boolean;
 }
+
+export const PHONE_SETUP_PROVISIONING_TIMEOUT_MS = 30_000;
 
 export function derivePhoneSetupPhase(
   flow: PhoneSetupFlowState,
@@ -81,11 +84,13 @@ export function derivePhoneSetupPhase(
   if (flow.pairedDeviceName) return "success";
   if (!flow.active) return "intro";
   if (snapshot.pairingOpen || flow.pairingAttempted) return "qr";
-  if (flow.localFallback || snapshot.accountBusy || snapshot.provisioning) return "verifying";
+  if (flow.localFallback) return "verifying";
+  if (snapshot.provisioningTimedOut) return "sign-in";
   if (snapshot.accountStatus === "signed-out" || snapshot.accountStatus === "unavailable") {
     return "sign-in";
   }
   if (snapshot.accountStatus === "error") return "sign-in";
+  if (snapshot.accountBusy || snapshot.provisioning) return "verifying";
   return "verifying";
 }
 

@@ -49,6 +49,38 @@ describe("phone setup flow", () => {
     expect(resumed.skipped).toBe(false);
   });
 
+  it("stops showing provisioning when the secure account fails or times out", () => {
+    const started = phoneSetupReducer(initialPhoneSetupFlowState, {
+      type: "start",
+      deviceIds: [],
+    });
+    expect(
+      derivePhoneSetupPhase(started, {
+        accountStatus: "error",
+        accountBusy: false,
+        provisioning: true,
+        pairingOpen: false,
+      }),
+    ).toBe("sign-in");
+    expect(
+      derivePhoneSetupPhase(started, {
+        accountStatus: "unavailable",
+        accountBusy: false,
+        provisioning: true,
+        pairingOpen: false,
+      }),
+    ).toBe("sign-in");
+    expect(
+      derivePhoneSetupPhase(started, {
+        accountStatus: "connecting",
+        accountBusy: false,
+        provisioning: true,
+        provisioningTimedOut: true,
+        pairingOpen: false,
+      }),
+    ).toBe("sign-in");
+  });
+
   it("never opens local pairing while hosted access is provisioning", () => {
     const companion = { enabled: true, endpoints: [] };
     expect(phonePairingGate(account("connecting"), companion, false)).toBe("wait");

@@ -22,6 +22,26 @@ export interface CompanionEndpoint {
   priority: number;
 }
 
+export type CompanionPairingRouteMode = "automatic" | "local";
+
+export interface CompanionPairingRouteSource {
+  port: number;
+  addresses?: string[];
+  tailscale?: string;
+  tailnetName?: string;
+  lan?: string | null;
+  hosts?: string[];
+  endpoints?: CompanionEndpoint[];
+  discovery?: { advertising: boolean; name: string };
+}
+
+export interface CompanionPairingRoute {
+  address: string;
+  port: number;
+  hosts?: string[];
+  endpoints?: CompanionEndpoint[];
+}
+
 /** How many fallback hosts a link will carry. The list is tiny in practice
  * (tailnet name, a LAN address or two, the mDNS name); the cap only keeps a
  * pathological interface list from bloating the QR code. */
@@ -71,6 +91,88 @@ function qrEndpoints(endpoints: CompanionEndpoint[] | undefined): CompanionEndpo
   }
 
   return valid.sort((left, right) => left.priority - right.priority).slice(0, MAX_HOSTS);
+}
+
+const deduplicatedHosts = (hosts: string[]): string[] => {
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const host of hosts) {
+    const normalized = host.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    values.push(normalized);
+  }
+  return values;
+};
+
+const directHTTPOrigin = (host: string, port: number): string => {
+  const authority = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${authority}:${port}`;
+};
+
+/** Select the route policy encoded into a QR. Automatic setup preserves the
+ * sidecar's hosted/Tailscale-first order. Explicit local setup promotes one
+ * exact LAN/Bonjour endpoint, followed only by protected upgrades; iOS then
+ * refuses to spray the pairing credential onto any other cleartext route. */
+export function companionPairingRoute(
+  source: CompanionPairingRouteSource,
+  mode: CompanionPairingRouteMode,
+): CompanionPairingRoute | null {
+  if (mode === "automatic") {
+    const address =
+      source.tailnetName
+      ?? source.lan
+      ?? source.addresses?.find((candidate) => candidate !== source.tailscale)
+      ?? source.hosts?.[0];
+    return address
+      ? {
+          address,
+          port: source.port,
+          hosts: source.hosts,
+          endpoints: source.endpoints,
+        }
+      : null;
+  }
+
+  const advertised = qrEndpoints(source.endpoints);
+  let preferred = advertised.find((endpoint) => endpoint.kind === "lan")
+    ?? (source.discovery?.advertising
+      ? advertised.find((endpoint) => endpoint.kind === "bonjour")
+      : null)
+    ?? null;
+  if (!preferred) {
+    const fallbackHost = source.lan?.trim()
+      || (source.discovery?.advertising
+        ? source.hosts?.find((host) => host.trim().toLowerCase().endsWith(".local"))
+        : null);
+    if (!fallbackHost) return null;
+    preferred = qrEndpoints([{
+      url: directHTTPOrigin(fallbackHost.trim(), source.port),
+      kind: fallbackHost.trim().toLowerCase().endsWith(".local") ? "bonjour" : "lan",
+      priority: 0,
+    }])[0] ?? null;
+  }
+  if (!preferred) return null;
+
+  const parsed = new URL(preferred.url);
+  const address = parsed.hostname;
+  const port = parsed.port ? Number(parsed.port) : 80;
+  const protectedRoutes = advertised.filter(
+    (endpoint) => endpoint.url !== preferred.url && ["hosted", "tailnet"].includes(endpoint.kind),
+  );
+  const otherLocalRoutes = advertised.filter(
+    (endpoint) => endpoint.url !== preferred.url && !["hosted", "tailnet"].includes(endpoint.kind),
+  );
+  const endpoints = [preferred, ...protectedRoutes, ...otherLocalRoutes].map((endpoint, index) => ({
+    ...endpoint,
+    priority: index * 100,
+  }));
+  return {
+    address,
+    port,
+    hosts: deduplicatedHosts([address, ...(source.hosts ?? [])]),
+    endpoints,
+  };
 }
 
 /** URL-safe, unpadded base64 keeps the structured JSON smaller than query
