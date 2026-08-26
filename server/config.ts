@@ -187,6 +187,9 @@ export function loadConfig(): AppConfig {
   // shadow the save until the next launch.
   cfg.xai = { ...cfg.xai };
   if (process.env.XAI_API_KEY !== undefined) cfg.xai.key = process.env.XAI_API_KEY;
+  cfg.openaiCompat = { ...cfg.openaiCompat };
+  if (process.env.OPENAI_COMPAT_API_KEY !== undefined) cfg.openaiCompat.key = process.env.OPENAI_COMPAT_API_KEY;
+  if (process.env.OPENAI_COMPAT_URL !== undefined) cfg.openaiCompat.url = process.env.OPENAI_COMPAT_URL;
   cfg.composio = { ...cfg.composio };
   if (process.env.COMPOSIO_API_KEY !== undefined) cfg.composio.apiKey = process.env.COMPOSIO_API_KEY;
   cfg.box = { ...cfg.box };
@@ -210,6 +213,7 @@ export function loadConfig(): AppConfig {
 export function syncCredentialEnv(patch: Partial<AppConfig>): void {
   const secrets: Array<[value: string | undefined, name: string]> = [
     [patch.xai?.key, "XAI_API_KEY"],
+    [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
     [patch.box?.token, "BOX_TOKEN"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
@@ -221,6 +225,10 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     if (value) process.env[name] = value;
     else delete process.env[name];
   }
+  if (patch.openaiCompat?.url !== undefined) {
+    if (patch.openaiCompat.url) process.env["OPENAI_COMPAT_URL"] = patch.openaiCompat.url;
+    else delete process.env["OPENAI_COMPAT_URL"];
+  }
 }
 
 /** Env names of every workspace credential this process may be holding —
@@ -230,6 +238,8 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
  * child these are someone else's keys riding along in `...process.env`. */
 export const WORKSPACE_CREDENTIAL_ENV = [
   "XAI_API_KEY",
+  "OPENAI_COMPAT_API_KEY",
+  "OPENAI_COMPAT_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
   "OMB_TTS_KEY",
@@ -274,7 +284,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     /* first write */
   }
   const checkedPatch = appConfigSchema.partial().parse(patch);
-  for (const key of ["xai", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);

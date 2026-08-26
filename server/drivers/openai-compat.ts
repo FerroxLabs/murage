@@ -37,6 +37,8 @@ export interface OpenAICompatConfig {
   url: string;
   /** Env var (instance environment or process.env) carrying the API key. */
   apiKeyEnv: string;
+  /** Direct API key if configured */
+  key?: string;
 }
 
 function decodeConfig(raw: unknown): OpenAICompatConfig {
@@ -50,6 +52,7 @@ function decodeConfig(raw: unknown): OpenAICompatConfig {
           ? envUrl.replace(/\/+$/, "")
           : "https://openrouter.ai/api/v1",
     apiKeyEnv: typeof o.apiKeyEnv === "string" && o.apiKeyEnv ? o.apiKeyEnv : "OPENAI_COMPAT_API_KEY",
+    key: typeof o.key === "string" && o.key ? o.key : undefined,
   };
 }
 
@@ -81,7 +84,12 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
   async create(input: DriverCreateInput<OpenAICompatConfig>): Promise<ProviderInstance> {
     const { instanceId, config } = input;
     const apiKey =
-      input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "";
+      config.key ??
+      input.environment[config.apiKeyEnv] ??
+      input.environment["OPENAI_COMPAT_API_KEY"] ??
+      process.env[config.apiKeyEnv] ??
+      process.env["OPENAI_COMPAT_API_KEY"] ??
+      "";
     const listeners = new Set<RuntimeEventListener>();
     const active = new Map<string, { abort: AbortController; turnId: string }>();
     let catalog = DEFAULT_MODELS;
@@ -100,7 +108,11 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
     const complete = async (
       messages: Array<{ role: string; content: string }>,
       model: string,
-      opts: { stream: boolean; signal?: AbortSignal; onDelta?: (d: string) => void },
+      opts: {
+        stream: boolean;
+        signal?: AbortSignal;
+        onDelta?: (d: string, streamKind?: "assistant_text" | "reasoning_text") => void;
+      },
     ): Promise<{ text: string; usage: { input: number; output: number } | null }> => {
       const res = await fetch(`${config.url}/chat/completions`, {
         method: "POST",
@@ -119,8 +131,11 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       }
       if (!opts.stream) {
         const json: any = await res.json();
+        const msg = json.choices?.[0]?.message;
+        const mainContent = typeof msg?.content === "string" ? msg.content : "";
+        const reasoningContent = typeof msg?.reasoning_content === "string" ? msg.reasoning_content : "";
         return {
-          text: json.choices?.[0]?.message?.content ?? "",
+          text: mainContent || reasoningContent || "",
           usage: json.usage
             ? {
                 input: json.usage.prompt_tokens ?? 0,
@@ -130,6 +145,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         };
       }
       let text = "";
+      let reasoning = "";
       let usage: { input: number; output: number } | null = null;
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
@@ -151,10 +167,16 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           } catch {
             continue;
           }
-          const delta = chunk.choices?.[0]?.delta?.content;
-          if (delta) {
-            text += delta;
-            opts.onDelta?.(delta);
+          const delta = chunk.choices?.[0]?.delta;
+          const contentDelta = typeof delta?.content === "string" ? delta.content : undefined;
+          const reasoningDelta = typeof delta?.reasoning_content === "string" ? delta.reasoning_content : undefined;
+          if (reasoningDelta) {
+            reasoning += reasoningDelta;
+            opts.onDelta?.(reasoningDelta, "reasoning_text");
+          }
+          if (contentDelta) {
+            text += contentDelta;
+            opts.onDelta?.(contentDelta, "assistant_text");
           }
           if (chunk.usage) {
             usage = {
@@ -163,6 +185,10 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
             };
           }
         }
+      }
+      // If content was empty but reasoning was emitted, fall back to reasoning text
+      if (!text.trim() && reasoning.trim()) {
+        text = reasoning;
       }
       return { text, usage };
     };
@@ -248,11 +274,11 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
             {
               stream: true,
               signal: abort.signal,
-              onDelta: (delta) =>
+              onDelta: (delta, streamKind = "assistant_text") =>
                 emit({
                   ...base(threadId, turnId),
                   type: "content.delta",
-                  streamKind: "assistant_text",
+                  streamKind,
                   delta,
                 }),
             },
