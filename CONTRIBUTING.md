@@ -39,6 +39,12 @@ pnpm package:mac   # DMG + ZIP; requires Swift/Xcode tools
 pnpm package:linux # Ubuntu x64 .deb + AppImage; no Swift required
 ```
 
+`pnpm dev:desktop` downloads and verifies the pinned Cloudflare Tunnel connector for the current
+platform and architecture before Electron starts. Later launches re-verify and reuse the staged
+binary. Packaging continues to use `pnpm build:cloudflared`, which stages every architecture the
+host's desktop package build requires. To stage only the current development target without
+launching Electron, run `node scripts/prepare-cloudflared.mjs --current`.
+
 For Ubuntu installation and real desktop checks, see [`docs/linux-desktop.md`](docs/linux-desktop.md).
 
 ## Ubuntu release checklist

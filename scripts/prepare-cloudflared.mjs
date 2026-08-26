@@ -1,6 +1,8 @@
 // Stage a pinned Cloudflare Tunnel connector for every desktop architecture
-// electron-builder will package on this host. The release asset is verified
-// before extraction and the executable is verified again on every reuse.
+// electron-builder will package on this host. Pass --current for development
+// to stage only the platform and architecture running this script. The release
+// asset is verified before extraction and the executable is verified again on
+// every reuse.
 // Nothing is installed globally and cloudflared's own updater stays disabled;
 // OpenMausBot updates this dependency with an ordinary reviewed app release.
 import { spawnSync } from "node:child_process";
@@ -54,6 +56,28 @@ export function targetsForHost(platform) {
   if (platform === "linux") return ["linux-x64"];
   if (platform === "win32") return ["win32-x64"];
   throw new Error(`Cloudflare Tunnel packaging is unsupported on ${platform}`);
+}
+
+export function targetForCurrentHost(platform = process.platform, arch = process.arch) {
+  const target = `${platform}-${arch}`;
+  if (!Object.hasOwn(CLOUDFLARED_ASSETS, target)) {
+    throw new Error(`Cloudflare Tunnel development is unsupported on ${target}`);
+  }
+  return target;
+}
+
+export function targetsForPreparation({
+  current = false,
+  platform = process.platform,
+  arch = process.arch,
+} = {}) {
+  return current ? [targetForCurrentHost(platform, arch)] : targetsForHost(platform);
+}
+
+export function parsePrepareCloudflaredArgs(args = []) {
+  if (args.length === 0) return { current: false };
+  if (args.length === 1 && args[0] === "--current") return { current: true };
+  throw new Error("Usage: node scripts/prepare-cloudflared.mjs [--current]");
 }
 
 export function sha256(value) {
@@ -249,10 +273,14 @@ async function stageTarget(root, target) {
 export async function prepareCloudflared({
   root = join(dirname(fileURLToPath(import.meta.url)), ".."),
   platform = process.platform,
+  arch = process.arch,
+  current = false,
 } = {}) {
-  for (const target of targetsForHost(platform)) await stageTarget(root, target);
+  for (const target of targetsForPreparation({ current, platform, arch })) {
+    await stageTarget(root, target);
+  }
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  await prepareCloudflared();
+  await prepareCloudflared(parsePrepareCloudflaredArgs(process.argv.slice(2)));
 }

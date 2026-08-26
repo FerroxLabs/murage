@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 
 import {
   CLOUDFLARED_ASSETS,
   CLOUDFLARED_VERSION,
   executableTarget,
+  parsePrepareCloudflaredArgs,
   sha256,
+  targetForCurrentHost,
   targetsForHost,
+  targetsForPreparation,
   verifyPinnedBinary,
   verifySha256,
 } from "./prepare-cloudflared.mjs";
@@ -37,6 +41,8 @@ const PINNED_ASSETS = {
   },
 };
 
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+
 function executableFixture(target) {
   const bytes = Buffer.alloc(128);
   if (target === "darwin-arm64" || target === "darwin-x64") {
@@ -60,6 +66,37 @@ describe("pinned cloudflared packaging", () => {
     expect(targetsForHost("linux")).toEqual(["linux-x64"]);
     expect(targetsForHost("win32")).toEqual(["win32-x64"]);
     expect(() => targetsForHost("freebsd")).toThrow(/unsupported/);
+  });
+
+  it("stages only the exact current desktop target in development mode", () => {
+    expect(targetForCurrentHost("darwin", "arm64")).toBe("darwin-arm64");
+    expect(targetForCurrentHost("darwin", "x64")).toBe("darwin-x64");
+    expect(targetForCurrentHost("linux", "x64")).toBe("linux-x64");
+    expect(targetForCurrentHost("win32", "x64")).toBe("win32-x64");
+    expect(targetsForPreparation({ current: true, platform: "darwin", arch: "arm64" })).toEqual([
+      "darwin-arm64",
+    ]);
+    expect(targetsForPreparation({ current: false, platform: "darwin", arch: "arm64" })).toEqual([
+      "darwin-arm64",
+      "darwin-x64",
+    ]);
+    expect(() => targetForCurrentHost("linux", "arm64")).toThrow(/unsupported/);
+  });
+
+  it("accepts only the documented current-target CLI option", () => {
+    expect(parsePrepareCloudflaredArgs([])).toEqual({ current: false });
+    expect(parsePrepareCloudflaredArgs(["--current"])).toEqual({ current: true });
+    expect(() => parsePrepareCloudflaredArgs(["--all"])).toThrow(/Usage:/);
+    expect(() => parsePrepareCloudflaredArgs(["--current", "--current"])).toThrow(/Usage:/);
+  });
+
+  it("stages the current target for development without narrowing package preparation", () => {
+    expect(packageJson.scripts["dev:desktop"]).toBe(
+      "node scripts/prepare-cloudflared.mjs --current && electron .",
+    );
+    expect(packageJson.scripts["build:cloudflared"]).toBe(
+      "node scripts/prepare-cloudflared.mjs",
+    );
   });
 
   it("pins a complete release asset and digest for every packaged target", () => {
