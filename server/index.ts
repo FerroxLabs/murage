@@ -1523,14 +1523,11 @@ async function startTurn(
           ? store.pinTaskCwd(bot.id, threadId, privateWorkspace)
           : null;
       const cwd = pinnedCwd ?? undefined;
-      // Per-turn workspace checkpoint: snapshot the folder this turn will run
-      // in (the bot's custom working folder or its private workspace) into the
-      // bot's shadow git repo, so the turn's file changes can be rolled back.
-      // Wait for the best-effort snapshot before the engine can touch files.
-      // snapshot() absorbs failures, so this can delay a turn on a large or
-      // unhealthy folder but can never fail it. Launching it in the background
-      // would race the engine and could checkpoint edits made by this turn.
-      if (cwd) await checkpoints.snapshot(bot.id, cwd, `turn ${threadId.slice(0, 8)}`);
+      // Checkpoint explicit project folders, where a bot can overwrite the
+      // user's work. Its private OpenMaus workspace is app-owned and changes
+      // on nearly every ordinary chat; snapshotting it would add hidden disk
+      // and process overhead without a user project to restore.
+      const checkpointCwd = cwd && cwd !== privateWorkspace ? cwd : undefined;
       // dweb is opt-in: without an explicit daemon URL, do not advertise
       // tools that would fail on every call or spawn an unnecessary proxy.
       const dwebUrl = process.env.DWEB_URL?.trim();
@@ -1732,6 +1729,11 @@ async function startTurn(
 
       // (activeVpsThreads was already claimed above, before the provision or
       // reuse await, so the backend guards saw this turn the whole time.)
+      // Wait immediately before dispatch: resources are already claimed, but
+      // the engine cannot edit the project until the snapshot has settled.
+      // snapshot() absorbs failures, so checkpointing may delay but never fail
+      // a turn.
+      if (checkpointCwd) await checkpoints.snapshot(bot.id, checkpointCwd, `turn ${threadId.slice(0, 8)}`);
       watchdog.watch(threadId, bot.id);
       await instance.adapter.sendTurn({
         threadId,
