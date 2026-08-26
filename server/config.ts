@@ -440,6 +440,21 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     const environment = { ...entry.environment };
     for (const [key, value] of injectedEnvironment(cfg, entry.driver)) environment[key] = value;
     entry.environment = environment;
+    // The driver URL is configuration, not a credential. Environment is
+    // intentionally not consulted by ProviderRegistry when it decodes a
+    // driver's config, so carry the workspace default into the transient
+    // instance map while preserving a per-instance override.
+    if (entry.driver === "openai-compat" && cfg.openaiCompat?.url) {
+      const raw = entry.config;
+      if (raw === undefined) {
+        entry.config = { url: cfg.openaiCompat.url };
+      } else if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+        const current = raw as Record<string, unknown>;
+        if (typeof current.url !== "string" || !current.url.trim()) {
+          entry.config = { ...current, url: cfg.openaiCompat.url };
+        }
+      }
+    }
   }
   return map;
 }

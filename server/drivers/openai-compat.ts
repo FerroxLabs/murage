@@ -113,7 +113,11 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         signal?: AbortSignal;
         onDelta?: (d: string, streamKind?: "assistant_text" | "reasoning_text") => void;
       },
-    ): Promise<{ text: string; usage: { input: number; output: number } | null }> => {
+    ): Promise<{
+      text: string;
+      reasoning: string;
+      usage: { input: number; output: number } | null;
+    }> => {
       const res = await fetch(`${config.url}/chat/completions`, {
         method: "POST",
         headers: {
@@ -135,7 +139,8 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         const mainContent = typeof msg?.content === "string" ? msg.content : "";
         const reasoningContent = typeof msg?.reasoning_content === "string" ? msg.reasoning_content : "";
         return {
-          text: mainContent || reasoningContent || "",
+          text: mainContent,
+          reasoning: reasoningContent,
           usage: json.usage
             ? {
                 input: json.usage.prompt_tokens ?? 0,
@@ -186,11 +191,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           }
         }
       }
-      // If content was empty but reasoning was emitted, fall back to reasoning text
-      if (!text.trim() && reasoning.trim()) {
-        text = reasoning;
-      }
-      return { text, usage };
+      return { text, reasoning, usage };
     };
 
     const fetchModels = async (): Promise<void> => {
@@ -268,7 +269,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
 
       (async () => {
         try {
-          const { text, usage } = await complete(
+          const { text, reasoning, usage } = await complete(
             messages,
             turn.model || catalog.default,
             {
@@ -286,7 +287,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           appendNative(threadId, {
             dir: "in",
             source: "openai-compat.chat.completions",
-            msg: { textLength: text.length, usage },
+            msg: { textLength: text.length, reasoningLength: reasoning.length, usage },
           });
           if (text.trim()) {
             emit({
@@ -371,12 +372,12 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         },
       },
       generateText: async (prompt: string) => {
-        const { text } = await complete(
+        const { text, reasoning } = await complete(
           [{ role: "user", content: prompt }],
           catalog.default,
           { stream: false },
         );
-        return text;
+        return text.trim() ? text : reasoning;
       },
       dispose: async () => {
         for (const { abort } of active.values()) abort.abort();

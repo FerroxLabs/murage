@@ -112,6 +112,33 @@ describe("default fleet", () => {
     expect(map.cursor).toEqual({ driver: "cursorAgent", environment: {} });
   });
 
+  it("carries the saved OpenAI-compatible URL into the live default instance", () => {
+    const map = instanceConfigs({
+      openaiCompat: { key: "secret", url: "https://models.example.test/v1" },
+    });
+    expect(map.openaiCompat.config).toEqual({ url: "https://models.example.test/v1" });
+    expect(map.openaiCompat.environment).toEqual({
+      OPENAI_COMPAT_API_KEY: "secret",
+      OPENAI_COMPAT_URL: "https://models.example.test/v1",
+    });
+  });
+
+  it("preserves a per-instance OpenAI-compatible URL override", () => {
+    const map = instanceConfigs({
+      openaiCompat: { url: "https://workspace.example.test/v1" },
+      instances: {
+        custom: {
+          driver: "openai-compat",
+          config: { url: "https://instance.example.test/v1", apiKeyEnv: "CUSTOM_KEY" },
+        },
+      },
+    });
+    expect(map.custom.config).toEqual({
+      url: "https://instance.example.test/v1",
+      apiKeyEnv: "CUSTOM_KEY",
+    });
+  });
+
   it("adds missing custom-only engines onto an existing product fleet", () => {
     const map = instanceConfigs({ instances: { claude: { driver: "claudeAgent" } } });
     expect(map.claude.driver).toBe("claudeAgent");
@@ -246,7 +273,16 @@ describe("credential env narrowing", () => {
 });
 
 describe("credential env preference", () => {
-  const VARS = ["XAI_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "OMB_TTS_KEY", "OMB_OPENAI_IMAGE_KEY", "COMPOSIO_API_KEY"] as const;
+  const VARS = [
+    "XAI_API_KEY",
+    "OPENAI_COMPAT_API_KEY",
+    "OPENAI_COMPAT_URL",
+    "BOX_TOKEN",
+    "OPENCODE_API_KEY",
+    "OMB_TTS_KEY",
+    "OMB_OPENAI_IMAGE_KEY",
+    "COMPOSIO_API_KEY",
+  ] as const;
   let saved: Record<string, string | undefined>;
 
   beforeEach(() => {
