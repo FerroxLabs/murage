@@ -17,6 +17,8 @@ const BOT_ID = process.env.OMB_BOT_ID ?? "";
 const THREAD_ID = process.env.OMB_THREAD_ID ?? "";
 const TOKEN = process.env.OMB_COMMS_TOKEN ?? "";
 const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
+const INITIALIZE_RELAY_TIMEOUT_MS = 1_000;
+const RELAY_TIMEOUT_MS = 10 * 60_000;
 
 function parsedHeaders(): Record<string, string> {
   try {
@@ -94,7 +96,7 @@ function parseUpstream(text: string, id: unknown): Json | null {
   return frames.findLast((frame) => frame.id === id) ?? frames.at(-1) ?? null;
 }
 
-async function relay(message: Json): Promise<Json | null> {
+async function relay(message: Json, timeoutMs = RELAY_TIMEOUT_MS): Promise<Json | null> {
   if (!UPSTREAM) throw new Error("connected apps are unavailable");
   const response = await fetch(UPSTREAM, {
     method: "POST",
@@ -105,7 +107,7 @@ async function relay(message: Json): Promise<Json | null> {
       ...(upstreamSessionId ? { "mcp-session-id": upstreamSessionId } : {}),
     },
     body: JSON.stringify(message),
-    signal: AbortSignal.timeout(10 * 60_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const nextSession = response.headers.get("mcp-session-id");
   if (nextSession) upstreamSessionId = nextSession;
@@ -155,7 +157,11 @@ async function handle(message: Json): Promise<void> {
   if (method === "initialize") {
     if (UPSTREAM) {
       try {
-        await relay(message);
+        // Capture the upstream session id when the service is healthy, but
+        // never let a stalled provider prevent the local MCP client from
+        // mounting the connector tools. The client sends initialized only
+        // after this bounded attempt and the local initialize response.
+        await relay(message, INITIALIZE_RELAY_TIMEOUT_MS);
       } catch {
         // Best-effort session setup. The client still needs a valid result.
       }

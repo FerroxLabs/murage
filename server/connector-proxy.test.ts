@@ -96,17 +96,54 @@ describe("connector MCP bridge", () => {
     expect(reply.result).not.toHaveProperty("content");
   });
 
+  it("answers initialize after a bounded wait when the upstream stalls", async () => {
+    let sawInitialize!: () => void;
+    const received = new Promise<void>((resolve) => { sawInitialize = resolve; });
+    const upstream = await listen((request) => {
+      request.resume();
+      request.on("end", sawInitialize);
+      // Deliberately never respond. The proxy must abort this request and
+      // return its local capability result instead of hanging OpenCode.
+    });
+    const lines = start({ OMB_CONNECTOR_UPSTREAM_URL: upstream });
+    child!.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 11,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05" },
+    })}\n`);
+
+    await received;
+    const reply = await nextJson(lines);
+    expect(reply).toMatchObject({
+      id: 11,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+      },
+    });
+  });
+
   it("still opens the upstream MCP session on initialize without echoing secrets", async () => {
     let upstreamAuthorization = "";
     let upstreamBody: any = null;
+    const methods: string[] = [];
+    const sessionHeaders: string[] = [];
+    let sawInitialized!: () => void;
+    const initialized = new Promise<void>((resolve) => { sawInitialized = resolve; });
     const upstream = await listen((request, response) => {
       let body = "";
       request.on("data", (chunk) => { body += chunk; });
       request.on("end", () => {
         upstreamAuthorization = String(request.headers.authorization ?? "");
         upstreamBody = JSON.parse(body);
+        methods.push(String(upstreamBody.method ?? ""));
+        sessionHeaders.push(String(request.headers["mcp-session-id"] ?? ""));
         response.writeHead(200, { "content-type": "application/json", "mcp-session-id": "transport-1" });
-        response.end(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { protocolVersion: "2025-06-18" } }));
+        response.end(upstreamBody.id === undefined
+          ? ""
+          : JSON.stringify({ jsonrpc: "2.0", id: 2, result: { protocolVersion: "2025-06-18" } }));
+        if (upstreamBody.method === "notifications/initialized") sawInitialized();
       });
     });
     const lines = start({
@@ -120,6 +157,11 @@ describe("connector MCP bridge", () => {
     expect(upstreamAuthorization).toBe("Bearer upstream-secret");
     expect(upstreamBody).toMatchObject({ method: "initialize" });
     expect(JSON.stringify(reply)).not.toContain("upstream-secret");
+
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`);
+    await initialized;
+    expect(methods).toEqual(["initialize", "notifications/initialized"]);
+    expect(sessionHeaders).toEqual(["", "transport-1"]);
   });
 
   it("relays tools/list without exposing upstream headers on stdout", async () => {
