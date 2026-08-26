@@ -38,6 +38,9 @@ final class Session: ObservableObject {
     /// One exact message the next opened chat should reveal.
     @Published private(set) var focusedMessageId: String?
     @Published private(set) var notificationAuthorization: UNAuthorizationStatus = .notDetermined
+    /// Distinguishes a real `.notDetermined` result from the in-memory value
+    /// used while notification settings are still loading at launch.
+    @Published private(set) var notificationAuthorizationResolved = false
     /// A short-lived desktop handoff waiting for PairingView to present it.
     @Published private(set) var pairingInvite: PairingInvite?
 
@@ -994,6 +997,7 @@ final class Session: ObservableObject {
 
     func refreshNotificationAuthorization() async {
         notificationAuthorization = await NotificationCoordinator.shared.authorizationStatus()
+        notificationAuthorizationResolved = true
     }
 
     func enableNotifications() async {
