@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createProxyHandler } from "../src/proxy.ts";
+import { createConnectedDeviceTracker } from "../src/connected-devices.ts";
 import type { CompanionEndpoint } from "../src/endpoints.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -73,6 +74,7 @@ let harness: ChildProcess;
 let sidecar: Server;
 let home: string;
 let stderr = "";
+const connectedDevices = createConnectedDeviceTracker();
 
 /** a request as a device makes it: a token, and a Host that is not loopback */
 const device = async (
@@ -168,12 +170,13 @@ beforeAll(async () => {
   sidecar = createServer(
     createProxyHandler({
       harnessPort: HARNESS_PORT,
-      authenticate: (t) => (t === TOKEN ? { cloudDesktopAccess: true } : null),
+      authenticate: (t) => (t === TOKEN ? { id: "d1", cloudDesktopAccess: true } : null),
       redeem: (code, deviceName) =>
         code === "424242"
           ? { token: TOKEN, device: { id: "d1", name: String(deviceName) } }
           : { error: "that code is not right" },
       serverName: () => "Test computer",
+      connected: connectedDevices.open,
     }),
   );
   // Not `listen(port, host, resolve)` alone: a bind failure emits `error` and
@@ -334,6 +337,7 @@ describe("the sidecar in front of an unmodified harness", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     expect(res.headers.get("cache-control")).toContain("no-store");
+    expect(connectedDevices.ids()).toEqual(["d1"]);
 
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
@@ -376,6 +380,11 @@ describe("the sidecar in front of an unmodified harness", () => {
       expect(frame).not.toContain("resumeCursors");
     } finally {
       controller.abort();
+      const cleanupDeadline = Date.now() + 2_000;
+      while (connectedDevices.ids().length && Date.now() < cleanupDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(connectedDevices.ids()).toEqual([]);
     }
   });
 

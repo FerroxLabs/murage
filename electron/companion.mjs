@@ -362,7 +362,14 @@ export function setCompanionHostedUrl(endpoint) {
 export async function companionState() {
   const keepAwake = companionKeepAwakeAtRest();
   if (!proc) {
-    const state = { enabled: false, keepAwake, port: COMPANION_PORT, devices: [], pairing: null };
+    const state = {
+      enabled: false,
+      keepAwake,
+      port: COMPANION_PORT,
+      devices: [],
+      connectedDeviceIds: [],
+      pairing: null,
+    };
     if (lastError) state.error = lastError;
     return state;
   }
@@ -371,7 +378,15 @@ export async function companionState() {
     return { enabled: true, keepAwake, ...state };
   } catch {
     // running but unreachable: report it rather than claiming health
-    return { enabled: true, keepAwake, port: COMPANION_PORT, devices: [], pairing: null, error: "the companion is not responding" };
+    return {
+      enabled: true,
+      keepAwake,
+      port: COMPANION_PORT,
+      devices: [],
+      connectedDeviceIds: [],
+      pairing: null,
+      error: "the companion is not responding",
+    };
   }
 }
 

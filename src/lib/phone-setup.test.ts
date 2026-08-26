@@ -1,15 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { CompanionAccountState } from "../types/ogb";
 import {
   companionStartFailure,
   derivePhoneSetupPhase,
   initialPhoneSetupFlowState,
+  keepPhonePairingIfCurrent,
   newlyPairedDevice,
   newlyPairedDeviceForFlow,
   normalizePhoneSetupActionError,
   phonePairingGate,
   phoneSetupBaseline,
   phoneSetupReducer,
+  shouldArmPhoneSetupProvisioningTimeout,
+  startNonOverlappingPhoneSetupPoll,
 } from "./phone-setup";
 
 const account = (status: CompanionAccountState["status"]): CompanionAccountState => ({
@@ -116,6 +119,78 @@ describe("phone setup flow", () => {
         false,
       ),
     ).toBe("open");
+  });
+
+  it("opens pairing over a protected tailnet without requiring a hosted account", () => {
+    const tailnet = {
+      enabled: true,
+      endpoints: [{
+        kind: "tailnet" as const,
+        url: "http://mac.tail1234.ts.net:8810",
+        priority: 100,
+      }],
+    };
+    expect(phonePairingGate(account("signed-out"), tailnet, false)).toBe("open");
+    expect(
+      phonePairingGate({ available: false, status: "signed-out" }, tailnet, false),
+    ).toBe("open");
+  });
+
+  it("arms the timeout during account IPC and explicit local setup", () => {
+    const local = phoneSetupReducer(
+      phoneSetupReducer(initialPhoneSetupFlowState, { type: "start", deviceIds: [] }),
+      { type: "use-local" },
+    );
+    expect(shouldArmPhoneSetupProvisioningTimeout(local, {
+      provisioning: true,
+      provisioningTimedOut: false,
+    })).toBe(true);
+    expect(derivePhoneSetupPhase(local, {
+      accountStatus: "connecting",
+      accountBusy: true,
+      provisioning: true,
+      provisioningTimedOut: true,
+      pairingOpen: false,
+    })).toBe("sign-in");
+  });
+
+  it("closes a pairing window that resolves after cancellation", async () => {
+    let current = true;
+    let resolveOpen!: (value: { pairing: true }) => void;
+    const open = vi.fn(() => new Promise<{ pairing: true }>((resolve) => {
+      resolveOpen = resolve;
+    }));
+    const close = vi.fn(async () => undefined);
+    const result = keepPhonePairingIfCurrent(open, close, () => current);
+
+    current = false;
+    resolveOpen({ pairing: true });
+    await expect(result).resolves.toBeNull();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("does not overlap a slow poll with later timer ticks", async () => {
+    vi.useFakeTimers();
+    try {
+      let release!: () => void;
+      const poll = vi.fn(() => new Promise<void>((resolve) => {
+        release = resolve;
+      }));
+      const stop = startNonOverlappingPhoneSetupPoll(poll, 1_000);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(poll).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(poll).toHaveBeenCalledTimes(1);
+
+      release();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(poll).toHaveBeenCalledTimes(2);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("derives paired success from a device added after setup began", () => {

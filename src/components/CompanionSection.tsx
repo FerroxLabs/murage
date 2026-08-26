@@ -13,6 +13,7 @@ import {
   companionBridge,
   loadCompanionBridgeState,
   shouldHydrateCompanionEmail,
+  type CompanionState,
   usePhoneSetupController,
 } from "./PhoneSetupFlow";
 import { companionPairingMode } from "../lib/phone-setup";
@@ -25,6 +26,25 @@ export {
   loadCompanionBridgeState,
   shouldHydrateCompanionEmail,
 };
+
+export interface CompanionPanelStatus {
+  label: string;
+  good: boolean;
+}
+
+export function deriveCompanionPanelStatus(
+  state: Pick<CompanionState, "enabled" | "devices" | "error">,
+): CompanionPanelStatus {
+  if (state.error) return { label: "Phone access needs attention", good: false };
+  if (!state.enabled) return { label: "Phone access off", good: false };
+  const pairedCount = state.devices.length;
+  return {
+    label: pairedCount
+      ? `${pairedCount} ${pairedCount === 1 ? "phone" : "phones"} paired`
+      : "Ready to pair",
+    good: true,
+  };
+}
 
 const relative = (at: number) => {
   const seconds = Math.round((Date.now() - at) / 1000);
@@ -66,12 +86,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   }
 
   const pairedCount = state.devices.length;
-  const statusLabel = !state.enabled
-    ? "Phone access off"
-    : pairedCount
-      ? `${pairedCount} ${pairedCount === 1 ? "phone" : "phones"} paired`
-      : "Ready to pair";
-  const statusGood = state.enabled;
+  const { label: statusLabel, good: statusGood } = deriveCompanionPanelStatus(state);
   const accountActionError = companionAccountActionError(c.account, c.accountError);
   const hosted = state.endpoints?.find((endpoint) => endpoint.kind === "hosted");
   const localRoutes = [
@@ -254,6 +269,26 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
           </div>
 
           <div className="border-t border-hairline/30 pt-4">
+            {c.tailscaleAvailable && (
+              <div className="mb-4 border-b border-hairline/30 pb-4">
+                <div className="flex items-start gap-2.5">
+                  <ShieldCheck size={15} className="mt-0.5 shrink-0 text-accent" />
+                  <div>
+                    <div className="text-[13px] text-ink">Tailscale pairing</div>
+                    <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+                      Keep pairing on your private tailnet, even when a secure hosted route is available.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  disabled={c.busy || c.accountBusy}
+                  onClick={c.useTailscale}
+                  className="mt-3 rounded-lg border border-hairline/40 px-3 py-1.5 text-[12px] text-ink hover:bg-control disabled:opacity-40"
+                >
+                  Pair over Tailscale
+                </button>
+              </div>
+            )}
             <div className="flex items-start gap-2.5">
               <Wifi size={15} className="mt-0.5 shrink-0 text-ink-secondary" />
               <div>
@@ -264,7 +299,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
               </div>
             </div>
             <button
-              disabled={c.busy}
+              disabled={c.busy || c.accountBusy}
               onClick={c.useLocal}
               className="mt-3 rounded-lg border border-hairline/40 px-3 py-1.5 text-[12px] text-ink hover:bg-control disabled:opacity-40"
             >

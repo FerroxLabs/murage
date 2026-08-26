@@ -22,7 +22,7 @@ export interface CompanionEndpoint {
   priority: number;
 }
 
-export type CompanionPairingRouteMode = "automatic" | "local";
+export type CompanionPairingRouteMode = "automatic" | "local" | "tailscale";
 
 export interface CompanionPairingRouteSource {
   port: number;
@@ -70,8 +70,10 @@ function qrEndpoints(endpoints: CompanionEndpoint[] | undefined): CompanionEndpo
       const parsed = new URL(endpoint.url);
       const expectedProtocol = endpoint.kind === "hosted" ? "https:" : "http:";
       const explicitPort = parsed.port ? Number(parsed.port) : null;
+      const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
       if (
         parsed.protocol !== expectedProtocol ||
+        (endpoint.kind === "tailnet" && !hostname.endsWith(".ts.net")) ||
         (explicitPort !== null && (!Number.isInteger(explicitPort) || explicitPort < 1 || explicitPort > 65_535)) ||
         parsed.username ||
         parsed.password ||
@@ -135,6 +137,43 @@ export function companionPairingRoute(
   }
 
   const advertised = qrEndpoints(source.endpoints);
+  if (mode === "tailscale") {
+    let preferred = advertised.find((endpoint) => endpoint.kind === "tailnet") ?? null;
+    if (!preferred && source.tailnetName?.trim()) {
+      preferred = qrEndpoints([{
+        url: directHTTPOrigin(source.tailnetName.trim(), source.port),
+        kind: "tailnet",
+        priority: 0,
+      }])[0] ?? null;
+    }
+    if (!preferred) return null;
+
+    const parsed = new URL(preferred.url);
+    const address = parsed.hostname;
+    const port = parsed.port ? Number(parsed.port) : 80;
+    const protectedRoutes = advertised.filter(
+      (endpoint) => endpoint.url !== preferred.url && ["hosted", "tailnet"].includes(endpoint.kind),
+    );
+    const endpoints = [preferred, ...protectedRoutes].map((endpoint, index) => ({
+      ...endpoint,
+      priority: index * 100,
+    }));
+    return {
+      address,
+      port,
+      // Legacy clients walk `hosts` without typed transport policy. Keep a
+      // Tailscale-only QR from carrying LAN/Bonjour cleartext fallbacks where
+      // its one-time credential could otherwise be replayed.
+      hosts: deduplicatedHosts([
+        address,
+        ...(source.hosts ?? []).filter((host) =>
+          host.trim().toLowerCase().replace(/\.$/, "").endsWith(".ts.net")
+        ),
+      ]),
+      endpoints,
+    };
+  }
+
   let preferred = advertised.find((endpoint) => endpoint.kind === "lan")
     ?? (source.discovery?.advertising
       ? advertised.find((endpoint) => endpoint.kind === "bonjour")

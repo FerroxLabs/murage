@@ -9,12 +9,17 @@ import { companionBridge, type CompanionState } from "./PhoneSetupFlow";
 export const SIDEBAR_PHONE_RECENT_MS = 2 * 60_000;
 const SIDEBAR_PHONE_POLL_MS = 15_000;
 
-type SidebarPhoneSnapshot = Pick<CompanionState, "enabled" | "devices" | "error">;
+type SidebarPhoneSnapshot = Pick<
+  CompanionState,
+  "enabled" | "devices" | "connectedDeviceIds" | "error"
+>;
 
 export type SidebarPhoneStatusKind =
   | "checking"
   | "unavailable"
   | "unpaired"
+  | "disconnected"
+  | "connected"
   | "stale"
   | "recent";
 
@@ -22,30 +27,51 @@ export interface SidebarPhoneStatus {
   kind: SidebarPhoneStatusKind;
   label: string;
   pairedCount: number;
-  recentCount: number;
+  connectedCount: number;
 }
 
-/** The sidecar coalesces last-seen writes for up to one minute. A two-minute
- * window leaves room for that write interval and this button's 15-second
- * poll without calling an idle phone "connected". Green therefore means the
- * phone successfully reached this computer recently, not that a socket is
- * guaranteed to still be open. */
+/** Current sidecars report authenticated live event streams, so green means a
+ * phone is connected now. The timestamp fallback is deliberately neutral and
+ * exists only for an older unpackaged development sidecar. */
 export function deriveSidebarPhoneStatus(
   snapshot: SidebarPhoneSnapshot | null | undefined,
   now: number,
 ): SidebarPhoneStatus {
   if (snapshot === undefined) {
-    return { kind: "checking", label: "Checking phone status", pairedCount: 0, recentCount: 0 };
+    return { kind: "checking", label: "Checking phone status", pairedCount: 0, connectedCount: 0 };
   }
   if (snapshot === null) {
-    return { kind: "unavailable", label: "Phone status unavailable", pairedCount: 0, recentCount: 0 };
+    return { kind: "unavailable", label: "Phone status unavailable", pairedCount: 0, connectedCount: 0 };
   }
 
   const pairedCount = snapshot.devices.length;
   if (!pairedCount) {
-    return { kind: "unpaired", label: "Pair a phone", pairedCount: 0, recentCount: 0 };
+    return { kind: "unpaired", label: "Pair a phone", pairedCount: 0, connectedCount: 0 };
   }
 
+  if (Array.isArray(snapshot.connectedDeviceIds)) {
+    const live = new Set(snapshot.connectedDeviceIds);
+    const connectedCount = snapshot.enabled && !snapshot.error
+      ? snapshot.devices.filter((device) => live.has(device.id)).length
+      : 0;
+    if (connectedCount) {
+      const label = pairedCount === 1
+        ? "Phone connected"
+        : connectedCount === pairedCount
+          ? `${pairedCount} phones connected`
+          : `${connectedCount} of ${pairedCount} phones connected`;
+      return { kind: "connected", label, pairedCount, connectedCount };
+    }
+    return {
+      kind: "disconnected",
+      label: pairedCount === 1 ? "Phone paired — not connected" : `${pairedCount} phones paired — none connected`,
+      pairedCount,
+      connectedCount: 0,
+    };
+  }
+
+  // Compatibility with a sidecar from an older unpackaged development build.
+  // Recent activity stays neutral because it is not proof of a live stream.
   const recentCount = snapshot.enabled && !snapshot.error
     ? snapshot.devices.filter((device) => {
         const age = now - device.lastSeenAt;
@@ -58,7 +84,7 @@ export function deriveSidebarPhoneStatus(
       : recentCount === pairedCount
         ? `${pairedCount} phones active recently`
         : `${recentCount} of ${pairedCount} phones active recently`;
-    return { kind: "recent", label, pairedCount, recentCount };
+    return { kind: "recent", label, pairedCount, connectedCount: 0 };
   }
 
   return {
@@ -67,7 +93,7 @@ export function deriveSidebarPhoneStatus(
       ? "Phone paired — not recently active"
       : `${pairedCount} phones paired — none recently active`,
     pairedCount,
-    recentCount: 0,
+    connectedCount: 0,
   };
 }
 
@@ -98,7 +124,7 @@ function useSidebarPhoneStatus(): SidebarPhoneStatus {
         const next = await companion.state();
         if (!disposed) setSnapshot(next);
       } catch {
-        if (!disposed) setSnapshot((current) => current ?? null);
+        if (!disposed) setSnapshot(null);
       } finally {
         refreshing = false;
       }
@@ -124,7 +150,7 @@ export function SidebarPhoneStatusButton({
   status: SidebarPhoneStatus;
   onOpen: () => void;
 }) {
-  const recent = status.kind === "recent";
+  const connected = status.kind === "connected";
   return (
     <button
       type="button"
@@ -136,7 +162,7 @@ export function SidebarPhoneStatusButton({
       className={cn(
         "relative flex size-10 shrink-0 items-center justify-center rounded-md hover:bg-raised",
         density === "icons" && "mx-auto",
-        recent ? "text-success" : "text-ink-secondary hover:text-ink",
+        connected ? "text-success" : "text-ink-secondary hover:text-ink",
       )}
     >
       <Smartphone size={18} strokeWidth={1.8} />
@@ -149,10 +175,10 @@ export function SidebarPhoneStatusButton({
           <Plus size={10} strokeWidth={2.8} />
         </span>
       )}
-      {recent && (
+      {connected && (
         <span
           aria-hidden="true"
-          data-phone-recent
+          data-phone-connected
           className="absolute bottom-1.5 right-1.5 size-1.5 rounded-full border border-panel bg-success"
         />
       )}

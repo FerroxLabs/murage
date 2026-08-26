@@ -4,6 +4,7 @@ import type { CompanionAccountState } from "../types/ogb";
 import {
   companionAccountActionError,
   companionPairingMode,
+  deriveCompanionPanelStatus,
   loadCompanionBridgeState,
   shouldHydrateCompanionEmail,
 } from "./CompanionSection";
@@ -33,6 +34,14 @@ describe("companion account action errors", () => {
 });
 
 describe("companion status refresh", () => {
+  it("does not show a healthy status when the enabled sidecar reports an error", () => {
+    expect(deriveCompanionPanelStatus({
+      enabled: true,
+      devices: [],
+      error: "sidecar stopped responding",
+    })).toEqual({ label: "Phone access needs attention", good: false });
+  });
+
   it("keeps account refreshes when the local Companion status fails", async () => {
     const remoteAccount = account("signed-out", "Email a code");
     const refreshed = await loadCompanionBridgeState(

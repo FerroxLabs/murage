@@ -13,6 +13,7 @@ import { DeviceRegistry } from "../src/devices.ts";
 let control: Server;
 let port = 0;
 let devices: DeviceRegistry;
+let connectedDeviceIds: string[] = [];
 
 const ask = async (
   method: string,
@@ -40,6 +41,7 @@ beforeAll(async () => {
       hostedUrl = next;
     },
     discovery: () => ({ advertising: false, name: "Test computer" }),
+    connectedDeviceIds: () => connectedDeviceIds,
   });
   port = await new Promise<number>((resolve) =>
     control.listen(0, "127.0.0.1", () => resolve((control.address() as { port: number }).port)),
@@ -176,6 +178,15 @@ describe("hostCandidates", () => {
     expect(body.hosts.at(-1)).toMatch(/^openmausbot-[0-9a-f]{8}\.local$/);
     expect(body.endpoints.at(-1)).toMatchObject({ kind: "bonjour", priority: 300 });
     expect(body.endpoints.at(-1).url).toMatch(/^http:\/\/openmausbot-[0-9a-f]{8}\.local:8810$/);
+  });
+
+  it("reports only the device ids backed by live authenticated streams", async () => {
+    connectedDeviceIds = ["phone-live"];
+    try {
+      expect((await ask("GET", "/state")).body.connectedDeviceIds).toEqual(["phone-live"]);
+    } finally {
+      connectedDeviceIds = [];
+    }
   });
 });
 

@@ -31,6 +31,8 @@ export interface ControlOptions {
   setHostedUrl?: (url: string | null) => void;
   /** Whether Bonjour came up, and under what name. */
   discovery: () => { advertising: boolean; name: string };
+  /** Device ids with at least one live authenticated event stream. */
+  connectedDeviceIds?: () => string[];
 }
 
 /** The host out of a `Host` header, port removed.
@@ -192,6 +194,7 @@ export function companionState(options: ControlOptions) {
     ),
     pairing: pairing ? { code: pairing.code, token: pairing.token, expiresAt: pairing.expiresAt } : null,
     devices: options.devices.list(),
+    connectedDeviceIds: options.connectedDeviceIds?.() ?? [],
     discovery: options.discovery(),
   };
 }

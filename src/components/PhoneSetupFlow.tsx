@@ -21,6 +21,7 @@ import {
   companionPairingLink,
   companionPairingRoute,
   type CompanionEndpoint,
+  type CompanionPairingRouteMode,
 } from "../lib/companion-pairing";
 import {
   PHONE_SETUP_PROVISIONING_TIMEOUT_MS,
@@ -28,11 +29,14 @@ import {
   companionStartFailure,
   derivePhoneSetupPhase,
   initialPhoneSetupFlowState,
+  keepPhonePairingIfCurrent,
   newlyPairedDeviceForFlow,
   normalizePhoneSetupActionError,
   phonePairingGate,
   phoneSetupBaseline,
   phoneSetupReducer,
+  shouldArmPhoneSetupProvisioningTimeout,
+  startNonOverlappingPhoneSetupPoll,
   type PhoneSetupPhase,
 } from "../lib/phone-setup";
 import type { CompanionAccountState } from "../types/ogb";
@@ -51,6 +55,7 @@ export interface CompanionState {
   keepAwake: boolean;
   port: number;
   devices: PhoneDevice[];
+  connectedDeviceIds?: string[];
   pairing: { code: string; token: string; expiresAt: number } | null;
   addresses?: string[];
   tailscale?: string;
@@ -129,6 +134,8 @@ export interface PhoneSetupController {
   pairingPort: number;
   hostedReady: boolean;
   localFallback: boolean;
+  tailscaleFallback: boolean;
+  tailscaleAvailable: boolean;
   pairingExpired: boolean;
   setupTimedOut: boolean;
   setEmail: (email: string) => void;
@@ -136,6 +143,7 @@ export interface PhoneSetupController {
   changeEmail: () => void;
   start: () => void;
   useLocal: () => void;
+  useTailscale: () => void;
   requestCode: () => void;
   verifyCode: () => void;
   retryAccount: () => void;
@@ -163,16 +171,35 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   const [flow, dispatchFlow] = useReducer(phoneSetupReducer, initialPhoneSetupFlowState);
   const emailEdited = useRef(false);
   const openingPairing = useRef(false);
+  const setupGeneration = useRef(0);
+  const mounted = useRef(true);
+  const loadInFlight = useRef<Promise<void> | null>(null);
 
-  const load = useCallback(async () => {
-    const next = await loadCompanionBridgeState(companionBridge(), companionAccountBridge());
-    if (next.companion) setState(next.companion);
-    if (next.account) {
-      setAccount(next.account);
-      if (shouldHydrateCompanionEmail(emailEdited.current, next.account)) {
-        setEmailState(next.account.email ?? "");
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      setupGeneration.current += 1;
+    };
+  }, []);
+
+  const load = useCallback((): Promise<void> => {
+    if (loadInFlight.current) return loadInFlight.current;
+    const pending = (async () => {
+      const next = await loadCompanionBridgeState(companionBridge(), companionAccountBridge());
+      if (!mounted.current) return;
+      if (next.companion) setState(next.companion);
+      if (next.account) {
+        setAccount(next.account);
+        if (shouldHydrateCompanionEmail(emailEdited.current, next.account)) {
+          setEmailState(next.account.email ?? "");
+        }
       }
-    }
+    })().finally(() => {
+      if (loadInFlight.current === pending) loadInFlight.current = null;
+    });
+    loadInFlight.current = pending;
+    return pending;
   }, []);
 
   useEffect(() => {
@@ -189,16 +216,17 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     setBusy(true);
     setError(null);
     try {
-      setState(await call(companion));
+      const next = await call(companion);
+      if (mounted.current) setState(next);
     } catch (cause) {
-      setError(
+      if (mounted.current) setError(
         normalizePhoneSetupActionError(
           cause,
           "Phone access could not be updated. Open Advanced & troubleshooting and try again.",
         ),
       );
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }, []);
 
@@ -210,32 +238,39 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       setAccountError(null);
       try {
         const next = await call(remote);
+        if (!mounted.current) return;
         setAccount(next);
         await load();
       } catch (cause) {
-        setAccountError(normalizePhoneSetupActionError(
+        if (mounted.current) setAccountError(normalizePhoneSetupActionError(
           cause,
           "Secure phone access could not be updated. Try again.",
         ));
       } finally {
-        setAccountBusy(false);
+        if (mounted.current) setAccountBusy(false);
       }
     },
     [load],
   );
 
   const openPairing = useCallback(
-    async (localFallback: boolean, accountOverride?: CompanionAccountState | null) => {
+    async (
+      routeMode: CompanionPairingRouteMode,
+      accountOverride?: CompanionAccountState | null,
+      generation = setupGeneration.current,
+    ) => {
       const companion = companionBridge();
       if (!companion || openingPairing.current) {
         if (!companion) setError("Phone setup is only available in the desktop app.");
         return;
       }
+      const isCurrent = () => mounted.current && setupGeneration.current === generation;
       openingPairing.current = true;
       setBusy(true);
       setError(null);
       try {
         const started = state?.enabled ? await companion.state() : await companion.start();
+        if (!isCurrent()) return;
         setState(started);
         const startFailure = companionStartFailure(started);
         if (startFailure) {
@@ -244,22 +279,34 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
           dispatchFlow({ type: "reset" });
           return;
         }
-        const gate = phonePairingGate(accountOverride ?? account, started, localFallback);
+        const explicitRoute = routeMode !== "automatic";
+        const gate = phonePairingGate(accountOverride ?? account, started, explicitRoute);
         if (gate !== "open") {
           setProvisioning(gate === "wait" || gate === "start");
           return;
         }
-        if (localFallback && !companionPairingRoute(started, "local")) {
+        if (explicitRoute && !companionPairingRoute(started, routeMode)) {
           setProvisioning(false);
-          setError(DIRECT_PAIRING_UNAVAILABLE);
+          setError(routeMode === "tailscale"
+            ? "Tailscale pairing isn’t available right now. Make sure Tailscale is connected and MagicDNS is on."
+            : DIRECT_PAIRING_UNAVAILABLE);
           dispatchFlow({ type: "reset" });
           return;
         }
-        const paired = await companion.pairing(true);
-        if (localFallback && !companionPairingRoute(paired, "local")) {
-          setState(await companion.pairing(false));
+        const paired = await keepPhonePairingIfCurrent(
+          () => companion.pairing(true),
+          () => companion.pairing(false),
+          isCurrent,
+        );
+        if (!paired) return;
+        if (explicitRoute && !companionPairingRoute(paired, routeMode)) {
+          const closed = await companion.pairing(false);
+          if (!isCurrent()) return;
+          setState(closed);
           setProvisioning(false);
-          setError(DIRECT_PAIRING_UNAVAILABLE);
+          setError(routeMode === "tailscale"
+            ? "Tailscale pairing isn’t available right now. Make sure Tailscale is connected and MagicDNS is on."
+            : DIRECT_PAIRING_UNAVAILABLE);
           dispatchFlow({ type: "reset" });
           return;
         }
@@ -271,6 +318,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
           deviceIds: paired.devices.map((device) => device.id),
         });
       } catch (cause) {
+        if (!isCurrent()) return;
         setProvisioning(false);
         setError(normalizePhoneSetupActionError(
           cause,
@@ -278,7 +326,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         ));
         dispatchFlow({ type: "reset" });
       } finally {
-        setBusy(false);
+        if (mounted.current) setBusy(false);
         openingPairing.current = false;
       }
     },
@@ -288,15 +336,19 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   const start = useCallback(() => {
     const baseline = phoneSetupBaseline(state?.devices ?? null);
     if (!baseline) return;
+    const generation = ++setupGeneration.current;
     dispatchFlow({ type: "start", deviceIds: baseline });
     setError(null);
     setAccountError(null);
     setSetupTimedOut(false);
-    if (account?.available && (account.status === "ready" || account.status === "connecting")) {
+    if (
+      phonePairingGate(account, state, false) === "open"
+      || (account?.available && (account.status === "ready" || account.status === "connecting"))
+    ) {
       setProvisioning(true);
-      void openPairing(false, account);
+      void openPairing("automatic", account, generation);
     }
-  }, [account, openPairing, state?.devices]);
+  }, [account, openPairing, state]);
 
   const useLocal = useCallback(() => {
     const baseline = phoneSetupBaseline(state?.devices ?? null);
@@ -304,37 +356,58 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     if (!flow.active) {
       dispatchFlow({ type: "start", deviceIds: baseline });
     }
+    const generation = ++setupGeneration.current;
     dispatchFlow({ type: "use-local" });
     setProvisioning(true);
     setSetupTimedOut(false);
     setAccountError(null);
-    void openPairing(true);
+    void openPairing("local", undefined, generation);
+  }, [flow.active, openPairing, state?.devices]);
+
+  const useTailscale = useCallback(() => {
+    const baseline = phoneSetupBaseline(state?.devices ?? null);
+    if (!baseline) return;
+    if (!flow.active) {
+      dispatchFlow({ type: "start", deviceIds: baseline });
+    }
+    const generation = ++setupGeneration.current;
+    dispatchFlow({ type: "use-tailscale" });
+    setProvisioning(true);
+    setSetupTimedOut(false);
+    setAccountError(null);
+    void openPairing("tailscale", undefined, generation);
   }, [flow.active, openPairing, state?.devices]);
 
   const requestCode = useCallback(() => {
     const remote = companionAccountBridge();
     const normalized = email.trim().toLowerCase();
     if (!remote || !normalized) return;
+    const generation = setupGeneration.current;
     setAccountBusy(true);
     setAccountError(null);
     void remote
       .requestCode(normalized)
       .then((next) => {
+        if (!mounted.current || setupGeneration.current !== generation) return;
         setAccount(next);
         setCodeSent(true);
       })
       .catch((cause: unknown) => {
+        if (!mounted.current || setupGeneration.current !== generation) return;
         setAccountError(
           normalizePhoneSetupActionError(cause, "We could not send the code. Try again."),
         );
       })
-      .finally(() => setAccountBusy(false));
+      .finally(() => {
+        if (mounted.current && setupGeneration.current === generation) setAccountBusy(false);
+      });
   }, [email]);
 
   const verifyCode = useCallback(() => {
     const remote = companionAccountBridge();
     const normalized = email.trim().toLowerCase();
     if (!remote || code.length !== 8) return;
+    const generation = setupGeneration.current;
     setAccountBusy(true);
     setProvisioning(true);
     setSetupTimedOut(false);
@@ -342,23 +415,30 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     void remote
       .verifyCode(normalized, code)
       .then(async (next) => {
+        if (!mounted.current || setupGeneration.current !== generation) return;
         setAccount(next);
         setCodeState("");
         setCodeSent(false);
-        await openPairing(false, next);
+        await openPairing("automatic", next, generation);
       })
       .catch((cause: unknown) => {
+        if (!mounted.current || setupGeneration.current !== generation) return;
         setProvisioning(false);
         setAccountError(
           normalizePhoneSetupActionError(cause, "That code could not be verified. Try again."),
         );
       })
-      .finally(() => setAccountBusy(false));
+      .finally(() => {
+        if (mounted.current && setupGeneration.current === generation) setAccountBusy(false);
+      });
   }, [code, email, openPairing]);
 
   const retryAccount = useCallback(() => {
     const remote = companionAccountBridge();
     if (!remote) return;
+    const baseline = flow.active ? phoneSetupBaseline(state?.devices ?? null) : null;
+    const generation = ++setupGeneration.current;
+    if (baseline) dispatchFlow({ type: "start", deviceIds: baseline });
     setAccountBusy(true);
     setProvisioning(true);
     setSetupTimedOut(false);
@@ -366,17 +446,25 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     void remote
       .retry()
       .then(async (next) => {
+        if (!mounted.current || setupGeneration.current !== generation) return;
         setAccount(next);
-        await openPairing(false, next);
+        if (flow.active) await openPairing("automatic", next, generation);
+        else {
+          await load();
+          if (mounted.current && setupGeneration.current === generation) setProvisioning(false);
+        }
       })
       .catch((cause: unknown) => {
+        if (!mounted.current || setupGeneration.current !== generation) return;
         setProvisioning(false);
         setAccountError(
           normalizePhoneSetupActionError(cause, "Secure access could not be restored. Try again."),
         );
       })
-      .finally(() => setAccountBusy(false));
-  }, [openPairing]);
+      .finally(() => {
+        if (mounted.current && setupGeneration.current === generation) setAccountBusy(false);
+      });
+  }, [flow.active, load, openPairing, state?.devices]);
 
   const phase = derivePhoneSetupPhase(flow, {
     accountStatus: account?.available ? account.status : "unavailable",
@@ -390,22 +478,28 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     if (
       !flow.active
       || flow.localFallback
+      || flow.tailscaleFallback
       || !account
       || (account.available && account.status !== "signed-out" && account.status !== "error")
     ) {
       return;
     }
     setProvisioning(false);
-  }, [account, flow.active, flow.localFallback]);
+  }, [account, flow.active, flow.localFallback, flow.tailscaleFallback]);
 
   useEffect(() => {
-    if (!flow.active || flow.localFallback || !provisioning || accountBusy || setupTimedOut) return;
+    if (!shouldArmPhoneSetupProvisioningTimeout(flow, {
+      provisioning,
+      provisioningTimedOut: setupTimedOut,
+    })) return;
     const timer = window.setTimeout(() => {
+      setupGeneration.current += 1;
+      setAccountBusy(false);
       setProvisioning(false);
       setSetupTimedOut(true);
     }, PHONE_SETUP_PROVISIONING_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
-  }, [accountBusy, flow.active, flow.localFallback, provisioning, setupTimedOut]);
+  }, [flow, provisioning, setupTimedOut]);
 
   useEffect(() => {
     if (!state) return;
@@ -417,6 +511,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     if (
       !flow.active ||
       flow.localFallback ||
+      flow.tailscaleFallback ||
       flow.pairingAttempted ||
       setupTimedOut ||
       !state ||
@@ -424,26 +519,30 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     ) {
       return;
     }
-    void openPairing(false);
-  }, [account, flow.active, flow.localFallback, flow.pairingAttempted, openPairing, setupTimedOut, state]);
+    void openPairing("automatic");
+  }, [account, flow.active, flow.localFallback, flow.pairingAttempted, flow.tailscaleFallback, openPairing, setupTimedOut, state]);
 
   const shouldPoll = flow.active || Boolean(state?.pairing);
   useEffect(() => {
-    const timer = window.setInterval(
+    return startNonOverlappingPhoneSetupPoll(
       () => {
         setNow(Date.now());
-        void load();
+        return load();
       },
       shouldPoll ? 1_000 : 10_000,
     );
-    return () => window.clearInterval(timer);
   }, [load, shouldPoll]);
 
+  const pairingRouteMode: CompanionPairingRouteMode = flow.localFallback
+    ? "local"
+    : flow.tailscaleFallback
+      ? "tailscale"
+      : "automatic";
   const pairingRoute = useMemo(
     () => state
-      ? companionPairingRoute(state, flow.localFallback ? "local" : "automatic")
+      ? companionPairingRoute(state, pairingRouteMode)
       : null,
-    [flow.localFallback, state],
+    [pairingRouteMode, state],
   );
   const pairingLink = useMemo(() => {
     if (!state?.pairing || !pairingRoute) return null;
@@ -456,9 +555,11 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
   }, [pairingRoute, state]);
 
   const cancel = useCallback(() => {
+    setupGeneration.current += 1;
     const companion = companionBridge();
     if (companion && state?.pairing) void act((current) => current.pairing(false));
     setProvisioning(false);
+    setAccountBusy(false);
     setSetupTimedOut(false);
     setCodeSent(false);
     setCodeState("");
@@ -484,6 +585,8 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     pairingPort: pairingRoute?.port ?? state?.port ?? 8810,
     hostedReady: Boolean(state?.endpoints?.some((endpoint) => endpoint.kind === "hosted")),
     localFallback: flow.localFallback,
+    tailscaleFallback: flow.tailscaleFallback,
+    tailscaleAvailable: Boolean(state && companionPairingRoute(state, "tailscale")),
     pairingExpired: flow.pairingAttempted && !state?.pairing,
     setupTimedOut,
     setEmail: (next) => {
@@ -498,16 +601,24 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     },
     start,
     useLocal,
+    useTailscale,
     requestCode,
     verifyCode,
     retryAccount,
     cancel,
-    refreshCode: () => void openPairing(flow.localFallback),
+    refreshCode: () => {
+      const generation = ++setupGeneration.current;
+      void openPairing(pairingRouteMode, undefined, generation);
+    },
     finish: () => {
+      setupGeneration.current += 1;
       setSetupTimedOut(false);
       dispatchFlow({ type: "reset" });
     },
-    skip: () => dispatchFlow({ type: "skip" }),
+    skip: () => {
+      setupGeneration.current += 1;
+      dispatchFlow({ type: "skip" });
+    },
     act,
     accountAct,
   };
@@ -560,7 +671,7 @@ export function PhoneSetupFlowView({
         <ValuePoints />
         <button
           onClick={c.start}
-          disabled={!c.state}
+          disabled={!c.state || c.busy || c.accountBusy}
           className="mt-5 w-full max-w-[320px] rounded-lg bg-accent py-2.5 text-[14px] font-medium text-white hover:opacity-90 disabled:cursor-wait disabled:opacity-40"
         >
           {variant === "settings"
@@ -688,10 +799,24 @@ export function PhoneSetupFlowView({
         <div className="my-4 flex items-center gap-3 text-[11px] text-ink-secondary">
           <span className="h-px flex-1 bg-hairline/40" /> or <span className="h-px flex-1 bg-hairline/40" />
         </div>
+        {c.tailscaleAvailable && (
+          <>
+            <button
+              disabled={c.busy || c.accountBusy}
+              onClick={c.useTailscale}
+              className="flex items-center justify-center gap-2 rounded-lg border border-hairline/50 py-2.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
+            >
+              <ShieldCheck size={15} /> Pair over Tailscale
+            </button>
+            <p className="mt-2 text-center text-[11px] leading-relaxed text-ink-secondary">
+              Your iPhone must be signed in to the same tailnet.
+            </p>
+          </>
+        )}
         <button
-          disabled={c.busy}
+          disabled={c.busy || c.accountBusy}
           onClick={c.useLocal}
-          className="flex items-center justify-center gap-2 rounded-lg border border-hairline/50 py-2.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
+          className={`${c.tailscaleAvailable ? "mt-3" : ""} flex items-center justify-center gap-2 rounded-lg border border-hairline/50 py-2.5 text-[13px] text-ink hover:bg-control disabled:opacity-40`}
         >
           <Wifi size={15} /> Pair on this Wi-Fi instead
         </button>
@@ -709,11 +834,17 @@ export function PhoneSetupFlowView({
           <Loader2 size={25} className="animate-spin" />
         </div>
         <h2 className="mt-4 text-[18px] font-semibold text-ink">
-          {c.localFallback ? "Preparing your pairing code" : "Creating secure phone access"}
+          {c.localFallback
+            ? "Preparing your pairing code"
+            : c.tailscaleFallback
+              ? "Preparing Tailscale pairing"
+              : "Creating secure phone access"}
         </h2>
         <p className="mt-1.5 max-w-[360px] text-[13px] leading-relaxed text-ink-secondary">
           {c.localFallback
             ? "This should only take a moment."
+            : c.tailscaleFallback
+              ? "Your pairing code will use your private tailnet connection."
             : "We’re giving this computer a private connection that works even when your phone is away from this Wi-Fi."}
         </p>
         {(c.error || c.accountError) && (
