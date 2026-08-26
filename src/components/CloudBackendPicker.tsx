@@ -19,7 +19,7 @@ export function CloudBackendPicker({
       <div className="text-[12px] font-medium text-ink">Cloud backend</div>
       <div className="mt-0.5 text-[11.5px] text-ink-secondary">
         {value === "vps"
-          ? "Auto only attaches to a VPS container that is already running — a stopped or missing one is never provisioned or started, and the bot quietly works as if no cloud computer existed. Choose Cloud to provision or start it. No interactive desktop tunnel is exposed."
+          ? "Auto reuses a running VPS by default. Enable Start VPS automatically to let Auto create or wake its managed container, or choose Cloud to do it explicitly. Open the live desktop securely from the computer panel."
           : "Box is the default hosted computer. Choose Self-hosted VPS to use your SSH-configured Linux Docker host."}
       </div>
       <div className="mt-2 flex overflow-hidden rounded-lg border border-hairline/40">

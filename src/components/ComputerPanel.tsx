@@ -591,11 +591,12 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       }
     } catch (e) {
       fallbackTab?.close();
+      // Release the bot before waiting on best-effort tunnel cleanup. A sick
+      // SSH process must never leave the agent paused indefinitely.
+      if (tookControl) await requestControl("release").catch(() => {});
       if (phase === "ready" && cloudBackend === "vps") {
         await api(`/api/bots/${bot.id}/computer/viewer-close`, { method: "POST", body: "{}" }).catch(() => {});
       }
-      // A failed viewer must not leave the bot's hands paused indefinitely.
-      if (tookControl) await requestControl("release").catch(() => {});
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setPending(null);
