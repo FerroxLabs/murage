@@ -139,6 +139,24 @@ describe("default fleet", () => {
     });
   });
 
+  it("does not retain an injected OpenAI-compatible URL across config refreshes", () => {
+    const config: AppConfig = {
+      openaiCompat: { url: "https://first.example.test/v1" },
+      instances: {
+        custom: { driver: "openai-compat" },
+      },
+    };
+
+    expect(instanceConfigs(config).custom.config).toEqual({
+      url: "https://first.example.test/v1",
+    });
+    config.openaiCompat = { url: "https://second.example.test/v1" };
+    expect(instanceConfigs(config).custom.config).toEqual({
+      url: "https://second.example.test/v1",
+    });
+    expect(config.instances?.custom.config).toBeUndefined();
+  });
+
   it("adds missing custom-only engines onto an existing product fleet", () => {
     const map = instanceConfigs({ instances: { claude: { driver: "claudeAgent" } } });
     expect(map.claude.driver).toBe("claudeAgent");

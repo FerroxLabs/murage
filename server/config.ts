@@ -436,7 +436,12 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
       if (!Object.hasOwn(map, id)) map[id] = { ...entry };
     }
   }
-  for (const entry of Object.values(map)) {
+  for (const [id, sourceEntry] of Object.entries(map)) {
+    // instanceConfigs() builds a transient runtime map. Never mutate the
+    // caller's persisted entries while injecting workspace defaults: doing so
+    // would turn the first workspace URL into a stale per-instance override.
+    const entry = { ...sourceEntry };
+    map[id] = entry;
     const environment = { ...entry.environment };
     for (const [key, value] of injectedEnvironment(cfg, entry.driver)) environment[key] = value;
     entry.environment = environment;
