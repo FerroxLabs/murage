@@ -240,7 +240,7 @@ export class DeviceRegistry {
     }
 
     const window = this.pairing();
-    if (!window) return { error: "no pairing is in progress — open Companion settings on your computer" };
+    if (!window) return { error: "no pairing is in progress — open Phone settings on your computer" };
     if (!sameCredential(window.code, presented) && !sameCredential(window.token, presented)) {
       window.attemptsLeft -= 1;
       // A burned window is the whole point: without this, six digits is a

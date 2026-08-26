@@ -132,7 +132,7 @@ const EXPLAINED: ReadonlyArray<{ path: RegExp; error: string }> = [
   {
     path: /^\/api\/(companion|devices)(\/|$)/,
     // Losing the phone must not mean losing the ability to lock it out.
-    error: "companion settings are managed on your computer",
+    error: "Phone settings are managed on your computer",
   },
   { path: /^\/api\/config$/, error: "API keys can only be changed on your computer" },
   { path: /^\/api\/local-computer(\/|$)/, error: "the Local VM is set up on your computer" },
@@ -167,7 +167,7 @@ export function denyReason({ path, method, authenticated }: RouteRequest): Denia
   if (method === "GET" && path === "/api/health") return null;
 
   if (!authenticated) {
-    return { status: 401, error: "pair this device from the OpenMausBot companion on your computer" };
+    return { status: 401, error: "pair this device from Phone settings in OpenMausBot on your computer" };
   }
 
   if (ALLOWED.some((route) => route.method === method && route.path.test(path))) return null;

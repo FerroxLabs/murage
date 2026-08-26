@@ -50,6 +50,7 @@ import {
   saveSidebarDensity,
   type SidebarDensity,
 } from "@/lib/sidebar-preferences";
+import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
 function profileInitials(profile?: { name?: string; email?: string }): string {
@@ -1556,6 +1557,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <Puzzle size={20} className="text-ink-secondary" />
           <span className={cn("text-[14px] text-ink", density === "icons" && "hidden")}>Connected apps</span>
         </button>
+        {density === "icons" && (
+          <SidebarPhoneButton
+            density={density}
+            onOpen={() => dispatch(phoneSettingsAction())}
+          />
+        )}
         <div className={cn("flex items-center", density === "icons" && "justify-center")}>
           <button
             onClick={() => dispatch({ type: "toggleAppSettings" })}
@@ -1568,6 +1575,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               {state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || "You"}
             </span>
           </button>
+          {density !== "icons" && (
+            <SidebarPhoneButton
+              density={density}
+              onOpen={() => dispatch(phoneSettingsAction())}
+            />
+          )}
           {density !== "icons" && <UpdateButton />}
           {density !== "icons" && <button
             onClick={() => dispatch({ type: "toggleAppSettings" })}

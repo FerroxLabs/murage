@@ -128,6 +128,12 @@ describe("DeviceRegistry", () => {
     expect(registry.count()).toBe(1);
   });
 
+  it("points an out-of-window pairing attempt to Phone settings", () => {
+    expect(new DeviceRegistry().redeem("000000", "iPhone")).toEqual({
+      error: "no pairing is in progress — open Phone settings on your computer",
+    });
+  });
+
   it("replays one logical redemption without creating an orphan device", () => {
     const registry = new DeviceRegistry();
     const { token: credential } = registry.openPairing();

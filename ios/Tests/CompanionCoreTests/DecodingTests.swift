@@ -313,9 +313,15 @@ final class DecodingTests: XCTestCase {
     func testDecodesTheHarnessErrorBodies() throws {
         // these strings are written for people, and the client shows them
         // rather than inventing its own
-        XCTAssertTrue(try decode(APIErrorBody.self, "unauthorized").error.contains("pair"))
+        XCTAssertEqual(
+            try decode(APIErrorBody.self, "unauthorized").error,
+            "pair this device from Phone settings in OpenMausBot on your computer"
+        )
         XCTAssertFalse(try decode(APIErrorBody.self, "forbidden").error.isEmpty)
-        XCTAssertFalse(try decode(APIErrorBody.self, "pair-rejected").error.isEmpty)
+        XCTAssertEqual(
+            try decode(APIErrorBody.self, "pair-rejected").error,
+            "no pairing is in progress — open Phone settings on your computer"
+        )
     }
 
     func testDecodesInstancesAndConfig() throws {
