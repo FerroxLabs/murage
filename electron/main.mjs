@@ -686,20 +686,32 @@ async function startServerOn(port) {
   // Identity check is by PID: a dev harness server has the same API shape,
   // so only the child we actually forked (matching pid + static serving)
   // counts as ours.
-  for (let i = 0; i < 40; i++) {
+  // The budget is wall-clock, not a fixed poll count: a healthy boot can take
+  // well past 20s on cold machines or when pre-listen network calls stall
+  // (issue #506), and reaping an about-to-listen child reads to the user as
+  // "something else is using its ports" even though nothing was on them.
+  const bootDeadline = Date.now() + SERVER_BOOT_TIMEOUT_MS;
+  let foreignOwner = false;
+  while (Date.now() < bootDeadline) {
     if (exited) return null;
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/health`);
       if (res.ok) {
         const body = await res.json().catch(() => null);
         if (body?.app === "openmausbot" && body.pid === proc.pid && body.static) return proc;
-        break; // someone else owns this port — try the next one
+        foreignOwner = true; // someone else owns this port — try the next one
+        break;
       }
     } catch {
       /* not up yet */
     }
     await new Promise((r) => setTimeout(r, 500));
   }
+  slog(
+    foreignOwner
+      ? `port ${port} answered health checks from another process`
+      : `child on port ${port} did not answer /api/health within ${SERVER_BOOT_TIMEOUT_MS / 1000}s`,
+  );
   try {
     proc.kill();
   } catch {}
@@ -738,8 +750,15 @@ function syncManagedComposioCredentials() {
 const ERROR_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen OpenMausBot — if it keeps happening, restart your computer.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">The background server didn't come up in time — this is usually slow startup, not a port conflict. Quit and reopen OpenMausBot. If it keeps happening, check the server log at ~/Library/Logs/openmausbot/server.log (macOS).</p></div></body>`,
   );
+
+// How long one packaged-server child gets to answer /api/health before the
+// parent reaps it and tries the next port. Wall-clock, deliberately generous:
+// first boots write data dirs and pre-listen network calls (managed composio,
+// workspace credentials) can stall a healthy child far past 20s on some
+// machines, which used to surface as the misleading "ports are busy" page.
+const SERVER_BOOT_TIMEOUT_MS = 60_000;
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
 const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath });
