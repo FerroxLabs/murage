@@ -285,20 +285,25 @@ async function ensureShadow(cwd: string, env: NodeJS.ProcessEnv, shadow: string)
   }
 }
 
-/** Stage everything and commit if anything actually changed. Returns the
- * checkpoint hash either way — idempotent when the folder is unchanged. */
-async function commitAll(cwd: string, env: NodeJS.ProcessEnv, label: string): Promise<string> {
+type CommitResult = { hash: string; complete: boolean };
+
+/** Stage everything and commit if anything actually changed. `complete`
+ * records whether every path was indexable: ordinary snapshots may keep the
+ * useful subset, but restore must not delete files its safety point missed. */
+async function commitAll(cwd: string, env: NodeJS.ProcessEnv, label: string): Promise<CommitResult> {
   // --ignore-errors skips files git cannot index (unreadable, FIFOs) instead
   // of aborting — but still exits 1 when it skipped an unreadable file, so
-  // the exit code is swallowed too: one chmod-000 file in the workspace must
-  // cost that file its snapshot, not disable checkpoints for the session. If
-  // the add failed wholesale (index lock, corrupt shadow), the diff/commit
-  // right below fails loudly and trips the disable as intended.
-  await runGit(["add", "-A", "--ignore-errors", "."], cwd, env).catch(() => "");
+  // the exit code is retained even though a partial snapshot remains useful.
+  // Restore treats an incomplete safety point as a hard stop before touching
+  // the work tree.
+  let complete = true;
+  await runGit(["add", "-A", "--ignore-errors", "."], cwd, env).catch(() => {
+    complete = false;
+  });
   if (await hasStagedChanges(cwd, env)) {
     await runGit(["commit", "--no-verify", "-m", label], cwd, env);
   }
-  return (await runGit(["rev-parse", "HEAD"], cwd, env)).trim();
+  return { hash: (await runGit(["rev-parse", "HEAD"], cwd, env)).trim(), complete };
 }
 
 /** Snapshot the folder. Returns the checkpoint hash, or null when the
@@ -314,7 +319,7 @@ export async function snapshot(botId: string, cwd: string, label: string): Promi
     return await serialize(shadow, async () => {
       const env = gitEnv(shadow, worktree);
       await ensureShadow(worktree, env, shadow);
-      return commitAll(worktree, env, label);
+      return (await commitAll(worktree, env, label)).hash;
     });
   } catch (e) {
     disable(botId, e instanceof Error ? e.message : String(e));
@@ -383,7 +388,13 @@ export async function restore(botId: string, cwd: string, hash: string): Promise
       const base = (await runGit(["rev-list", "--max-parents=0", "HEAD"], worktree, env)).trim();
       if (base === hash) return { ok: false, error: "that is the empty base marker, not a checkpoint" };
       // safety point: whatever is about to be overwritten becomes restorable
-      await commitAll(worktree, env, "before restore");
+      const safety = await commitAll(worktree, env, "before restore");
+      if (!safety.complete) {
+        return {
+          ok: false,
+          error: "restore stopped because some current files could not be added to the safety checkpoint",
+        };
+      }
       // Index AND work tree move to the source; HEAD stays put. --staged
       // matters: with a work-tree-only restore, a file that exists in the
       // source but not in the index (deleted in a later checkpoint, now

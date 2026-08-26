@@ -152,24 +152,26 @@ describe("restore", () => {
     expect(existsSync(join(cwd, "run.log"))).toBe(true);
   });
 
-  it("sweeps strays the snapshot could not stage, without failing the snapshot", async () => {
+  it.skipIf(process.platform === "win32")("refuses to restore when the safety checkpoint misses a path", async () => {
     const { bot, cwd } = workspace();
     writeFileSync(join(cwd, "a.txt"), "one");
     const checkpoint = await snapshot(bot, cwd, "turn 1");
 
-    // the "turn" leaves an unreadable file: git add cannot index it (skipped
-    // via --ignore-errors), so only `git clean -fd` can remove it on restore
-    writeFileSync(join(cwd, "locked.txt"), "unreadable");
-    chmodSync(join(cwd, "locked.txt"), 0o000);
-    // ...and the next snapshot must survive the unstageable file
+    // Git cannot read this file, but `git clean` can still unlink it. The
+    // safety snapshot may retain the ordinary edit; restore must stop before
+    // clean can delete the path it missed.
+    const locked = join(cwd, "locked.txt");
+    writeFileSync(locked, "unreadable");
+    chmodSync(locked, 0o000);
     writeFileSync(join(cwd, "a.txt"), "two");
-    const next = await snapshot(bot, cwd, "turn 2");
-    expect(next).toMatch(/^[0-9a-f]{40}$/);
 
     const result = await restore(bot, cwd, checkpoint!);
-    expect(result).toEqual({ ok: true });
-    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("one");
-    expect(existsSync(join(cwd, "locked.txt"))).toBe(false);
+    expect(result).toEqual({
+      ok: false,
+      error: "restore stopped because some current files could not be added to the safety checkpoint",
+    });
+    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("two");
+    expect(existsSync(locked)).toBe(true);
   });
 
   it("refuses garbage hashes and the empty base marker", async () => {

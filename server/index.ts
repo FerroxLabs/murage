@@ -720,6 +720,9 @@ let localVmImageBusy = false;
 let localVmProvisionBusy = false;
 let localVmModeChangeBusy = false;
 const activeVpsThreads = new Map<string, string>();
+// A restore mutates and cleans a project work tree. Claim the bot across the
+// entire async Git operation so a turn cannot start in that folder midway.
+const checkpointRestoreLeases = new Set<string>();
 const LOCAL_VM_IDLE_MS = 8 * 60 * 60_000;
 const localVmIdles = new Map<string, LocalVmIdleTimer>();
 
@@ -1380,6 +1383,11 @@ async function startTurn(
 ) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+  if (checkpointRestoreLeases.has(botId)) {
+    throw Object.assign(new Error("this bot's project files are being restored — wait for the restore to finish"), {
+      status: 409,
+    });
+  }
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
   const threadId = opts?.threadId ?? bot.threadId;
   // a webhook turn, or one inherited from a bot already running unattended
@@ -4345,10 +4353,20 @@ const server = createServer(async (req, res) => {
       if (!parsed.success) {
         return json(res, 400, { error: "cwd (absolute path) and hash (full 40-character checkpoint hash) required" });
       }
-      // restoring under a live turn would fight the engine writing files —
-      // same rule as rewinding a thread: stop, then roll back
+      // Claim synchronously with the busy check. startTurn checks the same
+      // lease before reserving the bot, so no turn can enter during the
+      // awaited Git operation.
       if (bot.busy) return json(res, 409, { error: "the bot is working — stop the turn before restoring files" });
-      const result = await checkpoints.restore(m[1]!, parsed.data.cwd, parsed.data.hash);
+      if (checkpointRestoreLeases.has(bot.id)) {
+        return json(res, 409, { error: "this bot's project files are already being restored" });
+      }
+      checkpointRestoreLeases.add(bot.id);
+      let result: checkpoints.RestoreResult;
+      try {
+        result = await checkpoints.restore(bot.id, parsed.data.cwd, parsed.data.hash);
+      } finally {
+        checkpointRestoreLeases.delete(bot.id);
+      }
       if (!result.ok) return json(res, 400, { error: result.error });
       return json(res, 200, { ok: true });
     }
