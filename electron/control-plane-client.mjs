@@ -180,7 +180,15 @@ export function createControlPlaneClient({
   ) => {
     const headers = new Headers({ accept: "application/json" });
     if (token) headers.set("authorization", `Bearer ${token}`);
-    if (body !== undefined) headers.set("content-type", "application/json");
+    // Node's fetch sends `Sec-Fetch-Mode: cors` even though Electron is a
+    // native client. Better Auth 1.7 treats that Fetch Metadata as a
+    // browser-shaped request and requires a trusted Origin. Our exact,
+    // validated control-plane origin is already trusted by the Worker; send
+    // it only to Better Auth routes instead of weakening server CSRF checks.
+    if (path.startsWith("/api/auth/")) headers.set("origin", origin);
+    if (body !== undefined) {
+      headers.set("content-type", "application/json");
+    }
     let response;
     try {
       const init = {

@@ -24,6 +24,7 @@ import {
   derivePhoneSetupPhase,
   initialPhoneSetupFlowState,
   newlyPairedDevice,
+  normalizePhoneSetupActionError,
   phonePairingGate,
   phoneSetupBaseline,
   phoneSetupReducer,
@@ -180,7 +181,12 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     try {
       setState(await call(companion));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(
+        normalizePhoneSetupActionError(
+          cause,
+          "Phone access could not be updated. Open Advanced & troubleshooting and try again.",
+        ),
+      );
     } finally {
       setBusy(false);
     }
@@ -197,9 +203,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         setAccount(next);
         await load();
       } catch (cause) {
-        setAccountError(
-          cause instanceof Error ? cause.message : "Secure phone access could not be updated",
-        );
+        setAccountError(normalizePhoneSetupActionError(
+          cause,
+          "Secure phone access could not be updated. Try again.",
+        ));
       } finally {
         setAccountBusy(false);
       }
@@ -238,7 +245,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         dispatchFlow({ type: "pairing-opened" });
       } catch (cause) {
         setProvisioning(false);
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(normalizePhoneSetupActionError(
+          cause,
+          "Phone pairing could not be prepared. Open Advanced & troubleshooting and try again.",
+        ));
         dispatchFlow({ type: "reset" });
       } finally {
         setBusy(false);
@@ -284,7 +294,9 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
         setCodeSent(true);
       })
       .catch((cause: unknown) => {
-        setAccountError(cause instanceof Error ? cause.message : "We could not send the code.");
+        setAccountError(
+          normalizePhoneSetupActionError(cause, "We could not send the code. Try again."),
+        );
       })
       .finally(() => setAccountBusy(false));
   }, [email]);
@@ -306,7 +318,9 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       })
       .catch((cause: unknown) => {
         setProvisioning(false);
-        setAccountError(cause instanceof Error ? cause.message : "That code could not be verified.");
+        setAccountError(
+          normalizePhoneSetupActionError(cause, "That code could not be verified. Try again."),
+        );
       })
       .finally(() => setAccountBusy(false));
   }, [code, email, openPairing]);
@@ -325,7 +339,9 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
       })
       .catch((cause: unknown) => {
         setProvisioning(false);
-        setAccountError(cause instanceof Error ? cause.message : "Secure access could not be restored.");
+        setAccountError(
+          normalizePhoneSetupActionError(cause, "Secure access could not be restored. Try again."),
+        );
       })
       .finally(() => setAccountBusy(false));
   }, [openPairing]);

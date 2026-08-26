@@ -5,6 +5,7 @@ import {
   derivePhoneSetupPhase,
   initialPhoneSetupFlowState,
   newlyPairedDevice,
+  normalizePhoneSetupActionError,
   phonePairingGate,
   phoneSetupBaseline,
   phoneSetupReducer,
@@ -125,5 +126,27 @@ describe("phone setup flow", () => {
     expect(companionStartFailure({ enabled: false, error: "Port 8811 is already in use" })).toBe(
       "Port 8811 is already in use",
     );
+  });
+
+  it("unwraps Electron IPC account errors without exposing channel machinery", () => {
+    const requestId = "c285fe8c-f6f4-41a3-a737-7a2d1faf405a";
+    const message = normalizePhoneSetupActionError(
+      new Error(
+        `Error invoking remote method 'companion-account:request-code': Error: The secure connection request was not allowed. Try signing in again. Reference: ${requestId}.`,
+      ),
+      "We could not send the code. Try again.",
+    );
+    expect(message).toBe(`We could not send the code. Try again. Reference: ${requestId}.`);
+    expect(message).not.toContain("remote method");
+    expect(message).not.toContain("companion-account");
+  });
+
+  it("replaces arbitrary IPC details with calm setup copy", () => {
+    expect(
+      normalizePhoneSetupActionError(
+        new Error("Error invoking remote method 'companion-account:request-code': Error: /private/keychain failed"),
+        "We could not send the code. Try again.",
+      ),
+    ).toBe("We could not send the code. Try again.");
   });
 });

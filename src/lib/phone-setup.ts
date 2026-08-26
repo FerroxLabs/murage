@@ -157,3 +157,41 @@ export function companionStartFailure(
   if (companion.enabled && !companion.error) return null;
   return companion.error?.trim() || START_FAILURE_MESSAGE;
 }
+
+const REQUEST_REFERENCE =
+  /\bReference:\s*([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.?/i;
+const IPC_REJECTION =
+  /^Error invoking remote method ['"][^'"\r\n]+['"]:\s*(?:Error:\s*)?/i;
+const PUBLIC_ACCOUNT_MESSAGES = [
+  /^Enter a valid email address\.$/,
+  /^The secure connection request (?:was not accepted|was not allowed)\./,
+  /^That code (?:is not valid|expired)\./,
+  /^Your sign-in expired\./,
+  /^OpenMausBot could not reach its secure connection service\./,
+  /^Too many attempts were made\./,
+  /^This computer was reconnected too often\./,
+  /^This account has reached its computer limit\./,
+  /^This computer is already connected\./,
+  /^The secure connection (?:is still being prepared|service could not finish setup|is still being removed)\./,
+  /^Secure access is not available right now\./,
+  /^The secure connection service (?:had a problem|returned an unexpected response)\./,
+  /^The secure connection request could not be completed\./,
+];
+
+/** Electron prefixes rejected IPC errors with its channel implementation.
+ * Keep that machinery and arbitrary internal messages out of product copy,
+ * while retaining the already-sanitized account message and request ID. */
+export function normalizePhoneSetupActionError(cause: unknown, fallback: string): string {
+  const raw = cause instanceof Error ? cause.message : "";
+  const unwrapped = raw.replace(IPC_REJECTION, "").replace(/^Error:\s*/i, "").trim();
+  const reference = unwrapped.match(REQUEST_REFERENCE)?.[1] ?? "";
+  const message = unwrapped.replace(REQUEST_REFERENCE, "").trim();
+  const forbiddenCodeRequest =
+    /remote method ['"]companion-account:request-code['"]/i.test(raw)
+    && message.startsWith("The secure connection request was not allowed.");
+  const publicMessage = !forbiddenCodeRequest
+    && PUBLIC_ACCOUNT_MESSAGES.some((pattern) => pattern.test(message))
+    ? message
+    : fallback;
+  return reference ? `${publicMessage} Reference: ${reference}.` : publicMessage;
+}
