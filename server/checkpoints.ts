@@ -25,7 +25,7 @@
 // service, and the snapshot-before-every-turn cadence follows Cline.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, parse, resolve } from "node:path";
 
@@ -39,19 +39,6 @@ export type RestoreResult = { ok: true } | { ok: false; error: string };
 /** Full sha1 hex only. The API hands out full hashes; accepting anything
  * looser would let arbitrary revspecs ("HEAD~3", "main@{u}") reach git. */
 const COMMIT_HASH = /^[0-9a-f]{40}$/;
-
-// Inherited git env that could redirect the shadow repo's reads or writes
-// into the user's own repository (or somewhere stranger). Stripped before
-// every call; the shadow values below are then set explicitly.
-const STRIPPED_GIT_ENV = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_CEILING_DIRECTORIES",
-  "GIT_TEMPLATE_DIR",
-];
 
 // What a checkpoint deliberately does not carry. Restores must never delete
 // these either: `git clean -fd` (without -x) leaves ignored files alone, so
@@ -168,19 +155,28 @@ function gitAvailable(): Promise<boolean> {
  * and a restore's `git clean -fd` there would be an act of vandalism. */
 export function refusalReason(cwd: string): string | null {
   if (!isAbsolute(cwd)) return "the working folder must be an absolute path";
-  const dir = resolve(cwd);
+  const requested = resolve(cwd);
   let stat;
+  let dir: string;
   try {
-    stat = statSync(dir);
+    stat = statSync(requested);
+    dir = realpathSync(requested);
   } catch {
     return "the working folder does not exist";
   }
   if (!stat.isDirectory()) return "the working folder is not a folder";
+  // Compare canonical paths too: otherwise /tmp/home-link -> $HOME bypasses
+  // the refusal while git still follows the symlink into the protected tree.
   if (dir === parse(dir).root) return "checkpoints are not taken at the filesystem root";
-  const home = resolve(homedir());
-  if (dir === home) return "checkpoints are not taken in the home folder";
+  const requestedHome = resolve(homedir());
+  const home = existsSync(requestedHome) ? realpathSync(requestedHome) : requestedHome;
+  if (requested === requestedHome || dir === home) return "checkpoints are not taken in the home folder";
   for (const name of ["Desktop", "Documents", "Downloads"]) {
-    if (dir === join(home, name)) return `checkpoints are not taken in the ${name} folder`;
+    const requestedProtected = join(requestedHome, name);
+    const protectedDir = existsSync(requestedProtected) ? realpathSync(requestedProtected) : requestedProtected;
+    if (requested === requestedProtected || dir === protectedDir) {
+      return `checkpoints are not taken in the ${name} folder`;
+    }
   }
   return null;
 }
@@ -192,7 +188,13 @@ function shadowDir(botId: string, cwd: string): string {
 
 function gitEnv(shadow: string, cwd: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const name of STRIPPED_GIT_ENV) delete env[name];
+  // Git has several redirection/config environment variables beyond the
+  // common GIT_DIR set (for example GIT_COMMON_DIR and GIT_CONFIG_KEY_*).
+  // None are needed by a local shadow repo, so clear the complete namespace
+  // before installing the small, explicit environment below.
+  for (const name of Object.keys(env)) {
+    if (name.startsWith("GIT_")) delete env[name];
+  }
   env.GIT_DIR = join(shadow, ".git");
   env.GIT_WORK_TREE = resolve(cwd);
   env.GIT_CONFIG_GLOBAL = join(shadow, "gitconfig");
@@ -306,12 +308,13 @@ export async function snapshot(botId: string, cwd: string, label: string): Promi
   if (disabledBots.has(botId)) return null;
   if (!(await gitAvailable())) return null;
   if (refusalReason(cwd) !== null) return null;
-  const shadow = shadowDir(botId, cwd);
   try {
+    const worktree = realpathSync(resolve(cwd));
+    const shadow = shadowDir(botId, worktree);
     return await serialize(shadow, async () => {
-      const env = gitEnv(shadow, cwd);
-      await ensureShadow(cwd, env, shadow);
-      return commitAll(cwd, env, label);
+      const env = gitEnv(shadow, worktree);
+      await ensureShadow(worktree, env, shadow);
+      return commitAll(worktree, env, label);
     });
   } catch (e) {
     disable(botId, e instanceof Error ? e.message : String(e));
@@ -326,12 +329,13 @@ export async function listCheckpoints(botId: string, cwd: string): Promise<Check
   if (disabledBots.has(botId)) return [];
   if (!(await gitAvailable())) return [];
   if (refusalReason(cwd) !== null) return [];
-  const shadow = shadowDir(botId, cwd);
-  if (!existsSync(join(shadow, ".git", "HEAD"))) return [];
   try {
+    const worktree = realpathSync(resolve(cwd));
+    const shadow = shadowDir(botId, worktree);
+    if (!existsSync(join(shadow, ".git", "HEAD"))) return [];
     return await serialize(shadow, async () => {
-      const env = gitEnv(shadow, cwd);
-      const out = await runGit(["log", "--format=%H%x09%ct%x09%s"], cwd, env);
+      const env = gitEnv(shadow, worktree);
+      const out = await runGit(["log", "--format=%H%x09%ct%x09%s"], worktree, env);
       const lines = out.split("\n").filter((line) => line.trim() !== "");
       lines.pop(); // the root of the log is always the empty base marker
       return lines.flatMap((line) => {
@@ -363,22 +367,23 @@ export async function restore(botId: string, cwd: string, hash: string): Promise
   const reason = refusalReason(cwd);
   if (reason !== null) return { ok: false, error: reason };
   if (!COMMIT_HASH.test(hash)) return { ok: false, error: "hash must be a full 40-character checkpoint hash" };
-  const shadow = shadowDir(botId, cwd);
-  if (!existsSync(join(shadow, ".git", "HEAD"))) {
-    return { ok: false, error: "no checkpoints exist for this folder" };
-  }
   try {
+    const worktree = realpathSync(resolve(cwd));
+    const shadow = shadowDir(botId, worktree);
+    if (!existsSync(join(shadow, ".git", "HEAD"))) {
+      return { ok: false, error: "no checkpoints exist for this folder" };
+    }
     return await serialize(shadow, async (): Promise<RestoreResult> => {
-      const env = gitEnv(shadow, cwd);
+      const env = gitEnv(shadow, worktree);
       try {
-        await runGit(["cat-file", "-e", `${hash}^{commit}`], cwd, env);
+        await runGit(["cat-file", "-e", `${hash}^{commit}`], worktree, env);
       } catch {
         return { ok: false, error: "no such checkpoint" };
       }
-      const base = (await runGit(["rev-list", "--max-parents=0", "HEAD"], cwd, env)).trim();
+      const base = (await runGit(["rev-list", "--max-parents=0", "HEAD"], worktree, env)).trim();
       if (base === hash) return { ok: false, error: "that is the empty base marker, not a checkpoint" };
       // safety point: whatever is about to be overwritten becomes restorable
-      await commitAll(cwd, env, "before restore");
+      await commitAll(worktree, env, "before restore");
       // Index AND work tree move to the source; HEAD stays put. --staged
       // matters: with a work-tree-only restore, a file that exists in the
       // source but not in the index (deleted in a later checkpoint, now
@@ -387,11 +392,11 @@ export async function restore(botId: string, cwd: string, hash: string): Promise
       // too makes clean blind to everything the checkpoint owns; what clean
       // then sweeps is exactly the strays the safety commit could not stage
       // (unreadable files, add races) — never ignored/excluded files (no -x).
-      await runGit(["restore", "--source", hash, "--staged", "--worktree", "--", "."], cwd, env);
-      await runGit(["clean", "-fd"], cwd, env);
+      await runGit(["restore", "--source", hash, "--staged", "--worktree", "--", "."], worktree, env);
+      await runGit(["clean", "-fd"], worktree, env);
       // record the post-restore state (also re-syncs the index with the
       // deletions restore made), so the timeline shows the rollback
-      await commitAll(cwd, env, `restored ${hash.slice(0, 8)}`);
+      await commitAll(worktree, env, `restored ${hash.slice(0, 8)}`);
       return { ok: true };
     });
   } catch (e) {

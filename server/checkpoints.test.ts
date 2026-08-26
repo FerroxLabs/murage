@@ -5,7 +5,7 @@
 // user's own git repo in the folder is never touched, and dangerous folders
 // (home) are refused outright.
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -248,6 +248,16 @@ describe("refusals", () => {
     // enabled in a legitimate folder afterwards
     const { cwd } = workspace();
     expect(await checkpointsEnabled(bot, cwd)).toBe(true);
+  });
+
+  it("refuses a symlink that resolves to the home folder", async () => {
+    const { bot, cwd } = workspace();
+    const linkedHome = join(cwd, "linked-home");
+    symlinkSync(homedir(), linkedHome, process.platform === "win32" ? "junction" : "dir");
+
+    expect(refusalReason(linkedHome)).toBe("checkpoints are not taken in the home folder");
+    expect(await snapshot(bot, linkedHome, "turn 1")).toBeNull();
+    expect(await checkpointsEnabled(bot, linkedHome)).toBe(false);
   });
 
   it("lists nothing (and creates nothing) for a folder never snapshotted", async () => {

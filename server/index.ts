@@ -1526,10 +1526,11 @@ async function startTurn(
       // Per-turn workspace checkpoint: snapshot the folder this turn will run
       // in (the bot's custom working folder or its private workspace) into the
       // bot's shadow git repo, so the turn's file changes can be rolled back.
-      // Fire-and-forget on purpose — a checkpoint must never delay or fail a
-      // turn, and checkpoints.ts guarantees snapshot() never throws. The turn
-      // record stores nothing; GET /api/bots/:id/checkpoints is the timeline.
-      if (cwd) void checkpoints.snapshot(bot.id, cwd, `turn ${threadId.slice(0, 8)}`);
+      // Wait for the best-effort snapshot before the engine can touch files.
+      // snapshot() absorbs failures, so this can delay a turn on a large or
+      // unhealthy folder but can never fail it. Launching it in the background
+      // would race the engine and could checkpoint edits made by this turn.
+      if (cwd) await checkpoints.snapshot(bot.id, cwd, `turn ${threadId.slice(0, 8)}`);
       // dweb is opt-in: without an explicit daemon URL, do not advertise
       // tools that would fail on every call or spawn an unnecessary proxy.
       const dwebUrl = process.env.DWEB_URL?.trim();
