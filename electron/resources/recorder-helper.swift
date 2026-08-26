@@ -445,6 +445,19 @@ guard let stopFile = argument("--stop-file") else {
     fputs("missing --stop-file\n", stderr)
     exit(2)
 }
+// LaunchServices gives the helper its TCC identity, but it also means the
+// parent cannot terminate us by killing the `open -W` waiter. Poll the stop
+// marker from process start — including during Accessibility's blocking
+// prompt — so a quit, a 5s ready-timeout, or a cancelled Teach-a-skill
+// session cannot leave a global event tap behind.
+var stopWatcher: DispatchSourceTimer?
+let stopTimer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+stopTimer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
+stopTimer.setEventHandler {
+    if FileManager.default.fileExists(atPath: stopFile) { exit(0) }
+}
+stopWatcher = stopTimer
+stopTimer.resume()
 let trustOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
 guard AXIsProcessTrustedWithOptions(trustOptions) else {
     fputs("Allow OpenMausBot Recorder in Privacy & Security → Accessibility, then try again. Input Monitoring may also be requested.\n", stderr)
