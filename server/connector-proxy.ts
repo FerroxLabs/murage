@@ -38,6 +38,22 @@ function textResult(id: unknown, text: string, isError = false): Json {
   return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) } };
 }
 
+function jsonRpcError(id: unknown, message: string): Json {
+  return { jsonrpc: "2.0", id, error: { code: -32000, message } };
+}
+
+function initializeResult(id: unknown, protocolVersion: unknown): Json {
+  return {
+    jsonrpc: "2.0",
+    id,
+    result: {
+      protocolVersion: typeof protocolVersion === "string" && protocolVersion ? protocolVersion : "2024-11-05",
+      capabilities: { tools: {} },
+      serverInfo: { name: "openmausbot-connectors", version: "1" },
+    },
+  };
+}
+
 async function readBounded(response: Response): Promise<string> {
   const declared = Number(response.headers.get("content-length") ?? "0");
   if (declared > MAX_RESPONSE_BYTES) throw new Error("connector response exceeded 20 MB");
@@ -127,6 +143,29 @@ async function showConnectorCards(slugs: string[]): Promise<void> {
 async function handle(message: Json): Promise<void> {
   const id = message.id;
   const method = String(message.method ?? "");
+  // OpenCode (and other MCP clients) mark a stdio server failed unless
+  // initialize returns capabilities/serverInfo. Relaying that handshake to
+  // Composio can time out, return a newer protocolVersion, or throw when the
+  // upstream URL never reached the child env — all of which previously
+  // surfaced as a tools/call-shaped {content,isError} payload.
+  if (method === "notifications/initialized" || method === "initialized") {
+    if (UPSTREAM) void relay(message).catch(() => {});
+    return;
+  }
+  if (method === "initialize") {
+    if (UPSTREAM) {
+      try {
+        await relay(message);
+      } catch {
+        // Best-effort session setup. The client still needs a valid result.
+      }
+    }
+    if (id !== undefined) {
+      const params = (message.params ?? {}) as Json;
+      send(initializeResult(id, params.protocolVersion));
+    }
+    return;
+  }
   if (method === "tools/call") {
     const params = (message.params ?? {}) as Json;
     const name = String(params.name ?? "");
@@ -144,8 +183,15 @@ async function handle(message: Json): Promise<void> {
       return;
     }
   }
-  const response = await relay(message);
-  if (response && id !== undefined) send(response);
+  try {
+    const response = await relay(message);
+    if (response && id !== undefined) send(response);
+  } catch (error) {
+    if (id === undefined) return;
+    const messageText = error instanceof Error ? error.message : String(error);
+    if (method === "tools/call") send(textResult(id, messageText, true));
+    else send(jsonRpcError(id, messageText));
+  }
 }
 
 const input = readline.createInterface({ input: process.stdin, terminal: false });
@@ -159,9 +205,11 @@ input.on("line", (line) => {
     return;
   }
   void handle(message).catch((error) => {
-    if (message.id !== undefined) {
-      send(textResult(message.id, error instanceof Error ? error.message : String(error), true));
-    }
+    if (message.id === undefined) return;
+    const method = String(message.method ?? "");
+    const messageText = error instanceof Error ? error.message : String(error);
+    if (method === "tools/call") send(textResult(message.id, messageText, true));
+    else send(jsonRpcError(message.id, messageText));
   });
 });
 input.on("close", () => process.exit(0));
