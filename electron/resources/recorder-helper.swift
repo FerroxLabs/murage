@@ -452,10 +452,12 @@ guard let stopFile = argument("--stop-file") else {
 // session cannot leave a global event tap behind.
 var stopWatcher: DispatchSourceTimer?
 let stopTimer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+let stopWatcherStopped = DispatchSemaphore(value: 0)
 stopTimer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
 stopTimer.setEventHandler {
     if FileManager.default.fileExists(atPath: stopFile) { exit(0) }
 }
+stopTimer.setCancelHandler { stopWatcherStopped.signal() }
 stopWatcher = stopTimer
 stopTimer.resume()
 let trustOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -468,6 +470,7 @@ guard AXIsProcessTrustedWithOptions(trustOptions) else {
 // blocking Accessibility prompt is finished.
 if FileManager.default.fileExists(atPath: stopFile) { exit(0) }
 stopTimer.cancel()
+stopWatcherStopped.wait()
 stopWatcher = nil
 let recorder = Recorder(stopFile: stopFile)
 guard recorder.start() else {
