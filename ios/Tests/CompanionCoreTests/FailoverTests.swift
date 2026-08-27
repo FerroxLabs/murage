@@ -297,6 +297,37 @@ final class FailoverTests: XCTestCase {
         XCTAssertEqual(persisted.orderedEndpoints.map(\.kind), [.lan, .hosted])
     }
 
+    func testAPriorityPreferredProtectedHeadOutranksTheActiveProtectedRoute() throws {
+        // A tailnet invite keeps the active tailnet route protected, but the
+        // desktop advertises its hosted HTTPS with a better priority: the
+        // trust ratchet must not hoist the active route above another
+        // protected head — only above a cleartext one.
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example",
+            kind: .hosted,
+            priority: 0
+        ))
+        let tailnet = try XCTUnwrap(CompanionEndpoint(
+            url: "http://mac.tail1234.ts.net:8810",
+            kind: .tailnet,
+            priority: 100
+        ))
+        let connection = Connection(
+            name: "Mac",
+            host: tailnet.host,
+            port: tailnet.port,
+            activeEndpoint: tailnet,
+            endpoints: [tailnet, hosted]
+        )
+
+        XCTAssertEqual(
+            connection.orderedEndpoints.map(\.kind),
+            [.hosted, .tailnet],
+            "an advertised protected head keeps its priority lead over the active route"
+        )
+        XCTAssertEqual(connection.automaticEndpoints.map(\.kind), [.hosted, .tailnet])
+    }
+
     func testPromotingAWorkingLegacyEndpointKeepsEveryLegacyFallback() throws {
         var connection = Connection(
             name: "Mac",
