@@ -67,4 +67,14 @@ export function applySkin(id: SkinId): void {
   } catch {
     /* quota / private mode — the skin still applies for this session */
   }
+  // The one surface CSS cannot reach: on Windows the caption buttons sit in a
+  // native overlay the main process paints. Left at the default it stays
+  // Midnight-black on a light skin — the "black block in the top-right
+  // corner" of issue #454. Best-effort: a browser tab or an older desktop
+  // build has no bridge, and the skin still applies without it.
+  try {
+    void window.ogb?.applySkin?.(id)?.catch(() => undefined);
+  } catch {
+    /* no bridge */
+  }
 }

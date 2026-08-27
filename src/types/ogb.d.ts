@@ -159,6 +159,8 @@ type SkillRecordingPayload = {
       openInstallTerminal?(command: string): Promise<boolean>;
       /** Opens an http(s) link in the user's default browser. */
       openExternal?(url: string): Promise<boolean>;
+      /** Recolor the native window chrome for a skin; absent on older builds. */
+      applySkin?(skin: string): Promise<boolean>;
       /** Receives a GitHub package URL opened through openmausbot://install. */
       onPackageInstall?(cb: (url: string) => void): () => void;
       /** Updates the native Dock/taskbar unread indicator. */
