@@ -463,6 +463,12 @@ guard AXIsProcessTrustedWithOptions(trustOptions) else {
     fputs("Allow OpenMausBot Recorder in Privacy & Security → Accessibility, then try again. Input Monitoring may also be requested.\n", stderr)
     exit(3)
 }
+// Recording has its own stop-file timer, which flushes any pending typing
+// before stopping the run loop. Hand off to that graceful path now that the
+// blocking Accessibility prompt is finished.
+if FileManager.default.fileExists(atPath: stopFile) { exit(0) }
+stopTimer.cancel()
+stopWatcher = nil
 let recorder = Recorder(stopFile: stopFile)
 guard recorder.start() else {
     fputs("input monitoring permission is required\n", stderr)
