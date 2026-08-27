@@ -1,0 +1,217 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  handleToolCall,
+  processMcpMessage,
+  TOOLS,
+} from "../scripts/mcp-server.ts";
+
+describe("MCP Server JSON-RPC Protocol", () => {
+  it("responds to initialize with protocol version and serverInfo", async () => {
+    const raw = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05" },
+    });
+    const resStr = await processMcpMessage(raw);
+    expect(resStr).not.toBeNull();
+    const res = JSON.parse(resStr!);
+
+    expect(res).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: {
+          name: "openmausbot-mcp",
+          version: "1.0.0",
+        },
+      },
+    });
+  });
+
+  it("handles ping method", async () => {
+    const raw = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
+    const resStr = await processMcpMessage(raw);
+    const res = JSON.parse(resStr!);
+    expect(res).toEqual({ jsonrpc: "2.0", id: 2, result: {} });
+  });
+
+  it("returns registered tools on tools/list", async () => {
+    const raw = JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" });
+    const resStr = await processMcpMessage(raw);
+    const res = JSON.parse(resStr!);
+
+    expect(res.result.tools).toBeInstanceOf(Array);
+    expect(res.result.tools.length).toBe(TOOLS.length);
+    expect(res.result.tools.map((t: any) => t.name)).toContain("list_bots");
+    expect(res.result.tools.map((t: any) => t.name)).toContain("send_bot_message");
+    expect(res.result.tools.map((t: any) => t.name)).toContain("set_bot_model");
+  });
+
+  it("returns parse error for invalid JSON", async () => {
+    const resStr = await processMcpMessage("not-a-valid-json");
+    const res = JSON.parse(resStr!);
+    expect(res).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+  });
+
+  it("returns method not found for unrecognized methods", async () => {
+    const raw = JSON.stringify({ jsonrpc: "2.0", id: 99, method: "unknown/method" });
+    const resStr = await processMcpMessage(raw);
+    const res = JSON.parse(resStr!);
+    expect(res).toMatchObject({
+      jsonrpc: "2.0",
+      id: 99,
+      error: { code: -32601, message: "Method not found: unknown/method" },
+    });
+  });
+});
+
+describe("MCP Server Tool Execution", () => {
+  it("executes get_system_health", async () => {
+    const mockFetcher = vi.fn(async (path: string) => {
+      if (path === "/api/health") return { ok: true, uptime: 1234 };
+      throw new Error(`Unexpected path ${path}`);
+    });
+
+    const res: any = await handleToolCall("get_system_health", {}, mockFetcher);
+    expect(mockFetcher).toHaveBeenCalledWith("/api/health");
+    expect(res).toMatchObject({ status: "connected", ok: true, uptime: 1234 });
+  });
+
+  it("executes list_bots", async () => {
+    const mockFetcher = vi.fn(async (path: string) => {
+      if (path === "/api/bots") {
+        return {
+          bots: [
+            { id: "bot-1", name: "Deckard", description: "Detective", busy: false, unread: false, messages: [{ id: "m1" }] },
+            { id: "bot-2", name: "Rachael", description: "Assistant", busy: true, unread: true, messages: [] },
+          ],
+        };
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+
+    const res: any = await handleToolCall("list_bots", {}, mockFetcher);
+    expect(res.bots).toHaveLength(2);
+    expect(res.bots[0]).toMatchObject({ id: "bot-1", name: "Deckard", messageCount: 1, busy: false });
+    expect(res.bots[1]).toMatchObject({ id: "bot-2", name: "Rachael", messageCount: 0, busy: true });
+  });
+
+  it("executes get_bot_messages with limit", async () => {
+    const mockFetcher = vi.fn(async (path: string) => {
+      if (path === "/api/bots") {
+        return {
+          bots: [
+            {
+              id: "bot-1",
+              name: "Deckard",
+              messages: [
+                { id: "m1", role: "user", text: "hello" },
+                { id: "m2", role: "assistant", text: "world" },
+              ],
+            },
+          ],
+        };
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+
+    const res: any = await handleToolCall("get_bot_messages", { bot_id: "bot-1", limit: 1 }, mockFetcher);
+    expect(res.botId).toBe("bot-1");
+    expect(res.messages).toHaveLength(1);
+    expect(res.messages[0]).toMatchObject({ id: "m2", text: "world" });
+  });
+
+  it("throws when get_bot_messages targets non-existent bot", async () => {
+    const mockFetcher = vi.fn(async () => ({ bots: [] }));
+    await expect(handleToolCall("get_bot_messages", { bot_id: "missing" }, mockFetcher)).rejects.toThrow(
+      "Bot not found: missing",
+    );
+  });
+
+  it("executes send_bot_message", async () => {
+    const mockFetcher = vi.fn(async (path: string, options?: RequestInit) => {
+      if (path === "/api/bots/bot-1/messages") {
+        expect(options?.method).toBe("POST");
+        expect(JSON.parse(options?.body as string)).toEqual({ text: "investigate scene" });
+        return { ok: true };
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+
+    const res: any = await handleToolCall("send_bot_message", { bot_id: "bot-1", text: "investigate scene" }, mockFetcher);
+    expect(res).toMatchObject({ success: true, result: { ok: true } });
+  });
+
+  it("executes set_bot_model with optional effort", async () => {
+    const mockFetcher = vi.fn(async (path: string, options?: RequestInit) => {
+      if (path === "/api/bots/bot-1") {
+        expect(options?.method).toBe("PATCH");
+        expect(JSON.parse(options?.body as string)).toEqual({
+          modelSelection: { instanceId: "openaiCompat", effort: "high" },
+        });
+        return { bot: { id: "bot-1", modelSelection: { instanceId: "openaiCompat", effort: "high" } } };
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+
+    const res: any = await handleToolCall(
+      "set_bot_model",
+      { bot_id: "bot-1", instance_id: "openaiCompat", effort: "high" },
+      mockFetcher,
+    );
+    expect(res.success).toBe(true);
+    expect(res.bot.modelSelection.instanceId).toBe("openaiCompat");
+  });
+
+  it("executes list_rooms and get_room_messages", async () => {
+    const mockFetcher = vi.fn(async (path: string) => {
+      if (path === "/api/bots") {
+        return {
+          groups: [
+            {
+              id: "room-1",
+              name: "War Room",
+              topic: "Incident response",
+              memberIds: ["bot-1", "bot-2"],
+              messages: [{ id: "rm-1", role: "user", text: "Status update please" }],
+            },
+          ],
+        };
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+
+    const roomsRes: any = await handleToolCall("list_rooms", {}, mockFetcher);
+    expect(roomsRes.rooms).toHaveLength(1);
+    expect(roomsRes.rooms[0].name).toBe("War Room");
+
+    const messagesRes: any = await handleToolCall("get_room_messages", { group_id: "room-1" }, mockFetcher);
+    expect(messagesRes.roomId).toBe("room-1");
+    expect(messagesRes.messages).toHaveLength(1);
+    expect(messagesRes.messages[0].text).toBe("Status update please");
+  });
+
+  it("executes interrupt_bot", async () => {
+    const mockFetcher = vi.fn(async (path: string, options?: RequestInit) => {
+      if (path === "/api/bots/bot-1/interrupt") {
+        expect(options?.method).toBe("POST");
+        return { ok: true };
+      }
+      throw new Error(`Unexpected path ${path}`);
+    });
+
+    const res: any = await handleToolCall("interrupt_bot", { bot_id: "bot-1" }, mockFetcher);
+    expect(res.success).toBe(true);
+  });
+
+  it("throws on unknown tool", async () => {
+    await expect(handleToolCall("non_existent_tool", {})).rejects.toThrow("Unknown tool: non_existent_tool");
+  });
+});
