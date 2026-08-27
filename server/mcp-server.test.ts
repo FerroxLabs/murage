@@ -126,6 +126,10 @@ describe("MCP Server Tool Execution", () => {
     expect(res.botId).toBe("bot-1");
     expect(res.messages).toHaveLength(1);
     expect(res.messages[0]).toMatchObject({ id: "m2", text: "world" });
+
+    // Verify negative or non-positive limit falls back to default without breaking slice
+    const defaultLimitRes: any = await handleToolCall("get_bot_messages", { bot_id: "bot-1", limit: -5 }, mockFetcher);
+    expect(defaultLimitRes.messages).toHaveLength(2);
   });
 
   it("throws when get_bot_messages targets non-existent bot", async () => {
@@ -135,9 +139,9 @@ describe("MCP Server Tool Execution", () => {
     );
   });
 
-  it("executes send_bot_message", async () => {
+  it("executes send_bot_message with URL encoding", async () => {
     const mockFetcher = vi.fn(async (path: string, options?: RequestInit) => {
-      if (path === "/api/bots/bot-1/messages") {
+      if (path === "/api/bots/bot%2Fspecial%231/messages") {
         expect(options?.method).toBe("POST");
         expect(JSON.parse(options?.body as string)).toEqual({ text: "investigate scene" });
         return { ok: true };
@@ -145,32 +149,36 @@ describe("MCP Server Tool Execution", () => {
       throw new Error(`Unexpected path ${path}`);
     });
 
-    const res: any = await handleToolCall("send_bot_message", { bot_id: "bot-1", text: "investigate scene" }, mockFetcher);
+    const res: any = await handleToolCall(
+      "send_bot_message",
+      { bot_id: "bot/special#1", text: "investigate scene" },
+      mockFetcher,
+    );
     expect(res).toMatchObject({ success: true, result: { ok: true } });
   });
 
-  it("executes set_bot_model with optional effort", async () => {
+  it("executes set_bot_model with optional effort and encoded bot_id", async () => {
     const mockFetcher = vi.fn(async (path: string, options?: RequestInit) => {
-      if (path === "/api/bots/bot-1") {
+      if (path === "/api/bots/bot%201") {
         expect(options?.method).toBe("PATCH");
         expect(JSON.parse(options?.body as string)).toEqual({
           modelSelection: { instanceId: "openaiCompat", effort: "high" },
         });
-        return { bot: { id: "bot-1", modelSelection: { instanceId: "openaiCompat", effort: "high" } } };
+        return { bot: { id: "bot 1", modelSelection: { instanceId: "openaiCompat", effort: "high" } } };
       }
       throw new Error(`Unexpected path ${path}`);
     });
 
     const res: any = await handleToolCall(
       "set_bot_model",
-      { bot_id: "bot-1", instance_id: "openaiCompat", effort: "high" },
+      { bot_id: "bot 1", instance_id: "openaiCompat", effort: "high" },
       mockFetcher,
     );
     expect(res.success).toBe(true);
     expect(res.bot.modelSelection.instanceId).toBe("openaiCompat");
   });
 
-  it("executes list_rooms and get_room_messages", async () => {
+  it("executes list_rooms mapping bulletin to topic and get_room_messages", async () => {
     const mockFetcher = vi.fn(async (path: string) => {
       if (path === "/api/bots") {
         return {
@@ -178,7 +186,7 @@ describe("MCP Server Tool Execution", () => {
             {
               id: "room-1",
               name: "War Room",
-              topic: "Incident response",
+              bulletin: "Shared incident brief",
               memberIds: ["bot-1", "bot-2"],
               messages: [{ id: "rm-1", role: "user", text: "Status update please" }],
             },
@@ -191,23 +199,24 @@ describe("MCP Server Tool Execution", () => {
     const roomsRes: any = await handleToolCall("list_rooms", {}, mockFetcher);
     expect(roomsRes.rooms).toHaveLength(1);
     expect(roomsRes.rooms[0].name).toBe("War Room");
+    expect(roomsRes.rooms[0].topic).toBe("Shared incident brief");
 
-    const messagesRes: any = await handleToolCall("get_room_messages", { group_id: "room-1" }, mockFetcher);
+    const messagesRes: any = await handleToolCall("get_room_messages", { group_id: "room-1", limit: -10 }, mockFetcher);
     expect(messagesRes.roomId).toBe("room-1");
     expect(messagesRes.messages).toHaveLength(1);
     expect(messagesRes.messages[0].text).toBe("Status update please");
   });
 
-  it("executes interrupt_bot", async () => {
+  it("executes interrupt_bot with encoded bot_id", async () => {
     const mockFetcher = vi.fn(async (path: string, options?: RequestInit) => {
-      if (path === "/api/bots/bot-1/interrupt") {
+      if (path === "/api/bots/bot%3A1/interrupt") {
         expect(options?.method).toBe("POST");
         return { ok: true };
       }
       throw new Error(`Unexpected path ${path}`);
     });
 
-    const res: any = await handleToolCall("interrupt_bot", { bot_id: "bot-1" }, mockFetcher);
+    const res: any = await handleToolCall("interrupt_bot", { bot_id: "bot:1" }, mockFetcher);
     expect(res.success).toBe(true);
   });
 

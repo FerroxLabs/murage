@@ -145,6 +145,11 @@ export const TOOLS: McpToolDefinition[] = [
   },
 ];
 
+function parsePositiveLimit(raw: unknown, fallback = 30): number {
+  const parsed = Math.floor(Number(raw));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export async function handleToolCall(
   name: string,
   args: Record<string, unknown>,
@@ -175,7 +180,7 @@ export async function handleToolCall(
       const res = await fetcher("/api/bots");
       const bot = ((res.bots as Array<Record<string, unknown>>) || []).find((b) => b.id === args.bot_id);
       if (!bot) throw new Error(`Bot not found: ${args.bot_id}`);
-      const limit = Number(args.limit) || 30;
+      const limit = parsePositiveLimit(args.limit, 30);
       const messages = ((bot.messages as Array<Record<string, unknown>>) || []).slice(-limit).map((msg) => ({
         id: msg.id,
         role: msg.role,
@@ -189,7 +194,7 @@ export async function handleToolCall(
     }
 
     case "send_bot_message": {
-      const res = await fetcher(`/api/bots/${args.bot_id}/messages`, {
+      const res = await fetcher(`/api/bots/${encodeURIComponent(String(args.bot_id))}/messages`, {
         method: "POST",
         body: JSON.stringify({ text: args.text }),
       });
@@ -201,7 +206,7 @@ export async function handleToolCall(
       const groups = ((res.groups as Array<Record<string, unknown>>) || []).map((g) => ({
         id: g.id,
         name: g.name,
-        topic: g.topic,
+        topic: typeof g.bulletin === "string" && g.bulletin ? g.bulletin : typeof g.topic === "string" ? g.topic : "",
         memberIds: g.memberIds,
         busyBotId: g.busyBotId,
         messageCount: (g.messages as Array<unknown> | undefined)?.length || 0,
@@ -213,7 +218,7 @@ export async function handleToolCall(
       const res = await fetcher("/api/bots");
       const group = ((res.groups as Array<Record<string, unknown>>) || []).find((g) => g.id === args.group_id);
       if (!group) throw new Error(`Room/Group not found: ${args.group_id}`);
-      const limit = Number(args.limit) || 30;
+      const limit = parsePositiveLimit(args.limit, 30);
       const messages = ((group.messages as Array<Record<string, unknown>>) || []).slice(-limit).map((msg) => ({
         id: msg.id,
         role: msg.role,
@@ -227,7 +232,7 @@ export async function handleToolCall(
     }
 
     case "send_room_message": {
-      const res = await fetcher(`/api/groups/${args.group_id}/messages`, {
+      const res = await fetcher(`/api/groups/${encodeURIComponent(String(args.group_id))}/messages`, {
         method: "POST",
         body: JSON.stringify({ text: args.text }),
       });
@@ -241,7 +246,7 @@ export async function handleToolCall(
         },
       };
       if (args.effort) (patch.modelSelection as Record<string, unknown>).effort = args.effort;
-      const res = await fetcher(`/api/bots/${args.bot_id}`, {
+      const res = await fetcher(`/api/bots/${encodeURIComponent(String(args.bot_id))}`, {
         method: "PATCH",
         body: JSON.stringify(patch),
       });
@@ -254,7 +259,7 @@ export async function handleToolCall(
     }
 
     case "interrupt_bot": {
-      const res = await fetcher(`/api/bots/${args.bot_id}/interrupt`, {
+      const res = await fetcher(`/api/bots/${encodeURIComponent(String(args.bot_id))}/interrupt`, {
         method: "POST",
       });
       return { success: true, result: res };
