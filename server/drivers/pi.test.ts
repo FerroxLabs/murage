@@ -255,6 +255,17 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-exit")).toBe(false);
   });
 
+  it("surfaces a pi turn error instead of reporting an empty success", async () => {
+    await create("turn-error");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-turn-error", text: "hi" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ ok: false, stopReason: "failed", usage: { input: 0, output: 0 } });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({
+      message: "Invalid schema for function 'computer_browser_prepare'",
+    });
+    expect(instance.adapter.hasSession("t-turn-error")).toBe(false);
+  });
+
   it("advertises images and every harness effort level", async () => {
     await create();
     expect(instance.adapter.capabilities.images).toBe(true);
