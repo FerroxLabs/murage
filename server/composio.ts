@@ -316,8 +316,9 @@ async function getProjectSession(apiKey: string, sessionId: string): Promise<Ses
 
 /** The project's own (non-Composio-managed) auth configs, one per toolkit.
  *  Disabled configs and ones switched off for Sessions are skipped; when a
- *  toolkit has several, the most recently updated wins. A scoped key can be
- *  denied this list — callers treat a failure as "none", never as fatal. */
+ *  toolkit has several, the most recently updated wins. Ordinary Session
+ *  preparation treats a denied list as "none"; an explicit auth retry surfaces
+ *  the denial so it cannot replace a usable Session with an incomplete one. */
 export async function listCustomAuthConfigs(apiKey: string): Promise<AuthConfigMap> {
   const chosen = new Map<string, { id: string; updated: string }>();
   let cursor: string | undefined;
@@ -363,6 +364,7 @@ function authConfigsKey(sessionId: string, wanted: AuthConfigMap): string {
 export async function prepareProjectSession(
   apiKey: string,
   current?: { apiKey?: string; userId?: string; sessionId?: string },
+  knownAuthConfigs?: AuthConfigMap,
 ): Promise<{ apiKey: string; userId: string; sessionId: string }> {
   const trimmed = apiKey.trim();
   if (!trimmed) throw new Error("Enter a Composio project API key");
@@ -372,7 +374,8 @@ export async function prepareProjectSession(
   // cannot be edited later — so they are read before deciding whether the
   // current Session is still the right one (issue #509: a twitter auth
   // config created after the Session existed was never used).
-  const authConfigs = await listCustomAuthConfigs(trimmed).catch((): AuthConfigMap => ({}));
+  const authConfigs = knownAuthConfigs
+    ?? await listCustomAuthConfigs(trimmed).catch((): AuthConfigMap => ({}));
   let priorUserId = current?.userId;
   if (trimmed === current?.apiKey && current.sessionId) {
     const existing = await getProjectSession(trimmed, current.sessionId);
@@ -443,10 +446,18 @@ async function ensureProjectSession(cfg: AppConfig): Promise<SessionResponse> {
 /** Replace the current Session with a freshly created one — the only way to
  *  pick up an auth config the user added after the Session was made. The
  *  Composio user id is kept, so every existing connection survives. */
-async function recreateProjectSession(cfg: AppConfig): Promise<SessionResponse> {
+async function recreateProjectSession(
+  cfg: AppConfig,
+  userId: string,
+  authConfigs: AuthConfigMap,
+): Promise<SessionResponse> {
   const composio = cfg.composio;
   if (!composio?.apiKey) throw new Error("No Composio project key configured");
-  const prepared = await prepareProjectSession(composio.apiKey, { apiKey: composio.apiKey, userId: composio.userId });
+  const prepared = await prepareProjectSession(
+    composio.apiKey,
+    { apiKey: composio.apiKey, userId },
+    authConfigs,
+  );
   multiAccountUpgradeAttempted.add(prepared.sessionId);
   composio.userId = prepared.userId;
   composio.sessionId = prepared.sessionId;
@@ -842,15 +853,16 @@ export async function authorizeService(cfg: AppConfig, slug: string, requestedAl
     // the Session existed is invisible to it: rebuild the Session once and
     // retry. If the project has no config for this toolkit, say what to do
     // instead of echoing Composio's "auth_config_override" hint.
-    const fresh = await recreateProjectSession(cfg);
     const slugLower = slug.toLowerCase();
-    const covered = Object.keys(fresh.config?.auth_configs ?? {}).some((key) => key.toLowerCase() === slugLower);
+    const authConfigs = await listCustomAuthConfigs(apiKey);
+    const covered = Object.keys(authConfigs).some((key) => key.toLowerCase() === slugLower);
     if (!covered) {
       throw inputError(
         `${slug} has no Composio-managed sign-in. In your Composio project, create an auth config for "${slug}" `
           + "(Auth Configs → Create) with your own app credentials, then click Connect again.",
       );
     }
+    const fresh = await recreateProjectSession(cfg, userId, authConfigs);
     res = await link(fresh.session_id);
     if (!res.ok) throw new Error(await responseError(res, `Composio authorization: HTTP ${res.status}`));
   }
