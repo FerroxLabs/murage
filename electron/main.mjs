@@ -952,6 +952,7 @@ ipcMain.on("desktop:unread-count", (event, value) => {
 
 function createWindow() {
   const isMac = process.platform === "darwin";
+  const waitsForSkinSync = process.platform === "win32";
   const primary = screen.getPrimaryDisplay();
   const displays = [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)];
   const restored = resolveWindowState(readWindowState(), displays.map((display) => display.workArea));
@@ -959,6 +960,11 @@ function createWindow() {
     ...restored.bounds,
     minWidth: 900,
     minHeight: 600,
+    // The renderer restores its persisted skin before mounting React and
+    // mirrors it over desktop:skin. Keep Windows hidden until that handshake
+    // recolors the native caption-button overlay, otherwise a saved light
+    // skin still flashes the Midnight-black block on every cold start.
+    show: !waitsForSkinSync,
     icon: APP_ICON,
     backgroundColor: "#070707",
     autoHideMenuBar: process.platform !== "darwin",
@@ -986,6 +992,18 @@ function createWindow() {
     },
   });
   mainWindow = win;
+  if (waitsForSkinSync) {
+    // A broken renderer or preload must not strand the app as an invisible
+    // process. Normal startup shows from desktop:skin almost immediately;
+    // this is only the bounded recovery path.
+    const skinSyncFallback = setTimeout(() => {
+      if (!win.isDestroyed() && !win.isVisible()) win.show();
+    }, 5_000);
+    skinSyncFallback.unref?.();
+    const clearSkinSyncFallback = () => clearTimeout(skinSyncFallback);
+    win.once("show", clearSkinSyncFallback);
+    win.once("closed", clearSkinSyncFallback);
+  }
   installWindowStatePersistence(win);
   applyUnreadBadge(win);
   if (restored.maximized) win.maximize();
@@ -1265,6 +1283,9 @@ ipcMain.handle("desktop:skin", (event, skin) => {
     const sender = BrowserWindow.fromWebContents(event.sender);
     try {
       sender?.setTitleBarOverlay({ ...skinChrome(skin), height: 60 });
+      // The first Windows window starts hidden so a persisted light skin is
+      // already applied when native chrome becomes visible.
+      if (sender && !sender.isVisible()) sender.show();
     } catch {
       // a window created without an overlay throws; safe to ignore
     }
