@@ -21,6 +21,11 @@ let base = "";
 const calls: Array<{ method: string; path: string; query: string; body: any }> = [];
 let malformedConnectedAccounts = false;
 let connectedAccountsUnavailable = false;
+// The project's own auth configs, and the ones the stub Session was created
+// with — a Session only knows the configs named at its creation, which is
+// the whole reason #509 happened.
+let customAuthConfigs: Array<Record<string, unknown>> = [];
+let sessionAuthConfigs: Record<string, string> = {};
 
 beforeAll(async () => {
   api = createServer(async (req, res) => {
@@ -36,11 +41,12 @@ beforeAll(async () => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/v3.1/tool_router/session") {
+      sessionAuthConfigs = body.auth_configs ?? {};
       res.writeHead(201, { "content-type": "application/json" });
       return res.end(JSON.stringify({
         session_id: "trs_test",
         mcp: { type: "http", url: "https://app.composio.dev/tool_router/v3/trs_test/mcp" },
-        config: { user_id: body.user_id, multi_account: body.multi_account },
+        config: { user_id: body.user_id, multi_account: body.multi_account, auth_configs: sessionAuthConfigs },
       }));
     }
     if (req.method === "GET" && url.pathname === "/api/v3.1/tool_router/session/trs_test") {
@@ -55,8 +61,13 @@ beforeAll(async () => {
             max_accounts_per_toolkit: 5,
             require_explicit_selection: true,
           },
+          auth_configs: sessionAuthConfigs,
         },
       }));
+    }
+    if (req.method === "GET" && url.pathname === "/api/v3.1/auth_configs") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ items: customAuthConfigs }));
     }
     if (req.method === "GET" && url.pathname === "/api/v3.1/tool_router/session/trs_legacy") {
       res.writeHead(200, { "content-type": "application/json" });
@@ -112,6 +123,18 @@ beforeAll(async () => {
       }));
     }
     if (req.method === "POST" && url.pathname.endsWith("/link")) {
+      // twitter has no Composio-managed auth: the link only works when the
+      // Session was created with the project's own config for it
+      if (body.toolkit === "twitter" && !sessionAuthConfigs.twitter) {
+        res.writeHead(400, { "content-type": "application/json" });
+        return res.end(JSON.stringify({
+          error: {
+            message:
+              "Composio does not manage auth for toolkit twitter and no auth config without required fields is available. "
+              + "Please create an auth config manually or specify one in auth_config_override.",
+          },
+        }));
+      }
       res.writeHead(201, { "content-type": "application/json" });
       return res.end(JSON.stringify({ redirect_url: `https://connect.composio.dev/link/${body.toolkit}` }));
     }
@@ -234,6 +257,74 @@ describe.sequential("Composio Sessions", () => {
         max_accounts_per_toolkit: 5,
         require_explicit_selection: true,
       },
+    });
+  });
+
+  it("names the project's own auth configs at creation and rebuilds a Session that predates them", async () => {
+    customAuthConfigs = [
+      { id: "ac_twitter_old", toolkit: { slug: "twitter" }, is_composio_managed: false, status: "ENABLED", last_updated_at: "2026-08-20T00:00:00Z" },
+      // newest wins, and the slug is matched case-insensitively
+      { id: "ac_twitter", toolkit: { slug: "TWITTER" }, is_composio_managed: false, status: "ENABLED", last_updated_at: "2026-08-25T00:00:00Z" },
+      // Composio-managed, disabled, and switched-off-for-Sessions configs are not the user's choice
+      { id: "ac_github_managed", toolkit: { slug: "github" }, is_composio_managed: true, status: "ENABLED" },
+      { id: "ac_slack_disabled", toolkit: { slug: "slack" }, is_composio_managed: false, status: "DISABLED" },
+      { id: "ac_notion_off", toolkit: { slug: "notion" }, is_composio_managed: false, is_enabled_for_tool_router: false },
+    ];
+    sessionAuthConfigs = {};
+    try {
+      const current = { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" };
+      const before = calls.length;
+      await expect(prepareProjectSession("ak_test", current)).resolves.toEqual({ ...current });
+      const creates = calls.slice(before).filter((call) => call.method === "POST" && call.path.endsWith("/session"));
+      expect(creates).toHaveLength(1);
+      expect(creates[0].body).toMatchObject({ user_id: "openmausbot_existing", auth_configs: { twitter: "ac_twitter" } });
+      // the rebuilt Session now covers the configs, so the next check reuses it
+      const after = calls.length;
+      await prepareProjectSession("ak_test", current);
+      expect(calls.slice(after).some((call) => call.method === "POST" && call.path.endsWith("/session"))).toBe(false);
+    } finally {
+      customAuthConfigs = [];
+      sessionAuthConfigs = {};
+    }
+  });
+
+  it("rebuilds the Session and retries when a toolkit needs the project's own auth config", async () => {
+    customAuthConfigs = [{ id: "ac_twitter", toolkit: { slug: "twitter" }, is_composio_managed: false, status: "ENABLED" }];
+    sessionAuthConfigs = {};
+    const cfg: AppConfig = {
+      // The live Session is authoritative. A stale local user ID must never
+      // move the rebuilt Session away from the existing connected accounts.
+      composio: { apiKey: "ak_test", userId: "stale-local-user", sessionId: "trs_test" },
+    };
+    try {
+      const before = calls.length;
+      await expect(authorizeService(cfg, "twitter")).resolves.toEqual({ url: "https://connect.composio.dev/link/twitter" });
+      const since = calls.slice(before);
+      // once against the stale Session, once against the rebuilt one
+      expect(since.filter((call) => call.method === "POST" && call.path.endsWith("/link"))).toHaveLength(2);
+      expect(since.filter((call) => call.method === "POST" && call.path.endsWith("/session")).at(-1)?.body).toMatchObject({
+        user_id: "openmausbot_existing",
+        auth_configs: { twitter: "ac_twitter" },
+      });
+      // the same Composio user keeps every existing connection
+      expect(cfg.composio).toMatchObject({ userId: "openmausbot_existing", sessionId: "trs_test" });
+    } finally {
+      customAuthConfigs = [];
+      sessionAuthConfigs = {};
+    }
+  });
+
+  it("says what to create when the project has no auth config for the toolkit", async () => {
+    const cfg: AppConfig = {
+      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+    };
+    const before = calls.length;
+    await expect(authorizeService(cfg, "twitter")).rejects.toThrow(/create an auth config for "twitter"/i);
+    expect(calls.slice(before).some((call) => call.method === "POST" && call.path.endsWith("/session"))).toBe(false);
+    expect(cfg.composio).toMatchObject({ userId: "openmausbot_existing", sessionId: "trs_test" });
+    // and a failure that is not about auth configs is passed through untouched
+    await expect(authorizeService(cfg, "github", "personal-three")).resolves.toEqual({
+      url: "https://connect.composio.dev/link/github",
     });
   });
 
