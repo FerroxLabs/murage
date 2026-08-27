@@ -539,7 +539,13 @@ export class RoutineManager {
   }
 
   private initialOccurrence(schedule: RoutineSchedule, now: number): number | null {
-    if (schedule.type === "once") return Math.max(schedule.at, now);
+    // Return the original time, not max(at, now): tick() already decides
+    // whether a stale "once" run fires or is recorded as "missed" based on
+    // how far past the scheduled time it is. Clamping to now here hides the
+    // original schedule from the run receipt (scheduledFor would read "now"
+    // instead of the time the user chose) and prevents the 12-hour missed
+    // threshold from ever triggering for a "once" routine created late.
+    if (schedule.type === "once") return schedule.at;
     return nextOccurrence(schedule, now);
   }
 
