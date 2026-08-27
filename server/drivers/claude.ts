@@ -764,7 +764,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         ok: boolean,
         stopReason: string | null,
         cost: number | null = null,
-        usage?: { input: number; output: number },
+        usage?: { input: number; output: number; cachedInput?: number },
       ) => {
         const t = session.turn;
         if (!t || t.settled) return;
@@ -845,7 +845,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 type: "thread.token-usage.updated",
                 input: (msg.usage.input_tokens || 0) + (msg.usage.cache_read_input_tokens || 0),
                 output: msg.usage.output_tokens || 0,
-                cachedInput: msg.usage.cache_read_input_tokens || 0,
+                ...(typeof msg.usage.cache_read_input_tokens === "number"
+                  ? { cachedInput: msg.usage.cache_read_input_tokens }
+                  : {}),
               });
             }
             break;
@@ -871,7 +873,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 ? {
                     input: (o.usage.input_tokens || 0) + (o.usage.cache_read_input_tokens || 0) + (o.usage.cache_creation_input_tokens || 0),
                     output: o.usage.output_tokens || 0,
-                    cachedInput: o.usage.cache_read_input_tokens || 0,
+                    ...(typeof o.usage.cache_read_input_tokens === "number"
+                      ? { cachedInput: o.usage.cache_read_input_tokens }
+                      : {}),
                   }
                 : undefined,
             );

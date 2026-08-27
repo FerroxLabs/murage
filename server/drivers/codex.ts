@@ -410,7 +410,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               state.usage = {
                 input: turnUsage.inputTokens ?? 0,
                 output: turnUsage.outputTokens ?? 0,
-                cachedInput: turnUsage.cachedInputTokens ?? 0,
+                ...(typeof turnUsage.cachedInputTokens === "number"
+                  ? { cachedInput: turnUsage.cachedInputTokens }
+                  : {}),
               };
             }
             const t = p.tokenUsage?.total;
@@ -420,7 +422,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 type: "thread.token-usage.updated",
                 input: t.inputTokens ?? 0,
                 output: t.outputTokens ?? 0,
-                cachedInput: t.cachedInputTokens ?? 0,
+                ...(typeof t.cachedInputTokens === "number"
+                  ? { cachedInput: t.cachedInputTokens }
+                  : {}),
               });
             }
             break;

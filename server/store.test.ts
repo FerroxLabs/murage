@@ -82,16 +82,19 @@ describe("Store", () => {
     // a driver that never reports the cached share leaves it unchanged
     store.addTaskUsage(bot.id, bot.threadId, { input: 800, output: 100, costUsd: null });
     store.addTaskUsage(bot.id, bot.threadId, { input: Number.NaN, output: -20, cachedInput: -5, costUsd: null });
+    // Providers occasionally report a cache count larger than input; keep the
+    // persisted share physically possible so percentages cannot exceed 100%.
+    store.addTaskUsage(bot.id, bot.threadId, { input: 10, output: 0, cachedInput: 20, costUsd: null });
     // a different thread never inherits another task's tally
     expect(store.addTaskUsage(bot.id, "no-such-thread", { input: 5, output: 5, costUsd: null })).toBeNull();
 
     const reloaded = new Store(selection);
     expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({
-      input: 2000,
+      input: 2010,
       output: 400,
-      cachedInput: 1000,
+      cachedInput: 1010,
       costUsd: null,
-      turns: 3,
+      turns: 4,
     });
   });
 
