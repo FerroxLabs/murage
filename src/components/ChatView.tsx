@@ -41,6 +41,7 @@ import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { stateForBot } from "@/lib/mascot";
 import { showWorkingDots } from "@/lib/turn-tail";
+import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
@@ -513,7 +514,7 @@ function Bubble({
             onClick={() => dispatch({ type: "cancelQueued", botId: bot.id, queueId: message.queueId ?? message.id })}
             aria-label="Cancel queued message"
             title="Cancel queued message"
-            className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-white hover:bg-white/10"
+            className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
           >
             <X size={11} strokeWidth={2.5} />
           </button>
@@ -878,6 +879,7 @@ export function ChatView({ bot }: { bot: Bot }) {
   // is finished, the whole bubble pops in above the mascot.
   const lastMessage = messages.at(-1);
   const toolInFlight = lastMessage?.kind === "activity" && lastMessage.tool?.ok === undefined;
+  const activityLabel = liveActivityLabel(lastMessage);
   const waiting = Boolean(
     bot.busy &&
       bot.activity !== "waiting-on-you" &&
@@ -1228,6 +1230,7 @@ export function ChatView({ bot }: { bot: Bot }) {
               />
             }
             visible={presenceVisible}
+            label={activityLabel}
             answering={popping !== null}
           >
             {popping ? (

@@ -1,4 +1,4 @@
-// Left-edge tail: mascot looks around while it works, with a "Working"
+// Left-edge tail: mascot looks around while it works, with a live activity
 // sheen beside it. The moment there is an answer, the label is gone and
 // the full bubble pops in above the mascot (same left edge).
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -7,11 +7,13 @@ import { cn } from "@/lib/cn";
 export function TurnPresence({
   avatar,
   visible,
+  label = "Thinking",
   answering = false,
   children,
 }: {
   avatar: ReactNode;
   visible: boolean;
+  label?: string;
   answering?: boolean;
   children?: ReactNode;
 }) {
@@ -55,7 +57,7 @@ export function TurnPresence({
         {avatar}
         {showWorking ? (
           <span className="thinking-shimmer animate-shimmer text-[13px] leading-none" aria-live="polite">
-            Working
+            {label}
           </span>
         ) : null}
       </div>

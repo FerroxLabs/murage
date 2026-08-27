@@ -1241,7 +1241,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return bot ? openOnboardingCard(bot) : undefined;
       })();
       if (action.type === "deleteBot") botPatchQueue.cancel(action.botId);
-      rawDispatch(action);
+      // A queued message is still real until the server confirms deletion.
+      // All other actions keep their existing optimistic behavior.
+      if (action.type !== "cancelQueued") rawDispatch(action);
       switch (action.type) {
         case "createRoutine":
           api("/api/routines", { method: "POST", body: JSON.stringify(action.input) }).catch(showError);
@@ -1265,7 +1267,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           api(`/api/routine-runs/${action.runId}/seen`, { method: "POST" }).catch(showError);
           break;
         case "cancelQueued":
-          api(`/api/bots/${action.botId}/queue/${action.queueId}`, { method: "DELETE" }).catch(showError);
+          void api(`/api/bots/${action.botId}/queue/${action.queueId}`, { method: "DELETE" })
+            .then(() => rawDispatch(action))
+            .catch(showError);
           break;
         case "send": {
           // persist through the existing card route so an older server that

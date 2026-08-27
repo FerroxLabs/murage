@@ -429,7 +429,7 @@ export function Composer({
               }}
               aria-label="Cancel queued message"
               title="Cancel queued message"
-              className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-white hover:bg-white/10"
+              className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
             >
               <X size={13} strokeWidth={2.5} />
             </button>

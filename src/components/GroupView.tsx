@@ -38,6 +38,7 @@ import { useFocusMessage } from "@/lib/focus-message";
 import { shortPath } from "@/lib/short-path";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 import { showWorkingDots } from "@/lib/turn-tail";
+import { liveActivityLabel } from "@/lib/live-activity";
 import { splitAttachedImages } from "@/lib/composer-attachments";
 import {
   TRANSCRIPT_WINDOW_SIZE,
@@ -837,11 +838,12 @@ export function GroupView({ group }: { group: Group }) {
   // Mascot stays while a member works; the finished reply pops in above it.
   const lastGroupMessage = group.messages.at(-1);
   const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined;
+  const activityLabel = liveActivityLabel(lastGroupMessage);
   const waiting = Boolean(
     speaker && showWorkingDots(true, undefined, group.messages.at(-1), speaker.id),
   );
   const wasWaiting = useRef(false);
-  const [popping, setPopping] = useState<{ id: string; text: string } | null>(null);
+  const [popping, setPopping] = useState<{ id: string; text: string; botId?: string } | null>(null);
   useEffect(() => {
     wasWaiting.current = false;
     setPopping(null);
@@ -852,11 +854,22 @@ export function GroupView({ group }: { group: Group }) {
   useEffect(() => {
     if (lastGroupMessage?.role !== "bot" || lastGroupMessage.kind !== "text" || !wasWaiting.current) return;
     wasWaiting.current = false;
-    setPopping({ id: lastGroupMessage.id, text: lastGroupMessage.text ?? "" });
+    setPopping({
+      id: lastGroupMessage.id,
+      text: lastGroupMessage.text ?? "",
+      botId: lastGroupMessage.from?.botId,
+    });
     const timer = setTimeout(() => setPopping(null), 520);
     return () => clearTimeout(timer);
-  }, [lastGroupMessage?.id, lastGroupMessage?.role, lastGroupMessage?.kind, lastGroupMessage?.text]);
+  }, [
+    lastGroupMessage?.id,
+    lastGroupMessage?.role,
+    lastGroupMessage?.kind,
+    lastGroupMessage?.text,
+    lastGroupMessage?.from?.botId,
+  ]);
   const presenceVisible = waiting || popping !== null;
+  const presenceSpeaker = speaker ?? members.find((member) => member.id === popping?.botId) ?? members[0];
 
   // Windowed transcript, mirroring ChatView: only a tail of the room mounts;
   // the anchored boundary re-tails on a render-phase reset when the room (or
@@ -1204,7 +1217,7 @@ export function GroupView({ group }: { group: Group }) {
             <TurnPresence
               avatar={
                 <MausAvatar
-                  color={(speaker ?? members[0])?.color ?? "green"}
+                  color={presenceSpeaker?.color ?? "green"}
                   state={toolInFlight ? "working" : "thinking"}
                   size={36}
                   forward={false}
@@ -1213,6 +1226,7 @@ export function GroupView({ group }: { group: Group }) {
                 />
               }
               visible={presenceVisible}
+              label={activityLabel}
               answering={popping !== null}
             >
               {popping ? (
