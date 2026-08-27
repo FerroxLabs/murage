@@ -181,4 +181,47 @@ describe("OpenAICompatDriver", () => {
     await expect(inst.generateText?.("question")).resolves.toBe("usable result");
     await inst.dispose();
   });
+
+  it("falls back to reasoning_content when content is empty (streaming)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith("/models")) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        return new Response(
+          'data: {"choices":[{"delta":{"reasoning_content":"thinking through the problem"}}]}\n' +
+            'data: {"choices":[{"delta":{"content":""}}]}\n' +
+            'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}\n' +
+            "data: [DONE]\n",
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }),
+    );
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "test-reasoning-fallback-stream",
+      displayName: "Reasoning Fallback",
+      enabled: true,
+      config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" },
+      environment: { TEST_KEY: "secret" },
+    });
+    const recorder = recordEvents(inst.adapter);
+
+    await inst.adapter.sendTurn({ threadId: "thread-rf", text: "prompt", model: "vendor/model" });
+    const item = await recorder.until((e) => e.type === "item.completed");
+    const completed = await recorder.until((e) => e.type === "turn.completed");
+
+    expect(item).toMatchObject({
+      type: "item.completed",
+      itemType: "assistant_text",
+      text: "thinking through the problem",
+    });
+    expect(completed).toMatchObject({ ok: true, usage: { input: 10, output: 5 } });
+
+    const deltas = recorder.events.filter((e) => e.type === "content.delta");
+    expect(deltas.some((d: any) => d.streamKind === "reasoning_text" && d.delta === "thinking through the problem")).toBe(true);
+
+    recorder.stop();
+    await inst.dispose();
+  });
 });
