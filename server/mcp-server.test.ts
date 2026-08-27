@@ -60,6 +60,64 @@ describe("MCP Server JSON-RPC Protocol", () => {
     });
   });
 
+  it("returns invalid request error for non-object, null, or array JSON", async () => {
+    const nullRes = JSON.parse((await processMcpMessage("null"))!);
+    expect(nullRes).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request" },
+    });
+
+    const arrayRes = JSON.parse((await processMcpMessage("[1, 2, 3]"))!);
+    expect(arrayRes).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request" },
+    });
+
+    const primitiveRes = JSON.parse((await processMcpMessage('"just a string"'))!);
+    expect(primitiveRes).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request" },
+    });
+  });
+
+  it("suppresses response for JSON-RPC notifications without id", async () => {
+    // Standard notification
+    const initNotification = await processMcpMessage(
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+    );
+    expect(initNotification).toBeNull();
+
+    // Ping notification without id
+    const pingNotification = await processMcpMessage(JSON.stringify({ jsonrpc: "2.0", method: "ping" }));
+    expect(pingNotification).toBeNull();
+
+    // tools/list notification without id
+    const listNotification = await processMcpMessage(JSON.stringify({ jsonrpc: "2.0", method: "tools/list" }));
+    expect(listNotification).toBeNull();
+  });
+
+  it("rejects unsupported protocol versions during initialize", async () => {
+    const raw = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 10,
+      method: "initialize",
+      params: { protocolVersion: "1999-01-01" },
+    });
+    const resStr = await processMcpMessage(raw);
+    const res = JSON.parse(resStr!);
+    expect(res).toMatchObject({
+      jsonrpc: "2.0",
+      id: 10,
+      error: {
+        code: -32602,
+        message: "Unsupported protocol version: 1999-01-01. Supported: 2024-11-05",
+      },
+    });
+  });
+
   it("returns method not found for unrecognized methods", async () => {
     const raw = JSON.stringify({ jsonrpc: "2.0", id: 99, method: "unknown/method" });
     const resStr = await processMcpMessage(raw);

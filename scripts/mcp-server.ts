@@ -271,7 +271,7 @@ export async function handleToolCall(
 }
 
 export function formatResponse(id: string | number | null, result?: unknown, error?: { code?: number; message?: string }) {
-  const payload: Record<string, unknown> = { jsonrpc: "2.0", id };
+  const payload: Record<string, unknown> = { jsonrpc: "2.0", id: id ?? null };
   if (error) {
     payload.error = {
       code: error.code || -32603,
@@ -297,10 +297,30 @@ export async function processMcpMessage(
     return formatResponse(null, undefined, { code: -32700, message: "Parse error" });
   }
 
-  const { id = null, method, params } = message;
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return formatResponse(null, undefined, { code: -32600, message: "Invalid Request" });
+  }
+
+  const isNotification = !("id" in message) || message.id === undefined;
+  const id = isNotification ? null : message.id;
+  const { method, params } = message;
+
+  if (typeof method !== "string") {
+    if (isNotification) return null;
+    return formatResponse(id, undefined, { code: -32600, message: "Invalid Request: method is required" });
+  }
 
   try {
     if (method === "initialize") {
+      const clientVersion = params?.protocolVersion;
+      if (clientVersion && typeof clientVersion === "string" && clientVersion !== "2024-11-05") {
+        if (isNotification) return null;
+        return formatResponse(id, undefined, {
+          code: -32602,
+          message: `Unsupported protocol version: ${clientVersion}. Supported: 2024-11-05`,
+        });
+      }
+      if (isNotification) return null;
       return formatResponse(id, {
         protocolVersion: "2024-11-05",
         capabilities: {
@@ -319,16 +339,19 @@ export async function processMcpMessage(
     }
 
     if (method === "ping") {
+      if (isNotification) return null;
       return formatResponse(id, {});
     }
 
     if (method === "tools/list") {
+      if (isNotification) return null;
       return formatResponse(id, { tools: TOOLS });
     }
 
     if (method === "tools/call") {
       const { name, arguments: toolArgs } = params || {};
       const result = await toolHandler(name, toolArgs || {});
+      if (isNotification) return null;
       return formatResponse(id, {
         content: [
           {
@@ -339,10 +362,11 @@ export async function processMcpMessage(
       });
     }
 
+    if (isNotification) return null;
     return formatResponse(id, undefined, { code: -32601, message: `Method not found: ${method}` });
   } catch (err: any) {
     log(`Error handling ${method}: ${err?.message || err}`);
-    if (id !== undefined && id !== null) {
+    if (!isNotification) {
       return formatResponse(id, {
         content: [
           {
@@ -365,14 +389,26 @@ if (process.argv[1] && (process.argv[1].endsWith("mcp-server.ts") || process.arg
     terminal: false,
   });
 
-  rl.on("line", async (line) => {
-    const response = await processMcpMessage(line);
-    if (response) {
-      process.stdout.write(response + "\n");
-    }
+  const activeRequests = new Set<Promise<void>>();
+
+  rl.on("line", (line) => {
+    const task: Promise<void> = (async () => {
+      try {
+        const response = await processMcpMessage(line);
+        if (response) {
+          process.stdout.write(response + "\n");
+        }
+      } finally {
+        activeRequests.delete(task);
+      }
+    })();
+    activeRequests.add(task);
   });
 
-  rl.on("close", () => {
+  rl.on("close", async () => {
+    if (activeRequests.size > 0) {
+      await Promise.allSettled(Array.from(activeRequests));
+    }
     process.exit(0);
   });
 
