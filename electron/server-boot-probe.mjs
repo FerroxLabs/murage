@@ -14,6 +14,11 @@
 //   unrelated app, wrong pid, non-JSON body) is reported as a foreign owner
 //   immediately instead of burning the rest of the budget re-polling a port
 //   we will never win.
+// - The expected pid must be read as a GETTER at response time, not captured
+//   when the caller forks: Electron's utilityProcess assigns proc.pid on the
+//   async `spawn` event, so a value grabbed right after fork() is still
+//   undefined and our own freshly-bound child would fail the identity match
+//   and be reaped as a "foreign owner" on its very first health answer.
 
 export const BOOT_PROBE_INTERVAL_MS = 500;
 
@@ -22,7 +27,7 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * @param {{
  *   port: number,
- *   pid: number,
+ *   pid: () => number | undefined,
  *   bootTimeoutMs: number,
  *   isExited?: () => boolean,
  *   now?: () => number,
@@ -30,7 +35,7 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  *   fetchImpl?: typeof fetch,
  * }} options
  * @returns {Promise<{ outcome: "ready" | "foreign-owner" | "timeout" | "exited" }>}
- */
+*/
 export async function pollServerIdentity({
   port,
   pid,
@@ -59,8 +64,17 @@ export async function pollServerIdentity({
       continue;
     }
     const body = await res.json().catch(() => null);
+    // Read the expected pid NOW, after the response landed: until the child's
+    // `spawn` event fires the getter yields undefined, and a child that has
+    // not spawned cannot be the one answering — so an answer during that
+    // window is genuinely somebody else's.
+    const expectedPid = pid();
     const identified =
-      res.ok && body?.app === "openmausbot" && body.pid === pid && body.static;
+      res.ok &&
+      expectedPid !== undefined &&
+      body?.app === "openmausbot" &&
+      body.pid === expectedPid &&
+      body.static;
     if (!identified) return { outcome: "foreign-owner" };
     // A response that finishes after the budget must not count as a healthy
     // boot — re-check the clock before declaring victory.

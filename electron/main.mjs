@@ -700,7 +700,10 @@ async function startServerOn(port) {
   // port conflict apart from slow startup.
   const identity = await pollServerIdentity({
     port,
-    pid: proc.pid,
+    // Getter, not value: proc.pid stays undefined until the async `spawn`
+    // event fires, and capturing it here would make the probe judge our own
+    // child a "foreign owner" on its first health answer.
+    pid: () => proc.pid,
     bootTimeoutMs: SERVER_BOOT_TIMEOUT_MS,
     isExited: () => exited,
   });

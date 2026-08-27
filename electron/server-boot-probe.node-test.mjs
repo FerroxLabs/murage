@@ -16,7 +16,7 @@ function okFetch({ body = OUR_BODY(), status = 200 } = {}) {
 test("returns ready when our own child answers with its identity", async () => {
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: 4242,
+    pid: () => 4242,
     bootTimeoutMs: 5_000,
     fetchImpl: okFetch(),
   });
@@ -33,7 +33,7 @@ test("a never-completing /api/health cannot wedge the launcher past the boot bud
   const startedAt = Date.now();
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: 4242,
+    pid: () => 4242,
     bootTimeoutMs: 300,
     fetchImpl: hangUntilAborted,
   });
@@ -50,7 +50,7 @@ test("a non-2xx health response is a foreign owner, reported without waiting out
   const startedAt = Date.now();
   const outcome = await pollServerIdentity({
     port: 18799,
-    pid: 4242,
+    pid: () => 4242,
     bootTimeoutMs: 60_000,
     fetchImpl,
   });
@@ -62,7 +62,7 @@ test("a non-2xx health response is a foreign owner, reported without waiting out
 test("a non-JSON body on an HTTP response counts as a foreign owner too", async () => {
   const outcome = await pollServerIdentity({
     port: 28799,
-    pid: 4242,
+    pid: () => 4242,
     bootTimeoutMs: 60_000,
     fetchImpl: async () => ({ ok: true, status: 200, json: async () => "not json-shaped" }),
   });
@@ -72,7 +72,7 @@ test("a non-JSON body on an HTTP response counts as a foreign owner too", async 
 test("an identity mismatch (same payload shape, wrong pid) stays foreign", async () => {
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: 4242,
+    pid: () => 4242,
     bootTimeoutMs: 5_000,
     fetchImpl: okFetch({ body: { app: "openmausbot", pid: 999, static: true } }),
   });
@@ -85,7 +85,7 @@ test("a response that lands after the deadline never returns ready", async () =>
   const now = () => [0, 0, 1_001][Math.min(reads++, 2)];
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: 4242,
+    pid: () => 4242,
     bootTimeoutMs: 1_000,
     now,
     sleep: async () => {},
@@ -102,7 +102,7 @@ test("connection failures keep retrying until the budget runs out", async () => 
   };
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: 4242,
+    pid: () => 4242,
     bootTimeoutMs: 1_500,
     fetchImpl: refused,
     sleep: async () => {},
@@ -115,7 +115,7 @@ test("reports exit instead of polling after the child has died", async () => {
   let attempts = 0;
   const outcome = await pollServerIdentity({
     port: 8799,
-    pid: 4242,
+    pid: () => 4242,
     bootTimeoutMs: 5_000,
     isExited: () => true,
     fetchImpl: async () => {
@@ -125,4 +125,44 @@ test("reports exit instead of polling after the child has died", async () => {
   });
   assert.equal(outcome.outcome, "exited");
   assert.equal(attempts, 0);
+});
+
+test("regression: a pid read before the spawn event must not doom our own child", async () => {
+  // Mirrors the packaged-app smoke failure: Electron's utilityProcess assigns
+  // proc.pid on the async `spawn` event, so a value captured at fork() time is
+  // undefined while the child is already binding its port. The first probe is
+  // refused (still booting), the second gets our child's real identity — and
+  // the pid getter now reports the spawned pid. A pid *value* captured at
+  // fork time turned this exact sequence into "foreign-owner" + a reaped
+  // healthy child.
+  let spawned = false;
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    if (calls === 1) throw new Error("ECONNREFUSED");
+    return { ok: true, status: 200, json: async () => ({ app: "openmausbot", pid: 4242, static: true }) };
+  };
+  const outcome = await pollServerIdentity({
+    port: 8799,
+    pid: () => (spawned ? 4242 : undefined),
+    bootTimeoutMs: 5_000,
+    sleep: async () => {
+      spawned = true; // the spawn event lands while we back off between polls
+    },
+    fetchImpl,
+  });
+  assert.equal(outcome.outcome, "ready");
+  assert.equal(calls, 2);
+});
+
+test("an answer that arrives while the pid is still unknown is a foreign owner", async () => {
+  // A child that has not spawned yet cannot be listening; if somebody
+  // answers anyway, it is genuinely not ours.
+  const outcome = await pollServerIdentity({
+    port: 8799,
+    pid: () => undefined,
+    bootTimeoutMs: 5_000,
+    fetchImpl: okFetch(),
+  });
+  assert.equal(outcome.outcome, "foreign-owner");
 });
