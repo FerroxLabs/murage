@@ -94,6 +94,10 @@ const DRIVER_KIND = "claudeAgent";
 export interface ClaudeConfig {
   cli: string;
   permissionMode: "acceptEdits" | "auto" | "bypassPermissions";
+  /** Available Claude built-ins. An empty list passes `--tools ""`. */
+  tools?: string[];
+  /** Claude tool patterns to deny after the available set is selected. */
+  disallowedTools?: string[];
 }
 
 // model catalog ported from upstream packages/contracts/src/model.ts
@@ -376,15 +380,36 @@ function createPermissionBroker(opts: {
   };
 }
 
+function decodeToolList(value: unknown, field: "tools" | "disallowedTools"): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(`claude: ${field} must be an array of non-empty strings`);
+  const decoded: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string" || !entry.trim()) {
+      throw new Error(`claude: ${field} must be an array of non-empty strings`);
+    }
+    const normalized = entry.trim();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    decoded.push(normalized);
+  }
+  return decoded;
+}
+
 function decodeConfig(raw: unknown): ClaudeConfig {
   const o = (raw ?? {}) as Record<string, unknown>;
   const mode = o.permissionMode;
   if (mode !== undefined && mode !== "acceptEdits" && mode !== "auto" && mode !== "bypassPermissions") {
     throw new Error(`claude: invalid permissionMode ${JSON.stringify(mode)}`);
   }
+  const tools = decodeToolList(o.tools, "tools");
+  const disallowedTools = decodeToolList(o.disallowedTools, "disallowedTools");
   return {
     cli: typeof o.cli === "string" ? o.cli : "claude",
     permissionMode: (mode as ClaudeConfig["permissionMode"]) ?? "acceptEdits",
+    ...(tools !== undefined ? { tools } : {}),
+    ...(disallowedTools !== undefined ? { disallowedTools } : {}),
   };
 }
 
@@ -550,6 +575,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         "--include-partial-messages",
         "--permission-mode", config.permissionMode === "auto" ? "acceptEdits" : config.permissionMode,
       ];
+      if (config.tools !== undefined) args.push("--tools", config.tools.join(","));
+      if (config.disallowedTools?.length) {
+        args.push("--disallowedTools", config.disallowedTools.join(","));
+      }
       const turnEnvironment: NodeJS.ProcessEnv = { ...process.env, ...input.environment };
       const turnModel = await resolveClaudeTurnModel(turn.model, turnEnvironment);
       const injected = applyClaudeInject({ ...turnEnvironment }, turnModel);
