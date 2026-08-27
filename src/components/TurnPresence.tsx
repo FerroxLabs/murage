@@ -1,5 +1,6 @@
-// Left-edge tail: mascot looks around while it works. The moment there is
-// an answer, the full bubble pops in above the mascot (same left edge).
+// Left-edge tail: mascot looks around while it works, with a "Working"
+// sheen beside it. The moment there is an answer, the label is gone and
+// the full bubble pops in above the mascot (same left edge).
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
@@ -39,17 +40,24 @@ export function TurnPresence({
 
   if (!mounted) return null;
   const showAnswer = phase === "answer" && children;
+  const showWorking = phase === "think";
   return (
     <div className="turn-presence flex flex-col items-start">
       {showAnswer ? <div className="turn-answer">{children}</div> : null}
       <div
         className={cn(
+          "flex items-center gap-2",
           showAnswer && "turn-mascot-tight",
           phase === "think" && "turn-mascot-in",
           phase === "out" && "turn-mascot-out",
         )}
       >
         {avatar}
+        {showWorking ? (
+          <span className="thinking-shimmer animate-shimmer text-[13px] leading-none" aria-live="polite">
+            Working
+          </span>
+        ) : null}
       </div>
     </div>
   );
