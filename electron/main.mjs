@@ -38,6 +38,7 @@ import {
   withoutManagedCompanionTunnelAccess,
 } from "./managed-companion-tunnel.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
+import { skinChrome, isKnownSkin } from "./skin-overlay.cjs";
 import { readSecureCredentials } from "./secure-credentials.mjs";
 import { createControlPlaneClient } from "./control-plane-client.mjs";
 import {
@@ -69,6 +70,9 @@ let desktopViewerOwner = null;
 let desktopViewerContextId = null;
 let pendingPackageInstallUrl = packageUrlFromCommandLine(process.argv);
 let mainWindow = null;
+// The active skin id, mirrored from the renderer so a window's native
+// caption-button overlay (issue #454) starts and stays on the right colours.
+let currentSkin = "midnight";
 let unreadCount = 0;
 let unreadOverlayIcon = null;
 
@@ -969,7 +973,11 @@ function createWindow() {
             // around a 36px control row = 60). Windows draws the caption buttons
             // to fill the overlay, so anything shorter leaves a dead band under
             // them and anything taller overhangs the header.
-            titleBarOverlay: { color: "#070707", symbolColor: "#b5b5b5", height: 60 },
+            // color/symbolColor follow the active skin (issue #454): the
+            // caption buttons live in this native overlay, and a light skin
+            // with a Midnight-black overlay is the "black block in the
+            // top-right corner". height stays 60 — see the note above.
+            titleBarOverlay: { ...skinChrome(currentSkin), height: 60 },
           }
         : {}),
     webPreferences: {
@@ -1241,6 +1249,27 @@ ipcMain.handle("desktop:save-file", async (event, rawPath) => {
     shell.showItemInFolder(choice.filePath);
     return choice.filePath;
   });
+});
+
+// The renderer owns the skin (it lives in localStorage and stamps
+// [data-skin] before first paint); it tells the main process so the one
+// surface CSS cannot reach — the Windows caption-button overlay — matches.
+// Persisted in-process so a window opened later starts on the right colours.
+ipcMain.handle("desktop:skin", (event, skin) => {
+  if (!isKnownSkin(skin)) return false;
+  currentSkin = skin;
+  // The caption-button overlay is a Windows-only surface (createWindow only
+  // configures titleBarOverlay there); on macOS/Linux the renderer's CSS is
+  // the whole story and there is nothing native to recolour.
+  if (process.platform === "win32") {
+    const sender = BrowserWindow.fromWebContents(event.sender);
+    try {
+      sender?.setTitleBarOverlay({ ...skinChrome(skin), height: 60 });
+    } catch {
+      // a window created without an overlay throws; safe to ignore
+    }
+  }
+  return true;
 });
 
 ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {

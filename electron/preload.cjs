@@ -118,6 +118,9 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Open a web link in the default browser. Unlike renderer window.open,
    * this remains reliable after an asynchronous API request. */
   openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
+  /** Tell the window which skin the page wears, so the native chrome the
+   * renderer cannot paint (the Windows caption-button overlay) matches. */
+  applySkin: (skin) => ipcRenderer.invoke("desktop:skin", skin),
   /** A reviewed BotMRR package opened through openmausbot://install. */
   onPackageInstall: (cb) => {
     packageInstallListeners.add(cb);
