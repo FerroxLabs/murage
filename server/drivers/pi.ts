@@ -229,7 +229,7 @@ interface PiEvent {
   toolName?: string;
   isError?: boolean;
   // turn_end / message_end
-  message?: { stopReason?: string; usage?: { input?: number; output?: number } };
+  message?: { stopReason?: string; errorMessage?: string; usage?: { input?: number; output?: number } };
   usage?: { input?: number; output?: number };
   // extension_ui_request
   id?: string;
@@ -517,7 +517,16 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             // answer — settling now would drop the final reply.
             if (sr === "toolUse" || sr === "tool_use" || sr === "tool_calls") return;
             const usage = evt.usage ?? evt.message?.usage;
-            settle(true, sr === "cancelled" ? "cancelled" : "end_turn", usage);
+            if (sr === "error" || sr === "failed") {
+              emit({
+                ...base(threadId, turnId),
+                type: "runtime.error",
+                message: String(evt.message?.errorMessage ?? "pi turn failed").slice(0, 2_000),
+              });
+              settle(false, "failed", usage);
+              return;
+            }
+            settle(true, sr === "cancelled" || sr === "aborted" ? "cancelled" : "end_turn", usage);
             return;
           }
           default:
