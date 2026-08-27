@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
 import { createAndroidDeviceController } from "./android-device.mjs";
 import { assemblyAICredential, mintAssemblyAIStreamingToken } from "./assemblyai.mjs";
@@ -20,6 +20,7 @@ import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import { buildDiagnosticsReport, decodeLogTail, diagnosticsFileName } from "./diagnostics.mjs";
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
+import { pollServerIdentity } from "./server-boot-probe.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { defaultSaveName, withSavableFile } from "./save-file.mjs";
 import {
@@ -650,6 +651,10 @@ async function gatherDiagnostics() {
   });
 }
 
+// Set by startServerPackaged: true only when every failing candidate port was
+// taken by another process — decides which error-page message renders.
+let serverStartConflictOnly = false;
+
 async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
   const childEnv = managedComposioChildEnvironment(composioBrokerUrl(), secureCredentials, {
@@ -686,40 +691,57 @@ async function startServerOn(port) {
   // Identity check is by PID: a dev harness server has the same API shape,
   // so only the child we actually forked (matching pid + static serving)
   // counts as ours.
-  for (let i = 0; i < 40; i++) {
-    if (exited) return null;
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/health`);
-      if (res.ok) {
-        const body = await res.json().catch(() => null);
-        if (body?.app === "openmausbot" && body.pid === proc.pid && body.static) return proc;
-        break; // someone else owns this port — try the next one
-      }
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 500));
+  // The budget is wall-clock, not a fixed poll count: a healthy boot can take
+  // well past 20s on cold machines or when pre-listen network calls stall
+  // (issue #506), and reaping an about-to-listen child reads to the user as
+  // "something else is using its ports" even though nothing was on them.
+  // The probe itself is deadline-bounded (a hung health endpoint cannot wedge
+  // us here forever) and reports WHY it gave up, so the error page can tell
+  // port conflict apart from slow startup.
+  const identity = await pollServerIdentity({
+    port,
+    // Getter, not value: proc.pid stays undefined until the async `spawn`
+    // event fires, and capturing it here would make the probe judge our own
+    // child a "foreign owner" on its first health answer.
+    pid: () => proc.pid,
+    bootTimeoutMs: SERVER_BOOT_TIMEOUT_MS,
+    isExited: () => exited,
+  });
+  if (identity.outcome === "ready") return { proc };
+  if (identity.outcome === "exited") {
+    slog(`child on port ${port} exited before answering /api/health`);
+  } else {
+    slog(
+      identity.outcome === "foreign-owner"
+        ? `port ${port} answered health checks from another process`
+        : `child on port ${port} did not answer /api/health within ${SERVER_BOOT_TIMEOUT_MS / 1000}s`,
+    );
   }
   try {
     proc.kill();
   } catch {}
-  return null;
+  return { proc: null, reason: identity.outcome };
 }
 
 async function startServerPackaged() {
   // two passes: a quit-and-reopen relaunch can race the dying instance's
   // server during teardown — one settle-and-retry covers it
+  let everyPortForeignOwned = true;
   for (let attempt = 0; attempt < 2; attempt++) {
     for (const port of [8799, 18799, 28799]) {
-      const proc = await startServerOn(port);
-      if (proc) {
-        serverProc = proc;
+      const started = await startServerOn(port);
+      if (started.proc) {
+        serverProc = started.proc;
         SERVER_PORT = port;
         return true;
       }
+      // A child that exited or timed out is not evidence of a port conflict —
+      // only "another process answered health checks" is.
+      if (started.reason !== "foreign-owner") everyPortForeignOwned = false;
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
+  serverStartConflictOnly = everyPortForeignOwned;
   return false;
 }
 
@@ -735,11 +757,35 @@ function syncManagedComposioCredentials() {
   }
 }
 
-const ERROR_PAGE =
-  "data:text/html;charset=utf-8," +
-  encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen OpenMausBot — if it keeps happening, restart your computer.</p></div></body>`,
+// The page is built at failure time (not import time): the message depends on
+// how the boot failed, and the log path comes from LOG_DIR so Windows and
+// Linux users see their real location instead of a macOS guess. The link
+// opens the log through the window's setWindowOpenHandler, which routes to
+// the platform handler.
+function escapeHtml(value) {
+  return value.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
+function buildErrorPage({ allPortsOccupied }) {
+  const serverLogPath = path.join(LOG_DIR, "server.log");
+  const serverLogHref = pathToFileURL(serverLogPath).href;
+  const reason = allPortsOccupied
+    ? "Every OpenMausBot port answered health checks from another process — likely a second copy of the app, or another program on ports 8799–28799. Quit that program, then quit and reopen OpenMausBot."
+    : "The background server didn't come up in time — this is usually slow startup, not a port conflict. Quit and reopen OpenMausBot.";
+  return (
+    "data:text/html;charset=utf-8," +
+    encodeURIComponent(
+      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">${escapeHtml(reason)} If it keeps happening, check <a target="_blank" rel="noopener" href="${serverLogHref}" style="color:#fcfcfc">${escapeHtml(serverLogPath)}</a>.</p></div></body>`,
+    )
   );
+}
+
+// How long one packaged-server child gets to answer /api/health before the
+// parent reaps it and tries the next port. Wall-clock, deliberately generous:
+// first boots write data dirs and pre-listen network calls (managed composio,
+// workspace credentials) can stall a healthy child far past 20s on some
+// machines, which used to surface as the misleading "ports are busy" page.
+const SERVER_BOOT_TIMEOUT_MS = 60_000;
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
 const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath });
@@ -1085,7 +1131,7 @@ function createWindow() {
   }
 
   if (app.isPackaged) {
-    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
+    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : buildErrorPage({ allPortsOccupied: serverStartConflictOnly }));
   } else {
     win.loadURL(DEV_URL);
   }
