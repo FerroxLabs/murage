@@ -69,6 +69,25 @@ test("a non-JSON body on an HTTP response counts as a foreign owner too", async 
   assert.equal(outcome.outcome, "foreign-owner");
 });
 
+test("an incomplete response body that reaches the deadline is a timeout", async () => {
+  let atDeadline = false;
+  const outcome = await pollServerIdentity({
+    port: 28799,
+    pid: () => 4242,
+    bootTimeoutMs: 1_000,
+    now: () => (atDeadline ? 1_000 : 0),
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        atDeadline = true;
+        throw new DOMException("body aborted", "AbortError");
+      },
+    }),
+  });
+  assert.equal(outcome.outcome, "timeout");
+});
+
 test("an identity mismatch (same payload shape, wrong pid) stays foreign", async () => {
   const outcome = await pollServerIdentity({
     port: 8799,

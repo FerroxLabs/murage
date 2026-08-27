@@ -64,6 +64,10 @@ export async function pollServerIdentity({
       continue;
     }
     const body = await res.json().catch(() => null);
+    // Body consumption is covered by the same abort signal as fetch. If it
+    // reaches the deadline, a null body means the probe timed out—not that a
+    // different process answered on the port.
+    if (now() >= deadline) return { outcome: "timeout" };
     // Read the expected pid NOW, after the response landed: until the child's
     // `spawn` event fires the getter yields undefined, and a child that has
     // not spawned cannot be the one answering — so an answer during that
