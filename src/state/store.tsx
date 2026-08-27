@@ -1049,9 +1049,15 @@ export function reducer(state: AppState, action: Action): AppState {
       return withMascotMotion(state, action.botId, "working");
     case "newTask":
     case "switchTask":
-    case "renameTask":
     case "deleteTask":
       return state;
+    case "renameTask":
+      return updateBot(state, action.botId, (bot) => ({
+        ...bot,
+        tasks: (bot.tasks ?? []).map((task) =>
+          task.threadId === action.threadId ? { ...task, title: action.title } : task,
+        ),
+      }));
     case "taskSwitched":
       return updateBot(state, action.bot.id, (bot) => ({ ...bot, ...action.bot, messages: action.bot.messages ?? [] }));
     case "newBot":

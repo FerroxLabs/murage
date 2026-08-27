@@ -73,6 +73,33 @@ describe("config status frames", () => {
   });
 });
 
+describe("task rename", () => {
+  it("updates the task title in local state immediately", () => {
+    const bot = {
+      id: "echo",
+      threadId: "t1",
+      name: "Echo",
+      title: "",
+      description: "",
+      notifications: true,
+      color: "green",
+      unread: false,
+      modelSelection: { instanceId: "x", model: "y" },
+      messages: [],
+      tasks: [
+        { threadId: "t1", title: "New task", createdAt: 1 },
+        { threadId: "t2", title: "Other", createdAt: 2 },
+      ],
+    } satisfies Bot;
+    const next = reducer(
+      { ...initialState, bots: [bot] },
+      { type: "renameTask", botId: bot.id, threadId: "t1", title: "Renamed" },
+    );
+    expect(next.bots[0]?.tasks?.find((task) => task.threadId === "t1")?.title).toBe("Renamed");
+    expect(next.bots[0]?.tasks?.find((task) => task.threadId === "t2")?.title).toBe("Other");
+  });
+});
+
 describe("Teach a skill feature flag", () => {
   const config = configStatusFromFrame({
     composio: { configured: false },
