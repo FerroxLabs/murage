@@ -259,7 +259,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
                       onClick={() => startRename(task)}
                       aria-label={`Rename ${task.title}`}
                       title="Rename this task"
-                      className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink group-hover:opacity-100"
+                      className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
                     >
                       <Pencil size={13} />
                     </button>
