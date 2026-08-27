@@ -69,7 +69,7 @@ export function ChatFindBar({ threadId, onClose }: { threadId: string; onClose: 
   }, [hits]);
 
   return (
-    <div className="mx-auto w-full max-w-[900px] px-5 pb-2">
+    <div className="w-full px-5 pb-2">
       <div className="flex items-center gap-1.5 rounded-xl border border-hairline/50 bg-panel px-2 py-1.5 shadow-sm">
         <Search size={15} className="shrink-0 text-ink-secondary" />
         <input

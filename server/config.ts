@@ -63,6 +63,8 @@ const localVmConfigSchema = z.object({
 const featureConfigSchema = z.object({
   /** Experimental desktop workflow recorder. Hidden unless explicitly enabled. */
   skillRecorder: z.boolean().optional(),
+  /** Show each tool run in the transcript. Off unless explicitly enabled. */
+  showToolCalls: z.boolean().optional(),
 });
 const instanceConfigSchema = z.object({
   driver: z.string().min(1),
@@ -115,7 +117,7 @@ export interface AppConfig {
    * separate container, durable workspace, viewer and lease. */
   localVm?: { mode?: "shared" | "per-bot"; maxInstances?: number };
   /** Opt-in product experiments. Every flag defaults to disabled. */
-  features?: { skillRecorder?: boolean };
+  features?: { skillRecorder?: boolean; showToolCalls?: boolean };
   instances?: InstanceConfigMap;
 }
 export type ConfigPatch = z.output<typeof appConfigPatchSchema>;
@@ -152,6 +154,10 @@ export function localVmMaxInstances(cfg: AppConfig): number {
 
 export function skillRecorderEnabled(cfg: AppConfig): boolean {
   return cfg.features?.skillRecorder === true;
+}
+
+export function showToolCallsEnabled(cfg: AppConfig): boolean {
+  return cfg.features?.showToolCalls === true;
 }
 
 // OMB_DATA_DIR isolates test/soak rigs from the user's real fleet.

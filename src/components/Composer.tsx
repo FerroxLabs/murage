@@ -251,12 +251,14 @@ export function Composer({
 
   useEffect(() => setHighlight(0), [mention?.start, mention?.query]);
 
-  // grow the textarea with its content (capped by max-h in the className)
+  // one line at rest, then grow with the draft — hard cap at six lines
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
+    const line = parseFloat(getComputedStyle(el).lineHeight) || 24;
+    const cap = line * 6;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
   }, [text]);
 
   const pickMention = (peer: MentionChoice) => {
@@ -402,26 +404,35 @@ export function Composer({
   return (
     <div className="px-5 pb-3 pt-1">
       {speechError && (
-        <div className="mx-auto mb-2 max-w-[900px] rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
+        <div className="mb-2 w-full rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
           {speechError}
         </div>
       )}
-      <div className="relative mx-auto max-w-[900px]">
+      <div className="relative w-full">
         {pendingChip && (
           <div className="mb-2 flex items-center gap-2 rounded-lg border border-hairline/40 bg-panel px-3 py-2 text-[12.5px] text-ink-secondary">
             <Clock size={13} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">
               Queued — sends when {busyName} finishes: “{pendingChip}”
             </span>
-            {group && (
-              <button
-                onClick={() => setQueued(null)}
-                aria-label="Discard queued message"
-                className="rounded p-0.5 hover:bg-raised hover:text-ink"
-              >
-                <X size={13} />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (group) {
+                  setQueued(null);
+                  return;
+                }
+                if (!bot) return;
+                for (const entry of state.pendingQueued?.[bot.threadId] ?? []) {
+                  dispatch({ type: "cancelQueued", botId: bot.id, queueId: entry.queueId });
+                }
+              }}
+              aria-label="Cancel queued message"
+              title="Cancel queued message"
+              className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              <X size={13} strokeWidth={2.5} />
+            </button>
           </div>
         )}
         {pickerOpen && (
@@ -617,7 +628,7 @@ export function Composer({
                   : `Message ${bot?.name ?? ""}`
           }
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
-            className="col-span-full row-start-1 max-h-60 min-h-[40px] w-full resize-none self-center bg-transparent px-1 pb-0 pt-2.5 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
+            className="col-span-full row-start-1 max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto self-center bg-transparent px-1 py-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
           />
           <div className="col-start-3 row-start-2 mt-1 flex items-center gap-1">
           {busy && !locked && (

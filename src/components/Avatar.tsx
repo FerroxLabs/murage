@@ -125,6 +125,8 @@ export type MausAvatarProps = {
    * direction. Off restores the engine's own drawn-in directions.
    */
   forward?: boolean;
+  /** How much each expression glances around. Overrides `forward`'s 0-or-1. */
+  lookAround?: number;
   /** Let the eyes follow the pointer across this avatar. */
   trackPointer?: boolean;
   /** Run the animation. Off renders the state's resting face. */
@@ -152,6 +154,7 @@ function MausAvatarComponent(
     showMouth,
     mouthStroke,
     forward = true,
+    lookAround,
     trackPointer = true,
     animated = true,
   }: MausAvatarProps,
@@ -205,7 +208,7 @@ function MausAvatarComponent(
         silhouette={GRADIENT_SILHOUETTE}
         gradient={gradientFor(color)}
         title={label ?? null}
-        lookAround={forward ? 0 : 1}
+        lookAround={lookAround ?? (forward ? 0 : 1)}
         gaze={{ x: (gaze?.x ?? 0) + pointer.x, y: (gaze?.y ?? 0) + pointer.y }}
         turn={turn}
         spring={spring}
