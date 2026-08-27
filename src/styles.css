@@ -336,6 +336,42 @@ body {
   from { transform: translateY(4px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
+/* mascot arrives at the tail */
+@keyframes turn-mascot-in {
+  from { opacity: 0; transform: scale(0.82); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes turn-mascot-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.88); }
+}
+/* the reply grows up from the mascot, staying on the left edge */
+@keyframes turn-answer-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.84);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.turn-mascot-in {
+  transform-origin: 18px 18px;
+  animation: turn-mascot-in 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.turn-mascot-out {
+  transform-origin: 18px 18px;
+  animation: turn-mascot-out 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.turn-answer {
+  transform-origin: 18px 100%;
+  animation: turn-answer-in 0.48s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* last line of text → mascot ≈ 5mm (bubble py-2.5 already contributes 10px) */
+.turn-mascot-tight {
+  margin-top: max(0px, calc(5mm - 10px));
+}
 /* "Thinking…" label sheen while the model reasons */
 @keyframes shimmer {
   from { background-position: 200% 50%; }
@@ -355,6 +391,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .animate-caret, .animate-msg-in, .animate-shimmer { animation: none; }
   .thinking-shimmer { background: none; color: var(--color-ink-secondary); }
+  .turn-mascot-in, .turn-mascot-out, .turn-answer { animation: none; }
   /* The drawer still moves, it just arrives instantly. */
   aside { transition: none; }
 }
