@@ -606,7 +606,7 @@ const groupSpeakers = new Map<string, { botId: string; name: string; color: stri
 // The latest running token totals for the turn in flight on each thread.
 // Providers report cumulative-within-turn numbers; the final value is folded
 // into the task's tally when the turn settles.
-const turnUsage = new Map<string, { input: number; output: number }>();
+const turnUsage = new Map<string, { input: number; output: number; cachedInput?: number }>();
 
 // Bounded per active turn. OpenHands uses a bounded recent-event scan for
 // the same class of stuck-loop detection; retaining an unlimited set of
@@ -1029,7 +1029,7 @@ bus.subscribe((event: RuntimeEvent) => {
     case "thread.token-usage.updated":
       // running totals for the turn in flight; folded into the task's
       // tally at turn.completed (below) so retries never double-count
-      turnUsage.set(event.threadId, { input: event.input, output: event.output });
+      turnUsage.set(event.threadId, { input: event.input, output: event.output, cachedInput: event.cachedInput });
       break;
     case "turn.completed": {
       const reply = lastReply.get(event.threadId) ?? "";
@@ -1052,6 +1052,7 @@ bus.subscribe((event: RuntimeEvent) => {
         store.addTaskUsage(bot.id, event.threadId, {
           input: tokens?.input,
           output: tokens?.output,
+          cachedInput: tokens?.cachedInput,
           costUsd: event.cost ?? null,
         });
         // settled → idle; a setup failure already marked it dead, keep that

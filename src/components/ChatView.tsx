@@ -25,7 +25,7 @@ import {
   Webhook,
   X,
 } from "lucide-react";
-import { costCaption, formatTokens, formatUsd, hasFiniteCost, usageChip } from "@/lib/usage";
+import { cachedInput, costCaption, formatTokens, formatUsd, hasFiniteCost, usageChip, usageDetail } from "@/lib/usage";
 import {
   useStore,
   useStreaming,
@@ -1264,7 +1264,11 @@ function UsageChip({ bot }: { bot: Bot }) {
   const billing = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
   const detail = [
     `${usage.turns} turn${usage.turns === 1 ? "" : "s"}`,
-    `${formatTokens(usage.input)} in · ${formatTokens(usage.output)} out`,
+    usageDetail(usage),
+    // the whole thread rides along on every turn, so most of "in" is the
+    // model re-reading what it already saw — say so, or the figure reads as
+    // a bug (issue #527)
+    cachedInput(usage) > 0 ? "cached = context re-read each turn, not new text" : null,
     hasFiniteCost(usage.costUsd) ? `${formatUsd(usage.costUsd)} ${costCaption(billing)}` : null,
   ]
     .filter(Boolean)

@@ -72,19 +72,27 @@ describe("Store", () => {
   it("addTaskUsage accumulates settled-turn totals per task and survives a restart", () => {
     const store = new Store(selection);
     const bot = store.createBot();
-    expect(store.addTaskUsage(bot.id, bot.threadId, { input: 1200, output: 300, costUsd: null })).toEqual({
+    expect(store.addTaskUsage(bot.id, bot.threadId, { input: 1200, output: 300, cachedInput: 1000, costUsd: null })).toEqual({
       input: 1200,
       output: 300,
+      cachedInput: 1000,
       costUsd: null,
       turns: 1,
     });
+    // a driver that never reports the cached share leaves it unchanged
     store.addTaskUsage(bot.id, bot.threadId, { input: 800, output: 100, costUsd: null });
-    store.addTaskUsage(bot.id, bot.threadId, { input: Number.NaN, output: -20, costUsd: null });
+    store.addTaskUsage(bot.id, bot.threadId, { input: Number.NaN, output: -20, cachedInput: -5, costUsd: null });
     // a different thread never inherits another task's tally
     expect(store.addTaskUsage(bot.id, "no-such-thread", { input: 5, output: 5, costUsd: null })).toBeNull();
 
     const reloaded = new Store(selection);
-    expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 2000, output: 400, costUsd: null, turns: 3 });
+    expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({
+      input: 2000,
+      output: 400,
+      cachedInput: 1000,
+      costUsd: null,
+      turns: 3,
+    });
   });
 
   it("persists the per-bot composio gate", () => {

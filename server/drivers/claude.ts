@@ -845,6 +845,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 type: "thread.token-usage.updated",
                 input: (msg.usage.input_tokens || 0) + (msg.usage.cache_read_input_tokens || 0),
                 output: msg.usage.output_tokens || 0,
+                cachedInput: msg.usage.cache_read_input_tokens || 0,
               });
             }
             break;
@@ -859,7 +860,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           case "result":
             // result.usage is this invocation's total — one process per turn,
             // so it is the turn's figure. cache reads count as input: they
-            // are billed (at the cache rate) and they fill the window.
+            // are billed (at the cache rate) and they fill the window — but
+            // they are reported separately too, so the UI can show how much
+            // of the figure was context re-read rather than new text.
             settle(
               o.is_error !== true,
               o.stop_reason ?? o.terminal_reason ?? null,
@@ -868,6 +871,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 ? {
                     input: (o.usage.input_tokens || 0) + (o.usage.cache_read_input_tokens || 0) + (o.usage.cache_creation_input_tokens || 0),
                     output: o.usage.output_tokens || 0,
+                    cachedInput: o.usage.cache_read_input_tokens || 0,
                   }
                 : undefined,
             );

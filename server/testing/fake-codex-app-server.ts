@@ -52,7 +52,7 @@ const finishTurn = () => {
     notify("item/agentMessage/delta", { itemId: "m1", delta: "fake codex" });
   }
   notify("item/completed", { item: { id: "m1", type: "agentMessage", text: "done from fake codex" } });
-  notify("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 7, outputTokens: 3 } } });
+  notify("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 7, cachedInputTokens: 4, outputTokens: 3 } } });
   dump();
   notify("turn/completed", { turn: { status: "completed" } });
 };
