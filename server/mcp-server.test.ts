@@ -134,20 +134,22 @@ describe("MCP Server JSON-RPC Protocol", () => {
     });
   });
 
-  it("rejects requests missing jsonrpc 2.0 field", async () => {
+  it("rejects requests missing or invalid jsonrpc 2.0 field with null id", async () => {
     // Missing jsonrpc entirely
     const noField = JSON.parse((await processMcpMessage(JSON.stringify({ id: 50, method: "ping" })))!);
     expect(noField).toMatchObject({
       jsonrpc: "2.0",
-      id: 50,
+      id: null,
       error: { code: -32600, message: "Invalid Request: missing or invalid jsonrpc version" },
     });
 
-    // Wrong jsonrpc version
-    const wrongVersion = JSON.parse((await processMcpMessage(JSON.stringify({ jsonrpc: "1.0", id: 51, method: "ping" })))!);
+    // Wrong jsonrpc version with malformed ID object
+    const wrongVersion = JSON.parse(
+      (await processMcpMessage(JSON.stringify({ jsonrpc: "1.0", id: { objectId: true }, method: "ping" })))!,
+    );
     expect(wrongVersion).toMatchObject({
       jsonrpc: "2.0",
-      id: 51,
+      id: null,
       error: { code: -32600, message: "Invalid Request: missing or invalid jsonrpc version" },
     });
   });
@@ -345,5 +347,56 @@ describe("MCP Server Tool Execution", () => {
 
   it("throws on unknown tool", async () => {
     await expect(handleToolCall("non_existent_tool", {})).rejects.toThrow("Unknown tool: non_existent_tool");
+  });
+});
+
+describe("MCP Base URL Security & Timeout", () => {
+  it("allows loopback http URLs and https URLs", async () => {
+    const { validateBaseUrl } = await import("../scripts/mcp-server.ts");
+    expect(validateBaseUrl("http://127.0.0.1:8799")).toBe("http://127.0.0.1:8799");
+    expect(validateBaseUrl("http://localhost:8799/")).toBe("http://localhost:8799");
+    expect(validateBaseUrl("http://[::1]:8799")).toBe("http://[::1]:8799");
+    expect(validateBaseUrl("https://openmausbot.internal.net/api/")).toBe("https://openmausbot.internal.net/api");
+  });
+
+  it("rejects non-loopback http endpoints unless ALLOW_INSECURE_HTTP is enabled", async () => {
+    const { validateBaseUrl } = await import("../scripts/mcp-server.ts");
+    const prevEnv = process.env.ALLOW_INSECURE_HTTP;
+    try {
+      delete process.env.ALLOW_INSECURE_HTTP;
+      expect(() => validateBaseUrl("http://remote-server.com:8799")).toThrow(
+        "Insecure cleartext HTTP origin 'http://remote-server.com:8799' is rejected",
+      );
+
+      process.env.ALLOW_INSECURE_HTTP = "true";
+      expect(validateBaseUrl("http://remote-server.com:8799")).toBe("http://remote-server.com:8799");
+    } finally {
+      if (prevEnv !== undefined) {
+        process.env.ALLOW_INSECURE_HTTP = prevEnv;
+      } else {
+        delete process.env.ALLOW_INSECURE_HTTP;
+      }
+    }
+  });
+
+  it("attaches timeout signal to request fetch calls", async () => {
+    const { request } = await import("../scripts/mcp-server.ts");
+    const originalFetch = globalThis.fetch;
+    try {
+      let passedSignal: AbortSignal | undefined;
+      globalThis.fetch = vi.fn(async (_url: any, options: any) => {
+        passedSignal = options?.signal;
+        return {
+          ok: true,
+          json: async () => ({ ok: true }),
+        } as any;
+      });
+
+      await request("/api/health");
+      expect(passedSignal).toBeDefined();
+      expect(passedSignal).toBeInstanceOf(AbortSignal);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

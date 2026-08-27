@@ -3,19 +3,45 @@
 // Standard JSON-RPC 2.0 stdio transport for external agent orchestration (Hermes, Claude Desktop, Cursor, etc.).
 import readline from "node:readline";
 
-export const OMB_BASE_URL = (
+export function validateBaseUrl(url: string): string {
+  const trimmed = url.replace(/\/+$/, "");
+  try {
+    const parsed = new URL(trimmed);
+    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    const isLoopback =
+      hostname === "127.0.0.1" ||
+      hostname === "localhost" ||
+      hostname === "::1" ||
+      hostname === "0.0.0.0";
+
+    if (parsed.protocol === "http:" && !isLoopback && process.env.ALLOW_INSECURE_HTTP !== "true") {
+      throw new Error(
+        `Insecure cleartext HTTP origin '${parsed.origin}' is rejected. Use https:// or set ALLOW_INSECURE_HTTP=true.`,
+      );
+    }
+  } catch (err: any) {
+    if (err?.message?.includes("Insecure cleartext HTTP")) throw err;
+  }
+  return trimmed;
+}
+
+export const OMB_BASE_URL = validateBaseUrl(
   process.env.OPENMAUSBOT_URL ||
-  (process.env.OMB_PORT ? `http://127.0.0.1:${process.env.OMB_PORT}` : "http://127.0.0.1:8799")
-).replace(/\/+$/, "");
+    (process.env.OMB_PORT ? `http://127.0.0.1:${process.env.OMB_PORT}` : "http://127.0.0.1:8799"),
+);
 
 export function log(msg: string) {
   process.stderr.write(`[openmausbot-mcp] ${msg}\n`);
 }
 
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 export async function request(path: string, options: RequestInit = {}, baseUrl = OMB_BASE_URL) {
   const url = `${baseUrl}${path}`;
+  const signal = options.signal || AbortSignal.timeout(DEFAULT_REQUEST_TIMEOUT_MS);
   const response = await fetch(url, {
     ...options,
+    signal,
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {}),
@@ -302,7 +328,7 @@ export async function processMcpMessage(
   }
 
   if (message.jsonrpc !== "2.0") {
-    return formatResponse(message.id ?? null, undefined, { code: -32600, message: "Invalid Request: missing or invalid jsonrpc version" });
+    return formatResponse(null, undefined, { code: -32600, message: "Invalid Request: missing or invalid jsonrpc version" });
   }
 
   const hasId = "id" in message && message.id !== undefined;
