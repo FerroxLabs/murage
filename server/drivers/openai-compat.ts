@@ -289,12 +289,13 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
             source: "openai-compat.chat.completions",
             msg: { textLength: text.length, reasoningLength: reasoning.length, usage },
           });
-          if (text.trim()) {
+          const replyText = text.trim() ? text : reasoning;
+          if (replyText.trim()) {
             emit({
               ...base(threadId, turnId),
               type: "item.completed",
               itemType: "assistant_text",
-              text,
+              text: replyText,
             });
           }
           if (usage) {
