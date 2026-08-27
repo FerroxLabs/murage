@@ -305,7 +305,12 @@ export async function processMcpMessage(
     return formatResponse(message.id ?? null, undefined, { code: -32600, message: "Invalid Request: missing or invalid jsonrpc version" });
   }
 
-  const isNotification = !("id" in message) || message.id === undefined;
+  const hasId = "id" in message && message.id !== undefined;
+  if (hasId && (typeof message.id !== "string" && typeof message.id !== "number" || (typeof message.id === "number" && !Number.isFinite(message.id)))) {
+    return formatResponse(null, undefined, { code: -32600, message: "Invalid Request: id must be a string or number" });
+  }
+
+  const isNotification = !hasId;
   const id = isNotification ? null : message.id;
   const { method, params } = message;
 

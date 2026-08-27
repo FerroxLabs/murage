@@ -151,6 +151,48 @@ describe("MCP Server JSON-RPC Protocol", () => {
       error: { code: -32600, message: "Invalid Request: missing or invalid jsonrpc version" },
     });
   });
+
+  it("validates message.id accepting string or number and rejecting other types", async () => {
+    // Valid string ID
+    const strIdRes = JSON.parse((await processMcpMessage(JSON.stringify({ jsonrpc: "2.0", id: "req-abc", method: "ping" })))!);
+    expect(strIdRes).toEqual({ jsonrpc: "2.0", id: "req-abc", result: {} });
+
+    // Valid number ID
+    const numIdRes = JSON.parse((await processMcpMessage(JSON.stringify({ jsonrpc: "2.0", id: 123, method: "ping" })))!);
+    expect(numIdRes).toEqual({ jsonrpc: "2.0", id: 123, result: {} });
+
+    // Invalid ID: boolean
+    const boolIdRes = JSON.parse((await processMcpMessage(JSON.stringify({ jsonrpc: "2.0", id: true, method: "ping" })))!);
+    expect(boolIdRes).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request: id must be a string or number" },
+    });
+
+    // Invalid ID: object
+    const objIdRes = JSON.parse((await processMcpMessage(JSON.stringify({ jsonrpc: "2.0", id: { sub: 1 }, method: "ping" })))!);
+    expect(objIdRes).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request: id must be a string or number" },
+    });
+
+    // Invalid ID: array
+    const arrIdRes = JSON.parse((await processMcpMessage(JSON.stringify({ jsonrpc: "2.0", id: [1, 2], method: "ping" })))!);
+    expect(arrIdRes).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request: id must be a string or number" },
+    });
+
+    // Invalid ID: null
+    const nullIdRes = JSON.parse((await processMcpMessage(JSON.stringify({ jsonrpc: "2.0", id: null, method: "ping" })))!);
+    expect(nullIdRes).toMatchObject({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request: id must be a string or number" },
+    });
+  });
 });
 
 describe("MCP Server Tool Execution", () => {
