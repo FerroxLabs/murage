@@ -99,7 +99,7 @@ describe("MCP Server JSON-RPC Protocol", () => {
     expect(listNotification).toBeNull();
   });
 
-  it("rejects unsupported protocol versions during initialize", async () => {
+  it("negotiates protocol version by returning server-supported version", async () => {
     const raw = JSON.stringify({
       jsonrpc: "2.0",
       id: 10,
@@ -108,12 +108,17 @@ describe("MCP Server JSON-RPC Protocol", () => {
     });
     const resStr = await processMcpMessage(raw);
     const res = JSON.parse(resStr!);
-    expect(res).toMatchObject({
+    // Per MCP spec: server returns its supported version for client negotiation
+    expect(res).toEqual({
       jsonrpc: "2.0",
       id: 10,
-      error: {
-        code: -32602,
-        message: "Unsupported protocol version: 1999-01-01. Supported: 2024-11-05",
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: {
+          name: "openmausbot-mcp",
+          version: "1.0.0",
+        },
       },
     });
   });
@@ -126,6 +131,24 @@ describe("MCP Server JSON-RPC Protocol", () => {
       jsonrpc: "2.0",
       id: 99,
       error: { code: -32601, message: "Method not found: unknown/method" },
+    });
+  });
+
+  it("rejects requests missing jsonrpc 2.0 field", async () => {
+    // Missing jsonrpc entirely
+    const noField = JSON.parse((await processMcpMessage(JSON.stringify({ id: 50, method: "ping" })))!);
+    expect(noField).toMatchObject({
+      jsonrpc: "2.0",
+      id: 50,
+      error: { code: -32600, message: "Invalid Request: missing or invalid jsonrpc version" },
+    });
+
+    // Wrong jsonrpc version
+    const wrongVersion = JSON.parse((await processMcpMessage(JSON.stringify({ jsonrpc: "1.0", id: 51, method: "ping" })))!);
+    expect(wrongVersion).toMatchObject({
+      jsonrpc: "2.0",
+      id: 51,
+      error: { code: -32600, message: "Invalid Request: missing or invalid jsonrpc version" },
     });
   });
 });

@@ -301,6 +301,10 @@ export async function processMcpMessage(
     return formatResponse(null, undefined, { code: -32600, message: "Invalid Request" });
   }
 
+  if (message.jsonrpc !== "2.0") {
+    return formatResponse(message.id ?? null, undefined, { code: -32600, message: "Invalid Request: missing or invalid jsonrpc version" });
+  }
+
   const isNotification = !("id" in message) || message.id === undefined;
   const id = isNotification ? null : message.id;
   const { method, params } = message;
@@ -312,15 +316,9 @@ export async function processMcpMessage(
 
   try {
     if (method === "initialize") {
-      const clientVersion = params?.protocolVersion;
-      if (clientVersion && typeof clientVersion === "string" && clientVersion !== "2024-11-05") {
-        if (isNotification) return null;
-        return formatResponse(id, undefined, {
-          code: -32602,
-          message: `Unsupported protocol version: ${clientVersion}. Supported: 2024-11-05`,
-        });
-      }
       if (isNotification) return null;
+      // Per MCP spec: always return the server's supported protocol version
+      // so the client can negotiate. No error for version mismatches.
       return formatResponse(id, {
         protocolVersion: "2024-11-05",
         capabilities: {
