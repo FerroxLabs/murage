@@ -385,10 +385,17 @@ final class Session: ObservableObject {
     /// the cursor is written down at a known point.
     func linger() {
         guard streamTask != nil, lingerTask == .invalid else { disconnect(); return }
-        lingerTask = UIApplication.shared.beginBackgroundTask(withName: "companion.linger") { [weak self] in
+        // A previous request can leave a sleeper behind when iOS refuses the
+        // background assertion. Never let it outlive the assertion it belongs
+        // to or disconnect a later linger window.
+        lingerSleep?.cancel()
+        lingerSleep = nil
+        let task = UIApplication.shared.beginBackgroundTask(withName: "companion.linger") { [weak self] in
             // time is up before our own timer — the system wants us gone now
             self?.disconnect()
         }
+        guard task != .invalid else { disconnect(); return }
+        lingerTask = task
         lingerSleep = Task { [weak self] in
             try? await Task.sleep(for: .seconds(25))
             guard !Task.isCancelled, let self, self.lingerTask != .invalid else { return }
