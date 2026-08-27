@@ -328,12 +328,17 @@ extension Connection {
             if let activeEndpoint, !candidates.contains(where: { $0.url == activeEndpoint.url }) {
                 candidates.append(activeEndpoint)
             }
-            candidates = candidates.enumerated().sorted {
+            // Route policy is part of candidate selection, not a final display
+            // filter. A disallowed cleartext route must not trigger the trust
+            // ratchet and hoist an otherwise lower-priority protected route.
+            candidates = endpointsAllowedByRoutePolicy(candidates).enumerated().sorted {
                 $0.element.priority == $1.element.priority
                     ? $0.offset < $1.offset
                     : $0.element.priority < $1.element.priority
             }.map(\.element)
-            if let activeEndpoint, activeEndpoint.protectsCredentials,
+            if let activeEndpoint = activeEndpoint.flatMap({ active in
+                candidates.first(where: { $0.url == active.url })
+            }), activeEndpoint.protectsCredentials,
                let sortedHead = candidates.first, !sortedHead.protectsCredentials {
                 candidates = [activeEndpoint] + candidates.filter { $0.url != activeEndpoint.url }
             }

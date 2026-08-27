@@ -328,6 +328,38 @@ final class FailoverTests: XCTestCase {
         XCTAssertEqual(connection.automaticEndpoints.map(\.kind), [.hosted, .tailnet])
     }
 
+    func testADisallowedCleartextHeadCannotHoistTheActiveProtectedRoute() throws {
+        let lan = try XCTUnwrap(CompanionEndpoint(
+            url: "http://192.168.1.42:8810",
+            kind: .lan,
+            priority: 0
+        ))
+        let hosted = try XCTUnwrap(CompanionEndpoint(
+            url: "https://mac.companion.example",
+            kind: .hosted,
+            priority: 50
+        ))
+        let tailnet = try XCTUnwrap(CompanionEndpoint(
+            url: "http://mac.tail1234.ts.net:8810",
+            kind: .tailnet,
+            priority: 100
+        ))
+        let connection = Connection(
+            name: "Mac",
+            host: tailnet.host,
+            port: tailnet.port,
+            activeEndpoint: tailnet,
+            endpoints: [lan, hosted, tailnet],
+            allowedRouteKinds: [.hosted, .tailnet]
+        )
+
+        XCTAssertEqual(
+            connection.orderedEndpoints.map(\.kind),
+            [.hosted, .tailnet],
+            "a route forbidden by policy must not influence protected-route ordering"
+        )
+    }
+
     func testPromotingAWorkingLegacyEndpointKeepsEveryLegacyFallback() throws {
         var connection = Connection(
             name: "Mac",
