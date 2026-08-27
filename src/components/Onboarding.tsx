@@ -34,7 +34,7 @@ function StatusRow({
     <div className="flex items-start gap-3 rounded-xl bg-card p-3.5">
       <span
         className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${
-          ok ? "bg-[#00c97222] text-[#38d591]" : warn ? "bg-[#ff980022] text-[#ff9800]" : "bg-raised text-ink-secondary"
+          ok ? "bg-success/15 text-success" : warn ? "bg-warning/15 text-warning" : "bg-raised text-ink-secondary"
         }`}
       >
         {ok ? <Check size={14} /> : <AlertTriangle size={13} />}
@@ -298,7 +298,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   </div>
                 </div>
                 {perms?.mic === "granted" ? (
-                  <Check size={16} className="shrink-0 text-[#38d591]" />
+                  <Check size={16} className="shrink-0 text-success" />
                 ) : perms?.mic === "denied" || perms?.mic === "restricted" ? (
                   <button
                     onClick={() => window.ogb?.permOpenSettings?.("mic")}
