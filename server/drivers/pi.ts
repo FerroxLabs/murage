@@ -461,6 +461,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const pending = new Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>();
       let settled = false;
 
+      // Write ~/.pi/agent/models.json before creating any credential-bearing
+      // MCP temp files. If model setup fails, there is nothing sensitive to
+      // clean up yet.
+      if (typeof turn.model === "string" && turn.model) {
+        ensurePiInjectModel(turn.model, { ...process.env, ...input.environment });
+      }
+
       // integrations → stdio MCP servers for the pi-mcp-extension. The config
       // carries credentials (box token, composio key, comms token), so it goes
       // into a 0600 temp file removed when the turn settles — never on argv.
@@ -482,12 +489,6 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
       }
       const childArgs = mcpServers ? [...PI_ARGS, "-e", SPAWNED_PROXIES.piMcpExtension] : PI_ARGS;
-
-      // Write ~/.pi/agent/models.json before spawn — pi loads custom
-      // providers at process start, so a post-spawn upsert would miss set_model.
-      if (typeof turn.model === "string" && turn.model) {
-        ensurePiInjectModel(turn.model, { ...process.env, ...input.environment });
-      }
 
       // spawnCli can throw synchronously (unresolvable CLI); if it does, the
       // 0600 temp file with the box token / composio key / comms token must
