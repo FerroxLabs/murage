@@ -161,6 +161,9 @@ export interface Task {
 export interface TaskUsage {
   input: number;
   output: number;
+  /** cached share of `input` (context the model re-read); absent on records
+   * from builds before it was tracked */
+  cachedInput?: number;
   /** null until any turn reported a cost — most engines never do; records
    * from builds before cost existed lack the field entirely */
   costUsd: number | null;

@@ -202,6 +202,11 @@ export interface TaskRecord {
 export interface TaskUsage {
   input: number;
   output: number;
+  /** The part of `input` the provider served from its prompt cache — context
+   * the model re-read rather than fresh text. Every turn resends the whole
+   * conversation plus the system prompt and tool schemas, so on a chatty
+   * thread this is most of `input`. Absent on records from older builds. */
+  cachedInput?: number;
   /** null until any turn reports a cost — most engines never do. Records
    * written by builds before cost existed lack the field; read as null. */
   costUsd: number | null;
@@ -990,7 +995,7 @@ export class Store {
   addTaskUsage(
     botId: string,
     threadId: string,
-    turn: { input?: number; output?: number; costUsd: number | null },
+    turn: { input?: number; output?: number; cachedInput?: number; costUsd: number | null },
   ): TaskUsage | null {
     const task = this.taskByThread(botId, threadId);
     if (!task) return null;
@@ -1000,9 +1005,17 @@ export class Store {
     // providers occasionally report NaN or a negative on a partial turn —
     // never let that poison a running tally
     const clean = (n: number | undefined) => (typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
+    // the cached share exists on a record only once a driver has reported
+    // it — a driver that never does leaves the record shaped as before
+    const cachedKnown = typeof prev.cachedInput === "number" || typeof turn.cachedInput === "number";
+    const prevInput = clean(prev.input);
+    const turnInput = clean(turn.input);
+    const nextCachedInput = Math.min(clean(prev.cachedInput), prevInput)
+      + Math.min(clean(turn.cachedInput), turnInput);
     task.usage = {
-      input: prev.input + clean(turn.input),
+      input: prevInput + turnInput,
       output: prev.output + clean(turn.output),
+      ...(cachedKnown ? { cachedInput: nextCachedInput } : {}),
       costUsd: cost === null ? prevCost : (prevCost ?? 0) + cost,
       turns: prev.turns + 1,
     };

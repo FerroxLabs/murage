@@ -222,11 +222,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.every((e) => e.turnId === turnId && e.provider === "claudeAgent")).toBe(true);
 
     const usage = recorder.events.find((e) => e.type === "thread.token-usage.updated")!;
-    expect(usage).toMatchObject({ input: 12, output: 5 }); // input + cache_read
+    expect(usage).toMatchObject({ input: 12, output: 5, cachedInput: 2 }); // input + cache_read, cache_read named
     const done = recorder.events.at(-1)!;
     // usage on the settle is the turn total from the result message, so
     // the harness has one figure to bank per turn
-    expect(done).toMatchObject({ type: "turn.completed", ok: true, cost: 0.01, usage: { input: 12, output: 5 } });
+    expect(done).toMatchObject({ type: "turn.completed", ok: true, cost: 0.01, usage: { input: 12, output: 5, cachedInput: 2 } });
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
   });
 
