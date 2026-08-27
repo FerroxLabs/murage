@@ -392,17 +392,20 @@ if (process.argv[1] && (process.argv[1].endsWith("mcp-server.ts") || process.arg
   const activeRequests = new Set<Promise<void>>();
 
   rl.on("line", (line) => {
-    const task: Promise<void> = (async () => {
+    const task = (async () => {
       try {
         const response = await processMcpMessage(line);
         if (response) {
           process.stdout.write(response + "\n");
         }
-      } finally {
-        activeRequests.delete(task);
+      } catch (err) {
+        log(`Error processing line: ${err}`);
       }
     })();
     activeRequests.add(task);
+    task.finally(() => {
+      activeRequests.delete(task);
+    });
   });
 
   rl.on("close", async () => {
