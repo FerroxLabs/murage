@@ -330,4 +330,34 @@ describe("RoutineManager", () => {
     expect(h.manager.listRuns()[0]).toMatchObject({ status: "missed" });
     expect(h.started).toHaveLength(0);
   });
+
+  it("records a missed receipt for a once routine created with a long-past time", async () => {
+    const h = harness();
+    const staleAt = new Date(2026, 7, 16, 6, 0, 0).getTime();
+    const routine = h.manager.create({
+      name: "Stale check",
+      prompt: "Do the stale thing",
+      botId: "maus-6",
+      schedule: { type: "once", at: staleAt },
+    });
+    expect(routine.nextRunAt).toBe(staleAt);
+    await h.manager.tick();
+    expect(h.manager.listRuns()[0]).toMatchObject({ status: "missed", scheduledFor: staleAt });
+    expect(h.started).toHaveLength(0);
+  });
+
+  it("runs a once routine created slightly late and records the original scheduled time", async () => {
+    const h = harness();
+    const lateAt = new Date(2026, 7, 17, 7, 55, 0).getTime();
+    const routine = h.manager.create({
+      name: "Late check",
+      prompt: "Do the late thing",
+      botId: "maus-7",
+      schedule: { type: "once", at: lateAt },
+    });
+    expect(routine.nextRunAt).toBe(lateAt);
+    await h.manager.tick();
+    expect(h.started).toHaveLength(1);
+    expect(h.manager.listRuns()[0]).toMatchObject({ status: "running", scheduledFor: lateAt });
+  });
 });
