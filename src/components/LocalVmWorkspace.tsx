@@ -295,7 +295,22 @@ function LocalVmPane({
         const viewerUrl = readyLocalVmViewerUrl(raw);
         if (!safeStatus.ready || !viewerUrl) return;
 
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        // Hidden or minimized Electron windows may suspend animation frames.
+        // Keep the layout read ordered after a paint when possible, but never
+        // let this serialized operation block viewer cleanup indefinitely.
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+          };
+          const timer = setTimeout(finish, 100);
+          requestAnimationFrame(() => {
+            clearTimeout(timer);
+            finish();
+          });
+        });
         if (!alive) return;
         const bounds = elementBounds(viewportRef);
         if (!bounds) throw new Error("layout-unavailable");
