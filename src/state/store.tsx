@@ -136,7 +136,20 @@ export interface Group {
   /** New user-created rooms remain in setup until Save or Skip. */
   setupCompletedAt?: number | null;
   setupSkippedAt?: number | null;
+  /** Separate conversations in this channel. DMs deliberately stay on one
+   * thread and omit this collection. */
+  tasks?: GroupTask[];
   messages: Message[];
+}
+
+/** One of a channel's independent conversations. The channel's threadId
+ * points at the active one; folder and pin state belong to the task. */
+export interface GroupTask {
+  threadId: string;
+  title: string;
+  createdAt: number;
+  pinnedCwd?: string | null;
+  pinnedMessageId?: string;
 }
 
 export interface ModelSelection {
@@ -441,6 +454,10 @@ export type Action =
       patch: Partial<Pick<Group, "name" | "bulletin" | "memberIds" | "defaultResponder" | "pinnedMessageId" | "section">>;
     }
   | { type: "deleteGroup"; groupId: string }
+  | { type: "newGroupTask"; groupId: string }
+  | { type: "switchGroupTask"; groupId: string; threadId: string }
+  | { type: "renameGroupTask"; groupId: string; threadId: string; title: string }
+  | { type: "deleteGroupTask"; groupId: string; threadId: string }
   | { type: "toggleReaction"; threadId: string; messageId: string; emoji: string }
   | { type: "interruptGroup"; groupId: string }
   | { type: "instances"; instances: InstanceInfo[] }
@@ -508,9 +525,16 @@ export function openNotificationTarget(
   // GROUP's thread id; asking the bot to switch to that thread would 404.
   // Open the room itself. A thread that is neither a room nor one of the
   // bot's own lands on a plain bot select instead of an error banner.
-  const group = state.groups.find((candidate) => candidate.threadId === target.threadId);
+  const group = state.groups.find(
+    (candidate) =>
+      candidate.threadId === target.threadId ||
+      (candidate.tasks ?? []).some((task) => task.threadId === target.threadId),
+  );
   if (group) {
     dispatch({ type: "select", id: group.id });
+    if (group.threadId !== target.threadId) {
+      dispatch({ type: "switchGroupTask", groupId: group.id, threadId: target.threadId });
+    }
     return;
   }
   dispatch({ type: "select", id: target.botId });
@@ -1050,6 +1074,9 @@ export function reducer(state: AppState, action: Action): AppState {
     case "newTask":
     case "switchTask":
     case "deleteTask":
+    case "newGroupTask":
+    case "switchGroupTask":
+    case "deleteGroupTask":
       return state;
     case "renameTask":
       return updateBot(state, action.botId, (bot) => ({
@@ -1058,6 +1085,20 @@ export function reducer(state: AppState, action: Action): AppState {
           task.threadId === action.threadId ? { ...task, title: action.title } : task,
         ),
       }));
+    case "renameGroupTask":
+      return {
+        ...state,
+        groups: state.groups.map((group) =>
+          group.id === action.groupId
+            ? {
+                ...group,
+                tasks: (group.tasks ?? []).map((task) =>
+                  task.threadId === action.threadId ? { ...task, title: action.title } : task,
+                ),
+              }
+            : group,
+        ),
+      };
     case "taskSwitched":
       return updateBot(state, action.bot.id, (bot) => ({ ...bot, ...action.bot, messages: action.bot.messages ?? [] }));
     case "newBot":
@@ -1496,6 +1537,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "deleteTask":
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "DELETE" })
             .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", bot: r.bot }))
+            .catch(showError);
+          break;
+        // Channel tasks mirror bot tasks, but hydrate the whole channel so
+        // switching atomically replaces its transcript, folder and pin.
+        case "newGroupTask":
+          api(`/api/groups/${action.groupId}/tasks`, { method: "POST", body: "{}" })
+            .then((r: any) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .catch(showError);
+          break;
+        case "switchGroupTask":
+          api(`/api/groups/${action.groupId}/tasks/${action.threadId}`, { method: "POST" })
+            .then((r: any) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .catch(showError);
+          break;
+        case "renameGroupTask":
+          api(`/api/groups/${action.groupId}/tasks/${action.threadId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ title: action.title }),
+          }).catch(showError);
+          break;
+        case "deleteGroupTask":
+          api(`/api/groups/${action.groupId}/tasks/${action.threadId}`, { method: "DELETE" })
+            .then((r: any) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
             .catch(showError);
           break;
         case "interruptGroup":

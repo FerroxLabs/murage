@@ -761,11 +761,15 @@ final class Session: ObservableObject {
                 return state.bot(bot.id).map(Chat.bot)
             }
             if let groupId = hit.groupId,
-               let room = state.rooms.first(where: { $0.id == groupId }) {
+               var room = state.rooms.first(where: { $0.id == groupId }) {
+                if room.threadId != hit.threadId {
+                    room = try await client.switchTask(groupId: room.id, threadId: hit.threadId)
+                    state.apply(.room(room))
+                }
                 let page = try await client.messages(threadId: hit.threadId, around: hit.messageId)
                 state.merge(page, intoThread: hit.threadId)
                 focusedMessageId = hit.messageId
-                return .room(room)
+                return state.rooms.first(where: { $0.id == groupId }).map(Chat.room)
             }
         } catch { actionError = error.localizedDescription }
         return nil
@@ -798,6 +802,32 @@ final class Session: ObservableObject {
     func deleteTask(_ task: BotTask, for bot: Bot) async {
         guard let client else { return }
         do { state.apply(.bot(try await client.deleteTask(botId: bot.id, threadId: task.threadId))) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func createTask(for room: Room, title: String?) async {
+        guard let client else { return }
+        do { state.apply(.room(try await client.createTask(groupId: room.id, title: title))) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func switchTask(_ task: BotTask, for room: Room) async {
+        guard let client, task.threadId != room.threadId else { return }
+        do { state.apply(.room(try await client.switchTask(groupId: room.id, threadId: task.threadId))) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func renameTask(_ task: BotTask, for room: Room, title: String) async {
+        guard let client else { return }
+        do {
+            try await client.renameTask(groupId: room.id, threadId: task.threadId, title: title)
+            await refresh()
+        } catch { actionError = error.localizedDescription }
+    }
+
+    func deleteTask(_ task: BotTask, for room: Room) async {
+        guard let client else { return }
+        do { state.apply(.room(try await client.deleteTask(groupId: room.id, threadId: task.threadId))) }
         catch { actionError = error.localizedDescription }
     }
 
@@ -964,7 +994,18 @@ final class Session: ObservableObject {
             // A room's approval/question notification carries the asker bot
             // with the ROOM's thread id — open the room rather than asking
             // the bot to switch to a thread it does not own (a 404).
-            if let room = state.rooms.first(where: { $0.threadId == target.threadId }) {
+            if var room = state.rooms.first(where: {
+                $0.threadId == target.threadId || ($0.tasks ?? []).contains(where: { $0.threadId == target.threadId })
+            }) {
+                if room.threadId != target.threadId {
+                    do {
+                        room = try await client.switchTask(groupId: room.id, threadId: target.threadId)
+                        state.apply(.room(room))
+                    } catch {
+                        // A stale notification should still open the channel's
+                        // current task instead of leaving the person nowhere.
+                    }
+                }
                 notificationChat = .room(room)
                 return
             }
@@ -1128,6 +1169,15 @@ enum Chat: Identifiable, Hashable {
     var isBot: Bool {
         if case .bot = self { return true }
         return false
+    }
+
+    var supportsTasks: Bool {
+        switch self {
+        case .bot: return true
+        // `tasks == nil` means an older paired desktop. Hide the affordance
+        // instead of sending it a route it does not know yet.
+        case let .room(room): return room.dm != true && room.tasks != nil
+        }
     }
 
     var subtitle: String {

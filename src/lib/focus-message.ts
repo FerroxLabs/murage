@@ -24,6 +24,10 @@ export async function landOnSearchHit(
     const result = await api(`/api/bots/${bot.id}/tasks/${hit.threadId}`, { method: "POST" });
     if (result?.bot) dispatch({ type: "taskSwitched", bot: result.bot });
   }
+  if (group && group.threadId !== hit.threadId) {
+    const result = await api(`/api/groups/${group.id}/tasks/${hit.threadId}`, { method: "POST" });
+    if (result?.group) dispatch({ type: "groupPatched", group: result.group });
+  }
   if (bot && !hit.onActivePath) {
     const branch = await api(`/api/bots/${bot.id}/active-branch`, {
       method: "POST",

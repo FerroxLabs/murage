@@ -290,7 +290,7 @@ struct ChatView: View {
             if listening { composerFocused = false }
         }
         .sheet(isPresented: $showingTasks) {
-            if case let .bot(bot) = current { TaskManagerView(bot: bot) }
+            if current.supportsTasks { TaskManagerView(chat: current) }
         }
         .sheet(isPresented: $showingProfile) {
             if case let .bot(bot) = current { AgentProfileView(bot: bot) }
@@ -495,6 +495,17 @@ struct ChatView: View {
                 subtitle: "Live view of what \(bot.name) is doing"
             ) { showingComputer = true })
         }
+        if case let .room(room) = current, room.dm != true {
+            out.append(PlusAction(
+                id: "task", systemImage: "plus.square.on.square", title: "New task",
+                subtitle: "Start a fresh conversation in \(room.name)",
+                disabled: current.busy || hasPendingApproval
+            ) { Task { await session.createTask(for: room, title: nil) } })
+            out.append(PlusAction(
+                id: "tasks", systemImage: "square.stack", title: "Tasks",
+                subtitle: "Switch, rename or remove one"
+            ) { showingTasks = true })
+        }
         out.append(PlusAction(
             id: "share", systemImage: "doc.plaintext", title: "Share transcript",
             subtitle: "This chat as Markdown"
@@ -583,7 +594,9 @@ struct ChatView: View {
                     isVisible: $showCommandHUD,
                     commands: current.isBot
                         ? CommandSkillHUDView.defaultCommands
-                        : CommandSkillHUDView.defaultCommands.filter { $0.id != "computer" && $0.id != "tasks" },
+                        : CommandSkillHUDView.defaultCommands.filter {
+                            $0.id != "computer" && (current.supportsTasks || $0.id != "tasks")
+                        },
                     accentColor: MausPalette.color(current.color)
                 ) { command in
                     switch command.id {
