@@ -178,20 +178,20 @@ describe("agents-proxy MCP surface", () => {
     ]);
   });
 
-  it("publishes explicit, bounded routine schedule schemas", async () => {
+  it("publishes a flat routine schedule schema that survives provider conversion", async () => {
     const list = await rpc("tools/list");
     const create = list.result.tools.find((t: { name: string }) => t.name === "propose_routine");
     expect(create.inputSchema.required).toEqual(["name", "instructions", "schedule"]);
-    expect(create.inputSchema.properties.schedule.oneOf).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ required: ["type", "at"] }),
-        expect.objectContaining({ required: ["type", "time", "weekdays"] }),
-      ]),
-    );
-    const weekly = create.inputSchema.properties.schedule.oneOf.find(
-      (option: any) => option.properties.type.const === "weekly",
-    );
-    expect(weekly.properties.weekdays.items.enum).toEqual([
+    const schedule = create.inputSchema.properties.schedule;
+    // No composition keywords anywhere in the tool surface: several agent
+    // CLIs flatten or drop oneOf/anyOf/const when converting MCP tools for
+    // their model API, and a model that never saw the branches guesses
+    // shapes forever (the 0.1.38 field failure).
+    expect(JSON.stringify(create.inputSchema)).not.toMatch(/"oneOf"|"anyOf"|"allOf"|"const"/);
+    expect(schedule.type).toBe("object");
+    expect(schedule.required).toEqual(["type"]);
+    expect(schedule.properties.type.enum).toEqual(["once", "weekly", "daily"]);
+    expect(schedule.properties.weekdays.items.enum).toEqual([
       "monday",
       "tuesday",
       "wednesday",
@@ -379,6 +379,67 @@ describe("agents-proxy MCP surface", () => {
       action: "delete",
       routineId: "routine-1",
     });
+  });
+
+  it("coerces the schedule shapes models actually send", async () => {
+    // "daily" is the natural word for every-day; it becomes weekly on all
+    // seven days on the wire, so the harness dialect stays unchanged.
+    await callTool("propose_routine", {
+      name: "Daily check",
+      instructions: "Check things.",
+      schedule: { type: "daily", time: "09:00" },
+    });
+    expect(lastRoutineRequestBody.routine.schedule).toEqual({
+      type: "weekly",
+      time: "09:00",
+      weekdays: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+    });
+
+    // Capitalized and short weekday names have one obvious meaning.
+    await callTool("propose_routine", {
+      name: "Caps",
+      instructions: "x.",
+      schedule: { type: "weekly", time: "09:00", weekdays: ["Monday", "FRI"] },
+    });
+    expect(lastRoutineRequestBody.routine.schedule.weekdays).toEqual(["monday", "friday"]);
+
+    // Models routinely deliver nested objects as JSON strings.
+    await callTool("propose_routine", {
+      name: "Str",
+      instructions: "x.",
+      schedule: JSON.stringify({ type: "weekly", time: "09:00", weekdays: ["monday"] }),
+    });
+    expect(lastRoutineRequestBody.routine.schedule).toEqual({ type: "weekly", time: "09:00", weekdays: ["monday"] });
+  });
+
+  it("answers unsupported schedules with instructions, before calling the harness", async () => {
+    lastRoutineRequestBody = null;
+    const interval = await callTool("propose_routine", {
+      name: "Interval",
+      instructions: "x.",
+      schedule: { type: "interval", minutes: 30 },
+    });
+    expect(interval.result.isError).toBe(true);
+    expect(interval.result.content[0].text).toContain("sub-day intervals");
+    expect(interval.result.content[0].text).toContain('"type":"daily"');
+
+    const noDays = await callTool("propose_routine", {
+      name: "NoDays",
+      instructions: "x.",
+      schedule: { type: "weekly", time: "09:00" },
+    });
+    expect(noDays.result.isError).toBe(true);
+    expect(noDays.result.content[0].text).toContain("weekdays");
+    expect(noDays.result.content[0].text).toContain("daily");
+
+    const unknown = await callTool("propose_routine_action", {
+      routine_id: "routine-1",
+      action: "update",
+      changes: { schedule: { type: "fortnightly", time: "09:00" } },
+    });
+    expect(unknown.result.isError).toBe(true);
+    expect(unknown.result.content[0].text).toContain("Unknown schedule type");
+    expect(lastRoutineRequestBody).toBeNull();
   });
 
   it("rejects malformed routine proposals before calling the harness", async () => {

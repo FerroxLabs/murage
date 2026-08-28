@@ -46,44 +46,118 @@ const WEEKDAYS = [
   "sunday",
 ] as const;
 
+// One flat object, deliberately free of oneOf/const/format: several agent
+// CLIs flatten or drop JSON-Schema composition keywords when converting MCP
+// tools into their provider's function-call format, and a model that never
+// saw the branches guesses shapes forever (the 0.1.38 field failure). The
+// per-type rules live in descriptions and are enforced with guiding errors
+// in normalizeScheduleInput below.
 const ROUTINE_SCHEDULE_SCHEMA = {
-  oneOf: [
-    {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        type: { type: "string", const: "once" },
-        at: {
-          type: "string",
-          format: "date-time",
-          description:
-            "Future RFC3339 date-time with an explicit timezone offset, for example 2026-09-01T09:00:00+05:30 or 2026-09-01T03:30:00Z.",
-        },
-      },
-      required: ["type", "at"],
+  type: "object",
+  additionalProperties: false,
+  description:
+    'Either {"type":"once","at":RFC3339} for one future run, {"type":"weekly","time":"HH:MM","weekdays":[...]} for chosen days, or {"type":"daily","time":"HH:MM"} to run every day. Sub-day intervals (every N minutes/hours) are not supported.',
+  properties: {
+    type: {
+      type: "string",
+      enum: ["once", "weekly", "daily"],
+      description: "once = a single future run; weekly = chosen weekdays; daily = every day of the week.",
     },
-    {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        type: { type: "string", const: "weekly" },
-        time: {
-          type: "string",
-          pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
-          description: "Local computer time in 24-hour HH:MM format.",
-        },
-        weekdays: {
-          type: "array",
-          minItems: 1,
-          uniqueItems: true,
-          items: { type: "string", enum: WEEKDAYS },
-          description: "Days on which the routine should run in the computer's local timezone.",
-        },
-      },
-      required: ["type", "time", "weekdays"],
+    at: {
+      type: "string",
+      description:
+        "Only for type once: future RFC3339 date-time with an explicit timezone offset, for example 2026-09-01T09:00:00+05:30 or 2026-09-01T03:30:00Z.",
     },
-  ],
+    time: {
+      type: "string",
+      description: "For type weekly or daily: local computer time in 24-hour HH:MM format, for example 09:00.",
+    },
+    weekdays: {
+      type: "array",
+      items: { type: "string", enum: WEEKDAYS },
+      description: "Only for type weekly: which days the routine runs, in the computer's local timezone.",
+    },
+  },
+  required: ["type"],
 } as const;
+
+const SHORT_WEEKDAYS = {
+  mon: "monday",
+  tue: "tuesday",
+  tues: "tuesday",
+  wed: "wednesday",
+  thu: "thursday",
+  thur: "thursday",
+  thurs: "thursday",
+  fri: "friday",
+  sat: "saturday",
+  sun: "sunday",
+} as const satisfies Record<string, (typeof WEEKDAYS)[number]>;
+
+const SUPPORTED_SCHEDULES =
+  'Supported schedules: {"type":"once","at":"2026-09-01T09:00:00+05:30"} (future RFC3339 with explicit offset), ' +
+  '{"type":"weekly","time":"09:00","weekdays":["monday","friday"]}, or {"type":"daily","time":"09:00"} for every day.';
+
+/** The outcome of coercing a model-sent schedule: the harness-dialect
+ * schedule, or a message telling the model exactly what to send instead. */
+interface NormalizedSchedule {
+  schedule?: Json;
+  error?: string;
+}
+
+/** A schedule as the harness accepts it, or a message telling the model
+ * exactly what to send instead. Coercion first, error second: models
+ * routinely stringify nested objects, say "daily", or shorten weekday
+ * names, and each of those has one obvious meaning. */
+function normalizeScheduleInput(args: Json): NormalizedSchedule {
+  let raw = args.schedule;
+  if (typeof raw === "string") {
+    // Some models deliver nested objects as JSON strings.
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return { error: `The schedule must be a JSON object, not text. ${SUPPORTED_SCHEDULES}` };
+    }
+  }
+  if (!jsonRecord(raw)) return { error: `The schedule must be a JSON object. ${SUPPORTED_SCHEDULES}` };
+  const type = typeof raw.type === "string" ? raw.type.trim().toLowerCase() : "";
+  if (type === "once") {
+    if (typeof raw.at !== "string" || !raw.at.trim()) {
+      return { error: `A once schedule needs "at": a future RFC3339 date-time with an explicit offset, for example 2026-09-01T09:00:00+05:30.` };
+    }
+    return { schedule: { type: "once", at: raw.at.trim() } };
+  }
+  if (type === "weekly" || type === "daily") {
+    const time = typeof raw.time === "string" ? raw.time.trim() : "";
+    if (!time) return { error: `A ${type} schedule needs "time" in 24-hour HH:MM, for example 09:00.` };
+    let weekdays: string[];
+    if (type === "daily") {
+      // daily = weekly on all seven days; an explicit weekdays list narrows it.
+      weekdays = Array.isArray(raw.weekdays) && raw.weekdays.length ? raw.weekdays : [...WEEKDAYS];
+    } else {
+      if (!Array.isArray(raw.weekdays) || raw.weekdays.length === 0) {
+        return { error: `A weekly schedule needs "weekdays", for example ["monday","friday"] — or use {"type":"daily"} to run every day.` };
+      }
+      weekdays = raw.weekdays;
+    }
+    const normalized: string[] = [];
+    for (const day of weekdays) {
+      const lower = String(day).trim().toLowerCase();
+      const full = (WEEKDAYS as readonly string[]).includes(lower)
+        ? lower
+        : Object.hasOwn(SHORT_WEEKDAYS, lower)
+          ? SHORT_WEEKDAYS[lower as keyof typeof SHORT_WEEKDAYS]
+          : undefined;
+      if (!full) return { error: `Unsupported weekday "${String(day)}". Use full names: ${WEEKDAYS.join(", ")}.` };
+      if (!normalized.includes(full)) normalized.push(full);
+    }
+    return { schedule: { type: "weekly", time, weekdays: normalized } };
+  }
+  if (type === "interval" || type === "cron" || type === "hourly" || type === "minutes") {
+    return { error: `Routines cannot run on sub-day intervals. ${SUPPORTED_SCHEDULES} Pick the closest daily or weekly time and tell the user about this limit.` };
+  }
+  return { error: `Unknown schedule type "${type || "(missing)"}". ${SUPPORTED_SCHEDULES}` };
+}
 
 const ROUTINE_FIELDS_SCHEMA = {
   name: { type: "string", minLength: 1, maxLength: 80, description: "Short name shown in Routines." },
@@ -247,16 +321,18 @@ function routineAction(value: unknown): RoutineAction | null {
     : null;
 }
 
-function routineFields(args: Json): Json {
+function routineFields(args: Json): { fields: Json; error?: string } {
   const fields: Json = {};
   if (typeof args.name === "string") fields.name = args.name.trim();
   if (typeof args.instructions === "string") fields.instructions = args.instructions.trim();
-  if (args.schedule && typeof args.schedule === "object" && !Array.isArray(args.schedule)) {
-    fields.schedule = args.schedule;
+  if (args.schedule !== undefined && args.schedule !== null) {
+    const normalized = normalizeScheduleInput(args);
+    if (normalized.error) return { fields, error: normalized.error };
+    fields.schedule = normalized.schedule;
   }
   if (typeof args.run_on === "string") fields.runOn = args.run_on;
   if (typeof args.duration_minutes === "number") fields.durationMinutes = args.duration_minutes;
-  return fields;
+  return { fields };
 }
 
 function confirmationResult(r: Json, fallback: string): { text: string } {
@@ -370,7 +446,8 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     };
   }
   if (name === "propose_routine") {
-    const routine = routineFields(args);
+    const { fields: routine, error: scheduleError } = routineFields(args);
+    if (scheduleError) return { text: scheduleError, isError: true };
     if (!routine.name || !routine.instructions || !routine.schedule) {
       return { text: "propose_routine needs name, instructions, and schedule.", isError: true };
     }
@@ -401,7 +478,8 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       if (!jsonRecord(args.changes)) {
         return { text: "The update action needs at least one field in changes.", isError: true };
       }
-      const changes = routineFields(args.changes);
+      const { fields: changes, error: scheduleError } = routineFields(args.changes);
+      if (scheduleError) return { text: scheduleError, isError: true };
       if (!Object.keys(changes).length) {
         return { text: "The update action needs at least one supported field in changes.", isError: true };
       }
