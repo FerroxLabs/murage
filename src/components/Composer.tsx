@@ -178,7 +178,7 @@ export function Composer({
   // Per-thread draft: switching bots unmounts this component, so both the
   // text and its attachment chips have to outlive it (see lib/drafts).
   const [text, setText, attachments, setAttachments] = useComposerDraft(
-    group ? `group:${group.id}` : `bot:${bot?.id ?? ""}`,
+    group ? `group:${group.id}:${group.threadId}` : `bot:${bot?.id ?? ""}`,
   );
   const addAttachments = useCallback(
     (next: Attachment[]) => setAttachments((prev) => [...prev, ...next]),

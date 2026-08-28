@@ -920,6 +920,24 @@ public struct CompanionClient: Sendable {
         try await send(try makeRequest("DELETE", "/api/bots/\(botId)/tasks/\(threadId)"), as: BotResponse.self).bot
     }
 
+    public func createTask(groupId: String, title: String? = nil) async throws -> Room {
+        var body: [String: Any] = [:]
+        if let title, !title.isEmpty { body["title"] = title }
+        return try await send(try makeRequest("POST", "/api/groups/\(groupId)/tasks", body: body), as: RoomResponse.self).group
+    }
+
+    public func switchTask(groupId: String, threadId: String) async throws -> Room {
+        try await send(try makeRequest("POST", "/api/groups/\(groupId)/tasks/\(threadId)"), as: RoomResponse.self).group
+    }
+
+    public func renameTask(groupId: String, threadId: String, title: String) async throws {
+        try await send(try makeRequest("PATCH", "/api/groups/\(groupId)/tasks/\(threadId)", body: ["title": title]))
+    }
+
+    public func deleteTask(groupId: String, threadId: String) async throws -> Room {
+        try await send(try makeRequest("DELETE", "/api/groups/\(groupId)/tasks/\(threadId)"), as: RoomResponse.self).group
+    }
+
     public func interrupt(botId: String) async throws {
         try await send(try makeRequest("POST", "/api/bots/\(botId)/interrupt"))
     }

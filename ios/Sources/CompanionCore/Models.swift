@@ -234,6 +234,9 @@ public struct Room: Codable, Hashable, Identifiable, Sendable {
     public var createdAt: Double
     public var dm: Bool?
     public var busyBotId: String?
+    /// Independent user conversations in this channel. Bot-to-bot rooms
+    /// omit tasks because their transcript is the canonical private chat.
+    public var tasks: [BotTask]?
     public var messages: [Message]?
     public var hasMore: Bool?
 }
@@ -849,6 +852,9 @@ struct ActiveBranchResponse: Codable, Sendable {
 
 struct BotResponse: Codable, Sendable {
     var bot: Bot
+}
+struct RoomResponse: Codable, Sendable {
+    var group: Room
 }
 struct VoiceListResponse: Codable, Sendable {
     var voices: [Voice]

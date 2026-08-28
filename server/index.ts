@@ -91,6 +91,7 @@ import {
   Store,
   type GroupDefaultResponder,
   type GroupRecord,
+  type GroupTaskRecord,
   type Message,
   type TaskRecord,
 } from "./store.ts";
@@ -324,6 +325,7 @@ store.seedIfEmpty();
  * than the desktop window did. Stripped here rather than at each call site
  * so a new broadcast cannot forget. */
 const wireTask = ({ resumeCursors, lastInstanceId, ...task }: TaskRecord) => task;
+const wireGroupTask = (task: GroupTaskRecord) => task;
 
 const wireBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
   const { resumeCursors, tasks, ...rest } = bot;
@@ -342,6 +344,13 @@ const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
   messages: store.messagesFor(bot.threadId),
   activeLeafId: store.activeLeaf(bot.threadId),
   tasks: store.tasks(bot.id).map(wireTask),
+});
+
+const groupWithThread = (group: GroupRecord) => ({
+  ...group,
+  messages: store.messagesFor(group.threadId),
+  activeLeafId: store.activeLeaf(group.threadId),
+  ...(group.dm ? {} : { tasks: store.groupTasks(group.id).map(wireGroupTask) }),
 });
 
 // The store tells us what it wrote; this is the ONE place that turns those
@@ -1951,6 +1960,7 @@ _loadPending();
 
 async function runGroupMemberTurn(
   groupId: string,
+  threadId: string,
   botId: string,
   hop: number,
   // bots that already spoke for this user message — "@Scout ask @Pixel"
@@ -1961,13 +1971,16 @@ async function runGroupMemberTurn(
 ): Promise<boolean> {
   const group = store.group(groupId);
   const bot = store.bot(botId);
-  if (!group || !bot) return false;
+  const ownsThread = group?.dm
+    ? group.threadId === threadId
+    : Boolean(group && store.groupTaskByThread(group.id, threadId));
+  if (!group || !bot || !ownsThread) return false;
   spoken.add(botId);
   const instance = registry.get(bot.modelSelection.instanceId);
   const userName = cfg.profile?.name?.trim() || "User";
   if (!instance) {
     const message = `${bot.name}'s model is unavailable`;
-    store.appendMessage(group.threadId, {
+    store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
@@ -1982,7 +1995,7 @@ async function runGroupMemberTurn(
   // reached one of them.
   if (bot.busy) {
     const message = `${bot.name} is busy in another conversation — skipped this round`;
-    store.appendMessage(group.threadId, {
+    store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
@@ -1993,10 +2006,10 @@ async function runGroupMemberTurn(
   }
   const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
   if (hop < MAX_COMMS_DEPTH && instance.adapter.capabilities.agentsMcp === true) {
-    integrations.agents = agentsIntegration(bot.id, group.threadId, hop);
+    integrations.agents = agentsIntegration(bot.id, threadId, hop);
   }
   const selectedSkills = selectBundledSkills(
-    serializeRoomContext(group.threadId, userName),
+    serializeRoomContext(threadId, userName),
     instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : [],
     availableSkills(),
   );
@@ -2005,12 +2018,12 @@ async function runGroupMemberTurn(
   }
   try {
     if (bot.composio !== false && composio.configured(cfg) && instance.adapter.capabilities.composioMcp === true) {
-      const connection = await connectedAppsIntegration(bot.id, group.threadId);
+      const connection = await connectedAppsIntegration(bot.id, threadId);
       if (connection) integrations.composio = connection;
     }
   } catch (error) {
     const message = `connected apps are unavailable — ${error instanceof Error ? error.message : String(error)}`;
-    store.appendMessage(group.threadId, {
+    store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
@@ -2022,7 +2035,7 @@ async function runGroupMemberTurn(
   store.setActivity(bot.id, "working");
 
   store.patchGroup(group.id, { busyBotId: bot.id }); // the store's change stream carries the frame
-  groupSpeakers.set(group.threadId, { botId: bot.id, name: bot.name, color: bot.color });
+  groupSpeakers.set(threadId, { botId: bot.id, name: bot.name, color: bot.color });
 
   const roster = group.memberIds
     .map((id) => store.bot(id))
@@ -2042,7 +2055,7 @@ async function runGroupMemberTurn(
     .filter(Boolean)
     .join("\n");
 
-  const text = `${serializeRoomContext(group.threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)${
+  const text = `${serializeRoomContext(threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)${
     cardContinuation ? `\n\n${cardContinuation}` : ""
   }`;
 
@@ -2056,7 +2069,7 @@ async function runGroupMemberTurn(
   // has its folder moved underneath it. Off-host members skip the folder
   // but must not decide the pin: the room's desk is a property of the
   // room, not of whichever member happened to speak first.
-  const cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id));
+  const cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id, threadId));
   const roomSystem =
     system +
     sectionContextSystemPrompt(bot.section) +
@@ -2073,8 +2086,8 @@ async function runGroupMemberTurn(
     let unsub = () => {};
     let unregisterStall = () => {};
     const deadline = new RoomTurnDeadline(timeoutMinutes, () => {
-      void instance.adapter.interruptTurn(group.threadId).catch(() => {});
-      store.appendMessage(group.threadId, {
+      void instance.adapter.interruptTurn(threadId).catch(() => {});
+      store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
         from: { botId: bot.id, name: bot.name, color: bot.color },
@@ -2091,7 +2104,7 @@ async function runGroupMemberTurn(
       resolve(value);
     };
     unsub = bus.subscribe((e: RuntimeEvent) => {
-      if (e.threadId !== group.threadId) return;
+      if (e.threadId !== threadId) return;
       if (e.type === "item.completed" && e.itemType === "assistant_text") replyText += `\n${e.text}`;
       else if (e.type === "turn.completed") finish("settled");
       // Waiting on a person is not turn work: hold the ceiling while an
@@ -2101,11 +2114,11 @@ async function runGroupMemberTurn(
       else if (e.type === "request.resolved") deadline.setWaitingOnHuman(false);
     });
     deadline.start();
-    unregisterStall = roomStallCompletions.register(group.threadId, () => finish("stalled"));
-    watchdog.watch(group.threadId, bot.id);
+    unregisterStall = roomStallCompletions.register(threadId, () => finish("stalled"));
+    watchdog.watch(threadId, bot.id);
     instance.adapter
       .sendTurn({
-        threadId: group.threadId,
+        threadId,
         text,
         system: roomSystem,
         cwd,
@@ -2114,14 +2127,14 @@ async function runGroupMemberTurn(
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : "turn failed";
-        store.appendMessage(group.threadId, {
+        store.appendMessage(threadId, {
           role: "bot",
           kind: "activity",
           from: { botId: bot.id, name: bot.name, color: bot.color },
           tool: { name: `error: ${message.slice(0, 140)}`, ok: false },
         });
         onDispatchError?.(message);
-        watchdog.settle(group.threadId);
+        watchdog.settle(threadId);
         finish("dispatch_failed");
       });
   });
@@ -2133,7 +2146,7 @@ async function runGroupMemberTurn(
   // when this invocation still owns the room; otherwise it would emit a
   // duplicate group frame or clear a newer speaker's state.
   if (store.group(group.id)?.busyBotId === bot.id) {
-    groupSpeakers.delete(group.threadId);
+    groupSpeakers.delete(threadId);
     store.patchGroup(group.id, { busyBotId: null, unread: true });
     if (store.bot(bot.id)?.busy) store.setActivity(bot.id, "idle");
   }
@@ -2152,7 +2165,7 @@ async function runGroupMemberTurn(
       .filter((b): b is NonNullable<typeof b> => Boolean(b) && b!.id !== bot.id);
     for (const next of roomResponders(replyText, members, { kind: "mentions" })) {
       if (spoken.has(next.id)) continue;
-      if (!(await runGroupMemberTurn(groupId, next.id, hop + 1, spoken))) return false;
+      if (!(await runGroupMemberTurn(groupId, threadId, next.id, hop + 1, spoken))) return false;
     }
   }
   return true;
@@ -2164,7 +2177,11 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message) {
   if (roomSetupPending(group)) {
     throw Object.assign(new Error("finish room setup before sending the first message"), { status: 409 });
   }
-  store.appendMessage(group.threadId, { role: "user", kind: "text", text, replyToId: replyTo?.id });
+  // Capture the active thread once. Every queued responder below is bound to
+  // this task even if another client asks to switch later.
+  const threadId = group.threadId;
+  store.appendMessage(threadId, { role: "user", kind: "text", text, replyToId: replyTo?.id });
+  if (!group.dm) store.titleGroupTaskFromFirstMessage(group.id, text, threadId);
 
   const members = group.memberIds
     .map((id) => store.bot(id))
@@ -2173,7 +2190,7 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message) {
   const archived = members.filter((member) => member.hidden);
   const mentionedArchived = mentionedBots(text, archived.map(({ name }) => ({ name })))[0];
   if (mentionedArchived) {
-    store.appendMessage(group.threadId, {
+    store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
       tool: {
@@ -2185,7 +2202,7 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message) {
   let responders = roomResponders(text, members, group.defaultResponder);
   // bot⇄bot channels: chipping in without a tag addresses the last speaker
   if (!responders.length && group.dm) {
-    const lastSpeakerId = [...store.messagesFor(group.threadId)]
+    const lastSpeakerId = [...store.messagesFor(threadId)]
       .reverse()
       .find((msg) => msg.kind === "text" && msg.from)?.from?.botId;
     const last = availableMembers.find((b) => b.id === lastSpeakerId) ?? availableMembers[0];
@@ -2201,7 +2218,7 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message) {
       unavailableMessage = `${defaultArchived.name} is archived and can't respond — restore it or mention an active room member.`;
     }
     if (unavailableMessage) {
-      store.appendMessage(group.threadId, {
+      store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
         tool: { name: unavailableMessage, ok: false },
@@ -2215,7 +2232,7 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message) {
     const current = store.group(groupId);
     if (current?.busyBotId) {
       const owner = store.bot(current.busyBotId);
-      store.appendMessage(current.threadId, {
+      store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
         tool: { name: `${owner?.name ?? "A room member"} is still stopping — this message was not dispatched`, ok: false },
@@ -2225,7 +2242,7 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message) {
     const spoken = new Set<string>();
     for (const responder of responders) {
       if (spoken.has(responder.id)) continue;
-      if (!(await runGroupMemberTurn(groupId, responder.id, 0, spoken))) break;
+      if (!(await runGroupMemberTurn(groupId, threadId, responder.id, 0, spoken))) break;
     }
   });
   groupQueues.set(groupId, next.catch(() => {}));
@@ -2308,7 +2325,7 @@ function dispatchConnectorResume(entry: { botId: string; threadId: string; resum
         pendingConnectorResumes.set(`${entry.threadId}:${entry.resumeKey}`, entry);
         return;
       }
-      await runGroupMemberTurn(current.group.id, entry.botId, 0, new Set(), prompt);
+      await runGroupMemberTurn(current.group.id, entry.threadId, entry.botId, 0, new Set(), prompt);
     });
     groupQueues.set(owner.group.id, next.catch((error) => {
       markConnectorResumeFailed(entry.threadId, entry.resumeKey, error instanceof Error ? error.message : String(error));
@@ -2391,6 +2408,7 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
       }
       await runGroupMemberTurn(
         current.group.id,
+        entry.threadId,
         entry.botId,
         0,
         new Set(),
@@ -3372,7 +3390,10 @@ const server = createServer(async (req, res) => {
             const task = store.taskByThread(bot.id, hit.threadId);
             return { ...hit, botId: bot.id, name: bot.name, task: task?.title, onActivePath: active };
           }
-          if (group) return { ...hit, groupId: group.id, name: group.name, onActivePath: active };
+          if (group) {
+            const task = store.groupTaskByThread(group.id, hit.threadId);
+            return { ...hit, groupId: group.id, name: group.name, task: task?.title, onActivePath: active };
+          }
           return null;
         })
         .filter((hit): hit is NonNullable<typeof hit> => hit !== null);
@@ -3390,7 +3411,9 @@ const server = createServer(async (req, res) => {
       if (format !== "markdown" && format !== "json") {
         return json(res, 400, { error: "format must be markdown or json" });
       }
-      const title = bot ? (store.taskByThread(bot.id, threadId)?.title || bot.name) : group!.name;
+      const title = bot
+        ? (store.taskByThread(bot.id, threadId)?.title || bot.name)
+        : (store.groupTaskByThread(group!.id, threadId)?.title || group!.name);
       const filename = (title.replace(/[^\w\- ]+/g, "").trim() || "conversation").slice(0, 60);
       const messages = store.activePath(threadId);
       if (format === "json") {
@@ -3787,6 +3810,78 @@ const server = createServer(async (req, res) => {
       if (!updated) return json(res, 404, { error: "no such room" });
       return json(res, 200, { group: updated });
     }
+
+    // ── channel tasks: separate conversations for the same team ────────
+    const channelTaskBlocked = (group: GroupRecord) =>
+      Boolean(group.busyBotId) ||
+      store.groupTasks(group.id).some((task) =>
+        store.messagesFor(task.threadId).some(
+          (message) =>
+            message.kind === "options" &&
+            message.card?.requestId &&
+            !message.card.answered &&
+            !message.card.dismissed,
+        ),
+      );
+
+    m = path.match(/^\/api\/groups\/([\w-]+)\/tasks$/);
+    if (m && method === "POST") {
+      const group = store.group(m[1]);
+      if (!group) return json(res, 404, { error: "no such channel" });
+      if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
+      if (channelTaskBlocked(group)) {
+        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+      }
+      const body = await readBody(req);
+      const task = store.createGroupTask(group.id, typeof body.title === "string" ? body.title : undefined);
+      if (!task) return json(res, 500, { error: "couldn't create that task" });
+      const fresh = groupWithThread(store.group(group.id)!);
+      broadcast({ kind: "group", group: fresh });
+      return json(res, 201, { group: fresh, task: wireGroupTask(task) });
+    }
+
+    m = path.match(/^\/api\/groups\/([\w-]+)\/tasks\/([\w-]+)$/);
+    if (m && method === "POST") {
+      const group = store.group(m[1]);
+      if (!group) return json(res, 404, { error: "no such channel" });
+      if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
+      if (channelTaskBlocked(group)) {
+        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+      }
+      const switched = store.switchGroupTask(group.id, m[2]);
+      if (!switched) return json(res, 404, { error: "no such channel task" });
+      const fresh = groupWithThread(switched);
+      broadcast({ kind: "group", group: fresh });
+      return json(res, 200, { group: fresh });
+    }
+    if (m && method === "PATCH") {
+      const group = store.group(m[1]);
+      if (!group) return json(res, 404, { error: "no such channel" });
+      if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
+      if (channelTaskBlocked(group)) {
+        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+      }
+      const body = await readBody(req);
+      const task = store.renameGroupTask(m[1], m[2], String(body.title ?? ""));
+      if (!task) return json(res, 404, { error: "no such channel task" });
+      return json(res, 200, { task: wireGroupTask(task) });
+    }
+    if (m && method === "DELETE") {
+      const group = store.group(m[1]);
+      if (!group) return json(res, 404, { error: "no such channel" });
+      if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
+      if (channelTaskBlocked(group)) {
+        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+      }
+      if (!store.groupTaskByThread(group.id, m[2])) return json(res, 404, { error: "no such channel task" });
+      lastReply.delete(m[2]);
+      const updated = store.deleteGroupTask(group.id, m[2]);
+      if (!updated) return json(res, 400, { error: "a channel keeps at least one task" });
+      const fresh = groupWithThread(updated);
+      broadcast({ kind: "group", group: fresh });
+      return json(res, 200, { group: fresh });
+    }
+
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
     if (m && method === "PATCH") {
       const body = await readBody(req);
@@ -3870,12 +3965,15 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const group = store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such room" });
-      lastReply.delete(group.threadId);
+      const threadIds = new Set([group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)]);
+      for (const threadId of threadIds) lastReply.delete(threadId);
       store.deleteGroup(group.id);
-      for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
-        try {
-          unlinkSync(join(dir, `${group.threadId}.ndjson`));
-        } catch {}
+      for (const threadId of threadIds) {
+        for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
+          try {
+            unlinkSync(join(dir, `${threadId}.ndjson`));
+          } catch {}
+        }
       }
       return json(res, 200, { ok: true });
     }

@@ -1,4 +1,4 @@
-// A bot's tasks: separate contexts on the same bot.
+// Separate task contexts for an agent or a channel.
 //
 // One endless thread per bot means every job contaminates the next, and
 // the only clean slate is a second bot. A task is a real boundary — its
@@ -6,7 +6,7 @@
 // long job and a quick question can sit side by side under one agent.
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Pencil, Plus, Trash2 } from "lucide-react";
-import { useStore, formatTime, type Bot, type Task } from "@/state/store";
+import { useStore, formatTime, type Bot, type Group, type Task } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE } from "@/lib/compact-chip";
 import { formatTokens } from "@/lib/format-tokens";
@@ -46,8 +46,25 @@ function TaskUsage({ usage }: { usage: Task["usage"] }) {
   );
 }
 
-export function TaskPicker({ bot }: { bot: Bot }) {
-  const { dispatch } = useStore();
+type PickerTask = Pick<Task, "threadId" | "title" | "createdAt"> & { usage?: Task["usage"] };
+
+function ConversationTaskPicker({
+  threadId,
+  tasks,
+  busy,
+  onNew,
+  onSwitch,
+  onRename,
+  onDelete,
+}: {
+  threadId: string;
+  tasks: PickerTask[];
+  busy: boolean;
+  onNew: () => void;
+  onSwitch: (threadId: string) => void;
+  onRename: (threadId: string, title: string) => void;
+  onDelete: (threadId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -55,8 +72,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finishingRename = useRef(false);
 
-  const tasks = bot.tasks ?? [];
-  const current = tasks.find((t) => t.threadId === bot.threadId);
+  const current = tasks.find((t) => t.threadId === threadId);
 
   const clearDismiss = () => {
     if (dismissTimer.current) {
@@ -135,9 +151,9 @@ export function TaskPicker({ bot }: { bot: Bot }) {
     return (
       <button
         type="button"
-        onClick={() => dispatch({ type: "newTask", botId: bot.id })}
-        disabled={bot.busy}
-        title={bot.busy ? "Let this turn finish first" : "New task — a fresh context on this bot"}
+        onClick={onNew}
+        disabled={busy}
+        title={busy ? "Let this turn finish first" : "New task — a fresh conversation"}
         className={cn(
           "flex items-center gap-1 rounded-full border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40",
           COMPACT_BUBBLE,
@@ -157,7 +173,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
     const currentTitle = tasks.find((task) => task.threadId === threadId)?.title ?? "";
     const title = save ? nextRename(currentTitle, draft) : null;
     setRenaming(null);
-    if (title) dispatch({ type: "renameTask", botId: bot.id, threadId, title });
+    if (title) onRename(threadId, title);
   };
 
   // the picker button stays as-is — a token count next to a truncated title
@@ -193,7 +209,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
         <div className="absolute right-0 top-full z-40 mt-1 w-[300px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1 shadow-2xl shadow-black/50">
           <div className="max-h-[320px] overflow-y-auto">
             {tasks.map((task) => {
-              const active = task.threadId === bot.threadId;
+              const active = task.threadId === threadId;
               return (
                 <div
                   key={task.threadId}
@@ -230,7 +246,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
                       type="button"
                       onClick={(e) => {
                         if (taskPickerPointerIntent("click", e.detail) !== "select") return;
-                        if (!active) dispatch({ type: "switchTask", botId: bot.id, threadId: task.threadId });
+                        if (!active) onSwitch(task.threadId);
                         queueDismiss();
                       }}
                       onDoubleClick={(e) => {
@@ -266,8 +282,8 @@ export function TaskPicker({ bot }: { bot: Bot }) {
                   )}
                   <button
                     type="button"
-                    onClick={() => dispatch({ type: "deleteTask", botId: bot.id, threadId: task.threadId })}
-                    disabled={bot.busy && active}
+                    onClick={() => onDelete(task.threadId)}
+                    disabled={busy && active}
                     aria-label="Delete task"
                     title="Delete this task and its conversation"
                     className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-danger group-hover:opacity-100 disabled:opacity-20"
@@ -281,10 +297,10 @@ export function TaskPicker({ bot }: { bot: Bot }) {
           <button
             type="button"
             onClick={() => {
-              dispatch({ type: "newTask", botId: bot.id });
+              onNew();
               closeMenu();
             }}
-            disabled={bot.busy}
+            disabled={busy}
             className="mt-1 flex w-full items-center gap-2 border-t border-hairline/40 px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/50 disabled:opacity-40"
           >
             <Plus size={13} className="text-ink-secondary" /> New task
@@ -292,5 +308,37 @@ export function TaskPicker({ bot }: { bot: Bot }) {
         </div>
       )}
     </div>
+  );
+}
+
+export function TaskPicker({ bot }: { bot: Bot }) {
+  const { dispatch } = useStore();
+  return (
+    <ConversationTaskPicker
+      threadId={bot.threadId}
+      tasks={bot.tasks ?? []}
+      busy={Boolean(bot.busy)}
+      onNew={() => dispatch({ type: "newTask", botId: bot.id })}
+      onSwitch={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
+      onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}
+      onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
+    />
+  );
+}
+
+/** The same task affordance in a channel. DMs never render it because their
+ * transcript is the private bot-to-bot exchange rather than user work. */
+export function GroupTaskPicker({ group }: { group: Group }) {
+  const { dispatch } = useStore();
+  return (
+    <ConversationTaskPicker
+      threadId={group.threadId}
+      tasks={group.tasks ?? []}
+      busy={Boolean(group.busyBotId)}
+      onNew={() => dispatch({ type: "newGroupTask", groupId: group.id })}
+      onSwitch={(threadId) => dispatch({ type: "switchGroupTask", groupId: group.id, threadId })}
+      onRename={(threadId, title) => dispatch({ type: "renameGroupTask", groupId: group.id, threadId, title })}
+      onDelete={(threadId) => dispatch({ type: "deleteGroupTask", groupId: group.id, threadId })}
+    />
   );
 }
