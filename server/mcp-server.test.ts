@@ -294,6 +294,23 @@ describe("MCP tool execution", () => {
     expect(JSON.stringify(switched)).not.toContain("session");
   });
 
+  it("rejects incomplete mutation responses before projecting them", async () => {
+    const fetcher = vi.fn(async () => ({}));
+
+    await expect(handleToolCall("update_bot_profile", {
+      bot_id: "bot-1", name: "Mira",
+    }, fetcher)).rejects.toThrow("OpenMausBot did not return the updated bot");
+    await expect(handleToolCall("update_channel", {
+      channel_id: "channel-1", name: "Launch",
+    }, fetcher)).rejects.toThrow("OpenMausBot did not return the updated channel");
+    await expect(handleToolCall("create_task", {
+      target_type: "bot", target_id: "bot-1", title: "Fresh",
+    }, fetcher)).rejects.toThrow("OpenMausBot did not return the created task");
+    await expect(handleToolCall("rename_task", {
+      target_type: "bot", target_id: "bot-1", task_id: "task-1", title: "Renamed",
+    }, fetcher)).rejects.toThrow("OpenMausBot did not return the renamed task");
+  });
+
   it("searches with encoded, bounded parameters", async () => {
     const fetcher = vi.fn(async () => ({ hits: [{ messageId: "m1" }] }));
     const result: any = await handleToolCall("search_messages", { query: "release notes", task_id: "task-1", limit: 100 }, fetcher);

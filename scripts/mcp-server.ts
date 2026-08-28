@@ -841,6 +841,9 @@ export async function handleToolCall(
         method: "PATCH",
         body: JSON.stringify(patch),
       });
+      if (!isRecord(result?.bot)) {
+        throw new Error("OpenMausBot did not return the updated bot");
+      }
       return { success: true, bot: projectBot(result.bot) };
     }
 
@@ -929,6 +932,9 @@ export async function handleToolCall(
         method: "PATCH",
         body: JSON.stringify(patch),
       });
+      if (!isRecord(result?.group)) {
+        throw new Error("OpenMausBot did not return the updated channel");
+      }
       return { success: true, channel: projectChannel(result.group) };
     }
 
@@ -937,12 +943,15 @@ export async function handleToolCall(
       const title = optionalStringArg(args, "title", { max: 80 });
       const route = taskRoute(args.target_type, targetId);
       const result = await fetcher(route, { method: "POST", body: JSON.stringify(title ? { title } : {}) });
+      if (!isRecord(result?.task) || typeof result.task.threadId !== "string") {
+        throw new Error("OpenMausBot did not return the created task");
+      }
       const activeTaskId = result.bot?.threadId ?? result.group?.threadId ?? result.task?.threadId;
       return {
         success: true,
         targetType: args.target_type,
         targetId,
-        task: projectTask(isRecord(result.task) ? result.task : {}, activeTaskId),
+        task: projectTask(result.task, activeTaskId),
       };
     }
 
@@ -972,11 +981,14 @@ export async function handleToolCall(
         method: "PATCH",
         body: JSON.stringify({ title }),
       });
+      if (!isRecord(result?.task)) {
+        throw new Error("OpenMausBot did not return the renamed task");
+      }
       return {
         success: true,
         targetType: args.target_type,
         targetId,
-        task: projectTask(isRecord(result.task) ? result.task : {}, undefined),
+        task: projectTask(result.task, undefined),
       };
     }
 

@@ -141,11 +141,19 @@ if (listening) {
   // The ping is deliberately followed by EOF without waiting. If the stdio
   // close path exits before buffered frames drain, id 3 will be missing.
   mcp.stdin.end(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "ping" })}\n`);
+  const closed = new Promise((resolve) => mcp.once("close", (code, signal) => resolve({ code, signal })));
+  let timeout;
   const exit = await Promise.race([
-    new Promise((resolve) => mcp.once("exit", (code, signal) => resolve({ code, signal }))),
-    new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 10_000)),
+    closed,
+    new Promise((resolve) => {
+      timeout = setTimeout(() => resolve({ timeout: true }), 10_000);
+    }),
   ]);
-  if (exit.timeout) mcp.kill("SIGKILL");
+  clearTimeout(timeout);
+  if (exit.timeout) {
+    mcp.kill("SIGKILL");
+    await closed;
+  }
   try {
     const responses = stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
     mcpReport = { exit, responses, stderr };

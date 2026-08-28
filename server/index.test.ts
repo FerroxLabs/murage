@@ -562,6 +562,33 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("rejects null and array task, channel, and bot mutation bodies", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const room = (await api("POST", "/api/groups", { name: "Object bodies", memberIds: [bot.id] })).body.group;
+    try {
+      const routes = [
+        ["POST", `/api/groups/${room.id}/tasks`],
+        ["PATCH", `/api/groups/${room.id}/tasks/${room.threadId}`],
+        ["PATCH", `/api/groups/${room.id}`],
+        ["PATCH", `/api/bots/${bot.id}`],
+      ] as const;
+      for (const [method, path] of routes) {
+        for (const body of ["null", "[]"]) {
+          const response = await fetch(`${BASE}${path}`, {
+            method,
+            headers: { "content-type": "application/json" },
+            body,
+          });
+          expect(response.status).toBe(400);
+          expect(await response.json()).toEqual({ error: "body must be a JSON object" });
+        }
+      }
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("keeps bot-to-bot channels single-threaded and blocks task changes on an open approval", async () => {
     const dm = await api("POST", "/api/groups/test-dm/tasks", {});
     expect(dm.status).toBe(400);
@@ -2177,6 +2204,84 @@ describe("harness HTTP API", () => {
       )).toHaveLength(0);
     } finally {
       await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId });
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${first.id}`);
+      await api("DELETE", `/api/bots/${second.id}`);
+    }
+  });
+
+  it("tracks and cancels a queued channel credential continuation before provider dispatch", async () => {
+    const first = (await api("POST", "/api/bots", {})).body.bot;
+    const second = (await api("POST", "/api/bots", {})).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Credential continuation",
+      memberIds: [first.id, second.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: first.id } },
+    })).body.group;
+    try {
+      for (const bot of [first, second]) {
+        const selected = await api("PATCH", `/api/bots/${bot.id}`, {
+          modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+        });
+        expect(selected.status).toBe(200);
+      }
+
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "start the lead" })).status).toBe(202);
+      await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
+      const firstDump = JSON.parse(readFileSync(fakeClaudeDump, "utf8")) as {
+        pid: number;
+        mcpConfig: { mcpServers: { agents: { env: { OMB_COMMS_TOKEN: string } } } };
+      };
+      const token = firstDump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN;
+      expect(token).toMatch(/^[a-f0-9]{48}$/);
+
+      const requested = await fetch(`${BASE}/api/internal/request-credential`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          fromBotId: second.id,
+          fromThreadId: room.threadId,
+          credentialId: "openaiImageApiKey",
+          reason: "needed for the queued task",
+        }),
+      });
+      expect(requested.status).toBe(201);
+      const { messageId } = (await requested.json()) as { messageId: string };
+
+      const resumed = await api("POST", `/api/bots/${second.id}/secret-cards/${messageId}/dismiss`, {
+        threadId: room.threadId,
+      });
+      expect(resumed).toEqual({ status: 200, body: { dismissed: true, resumed: true } });
+
+      const queued = (await api("GET", "/api/bots?messages=0")).body;
+      expect(queued.groups.find((group: { id: string }) => group.id === room.id)?.working).toBe(true);
+      const deletion = await api("DELETE", `/api/groups/${room.id}`);
+      expect(deletion.status).toBe(409);
+      expect(deletion.body.error).toMatch(/working/i);
+
+      expect((await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId })).status).toBe(200);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        return {
+          working: state.groups.find((group: { id: string }) => group.id === room.id)?.working,
+          secondBusy: Boolean(state.bots.find((bot: { id: string }) => bot.id === second.id)?.busy),
+        };
+      }, { timeout: 5_000 }).toEqual({ working: false, secondBusy: false });
+
+      // The continuation sat behind the lead's hanging provider. Interrupting
+      // the room must cancel it before a second provider process is spawned.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(JSON.parse(readFileSync(fakeClaudeDump, "utf8")).pid).toBe(firstDump.pid);
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId });
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        return state.groups.find((group: { id: string }) => group.id === room.id)?.working;
+      }, { timeout: 5_000 }).toBe(false);
       await api("DELETE", `/api/groups/${room.id}`);
       await api("DELETE", `/api/bots/${first.id}`);
       await api("DELETE", `/api/bots/${second.id}`);

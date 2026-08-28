@@ -2614,19 +2614,35 @@ function dispatchConnectorResume(entry: { botId: string; threadId: string; resum
     return;
   }
   if (owner.group) {
-    const previous = groupQueues.get(owner.group.id) ?? Promise.resolve();
+    const groupId = owner.group.id;
+    const operation = beginGroupTurnOperation(groupId, entry.threadId);
+    const previous = groupQueues.get(groupId) ?? Promise.resolve();
     const next = previous.then(async () => {
+      if (operation.cancelled) return;
       const current = connectorThread(entry.botId, entry.threadId);
       if (!current?.group) return;
       if (current.bot.busy) {
         pendingConnectorResumes.set(`${entry.threadId}:${entry.resumeKey}`, entry);
         return;
       }
-      await runGroupMemberTurn(current.group.id, entry.threadId, entry.botId, 0, new Set(), prompt);
+      await runGroupMemberTurn(
+        current.group.id,
+        entry.threadId,
+        entry.botId,
+        0,
+        new Set(),
+        prompt,
+        (message) => markConnectorResumeFailed(entry.threadId, entry.resumeKey, message),
+        () => operation.cancelled,
+      );
     });
-    groupQueues.set(owner.group.id, next.catch((error) => {
-      markConnectorResumeFailed(entry.threadId, entry.resumeKey, error instanceof Error ? error.message : String(error));
-    }));
+    const tracked = next.finally(() => finishGroupTurnOperation(groupId, operation));
+    groupQueues.set(
+      groupId,
+      tracked.catch((error) => {
+        markConnectorResumeFailed(entry.threadId, entry.resumeKey, error instanceof Error ? error.message : String(error));
+      }),
+    );
     return;
   }
   void startTurn(entry.botId, prompt, {
@@ -2695,8 +2711,11 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
     return;
   }
   if (owner.group) {
-    const previous = groupQueues.get(owner.group.id) ?? Promise.resolve();
+    const groupId = owner.group.id;
+    const operation = beginGroupTurnOperation(groupId, entry.threadId);
+    const previous = groupQueues.get(groupId) ?? Promise.resolve();
     const next = previous.then(async () => {
+      if (operation.cancelled) return;
       const current = connectorThread(entry.botId, entry.threadId);
       if (!current?.group) return;
       if (current.bot.busy) {
@@ -2711,11 +2730,13 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
         new Set(),
         prompt,
         (message) => markSecretResumeFailed(entry.threadId, entry.messageId, message),
+        () => operation.cancelled,
       );
     });
+    const tracked = next.finally(() => finishGroupTurnOperation(groupId, operation));
     groupQueues.set(
-      owner.group.id,
-      next.catch((error) => {
+      groupId,
+      tracked.catch((error) => {
         markSecretResumeFailed(
           entry.threadId,
           entry.messageId,
@@ -4145,6 +4166,9 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
       }
       const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return json(res, 400, { error: "body must be a JSON object" });
+      }
       const task = store.createGroupTask(group.id, typeof body.title === "string" ? body.title : undefined);
       if (!task) return json(res, 500, { error: "couldn't create that task" });
       const fresh = groupWithThread(store.group(group.id)!);
@@ -4177,6 +4201,9 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
       }
       const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return json(res, 400, { error: "body must be a JSON object" });
+      }
       const task = store.renameGroupTask(m[1], m[2], String(body.title ?? ""));
       if (!task) return json(res, 404, { error: "no such channel task" });
       return json(res, 200, { task: wireGroupTask(task) });
@@ -4200,6 +4227,9 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
     if (m && method === "PATCH") {
       const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return json(res, 400, { error: "body must be a JSON object" });
+      }
       const existing = store.group(m[1]);
       if (!existing) return json(res, 404, { error: "no such room" });
       if (
@@ -4284,6 +4314,9 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const group = store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such room" });
+      if (groupIsWorking(group)) {
+        return json(res, 409, { error: "this channel is working — stop that turn first" });
+      }
       const threadIds = new Set([group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)]);
       for (const threadId of threadIds) lastReply.delete(threadId);
       store.deleteGroup(group.id);
@@ -4482,6 +4515,9 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "PATCH") {
       const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return json(res, 400, { error: "body must be a JSON object" });
+      }
       const existingBot = store.bot(m[1]);
       if (body.requireAvailableModel !== undefined && typeof body.requireAvailableModel !== "boolean") {
         return json(res, 400, { error: "requireAvailableModel must be true or false" });
