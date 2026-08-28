@@ -1129,10 +1129,10 @@ export function GroupView({ group }: { group: Group }) {
         );
       })()}
 
-      {/* Transcript */}
+      <div className="relative min-h-0 flex-1">
       <div
         ref={scrollRef}
-        className="flex-1 overflow-x-hidden overflow-y-auto px-5 [overflow-anchor:none]"
+        className="h-full overflow-x-hidden overflow-y-auto px-5 [overflow-anchor:none]"
         onWheel={(e) => {
           if (e.deltaY < 0) setBottomFollow(false);
           else if (atEnd()) setBottomFollow(true);
@@ -1163,7 +1163,7 @@ export function GroupView({ group }: { group: Group }) {
           </div>
         ) : (
         <div
-          className="flex w-full flex-col gap-3 pb-4"
+          className="flex w-full flex-col gap-3 pb-24"
           role="log"
           aria-live="polite"
           aria-label={`Room ${group.name}`}
@@ -1260,6 +1260,7 @@ export function GroupView({ group }: { group: Group }) {
         </button>
       )}
 
+      <div className="absolute inset-x-0 bottom-0 z-[2]">
       <Composer
         key={group.threadId}
         group={group}
@@ -1268,6 +1269,8 @@ export function GroupView({ group }: { group: Group }) {
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
       />
+      </div>
+      </div>
     </main>
   );
 }
