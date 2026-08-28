@@ -136,6 +136,28 @@ describe("Store", () => {
     expect(new Store(selection).group(channel.id)?.section).toBe("Work");
   });
 
+  it("persists a channel's completed setup in the same create write", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const channel = store.createGroup("Launch", [bot.id], false, "Work", {
+      bulletin: "Ship carefully.",
+      defaultResponder: { kind: "mentions" },
+      completed: true,
+    });
+
+    expect(channel).toMatchObject({
+      bulletin: "Ship carefully.",
+      defaultResponder: { kind: "mentions" },
+      setupSkippedAt: null,
+    });
+    expect(channel.setupCompletedAt).toEqual(expect.any(Number));
+    expect(new Store(selection).group(channel.id)).toMatchObject({
+      bulletin: "Ship carefully.",
+      defaultResponder: { kind: "mentions" },
+      setupCompletedAt: channel.setupCompletedAt,
+    });
+  });
+
   it("migrates old rooms without routing to their first member", () => {
     const store = new Store(selection);
     const first = store.createBot();

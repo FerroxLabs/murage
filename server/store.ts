@@ -678,24 +678,42 @@ export class Store {
     );
   }
 
-  createGroup(name: string, memberIds: string[], dm = false, section?: string): GroupRecord {
+  createGroup(
+    name: string,
+    memberIds: string[],
+    dm = false,
+    section?: string,
+    setup?: {
+      bulletin?: string;
+      defaultResponder?: GroupDefaultResponder;
+      completed?: boolean;
+    },
+  ): GroupRecord {
     const threadId = newId();
+    const createdAt = Date.now();
     const group: GroupRecord = {
       id: newId(),
       threadId,
       ...(dm
         ? {}
-        : { tasks: [{ threadId, title: UNTITLED_TASK, createdAt: Date.now() }] }),
+        : { tasks: [{ threadId, title: UNTITLED_TASK, createdAt }] }),
       name,
       memberIds,
-      defaultResponder: dm ? { kind: "mentions" } : { kind: "member", botId: memberIds[0] },
-      bulletin: "",
+      defaultResponder: dm
+        ? { kind: "mentions" }
+        : normalizeGroupDefaultResponder(setup?.defaultResponder, memberIds, false),
+      bulletin: setup?.bulletin ?? "",
       unread: false,
-      createdAt: Date.now(),
+      createdAt,
       dm: dm || undefined,
       busyBotId: null,
       section,
-      ...(dm ? {} : { setupCompletedAt: null, setupSkippedAt: null }),
+      ...(dm
+        ? {}
+        : {
+            setupCompletedAt: setup?.completed ? createdAt : null,
+            setupSkippedAt: null,
+          }),
     };
     this.groups.unshift(group);
     this.saveGroups();

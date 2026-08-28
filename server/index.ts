@@ -72,7 +72,7 @@ import { ComputerControl } from "./computer-control.ts";
 import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import { buildNotification, type Notification } from "./notify.ts";
-import { isEffortLevel, type RequestOutcome, type RuntimeEvent } from "./contracts.ts";
+import { isEffortLevel, type ModelSelection, type RequestOutcome, type RuntimeEvent } from "./contracts.ts";
 import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -312,6 +312,94 @@ async function defaultSelection() {
   const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0];
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
+
+function checkedModelSelection(
+  raw: unknown,
+  current?: { selection: ModelSelection; busy: boolean },
+  requireAvailableModel = false,
+): { ok: true; selection: ModelSelection } | { ok: false; status: number; error: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, status: 400, error: "modelSelection must be an object" };
+  }
+  const value = raw as { instanceId?: unknown; model?: unknown; effort?: unknown };
+  if (typeof value.instanceId !== "string" || !value.instanceId.trim()) {
+    return { ok: false, status: 400, error: "modelSelection.instanceId is required" };
+  }
+  if (typeof value.model !== "string" || !value.model.trim()) {
+    return { ok: false, status: 400, error: "modelSelection.model is required" };
+  }
+  const selection: ModelSelection = {
+    instanceId: value.instanceId.trim(),
+    model: value.model.trim(),
+  };
+  if (value.effort !== undefined) {
+    if (!isEffortLevel(value.effort)) {
+      return { ok: false, status: 400, error: `effort "${String(value.effort)}" is not recognized` };
+    }
+    selection.effort = value.effort;
+  }
+  const changed = current && (
+    selection.instanceId !== current.selection.instanceId ||
+    selection.model !== current.selection.model ||
+    selection.effort !== current.selection.effort
+  );
+  if (current?.busy && changed) {
+    return { ok: false, status: 409, error: "the bot is working — stop it before changing models" };
+  }
+  const target = registry.get(selection.instanceId);
+  // Model IDs remain free-form at the app's general API boundary. Custom
+  // engines can accept IDs that are not in their discovery catalog, and
+  // several drivers only learn the final catalog when a turn starts. The
+  // MCP tool applies a stricter discovered-model policy for its own calls.
+  if (requireAvailableModel) {
+    if (!target) {
+      return { ok: false, status: 400, error: `model instance "${selection.instanceId}" is unavailable` };
+    }
+    const offered =
+      selection.model === target.models.default ||
+      target.models.options.some((option) => option.id === selection.model);
+    if (!offered) {
+      return {
+        ok: false,
+        status: 400,
+        error: `model "${selection.model}" is not offered by instance "${selection.instanceId}"`,
+      };
+    }
+  }
+  const allowed: readonly string[] = target?.adapter.capabilities.effortLevels ?? [];
+  if (target && selection.effort !== undefined && !allowed.includes(selection.effort)) {
+    return { ok: false, status: 400, error: `effort "${selection.effort}" is not offered by this bot's engine` };
+  }
+  return { ok: true, selection };
+}
+
+function checkedGroupResponder(value: unknown, memberIds: string[]): GroupDefaultResponder | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const responder = value as { kind?: unknown; botId?: unknown };
+  if (responder.kind === "everyone") return { kind: "everyone" };
+  if (responder.kind === "mentions") return { kind: "mentions" };
+  if (
+    responder.kind === "member" &&
+    typeof responder.botId === "string" &&
+    memberIds.includes(responder.botId)
+  ) {
+    return { kind: "member", botId: responder.botId };
+  }
+  return null;
+}
+
+function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | { ok: false; error: string } {
+  if (!Array.isArray(value)) return { ok: false, error: "memberIds must be a list of bot IDs" };
+  const invalidIndex = value.findIndex(
+    (id) => typeof id !== "string" || !id.trim() || !store.bot(id),
+  );
+  if (invalidIndex !== -1) {
+    return { ok: false, error: `unknown channel member: ${String(value[invalidIndex])}` };
+  }
+  const memberIds = [...new Set(value as string[])];
+  if (!memberIds.length) return { ok: false, error: "a channel needs at least one bot" };
+  return { ok: true, memberIds };
+}
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
@@ -346,8 +434,52 @@ const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
   tasks: store.tasks(bot.id).map(wireTask),
 });
 
+type GroupTurnOperation = {
+  id: string;
+  threadId: string;
+  cancelled: boolean;
+};
+
+// busyBotId names only the speaker that currently owns the provider process.
+// A room turn is wider: it also includes async setup and every responder still
+// queued behind that speaker. Keep that operation visible for its whole
+// lifetime so polling clients cannot mistake a handoff for completion.
+const groupTurnOperations = new Map<string, Set<GroupTurnOperation>>();
+
+function groupIsWorking(group: GroupRecord): boolean {
+  return Boolean(group.busyBotId) || Boolean(groupTurnOperations.get(group.id)?.size);
+}
+
+function publicGroupState(group: GroupRecord) {
+  return { ...group, working: groupIsWorking(group) };
+}
+
+function beginGroupTurnOperation(groupId: string, threadId: string): GroupTurnOperation {
+  const operation = { id: randomUUID(), threadId, cancelled: false };
+  const operations = groupTurnOperations.get(groupId) ?? new Set<GroupTurnOperation>();
+  operations.add(operation);
+  groupTurnOperations.set(groupId, operations);
+  const group = store.group(groupId);
+  if (group) broadcast({ kind: "group", group: publicGroupState(group) });
+  return operation;
+}
+
+function finishGroupTurnOperation(groupId: string, operation: GroupTurnOperation) {
+  const operations = groupTurnOperations.get(groupId);
+  operations?.delete(operation);
+  if (operations?.size === 0) groupTurnOperations.delete(groupId);
+  const group = store.group(groupId);
+  if (group) broadcast({ kind: "group", group: publicGroupState(group) });
+}
+
+function cancelGroupTurnOperations(groupId: string, threadId: string) {
+  for (const operation of groupTurnOperations.get(groupId) ?? []) {
+    if (operation.threadId === threadId) operation.cancelled = true;
+  }
+}
+
 const groupWithThread = (group: GroupRecord) => ({
-  ...group,
+  ...publicGroupState(group),
   messages: store.messagesFor(group.threadId),
   activeLeafId: store.activeLeaf(group.threadId),
   ...(group.dm ? {} : { tasks: store.groupTasks(group.id).map(wireGroupTask) }),
@@ -380,7 +512,7 @@ store.onChange((change) => {
       break;
     case "group": {
       const group = store.group(change.groupId);
-      if (group) broadcast({ kind: "group", group });
+      if (group) broadcast({ kind: "group", group: publicGroupState(group) });
       break;
     }
     case "group.deleted":
@@ -1968,7 +2100,9 @@ async function runGroupMemberTurn(
   spoken: Set<string> = new Set(),
   cardContinuation?: string,
   onDispatchError?: (message: string) => void,
+  isCancelled?: () => boolean,
 ): Promise<boolean> {
+  if (isCancelled?.()) return false;
   const group = store.group(groupId);
   const bot = store.bot(botId);
   const ownsThread = group?.dm
@@ -2028,6 +2162,26 @@ async function runGroupMemberTurn(
       kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
       tool: { name: `error: ${message}`, ok: false },
+    });
+    onDispatchError?.(message);
+    return true;
+  }
+  // Connected-app discovery is intentionally awaited before a provider owns
+  // the bot. An interrupt during that setup window must still stop the queued
+  // room operation before it starts a process.
+  if (isCancelled?.()) return false;
+  // A 1:1 or another room turn may have claimed this bot while connected-app
+  // setup was in flight. Re-check immediately before the synchronous claim so
+  // one bot can never own two provider processes.
+  const readyBot = store.bot(bot.id);
+  if (!readyBot) return false;
+  if (readyBot.busy) {
+    const message = `${bot.name} became busy in another conversation — skipped this round`;
+    store.appendMessage(threadId, {
+      role: "bot",
+      kind: "activity",
+      from: { botId: bot.id, name: bot.name, color: bot.color },
+      tool: { name: message, ok: false },
     });
     onDispatchError?.(message);
     return true;
@@ -2159,13 +2313,16 @@ async function runGroupMemberTurn(
   }
 
   // chained mentions: a member's reply can summon teammates — one hop only
-  if (hop < MAX_GROUP_HOPS && replyText.trim()) {
+  if (!isCancelled?.() && hop < MAX_GROUP_HOPS && replyText.trim()) {
     const members = group.memberIds
       .map((id) => store.bot(id))
       .filter((b): b is NonNullable<typeof b> => Boolean(b) && b!.id !== bot.id);
     for (const next of roomResponders(replyText, members, { kind: "mentions" })) {
+      if (isCancelled?.()) return false;
       if (spoken.has(next.id)) continue;
-      if (!(await runGroupMemberTurn(groupId, threadId, next.id, hop + 1, spoken))) return false;
+      if (!(await runGroupMemberTurn(groupId, threadId, next.id, hop + 1, spoken, undefined, undefined, isCancelled))) {
+        return false;
+      }
     }
   }
   return true;
@@ -2227,8 +2384,10 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message) {
     return;
   }
 
+  const operation = beginGroupTurnOperation(groupId, threadId);
   const prev = groupQueues.get(groupId) ?? Promise.resolve();
   const next = prev.then(async () => {
+    if (operation.cancelled) return;
     const current = store.group(groupId);
     if (current?.busyBotId) {
       const owner = store.bot(current.busyBotId);
@@ -2241,11 +2400,22 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message) {
     }
     const spoken = new Set<string>();
     for (const responder of responders) {
+      if (operation.cancelled) break;
       if (spoken.has(responder.id)) continue;
-      if (!(await runGroupMemberTurn(groupId, threadId, responder.id, 0, spoken))) break;
+      if (!(await runGroupMemberTurn(
+        groupId,
+        threadId,
+        responder.id,
+        0,
+        spoken,
+        undefined,
+        undefined,
+        () => operation.cancelled,
+      ))) break;
     }
   });
-  groupQueues.set(groupId, next.catch(() => {}));
+  const tracked = next.finally(() => finishGroupTurnOperation(groupId, operation));
+  groupQueues.set(groupId, tracked.catch(() => {}));
 }
 
 function roomSetupPending(group: GroupRecord): boolean {
@@ -3246,7 +3416,7 @@ const server = createServer(async (req, res) => {
       if (limit === null) return json(res, 400, { error: "messages must be a non-negative whole number" });
       return json(res, 200, {
         bots: store.bots.map((bot) => ({ ...publicBot(bot), ...messagePage(bot.threadId, limit) })),
-        groups: store.groups.map((g) => ({ ...g, ...messagePage(g.threadId, limit) })),
+        groups: store.groups.map((g) => ({ ...publicGroupState(g), ...messagePage(g.threadId, limit) })),
         computerControl: Object.fromEntries(
           store.bots.map((bot) => {
             const snapshot = computerControl.snapshot(bot.id);
@@ -3447,15 +3617,12 @@ const server = createServer(async (req, res) => {
     // ── channels (persisted internally as groups) ───────────────────────
     if (method === "POST" && path === "/api/groups") {
       const body = await readBody(req);
-      const requestedMemberIds: unknown[] = Array.isArray(body.memberIds) ? body.memberIds : [];
-      const memberIds = [
-        ...new Set(
-          requestedMemberIds.filter(
-            (id): id is string => typeof id === "string" && Boolean(store.bot(id)),
-          ),
-        ),
-      ];
-      if (memberIds.length === 0) return json(res, 400, { error: "a channel needs at least one bot" });
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return json(res, 400, { error: "channel must be a JSON object" });
+      }
+      const roster = checkedMemberIds(body.memberIds);
+      if (!roster.ok) return json(res, 400, { error: roster.error });
+      const { memberIds } = roster;
       if (body.name !== undefined && typeof body.name !== "string") {
         return json(res, 400, { error: "channel name must be a string" });
       }
@@ -3469,8 +3636,26 @@ const server = createServer(async (req, res) => {
           return json(res, 400, { error: "context must be at most 60 characters" });
         }
       }
-      const group = store.createGroup(name, memberIds, false, section);
-      return json(res, 201, { group: { ...group, messages: [] } });
+      let setup:
+        | { bulletin: string; defaultResponder: GroupDefaultResponder; completed: true }
+        | undefined;
+      if (body.setup !== undefined) {
+        if (!body.setup || typeof body.setup !== "object" || Array.isArray(body.setup)) {
+          return json(res, 400, { error: "setup must be an object" });
+        }
+        const requested = body.setup as { bulletin?: unknown; defaultResponder?: unknown };
+        if (typeof requested.bulletin !== "string") {
+          return json(res, 400, { error: "setup.bulletin must be a string" });
+        }
+        if (requested.bulletin.length > 12_000) {
+          return json(res, 400, { error: "setup.bulletin must be at most 12000 characters" });
+        }
+        const responder = checkedGroupResponder(requested.defaultResponder, memberIds);
+        if (!responder) return json(res, 400, { error: "invalid setup.defaultResponder" });
+        setup = { bulletin: requested.bulletin, defaultResponder: responder, completed: true };
+      }
+      const group = store.createGroup(name, memberIds, false, section, setup);
+      return json(res, 201, { group: { ...publicGroupState(group), messages: [] } });
     }
     if (method === "POST" && path === "/api/teams/export") {
       const body = await readBody(req);
@@ -3736,7 +3921,7 @@ const server = createServer(async (req, res) => {
             // before anyone has worked, which is the store's call, not ours.
             group = store.patchGroup(group.id, { cwd: projectCwd }) ?? group;
           }
-          broadcast({ kind: "group", group });
+          broadcast({ kind: "group", group: publicGroupState(group) });
           createdGroups.push(group);
         }
 
@@ -3779,7 +3964,7 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "action must be complete or skip" });
       }
       if (group.setupCompletedAt != null || group.setupSkippedAt != null) {
-        return json(res, 200, { group });
+        return json(res, 200, { group: publicGroupState(group) });
       }
       if (store.messagesFor(group.threadId).length > 0) {
         return json(res, 409, { error: "room setup must be finished before the first message" });
@@ -3808,12 +3993,12 @@ const server = createServer(async (req, res) => {
       }
       const updated = store.patchGroup(m[1], patch);
       if (!updated) return json(res, 404, { error: "no such room" });
-      return json(res, 200, { group: updated });
+      return json(res, 200, { group: publicGroupState(updated) });
     }
 
     // ── channel tasks: separate conversations for the same team ────────
     const channelTaskBlocked = (group: GroupRecord) =>
-      Boolean(group.busyBotId) ||
+      groupIsWorking(group) ||
       store.groupTasks(group.id).some((task) =>
         store.messagesFor(task.threadId).some(
           (message) =>
@@ -3852,7 +4037,10 @@ const server = createServer(async (req, res) => {
       if (!switched) return json(res, 404, { error: "no such channel task" });
       const fresh = groupWithThread(switched);
       broadcast({ kind: "group", group: fresh });
-      return json(res, 200, { group: fresh });
+      const responseGroup = url.searchParams.get("messages") === "0"
+        ? { ...publicGroupState(switched), tasks: store.groupTasks(switched.id).map(wireGroupTask) }
+        : fresh;
+      return json(res, 200, { group: responseGroup });
     }
     if (m && method === "PATCH") {
       const group = store.group(m[1]);
@@ -3887,6 +4075,12 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const existing = store.group(m[1]);
       if (!existing) return json(res, 404, { error: "no such room" });
+      if (
+        channelTaskBlocked(existing) &&
+        (body.memberIds !== undefined || body.defaultResponder !== undefined || body.bulletin !== undefined)
+      ) {
+        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+      }
       const patch: Record<string, unknown> = {};
       if (body.name !== undefined) {
         if (typeof body.name !== "string") return json(res, 400, { error: "room name must be a string" });
@@ -3895,29 +4089,27 @@ const server = createServer(async (req, res) => {
         if (name.length > 100) return json(res, 400, { error: "room name must be at most 100 characters" });
         patch.name = name;
       }
-      for (const key of ["bulletin", "unread"] as const) {
-        if (body[key] !== undefined) patch[key] = body[key];
+      if (body.bulletin !== undefined) {
+        if (typeof body.bulletin !== "string") return json(res, 400, { error: "bulletin must be a string" });
+        if (body.bulletin.length > 12_000) {
+          return json(res, 400, { error: "bulletin must be at most 12000 characters" });
+        }
+        patch.bulletin = body.bulletin;
       }
-      if (Array.isArray(body.memberIds)) {
+      if (body.unread !== undefined) {
+        if (typeof body.unread !== "boolean") return json(res, 400, { error: "unread must be true or false" });
+        patch.unread = body.unread;
+      }
+      if (body.memberIds !== undefined) {
         // A DM is the pair it was opened for; only real rooms have a roster.
         if (existing.dm) return json(res, 400, { error: "direct-message channels cannot change members" });
-        const ids = [
-          ...new Set(
-            body.memberIds.filter((id: unknown): id is string => typeof id === "string" && Boolean(store.bot(id))),
-          ),
-        ];
-        if (!ids.length) return json(res, 400, { error: "a room needs at least one bot" });
-        patch.memberIds = ids;
+        const roster = checkedMemberIds(body.memberIds);
+        if (!roster.ok) return json(res, 400, { error: roster.error.replace("channel", "room") });
+        patch.memberIds = roster.memberIds;
       }
       if (body.defaultResponder !== undefined) {
-        const value = body.defaultResponder as { kind?: unknown; botId?: unknown } | null;
         const memberIds = (patch.memberIds as string[] | undefined) ?? existing.memberIds;
-        let responder: GroupDefaultResponder | null = null;
-        if (value?.kind === "everyone") responder = { kind: "everyone" };
-        else if (value?.kind === "mentions") responder = { kind: "mentions" };
-        else if (value?.kind === "member" && typeof value.botId === "string" && memberIds.includes(value.botId)) {
-          responder = { kind: "member", botId: value.botId };
-        }
+        const responder = checkedGroupResponder(body.defaultResponder, memberIds);
         if (!responder) return json(res, 400, { error: "invalid default responder" });
         patch.defaultResponder = responder;
       }
@@ -3952,14 +4144,14 @@ const server = createServer(async (req, res) => {
       }
       const group = store.patchGroup(m[1], patch);
       if (!group) return json(res, 404, { error: "no such room" });
-      return json(res, 200, { group });
+      return json(res, 200, { group: publicGroupState(group) });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)\/read$/);
     if (m && method === "POST") {
       const group = store.patchGroup(m[1], { unread: false });
       if (!group) return json(res, 404, { error: "no such room" });
-      broadcast({ kind: "group", group });
-      return json(res, 200, { group });
+      broadcast({ kind: "group", group: publicGroupState(group) });
+      return json(res, 200, { group: publicGroupState(group) });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
     if (m && method === "DELETE") {
@@ -3980,10 +4172,19 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/groups\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
       const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return json(res, 400, { error: "body must be a JSON object" });
+      }
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
       const group = store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such group" });
+      if (body.threadId !== undefined && (typeof body.threadId !== "string" || !/^[\w-]+$/.test(body.threadId))) {
+        return json(res, 400, { error: "threadId must be a task id" });
+      }
+      if (body.threadId !== undefined && body.threadId !== group.threadId) {
+        return json(res, 409, { error: "the channel switched tasks before it could receive the message" });
+      }
       const replyTo = resolveReplyTarget(group.threadId, body.replyToId);
       startGroupTurn(group.id, text, replyTo);
       return json(res, 202, { ok: true });
@@ -3992,6 +4193,21 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const group = store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such room" });
+      const rawBody = await readBody(req);
+      if (rawBody !== null && (typeof rawBody !== "object" || Array.isArray(rawBody))) {
+        return json(res, 400, { error: "body must be a JSON object" });
+      }
+      const body = rawBody ?? {};
+      if (body.threadId !== undefined && (typeof body.threadId !== "string" || !/^[\w-]+$/.test(body.threadId))) {
+        return json(res, 400, { error: "threadId must be a task id" });
+      }
+      if (body.threadId !== undefined && body.threadId !== group.threadId) {
+        return json(res, 409, { error: "the channel switched tasks before it could be interrupted" });
+      }
+      // Mark the whole room operation cancelled before awaiting the provider.
+      // This covers setup-before-busy and responder handoffs, and makes every
+      // queued responder observe cancellation before it can start.
+      cancelGroupTurnOperations(group.id, group.threadId);
       const busy = group.busyBotId ? store.bot(group.busyBotId) : undefined;
       const instance = busy ? registry.get(busy.modelSelection.instanceId) : undefined;
       await instance?.adapter.interruptTurn(group.threadId).catch(() => {});
@@ -4010,11 +4226,48 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { message: patched });
     }
     if (method === "POST" && path === "/api/bots") {
-      const bot = store.createBot();
-      store.patchBot(bot.id, { modelSelection: await defaultSelection() });
+      const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return json(res, 400, { error: "bot must be a JSON object" });
+      }
+      if (body.requireAvailableModel !== undefined && typeof body.requireAvailableModel !== "boolean") {
+        return json(res, 400, { error: "requireAvailableModel must be true or false" });
+      }
+      if (body.requireAvailableModel === true && body.modelSelection === undefined) {
+        return json(res, 400, { error: "requireAvailableModel requires modelSelection" });
+      }
+      const profileInput = Object.fromEntries(
+        ["name", "title", "description"]
+          .filter((key) => body[key] !== undefined)
+          .map((key) => [key, body[key]]),
+      );
+      const profile = parseBotProfilePatch(profileInput, true);
+      if (!profile.ok) return json(res, 400, { error: profile.error });
+      let section: string | undefined;
+      if (body.section !== undefined && body.section !== null) {
+        if (typeof body.section !== "string") return json(res, 400, { error: "section must be a string" });
+        section = body.section.trim() || undefined;
+        if (section && section.length > 60) {
+          return json(res, 400, { error: "section must be at most 60 characters" });
+        }
+      }
+      let selection: ModelSelection;
+      if (body.modelSelection === undefined) {
+        selection = await defaultSelection();
+      } else {
+        const checked = checkedModelSelection(body.modelSelection, undefined, body.requireAvailableModel === true);
+        if (!checked.ok) return json(res, checked.status, { error: checked.error });
+        selection = checked.selection;
+      }
+      // Keep the capacity check immediately beside the synchronous write.
+      // Awaiting provider discovery before this point cannot race the cap.
+      if (store.bots.length >= MAX_WORKSPACE_BOTS) {
+        return json(res, 409, { error: `this workspace is limited to ${MAX_WORKSPACE_BOTS} bots` });
+      }
+      const bot = store.createBot({ ...profile.patch, section, modelSelection: selection });
       return json(res, 201, {
         bot: {
-          ...wireBot(store.bot(bot.id)!),
+          ...wireBot(bot),
           messages: store.messagesFor(bot.threadId),
           activeLeafId: store.activeLeaf(bot.threadId),
         },
@@ -4103,6 +4356,9 @@ const server = createServer(async (req, res) => {
     if (m && method === "PATCH") {
       const body = await readBody(req);
       const existingBot = store.bot(m[1]);
+      if (body.requireAvailableModel !== undefined && typeof body.requireAvailableModel !== "boolean") {
+        return json(res, 400, { error: "requireAvailableModel must be true or false" });
+      }
       // Neither Codex (free-form string field) nor Grok (lazy, logs-only)
       // rejects an unknown effort level at their own boundary — this is the
       // only real gate, so it stays. But it fires only when the target
@@ -4114,22 +4370,19 @@ const server = createServer(async (req, res) => {
       // be offline would cost the copy all of them. Letting it through is
       // safe — startTurn refuses to run a turn on an unavailable instance
       // anyway, so an unverifiable level never reaches a CLI.
-      const nextSelection = (body as Record<string, unknown>).modelSelection as
-        | { instanceId?: string; effort?: string }
-        | undefined;
-      if (nextSelection?.effort !== undefined) {
-        if (!isEffortLevel(nextSelection.effort)) {
-          return json(res, 400, { error: `effort "${String(nextSelection.effort)}" is not recognized` });
-        }
-        const target = registry.get(nextSelection.instanceId ?? existingBot?.modelSelection.instanceId ?? "");
-        // typed as strings, not levels: this is the boundary that decides
-        // whether the value *is* a level, so it must not assert that it is
-        const allowed: readonly string[] = target?.adapter.capabilities.effortLevels ?? [];
-        if (target && !allowed.includes(nextSelection.effort)) {
-          return json(res, 400, {
-            error: `effort "${nextSelection.effort}" is not offered by this bot's engine`,
-          });
-        }
+      const rawSelection = (body as Record<string, unknown>).modelSelection;
+      if (body.requireAvailableModel === true && rawSelection === undefined) {
+        return json(res, 400, { error: "requireAvailableModel requires modelSelection" });
+      }
+      let normalizedSelection: ModelSelection | undefined;
+      if (rawSelection !== undefined) {
+        const checked = checkedModelSelection(
+          rawSelection,
+          existingBot ? { selection: existingBot.modelSelection, busy: Boolean(existingBot.busy) } : undefined,
+          body.requireAvailableModel === true,
+        );
+        if (!checked.ok) return json(res, checked.status, { error: checked.error });
+        normalizedSelection = checked.selection;
       }
       // Persona/profile fields reach prompts and paired clients. Both this
       // broad desktop endpoint and the paired-safe profile endpoint pass
@@ -4152,9 +4405,10 @@ const server = createServer(async (req, res) => {
           else section = trimmed;
         }
       }
-      for (const key of ["modelSelection", "unread", "computer", "cloudBackend", "color", "mascotExpression", "pinned", "hidden"] as const) {
+      for (const key of ["unread", "computer", "cloudBackend", "color", "mascotExpression", "pinned", "hidden"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
+      if (normalizedSelection) patch.modelSelection = normalizedSelection;
       // one pinned message per thread; null/"" clears. The id is not
       // validated against the transcript here — a pin whose message was
       // edited to another branch or deleted simply resolves to nothing.
@@ -4498,10 +4752,19 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
       const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return json(res, 400, { error: "body must be a JSON object" });
+      }
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      if (body.threadId !== undefined && (typeof body.threadId !== "string" || !/^[\w-]+$/.test(body.threadId))) {
+        return json(res, 400, { error: "threadId must be a task id" });
+      }
+      if (body.threadId !== undefined && body.threadId !== bot.threadId) {
+        return json(res, 409, { error: "the bot switched tasks before it could receive the message" });
+      }
       const replyTo = resolveReplyTarget(bot.threadId, body.replyToId);
       // Claude can accept the message inside its live turn. If the write
       // loses a race with turn settlement, or the engine cannot steer, the
@@ -4642,8 +4905,20 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      const rawBody = await readBody(req);
+      if (rawBody !== null && (typeof rawBody !== "object" || Array.isArray(rawBody))) {
+        return json(res, 400, { error: "body must be a JSON object" });
+      }
+      const body = rawBody ?? {};
+      const expectedThreadId = body.threadId;
+      if (expectedThreadId !== undefined && (typeof expectedThreadId !== "string" || !/^[\w-]+$/.test(expectedThreadId))) {
+        return json(res, 400, { error: "threadId must be a task id" });
+      }
       const routineRun = routines!.activeRunForBot(bot.id);
       if (routineRun) {
+        if (expectedThreadId !== undefined && routineRun.threadId !== expectedThreadId) {
+          return json(res, 409, { error: "this bot is running a routine in another conversation" });
+        }
         await routines!.cancelRun(routineRun.id);
         return json(res, 200, { ok: true });
       }
@@ -4652,8 +4927,14 @@ const server = createServer(async (req, res) => {
       // from its own chat must reach that turn, not just the 1:1 thread
       const busyGroup = store.groups.find((g) => g.busyBotId === bot.id);
       if (busyGroup) {
+        if (expectedThreadId !== undefined && busyGroup.threadId !== expectedThreadId) {
+          return json(res, 409, { error: `this bot is working in channel ${busyGroup.id}` });
+        }
         await instance?.adapter.interruptTurn(busyGroup.threadId).catch(() => {});
         closeOpenApprovals(busyGroup.threadId);
+      }
+      if (expectedThreadId !== undefined && !busyGroup && bot.threadId !== expectedThreadId) {
+        return json(res, 409, { error: "the bot switched tasks before it could be interrupted" });
       }
       await instance?.adapter.interruptTurn(bot.threadId).catch(() => {});
       closeOpenApprovals(bot.threadId);
@@ -4685,11 +4966,21 @@ const server = createServer(async (req, res) => {
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/tasks\/([\w-]+)$/);
     if (m && method === "POST") {
-      const switched = store.switchTask(m[1], m[2]);
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      // Switching the active thread while its provider turn is still running
+      // loses ownership of the process and can make a later interrupt target
+      // the wrong task. Keep this mutation atomic at the HTTP boundary; an
+      // MCP client cannot make a safe check-then-switch across two requests.
+      if (bot.busy) return json(res, 409, { error: "this bot is working — stop it before switching tasks" });
+      const switched = store.switchTask(bot.id, m[2]);
       if (!switched) return json(res, 404, { error: "no such task" });
       const fresh = botWithThread(switched);
       broadcast({ kind: "bot", bot: fresh });
-      return json(res, 200, { bot: fresh });
+      const responseBot = url.searchParams.get("messages") === "0"
+        ? { ...wireBot(switched), tasks: store.tasks(switched.id).map(wireTask) }
+        : fresh;
+      return json(res, 200, { bot: responseBot });
     }
     if (m && method === "PATCH") {
       const body = await readBody(req);
