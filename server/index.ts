@@ -1109,10 +1109,15 @@ bus.subscribe((event: RuntimeEvent) => {
         // Avoid buzzing the owner for a card the reviewer is about to answer.
         // A deny, failure, or timeout falls back to the normal notification;
         // if the human already answered meanwhile, notifyHuman is a no-op.
-        void reviewTask.then((approved) => {
-          if (!approved) notifyHuman();
-        });
+        void reviewTask
+          .catch(() => false)
+          .then((approved) => {
+            if (!approved) notifyHuman();
+          });
       } else {
+        // Watch mode notifies immediately, but its background audit must not
+        // become an unhandled rejection if an unexpected store error occurs.
+        if (reviewTask) void reviewTask.catch(() => false);
         notifyHuman();
       }
       break;
