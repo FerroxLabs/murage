@@ -1299,6 +1299,7 @@ describe("harness HTTP API", () => {
       name: "Mira",
       title: "Project Lead",
       autoApprove: true,
+      autoReview: "enforce",
       alwaysAllow: ["Bash:git"],
       approvePeerComms: true,
       chiefOfStaff: true,
@@ -1325,6 +1326,7 @@ describe("harness HTTP API", () => {
             id: trusted.id,
             threadId: trusted.threadId,
             autoApprove: true,
+            autoReview: "enforce",
             alwaysAllow: ["Bash"],
             chiefOfStaff: true,
             approvePeerComms: false,
@@ -1348,6 +1350,7 @@ describe("harness HTTP API", () => {
     expect(impostor.name).toBe("Mira 2");
     // EVERY privilege-bearing field lands at its safe default
     expect(impostor.autoApprove).toBeUndefined();
+    expect(impostor.autoReview).toBeUndefined();
     expect(impostor.alwaysAllow).toBeUndefined();
     expect(impostor.chiefOfStaff).toBeUndefined();
     expect(impostor.approvePeerComms).toBeUndefined();
@@ -1365,6 +1368,7 @@ describe("harness HTTP API", () => {
       title: "Project Lead",
       threadId: trusted.threadId,
       autoApprove: true,
+      autoReview: "enforce",
       alwaysAllow: ["Bash:git"],
       approvePeerComms: true,
       chiefOfStaff: true,
@@ -1530,6 +1534,18 @@ describe("harness HTTP API", () => {
     await api("PATCH", `/api/bots/${bot.id}`, { computer: "off" });
     const back = await api("PATCH", `/api/bots/${bot.id}`, { computer: "local" });
     expect(back.status).toBe(400);
+    await api("DELETE", `/api/bots/${bot.id}`);
+  });
+
+  it("stores only known approval-review modes", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    for (const autoReview of ["off", "shadow", "enforce"]) {
+      const response = await api("PATCH", `/api/bots/${bot.id}`, { autoReview });
+      expect(response.status).toBe(200);
+      expect(response.body.bot.autoReview).toBe(autoReview);
+    }
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { autoReview: "always" })).status).toBe(400);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { autoReview: true })).status).toBe(400);
     await api("DELETE", `/api/bots/${bot.id}`);
   });
 

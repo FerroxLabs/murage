@@ -19,6 +19,7 @@ import {
 } from "../shared/credential-request.ts";
 
 import { approvalKey, autoVerdict } from "./auto-approve.ts";
+import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import * as checkpoints from "./checkpoints.ts";
 import { appendDecision, readDecisions } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
@@ -72,7 +73,7 @@ import { ComputerControl } from "./computer-control.ts";
 import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import { buildNotification, type Notification } from "./notify.ts";
-import { isEffortLevel, type RequestOutcome, type RuntimeEvent } from "./contracts.ts";
+import { isEffortLevel, type ProviderInstance, type RequestOutcome, type RuntimeEvent } from "./contracts.ts";
 import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -679,6 +680,79 @@ const watchdog = new TurnWatchdog({
 });
 watchdog.start();
 
+async function reviewPermissionCard(args: {
+  instance: ProviderInstance;
+  asker: {
+    id: string;
+    name: string;
+    title?: string;
+    description?: string;
+    autoReview?: string;
+    modelSelection: { instanceId: string };
+  };
+  threadId: string;
+  requestId: string;
+  messageId: string;
+  tool: string;
+  summary: string;
+}): Promise<boolean> {
+  const mode = resolveAutoReviewMode(args.asker.autoReview);
+  if (mode === "off" || !args.instance.reviewPermission) return false;
+  const persona = [args.asker.name, args.asker.title, args.asker.description].filter(Boolean).join(" — ");
+  const reviewed = await requestReview(args.instance.reviewPermission.bind(args.instance), {
+    tool: args.tool,
+    summary: args.summary,
+    persona,
+  });
+  if (!reviewed) return false;
+
+  if (mode === "shadow") {
+    appendDecision(DATA_DIR, {
+      threadId: args.threadId,
+      requestId: args.requestId,
+      botId: args.asker.id,
+      botName: args.asker.name,
+      tool: args.tool,
+      summary: args.summary,
+      decision: reviewed.allow ? "review-would-approve" : "review-would-deny",
+      source: "auto-review-shadow",
+      rule: reviewed.reason,
+    });
+    return false;
+  }
+  if (!reviewed.allow) return false;
+
+  // The human can answer while review is running. Their click wins before
+  // the provider receives anything and before the audit log claims approval.
+  const card = store.messagesFor(args.threadId).find((message) => message.id === args.messageId)?.card;
+  if (!card || card.answered) return false;
+  let outcome: RequestOutcome = "unavailable";
+  try {
+    outcome = await args.instance.adapter.respondToRequest(args.threadId, args.requestId, { behavior: "allow" });
+  } catch {
+    return false;
+  }
+  if (outcome === "unavailable") return false;
+
+  store.appendMessage(args.threadId, {
+    role: "bot",
+    kind: "activity",
+    tool: { name: `review approved ${args.tool}: ${reviewed.reason}`, ok: true },
+  });
+  appendDecision(DATA_DIR, {
+    threadId: args.threadId,
+    requestId: args.requestId,
+    botId: args.asker.id,
+    botName: args.asker.name,
+    tool: args.tool,
+    summary: args.summary,
+    decision: "auto-approved",
+    source: "auto-review",
+    rule: reviewed.reason,
+  });
+  return true;
+}
+
 bus.subscribe((event: RuntimeEvent) => {
   if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true);
   else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false);
@@ -974,6 +1048,35 @@ bus.subscribe((event: RuntimeEvent) => {
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
+      const reviewMode = resolveAutoReviewMode(asker?.autoReview);
+      let reviewTask: Promise<boolean> | undefined;
+      if (
+        permission &&
+        asker &&
+        event.requestId &&
+        shouldReview({
+          source: verdict?.source,
+          mode: reviewMode,
+          unattended: Boolean(unattended),
+          approvalScope: event.approvalScope,
+        })
+      ) {
+        // Review stays on the provider boundary that opened the request.
+        // Falling back to an arbitrary sibling could disclose action details
+        // to a provider the user did not choose for this bot.
+        const instance = registry.get(event.providerInstanceId ?? asker.modelSelection.instanceId);
+        if (instance?.reviewPermission) {
+          reviewTask = reviewPermissionCard({
+            instance,
+            asker,
+            threadId: event.threadId,
+            requestId: event.requestId,
+            messageId: message.id,
+            tool: event.tool,
+            summary: event.summary,
+          });
+        }
+      }
       // Every card that reaches a human is a decision too — "a rule sent
       // this to you, and here is which one". `question` marks the cards no
       // rule may ever answer; a permission card without a verdict (no known
@@ -994,10 +1097,23 @@ bus.subscribe((event: RuntimeEvent) => {
       // Notify from HERE, not from a separate subscriber on request.opened:
       // this is the branch where a card actually reached a human. Anything
       // auto mode answered took the early return above and never buzzes.
-      if (asker) {
+      const notifyHuman = () => {
+        if (!asker) return;
+        const card = store.messagesFor(event.threadId).find((candidate) => candidate.id === message.id)?.card;
+        if (!card || card.answered) return;
         // the bot is not working now — it is waiting on a person
         if (asker.busy) store.setActivity(asker.id, "waiting-on-you");
         notify(buildNotification(permission ? "approval" : "question", asker, event.threadId, event.summary));
+      };
+      if (reviewTask && reviewMode === "enforce") {
+        // Avoid buzzing the owner for a card the reviewer is about to answer.
+        // A deny, failure, or timeout falls back to the normal notification;
+        // if the human already answered meanwhile, notifyHuman is a no-op.
+        void reviewTask.then((approved) => {
+          if (!approved) notifyHuman();
+        });
+      } else {
+        notifyHuman();
       }
       break;
     }
@@ -4205,6 +4321,12 @@ const server = createServer(async (req, res) => {
       if (body.autoApprove !== undefined) {
         if (typeof body.autoApprove !== "boolean") return json(res, 400, { error: "autoApprove must be true or false" });
         patch.autoApprove = body.autoApprove;
+      }
+      if (body.autoReview !== undefined) {
+        if (body.autoReview !== "off" && body.autoReview !== "shadow" && body.autoReview !== "enforce") {
+          return json(res, 400, { error: "autoReview must be off, shadow, or enforce" });
+        }
+        patch.autoReview = body.autoReview;
       }
       // "Auto on this Mac" hands a bot the user's real session, so the grant
       // must prove a human saw the warning. The desktop dialog is the only
