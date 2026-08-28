@@ -312,17 +312,36 @@ extension Connection {
     /// legacy fields because they can represent hosted HTTPS. A connection
     /// either walks that complete typed set or, for an older desktop, derives
     /// direct routes from the legacy fields — never a lossy mixture of both.
+    ///
+    /// A protected route that already carried the bearer leads when — and
+    /// only when — the priority sort would otherwise hand the rotation to a
+    /// cleartext route. Without this, a hand-typed LAN origin (`priority: 0`)
+    /// wins the sort after restart and the rotation hands the token to
+    /// cleartext again. But when the sort's head is itself protected (a
+    /// tailnet invite whose active tailnet route sits behind an advertised
+    /// hosted HTTPS), the advertised priority order stands. Typing a local
+    /// address resets `activeEndpoint`, so the priority order remains the
+    /// escape hatch.
     public var orderedEndpoints: [CompanionEndpoint] {
         var candidates = endpoints ?? []
         if !candidates.isEmpty {
             if let activeEndpoint, !candidates.contains(where: { $0.url == activeEndpoint.url }) {
                 candidates.append(activeEndpoint)
             }
-            candidates = candidates.enumerated().sorted {
+            // Route policy is part of candidate selection, not a final display
+            // filter. A disallowed cleartext route must not trigger the trust
+            // ratchet and hoist an otherwise lower-priority protected route.
+            candidates = endpointsAllowedByRoutePolicy(candidates).enumerated().sorted {
                 $0.element.priority == $1.element.priority
                     ? $0.offset < $1.offset
                     : $0.element.priority < $1.element.priority
             }.map(\.element)
+            if let activeEndpoint = activeEndpoint.flatMap({ active in
+                candidates.first(where: { $0.url == active.url })
+            }), activeEndpoint.protectsCredentials,
+               let sortedHead = candidates.first, !sortedHead.protectsCredentials {
+                candidates = [activeEndpoint] + candidates.filter { $0.url != activeEndpoint.url }
+            }
         } else {
             candidates = orderedHosts.enumerated().compactMap { offset, candidate in
                 CompanionEndpoint.direct(host: candidate, port: port, priority: offset)

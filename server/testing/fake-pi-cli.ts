@@ -5,7 +5,7 @@
 // / set_model, and streams a scripted turn in response to `prompt`. Failure
 // modes mirror how the real CLI misbehaves:
 //
-//   FAKE_PI_MODE   happy (default) | tooluse | permission | interleave | no-models | exit-early
+//   FAKE_PI_MODE   happy (default) | tooluse | permission | interleave | turn-error | no-models | exit-early
 //   FAKE_PI_MODELS comma-separated provider/model pairs (default "ollama-cloud/glm-5.2,openai/gpt-4o")
 //   FAKE_PI_DUMP   path to append {argv, env} JSON, so a test can assert argv shape
 //                  and env hygiene (no leaked secrets into the pi child).
@@ -77,6 +77,21 @@ const streamTurn = () => {
     send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta } });
   }
   send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
+  send({ type: "agent_end" });
+};
+
+const streamErrorTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({
+    type: "turn_end",
+    message: {
+      stopReason: "error",
+      errorMessage: "Invalid schema for function 'computer_browser_prepare'",
+      usage: { input: 0, output: 0 },
+    },
+    usage: { input: 0, output: 0 },
+  });
   send({ type: "agent_end" });
 };
 
@@ -167,6 +182,13 @@ function handle(cmd: any) {
       send({ type: "response", command: "switch_session", success: true, data: { sessionId: "s-resumed", sessionFile: currentSessionFile } });
       return;
     case "set_model": {
+      if (process.env.FAKE_PI_DUMP) {
+        try {
+          appendFileSync(process.env.FAKE_PI_DUMP, JSON.stringify({ setModel: { provider: cmd.provider, modelId: cmd.modelId } }) + "\n");
+        } catch {
+          /* never let dumping break a run */
+        }
+      }
       send({ type: "response", command: "set_model", success: true, data: { id: cmd.modelId, provider: cmd.provider } });
       return;
     }
@@ -187,6 +209,7 @@ function handle(cmd: any) {
       if (mode === "tooluse") streamToolTurn();
       else if (mode === "permission") streamPermissionTurn();
       else if (mode === "interleave") streamInterleaveTurn();
+      else if (mode === "turn-error") streamErrorTurn();
       else streamTurn();
       return;
     case "extension_ui_response":

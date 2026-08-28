@@ -118,6 +118,9 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Open a web link in the default browser. Unlike renderer window.open,
    * this remains reliable after an asynchronous API request. */
   openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
+  /** Tell the window which skin the page wears, so the native chrome the
+   * renderer cannot paint (the Windows caption-button overlay) matches. */
+  applySkin: (skin) => ipcRenderer.invoke("desktop:skin", skin),
   /** A reviewed BotMRR package opened through openmausbot://install. */
   onPackageInstall: (cb) => {
     packageInstallListeners.add(cb);
@@ -135,6 +138,18 @@ contextBridge.exposeInMainWorld("ogb", {
       const handler = (_event, state) => cb(state);
       ipcRenderer.on("desktop-viewer:state", handler);
       return () => ipcRenderer.removeListener("desktop-viewer:state", handler);
+    },
+  },
+  /** Two sandboxed Local VM viewers embedded in the owning app window. */
+  desktopWorkspace: {
+    open: (input) => ipcRenderer.invoke("desktop-workspace:open", input),
+    layout: (items) => ipcRenderer.invoke("desktop-workspace:layout", items),
+    setInteractive: (contextId) => ipcRenderer.invoke("desktop-workspace:set-interactive", contextId),
+    close: (contextId) => ipcRenderer.invoke("desktop-workspace:close", contextId),
+    onState: (cb) => {
+      const handler = (_event, state) => cb(state);
+      ipcRenderer.on("desktop-workspace:state", handler);
+      return () => ipcRenderer.removeListener("desktop-workspace:state", handler);
     },
   },
   /** Native folder picker for a bot's working folder; null when cancelled. */

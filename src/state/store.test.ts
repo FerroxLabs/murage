@@ -6,12 +6,20 @@ import {
   openNotificationTarget,
   reducer,
   type Bot,
+  type Group,
   type Message,
 } from "./store";
 
 describe("notification routing", () => {
   const bots = [{ id: "bot-1", threadId: "main-thread", tasks: [{ threadId: "detached-thread" }] }] as never;
-  const groups = [{ id: "room-1", threadId: "room-thread" }] as never;
+  const groups = [{
+    id: "room-1",
+    threadId: "room-thread",
+    tasks: [
+      { threadId: "room-thread", title: "Current", createdAt: 1 },
+      { threadId: "older-room-thread", title: "Older", createdAt: 0 },
+    ],
+  }] as never;
 
   it("selects the bot and switches to the notification's exact task", () => {
     const dispatch = vi.fn();
@@ -32,6 +40,17 @@ describe("notification routing", () => {
     openNotificationTarget(dispatch, { botId: "bot-1", threadId: "room-thread" }, { bots, groups });
 
     expect(dispatch.mock.calls.map(([action]) => action)).toEqual([{ type: "select", id: "room-1" }]);
+  });
+
+  it("opens the room and restores the exact inactive channel task", () => {
+    const dispatch = vi.fn();
+
+    openNotificationTarget(dispatch, { botId: "bot-1", threadId: "older-room-thread" }, { bots, groups });
+
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+      { type: "select", id: "room-1" },
+      { type: "switchGroupTask", groupId: "room-1", threadId: "older-room-thread" },
+    ]);
   });
 
   it("lands on a plain bot select for a thread it cannot place, not an error", () => {
@@ -70,6 +89,57 @@ describe("config status frames", () => {
       profile: { name: "Ian", email: "ian@example.test" },
       features: { skillRecorder: true },
     });
+  });
+});
+
+describe("task rename", () => {
+  it("updates the task title in local state immediately", () => {
+    const bot = {
+      id: "echo",
+      threadId: "t1",
+      name: "Echo",
+      title: "",
+      description: "",
+      notifications: true,
+      color: "green",
+      unread: false,
+      modelSelection: { instanceId: "x", model: "y" },
+      messages: [],
+      tasks: [
+        { threadId: "t1", title: "New task", createdAt: 1 },
+        { threadId: "t2", title: "Other", createdAt: 2 },
+      ],
+    } satisfies Bot;
+    const next = reducer(
+      { ...initialState, bots: [bot] },
+      { type: "renameTask", botId: bot.id, threadId: "t1", title: "Renamed" },
+    );
+    expect(next.bots[0]?.tasks?.find((task) => task.threadId === "t1")?.title).toBe("Renamed");
+    expect(next.bots[0]?.tasks?.find((task) => task.threadId === "t2")?.title).toBe("Other");
+  });
+
+  it("updates a channel task title in local state immediately", () => {
+    const group = {
+      id: "room",
+      threadId: "room-task-1",
+      name: "Launch",
+      memberIds: [],
+      defaultResponder: { kind: "everyone" },
+      bulletin: "",
+      unread: false,
+      createdAt: 1,
+      messages: [],
+      tasks: [
+        { threadId: "room-task-1", title: "New task", createdAt: 1 },
+        { threadId: "room-task-2", title: "Other", createdAt: 2 },
+      ],
+    } satisfies Group;
+    const next = reducer(
+      { ...initialState, groups: [group] },
+      { type: "renameGroupTask", groupId: group.id, threadId: "room-task-1", title: "Renamed" },
+    );
+    expect(next.groups[0]?.tasks?.find((task) => task.threadId === "room-task-1")?.title).toBe("Renamed");
+    expect(next.groups[0]?.tasks?.find((task) => task.threadId === "room-task-2")?.title).toBe("Other");
   });
 });
 
@@ -393,5 +463,21 @@ describe("pending queued chip", () => {
     });
     expect(late.pendingQueued).toEqual({});
     expect(late.consumedQueueIds["foreign-99"]).toBeUndefined();
+  });
+
+  it("drops a cancelled pending chip without waiting for drain", () => {
+    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const queued = reducer(withBot, {
+      type: "pendingQueued",
+      threadId: "t1",
+      queueId: "q-drop",
+      text: "never mind",
+    });
+    const cancelled = reducer(queued, {
+      type: "cancelQueued",
+      botId: "b1",
+      queueId: "q-drop",
+    });
+    expect(cancelled.pendingQueued).toEqual({});
   });
 });

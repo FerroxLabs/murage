@@ -94,6 +94,21 @@ type SkillRecordingPayload = {
     };
   };
 
+  interface DesktopWorkspaceBounds {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }
+
+  interface DesktopWorkspaceState {
+    contextId: string;
+    open: boolean;
+    status: "opening" | "ready" | "error" | "closed";
+    interactive: boolean;
+    code?: "load-failed" | "renderer-gone";
+  }
+
   interface Window {
     ogb?: {
       platform: NodeJS.Platform;
@@ -159,6 +174,8 @@ type SkillRecordingPayload = {
       openInstallTerminal?(command: string): Promise<boolean>;
       /** Opens an http(s) link in the user's default browser. */
       openExternal?(url: string): Promise<boolean>;
+      /** Recolor the native window chrome for a skin; absent on older builds. */
+      applySkin?(skin: string): Promise<boolean>;
       /** Receives a GitHub package URL opened through openmausbot://install. */
       onPackageInstall?(cb: (url: string) => void): () => void;
       /** Updates the native Dock/taskbar unread indicator. */
@@ -171,6 +188,24 @@ type SkillRecordingPayload = {
         /** The current viewer state, for a panel to initialize from on mount. */
         currentState(): Promise<{ open: boolean; contextId: string | null }>;
         onState(cb: (state: { open: boolean; contextId: string | null }) => void): () => void;
+      };
+      /** Two Local VM viewers embedded in one app window. URLs are accepted
+       * only by main-process validation and never return over this bridge. */
+      desktopWorkspace?: {
+        open(input: {
+          contextId: string;
+          url: string;
+          title: string;
+          bounds: DesktopWorkspaceBounds;
+        }): Promise<DesktopWorkspaceState>;
+        layout(items: Array<{
+          contextId: string;
+          bounds: DesktopWorkspaceBounds;
+          visible: boolean;
+        }>): Promise<boolean>;
+        setInteractive(contextId: string | null): Promise<boolean>;
+        close(contextId?: string): Promise<boolean>;
+        onState(cb: (state: DesktopWorkspaceState) => void): () => void;
       };
       /** Native folder picker; resolves null when the user cancels. */
       pickFolder?(current?: string): Promise<string | null>;

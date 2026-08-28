@@ -94,6 +94,10 @@ const DRIVER_KIND = "claudeAgent";
 export interface ClaudeConfig {
   cli: string;
   permissionMode: "acceptEdits" | "auto" | "bypassPermissions";
+  /** Available Claude built-ins. An empty list passes `--tools ""`. */
+  tools?: string[];
+  /** Claude tool patterns to deny after the available set is selected. */
+  disallowedTools?: string[];
 }
 
 // model catalog ported from upstream packages/contracts/src/model.ts
@@ -376,15 +380,36 @@ function createPermissionBroker(opts: {
   };
 }
 
+function decodeToolList(value: unknown, field: "tools" | "disallowedTools"): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(`claude: ${field} must be an array of non-empty strings`);
+  const decoded: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string" || !entry.trim()) {
+      throw new Error(`claude: ${field} must be an array of non-empty strings`);
+    }
+    const normalized = entry.trim();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    decoded.push(normalized);
+  }
+  return decoded;
+}
+
 function decodeConfig(raw: unknown): ClaudeConfig {
   const o = (raw ?? {}) as Record<string, unknown>;
   const mode = o.permissionMode;
   if (mode !== undefined && mode !== "acceptEdits" && mode !== "auto" && mode !== "bypassPermissions") {
     throw new Error(`claude: invalid permissionMode ${JSON.stringify(mode)}`);
   }
+  const tools = decodeToolList(o.tools, "tools");
+  const disallowedTools = decodeToolList(o.disallowedTools, "disallowedTools");
   return {
     cli: typeof o.cli === "string" ? o.cli : "claude",
     permissionMode: (mode as ClaudeConfig["permissionMode"]) ?? "acceptEdits",
+    ...(tools !== undefined ? { tools } : {}),
+    ...(disallowedTools !== undefined ? { disallowedTools } : {}),
   };
 }
 
@@ -550,6 +575,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         "--include-partial-messages",
         "--permission-mode", config.permissionMode === "auto" ? "acceptEdits" : config.permissionMode,
       ];
+      if (config.tools !== undefined) args.push("--tools", config.tools.join(","));
+      if (config.disallowedTools?.length) {
+        args.push("--disallowedTools", config.disallowedTools.join(","));
+      }
       const turnEnvironment: NodeJS.ProcessEnv = { ...process.env, ...input.environment };
       const turnModel = await resolveClaudeTurnModel(turn.model, turnEnvironment);
       const injected = applyClaudeInject({ ...turnEnvironment }, turnModel);
@@ -735,7 +764,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         ok: boolean,
         stopReason: string | null,
         cost: number | null = null,
-        usage?: { input: number; output: number },
+        usage?: { input: number; output: number; cachedInput?: number },
       ) => {
         const t = session.turn;
         if (!t || t.settled) return;
@@ -816,6 +845,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 type: "thread.token-usage.updated",
                 input: (msg.usage.input_tokens || 0) + (msg.usage.cache_read_input_tokens || 0),
                 output: msg.usage.output_tokens || 0,
+                ...(typeof msg.usage.cache_read_input_tokens === "number"
+                  ? { cachedInput: msg.usage.cache_read_input_tokens }
+                  : {}),
               });
             }
             break;
@@ -830,7 +862,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           case "result":
             // result.usage is this invocation's total — one process per turn,
             // so it is the turn's figure. cache reads count as input: they
-            // are billed (at the cache rate) and they fill the window.
+            // are billed (at the cache rate) and they fill the window — but
+            // they are reported separately too, so the UI can show how much
+            // of the figure was context re-read rather than new text.
             settle(
               o.is_error !== true,
               o.stop_reason ?? o.terminal_reason ?? null,
@@ -839,6 +873,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 ? {
                     input: (o.usage.input_tokens || 0) + (o.usage.cache_read_input_tokens || 0) + (o.usage.cache_creation_input_tokens || 0),
                     output: o.usage.output_tokens || 0,
+                    ...(typeof o.usage.cache_read_input_tokens === "number"
+                      ? { cachedInput: o.usage.cache_read_input_tokens }
+                      : {}),
                   }
                 : undefined,
             );

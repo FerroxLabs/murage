@@ -122,6 +122,21 @@ final class StoreTests: XCTestCase {
         XCTAssertFalse(state.transcript(forThread: "another-task").contains { $0.id == "old-tail" })
     }
 
+    func testAChannelTaskSwitchReplacesTheActiveTranscript() throws {
+        var state = try hydrated()
+        var room = try XCTUnwrap(state.rooms.first)
+        let previousThread = room.threadId
+        state.apply(.message(threadId: previousThread, message: message("old-room-tail")))
+
+        room.threadId = "another-room-task"
+        room.messages = [message("new-room-root", text: "new channel task")]
+        state.apply(.room(room))
+
+        XCTAssertEqual(state.rooms.first(where: { $0.id == room.id })?.threadId, "another-room-task")
+        XCTAssertEqual(state.transcript(forThread: "another-room-task").map(\.id), ["new-room-root"])
+        XCTAssertFalse(state.transcript(forThread: "another-room-task").contains { $0.id == "old-room-tail" })
+    }
+
     func testVisibleTranscriptFollowsTheActiveBranch() throws {
         var state = try hydrated()
         let bot = try XCTUnwrap(state.bots.first)

@@ -175,6 +175,35 @@ final class DecodingTests: XCTestCase {
         XCTAssertNil(pending.accounts)
     }
 
+    func testAnUnreadableCredentialStoreIsNotAnEmptyInventory() throws {
+        func statuses(_ json: String) throws -> ConnectorStatuses {
+            try JSONDecoder().decode(ConnectorStatuses.self, from: Data(json.utf8))
+        }
+
+        // The one answer that withdraws its own authority: an empty map the
+        // server explicitly labels as "we could not read the store".
+        let unreadable = try statuses(#"{"configured":false,"credentialStore":"unavailable","services":{}}"#)
+        XCTAssertTrue(unreadable.services.isEmpty)
+        XCTAssertFalse(unreadable.isAuthoritative)
+
+        // The three ways of still being authoritative. Each is asserted
+        // separately because a rule that only recognised the case above would
+        // pass a test that only checked the case above — and every one of
+        // these would then start hiding accounts that really are gone.
+        XCTAssertTrue(
+            try statuses(#"{"configured":true,"credentialStore":"ok","services":{}}"#).isAuthoritative,
+            "an empty list from a readable store really does mean nothing is connected"
+        )
+        XCTAssertTrue(
+            try statuses(#"{"configured":true,"services":{}}"#).isAuthoritative,
+            "a computer older than the field would otherwise have every answer treated as unknowable"
+        )
+        XCTAssertTrue(
+            try statuses(#"{"configured":false,"credentialStore":"Unavailable","services":{}}"#).isAuthoritative,
+            "only the exact string server/index.ts writes withdraws the claim; anything else is as unknown as an absent field"
+        )
+    }
+
     func testOneMalformedBotDoesNotHideTheRestOfTheFleet() throws {
         let json = """
         {
@@ -337,6 +366,14 @@ final class DecodingTests: XCTestCase {
         let config = try decode(ConfigStatus.self, "config")
         XCTAssertEqual(config.profile?.name, "Ada Lovelace")
         XCTAssertEqual(config.box?.configured, false)
+        // Captured bytes, not our idea of them: `describeVoice` always sends
+        // the engine, so a sidecar that stopped forwarding it fails here
+        // instead of quietly sending every built-in-voices user back to an
+        // explanation about an ElevenLabs key. The captured value is stable on
+        // any platform — the fabricated config selects no provider, so the
+        // server's own fallback decides it.
+        XCTAssertEqual(config.tts?.provider, "elevenlabs")
+        XCTAssertEqual(config.voiceProvider, .elevenlabs)
     }
 
     // MARK: - Frames

@@ -5,7 +5,7 @@
 //
 // The fake CLI is a shebang script Windows cannot exec directly; spawnCli
 // resolves it to `node <script>`, so these run everywhere.
-import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,17 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { buildMcpServers, fetchPiModels, parsePiCatalog, PiDriver } from "./pi.ts";
+import { encodeInjectId, localHost } from "./local-inject.ts";
+import {
+  applyPiLocalCatalog,
+  buildMcpServers,
+  ensurePiInjectModel,
+  fetchPiModels,
+  parsePiCatalog,
+  PiDriver,
+  preferPiInjectRows,
+  splitPiModel,
+} from "./pi.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-pi-cli.ts");
 const MODELS_LINE =
@@ -255,6 +265,17 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-exit")).toBe(false);
   });
 
+  it("surfaces a pi turn error instead of reporting an empty success", async () => {
+    await create("turn-error");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-turn-error", text: "hi" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ ok: false, stopReason: "failed", usage: { input: 0, output: 0 } });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({
+      message: "Invalid schema for function 'computer_browser_prepare'",
+    });
+    expect(instance.adapter.hasSession("t-turn-error")).toBe(false);
+  });
+
   it("advertises images and every harness effort level", async () => {
     await create();
     expect(instance.adapter.capabilities.images).toBe(true);
@@ -434,6 +455,26 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(recorder.events.some((e) => e.type === "request.resolved")).toBe(true);
   });
 
+  it("registers an ask before emitting it so synchronous auto-approval works", async () => {
+    await create("permission");
+    let unsubscribe = () => {};
+    const outcome = new Promise<string>((resolve) => {
+      unsubscribe = instance.adapter.onEvent((event) => {
+        if (event.type !== "request.opened" || !event.requestId) return;
+        // This mirrors the harness's auto-approve listener: emit() invokes it
+        // synchronously, so the ask must already be in pending here.
+        void instance.adapter
+          .respondToRequest(event.threadId, event.requestId, { behavior: "allow" })
+          .then(resolve);
+      });
+    });
+    await instance.adapter.sendTurn({ threadId: "t-sync-auto", text: "go" });
+    expect(await outcome).toBe("allowed-once");
+    unsubscribe();
+    const done = await recorder.until((event) => event.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+  });
+
   it("respondToRequest is unavailable for an ask that is not pending", async () => {
     await create();
     await expect(instance.adapter.respondToRequest("t-none", "nope", { behavior: "allow" })).resolves.toBe("unavailable");
@@ -446,6 +487,173 @@ describe("PiDriver turns (fake CLI)", () => {
     await instance.adapter.interruptTurn("t-interrupt");
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+  });
+
+  it("writes models.json and set_model for a host::model inject pick", async () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-pi-turn-inject-"));
+    const dump = join(home, "dump.jsonl");
+    await create(undefined, { HOME: home, FAKE_PI_DUMP: dump });
+    const { turnId } = await instance.adapter.sendTurn({
+      threadId: "t-inject",
+      text: "hi",
+      model: encodeInjectId("omlx", "MiniMax-M3-4bit"),
+    });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const dumps = readFileSync(dump, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { setModel?: { provider: string; modelId: string } });
+    expect(dumps.some((row) => row.setModel?.provider === "omlx" && row.setModel?.modelId === "MiniMax-M3-4bit")).toBe(
+      true,
+    );
+    const written = JSON.parse(readFileSync(join(home, ".pi", "agent", "models.json"), "utf8")) as {
+      providers: { omlx: { baseUrl: string; models: Array<{ id: string }> } };
+    };
+    expect(written.providers.omlx.baseUrl).toBe("http://127.0.0.1:8080/v1");
+    expect(written.providers.omlx.models.some((m) => m.id === "MiniMax-M3-4bit")).toBe(true);
+  });
+});
+
+describe("splitPiModel", () => {
+  it("splits native provider/model composites, including slashes in the model id", () => {
+    expect(splitPiModel("ollama-cloud/glm-5.2")).toEqual({ provider: "ollama-cloud", modelId: "glm-5.2" });
+    expect(splitPiModel("openai/gpt-4o")).toEqual({ provider: "openai", modelId: "gpt-4o" });
+    expect(splitPiModel("openrouter/qwen/qwen3-coder-next")).toEqual({
+      provider: "openrouter",
+      modelId: "qwen/qwen3-coder-next",
+    });
+  });
+
+  it("splits live-host inject ids on ::, not /", () => {
+    expect(splitPiModel("omlx::MiniMax-M3-4bit")).toEqual({ provider: "omlx", modelId: "MiniMax-M3-4bit" });
+    expect(splitPiModel("ollama::llama3.1:70b")).toEqual({ provider: "ollama", modelId: "llama3.1:70b" });
+    expect(splitPiModel("unsloth::unsloth/gemma-4-26B-A4B-it-GGUF")).toEqual({
+      provider: "unsloth",
+      modelId: "unsloth/gemma-4-26B-A4B-it-GGUF",
+    });
+  });
+
+  it("returns null for empty or unstructured ids", () => {
+    expect(splitPiModel("")).toBeNull();
+    expect(splitPiModel("glm-5.2")).toBeNull();
+  });
+});
+
+describe("preferPiInjectRows", () => {
+  it("drops host/model rows when the same live host::model is present", () => {
+    const catalog = preferPiInjectRows({
+      default: "omlx/MiniMax-M3-4bit",
+      options: [
+        { id: "omlx/MiniMax-M3-4bit", label: "MiniMax-M3-4bit", custom: true },
+        { id: "openai/gpt-4o", label: "GPT-4o", custom: true },
+        { id: "omlx::MiniMax-M3-4bit", label: "MiniMax-M3-4bit (oMLX)", custom: true, loaded: true },
+      ],
+    });
+    expect(catalog.options.map((o) => o.id)).toEqual(["openai/gpt-4o", "omlx::MiniMax-M3-4bit"]);
+    expect(catalog.default).toBe("omlx::MiniMax-M3-4bit");
+  });
+
+  it("leaves the catalog alone when there are no inject rows", () => {
+    const catalog = {
+      default: "omlx/keep",
+      options: [{ id: "omlx/keep", label: "keep", custom: true as const }],
+    };
+    expect(preferPiInjectRows(catalog)).toEqual(catalog);
+  });
+});
+
+describe("ensurePiInjectModel", () => {
+  it("upserts a provider into ~/.pi/agent/models.json without dropping existing models", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-pi-inject-"));
+    mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+    writeFileSync(
+      join(home, ".pi", "agent", "models.json"),
+      JSON.stringify({
+        providers: {
+          omlx: {
+            baseUrl: "http://127.0.0.1:8080/v1",
+            api: "openai-completions",
+            apiKey: "omlx",
+            compat: { supportsDeveloperRole: false, supportsReasoningEffort: true },
+            models: [{ id: "keep-me", name: "Keep me", contextWindow: 8192, maxTokens: 1024 }],
+          },
+        },
+      }),
+    );
+    const split = ensurePiInjectModel("omlx::MiniMax-M3-4bit", { HOME: home });
+    expect(split).toEqual({ provider: "omlx", modelId: "MiniMax-M3-4bit" });
+    const written = JSON.parse(readFileSync(join(home, ".pi", "agent", "models.json"), "utf8")) as {
+      providers: {
+        omlx: {
+          baseUrl: string;
+          api: string;
+          apiKey: string;
+          models: Array<{ id: string; contextWindow?: number }>;
+        };
+      };
+    };
+    expect(written.providers.omlx.baseUrl).toBe("http://127.0.0.1:8080/v1");
+    expect(written.providers.omlx.api).toBe("openai-completions");
+    expect(written.providers.omlx.apiKey).toBe("omlx");
+    expect(written.providers.omlx.models.map((m) => m.id)).toEqual(["keep-me", "MiniMax-M3-4bit"]);
+    expect(written.providers.omlx.models[0]).toMatchObject({ id: "keep-me", contextWindow: 8192 });
+  });
+
+  it("writes Unsloth's studio token, not the placeholder", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-pi-unsloth-"));
+    const split = ensurePiInjectModel("unsloth::Qwen3.8-27B", {
+      HOME: home,
+      UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret",
+    });
+    expect(split).toEqual({ provider: "unsloth", modelId: "Qwen3.8-27B" });
+    const written = JSON.parse(readFileSync(join(home, ".pi", "agent", "models.json"), "utf8")) as {
+      providers: { unsloth: { apiKey: string; baseUrl: string } };
+    };
+    expect(written.providers.unsloth.apiKey).toBe("unsloth-secret");
+    expect(written.providers.unsloth.baseUrl).toBe(localHost("unsloth")!.baseUrl);
+  });
+
+  it("leaves official slugs and the models.json file untouched", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-pi-cloud-"));
+    expect(ensurePiInjectModel("openai/gpt-4o", { HOME: home })).toEqual({ provider: "openai", modelId: "gpt-4o" });
+    expect(() => readFileSync(join(home, ".pi", "agent", "models.json"))).toThrow();
+  });
+
+  it("does not destroy a malformed models.json", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-pi-badjson-"));
+    mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+    const path = join(home, ".pi", "agent", "models.json");
+    writeFileSync(path, "not json");
+    expect(ensurePiInjectModel("omlx::MiniMax-M3-4bit", { HOME: home })).toEqual({
+      provider: "omlx",
+      modelId: "MiniMax-M3-4bit",
+    });
+    expect(readFileSync(path, "utf8")).toBe("not json");
+  });
+});
+
+describe("applyPiLocalCatalog", () => {
+  it("merges live inject rows onto the probed catalog", async () => {
+    const catalog = await applyPiLocalCatalog(
+      {
+        default: "openai/gpt-4o",
+        options: [
+          { id: "openai/gpt-4o", label: "GPT-4o", custom: true },
+          { id: "omlx/MiniMax-M3-4bit", label: "MiniMax-M3-4bit", custom: true },
+        ],
+      },
+      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      async (url) => {
+        if (String(url).includes(":8080")) {
+          return new Response(JSON.stringify({ data: [{ id: "MiniMax-M3-4bit" }] }), { status: 200 });
+        }
+        return new Response("nope", { status: 500 });
+      },
+    );
+    expect(catalog.options.some((o) => o.id === "omlx::MiniMax-M3-4bit")).toBe(true);
+    expect(catalog.options.some((o) => o.id === "omlx/MiniMax-M3-4bit")).toBe(false);
+    expect(catalog.options.some((o) => o.id === "openai/gpt-4o")).toBe(true);
   });
 });
 

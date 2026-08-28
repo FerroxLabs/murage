@@ -1,10 +1,10 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
 import { createAndroidDeviceController } from "./android-device.mjs";
 import { assemblyAICredential, mintAssemblyAIStreamingToken } from "./assemblyai.mjs";
@@ -20,6 +20,7 @@ import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import { buildDiagnosticsReport, decodeLogTail, diagnosticsFileName } from "./diagnostics.mjs";
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
+import { pollServerIdentity } from "./server-boot-probe.mjs";
 import { packageUrlFromCommandLine, packageUrlFromDeepLink } from "./package-link.mjs";
 import { defaultSaveName, withSavableFile } from "./save-file.mjs";
 import {
@@ -37,6 +38,7 @@ import {
   withoutManagedCompanionTunnelAccess,
 } from "./managed-companion-tunnel.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
+import { skinChrome, isKnownSkin } from "./skin-overlay.cjs";
 import { readSecureCredentials } from "./secure-credentials.mjs";
 import { createControlPlaneClient } from "./control-plane-client.mjs";
 import {
@@ -54,6 +56,7 @@ const { createDisplayMediaGuard, invokeDisplayMediaCallback, selectCaptureSource
 );
 const { STAGE_PREFIX: APPIMAGE_CUA_STAGE_PREFIX } = require("./cua-linux-bundle.cjs");
 const { desktopViewerUrl, sameDesktopViewerOrigin } = require("./desktop-viewer.cjs");
+const { createDesktopWorkspaceManager } = require("./desktop-workspace.cjs");
 const { normalizeUnreadCount, parseWindowState, resolveWindowState } = require("./window-state.cjs");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -66,8 +69,13 @@ const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 let desktopViewerWindow = null;
 let desktopViewerOwner = null;
 let desktopViewerContextId = null;
+let desktopWorkspaceManager = null;
+let desktopWorkspaceOwner = null;
 let pendingPackageInstallUrl = packageUrlFromCommandLine(process.argv);
 let mainWindow = null;
+// The active skin id, mirrored from the renderer so a window's native
+// caption-button overlay (issue #454) starts and stays on the right colours.
+let currentSkin = "midnight";
 let unreadCount = 0;
 let unreadOverlayIcon = null;
 
@@ -650,6 +658,10 @@ async function gatherDiagnostics() {
   });
 }
 
+// Set by startServerPackaged: true only when every failing candidate port was
+// taken by another process — decides which error-page message renders.
+let serverStartConflictOnly = false;
+
 async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
   const childEnv = managedComposioChildEnvironment(composioBrokerUrl(), secureCredentials, {
@@ -686,40 +698,57 @@ async function startServerOn(port) {
   // Identity check is by PID: a dev harness server has the same API shape,
   // so only the child we actually forked (matching pid + static serving)
   // counts as ours.
-  for (let i = 0; i < 40; i++) {
-    if (exited) return null;
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/health`);
-      if (res.ok) {
-        const body = await res.json().catch(() => null);
-        if (body?.app === "openmausbot" && body.pid === proc.pid && body.static) return proc;
-        break; // someone else owns this port — try the next one
-      }
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 500));
+  // The budget is wall-clock, not a fixed poll count: a healthy boot can take
+  // well past 20s on cold machines or when pre-listen network calls stall
+  // (issue #506), and reaping an about-to-listen child reads to the user as
+  // "something else is using its ports" even though nothing was on them.
+  // The probe itself is deadline-bounded (a hung health endpoint cannot wedge
+  // us here forever) and reports WHY it gave up, so the error page can tell
+  // port conflict apart from slow startup.
+  const identity = await pollServerIdentity({
+    port,
+    // Getter, not value: proc.pid stays undefined until the async `spawn`
+    // event fires, and capturing it here would make the probe judge our own
+    // child a "foreign owner" on its first health answer.
+    pid: () => proc.pid,
+    bootTimeoutMs: SERVER_BOOT_TIMEOUT_MS,
+    isExited: () => exited,
+  });
+  if (identity.outcome === "ready") return { proc };
+  if (identity.outcome === "exited") {
+    slog(`child on port ${port} exited before answering /api/health`);
+  } else {
+    slog(
+      identity.outcome === "foreign-owner"
+        ? `port ${port} answered health checks from another process`
+        : `child on port ${port} did not answer /api/health within ${SERVER_BOOT_TIMEOUT_MS / 1000}s`,
+    );
   }
   try {
     proc.kill();
   } catch {}
-  return null;
+  return { proc: null, reason: identity.outcome };
 }
 
 async function startServerPackaged() {
   // two passes: a quit-and-reopen relaunch can race the dying instance's
   // server during teardown — one settle-and-retry covers it
+  let everyPortForeignOwned = true;
   for (let attempt = 0; attempt < 2; attempt++) {
     for (const port of [8799, 18799, 28799]) {
-      const proc = await startServerOn(port);
-      if (proc) {
-        serverProc = proc;
+      const started = await startServerOn(port);
+      if (started.proc) {
+        serverProc = started.proc;
         SERVER_PORT = port;
         return true;
       }
+      // A child that exited or timed out is not evidence of a port conflict —
+      // only "another process answered health checks" is.
+      if (started.reason !== "foreign-owner") everyPortForeignOwned = false;
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
+  serverStartConflictOnly = everyPortForeignOwned;
   return false;
 }
 
@@ -735,11 +764,35 @@ function syncManagedComposioCredentials() {
   }
 }
 
-const ERROR_PAGE =
-  "data:text/html;charset=utf-8," +
-  encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen OpenMausBot — if it keeps happening, restart your computer.</p></div></body>`,
+// The page is built at failure time (not import time): the message depends on
+// how the boot failed, and the log path comes from LOG_DIR so Windows and
+// Linux users see their real location instead of a macOS guess. The link
+// opens the log through the window's setWindowOpenHandler, which routes to
+// the platform handler.
+function escapeHtml(value) {
+  return value.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
+function buildErrorPage({ allPortsOccupied }) {
+  const serverLogPath = path.join(LOG_DIR, "server.log");
+  const serverLogHref = pathToFileURL(serverLogPath).href;
+  const reason = allPortsOccupied
+    ? "Every OpenMausBot port answered health checks from another process — likely a second copy of the app, or another program on ports 8799–28799. Quit that program, then quit and reopen OpenMausBot."
+    : "The background server didn't come up in time — this is usually slow startup, not a port conflict. Quit and reopen OpenMausBot.";
+  return (
+    "data:text/html;charset=utf-8," +
+    encodeURIComponent(
+      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">${escapeHtml(reason)} If it keeps happening, check <a target="_blank" rel="noopener" href="${serverLogHref}" style="color:#fcfcfc">${escapeHtml(serverLogPath)}</a>.</p></div></body>`,
+    )
   );
+}
+
+// How long one packaged-server child gets to answer /api/health before the
+// parent reaps it and tries the next port. Wall-clock, deliberately generous:
+// first boots write data dirs and pre-listen network calls (managed composio,
+// workspace credentials) can stall a healthy child far past 20s on some
+// machines, which used to surface as the misleading "ports are busy" page.
+const SERVER_BOOT_TIMEOUT_MS = 60_000;
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
 const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath });
@@ -889,6 +942,56 @@ function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
   return true;
 }
 
+function ensureDesktopWorkspace(owner) {
+  if (!owner || owner.isDestroyed()) throw new Error("The OpenMausBot window is unavailable");
+  if (desktopWorkspaceManager) {
+    if (desktopWorkspaceOwner !== owner) {
+      throw new Error("The desktop workspace belongs to another app window");
+    }
+    return desktopWorkspaceManager;
+  }
+
+  desktopWorkspaceOwner = owner;
+  const manager = createDesktopWorkspaceManager({
+    owner,
+    createView: (options) => new WebContentsView(options),
+    partitionPrefix: `openmausbot-desktop-workspace-${randomUUID()}`,
+    notify: (state) => {
+      if (!owner.isDestroyed() && !owner.webContents.isDestroyed()) {
+        owner.webContents.send("desktop-workspace:state", state);
+      }
+    },
+  });
+  desktopWorkspaceManager = manager;
+
+  // Native child views outlive the renderer DOM unless we explicitly tear
+  // them down. Reloads, renderer crashes and owner destruction all close both
+  // panes without retaining their secret-bearing noVNC URLs.
+  owner.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) manager.closeAll();
+  });
+  owner.webContents.on("render-process-gone", () => manager.closeAll());
+  owner.once("closed", () => {
+    manager.closeAll();
+    if (desktopWorkspaceManager === manager) {
+      desktopWorkspaceManager = null;
+      desktopWorkspaceOwner = null;
+    }
+  });
+  return manager;
+}
+
+function desktopWorkspaceForEvent(event, create = false) {
+  const owner = mainWindow;
+  if (!owner || owner.isDestroyed() || event.sender !== owner.webContents) {
+    throw new Error("The desktop workspace is available only to the main app window");
+  }
+  if (desktopWorkspaceManager && desktopWorkspaceOwner !== owner) {
+    throw new Error("The desktop workspace belongs to another app window");
+  }
+  return create ? ensureDesktopWorkspace(owner) : desktopWorkspaceManager;
+}
+
 ipcMain.on("screen:preview-intent", (event) => {
   event.returnValue = displayMediaGuard.begin(event.senderFrame);
 });
@@ -902,6 +1005,7 @@ ipcMain.on("desktop:unread-count", (event, value) => {
 
 function createWindow() {
   const isMac = process.platform === "darwin";
+  const waitsForSkinSync = process.platform === "win32";
   const primary = screen.getPrimaryDisplay();
   const displays = [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)];
   const restored = resolveWindowState(readWindowState(), displays.map((display) => display.workArea));
@@ -909,6 +1013,11 @@ function createWindow() {
     ...restored.bounds,
     minWidth: 900,
     minHeight: 600,
+    // The renderer restores its persisted skin before mounting React and
+    // mirrors it over desktop:skin. Keep Windows hidden until that handshake
+    // recolors the native caption-button overlay, otherwise a saved light
+    // skin still flashes the Midnight-black block on every cold start.
+    show: !waitsForSkinSync,
     icon: APP_ICON,
     backgroundColor: "#070707",
     autoHideMenuBar: process.platform !== "darwin",
@@ -923,7 +1032,11 @@ function createWindow() {
             // around a 36px control row = 60). Windows draws the caption buttons
             // to fill the overlay, so anything shorter leaves a dead band under
             // them and anything taller overhangs the header.
-            titleBarOverlay: { color: "#070707", symbolColor: "#b5b5b5", height: 60 },
+            // color/symbolColor follow the active skin (issue #454): the
+            // caption buttons live in this native overlay, and a light skin
+            // with a Midnight-black overlay is the "black block in the
+            // top-right corner". height stays 60 — see the note above.
+            titleBarOverlay: { ...skinChrome(currentSkin), height: 60 },
           }
         : {}),
     webPreferences: {
@@ -932,10 +1045,22 @@ function createWindow() {
     },
   });
   mainWindow = win;
+  if (waitsForSkinSync) {
+    // A broken renderer or preload must not strand the app as an invisible
+    // process. Normal startup shows from desktop:skin almost immediately;
+    // this is only the bounded recovery path.
+    const skinSyncFallback = setTimeout(() => {
+      if (!win.isDestroyed() && !win.isVisible()) win.show();
+    }, 5_000);
+    skinSyncFallback.unref?.();
+    const clearSkinSyncFallback = () => clearTimeout(skinSyncFallback);
+    win.once("show", clearSkinSyncFallback);
+    win.once("closed", clearSkinSyncFallback);
+  }
   installWindowStatePersistence(win);
   applyUnreadBadge(win);
   if (restored.maximized) win.maximize();
-  win.on("closed", () => {
+  win.once("closed", () => {
     if (mainWindow === win) mainWindow = null;
   });
 
@@ -1085,7 +1210,7 @@ function createWindow() {
   }
 
   if (app.isPackaged) {
-    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
+    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : buildErrorPage({ allPortsOccupied: serverStartConflictOnly }));
   } else {
     win.loadURL(DEV_URL);
   }
@@ -1197,6 +1322,30 @@ ipcMain.handle("desktop:save-file", async (event, rawPath) => {
   });
 });
 
+// The renderer owns the skin (it lives in localStorage and stamps
+// [data-skin] before first paint); it tells the main process so the one
+// surface CSS cannot reach — the Windows caption-button overlay — matches.
+// Persisted in-process so a window opened later starts on the right colours.
+ipcMain.handle("desktop:skin", (event, skin) => {
+  if (!isKnownSkin(skin)) return false;
+  currentSkin = skin;
+  // The caption-button overlay is a Windows-only surface (createWindow only
+  // configures titleBarOverlay there); on macOS/Linux the renderer's CSS is
+  // the whole story and there is nothing native to recolour.
+  if (process.platform === "win32") {
+    const sender = BrowserWindow.fromWebContents(event.sender);
+    try {
+      sender?.setTitleBarOverlay({ ...skinChrome(skin), height: 60 });
+      // The first Windows window starts hidden so a persisted light skin is
+      // already applied when native chrome becomes visible.
+      if (sender && !sender.isVisible()) sender.show();
+    } catch {
+      // a window created without an overlay throws; safe to ignore
+    }
+  }
+  return true;
+});
+
 ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {
   if (typeof rawUrl !== "string") throw new Error("A web address is required");
   let url;
@@ -1218,6 +1367,28 @@ ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {
 ipcMain.handle("desktop-viewer:open", (event, rawUrl, title, contextId) => {
   const owner = BrowserWindow.fromWebContents(event.sender);
   return openDesktopViewer(owner, rawUrl, title, contextId);
+});
+
+// Two Local VM desktops share the existing app BrowserWindow. The renderer
+// supplies only layout and intent; URL validation, sandboxing, session
+// isolation and the one-interactive-pane invariant stay in the main process.
+ipcMain.handle("desktop-workspace:open", (event, input) =>
+  desktopWorkspaceForEvent(event, true).open(input),
+);
+ipcMain.handle("desktop-workspace:layout", (event, items) => {
+  const manager = desktopWorkspaceForEvent(event);
+  if (!manager) return false;
+  return manager.layout(items);
+});
+ipcMain.handle("desktop-workspace:set-interactive", (event, contextId) => {
+  const manager = desktopWorkspaceForEvent(event);
+  if (!manager) return contextId == null;
+  return manager.setInteractive(contextId);
+});
+ipcMain.handle("desktop-workspace:close", (event, contextId) => {
+  const manager = desktopWorkspaceForEvent(event);
+  if (!manager) return true;
+  return manager.close(contextId);
 });
 
 // Close only when the caller owns the current viewer — otherwise one bot's

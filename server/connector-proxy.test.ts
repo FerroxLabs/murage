@@ -74,21 +74,130 @@ describe("connector MCP bridge", () => {
     expect(received.body.resumeKey).toMatch(/^[\w-]{8,100}$/);
   });
 
-  it("relays ordinary MCP JSON-RPC without exposing upstream headers on stdout", async () => {
+  it("answers initialize locally so a missing or failing upstream cannot fail the MCP handshake", async () => {
+    const lines = start({});
+    child!.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05" },
+    })}\n`);
+    const reply = await nextJson(lines);
+    expect(reply).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "openmausbot-connectors", version: "1" },
+      },
+    });
+    expect(reply.result).not.toHaveProperty("isError");
+    expect(reply.result).not.toHaveProperty("content");
+  });
+
+  it("answers initialize after a bounded wait when the upstream stalls", async () => {
+    let sawInitialize!: () => void;
+    const received = new Promise<void>((resolve) => { sawInitialize = resolve; });
+    const upstream = await listen((request) => {
+      request.resume();
+      request.on("end", sawInitialize);
+      // Deliberately never respond. The proxy must abort this request and
+      // return its local capability result instead of hanging OpenCode.
+    });
+    const lines = start({ OMB_CONNECTOR_UPSTREAM_URL: upstream });
+    child!.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 11,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05" },
+    })}\n`);
+
+    await received;
+    const reply = await nextJson(lines);
+    expect(reply).toMatchObject({
+      id: 11,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+      },
+    });
+  });
+
+  it("still opens the upstream MCP session on initialize without echoing secrets", async () => {
     let upstreamAuthorization = "";
+    let upstreamBody: any = null;
+    const methods: string[] = [];
+    const sessionHeaders: string[] = [];
+    let sawInitialized!: () => void;
+    const initialized = new Promise<void>((resolve) => { sawInitialized = resolve; });
     const upstream = await listen((request, response) => {
-      upstreamAuthorization = String(request.headers.authorization ?? "");
-      response.writeHead(200, { "content-type": "application/json", "mcp-session-id": "transport-1" });
-      response.end(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { protocolVersion: "2025-06-18" } }));
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        upstreamAuthorization = String(request.headers.authorization ?? "");
+        upstreamBody = JSON.parse(body);
+        methods.push(String(upstreamBody.method ?? ""));
+        sessionHeaders.push(String(request.headers["mcp-session-id"] ?? ""));
+        response.writeHead(200, { "content-type": "application/json", "mcp-session-id": "transport-1" });
+        response.end(upstreamBody.id === undefined
+          ? ""
+          : JSON.stringify({ jsonrpc: "2.0", id: 2, result: { protocolVersion: "2025-06-18" } }));
+        if (upstreamBody.method === "notifications/initialized") sawInitialized();
+      });
     });
     const lines = start({
       OMB_CONNECTOR_UPSTREAM_URL: upstream,
       OMB_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer upstream-secret" }),
     });
-    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "initialize", params: {} })}\n`);
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2024-11-05" } })}\n`);
     const reply = await nextJson(lines);
-    expect(reply).toEqual({ jsonrpc: "2.0", id: 2, result: { protocolVersion: "2025-06-18" } });
+    expect(reply.result.protocolVersion).toBe("2024-11-05");
+    expect(reply.result.serverInfo).toEqual({ name: "openmausbot-connectors", version: "1" });
+    expect(upstreamAuthorization).toBe("Bearer upstream-secret");
+    expect(upstreamBody).toMatchObject({ method: "initialize" });
+    expect(JSON.stringify(reply)).not.toContain("upstream-secret");
+
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`);
+    await initialized;
+    expect(methods).toEqual(["initialize", "notifications/initialized"]);
+    expect(sessionHeaders).toEqual(["", "transport-1"]);
+  });
+
+  it("relays tools/list without exposing upstream headers on stdout", async () => {
+    let upstreamAuthorization = "";
+    const upstream = await listen((request, response) => {
+      upstreamAuthorization = String(request.headers.authorization ?? "");
+      response.writeHead(200, { "content-type": "application/json", "mcp-session-id": "transport-1" });
+      response.end(JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        result: { tools: [{ name: "COMPOSIO_SEARCH_TOOLS" }] },
+      }));
+    });
+    const lines = start({
+      OMB_CONNECTOR_UPSTREAM_URL: upstream,
+      OMB_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer upstream-secret" }),
+    });
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list", params: {} })}\n`);
+    const reply = await nextJson(lines);
+    expect(reply).toEqual({
+      jsonrpc: "2.0",
+      id: 4,
+      result: { tools: [{ name: "COMPOSIO_SEARCH_TOOLS" }] },
+    });
     expect(upstreamAuthorization).toBe("Bearer upstream-secret");
     expect(JSON.stringify(reply)).not.toContain("upstream-secret");
+  });
+
+  it("returns a JSON-RPC error, not a tools result, when a non-call relay fails", async () => {
+    const lines = start({});
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} })}\n`);
+    const reply = await nextJson(lines);
+    expect(reply).toEqual({
+      jsonrpc: "2.0",
+      id: 3,
+      error: { code: -32000, message: "connected apps are unavailable" },
+    });
   });
 });

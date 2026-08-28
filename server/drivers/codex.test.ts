@@ -106,6 +106,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(recorder.events.find((e) => e.type === "thread.token-usage.updated")).toMatchObject({
       input: 7,
       output: 3,
+      cachedInput: 4,
     });
     expect(recorder.events.filter((event) => event.itemId === "w1")).toMatchObject([
       { type: "item.started", itemType: "tool", title: "web_search" },
@@ -113,7 +114,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     ]);
     // codex reports the THREAD total; the driver turns it into this turn's
     // figure so the harness never sums a running total
-    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true, usage: { input: 7, output: 3 } });
+    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true, usage: { input: 7, output: 3, cachedInput: 4 } });
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.env.OPENAI_API_KEY).toBeUndefined();

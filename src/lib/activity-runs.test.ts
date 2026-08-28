@@ -41,6 +41,17 @@ describe("groupActivityRuns", () => {
     expect(items.map((i) => i.kind)).toEqual(["message", "message"]);
   });
 
+  it("keeps ordinary failed tools visible between successful runs", () => {
+    const items = groupActivityRuns([
+      tool("Read"),
+      tool("Edit"),
+      tool("Bash", false),
+      tool("Write"),
+      tool("Write"),
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(["run", "message", "run"]);
+  });
+
   it("gives a run a stable id taken from its first step", () => {
     const steps = [tool("Edit"), tool("Edit")];
     const items = groupActivityRuns(steps);

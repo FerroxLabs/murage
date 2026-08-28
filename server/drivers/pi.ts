@@ -13,11 +13,14 @@
 //
 // Model ids in the picker are `provider/modelId` composites (e.g.
 // `ollama-cloud/glm-5.2`); `set_model` splits that into pi's separate
-// `{provider, modelId}` fields. The live catalog is probed from
-// `get_available_models` and every entry is flagged `custom` because pi is a
-// custom-only (BYOK) engine — the model picker's Local pane only lists
-// `custom` options for custom-only engines.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// `{provider, modelId}` fields. Live local hosts (oMLX / Ollama / EXO /
+// LM Studio / Unsloth) land as `host::model` inject ids the same way the
+// other engines do: mergeLocalInject lists them in Custom, and a pick
+// upserts ~/.pi/agent/models.json so pi can reach the host. The live
+// catalog is probed from `get_available_models` and every entry is flagged
+// `custom` because pi is a custom-only (BYOK) engine — the model picker's
+// Local pane only lists `custom` options for custom-only engines.
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -39,6 +42,13 @@ import type {
   SendTurnInput,
 } from "../contracts.ts";
 import { EFFORT_LEVELS, newEventId, newId } from "../contracts.ts";
+import {
+  decodeInjectId,
+  encodeInjectId,
+  hostApiKey,
+  localHost,
+  mergeLocalInject,
+} from "./local-inject.ts";
 import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "piAgent";
@@ -125,6 +135,135 @@ export function parsePiCatalog(stdout: string, fallbackDefault = ""): ModelCatal
   }
   if (!def && options.length) def = options[0]!.id;
   return { default: def, options };
+}
+
+/** Split a picker id into pi's `{provider, modelId}`. Accepts both the
+ *  native `provider/modelId` composite and a live-host `host::model`
+ *  inject id. */
+export function splitPiModel(id: string): { provider: string; modelId: string } | null {
+  const inject = decodeInjectId(id);
+  if (inject) return { provider: inject.host, modelId: inject.model };
+  if (!id.includes("/")) return null;
+  const [provider, ...rest] = id.split("/");
+  if (!provider || !rest.length) return null;
+  return { provider, modelId: rest.join("/") };
+}
+
+/** Prefer live `host::model` inject rows over the same model already
+ *  listed as `host/model` from ~/.pi/agent/models.json, so Custom does
+ *  not show duplicates. */
+export function preferPiInjectRows(catalog: ModelCatalog): ModelCatalog {
+  const injectIds = new Set(
+    catalog.options.filter((option) => decodeInjectId(option.id)).map((option) => option.id),
+  );
+  if (!injectIds.size) return catalog;
+  const options = catalog.options.filter((option) => {
+    if (decodeInjectId(option.id)) return true;
+    const slash = option.id.indexOf("/");
+    if (slash <= 0) return true;
+    return !injectIds.has(encodeInjectId(option.id.slice(0, slash), option.id.slice(slash + 1)));
+  });
+  let def = catalog.default;
+  if (def && !options.some((option) => option.id === def)) {
+    const slash = def.indexOf("/");
+    const mapped = slash > 0 ? encodeInjectId(def.slice(0, slash), def.slice(slash + 1)) : "";
+    def = injectIds.has(mapped) ? mapped : (options[0]?.id ?? "");
+  }
+  return { default: def, options };
+}
+
+export async function applyPiLocalCatalog(
+  catalog: ModelCatalog,
+  env: Record<string, string | undefined> = process.env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ModelCatalog> {
+  return preferPiInjectRows(await mergeLocalInject(catalog, env, fetchImpl));
+}
+
+function piAgentDir(env: Record<string, string | undefined>): string {
+  return join(env.HOME || env.USERPROFILE || homedir(), ".pi", "agent");
+}
+
+/** Upsert a live local host into ~/.pi/agent/models.json so `set_model`
+ *  can reach it. Existing providers and models are kept. Returns the
+ *  `{provider, modelId}` pair pi's RPC expects, or null when the picker
+ *  id is not a model at all. */
+export function ensurePiInjectModel(
+  modelId: string,
+  env: Record<string, string | undefined> = process.env,
+): { provider: string; modelId: string } | null {
+  const split = splitPiModel(modelId);
+  if (!split) return null;
+  const inject = decodeInjectId(modelId);
+  if (!inject) return split;
+  const host = localHost(inject.host);
+  if (!host) return split;
+
+  const dir = piAgentDir(env);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "models.json");
+  let root: Record<string, unknown> = { providers: {} };
+  if (existsSync(path)) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        root = parsed as Record<string, unknown>;
+      } else {
+        // Malformed — do not destroy the file; still return the split so
+        // set_model can try.
+        return split;
+      }
+    } catch {
+      return split;
+    }
+  }
+
+  const providers =
+    root.providers && typeof root.providers === "object" && !Array.isArray(root.providers)
+      ? { ...(root.providers as Record<string, unknown>) }
+      : {};
+  const previous = providers[inject.host];
+  const existing: Record<string, unknown> =
+    previous && typeof previous === "object" && !Array.isArray(previous)
+      ? { ...(previous as Record<string, unknown>) }
+      : {
+          baseUrl: host.baseUrl,
+          api: "openai-completions",
+          apiKey: hostApiKey(host, env),
+          compat: { supportsDeveloperRole: false, supportsReasoningEffort: true },
+          models: [] as Array<Record<string, unknown>>,
+        };
+  existing.baseUrl = host.baseUrl;
+  existing.api = typeof existing.api === "string" && existing.api ? existing.api : "openai-completions";
+  existing.apiKey = hostApiKey(host, env);
+  if (!existing.compat) {
+    existing.compat = { supportsDeveloperRole: false, supportsReasoningEffort: true };
+  }
+  const models: Array<Record<string, unknown>> = Array.isArray(existing.models)
+    ? existing.models.filter(
+        (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row),
+      )
+    : [];
+  if (!models.some((row) => row.id === inject.model)) {
+    models.push({
+      id: inject.model,
+      name: inject.model,
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 131072,
+      maxTokens: 16384,
+    });
+  }
+  existing.models = models;
+  providers[inject.host] = existing;
+  root.providers = providers;
+  writeFileSync(path, `${JSON.stringify(root, null, 2)}\n`, { mode: 0o600 });
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // Windows ignores POSIX modes; keep the inject even if chmod is unsupported.
+  }
+  return split;
 }
 
 /** The pi-side default model, read from ~/.pi/agent/settings.json so the
@@ -229,7 +368,7 @@ interface PiEvent {
   toolName?: string;
   isError?: boolean;
   // turn_end / message_end
-  message?: { stopReason?: string; usage?: { input?: number; output?: number } };
+  message?: { stopReason?: string; errorMessage?: string; usage?: { input?: number; output?: number } };
   usage?: { input?: number; output?: number };
   // extension_ui_request
   id?: string;
@@ -271,11 +410,18 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     const catalogEnv = piEnvironment({ ...process.env, ...input.environment });
     let models = EMPTY;
     const refreshModels = async () => {
+      let base = models;
       try {
         const resolved = await fetchPiModels(config.cli, catalogEnv);
-        if (resolved.options.length) models = resolved;
+        if (resolved.options.length) base = resolved;
       } catch {
         // Keep the last usable catalog when the probe fails.
+      }
+      try {
+        const next = await applyPiLocalCatalog(base, catalogEnv);
+        if (next.options.length) models = next;
+      } catch {
+        if (base.options.length) models = base;
       }
     };
     await refreshModels();
@@ -314,6 +460,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const turnId = newId();
       const pending = new Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>();
       let settled = false;
+
+      // Write ~/.pi/agent/models.json before creating any credential-bearing
+      // MCP temp files. If model setup fails, there is nothing sensitive to
+      // clean up yet.
+      if (typeof turn.model === "string" && turn.model) {
+        ensurePiInjectModel(turn.model, { ...process.env, ...input.environment });
+      }
 
       // integrations → stdio MCP servers for the pi-mcp-extension. The config
       // carries credentials (box token, composio key, comms token), so it goes
@@ -494,6 +647,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               flushAssistantText();
               const reqId = evt.id ?? newId();
               const isQuestion = evt.method === "input";
+              // Register BEFORE emitting: the harness may auto-approve from
+              // inside its synchronous request.opened listener. Emitting first
+              // made respondToRequest see no pending ask, return unavailable,
+              // then fall back to a human card on every "Always allow" call.
+              pending.set(reqId, (decision) => {
+                if (decision.behavior === "deny") send({ type: "extension_ui_response", id: reqId, cancelled: true });
+                else if (isQuestion) send({ type: "extension_ui_response", id: reqId, value: decision.message ?? "" });
+                else send({ type: "extension_ui_response", id: reqId, confirmed: true });
+              });
               emit({
                 ...base(threadId, turnId),
                 requestId: reqId,
@@ -501,11 +663,6 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                 requestType: isQuestion ? "question" : "permission",
                 tool: String(evt.title ?? "pi"),
                 summary: String(evt.title ?? "pi wants confirmation"),
-              });
-              pending.set(reqId, (decision) => {
-                if (decision.behavior === "deny") send({ type: "extension_ui_response", id: reqId, cancelled: true });
-                else if (isQuestion) send({ type: "extension_ui_response", id: reqId, value: decision.message ?? "" });
-                else send({ type: "extension_ui_response", id: reqId, confirmed: true });
               });
             }
             return;
@@ -517,7 +674,16 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             // answer — settling now would drop the final reply.
             if (sr === "toolUse" || sr === "tool_use" || sr === "tool_calls") return;
             const usage = evt.usage ?? evt.message?.usage;
-            settle(true, sr === "cancelled" ? "cancelled" : "end_turn", usage);
+            if (sr === "error" || sr === "failed") {
+              emit({
+                ...base(threadId, turnId),
+                type: "runtime.error",
+                message: String(evt.message?.errorMessage ?? "pi turn failed").slice(0, 2_000),
+              });
+              settle(false, "failed", usage);
+              return;
+            }
+            settle(true, sr === "cancelled" || sr === "aborted" ? "cancelled" : "end_turn", usage);
             return;
           }
           default:
@@ -577,12 +743,12 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         // accepts a prompt without an explicit session.
       }
 
-      // pin the chosen model (composite id → provider + modelId)
-      if (typeof turn.model === "string" && turn.model.includes("/")) {
-        const [provider, ...rest] = turn.model.split("/");
+      // pin the chosen model (composite id or host::model inject → provider + modelId)
+      const chosen = typeof turn.model === "string" ? splitPiModel(turn.model) : null;
+      if (chosen) {
         try {
           const modelPromise = awaitResponse("set_model");
-          send({ type: "set_model", provider, modelId: rest.join("/") });
+          send({ type: "set_model", provider: chosen.provider, modelId: chosen.modelId });
           await modelPromise;
         } catch {
           /* keep going on the default model */

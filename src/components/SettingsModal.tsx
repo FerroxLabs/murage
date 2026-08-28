@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Coins, KeyRound, Monitor, Search, Smartphone, Terminal, User, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
-import { skillRecorderEnabled } from "@/lib/feature-flags";
+import { showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
 import { ApiKeyRow, VpsConnection } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
@@ -25,7 +25,7 @@ const SECTIONS: Array<{
   icon: typeof User;
   keywords: string[];
 }> = [
-  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates"] },
+  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls"] },
   { id: "connections", label: "Connections", icon: KeyRound, keywords: ["keys", "api", "composio", "box", "xai", "vps"] },
   { id: "engines", label: "Engines", icon: Terminal, keywords: ["models", "claude", "grok", "providers", "cli"] },
   { id: "companion", label: "Phone", icon: Smartphone, keywords: ["companion", "phone", "pair", "mobile"] },
@@ -137,6 +137,57 @@ function AnalyticsRow() {
       >
         <span className={cnKnob(on)} />
       </button>
+    </Card>
+  );
+}
+
+function ToolCallsRow() {
+  const { state, dispatch } = useStore();
+  const enabled = showToolCallsEnabled(state.config);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const toggle = async () => {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const config: ConfigStatus = await api("/api/config", {
+        method: "PATCH",
+        body: JSON.stringify({ features: { showToolCalls: !enabled } }),
+      });
+      dispatch({ type: "configStatus", config });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save the tool-call setting.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Tool calls"
+      subtitle="Show each tool a bot runs in the transcript. Off by default — the mascot already shows that work is happening."
+    >
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-[14px] font-medium text-ink">Show tool calls</div>
+          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+            Named chips for Bash, search, and other tools. Errors and bot-to-bot messages still appear.
+          </div>
+        </div>
+        <button
+          role="switch"
+          aria-checked={enabled}
+          aria-label="Show tool calls in chat"
+          disabled={saving}
+          onClick={() => void toggle()}
+          className={`${cnSwitch(enabled)} disabled:cursor-wait disabled:opacity-50`}
+        >
+          <span className={cnKnob(enabled)} />
+        </button>
+      </div>
+      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
     </Card>
   );
 }
@@ -384,6 +435,7 @@ export function SettingsModal() {
                 <Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
                   <RoomTurnTimeoutSettings />
                 </Card>
+                <ToolCallsRow />
                 <ExperimentalFeaturesRow />
                 <UpdatesRow />
                 <DiagnosticsRow />

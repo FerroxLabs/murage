@@ -13,6 +13,7 @@ import {
   parseConfigPatch,
   parseStoredConfig,
   roomTurnTimeoutMinutes,
+  showToolCallsEnabled,
   skillRecorderEnabled,
   stripWorkspaceCredentialEnv,
   syncCredentialEnv,
@@ -89,6 +90,14 @@ describe("configuration boundaries", () => {
     expect(() => parseConfigPatch({ features: { skillRecorder: "yes" } })).toThrow(
       "features.skillRecorder",
     );
+  });
+
+  it("keeps tool-call chips off by default and accepts an explicit opt-in", () => {
+    expect(showToolCallsEnabled({})).toBe(false);
+    expect(parseConfigPatch({ features: { showToolCalls: true } })).toEqual({
+      features: { showToolCalls: true },
+    });
+    expect(showToolCallsEnabled({ features: { showToolCalls: true } })).toBe(true);
   });
 
   it.each([0, 1.5, 5, "2", null])("rejects an invalid per-bot VM limit: %j", (maxInstances) => {

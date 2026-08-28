@@ -451,6 +451,53 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("creates, switches, renames and deletes independent channel tasks", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const room = (await api("POST", "/api/groups", { name: "Parallel work", memberIds: [bot.id] })).body.group;
+    try {
+      expect(room.tasks).toHaveLength(1);
+      expect(room.tasks[0].threadId).toBe(room.threadId);
+      const originalThread = room.threadId;
+
+      const created = await api("POST", `/api/groups/${room.id}/tasks`, { title: "Launch plan" });
+      expect(created.status).toBe(201);
+      expect(created.body.group.threadId).toBe(created.body.task.threadId);
+      expect(created.body.group.messages).toEqual([]);
+      expect(created.body.group.tasks).toHaveLength(2);
+
+      const newThread = created.body.task.threadId;
+      const renamed = await api("PATCH", `/api/groups/${room.id}/tasks/${newThread}`, {
+        title: "Release plan",
+      });
+      expect(renamed.status).toBe(200);
+      expect(renamed.body.task.title).toBe("Release plan");
+
+      const switched = await api("POST", `/api/groups/${room.id}/tasks/${originalThread}`);
+      expect(switched.status).toBe(200);
+      expect(switched.body.group.threadId).toBe(originalThread);
+      expect(switched.body.group.tasks.find((task: { threadId: string }) => task.threadId === newThread).title).toBe("Release plan");
+
+      const removed = await api("DELETE", `/api/groups/${room.id}/tasks/${newThread}`);
+      expect(removed.status).toBe(200);
+      expect(removed.body.group.tasks).toHaveLength(1);
+      expect((await api("DELETE", `/api/groups/${room.id}/tasks/${originalThread}`)).status).toBe(400);
+      expect((await api("POST", `/api/groups/${room.id}/tasks/missing-thread`)).status).toBe(404);
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("keeps bot-to-bot channels single-threaded and blocks task changes on an open approval", async () => {
+    const dm = await api("POST", "/api/groups/test-dm/tasks", {});
+    expect(dm.status).toBe(400);
+    expect(dm.body.error).toMatch(/one canonical conversation/i);
+
+    const blocked = await api("POST", "/api/groups/test-stranded-room/tasks", {});
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error).toMatch(/waiting on you/i);
+  });
+
   it("keeps direct-message channels folderless at the API boundary", async () => {
     const attempted = await api("PATCH", "/api/groups/test-dm", { cwd: home });
     expect(attempted.status).toBe(400);
@@ -1675,18 +1722,22 @@ describe("harness HTTP API", () => {
   it("keeps Teach a skill off by default and persists an explicit opt-in", async () => {
     const before = await api("GET", "/api/config");
     expect(before.status).toBe(200);
-    expect(before.body.features).toEqual({ skillRecorder: false });
+    expect(before.body.features).toEqual({ skillRecorder: false, showToolCalls: false });
 
     const saved = await api("PATCH", "/api/config", {
       features: { skillRecorder: true },
     });
     expect(saved.status).toBe(200);
-    expect(saved.body.features).toEqual({ skillRecorder: true });
+    expect(saved.body.features).toEqual({ skillRecorder: true, showToolCalls: false });
 
     const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
     expect(disk.features).toEqual({ skillRecorder: true });
 
-    await api("PATCH", "/api/config", { features: { skillRecorder: false } });
+    const tools = await api("PATCH", "/api/config", { features: { showToolCalls: true } });
+    expect(tools.status).toBe(200);
+    expect(tools.body.features).toEqual({ skillRecorder: true, showToolCalls: true });
+
+    await api("PATCH", "/api/config", { features: { skillRecorder: false, showToolCalls: false } });
   });
 
   it("keeps shared Local VM mode by default and resolves isolated targets per bot when enabled", async () => {
@@ -2467,6 +2518,46 @@ describe("computer control API (who is driving)", () => {
     } finally {
       sse.close();
     }
+  });
+
+  it("atomically owns and conditionally releases a workspace lease without returning its id", async () => {
+    const owner = "lease_5b6bbbd2-b88b-4c50-a748-ec87f332662f";
+    const other = "lease_ed602995-306f-480a-8817-e8d8c8fe7d90";
+    const took = await api("POST", `/api/bots/${botId}/computer/control`, {
+      action: "take",
+      controlLeaseId: owner,
+    });
+    expect(took.body).toMatchObject({ held: true, owned: true, acquired: true });
+    expect(JSON.stringify(took.body)).not.toContain(owner);
+
+    const blocked = await api("POST", `/api/bots/${botId}/computer/control`, {
+      action: "take",
+      controlLeaseId: other,
+    });
+    expect(blocked.body).toMatchObject({ held: true, owned: false, acquired: false });
+
+    const wrongRelease = await api("POST", `/api/bots/${botId}/computer/control`, {
+      action: "release",
+      controlLeaseId: other,
+    });
+    expect(wrongRelease.body).toMatchObject({ held: true, released: false });
+
+    const released = await api("POST", `/api/bots/${botId}/computer/control`, {
+      action: "release",
+      controlLeaseId: owner,
+    });
+    expect(released.body).toMatchObject({ held: false, released: true });
+    expect(JSON.stringify(released.body)).not.toContain(owner);
+  });
+
+  it("rejects malformed workspace leases without echoing them", async () => {
+    const invalid = "bad lease value";
+    const res = await api("POST", `/api/bots/${botId}/computer/control`, {
+      action: "take",
+      controlLeaseId: invalid,
+    });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).not.toContain(invalid);
   });
 
   it("refuses an unknown action and an unknown bot", async () => {
