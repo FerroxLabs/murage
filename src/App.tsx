@@ -17,6 +17,7 @@ import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
 import { CommandPalette } from "@/components/CommandPalette";
+import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { SkillRecorderPage } from "@/components/SkillRecorderPage";
 import { TeamMapPage } from "@/components/TeamMapPage";
 
@@ -29,6 +30,8 @@ function Shell() {
   // turn the aside into a containing block for its fixed descendants (see
   // Sidebar.tsx's className comment).
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [localVmWorkspaceBotId, setLocalVmWorkspaceBotId] = useState<string | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
@@ -93,6 +96,35 @@ function Shell() {
     setDrawerOpen(false);
   }, [state.selectedId, state.activeView, state.pluginsOpen, state.settingsOpen]);
 
+  useEffect(() => {
+    if (
+      localVmWorkspaceBotId &&
+      (state.activeView !== "chat" || state.selectedId !== localVmWorkspaceBotId)
+    ) {
+      setLocalVmWorkspaceBotId(null);
+    }
+  }, [localVmWorkspaceBotId, state.activeView, state.selectedId]);
+
+  const openLocalVmWorkspace = (botId: string) => {
+    dispatch({ type: "toggleComputer", open: false });
+    setLocalVmWorkspaceBotId(botId);
+  };
+
+  const openComputerFromWorkspace = (botId: string) => {
+    setLocalVmWorkspaceBotId(null);
+    dispatch({ type: "select", id: botId });
+    dispatch({ type: "toggleComputer", open: true });
+  };
+
+  const nativeViewOverlayOpen =
+    drawerOpen ||
+    paletteOpen ||
+    state.settingsOpen ||
+    state.computerOpen ||
+    state.inspectorOpen ||
+    state.appSettingsOpen ||
+    state.pluginsOpen;
+
   // The viewer outlives ComputerPanel and can target any bot, so release control
   // here (always mounted) when a bot's viewer closes. release() is idempotent.
   useEffect(() => {
@@ -152,6 +184,13 @@ function Shell() {
         <RoutinesPage />
       ) : state.activeView === "skill-recorder" ? (
         <SkillRecorderPage />
+      ) : localVmWorkspaceBotId ? (
+        <LocalVmWorkspace
+          primaryBotId={localVmWorkspaceBotId}
+          overlayOpen={nativeViewOverlayOpen}
+          onClose={() => setLocalVmWorkspaceBotId(null)}
+          onOpenComputer={openComputerFromWorkspace}
+        />
       ) : noEngines ? (
         <NoEngines />
       ) : group ? (
@@ -172,13 +211,15 @@ function Shell() {
         </main>
       )}
       {state.settingsOpen && bot && <SettingsPanel bot={bot} />}
-      {state.computerOpen && bot && <ComputerPanel bot={bot} />}
+      {state.computerOpen && bot && (
+        <ComputerPanel bot={bot} onOpenVmWorkspace={openLocalVmWorkspace} />
+      )}
       {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
       {state.appSettingsOpen && <SettingsModal />}
       {state.pluginsOpen && <PluginsPanel />}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
-      <CommandPalette />
+      <CommandPalette onOpenChange={setPaletteOpen} />
       </div>
     </div>
   );
