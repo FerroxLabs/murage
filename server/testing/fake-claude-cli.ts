@@ -52,13 +52,20 @@ if (argv[0] === "auth" && argv[1] === "status") {
   );
 }
 
-// One-shot helper mode used by generateText. It does not use stdin or emit
-// the stream-json turn protocol.
+// One-shot helper mode used by generateText/reviewPermission. The prompt is
+// deliberately read from stdin so sensitive review text never appears in
+// argv or process listings.
 if (argAfter("--output-format") === "text") {
+  const prompt = await new Promise<string>((resolve) => {
+    let input = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => { input += chunk; });
+    process.stdin.on("end", () => resolve(input));
+  });
   if (process.env.FAKE_CLAUDE_DUMP) {
     writeFileSync(
       process.env.FAKE_CLAUDE_DUMP,
-      JSON.stringify({ pid: process.pid, argv, env: process.env, prompt: argAfter("-p"), mcpConfig: null }, null, 2),
+      JSON.stringify({ pid: process.pid, argv, env: process.env, prompt, mcpConfig: null }, null, 2),
     );
   }
   process.stdout.write("fake generated text\n");
