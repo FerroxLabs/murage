@@ -332,6 +332,24 @@ describe("harness HTTP API", () => {
     expect(JSON.stringify(response.body)).not.toContain("prompt");
   });
 
+  it("rejects non-object bot and channel create bodies without writing records", async () => {
+    const before = await api("GET", "/api/bots?messages=0");
+    for (const path of ["/api/bots", "/api/groups"]) {
+      for (const body of ["null", "[]"]) {
+        const response = await fetch(`${BASE}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ error: expect.stringMatching(/JSON object/) });
+      }
+    }
+    const after = await api("GET", "/api/bots?messages=0");
+    expect(after.body.bots).toHaveLength(before.body.bots.length);
+    expect(after.body.groups).toHaveLength(before.body.groups.length);
+  });
+
   it("adds and removes room members through PATCH", async () => {
     const [first, second, third] = await Promise.all([
       api("POST", "/api/bots"),
@@ -363,7 +381,7 @@ describe("harness HTTP API", () => {
       for (const memberIds of [[], ["no-such-bot"]]) {
         const attempted = await api("PATCH", `/api/groups/${room.id}`, { memberIds });
         expect(attempted.status).toBe(400);
-        expect(attempted.body.error).toMatch(/at least one bot/i);
+        expect(attempted.body.error).toMatch(/at least one bot|unknown room member/i);
       }
       const state = (await api("GET", "/api/bots")).body;
       expect(state.groups.find((group: { id: string }) => group.id === room.id).memberIds).toEqual([bot.id]);
@@ -451,6 +469,62 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("creates an MCP-ready channel in one request without exposing partial setup", async () => {
+    const bot = (await api("GET", "/api/bots?messages=0")).body.bots[0];
+    const created = await api("POST", "/api/groups", {
+      name: "Atomic setup",
+      memberIds: [bot.id],
+      section: "Work",
+      setup: {
+        bulletin: "Keep updates concise.",
+        defaultResponder: { kind: "mentions" },
+      },
+    });
+    expect(created.status).toBe(201);
+    const group = created.body.group;
+    try {
+      expect(group).toMatchObject({
+        name: "Atomic setup",
+        memberIds: [bot.id],
+        section: "Work",
+        bulletin: "Keep updates concise.",
+        defaultResponder: { kind: "mentions" },
+        setupSkippedAt: null,
+      });
+      expect(group.setupCompletedAt).toEqual(expect.any(Number));
+      expect((await api("POST", `/api/groups/${group.id}/messages`, { text: "A quiet update" })).status).toBe(202);
+    } finally {
+      await api("POST", `/api/groups/${group.id}/interrupt`, {});
+      await api("DELETE", `/api/groups/${group.id}`);
+    }
+  });
+
+  it("rejects an entire channel roster when any requested member is unknown", async () => {
+    const bot = (await api("GET", "/api/bots?messages=0")).body.bots[0];
+    const before = (await api("GET", "/api/bots?messages=0")).body.groups.length;
+    const rejectedCreate = await api("POST", "/api/groups", {
+      name: "No partial roster",
+      memberIds: [bot.id, "missing-bot"],
+    });
+    expect(rejectedCreate.status).toBe(400);
+    expect(rejectedCreate.body.error).toContain("missing-bot");
+    expect((await api("GET", "/api/bots?messages=0")).body.groups).toHaveLength(before);
+
+    const room = (await api("POST", "/api/groups", { name: "Stable roster", memberIds: [bot.id] })).body.group;
+    try {
+      const rejectedPatch = await api("PATCH", `/api/groups/${room.id}`, {
+        memberIds: [bot.id, "missing-bot"],
+      });
+      expect(rejectedPatch.status).toBe(400);
+      const reread = (await api("GET", "/api/bots?messages=0")).body.groups.find(
+        (candidate: { id: string }) => candidate.id === room.id,
+      );
+      expect(reread.memberIds).toEqual([bot.id]);
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+    }
+  });
+
   it("creates, switches, renames and deletes independent channel tasks", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     const room = (await api("POST", "/api/groups", { name: "Parallel work", memberIds: [bot.id] })).body.group;
@@ -482,6 +556,33 @@ describe("harness HTTP API", () => {
       expect(removed.body.group.tasks).toHaveLength(1);
       expect((await api("DELETE", `/api/groups/${room.id}/tasks/${originalThread}`)).status).toBe(400);
       expect((await api("POST", `/api/groups/${room.id}/tasks/missing-thread`)).status).toBe(404);
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("rejects null and array task, channel, and bot mutation bodies", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const room = (await api("POST", "/api/groups", { name: "Object bodies", memberIds: [bot.id] })).body.group;
+    try {
+      const routes = [
+        ["POST", `/api/groups/${room.id}/tasks`],
+        ["PATCH", `/api/groups/${room.id}/tasks/${room.threadId}`],
+        ["PATCH", `/api/groups/${room.id}`],
+        ["PATCH", `/api/bots/${bot.id}`],
+      ] as const;
+      for (const [method, path] of routes) {
+        for (const body of ["null", "[]"]) {
+          const response = await fetch(`${BASE}${path}`, {
+            method,
+            headers: { "content-type": "application/json" },
+            body,
+          });
+          expect(response.status).toBe(400);
+          expect(await response.json()).toEqual({ error: "body must be a JSON object" });
+        }
+      }
     } finally {
       await api("DELETE", `/api/groups/${room.id}`);
       await api("DELETE", `/api/bots/${bot.id}`);
@@ -774,7 +875,7 @@ describe("harness HTTP API", () => {
       expect(archivedBot.status).toBe(200);
       await api("PATCH", `/api/bots/${active.id}`, {
         name: "Atlas",
-        modelSelection: { instanceId: "ghost" },
+        modelSelection: { instanceId: "ghost", model: "ghost-1" },
       });
       await api("PATCH", `/api/groups/${room.id}`, { defaultResponder: { kind: "mentions" } });
 
@@ -1457,6 +1558,212 @@ describe("harness HTTP API", () => {
     expect(patched.body.error).toContain("not recognized");
   });
 
+  it("creates a fully configured bot in one request and greets with its final name", async () => {
+    const created = await api("POST", "/api/bots", {
+      name: "  Pathfinder  ",
+      title: "Researcher",
+      description: "Maps the problem before acting.",
+      section: "  Work  ",
+      modelSelection: { instanceId: "  ghost  ", model: "  ghost-1  ", effort: "high" },
+    });
+    expect(created.status).toBe(201);
+    const bot = created.body.bot;
+    try {
+      expect(bot).toMatchObject({
+        name: "Pathfinder",
+        title: "Researcher",
+        description: "Maps the problem before acting.",
+        section: "Work",
+        modelSelection: { instanceId: "ghost", model: "ghost-1", effort: "high" },
+      });
+      expect(bot.messages[0].text).toContain("Pathfinder");
+      expect(bot.messages[0].text).not.toContain("Maus");
+    } finally {
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("opts MCP-style model writes into the current live catalog without narrowing general writes", async () => {
+    const instances = (await api("GET", "/api/instances")).body.instances;
+    const claude = instances.find((instance: { instanceId: string }) => instance.instanceId === "claude");
+    expect(claude.snapshot.state).toBe("available");
+    const customModel = `${claude.models.default}-custom`;
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      const general = await api("PATCH", `/api/bots/${bot.id}`, {
+        modelSelection: { instanceId: "claude", model: customModel },
+      });
+      expect(general.status).toBe(200);
+      expect(general.body.bot.modelSelection.model).toBe(customModel);
+
+      const strictPatch = await api("PATCH", `/api/bots/${bot.id}`, {
+        modelSelection: { instanceId: "claude", model: customModel },
+        requireAvailableModel: true,
+      });
+      expect(strictPatch.status).toBe(400);
+      expect(strictPatch.body.error).toMatch(/not offered/i);
+
+      const beforeIds = (await api("GET", "/api/bots?messages=0")).body.bots.map(
+        (candidate: { id: string }) => candidate.id,
+      );
+      const strictCreate = await api("POST", "/api/bots", {
+        name: "Should not exist",
+        modelSelection: { instanceId: "claude", model: customModel },
+        requireAvailableModel: true,
+      });
+      expect(strictCreate.status).toBe(400);
+      const afterIds = (await api("GET", "/api/bots?messages=0")).body.bots.map(
+        (candidate: { id: string }) => candidate.id,
+      );
+      expect(afterIds).toEqual(beforeIds);
+
+      expect((await api("PATCH", `/api/bots/${bot.id}`, {
+        requireAvailableModel: "yes",
+      })).status).toBe(400);
+      expect((await api("POST", "/api/bots", {
+        name: "Missing selection",
+        requireAvailableModel: true,
+      })).status).toBe(400);
+    } finally {
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("rejects incomplete model selections instead of persisting a broken bot", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      const missingModel = await api("PATCH", `/api/bots/${bot.id}`, {
+        modelSelection: { instanceId: "ghost" },
+      });
+      expect(missingModel.status).toBe(400);
+      expect(missingModel.body.error).toContain("modelSelection.model");
+
+      const missingInstance = await api("PATCH", `/api/bots/${bot.id}`, {
+        modelSelection: { model: "ghost-1" },
+      });
+      expect(missingInstance.status).toBe(400);
+      expect(missingInstance.body.error).toContain("modelSelection.instanceId");
+
+      const reread = (await api("GET", "/api/bots?messages=0")).body.bots.find(
+        (candidate: { id: string }) => candidate.id === bot.id,
+      );
+      expect(reread.modelSelection).toEqual(bot.modelSelection);
+    } finally {
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("refuses to switch a bot's active task while its turn is running", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    try {
+      const instances = (await api("GET", "/api/instances")).body.instances;
+      const claude = instances.find((instance: { instanceId: string }) => instance.instanceId === "claude");
+      expect(claude.snapshot.state).toBe("available");
+      expect((await api("PATCH", `/api/bots/${bot.id}`, {
+        modelSelection: { instanceId: "claude", model: claude.models.default },
+      })).status).toBe(200);
+
+      const originalTask = bot.threadId;
+      const created = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Running task" });
+      expect(created.status).toBe(201);
+      const runningTask = created.body.task.threadId;
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" })).status).toBe(202);
+
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body.bots.find(
+          (candidate: { id: string }) => candidate.id === bot.id,
+        );
+        return state?.busy;
+      }).toBe(true);
+
+      const blocked = await api("POST", `/api/bots/${bot.id}/tasks/${originalTask}`);
+      expect(blocked.status).toBe(409);
+      expect(blocked.body.error).toMatch(/stop it before switching tasks/i);
+      const current = (await api("GET", "/api/bots?messages=0")).body.bots.find(
+        (candidate: { id: string }) => candidate.id === bot.id,
+      );
+      expect(current.threadId).toBe(runningTask);
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`, {});
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("refuses to interrupt a conversation after its active task changed", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const room = (await api("POST", "/api/groups", { name: "Exact stop", memberIds: [bot.id] })).body.group;
+    try {
+      const wrongBot = await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: "old-task" });
+      expect(wrongBot.status).toBe(409);
+      const wrongRoom = await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: "old-task" });
+      expect(wrongRoom.status).toBe(409);
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
+      expect((await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId })).status).toBe(200);
+      for (const route of [`/api/bots/${bot.id}/interrupt`, `/api/groups/${room.id}/interrupt`]) {
+        const compatibleNull = await fetch(`${BASE}${route}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "null",
+        });
+        expect(compatibleNull.status).toBe(200);
+        const rejectedArray = await fetch(`${BASE}${route}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "[]",
+        });
+        expect(rejectedArray.status).toBe(400);
+      }
+    } finally {
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("pins sends to the expected task and offers compact switch responses", async () => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const room = (await api("POST", "/api/groups", { name: "Pinned sends", memberIds: [bot.id] })).body.group;
+    try {
+      const wrongBot = await api("POST", `/api/bots/${bot.id}/messages`, {
+        text: "Do not reroute me",
+        threadId: "old-task",
+      });
+      expect(wrongBot.status).toBe(409);
+      expect(wrongBot.body.error).toMatch(/switched tasks/i);
+
+      const wrongRoom = await api("POST", `/api/groups/${room.id}/messages`, {
+        text: "Do not reroute me",
+        threadId: "old-task",
+      });
+      expect(wrongRoom.status).toBe(409);
+      expect(wrongRoom.body.error).toMatch(/switched tasks/i);
+
+      const botOriginal = bot.threadId;
+      const botTask = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Second" });
+      expect(botTask.status).toBe(201);
+      const compactBot = await api("POST", `/api/bots/${bot.id}/tasks/${botOriginal}?messages=0`, {});
+      expect(compactBot.status).toBe(200);
+      expect(compactBot.body.bot.threadId).toBe(botOriginal);
+      expect(compactBot.body.bot.tasks).toHaveLength(2);
+      expect(compactBot.body.bot).not.toHaveProperty("messages");
+      expect(compactBot.body.bot).not.toHaveProperty("activeLeafId");
+
+      const roomOriginal = room.threadId;
+      const roomTask = await api("POST", `/api/groups/${room.id}/tasks`, { title: "Second" });
+      expect(roomTask.status).toBe(201);
+      const compactRoom = await api("POST", `/api/groups/${room.id}/tasks/${roomOriginal}?messages=0`, {});
+      expect(compactRoom.status).toBe(200);
+      expect(compactRoom.body.group.threadId).toBe(roomOriginal);
+      expect(compactRoom.body.group.tasks).toHaveLength(2);
+      expect(compactRoom.body.group).not.toHaveProperty("messages");
+      expect(compactRoom.body.group).not.toHaveProperty("activeLeafId");
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`, {});
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("POST", `/api/bots/${bot.id}/interrupt`, {});
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("leaves a bot with no effort level untouched", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
     expect(bot.modelSelection.effort).toBeUndefined();
@@ -1837,6 +2144,147 @@ describe("harness HTTP API", () => {
       await api("DELETE", `/api/groups/${room.id}`);
       await api("DELETE", `/api/bots/${botId}`);
       await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
+    }
+  });
+
+  it("tracks and interrupts the whole queued channel turn", async () => {
+    const first = (await api("POST", "/api/bots", {})).body.bot;
+    const second = (await api("POST", "/api/bots", {})).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Queued channel turn",
+      memberIds: [first.id, second.id],
+      setup: { bulletin: "", defaultResponder: { kind: "everyone" } },
+    })).body.group;
+    try {
+      for (const bot of [first, second]) {
+        const selected = await api("PATCH", `/api/bots/${bot.id}`, {
+          modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+        });
+        expect(selected.status).toBe(200);
+      }
+
+      const sent = await api("POST", `/api/groups/${room.id}/messages`, {
+        text: "both bots should answer",
+        threadId: room.threadId,
+      });
+      expect(sent.status).toBe(202);
+
+      // The operation is registered before any awaited provider setup. Polling
+      // and structural guards therefore cannot see a false idle window.
+      const immediate = (await api("GET", "/api/bots?messages=0")).body;
+      expect(immediate.groups.find((group: { id: string }) => group.id === room.id)?.working).toBe(true);
+      expect((await api("POST", `/api/groups/${room.id}/tasks`, { title: "Too soon" })).status).toBe(409);
+      expect((await api("PATCH", `/api/groups/${room.id}`, { memberIds: [first.id] })).status).toBe(409);
+
+      const interrupted = await api("POST", `/api/groups/${room.id}/interrupt`, {
+        threadId: room.threadId,
+      });
+      expect(interrupted.status).toBe(200);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        const currentRoom = state.groups.find((group: { id: string }) => group.id === room.id);
+        return {
+          working: currentRoom?.working,
+          busyBotId: currentRoom?.busyBotId,
+          busyBots: state.bots
+            .filter((bot: { id: string; busy: boolean }) =>
+              (bot.id === first.id || bot.id === second.id) && bot.busy,
+            )
+            .map((bot: { id: string }) => bot.id),
+        };
+      }, { timeout: 5_000 }).toEqual({ working: false, busyBotId: null, busyBots: [] });
+
+      // Cancellation must be durable for the queued remainder, not merely
+      // interrupt whichever responder happened to own the process.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const settled = (await api("GET", "/api/bots?messages=0")).body;
+      expect(settled.groups.find((group: { id: string }) => group.id === room.id)?.working).toBe(false);
+      expect(settled.bots.filter((bot: { id: string; busy: boolean }) =>
+        (bot.id === first.id || bot.id === second.id) && bot.busy,
+      )).toHaveLength(0);
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId });
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${first.id}`);
+      await api("DELETE", `/api/bots/${second.id}`);
+    }
+  });
+
+  it("tracks and cancels a queued channel credential continuation before provider dispatch", async () => {
+    const first = (await api("POST", "/api/bots", {})).body.bot;
+    const second = (await api("POST", "/api/bots", {})).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Credential continuation",
+      memberIds: [first.id, second.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: first.id } },
+    })).body.group;
+    try {
+      for (const bot of [first, second]) {
+        const selected = await api("PATCH", `/api/bots/${bot.id}`, {
+          modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+        });
+        expect(selected.status).toBe(200);
+      }
+
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "start the lead" })).status).toBe(202);
+      await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
+      const firstDump = JSON.parse(readFileSync(fakeClaudeDump, "utf8")) as {
+        pid: number;
+        mcpConfig: { mcpServers: { agents: { env: { OMB_COMMS_TOKEN: string } } } };
+      };
+      const token = firstDump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN;
+      expect(token).toMatch(/^[a-f0-9]{48}$/);
+
+      const requested = await fetch(`${BASE}/api/internal/request-credential`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          fromBotId: second.id,
+          fromThreadId: room.threadId,
+          credentialId: "openaiImageApiKey",
+          reason: "needed for the queued task",
+        }),
+      });
+      expect(requested.status).toBe(201);
+      const { messageId } = (await requested.json()) as { messageId: string };
+
+      const resumed = await api("POST", `/api/bots/${second.id}/secret-cards/${messageId}/dismiss`, {
+        threadId: room.threadId,
+      });
+      expect(resumed).toEqual({ status: 200, body: { dismissed: true, resumed: true } });
+
+      const queued = (await api("GET", "/api/bots?messages=0")).body;
+      expect(queued.groups.find((group: { id: string }) => group.id === room.id)?.working).toBe(true);
+      const deletion = await api("DELETE", `/api/groups/${room.id}`);
+      expect(deletion.status).toBe(409);
+      expect(deletion.body.error).toMatch(/working/i);
+
+      expect((await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId })).status).toBe(200);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        return {
+          working: state.groups.find((group: { id: string }) => group.id === room.id)?.working,
+          secondBusy: Boolean(state.bots.find((bot: { id: string }) => bot.id === second.id)?.busy),
+        };
+      }, { timeout: 5_000 }).toEqual({ working: false, secondBusy: false });
+
+      // The continuation sat behind the lead's hanging provider. Interrupting
+      // the room must cancel it before a second provider process is spawned.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(JSON.parse(readFileSync(fakeClaudeDump, "utf8")).pid).toBe(firstDump.pid);
+    } finally {
+      await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId });
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots?messages=0")).body;
+        return state.groups.find((group: { id: string }) => group.id === room.id)?.working;
+      }, { timeout: 5_000 }).toBe(false);
+      await api("DELETE", `/api/groups/${room.id}`);
+      await api("DELETE", `/api/bots/${first.id}`);
+      await api("DELETE", `/api/bots/${second.id}`);
     }
   });
 
