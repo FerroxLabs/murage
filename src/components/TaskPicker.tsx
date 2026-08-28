@@ -5,11 +5,32 @@
 // own transcript and its own provider session — so sensitive work, a
 // long job and a quick question can sit side by side under one agent.
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Pencil, Plus, Trash2 } from "lucide-react";
 import { useStore, formatTime, type Bot, type Task } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE } from "@/lib/compact-chip";
 import { formatTokens } from "@/lib/format-tokens";
+import { nextRename } from "@/lib/rename";
+
+/** Click-to-switch used to close this menu immediately, which unmounted the
+ * row before a double-click (or right-click) could start a rename. Linger
+ * just long enough for the second click to land; rename cancels the close. */
+export const TASK_PICKER_DISMISS_MS = 500;
+
+export const TASK_RENAME_HINT = "Click to switch · double-click or right-click to rename";
+
+/** Decide what a pointer event on a task row should do. The click that
+ * accompanies a dblclick (detail >= 2) must not switch/close — that is
+ * what used to eat the advertised rename. */
+export function taskPickerPointerIntent(
+  type: string,
+  detail = 1,
+): "select" | "rename" | "ignore" {
+  if (type === "dblclick" || type === "contextmenu") return "rename";
+  if (type === "click" && detail >= 2) return "ignore";
+  if (type === "click") return "select";
+  return "ignore";
+}
 
 /** Quiet per-task token tally — input+output combined, because one honest
  * total reads faster than a split; the split lives in the hover title. */
@@ -31,30 +52,89 @@ export function TaskPicker({ bot }: { bot: Bot }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finishingRename = useRef(false);
 
   const tasks = bot.tasks ?? [];
   const current = tasks.find((t) => t.threadId === bot.threadId);
 
+  const clearDismiss = () => {
+    if (dismissTimer.current) {
+      clearTimeout(dismissTimer.current);
+      dismissTimer.current = null;
+    }
+  };
+
+  const closeMenu = () => {
+    clearDismiss();
+    setRenaming(null);
+    setOpen(false);
+  };
+
+  const queueDismiss = () => {
+    clearDismiss();
+    dismissTimer.current = setTimeout(() => {
+      dismissTimer.current = null;
+      setRenaming(null);
+      setOpen(false);
+    }, TASK_PICKER_DISMISS_MS);
+  };
+
+  const startRename = (task: Task) => {
+    clearDismiss();
+    finishingRename.current = false;
+    setDraft(task.title);
+    setRenaming(task.threadId);
+  };
+
+  useEffect(() => () => {
+    if (dismissTimer.current) clearTimeout(dismissTimer.current);
+  }, []);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      if (dismissTimer.current) {
+        clearTimeout(dismissTimer.current);
+        dismissTimer.current = null;
+      }
+      setRenaming(null);
+      return;
+    }
     const onDown = (e: MouseEvent) => {
       // SAFETY: a mousedown target inside a document is always a DOM Node
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      if (!ref.current?.contains(e.target as Node)) {
+        if (dismissTimer.current) {
+          clearTimeout(dismissTimer.current);
+          dismissTimer.current = null;
+        }
+        setRenaming(null);
+        setOpen(false);
+      }
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (renaming) return;
+      if (dismissTimer.current) {
+        clearTimeout(dismissTimer.current);
+        dismissTimer.current = null;
+      }
+      setRenaming(null);
+      setOpen(false);
+    };
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, renaming]);
 
   // a bot that has only ever done one thing doesn't need a switcher yet —
   // just the button that gives it a second context
   if (tasks.length <= 1) {
     return (
       <button
+        type="button"
         onClick={() => dispatch({ type: "newTask", botId: bot.id })}
         disabled={bot.busy}
         title={bot.busy ? "Let this turn finish first" : "New task — a fresh context on this bot"}
@@ -69,8 +149,13 @@ export function TaskPicker({ bot }: { bot: Bot }) {
     );
   }
 
-  const commitRename = (threadId: string) => {
-    const title = draft.trim();
+  const commitRename = (threadId: string, save: boolean) => {
+    // Escape unmounts the input, which fires blur. Without this guard the
+    // blur would save the draft the user just cancelled.
+    if (finishingRename.current) return;
+    finishingRename.current = true;
+    const currentTitle = tasks.find((task) => task.threadId === threadId)?.title ?? "";
+    const title = save ? nextRename(currentTitle, draft) : null;
     setRenaming(null);
     if (title) dispatch({ type: "renameTask", botId: bot.id, threadId, title });
   };
@@ -87,7 +172,11 @@ export function TaskPicker({ bot }: { bot: Bot }) {
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        type="button"
+        onClick={() => {
+          if (open) closeMenu();
+          else setOpen(true);
+        }}
         title={switchTitle}
         className={cn(
           "flex max-w-[220px] items-center gap-1.5 rounded-full border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink",
@@ -115,26 +204,47 @@ export function TaskPicker({ bot }: { bot: Bot }) {
                     <input
                       autoFocus
                       value={draft}
+                      maxLength={80}
+                      aria-label="Rename task"
+                      onFocus={(e) => e.currentTarget.select()}
                       onChange={(e) => setDraft(e.target.value)}
-                      onBlur={() => commitRename(task.threadId)}
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onBlur={() => commitRename(task.threadId, true)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") commitRename(task.threadId);
-                        if (e.key === "Escape") setRenaming(null);
+                        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          commitRename(task.threadId, true);
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          commitRename(task.threadId, false);
+                        }
                       }}
                       className="min-w-0 flex-1 rounded bg-inset px-1.5 py-0.5 text-[13px] text-ink focus:outline-none"
                     />
                   ) : (
                     <button
-                      onClick={() => {
+                      type="button"
+                      onClick={(e) => {
+                        if (taskPickerPointerIntent("click", e.detail) !== "select") return;
                         if (!active) dispatch({ type: "switchTask", botId: bot.id, threadId: task.threadId });
-                        setOpen(false);
+                        queueDismiss();
                       }}
-                      onDoubleClick={() => {
-                        setDraft(task.title);
-                        setRenaming(task.threadId);
+                      onDoubleClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        startRename(task);
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        startRename(task);
                       }}
                       className="min-w-0 flex-1 text-left"
-                      title="Click to switch · double-click to rename"
+                      title={TASK_RENAME_HINT}
                     >
                       <div className="truncate text-[13px] text-ink">{task.title}</div>
                       <div className="text-[11px] text-ink-secondary">
@@ -143,7 +253,19 @@ export function TaskPicker({ bot }: { bot: Bot }) {
                       </div>
                     </button>
                   )}
+                  {renaming !== task.threadId && (
+                    <button
+                      type="button"
+                      onClick={() => startRename(task)}
+                      aria-label={`Rename ${task.title}`}
+                      title="Rename this task"
+                      className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  )}
                   <button
+                    type="button"
                     onClick={() => dispatch({ type: "deleteTask", botId: bot.id, threadId: task.threadId })}
                     disabled={bot.busy && active}
                     aria-label="Delete task"
@@ -157,9 +279,10 @@ export function TaskPicker({ bot }: { bot: Bot }) {
             })}
           </div>
           <button
+            type="button"
             onClick={() => {
               dispatch({ type: "newTask", botId: bot.id });
-              setOpen(false);
+              closeMenu();
             }}
             disabled={bot.busy}
             className="mt-1 flex w-full items-center gap-2 border-t border-hairline/40 px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/50 disabled:opacity-40"
