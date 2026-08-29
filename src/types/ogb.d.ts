@@ -101,6 +101,21 @@ type SkillRecordingPayload = {
     height: number;
   }
 
+  interface BrowserSurfaceState {
+    botId: string;
+    open: boolean;
+    url: string;
+    title: string;
+    loading: boolean;
+    canGoBack: boolean;
+    canGoForward?: boolean;
+    visible: boolean;
+    partition?: string | null;
+    profile?: string | null;
+    mode?: "compact" | "expanded" | null;
+    code?: "renderer-gone" | "profile-changed" | "evicted";
+  }
+
   interface DesktopWorkspaceState {
     contextId: string;
     open: boolean;
@@ -191,6 +206,23 @@ type SkillRecordingPayload = {
       };
       /** Two Local VM viewers embedded in one app window. URLs are accepted
        * only by main-process validation and never return over this bridge. */
+      /** The built-in browser surface; absent in a browser tab or an older shell. */
+      browser?: {
+        available(): Promise<boolean>;
+        state(botId: string): Promise<BrowserSurfaceState>;
+        layout(
+          botId: string,
+          bounds: DesktopWorkspaceBounds | null,
+          profile?: string,
+          mode?: "compact" | "expanded",
+        ): Promise<BrowserSurfaceState>;
+        navigate(botId: string, url: string): Promise<{ url: string; title: string }>;
+        back(botId: string): Promise<{ url: string; title: string }>;
+        forward?(botId: string): Promise<{ url: string; title: string }>;
+        forgetProfile?(profileId: string): Promise<{ dropped: number }>;
+        close(botId: string): Promise<boolean>;
+        onState(cb: (state: BrowserSurfaceState) => void): () => void;
+      };
       desktopWorkspace?: {
         open(input: {
           contextId: string;

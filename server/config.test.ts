@@ -15,6 +15,7 @@ import {
   roomTurnTimeoutMinutes,
   showToolCallsEnabled,
   skillRecorderEnabled,
+  builtInBrowserEnabled,
   stripWorkspaceCredentialEnv,
   syncCredentialEnv,
   vpsSshAlias,
@@ -87,6 +88,18 @@ describe("configuration boundaries", () => {
       features: { skillRecorder: true },
     });
     expect(skillRecorderEnabled({ features: { skillRecorder: true } })).toBe(true);
+    // the built-in browser is on unless switched off — an independent flag
+    expect(builtInBrowserEnabled({})).toBe(true);
+    expect(builtInBrowserEnabled({ features: { skillRecorder: true } })).toBe(true);
+    expect(parseConfigPatch({ features: { browser: false } })).toEqual({ features: { browser: false } });
+    expect(builtInBrowserEnabled({ features: { browser: false } })).toBe(false);
+    expect(builtInBrowserEnabled({ features: { browser: true } })).toBe(true);
+    // named browser profiles: the list is the unit, ids are partition-safe
+    expect(parseConfigPatch({ browserProfiles: [{ id: "work", name: " Work " }] })).toEqual({
+      browserProfiles: [{ id: "work", name: "Work" }],
+    });
+    expect(() => parseConfigPatch({ browserProfiles: [{ id: "../evil", name: "x" }] })).toThrow(/browserProfiles.*id/i);
+    expect(() => parseConfigPatch({ browserProfiles: [{ id: "ok", name: "" }] })).toThrow(/browserProfiles.*name/i);
     expect(() => parseConfigPatch({ features: { skillRecorder: "yes" } })).toThrow(
       "features.skillRecorder",
     );

@@ -259,6 +259,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             env: acpEnv(composio.env),
           });
         }
+        const browser = turn.integrations?.browser;
+        if (browser) {
+          servers.push({ name: "browser", command: browser.command, args: browser.args, env: acpEnv(browser.env) });
+        }
         // The bot's computer, mounted exactly like the Claude driver does.
         // Cloud boxes use the REST adapter; host and sandbox Cua connections
         // expose Cua Driver's official MCP server directly.
@@ -739,6 +743,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             agentsMcp: true,
             computerMcp: true,
             composioMcp: true,
+            browserMcp: true,
             images: support.images !== false,
             effortLevels: support.effortLevels,
             localComputerMcp: !config.fullAuto,

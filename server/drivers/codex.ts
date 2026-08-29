@@ -177,6 +177,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // Driver stdio MCP server. Codex sees the same computer tool surface.
           mountMcpServer(appServerArgs, env, "computer", turn.integrations.localComputer);
         }
+        if (turn.integrations?.browser) {
+          mountMcpServer(appServerArgs, env, "browser", turn.integrations.browser);
+        }
         if (turn.integrations?.phone) {
           const bridge = turn.integrations.phone;
           Object.assign(env, bridge.env);
@@ -631,6 +634,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         composioMcp: true,
         agentsMcp: true,
         phoneMcp: true,
+        browserMcp: true,
         images: true,
         effortLevels: ["low", "medium", "high", "xhigh", "max"],
       },

@@ -17,7 +17,9 @@
     "dist-server/**",
     "electron/vendor/**",
     "release/**",
-    "tools/oxlint/anti-slop/**"
+    "tools/oxlint/anti-slop/**",
+    "third_party/**",
+    "electron/resources/**"
   ],
   "jsPlugins": [
     {

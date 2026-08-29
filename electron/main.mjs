@@ -58,6 +58,10 @@ const { createDisplayMediaGuard, invokeDisplayMediaCallback, selectCaptureSource
 const { STAGE_PREFIX: APPIMAGE_CUA_STAGE_PREFIX } = require("./cua-linux-bundle.cjs");
 const { desktopViewerUrl, sameDesktopViewerOrigin } = require("./desktop-viewer.cjs");
 const { createDesktopWorkspaceManager } = require("./desktop-workspace.cjs");
+const { createBrowserSurfaceManager } = require("./browser-surface.cjs");
+const { browserProfilePartition } = require("./browser-snapshot.cjs");
+const { createBrowserHost } = require("./browser-host.cjs");
+const { createCuaConnectionStore: createDescriptorStore } = require("./cua-connection.cjs");
 const { normalizeUnreadCount, parseWindowState, resolveWindowState } = require("./window-state.cjs");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -72,6 +76,15 @@ let desktopViewerOwner = null;
 let desktopViewerContextId = null;
 let desktopWorkspaceManager = null;
 let desktopWorkspaceOwner = null;
+// The built-in browser surface (Browser tab of the computer panel): views
+// live in this process; bots reach them through the loopback host whose
+// address and per-boot token the descriptor file hands to the harness.
+let browserSurface = null;
+let browserHost = null;
+const browserConnectionStore = createDescriptorStore({
+  getUserData: () => app.getPath("userData"),
+  fileName: "browser-connection.json",
+});
 let pendingPackageInstallUrl = packageUrlFromCommandLine(process.argv);
 let mainWindow = null;
 let unreadCount = 0;
@@ -990,6 +1003,98 @@ function desktopWorkspaceForEvent(event, create = false) {
   return create ? ensureDesktopWorkspace(owner) : desktopWorkspaceManager;
 }
 
+/** The built-in browser: WebContentsViews per bot inside the app window,
+ * plus the loopback host the bot's tools call. The host (and the token in
+ * the descriptor) lives for the whole process; the surface belongs to a
+ * window and is rebuilt for every window created — macOS keeps the app
+ * alive with none open, and `activate` makes a new one. Never blocks the
+ * window: without it the Browser tab simply reports itself unavailable. */
+async function startBrowserSurface(owner) {
+  try {
+    browserSurface = createBrowserSurfaceManager({
+      owner,
+      createView: (options) => new WebContentsView(options),
+      notify: (state) => {
+        if (!owner.isDestroyed() && !owner.webContents.isDestroyed()) owner.webContents.send("browser:state", state);
+      },
+    });
+    if (!browserHost) {
+      browserHost = createBrowserHost({ manager: () => browserSurface });
+      await browserHost.start();
+      browserConnectionStore.persist(browserHost.descriptor());
+    }
+    // A renderer reload or crash loses the panel that positioned the views;
+    // hide them until a mounted Browser tab lays them out again. The pages
+    // themselves stay alive — a bot mid-task must not lose its tab.
+    owner.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) browserSurface?.hideAll();
+    });
+    owner.webContents.on("render-process-gone", () => browserSurface?.hideAll());
+    const surface = browserSurface;
+    owner.once("closed", () => {
+      surface.closeAll();
+      if (browserSurface === surface) browserSurface = null;
+    });
+    slog(`browser surface ready for window ${owner.id} (host ${browserHost.url})`);
+  } catch (error) {
+    slog(`browser surface unavailable: ${error?.message ?? error}`);
+    browserSurface = null;
+  }
+}
+
+function browserSurfaceForEvent(event) {
+  const owner = mainWindow;
+  if (!owner || owner.isDestroyed() || event.sender !== owner.webContents) {
+    throw new Error("The browser is available only to the main app window");
+  }
+  if (!browserSurface) throw new Error("The built-in browser is unavailable");
+  return browserSurface;
+}
+
+ipcMain.handle("browser:available", () => Boolean(browserSurface && browserHost?.url));
+ipcMain.handle("browser:state", (event, botId) => browserSurfaceForEvent(event).state(botId));
+ipcMain.handle("browser:layout", (event, botId, bounds, profile, mode) =>
+  browserSurfaceForEvent(event).layout(
+    botId,
+    bounds ?? null,
+    Object.prototype.toString.call(profile) === "[object String]" ? profile : undefined,
+    mode === "expanded" ? "expanded" : "compact",
+  ),
+);
+ipcMain.handle("browser:forward", async (event, botId) => {
+  const result = await browserSurfaceForEvent(event).forward(botId);
+  return { url: result.url, title: result.title };
+});
+ipcMain.handle("browser:navigate", async (event, botId, url) => {
+  const result = await browserSurfaceForEvent(event).navigate(botId, url);
+  return { url: result.url, title: result.title };
+});
+ipcMain.handle("browser:back", async (event, botId) => {
+  const result = await browserSurfaceForEvent(event).back(botId);
+  return { url: result.url, title: result.title };
+});
+ipcMain.handle("browser:close", (event, botId) => browserSurfaceForEvent(event).close(botId));
+// Deleting a profile: every bot's view on it goes, then its cookies, storage
+// and cache. The partition directory itself is left for Chromium to reuse
+// (removing it while the session object lives is the EBUSY trap every
+// Electron app with profiles has hit); nothing identifying remains in it.
+ipcMain.handle("browser:forget-profile", async (event, profileId) => {
+  const surface = browserSurfaceForEvent(event);
+  const id = String(profileId ?? "");
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(id) || id === "guest") throw new Error("That browser profile id is invalid");
+  const dropped = surface.forgetProfile(id);
+  const ses = session.fromPartition(browserProfilePartition(id));
+  await ses.clearStorageData();
+  await ses.clearCache();
+  try {
+    await ses.clearAuthCache();
+  } catch {}
+  try {
+    ses.closeAllConnections();
+  } catch {}
+  return { dropped };
+});
+
 ipcMain.on("screen:preview-intent", (event) => {
   event.returnValue = displayMediaGuard.begin(event.senderFrame);
 });
@@ -1019,6 +1124,19 @@ function createWindow() {
     },
   });
   mainWindow = win;
+  void startBrowserSurface(win);
+  if (waitsForSkinSync) {
+    // A broken renderer or preload must not strand the app as an invisible
+    // process. Normal startup shows from desktop:skin almost immediately;
+    // this is only the bounded recovery path.
+    const skinSyncFallback = setTimeout(() => {
+      if (!win.isDestroyed() && !win.isVisible()) win.show();
+    }, 5_000);
+    skinSyncFallback.unref?.();
+    const clearSkinSyncFallback = () => clearTimeout(skinSyncFallback);
+    win.once("show", clearSkinSyncFallback);
+    win.once("closed", clearSkinSyncFallback);
+  }
   installWindowStatePersistence(win);
   applyUnreadBadge(win);
   if (restored.maximized) win.maximize();
@@ -1699,9 +1817,13 @@ app.on("before-quit", (e) => {
   // stop it here so quitting never orphans a recording process
   if (nativeActions.appleSpeech) stopSpeech();
   stopRecorder();
+  try {
+    browserSurface?.closeAll();
+  } catch {}
   const cleanup = Promise.race([
     Promise.all([
       stopCua().catch(() => {}),
+      browserHost?.stop().catch(() => {}) ?? Promise.resolve(),
       // Both listeners reachable from outside the app are owned children.
       // Shut the connector down first, then the sidecar, without changing the
       // remembered toggle the next launch will restore.

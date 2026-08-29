@@ -6,6 +6,7 @@ import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
+import { builtInBrowserEnabled } from "@/lib/feature-flags";
 import { requestNotificationPermission } from "@/lib/notify";
 import { botUsage, costCaption, formatTokens, formatUsd, hasFiniteCost } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
@@ -343,6 +344,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "chiefOfStaff"
         | "approvePeerComms"
         | "composio"
+        | "browser"
         | "modelSelection"
       >
     > & { acknowledgeLocalAuto?: boolean },
@@ -356,6 +358,10 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const canUseVps = engine?.capabilities?.computerMcp === true && engine.driverKind !== "boxAgent";
   const connectedAppsConfigured = state.config?.composio?.configured === true;
   const connectedAppsEnabled = bot.composio !== false;
+  const canUseBrowser = engine?.capabilities?.browserMcp === true;
+  const desktopBrowser = Boolean(window.ogb?.browser);
+  const browserFeature = builtInBrowserEnabled(state.config);
+  const browserEnabled = bot.browser !== false;
   const sectionName = bot.section?.trim() || "General";
   const currentChief = state.bots.find(
     (candidate) =>
@@ -540,6 +546,41 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 className={cn(
                   "absolute top-[3px] size-5 rounded-full bg-white transition-all",
                   connectedAppsEnabled ? "left-[21px]" : "left-[3px]",
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+            <div>
+              <div className="text-[15px] font-medium text-ink">Browser</div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                {!desktopBrowser
+                  ? "The built-in browser needs the OpenMausBot desktop app."
+                  : !browserFeature
+                    ? "The built-in browser is switched off under App Settings → Experimental features."
+                    : !canUseBrowser
+                      ? "This bot's current engine cannot use the built-in browser."
+                      : browserEnabled
+                        ? "This bot has its own browser tab in the computer panel — its own logins, watchable and takeable at any time."
+                        : "Keep the built-in browser unavailable to this bot."}
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={browserEnabled}
+              aria-label="Give this bot a built-in browser"
+              disabled={!browserEnabled && (!desktopBrowser || !browserFeature || !canUseBrowser)}
+              onClick={() => patch({ browser: !browserEnabled })}
+              className={cn(
+                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                browserEnabled ? "bg-accent" : "bg-control",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  browserEnabled ? "left-[21px]" : "left-[3px]",
                 )}
               />
             </button>
