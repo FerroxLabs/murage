@@ -1092,7 +1092,7 @@ bus.subscribe((event: RuntimeEvent) => {
         // computer tools can change the screen, and each capture competes
         // with the agent for the box's command endpoint, so a bot grinding
         // through file edits must not trigger one per tool.
-        if (bot && /computer|screenshot|click|type_text|press_key|scroll|open_url/i.test(toolName)) {
+        if (bot && /computer|screenshot|click|type_text|press_key|scroll|open_url|wait_for/i.test(toolName)) {
           pokeScreenPoller(bot.id);
         }
       }

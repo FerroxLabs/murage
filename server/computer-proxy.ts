@@ -642,6 +642,30 @@ const TOOLS = [
     },
   },
   {
+    name: "wait_for",
+    description:
+      "Wait on the bot's cloud computer until a condition holds, then return — ONE call instead of polling with repeated computer_exec or screenshot calls while a server boots or a job finishes. Give only the fields your chosen condition needs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        condition: {
+          type: "string",
+          enum: ["http_ready", "tcp_ready", "output_matches", "file_exists"],
+          description:
+            "http_ready = a URL answers; tcp_ready = a local port accepts; output_matches = a command's output matches a pattern; file_exists = a path appears",
+        },
+        url: { type: "string", description: "http_ready only: the URL to poll, e.g. http://localhost:3000" },
+        port: { type: "integer", description: "tcp_ready only: the local TCP port, e.g. 5432" },
+        command: { type: "string", description: "output_matches only: shell command whose combined output is checked each poll" },
+        pattern: { type: "string", description: "output_matches only: extended regex the output must match, e.g. ready|listening" },
+        path: { type: "string", description: "file_exists only: absolute path on the computer" },
+        timeout_seconds: { type: "integer", description: "give up after this many seconds; default 60, max 240" },
+        ...OBSERVE_PROPS,
+      },
+      required: ["condition"],
+    },
+  },
+  {
     name: "open_url",
     description:
       "Open a URL in the computer's own Chrome, verify the exact destination when DevTools is available, and return the resulting screen.",
@@ -989,6 +1013,60 @@ async function call(id: unknown, name: string, args: any) {
     if (args.observe !== true) return text(id, note);
     const shot = await runOnBox([ENV, GEOMETRY, ensureRemoteCuaCommand(), captureBlock()].join("; "), 60_000);
     return observed(id, note, await frameFrom(shot));
+  }
+  if (name === "wait_for") {
+    const condition = String(args.condition ?? "").trim().toLowerCase();
+    const timeout = Math.min(Math.max(Math.trunc(Number(args.timeout_seconds) || 60), 1), 240);
+    let check = "";
+    let label = "";
+    if (condition === "http_ready") {
+      const url = String(args.url ?? "").trim();
+      if (!/^https?:\/\//i.test(url)) {
+        return text(id, 'http_ready needs "url", e.g. {"condition":"http_ready","url":"http://localhost:3000"}.', true);
+      }
+      check = `[ "$(curl -s -o /dev/null -m 2 -w '%{http_code}' ${shellQuote(url)})" != "000" ]`;
+      label = url;
+    } else if (condition === "tcp_ready") {
+      const portNumber = Math.trunc(Number(args.port));
+      if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) {
+        return text(id, 'tcp_ready needs "port" 1-65535, e.g. {"condition":"tcp_ready","port":5432}.', true);
+      }
+      check = `(echo > /dev/tcp/127.0.0.1/${portNumber}) 2>/dev/null`;
+      label = `port ${portNumber}`;
+    } else if (condition === "output_matches") {
+      const probe = String(args.command ?? "").slice(0, 2000);
+      const pattern = String(args.pattern ?? "").slice(0, 500);
+      if (!probe.trim() || !pattern.trim()) {
+        return text(id, 'output_matches needs "command" and "pattern", e.g. {"condition":"output_matches","command":"tail -1 /tmp/build.log","pattern":"done|failed"}.', true);
+      }
+      check = `bash -c ${shellQuote(probe)} 2>&1 | grep -Eq ${shellQuote(pattern)}`;
+      label = `/${pattern}/ in ${probe.slice(0, 80)}`;
+    } else if (condition === "file_exists") {
+      const target = String(args.path ?? "").trim();
+      if (!target.startsWith("/")) {
+        return text(id, 'file_exists needs an absolute "path", e.g. {"condition":"file_exists","path":"/tmp/render.done"}.', true);
+      }
+      check = `[ -e ${shellQuote(target)} ]`;
+      label = target;
+    } else {
+      return text(id, 'wait_for needs "condition": http_ready, tcp_ready, output_matches, or file_exists.', true);
+    }
+    // The whole wait runs box-side in ONE round trip — a 2s poll loop, then
+    // (by default) the settled screen — instead of the model burning an
+    // inference per poll while a server boots or a job finishes.
+    const loop = `MET=no; END=$((SECONDS+${timeout})); while [ $SECONDS -lt $END ]; do if ${check}; then MET=yes; break; fi; sleep 2; done; echo "WAIT $MET ELAPSED $SECONDS"`;
+    observations.noteAction();
+    const observe = wantsFrame(args);
+    const out = observe
+      ? await runOnBox([ENV, GEOMETRY, loop, ensureRemoteCuaCommand(), captureBlock(settleOf(args))].join("; "), (timeout + 60) * 1000)
+      : await runOnBox(loop, (timeout + 30) * 1000);
+    const met = /WAIT yes/.test(out.stdout);
+    const elapsed = out.stdout.match(/ELAPSED (\d+)/)?.[1];
+    const note = met
+      ? `condition met: ${label}${elapsed ? ` (~${elapsed}s)` : ""}`
+      : `timed out after ${timeout}s waiting for ${label} — it may not be coming up; inspect with computer_exec (logs, process list) before waiting again.`;
+    if (!observe) return text(id, note, !met);
+    return observed(id, note, await frameFrom(out));
   }
   if (name === "open_url") {
     const url = String(args.url ?? "");

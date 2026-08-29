@@ -74,6 +74,10 @@ describe("computer proxy (fake box)", () => {
                 })
               : command.includes("openmausbot-cdp.mjs click") || command.includes("openmausbot-cdp.mjs fill")
                 ? `GEOM 1920 1080\nHASH ${hash}\nSIZE ${size}\nB64 ${JPEG}\nSEM ok\n`
+            : command.includes('echo "WAIT')
+              ? command.includes("/dev/tcp/")
+                ? "WAIT no ELAPSED 5\n"
+                : `WAIT yes ELAPSED 3\nGEOM 1920 1080\nHASH ${hash}\nSIZE ${size}\nB64 ${JPEG}\nACT ok\n`
             : cropFails && /convert "\$f" -crop/.test(command)
               ? `GEOM 1920 1080\nHASH ${hash}\nCROP_FAILED\n`
               : /GEOM/.test(command)
@@ -149,6 +153,84 @@ describe("computer proxy (fake box)", () => {
     expect(click.description).toMatch(/return the resulting screen/i);
     const screenshot = res.result.tools.find((t: any) => t.name === "screenshot");
     expect(screenshot.inputSchema.properties.region).toBeTruthy();
+  });
+
+  it("wait_for publishes a flat schema and answers bad input with guidance, not a box call", async () => {
+    rpc({ jsonrpc: "2.0", id: 70, method: "tools/list" });
+    const list = await waitFor(70);
+    const tool = list.result.tools.find((t: any) => t.name === "wait_for");
+    expect(tool.inputSchema.properties.condition.enum).toEqual([
+      "http_ready",
+      "tcp_ready",
+      "output_matches",
+      "file_exists",
+    ]);
+    // composition keywords do not survive provider schema conversion (#544)
+    expect(JSON.stringify(tool.inputSchema)).not.toMatch(/"(oneOf|anyOf|allOf|const|format)":/);
+
+    const before = commands.length;
+    rpc({ jsonrpc: "2.0", id: 71, method: "tools/call", params: { name: "wait_for", arguments: { condition: "http_ready" } } });
+    const missing = await waitFor(71);
+    expect(missing.result.isError).toBe(true);
+    expect(missing.result.content[0].text).toContain('"url"');
+    rpc({ jsonrpc: "2.0", id: 72, method: "tools/call", params: { name: "wait_for", arguments: { condition: "every_5_minutes" } } });
+    const unknown = await waitFor(72);
+    expect(unknown.result.isError).toBe(true);
+    expect(unknown.result.content[0].text).toContain("http_ready");
+    expect(commands.length).toBe(before); // guidance is free
+  });
+
+  it("wait_for runs the whole poll box-side in ONE round trip and returns the settled frame", async () => {
+    hash = "wait1111";
+    const before = commands.length;
+    rpc({
+      jsonrpc: "2.0",
+      id: 73,
+      method: "tools/call",
+      params: {
+        name: "wait_for",
+        arguments: { condition: "http_ready", url: "http://localhost:3000/health", timeout_seconds: 90 },
+      },
+    });
+    const res = await waitFor(73);
+    expect(commands.length - before).toBe(1);
+    const command = commands.at(-1)!;
+    if (process.platform !== "win32") expect(spawnSync("/bin/bash", ["-n", "-c", command]).status).toBe(0);
+    expect(command).toContain("'http://localhost:3000/health'");
+    expect(command).toContain("END=$((SECONDS+90))");
+    expect(command).toMatch(/while \[ \$SECONDS -lt \$END \]/);
+    expect(res.result.content[0].text).toContain("condition met");
+    expect(res.result.content[1].type).toBe("image");
+    hash = "aaaa1111"; // restore: later tests assert their own frame changes
+  });
+
+  it("wait_for reports a timeout as advice, and builds sound shells for every condition", async () => {
+    rpc({
+      jsonrpc: "2.0",
+      id: 74,
+      method: "tools/call",
+      params: { name: "wait_for", arguments: { condition: "tcp_ready", port: 5432, observe: false, timeout_seconds: 5 } },
+    });
+    const timedOut = await waitFor(74);
+    expect(timedOut.result.isError).toBe(true);
+    expect(timedOut.result.content[0].text).toContain("timed out after 5s");
+    expect(timedOut.result.content[0].text).toContain("computer_exec");
+
+    rpc({
+      jsonrpc: "2.0",
+      id: 75,
+      method: "tools/call",
+      params: {
+        name: "wait_for",
+        arguments: { condition: "output_matches", command: "tail -1 /tmp/build.log", pattern: "done|failed", observe: false },
+      },
+    });
+    const matched = await waitFor(75);
+    expect(matched.result.content[0].text).toContain("condition met");
+    const command = commands.at(-1)!;
+    if (process.platform !== "win32") expect(spawnSync("/bin/bash", ["-n", "-c", command]).status).toBe(0);
+    expect(command).toContain("grep -Eq");
+    expect(command).toContain("done|failed");
   });
 
   it("clicks and returns the frame in ONE round trip, scaled box-side", async () => {
