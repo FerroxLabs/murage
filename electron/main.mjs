@@ -1107,6 +1107,7 @@ ipcMain.on("desktop:unread-count", (event, value) => {
 });
 
 function createWindow() {
+  const waitsForSkinSync = process.platform === "win32";
   const primary = screen.getPrimaryDisplay();
   const displays = [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)];
   const restored = resolveWindowState(readWindowState(), displays.map((display) => display.workArea));
@@ -1114,6 +1115,11 @@ function createWindow() {
     ...restored.bounds,
     minWidth: 900,
     minHeight: 600,
+    // The renderer restores its persisted skin before mounting React and
+    // mirrors it over desktop:skin. Keep Windows hidden until that handshake
+    // recolors the native caption-button overlay, otherwise a saved light
+    // skin still flashes the Midnight-black block on every cold start.
+    show: !waitsForSkinSync,
     icon: APP_ICON,
     backgroundColor: "#070707",
     autoHideMenuBar: process.platform !== "darwin",
