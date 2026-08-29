@@ -539,6 +539,23 @@ describe("Store change stream", () => {
     expect(events.at(-1)).toEqual({ type: "group.deleted", groupId: g.id });
   });
 
+  it("delivers each change to the listener snapshot captured before emission", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const seen: string[] = [];
+    let removeSecond = () => {};
+    store.onChange(() => {
+      seen.push("first");
+      removeSecond();
+      store.onChange(() => seen.push("late"));
+    });
+    removeSecond = store.onChange(() => seen.push("second"));
+
+    store.patchBot(bot.id, { name: "Snapshot" });
+
+    expect(seen).toEqual(["first", "second"]);
+  });
+
   it("unsubscribe stops delivery", () => {
     const store = new Store(selection);
     const bot = store.createBot();

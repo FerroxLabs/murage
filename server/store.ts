@@ -635,15 +635,14 @@ export class Store {
         continue;
       }
       if (!g.tasks?.length) {
-        g.tasks = [
-          {
-            threadId: g.threadId,
-            title: this.firstUserLine(g.threadId) ?? UNTITLED_TASK,
-            createdAt: g.createdAt,
-            ...(g.pinnedCwd !== undefined ? { pinnedCwd: g.pinnedCwd } : {}),
-            ...(g.pinnedMessageId ? { pinnedMessageId: g.pinnedMessageId } : {}),
-          },
-        ];
+        const initialTask: GroupTaskRecord = {
+          threadId: g.threadId,
+          title: this.firstUserLine(g.threadId) ?? UNTITLED_TASK,
+          createdAt: g.createdAt,
+        };
+        if (g.pinnedCwd !== undefined) initialTask.pinnedCwd = g.pinnedCwd;
+        if (g.pinnedMessageId) initialTask.pinnedMessageId = g.pinnedMessageId;
+        g.tasks = [initialTask];
         groupsMigrated = true;
       }
       // Repair a malformed/stale active pointer conservatively. Every task
@@ -690,7 +689,7 @@ export class Store {
   }
 
   private saveGroups() {
-    writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId, ...g }) => g), null, 2));
+    writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, ...g }) => g), null, 2));
   }
 
   // ── groups ────────────────────────────────────────────────────────────
@@ -737,9 +736,6 @@ export class Store {
     const group: GroupRecord = {
       id: newId(),
       threadId,
-      ...(dm
-        ? {}
-        : { tasks: [{ threadId, title: UNTITLED_TASK, createdAt }] }),
       name,
       memberIds,
       defaultResponder: dm
@@ -751,13 +747,12 @@ export class Store {
       dm: dm || undefined,
       busyBotId: null,
       section,
-      ...(dm
-        ? {}
-        : {
-            setupCompletedAt: setup?.completed ? createdAt : null,
-            setupSkippedAt: null,
-          }),
     };
+    if (!dm) {
+      group.tasks = [{ threadId, title: UNTITLED_TASK, createdAt }];
+      group.setupCompletedAt = setup?.completed ? createdAt : null;
+      group.setupSkippedAt = null;
+    }
     this.groups.unshift(group);
     this.saveGroups();
     this.emit({ type: "group", groupId: group.id });
@@ -835,7 +830,7 @@ export class Store {
     if (!group || group.dm) return null;
     const task: GroupTaskRecord = {
       threadId: newId(),
-      title: title?.trim() || UNTITLED_TASK,
+      title: title?.trim().slice(0, 80) || UNTITLED_TASK,
       createdAt: Date.now(),
     };
     group.tasks = [task, ...(group.tasks ?? [])];

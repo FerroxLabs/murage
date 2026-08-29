@@ -88,7 +88,7 @@ describe("replacement snapshot boundary", () => {
 });
 
 describe("notification routing", () => {
-  const bots = [{ id: "bot-1", threadId: "main-thread", tasks: [{ threadId: "detached-thread" }] }] as never;
+  const bots = [{ id: "bot-1", threadId: "main-thread", tasks: [{ threadId: "detached-thread" }] }];
   const groups = [{
     id: "room-1",
     threadId: "room-thread",
@@ -96,7 +96,7 @@ describe("notification routing", () => {
       { threadId: "room-thread", title: "Current", createdAt: 1 },
       { threadId: "older-room-thread", title: "Older", createdAt: 0 },
     ],
-  }] as never;
+  }];
 
   it("selects the bot and switches to the notification's exact task", () => {
     const dispatch = vi.fn();

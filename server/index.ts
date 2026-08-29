@@ -109,7 +109,6 @@ import {
   Store,
   type GroupDefaultResponder,
   type GroupRecord,
-  type GroupTaskRecord,
   type Message,
   type TaskRecord,
 } from "./store.ts";
@@ -228,6 +227,7 @@ function authorizedComms(header: string | string[] | undefined): boolean {
 // A→B is allowed but B→C (and A→B→A loops) never start.
 const MAX_COMMS_DEPTH = 1;
 const MAX_WORKSPACE_BOTS = 100;
+const createGroupTaskRequestSchema = z.object({ title: z.string().optional() });
 // Resolved from the server root — see server/proxy-paths.ts. This descending
 // path happened to survive bundling, but it goes through the same anchor so
 // there is exactly one way proxies are located.
@@ -449,11 +449,10 @@ store.seedIfEmpty();
  * paired phone has even less business holding provider session identifiers
  * than the desktop window did. Stripped here rather than at each call site
  * so a new broadcast cannot forget. */
-const wireTask = ({ resumeCursors, lastInstanceId, ...task }: TaskRecord) => task;
-const wireGroupTask = (task: GroupTaskRecord) => task;
+const wireTask = ({ resumeCursors: _resumeCursors, lastInstanceId: _lastInstanceId, ...task }: TaskRecord) => task;
 
 const wireBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
-  const { resumeCursors, tasks, ...rest } = bot;
+  const { resumeCursors: _resumeCursors, tasks, ...rest } = bot;
   return { ...rest, avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
 };
 
@@ -519,7 +518,7 @@ const groupWithThread = (group: GroupRecord) => ({
   ...publicGroupState(group),
   messages: store.messagesFor(group.threadId),
   activeLeafId: store.activeLeaf(group.threadId),
-  ...(group.dm ? {} : { tasks: store.groupTasks(group.id).map(wireGroupTask) }),
+  ...(group.dm ? {} : { tasks: store.groupTasks(group.id) }),
 });
 
 // The store tells us what it wrote; this is the ONE place that turns those
@@ -585,7 +584,7 @@ function pageSize(raw: string | null): number | null | undefined {
  * `/api/threads/:threadId/messages/:id/image` when it actually shows one. */
 function slimMessage(message: Message): Message | Record<string, unknown> {
   if (message.kind !== "screen" || !message.png) return message;
-  const { png, mime, ...rest } = message;
+  const { png: _png, mime: _mime, ...rest } = message;
   return { ...rest, hasImage: true };
 }
 
@@ -4022,7 +4021,7 @@ const server = createServer(async (req, res) => {
       if (format === "json") {
         // pixels stripped — an export is for reading and archiving, and a
         // base64 desktop frame is neither
-        const slim = messages.map(({ png, mime, ...rest }) => rest);
+        const slim = messages.map(({ png: _png, mime: _mime, ...rest }) => rest);
         res.writeHead(200, {
           "content-type": "application/json",
           "content-disposition": `attachment; filename="${filename}.json"`,
@@ -4454,11 +4453,13 @@ const server = createServer(async (req, res) => {
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
-      const task = store.createGroupTask(group.id, typeof body.title === "string" ? body.title : undefined);
+      const request = createGroupTaskRequestSchema.safeParse(body);
+      if (!request.success) return json(res, 400, { error: "title must be text" });
+      const task = store.createGroupTask(group.id, request.data.title);
       if (!task) return json(res, 500, { error: "couldn't create that task" });
       const fresh = groupWithThread(store.group(group.id)!);
       broadcast({ kind: "group", group: fresh });
-      return json(res, 201, { group: fresh, task: wireGroupTask(task) });
+      return json(res, 201, { group: fresh, task });
     }
 
     m = path.match(/^\/api\/groups\/([\w-]+)\/tasks\/([\w-]+)$/);
@@ -4474,7 +4475,7 @@ const server = createServer(async (req, res) => {
       const fresh = groupWithThread(switched);
       broadcast({ kind: "group", group: fresh });
       const responseGroup = url.searchParams.get("messages") === "0"
-        ? { ...publicGroupState(switched), tasks: store.groupTasks(switched.id).map(wireGroupTask) }
+        ? { ...publicGroupState(switched), tasks: store.groupTasks(switched.id) }
         : fresh;
       return json(res, 200, { group: responseGroup });
     }
@@ -4491,7 +4492,7 @@ const server = createServer(async (req, res) => {
       }
       const task = store.renameGroupTask(m[1], m[2], String(body.title ?? ""));
       if (!task) return json(res, 404, { error: "no such channel task" });
-      return json(res, 200, { task: wireGroupTask(task) });
+      return json(res, 200, { task });
     }
     if (m && method === "DELETE") {
       const group = store.group(m[1]);
