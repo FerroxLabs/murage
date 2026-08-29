@@ -15,6 +15,7 @@ import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { botAvatarProfile, type BotAvatarCrop } from "../shared/bot-avatar.ts";
 import type { RoutineRequestCardData } from "../shared/routine-request.ts";
+import type { RoutineRunCardData } from "../shared/routine-run.ts";
 
 export type MausColor =
   | "green"
@@ -87,11 +88,14 @@ export interface SecretRequestCardData {
 export interface Message {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret";
+  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run";
   text?: string;
   card?: OptionCardData;
   connector?: ConnectorCardData;
   secret?: SecretRequestCardData;
+  /** One idempotently updated status card in the conversation that created a
+   * routine. The actual provider turn remains in its isolated task. */
+  routineRun?: RoutineRunCardData;
   /** activity messages: tool name + outcome. `spoken` is the same chip as
    * a phrase a voice can read ("reading a file") — computed once here so
    * call mode never has to re-derive it from the raw tool name, and absent
@@ -242,6 +246,13 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
   const out = { ...message };
   if (typeof out.text === "string") out.text = redactSecretsInText(out.text);
   if (out.tool?.name) out.tool = { ...out.tool, name: redactSecretsInText(out.tool.name) };
+  if (out.routineRun) {
+    const routineRun = { ...out.routineRun };
+    routineRun.routineName = redactSecretsInText(routineRun.routineName);
+    if (routineRun.summary) routineRun.summary = redactSecretsInText(routineRun.summary);
+    if (routineRun.error) routineRun.error = redactSecretsInText(routineRun.error);
+    out.routineRun = routineRun;
+  }
   if (out.card) {
     const card = { ...out.card } as OptionCardData & { summary?: string };
     card.title = redactSecretsInText(card.title);

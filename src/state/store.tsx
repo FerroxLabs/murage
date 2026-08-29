@@ -17,6 +17,7 @@ import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
+import type { RoutineRunCardData } from "../../shared/routine-run";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
@@ -27,6 +28,7 @@ import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { openLiveEvents } from "@/lib/live-events";
 
 export type { MausColor } from "@/lib/mascot";
+export type { RoutineRunCardData } from "../../shared/routine-run";
 
 export interface OptionCardData {
   title: string;
@@ -74,11 +76,13 @@ export interface SecretRequestCardData {
 export interface Message {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret";
+  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run";
   text?: string;
   card?: OptionCardData;
   connector?: ConnectorCardData;
   secret?: SecretRequestCardData;
+  /** Lifecycle mirror for a routine whose real work lives in a fresh task. */
+  routineRun?: RoutineRunCardData;
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
@@ -593,6 +597,19 @@ interface NotificationThreadOwner {
 interface NotificationRoutingState {
   bots: NotificationThreadOwner[];
   groups: NotificationThreadOwner[];
+}
+
+/** The exact conversation currently on screen. A focused window is not
+ * enough to suppress an alert when its actionable card is in another task. */
+export function visibleNotificationThread(
+  state: NotificationRoutingState & Pick<AppState, "activeView" | "selectedId">,
+): string | null {
+  if (state.activeView !== "chat") return null;
+  return (
+    state.bots.find((candidate) => candidate.id === state.selectedId)?.threadId ??
+    state.groups.find((candidate) => candidate.id === state.selectedId)?.threadId ??
+    null
+  );
 }
 
 export function openNotificationTarget(
@@ -1978,6 +1995,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             frame.notification,
             (target) => openNotificationTarget(dispatch, target, stateRef.current),
             stateRef.current.bots.find((bot) => bot.id === frame.notification.botId)?.avatarUrl,
+            visibleNotificationThread(stateRef.current),
           );
           break;
         case "group.deleted":

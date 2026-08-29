@@ -30,6 +30,7 @@ import {
   useStreaming,
   formatTime,
   messageVersions,
+  openNotificationTarget,
   visibleMessages,
   type Bot,
   type InstanceInfo,
@@ -50,6 +51,7 @@ import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedImageGallery } from "./AttachmentPreview";
 import { ModelPicker } from "./ModelPicker";
 import { RenameTitle } from "./RenameTitle";
@@ -704,6 +706,22 @@ const MessagesList = memo(function MessagesList({
               }
               if (shouldHideOnboardingCard(m, transcript)) return null;
               return <OptionCard botId={bot.id} message={m} />;
+            case "routine.run": {
+              const executionThreadId = m.routineRun?.executionThreadId;
+              const canOpen = hasRoutineExecutionTask(bot.tasks, executionThreadId);
+              return (
+                <RoutineRunCard
+                  message={m}
+                  onOpen={canOpen
+                    ? () => openNotificationTarget(
+                        dispatch,
+                        { botId: bot.id, threadId: executionThreadId },
+                        state,
+                      )
+                    : undefined}
+                />
+              );
+            }
             case "activity": {
               // a failed turn is an error, not a tool run — render it as one.
               // bot⇄bot comm chips stay because they link to another conversation.

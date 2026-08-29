@@ -1,9 +1,14 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { nextOccurrence, RoutineManager, type RoutineManagerOptions } from "./routines.ts";
+import {
+  nextOccurrence,
+  RoutineManager,
+  type RoutineManagerOptions,
+  type RoutineSchedule,
+} from "./routines.ts";
 
 const dirs: string[] = [];
 
@@ -22,6 +27,7 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
   const triggerSources: string[] = [];
   const taskActivations: boolean[] = [];
   const emitted: any[] = [];
+  const changed: any[] = [];
   const failed: any[] = [];
   const options: RoutineManagerOptions = {
     file: tempFile(),
@@ -37,6 +43,7 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
       runOns.push(runOn);
       triggerSources.push(triggerSource);
     },
+    onRunChanged: (run) => changed.push(run),
     onRunFailed: (run) => failed.push(run),
   };
   const manager = new RoutineManager(options);
@@ -48,6 +55,7 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
     runOns,
     triggerSources,
     taskActivations,
+    changed,
     failed,
     setNow: (value: number) => (now = value),
     setBot: (value: typeof bot) => (bot = value),
@@ -151,6 +159,120 @@ describe("RoutineManager", () => {
     expect(reloaded.reconcileRoutineRequestReceipts([request])).toBe(0);
     expect(reloaded.forgetRoutineRequestReceipt(request)).toBe(true);
     expect(new RoutineManager(h.options).routineRequestReceipt(request.requestId)).toBeNull();
+  });
+
+  it("persists trusted chat provenance and snapshots it onto detached runs", async () => {
+    const h = harness();
+    const request = {
+      requestId: "request-source-thread",
+      messageId: "message-source-thread",
+      botId: "maus-1",
+      threadId: "conversation-that-created-it",
+      action: "create" as const,
+      fingerprintVersion: 1 as const,
+      fingerprint: "e".repeat(64),
+    };
+    const routine = h.manager.create({
+      name: "Source report",
+      prompt: "Summarize the queue",
+      botId: "maus-1",
+      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 5).getTime() },
+    }, request);
+
+    expect(routine.sourceThreadId).toBe(request.threadId);
+    const reloaded = new RoutineManager(h.options);
+    expect(reloaded.listRoutines()[0]?.sourceThreadId).toBe(request.threadId);
+
+    h.setNow(routine.nextRunAt!);
+    await reloaded.tick();
+    const run = reloaded.listRuns()[0]!;
+    expect(run).toMatchObject({
+      sourceThreadId: request.threadId,
+      threadId: "thread-1",
+      status: "running",
+    });
+    expect(run.threadId).not.toBe(run.sourceThreadId);
+    expect(h.changed.map(({ status, sourceThreadId, threadId }) => ({ status, sourceThreadId, threadId })))
+      .toEqual([
+        { status: "queued", sourceThreadId: request.threadId, threadId: undefined },
+        { status: "running", sourceThreadId: request.threadId, threadId: "thread-1" },
+      ]);
+  });
+
+  it("does not trust a calendar payload to choose another conversation", () => {
+    const h = harness();
+    const schedule: RoutineSchedule = { type: "daily", time: "09:00", weekdays: [1] };
+    const calendarPayload = {
+      name: "Calendar-owned",
+      prompt: "Run without a chat source",
+      botId: "maus-1",
+      schedule,
+      sourceThreadId: "forged-thread",
+    };
+    const routine = h.manager.create(calendarPayload);
+    expect(routine.sourceThreadId).toBeUndefined();
+  });
+
+  it("keeps routine history when a persisted source thread is malformed", () => {
+    const h = harness();
+    const request = {
+      requestId: "request-malformed-source",
+      messageId: "message-malformed-source",
+      botId: "maus-1",
+      threadId: "trusted-source",
+      action: "create" as const,
+      fingerprintVersion: 1 as const,
+      fingerprint: "2".repeat(64),
+    };
+    h.manager.create({
+      name: "Survives malformed provenance",
+      prompt: "Keep this routine",
+      botId: "maus-1",
+      schedule: { type: "daily", time: "09:00", weekdays: [1] },
+    }, request);
+    const file = h.options.file;
+    if (!file) throw new Error("test harness did not configure routine persistence");
+    const stored = readFileSync(file, "utf8");
+    const malformed = stored.replace(`"sourceThreadId": "${request.threadId}"`, '"sourceThreadId": 42');
+    expect(malformed).not.toBe(stored);
+    writeFileSync(file, malformed);
+
+    const reloaded = new RoutineManager(h.options);
+    expect(reloaded.listRoutines()).toMatchObject([{
+      name: "Survives malformed provenance",
+      sourceThreadId: undefined,
+    }]);
+  });
+
+  it("reports a chat-confirmed run-now to its invoking thread without rebinding the routine", () => {
+    const h = harness();
+    const createRequest = {
+      requestId: "request-create-origin",
+      messageId: "message-create-origin",
+      botId: "maus-1",
+      threadId: "original-thread",
+      action: "create" as const,
+      fingerprintVersion: 1 as const,
+      fingerprint: "f".repeat(64),
+    };
+    const routine = h.manager.create({
+      name: "Daily source",
+      prompt: "Review it",
+      botId: "maus-1",
+      schedule: { type: "daily", time: "09:00", weekdays: [1] },
+    }, createRequest);
+    const runRequest = {
+      ...createRequest,
+      requestId: "request-run-now-elsewhere",
+      messageId: "message-run-now-elsewhere",
+      threadId: "invoking-thread",
+      action: "run_now" as const,
+      fingerprint: "1".repeat(64),
+    };
+
+    const run = h.manager.runNow(routine.id, runRequest)!;
+    expect(run.sourceThreadId).toBe("invoking-thread");
+    expect(h.manager.listRoutines()[0]?.sourceThreadId).toBe("original-thread");
   });
 
   it("removes unreachable recovery receipts when their conversation is deleted", () => {
@@ -347,9 +469,21 @@ describe("RoutineManager", () => {
       threadId: "thread-1",
       createdAt: new Date(h.manager.listRuns()[0]!.startedAt!).toISOString(),
     };
-    h.manager.handleRuntimeEvent({ ...base, type: "request.opened", requestType: "question", tool: "ask", summary: "Need a date" });
-    expect(h.manager.listRuns()[0]!.status).toBe("waiting");
+    const secret = `sk-ant-api03-${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
+    h.manager.handleRuntimeEvent({
+      ...base,
+      type: "request.opened",
+      requestType: "question",
+      tool: "ask",
+      summary: `Choose the two actions before using ${secret}`,
+    });
+    expect(h.manager.listRuns()[0]).toMatchObject({
+      status: "waiting",
+      attention: expect.stringContaining("Choose the two actions"),
+    });
+    expect(h.manager.listRuns()[0]!.attention).not.toContain(secret);
     h.manager.handleRuntimeEvent({ ...base, type: "request.resolved", behavior: "answer", source: "user" });
+    expect(h.manager.listRuns()[0]!.attention).toBeUndefined();
     h.manager.handleRuntimeEvent({ ...base, type: "item.completed", itemType: "assistant_text", text: "Report shipped." });
     h.manager.handleRuntimeEvent({ ...base, type: "turn.completed", ok: true, cost: 0.02 });
 
@@ -431,6 +565,7 @@ describe("RoutineManager", () => {
     await h.manager.tick();
     expect(h.manager.listRuns()[0]).toMatchObject({ status: "missed" });
     expect(h.started).toHaveLength(0);
+    expect(h.failed).toMatchObject([{ id: h.manager.listRuns()[0]!.id, status: "missed" }]);
   });
 
   it("records a missed receipt for a once routine created with a long-past time", async () => {

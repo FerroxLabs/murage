@@ -9,6 +9,7 @@ import {
   useStore,
   useStreaming,
   formatTime,
+  openNotificationTarget,
   type Bot,
   type Group,
   type GroupDefaultResponder,
@@ -26,6 +27,7 @@ import { GroupTaskPicker } from "./TaskPicker";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedImageGallery } from "./AttachmentPreview";
 import { GroupCallButton, GroupCallOverlay } from "./GroupCallView";
 import { ReactionBar, ReactionChips } from "./Reactions";
@@ -179,6 +181,11 @@ const Transcript = memo(function Transcript({
         const user = m.role === "user";
         const attachedImages = user && m.text ? splitAttachedImages(m.text) : null;
         const newCluster = !prev || prev.role !== m.role || prev.from?.botId !== m.from?.botId || newDay;
+        const routineOwner = m.kind === "routine.run" ? memberOf(m.from?.botId) : undefined;
+        const routineExecutionThreadId = m.routineRun?.executionThreadId;
+        const routineTarget = routineOwner && hasRoutineExecutionTask(routineOwner.tasks, routineExecutionThreadId)
+          ? { botId: routineOwner.id, threadId: routineExecutionThreadId }
+          : undefined;
         const row =
           // a member can hit a permission ask mid-turn; without this the
           // card never rendered here and the bot waited out its timeout.
@@ -192,6 +199,15 @@ const Transcript = memo(function Transcript({
           ) : m.kind === "options" && m.card?.requestId && m.card.tool ? (
             <div className="flex justify-start">
               <ApprovalCard bot={memberOf(m.from?.botId)} message={m} />
+            </div>
+          ) : m.kind === "routine.run" ? (
+            <div className="flex justify-start">
+              <RoutineRunCard
+                message={m}
+                onOpen={routineTarget
+                  ? () => openNotificationTarget(dispatch, routineTarget, state)
+                  : undefined}
+              />
             </div>
           ) : m.kind === "activity" && m.tool ? (
             m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls ? (

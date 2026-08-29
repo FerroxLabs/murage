@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -40,6 +41,18 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json() };
+};
+
+const storedMessageCount = (threadId: string): number => {
+  const db = new DatabaseSync(join(home, ".openmausbot", "messages.db"), { readOnly: true });
+  try {
+    const row = z.object({ count: z.number() }).parse(
+      db.prepare("SELECT COUNT(*) AS count FROM messages WHERE thread_id = ?").get(threadId),
+    );
+    return row.count;
+  } finally {
+    db.close();
+  }
 };
 
 const uploadAvatar = async (mime = "image/png"): Promise<string> => {
@@ -2560,6 +2573,7 @@ describe("harness HTTP API", () => {
   it("keeps chat-created routines inert until their durable card is confirmed", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     let routineId = "";
+    let orphanRoutineId = "";
     let legacyRoutineId = "";
     try {
       const selected = await api("PATCH", `/api/bots/${bot.id}`, {
@@ -2655,7 +2669,11 @@ describe("harness HTTP API", () => {
       }).toEqual(["card-shown:routine", "user-approved:user"]);
 
       const after = await api("GET", "/api/routines");
-      expect(after.body.routines.filter((routine: { botId: string }) => routine.botId === bot.id)).toHaveLength(1);
+      const confirmedRoutine = after.body.routines.find((routine: { id: string }) => routine.id === routineId);
+      expect(confirmedRoutine).toMatchObject({
+        botId: bot.id,
+        sourceThreadId: bot.threadId,
+      });
       const duplicate = await api("POST", `/api/threads/${bot.threadId}/respond`, {
         requestId: proposal.requestId,
         behavior: "allow",
@@ -2663,6 +2681,136 @@ describe("harness HTTP API", () => {
       expect(duplicate.body.alreadySettled).toBe(true);
       expect((await api("GET", "/api/routines")).body.routines
         .filter((routine: { botId: string }) => routine.botId === bot.id)).toHaveLength(1);
+
+      // The initial fixture turn is deliberately hung. Once it is stopped,
+      // force a deterministic dispatch failure by choosing the configured
+      // but unavailable ghost provider. The execution stays detached, while one source card is
+      // appended then patched through queued → running → failed.
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+      await expect.poll(async () => {
+        const current = (await api("GET", "/api/bots?messages=0")).body.bots
+          .find((candidate: { id: string }) => candidate.id === bot.id);
+        return Boolean(current?.busy);
+      }, { timeout: 5_000 }).toBe(false);
+      expect((await api("PATCH", `/api/bots/${bot.id}`, {
+        modelSelection: { instanceId: "ghost", model: "unavailable-fixture" },
+      })).status).toBe(200);
+
+      const routineEvents = await openSse(`${BASE}/api/events`);
+      try {
+        const queued = await api("POST", `/api/routines/${routineId}/run`);
+        expect(queued.status).toBe(201);
+        const failedNotice = await routineEvents.until(
+          (frame) =>
+            frame.kind === "notify" &&
+            frame.notification?.kind === "routine-failed" &&
+            frame.notification?.botId === bot.id,
+          5_000,
+        );
+        expect(failedNotice.notification.threadId).toBe(bot.threadId);
+
+        await expect.poll(async () => {
+          const current = (await api("GET", "/api/bots")).body.bots
+            .find((candidate: { id: string }) => candidate.id === bot.id);
+          return current?.messages.filter(
+            (message: { kind?: string; routineRun?: { runId?: string } }) =>
+              message.kind === "routine.run" && message.routineRun?.runId === queued.body.run.id,
+          ) ?? [];
+        }, { timeout: 5_000 }).toHaveLength(1);
+        const current = (await api("GET", "/api/bots")).body.bots
+          .find((candidate: { id: string }) => candidate.id === bot.id);
+        const runCards = current.messages.filter(
+          (message: { kind?: string; routineRun?: { runId?: string } }) =>
+            message.kind === "routine.run" && message.routineRun?.runId === queued.body.run.id,
+        );
+        expect(runCards).toHaveLength(1);
+        expect(runCards[0].routineRun).toMatchObject({
+          runId: queued.body.run.id,
+          routineId,
+          routineName: "Weekday brief",
+          status: "failed",
+        });
+        expect(runCards[0].routineRun.executionThreadId).not.toBe(bot.threadId);
+
+        // Reading the source and then marking the failure seen in Routines
+        // must not make the original conversation unread again. markSeen
+        // re-emits the receipt without changing its lifecycle status.
+        expect((await api("POST", `/api/bots/${bot.id}/read`)).status).toBe(200);
+        expect((await api("POST", `/api/routine-runs/${queued.body.run.id}/seen`)).status).toBe(200);
+        const afterSeen = (await api("GET", "/api/bots?messages=0")).body.bots
+          .find((candidate: { id: string }) => candidate.id === bot.id);
+        expect(afterSeen.unread).toBe(false);
+
+        const grounded = await fetch(
+          `${BASE}/api/internal/routines?fromBotId=${encodeURIComponent(bot.id)}&fromThreadId=${encodeURIComponent(bot.threadId)}`,
+          { headers: internalHeaders },
+        );
+        const groundedBody = z.object({
+          routines: z.array(z.object({
+            id: z.string(),
+            latestRun: z.object({
+              status: z.string(),
+              scheduledFor: z.string().nullable(),
+              startedAt: z.string().nullable(),
+              finishedAt: z.string().nullable(),
+              output: z.string().nullable(),
+              error: z.string().nullable(),
+              executionThreadId: z.string().nullable(),
+            }).nullable(),
+          }).passthrough()),
+        }).parse(await grounded.json());
+        expect(groundedBody.routines.find((routine) => routine.id === routineId)?.latestRun).toMatchObject({
+          status: "failed",
+          startedAt: expect.any(String),
+          finishedAt: expect.any(String),
+          error: expect.stringMatching(/provider instance "ghost" is unavailable/i),
+          executionThreadId: runCards[0].routineRun.executionThreadId,
+        });
+      } finally {
+        routineEvents.close();
+      }
+
+      // A deleted source conversation is a safe fallback, not an instruction
+      // to recreate its transcript. The run still gets its detached receipt
+      // and failure, but no lifecycle message is written to the orphan id.
+      const orphanSource = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Temporary routine source" });
+      expect(orphanSource.status).toBe(201);
+      const orphanThreadId = z.object({
+        task: z.object({ threadId: z.string() }),
+      }).parse(orphanSource.body).task.threadId;
+      const orphanProposalResponse = await fetch(`${BASE}/api/internal/routine-requests`, {
+        method: "POST",
+        headers: internalHeaders,
+        body: JSON.stringify({
+          fromBotId: bot.id,
+          fromThreadId: orphanThreadId,
+          action: "create",
+          routine: {
+            name: "Orphan-safe brief",
+            instructions: "Summarize without recreating the deleted source.",
+            schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] },
+            runOn: "maus",
+          },
+        }),
+      });
+      expect(orphanProposalResponse.status).toBe(201);
+      const orphanProposal = z.object({ requestId: z.string() }).parse(await orphanProposalResponse.json());
+      const orphanConfirmed = await api("POST", `/api/threads/${orphanThreadId}/respond`, {
+        requestId: orphanProposal.requestId,
+        behavior: "allow",
+      });
+      expect(orphanConfirmed.status).toBe(200);
+      orphanRoutineId = orphanConfirmed.body.resultId;
+      expect((await api("DELETE", `/api/bots/${bot.id}/tasks/${orphanThreadId}`)).status).toBe(200);
+      expect(storedMessageCount(orphanThreadId)).toBe(0);
+
+      const orphanRun = await api("POST", `/api/routines/${orphanRoutineId}/run`);
+      expect(orphanRun.status).toBe(201);
+      await expect.poll(async () => {
+        const runs = (await api("GET", "/api/routines")).body.runs;
+        return runs.find((run: { id: string }) => run.id === orphanRun.body.run.id)?.status;
+      }, { timeout: 5_000 }).toBe("failed");
+      expect(storedMessageCount(orphanThreadId)).toBe(0);
 
       // Calendar-created routines may predate chat-card redaction. Listing
       // them to a model must redact the whole prompt before returning its
@@ -2709,6 +2857,7 @@ describe("harness HTTP API", () => {
       expect(wrongThread.status).toBe(403);
     } finally {
       if (legacyRoutineId) await api("DELETE", `/api/routines/${legacyRoutineId}`);
+      if (orphanRoutineId) await api("DELETE", `/api/routines/${orphanRoutineId}`);
       if (routineId) await api("DELETE", `/api/routines/${routineId}`);
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       await api("DELETE", `/api/bots/${bot.id}`);

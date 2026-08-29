@@ -151,7 +151,7 @@ import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import * as vps from "./vps-computer.ts";
-import { RoutineManager, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { fetchBotDirectory, matchDirectoryBots, type MatchedDirectoryBot } from "./bot-directory.ts";
 import { scoutProject, suggestTeam } from "./project-scout.ts";
@@ -1279,7 +1279,12 @@ bus.subscribe((event: RuntimeEvent) => {
         if (!card || card.answered) return;
         // the bot is not working now — it is waiting on a person
         if (asker.busy) store.setActivity(asker.id, "waiting-on-you");
-        notify(buildNotification(permission ? "approval" : "question", asker, event.threadId, event.summary));
+        notify(buildNotification(
+          permission ? "approval" : "question",
+          asker,
+          (routineRun && routineSourceThread(routineRun)) || event.threadId,
+          event.summary,
+        ));
       };
       if (reviewTask && reviewMode === "enforce") {
         // Avoid buzzing the owner for a card the reviewer is about to answer.
@@ -1366,11 +1371,18 @@ bus.subscribe((event: RuntimeEvent) => {
         });
         // settled → idle; a setup failure already marked it dead, keep that
         if (store.bot(bot.id)?.activity !== "dead") store.setActivity(bot.id, "idle");
-        store.patchBot(bot.id, { unread: true });
+        const routineReportThread = routineRun ? routineSourceThread(routineRun) : null;
+        const routineReportGroup = routineReportThread ? store.groupByThread(routineReportThread) : undefined;
+        // Group-origin routines belong to that channel's unread state. Their
+        // hidden execution task should not light up the bot's 1:1 sidebar too.
+        if (!routineReportGroup) store.patchBot(bot.id, { unread: true });
         if (routineRun?.status !== "failed") {
           // the frame carries the bot's avatar so every desktop client can
           // show the notification under that bot's own face
-          notify(buildNotification("done", bot, event.threadId, reply, { avatarUrl: bot.avatarUrl }));
+          const completionDetail = routineRun
+            ? reply || routineRun.output || routineRun.routineName
+            : reply;
+          notify(buildNotification("done", bot, routineReportThread ?? event.threadId, completionDetail, { avatarUrl: bot.avatarUrl }));
         }
         if (screenPollers.has(bot.id)) {
           // the last live frame becomes a settled inline screen message —
@@ -2156,6 +2168,91 @@ async function startTurn(
 // ── routines: persisted definitions → detached bot tasks ───────────────
 // The scheduler owns timing and receipts; the existing harness remains the
 // only owner of provider sessions, approvals, tools, computers and messages.
+function routineSourceOwner(run: RoutineRun) {
+  const threadId = run.sourceThreadId?.trim();
+  if (!threadId) return null;
+  // Validate before messagesFor(): Store lazily opens transcript storage, so
+  // reading an orphan id first would recreate a deleted conversation.
+  const bot = store.bot(run.botId);
+  if (!bot) return null;
+  if (store.taskByThread(bot.id, threadId)) return { bot, group: undefined, threadId };
+  const group = store.groupByThread(threadId);
+  return group?.memberIds.includes(bot.id) ? { bot, group, threadId } : null;
+}
+
+function routineSourceThread(run: RoutineRun): string | null {
+  return routineSourceOwner(run)?.threadId ?? null;
+}
+
+function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
+  const visibleSummary = run.status === "waiting" ? run.attention : run.output;
+  const summary = visibleSummary ? redactSecretsInText(visibleSummary).slice(0, 2_000) : undefined;
+  const error = run.error ? redactSecretsInText(run.error).slice(0, 500) : undefined;
+  const card: NonNullable<Message["routineRun"]> = {
+    runId: run.id,
+    routineId: run.routineId,
+    routineName: redactSecretsInText(run.routineName),
+    status: run.status,
+  };
+  if (run.threadId) card.executionThreadId = run.threadId;
+  if (summary) card.summary = summary;
+  if (error) card.error = error;
+  return card;
+}
+
+function routineRunFallbackText(card: NonNullable<Message["routineRun"]>): string {
+  const state =
+    card.status === "waiting"
+      ? "needs your attention"
+      : card.status === "completed"
+        ? "completed"
+        : card.status === "failed"
+          ? "failed"
+          : card.status === "cancelled"
+            ? "was cancelled"
+            : card.status === "missed"
+              ? "was missed"
+              : card.status;
+  return `Routine “${card.routineName}” ${state}`;
+}
+
+/** Upsert one durable lifecycle card per run. Replaying the same transition,
+ * including restart recovery, patches the existing run id instead of adding
+ * another chat message. */
+function syncRoutineRunToSource(run: RoutineRun): string | null {
+  const source = routineSourceOwner(run);
+  if (!source) return null;
+  const sourceThreadId = source.threadId;
+  const card = routineRunCard(run);
+  const text = routineRunFallbackText(card);
+  const existing = store.messagesFor(sourceThreadId).find(
+    (message) => message.kind === "routine.run" && message.routineRun?.runId === run.id,
+  );
+  const statusChanged = existing?.routineRun?.status !== run.status;
+  if (existing) {
+    store.patchMessage(sourceThreadId, existing.id, { text, routineRun: card });
+  } else {
+    const message: Omit<Message, "id" | "at"> = {
+      role: "bot",
+      kind: "routine.run",
+      text,
+      routineRun: card,
+    };
+    if (source.group) {
+      message.from = { botId: source.bot.id, name: source.bot.name, color: source.bot.color };
+    }
+    store.appendMessage(sourceThreadId, message);
+  }
+
+  // Merely queueing/running is ambient progress. Attention and terminal
+  // states become unread in the conversation where the user asked for them.
+  if (statusChanged && ["waiting", "completed", "failed", "missed"].includes(run.status)) {
+    if (source.group) store.patchGroup(source.group.id, { unread: true });
+    else store.patchBot(source.bot.id, { unread: true });
+  }
+  return sourceThreadId;
+}
+
 routines = new RoutineManager({
   emit: broadcast,
   botState: (botId) => {
@@ -2180,11 +2277,12 @@ routines = new RoutineManager({
         : null;
     await instance?.adapter.interruptTurn(threadId);
   },
+  onRunChanged: syncRoutineRunToSource,
   onRunFailed: (run) => {
     const bot = store.bot(run.botId);
     if (!bot) return;
     const detail = run.error ? `${run.routineName}: ${run.error}` : run.routineName;
-    notify(buildNotification("routine-failed", bot, run.threadId ?? bot.threadId, detail));
+    notify(buildNotification("routine-failed", bot, routineSourceThread(run) ?? run.threadId ?? bot.threadId, detail));
   },
 });
 const recoveryOwners = routines.routineRequestReceiptOwners();
@@ -2240,7 +2338,12 @@ const routineRequests = new RoutineRequestService({
 });
 const ROUTINE_WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
 const routineTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-const agentRoutine = (routine: ReturnType<RoutineManager["listRoutines"]>[number]) => {
+const routineTimestamp = (value: number | undefined) =>
+  value !== undefined && Number.isFinite(value) ? new Date(value).toISOString() : null;
+const agentRoutine = (
+  routine: ReturnType<RoutineManager["listRoutines"]>[number],
+  latestRun?: RoutineRun,
+) => {
   // Routines created in the calendar predate chat-card redaction and may
   // contain a credential in their instructions. The list result is handed
   // back to the model, so scrub the complete value before taking its preview.
@@ -2262,6 +2365,20 @@ const agentRoutine = (routine: ReturnType<RoutineManager["listRoutines"]>[number
           weekdays: routine.schedule.weekdays.map((day) => ROUTINE_WEEKDAY_NAMES[day]),
         },
     nextRunAt: routine.nextRunAt === null ? null : new Date(routine.nextRunAt).toISOString(),
+    latestRun: latestRun
+      ? {
+          id: latestRun.id,
+          status: latestRun.status,
+          triggerSource: latestRun.triggerSource ?? (latestRun.manual ? "manual" : "schedule"),
+          scheduledFor: routineTimestamp(latestRun.scheduledFor),
+          startedAt: routineTimestamp(latestRun.startedAt),
+          finishedAt: routineTimestamp(latestRun.finishedAt),
+          attention: latestRun.attention ? redactSecretsInText(latestRun.attention).slice(0, 500) : null,
+          output: latestRun.output ? redactSecretsInText(latestRun.output).slice(0, 1_000) : null,
+          error: latestRun.error ? redactSecretsInText(latestRun.error).slice(0, 500) : null,
+          executionThreadId: latestRun.threadId ?? null,
+        }
+      : null,
   };
 };
 function sendRoutineResolution(
@@ -3312,13 +3429,20 @@ const server = createServer(async (req, res) => {
         if (!connectorThread(from.id, fromThreadId)) {
           return json(res, 403, { error: "source conversation does not belong to sender" });
         }
+        const latestRuns = new Map<string, RoutineRun>();
+        // listRuns is newest-first. Keep the first receipt per definition so
+        // the agent can answer "did it run?" from scheduler truth rather
+        // than guessing from conversation history.
+        for (const run of routines!.listRuns()) {
+          if (run.botId === from.id && !latestRuns.has(run.routineId)) latestRuns.set(run.routineId, run);
+        }
         return json(res, 200, {
           now: new Date().toISOString(),
           timeZone: routineTimeZone(),
           routines: routines!.listRoutines()
             .filter((routine) => routine.botId === from.id)
             .slice(0, 100)
-            .map(agentRoutine),
+            .map((routine) => agentRoutine(routine, latestRuns.get(routine.id))),
         });
       }
       if (method === "POST" && path === "/api/internal/routine-requests") {

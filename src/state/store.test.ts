@@ -6,6 +6,7 @@ import {
   loadSnapshotBoundary,
   openNotificationTarget,
   reducer,
+  visibleNotificationThread,
   type Bot,
   type Group,
   type Message,
@@ -136,6 +137,27 @@ describe("notification routing", () => {
     openNotificationTarget(dispatch, { botId: "bot-1", threadId: "deleted-task-thread" }, { bots, groups });
 
     expect(dispatch.mock.calls.map(([action]) => action)).toEqual([{ type: "select", id: "bot-1" }]);
+  });
+
+  it("identifies only the exact chat thread currently on screen", () => {
+    expect(visibleNotificationThread({
+      activeView: "chat",
+      selectedId: "bot-1",
+      bots,
+      groups,
+    })).toBe("main-thread");
+    expect(visibleNotificationThread({
+      activeView: "chat",
+      selectedId: "room-1",
+      bots,
+      groups,
+    })).toBe("room-thread");
+    expect(visibleNotificationThread({
+      activeView: "routines",
+      selectedId: "bot-1",
+      bots,
+      groups,
+    })).toBeNull();
   });
 });
 

@@ -454,7 +454,12 @@ describe("RoutineRequestService", () => {
     });
     expect(first).toMatchObject({ claimed: true, state: "applied", action: "create" });
     if (first.state !== "applied") throw new Error("Expected the routine to be applied");
-    expect(routines.listRoutines()).toMatchObject([{ botId: "bot-a", name: "Morning brief", enabled: true }]);
+    expect(routines.listRoutines()).toMatchObject([{
+      botId: "bot-a",
+      name: "Morning brief",
+      enabled: true,
+      sourceThreadId: "thread-a",
+    }]);
     expect(routines.routineRequestReceipt(proposal.requestId)).toBeNull();
     expect(store.messagesFor("thread-a")[0]!.card).toMatchObject({
       held: undefined,

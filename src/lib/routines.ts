@@ -48,6 +48,8 @@ export interface RoutineRun {
   finishedAt?: number;
   output?: string;
   error?: string;
+  /** Concise, redacted question or approval reason while status is waiting. */
+  attention?: string;
   cost?: number | null;
   denials?: string[];
   createdAt: number;

@@ -29,16 +29,17 @@ export function buildNotificationOptions(bot: NotificationBotIdentity): Notifica
   return { tag: `openmausbot:${bot.id}`, icon: bot.avatarUrl ?? undefined };
 }
 
-/** Show one, unless the app is already in front of the user — a banner over
- * the window you are looking at is noise, and the chat itself already shows
- * the card. */
+/** Show one unless the exact destination conversation is already visible.
+ * A focused app may still be showing another task (routine runs are detached),
+ * so window focus alone is not proof that the actionable card can be seen. */
 export function showNotification(
   frame: NotifyFrame,
   onOpen: (target: NotificationTarget) => void,
   avatarUrl?: string | null,
+  visibleThreadId?: string | null,
 ) {
   if (typeof Notification === "undefined") return;
-  if (document.hasFocus()) return;
+  if (document.hasFocus() && visibleThreadId === frame.threadId) return;
 
   const open = () => {
     window.focus();

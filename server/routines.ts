@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 
 import { DATA_DIR } from "./config.ts";
 import type { RuntimeEvent } from "./contracts.ts";
+import { redactSecretsInText } from "./redact.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 
 export type RoutineSchedule =
@@ -14,6 +16,8 @@ export type RoutineSchedule =
  * using the provider selected on the MAUS and only borrows its configured
  * computer tools, if any. */
 export type RoutineRunOn = "maus" | "cloud";
+
+const persistedSourceThreadId = z.string().trim().min(1).optional().catch(undefined);
 
 export type RoutineRunTrigger = "schedule" | "manual" | "webhook";
 
@@ -35,6 +39,9 @@ export interface Routine {
   enabled: boolean;
   schedule: RoutineSchedule;
   durationMinutes: number;
+  /** Conversation that created this routine in chat. Calendar/import-created
+   * routines intentionally have no source, and older files migrate in place. */
+  sourceThreadId?: string;
   nextRunAt: number | null;
   createdAt: number;
   updatedAt: number;
@@ -56,10 +63,15 @@ export interface RoutineRun {
   triggerSource?: RoutineRunTrigger;
   webhookId?: string;
   deliveryId?: string;
+  /** Snapshot the routine's reporting destination. Execution remains on the
+   * separate `threadId` so recurring work never contaminates chat context. */
+  sourceThreadId?: string;
   threadId?: string;
   startedAt?: number;
   finishedAt?: number;
   output?: string;
+  /** Human-readable reason the detached execution is waiting. */
+  attention?: string;
   error?: string;
   cost?: number | null;
   denials?: string[];
@@ -134,6 +146,8 @@ export interface RoutineManagerOptions {
     onDispatchError: (message: string) => void,
   ) => Promise<void>;
   interruptTurn?: (botId: string, threadId: string, runOn: RoutineRunOn) => Promise<void>;
+  /** Projects every durable transition into the source conversation. */
+  onRunChanged?: (run: RoutineRun) => void;
   onRunFailed?: (run: RoutineRun) => void;
 }
 
@@ -224,10 +238,18 @@ export class RoutineManager {
     try {
       const disk = JSON.parse(readFileSync(this.file, "utf8")) as Partial<RoutineFile>;
       this.routines = Array.isArray(disk.routines)
-        ? disk.routines.map((routine) => ({ ...routine, runOn: routine.runOn ?? "maus" }))
+        ? disk.routines.map((routine) => ({
+            ...routine,
+            runOn: routine.runOn ?? "maus",
+            sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
+          }))
         : [];
       this.runs = Array.isArray(disk.runs)
-        ? disk.runs.map((run) => ({ ...run, runOn: run.runOn ?? "maus" }))
+        ? disk.runs.map((run) => ({
+            ...run,
+            runOn: run.runOn ?? "maus",
+            sourceThreadId: persistedSourceThreadId.parse(run.sourceThreadId),
+          }))
         : [];
       this.routineRequestReceipts = Array.isArray(disk.routineRequestReceipts)
         ? disk.routineRequestReceipts.filter((receipt): receipt is RoutineRequestReceipt =>
@@ -253,13 +275,17 @@ export class RoutineManager {
       if (run.status === "running" || run.status === "waiting") {
         run.status = "failed";
         run.error = "OpenMausBot restarted while this routine was running";
+        run.attention = undefined;
         run.finishedAt = this.now();
         recovered.push({ ...run });
       }
     }
     if (recovered.length > 0) {
       this.save();
-      for (const run of recovered) this.options.onRunFailed?.(run);
+      for (const run of recovered) {
+        this.notifyRunChanged(run);
+        this.options.onRunFailed?.(run);
+      }
     }
   }
 
@@ -356,6 +382,9 @@ export class RoutineManager {
     const routine: Routine = {
       id: randomUUID(),
       ...clean,
+      // Only a confirmed chat card supplies `request`; the public calendar
+      // API cannot choose an arbitrary transcript as a reporting target.
+      sourceThreadId: request?.threadId,
       nextRunAt: clean.enabled ? this.initialOccurrence(clean.schedule, at) : null,
       createdAt: at,
       updatedAt: at,
@@ -405,6 +434,7 @@ export class RoutineManager {
         for (const run of this.runs) {
           if (run.routineId !== routine.id || run.status !== "queued") continue;
           run.status = "cancelled";
+          run.attention = undefined;
           run.finishedAt = this.now();
           run.error = "The routine was paused before this run started";
           cancelledRuns.push(run);
@@ -432,6 +462,7 @@ export class RoutineManager {
       for (const run of this.runs) {
         if (run.routineId !== id || run.status !== "queued") continue;
         run.status = "cancelled";
+        run.attention = undefined;
         run.finishedAt = this.now();
         cancelledRuns.push(run);
       }
@@ -455,6 +486,7 @@ export class RoutineManager {
     for (const run of this.runs) {
       if (run.botId !== botId || !["queued", "running", "waiting"].includes(run.status)) continue;
       run.status = "cancelled";
+      run.attention = undefined;
       run.finishedAt = this.now();
       run.error = "The assigned bot was deleted";
       this.emitRun(run);
@@ -477,6 +509,9 @@ export class RoutineManager {
     let run!: RoutineRun;
     this.commitMutation(() => {
       run = this.newRun(routine, this.now(), true);
+      // A chat-confirmed "run now" reports back to the conversation that
+      // invoked this one run. It must not silently rebind future schedules.
+      if (request) run.sourceThreadId = request.threadId;
       if (request) this.rememberRoutineRequest(request, run.id, this.now());
     });
     this.emitRun(run);
@@ -534,6 +569,7 @@ export class RoutineManager {
     for (const run of this.runs) {
       if (run.webhookId !== webhookId || run.status !== "queued") continue;
       run.status = "cancelled";
+      run.attention = undefined;
       run.finishedAt = this.now();
       run.error = message.slice(0, 500);
       this.emitRun(run);
@@ -546,6 +582,7 @@ export class RoutineManager {
     const run = this.runs.find((r) => r.id === id);
     if (!run || !["queued", "running", "waiting"].includes(run.status)) return null;
     run.status = "cancelled";
+    run.attention = undefined;
     run.finishedAt = this.now();
     this.save();
     this.emitRun(run);
@@ -583,6 +620,7 @@ export class RoutineManager {
     try {
       const now = this.now();
       let changed = false;
+      const missedRuns: RoutineRun[] = [];
       for (const routine of this.routines) {
         if (!routine.enabled || routine.nextRunAt == null || routine.nextRunAt > now) continue;
         const scheduledFor = routine.nextRunAt;
@@ -593,6 +631,7 @@ export class RoutineManager {
           missed.finishedAt = now;
           missed.error = "This computer was offline for more than 12 hours after the scheduled time";
           this.emitRun(missed);
+          missedRuns.push({ ...missed });
         } else {
           const run = this.newRun(routine, scheduledFor, false);
           this.emitRun(run);
@@ -605,6 +644,7 @@ export class RoutineManager {
         changed = true;
       }
       if (changed) this.save();
+      for (const missed of missedRuns) this.options.onRunFailed?.(missed);
 
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
@@ -655,12 +695,14 @@ export class RoutineManager {
     if (!run) return null;
     if (event.type === "request.opened") {
       run.status = "waiting";
+      run.attention = redactSecretsInText(event.summary).trim().slice(0, 500) || undefined;
     } else if (event.type === "request.resolved") {
       run.status = "running";
+      run.attention = undefined;
     } else if (event.type === "item.completed" && event.itemType === "assistant_text") {
-      run.output = event.text.trim().slice(0, 2_000);
+      run.output = redactSecretsInText(event.text).trim().slice(0, 2_000);
     } else if (event.type === "runtime.error") {
-      run.error = event.message.slice(0, 500);
+      run.error = redactSecretsInText(event.message).slice(0, 500);
     } else if (event.type === "turn.retrying") {
       // the driver will relaunch this same run; a transient blip is not a
       // receipt-worthy failure, so keep the run running and stay quiet
@@ -674,6 +716,7 @@ export class RoutineManager {
         return { ...run };
       }
       run.status = "completed";
+      run.attention = undefined;
       run.finishedAt = this.now();
       run.error = undefined;
     } else {
@@ -694,7 +737,8 @@ export class RoutineManager {
 
   private failRun(run: RoutineRun, message: string) {
     run.status = "failed";
-    run.error = message.slice(0, 500);
+    run.attention = undefined;
+    run.error = redactSecretsInText(message).slice(0, 500);
     run.finishedAt = this.now();
     this.save();
     this.emitRun(run);
@@ -725,6 +769,7 @@ export class RoutineManager {
       status: "queued",
       manual,
       triggerSource: manual ? "manual" : "schedule",
+      sourceThreadId: routine.sourceThreadId,
       createdAt: this.now(),
     };
     this.runs.push(run);
@@ -738,6 +783,17 @@ export class RoutineManager {
 
   private emitRun(run: RoutineRun) {
     this.options.emit?.({ kind: "routine.run", run: { ...run } });
+    this.notifyRunChanged(run);
+  }
+
+  private notifyRunChanged(run: RoutineRun) {
+    try {
+      this.options.onRunChanged?.({ ...run });
+    } catch (error) {
+      // Reporting is secondary to scheduler truth. A transcript write must
+      // never strand the run in memory or prevent the next tick.
+      console.error("routine: source-thread lifecycle update failed", error);
+    }
   }
 
   private matchingRoutineRequestReceipt(request: RoutineRequestCommit): RoutineRequestReceipt | null {
