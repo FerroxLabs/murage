@@ -3,10 +3,10 @@
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { Coins, KeyRound, Monitor, Search, Smartphone, Terminal, User, X } from "lucide-react";
+import { Coins, Globe, KeyRound, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
-import { showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
+import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
 import { ApiKeyRow, VpsConnection } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
@@ -194,24 +194,26 @@ function ToolCallsRow() {
 
 function ExperimentalFeaturesRow() {
   const { state, dispatch } = useStore();
-  const enabled = skillRecorderEnabled(state.config);
-  const [saving, setSaving] = useState(false);
+  const skillRecorder = skillRecorderEnabled(state.config);
+  const browser = builtInBrowserEnabled(state.config);
+  const desktopBrowser = Boolean(window.ogb?.browser);
+  const [saving, setSaving] = useState<"skillRecorder" | "browser" | null>(null);
   const [error, setError] = useState("");
 
-  const toggle = async () => {
+  const toggle = async (feature: "skillRecorder" | "browser", next: boolean) => {
     if (saving) return;
-    setSaving(true);
+    setSaving(feature);
     setError("");
     try {
       const config: ConfigStatus = await api("/api/config", {
         method: "PATCH",
-        body: JSON.stringify({ features: { skillRecorder: !enabled } }),
+        body: JSON.stringify({ features: { [feature]: next } }),
       });
       dispatch({ type: "configStatus", config });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save the experimental feature setting.");
     } finally {
-      setSaving(false);
+      setSaving(null);
     }
   };
 
@@ -229,15 +231,156 @@ function ExperimentalFeaturesRow() {
         </div>
         <button
           role="switch"
-          aria-checked={enabled}
+          aria-checked={skillRecorder}
           aria-label="Show Teach a skill"
-          disabled={saving}
-          onClick={() => void toggle()}
-          className={`${cnSwitch(enabled)} disabled:cursor-wait disabled:opacity-50`}
+          disabled={saving !== null}
+          onClick={() => void toggle("skillRecorder", !skillRecorder)}
+          className={`${cnSwitch(skillRecorder)} disabled:cursor-wait disabled:opacity-50`}
         >
-          <span className={cnKnob(enabled)} />
+          <span className={cnKnob(skillRecorder)} />
         </button>
       </div>
+      <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
+        <div className="min-w-0">
+          <div className="text-[14px] font-medium text-ink">Built-in browser</div>
+          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+            {desktopBrowser
+              ? "Bots get their own browser tab in the computer panel. Turn this off to remove it for every bot; each bot also has its own switch."
+              : "Needs the OpenMausBot desktop app."}
+          </div>
+        </div>
+        <button
+          role="switch"
+          aria-checked={browser}
+          aria-label="Enable the built-in browser"
+          disabled={saving !== null || (!browser && !desktopBrowser)}
+          onClick={() => void toggle("browser", !browser)}
+          className={`${cnSwitch(browser)} disabled:cursor-wait disabled:opacity-50`}
+        >
+          <span className={cnKnob(browser)} />
+        </button>
+      </div>
+      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
+    </Card>
+  );
+}
+
+/** Named browser sessions: rename or delete; deleting wipes that session's
+ * logins, storage and cache and sends any bot on it back to its own. */
+function BrowserProfilesRow() {
+  const { state, dispatch } = useStore();
+  const profiles = state.config?.browserProfiles ?? [];
+  const bridge = window.ogb?.browser;
+  const [busy, setBusy] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const [error, setError] = useState("");
+  if (!builtInBrowserEnabled(state.config) || !bridge) return null;
+
+  const save = async (next: typeof profiles, then?: () => Promise<void>) => {
+    try {
+      const config: ConfigStatus = await api("/api/config", { method: "PATCH", body: JSON.stringify({ browserProfiles: next }) });
+      dispatch({ type: "configStatus", config });
+      await then?.();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save browser profiles.");
+    } finally {
+      setBusy(null);
+      setRenaming(null);
+    }
+  };
+  const remove = (id: string) => {
+    if (busy) return;
+    setBusy(id);
+    setError("");
+    void save(
+      profiles.filter((profile) => profile.id !== id),
+      async () => {
+        // bots pointed at it fall back to their own session server-side; the
+        // surface drops its views and wipes the partition's data
+        for (const bot of state.bots) {
+          if (bot.browserProfile === id) dispatch({ type: "updateBot", botId: bot.id, patch: { browserProfile: null } });
+        }
+        await bridge.forgetProfile?.(id);
+      },
+    );
+  };
+  const rename = () => {
+    if (!renaming || busy) return;
+    const name = renaming.name.trim();
+    if (!name) return;
+    setBusy(renaming.id);
+    setError("");
+    void save(profiles.map((profile) => (profile.id === renaming.id ? { ...profile, name } : profile)));
+  };
+  const usersOf = (id: string) => state.bots.filter((bot) => !bot.hidden && bot.browserProfile === id).map((bot) => bot.name);
+
+  return (
+    <Card
+      title="Browser profiles"
+      subtitle="Named sign-in sessions any bot can use. Create one from a bot's Browser tab; sign in once and it stays."
+    >
+      {profiles.length === 0 ? (
+        <div className="text-[13px] text-ink-secondary">No profiles yet — pick "+ Add profile…" under a bot's browser.</div>
+      ) : (
+        <div className="flex flex-col divide-y divide-hairline/30">
+          {profiles.map((profile) => {
+            const users = usersOf(profile.id);
+            const editing = renaming?.id === profile.id;
+            return (
+              <div key={profile.id} className="flex items-center justify-between gap-3 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Globe size={14} className="shrink-0 text-ink-secondary" />
+                  {editing ? (
+                    <form
+                      className="flex items-center gap-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        rename();
+                      }}
+                    >
+                      <input
+                        autoFocus
+                        value={renaming.name}
+                        onChange={(event) => setRenaming({ id: profile.id, name: event.target.value })}
+                        maxLength={40}
+                        className="rounded-md bg-inset px-2 py-1 text-[13px] text-ink outline-none"
+                        aria-label="Profile name"
+                      />
+                      <button type="submit" disabled={busy !== null} className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-ink disabled:opacity-50">
+                        Save
+                      </button>
+                      <button type="button" onClick={() => setRenaming(null)} className="text-[12px] text-ink-secondary hover:text-ink">
+                        Cancel
+                      </button>
+                    </form>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setRenaming({ id: profile.id, name: profile.name })}
+                      className="truncate text-left text-[14px] font-medium text-ink hover:underline"
+                      title="Rename"
+                    >
+                      {profile.name}
+                    </button>
+                  )}
+                  <span className="truncate text-[12px] text-ink-secondary">
+                    {users.length ? `used by ${users.join(", ")}` : "not in use"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => remove(profile.id)}
+                  disabled={busy !== null}
+                  className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-50"
+                  title="Delete this profile and forget its logins"
+                >
+                  <Trash2 size={13} /> Delete
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
     </Card>
   );
@@ -437,6 +580,7 @@ export function SettingsModal() {
                 </Card>
                 <ToolCallsRow />
                 <ExperimentalFeaturesRow />
+                <BrowserProfilesRow />
                 <UpdatesRow />
                 <DiagnosticsRow />
                 <AnalyticsRow />
