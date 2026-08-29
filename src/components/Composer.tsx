@@ -59,9 +59,13 @@ interface QueuedGroupSend {
   draft: ComposerDraftSnapshot;
 }
 
+/** Composer chip for Auto mode. Same `autoApprove` bit as the profile switch
+ * — picking Auto mode here turns that on. The chip only changes its name,
+ * not its color. */
 function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto: boolean) => void }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const on = Boolean(bot.autoApprove);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -80,21 +84,18 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [open]);
 
-  const mode = bot.autoApprove ? "auto" : "ask";
-  const Icon = mode === "auto" ? ShieldCheck : Hand;
-  const label = mode === "auto" ? "Approve for me" : "Ask for approval";
-
   return (
     <div className="relative flex items-center" ref={wrapperRef}>
       <button
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={on ? "Auto mode" : "Ask for approval"}
         onClick={() => setOpen((current) => !current)}
         className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
       >
-        <Icon size={14} className="opacity-70" />
-        {label}
+        {on ? <ShieldCheck size={14} className="opacity-70" /> : <Hand size={14} className="opacity-70" />}
+        {on ? "Auto mode" : "Ask for approval"}
       </button>
 
       {open && (
@@ -110,7 +111,7 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
             <button
               type="button"
               role="menuitemradio"
-              aria-checked={mode === "ask"}
+              aria-checked={!on}
               onClick={() => {
                 onSetAuto(false);
                 setOpen(false);
@@ -121,7 +122,7 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
               <div className="flex w-full flex-col gap-0.5">
                 <div className="flex items-center justify-between text-[14px] text-ink">
                   Ask for approval
-                  {mode === "ask" && <Check size={14} />}
+                  {!on && <Check size={14} />}
                 </div>
                 <div className="text-[13px] text-ink-secondary">Ask before actions that need your permission</div>
               </div>
@@ -129,7 +130,7 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
             <button
               type="button"
               role="menuitemradio"
-              aria-checked={mode === "auto"}
+              aria-checked={on}
               onClick={() => {
                 onSetAuto(true);
                 setOpen(false);
@@ -139,8 +140,8 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
               <ShieldCheck size={16} className="mt-0.5 shrink-0 opacity-70" />
               <div className="flex w-full flex-col gap-0.5">
                 <div className="flex items-center justify-between text-[14px] text-ink">
-                  Approve for me
-                  {mode === "auto" && <Check size={14} />}
+                  Auto mode
+                  {on && <Check size={14} />}
                 </div>
                 <div className="text-[13px] text-ink-secondary">
                   Keep going automatically; destructive and sensitive actions still ask
