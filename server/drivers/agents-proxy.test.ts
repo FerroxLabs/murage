@@ -19,6 +19,8 @@ let lastAuth: string | undefined;
 let lastAskBody: any = null;
 let askResponse: unknown = { botName: "Helper", text: "hi from helper" };
 let lastDelegateBody: any = null;
+let lastDelegationUrl: string | null = null;
+let delegationStatusResponse: unknown = { status: "done", toBotName: "Helper", result: "All done." };
 let delegateResponse: unknown = { queued: true, message: "Delegation queued." };
 let lastCreateBody: any = null;
 let lastCredentialBody: any = null;
@@ -87,6 +89,12 @@ beforeAll(async () => {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify(delegateResponse));
       });
+      return;
+    }
+    if (req.method === "GET" && req.url?.startsWith("/api/internal/delegations/")) {
+      lastDelegationUrl = req.url;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(delegationStatusResponse));
       return;
     }
     if (req.method === "POST" && req.url === "/api/internal/create-bot") {
@@ -170,6 +178,8 @@ describe("agents-proxy MCP surface", () => {
       "list_bots",
       "ask_bot",
       "delegate_bot",
+      "check_delegation",
+      "wait_delegation",
       "create_bot",
       "request_credential",
       "list_routines",
@@ -301,6 +311,46 @@ describe("agents-proxy MCP surface", () => {
     const res = await callTool("request_credential", { credential_id: "arbitrary.config.path" });
     expect(res.result.isError).toBe(true);
     expect(lastCredentialBody).toBeNull();
+  });
+
+  it("hands the delegator its task id and the tools to read the outcome", async () => {
+    delegateResponse = {
+      queued: true,
+      taskId: "task-abc123",
+      message: "Delegation queued — @Helper will pick it up after your current turn finishes.",
+    };
+    const res = await callTool("delegate_bot", { bot_id: "bot-helper", message: "do the thing" });
+    expect(res.result.content[0].text).toContain("Task id: task-abc123");
+    expect(res.result.content[0].text).toContain("wait_delegation");
+    delegateResponse = { queued: true, message: "Delegation queued." };
+  });
+
+  it("check/wait_delegation: flat schemas, guided errors, and the read-back wire", async () => {
+    const list = await rpc("tools/list");
+    for (const name of ["check_delegation", "wait_delegation"]) {
+      const tool = list.result.tools.find((t: { name: string }) => t.name === name);
+      expect(JSON.stringify(tool.inputSchema)).not.toMatch(/"(oneOf|anyOf|allOf|const|format)":/);
+    }
+
+    lastDelegationUrl = null;
+    const bad = await callTool("check_delegation", { task_id: "!" });
+    expect(bad.result.isError).toBe(true);
+    expect(bad.result.content[0].text).toContain('"task_id"');
+    expect(lastDelegationUrl).toBeNull(); // guidance is free
+
+    const done = await callTool("check_delegation", { task_id: "task-abc123" });
+    expect(done.result.content[0].text).toContain("@Helper finished task task-abc123");
+    expect(done.result.content[0].text).toContain("All done.");
+    expect(lastDelegationUrl).toContain("/api/internal/delegations/task-abc123?");
+    expect(lastDelegationUrl).toContain("wait_ms=0");
+    expect(lastDelegationUrl).toContain("fromBotId=bot-asker");
+
+    delegationStatusResponse = { status: "queued", toBotName: "Helper" };
+    const waiting = await callTool("wait_delegation", { task_id: "task-abc123", timeout_seconds: 45 });
+    expect(waiting.result.content[0].text).toContain("still queued");
+    expect(waiting.result.content[0].text).toContain("after 45s");
+    expect(lastDelegationUrl).toContain("wait_ms=45000");
+    delegationStatusResponse = { status: "done", toBotName: "Helper", result: "All done." };
   });
 
   it("lists only the current bot's routines with authoritative time context", async () => {
