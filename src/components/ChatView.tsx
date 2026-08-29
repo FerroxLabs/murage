@@ -65,6 +65,7 @@ import { ActivityRun } from "./ActivityRun";
 import { webhookMessageView } from "@/lib/webhook-message";
 import { splitAttachedImages } from "@/lib/composer-attachments";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
+import { useComposerDockPad } from "@/lib/composer-dock";
 import {
   TRANSCRIPT_WINDOW_SIZE,
   expandWindowStart,
@@ -800,6 +801,8 @@ function PinnedBanner({
 export function ChatView({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerDockRef = useRef<HTMLDivElement>(null);
+  const composerDock = useComposerDockPad(composerDockRef);
 
   const stream = useStreaming();
   const streaming = stream.streaming[bot.threadId];
@@ -949,13 +952,16 @@ export function ChatView({ bot }: { bot: Bot }) {
   useFocusMessage(bot.threadId, messages.length > 0);
 
   // deps track the FULL messages.length, so expanding the window (which only
-  // changes windowedMessages) can never re-trigger this bottom scrollTo
+  // changes windowedMessages) can never re-trigger this bottom scrollTo.
+  // `follow` is intentionally omitted: flipping it true used to yank the
+  // viewport to the end. Re-pinning only arms future content; Jump to latest
+  // and this effect on new rows do the scrolling.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [bot.id, messages.length, streaming, reasoning, bot.busy, follow]);
+  }, [bot.id, messages.length, streaming, reasoning, bot.busy, composerDock.pad]);
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
@@ -1166,7 +1172,8 @@ export function ChatView({ bot }: { bot: Bot }) {
         }}
       >
         <div
-          className="flex w-full flex-col gap-3 pb-24"
+          className="flex w-full flex-col gap-3"
+          style={{ paddingBottom: composerDock.pad }}
           role="log"
           aria-live="polite"
           aria-label={`Conversation with ${bot.name}`}
@@ -1245,7 +1252,8 @@ export function ChatView({ bot }: { bot: Bot }) {
         <button
           onClick={jumpToLatest}
           aria-label="Jump to latest messages"
-          className="animate-pop-in absolute bottom-24 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
+          className="animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
+          style={{ bottom: composerDock.height }}
         >
           <ArrowDown size={13} /> Jump to latest
         </button>
@@ -1255,7 +1263,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           request can restore the old task without spilling into the newly
           selected one. ArrowUp-to-edit stays gated on busy because editing
           rewinds the thread, which a live turn forbids (the server 409s it). */}
-      <div className="absolute inset-x-0 bottom-0 z-[2]">
+      <div ref={composerDockRef} className="absolute inset-x-0 bottom-0 z-[2]">
       <Composer
         key={bot.threadId}
         bot={bot}
