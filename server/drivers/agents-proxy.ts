@@ -216,6 +216,31 @@ const TOOLS = [
     },
   },
   {
+    name: "check_delegation",
+    description:
+      "Check what happened to a delegation you queued with delegate_bot, without waiting: still queued, running, or finished — and the peer's reply once it is done.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The task id delegate_bot returned." },
+      },
+      required: ["task_id"],
+    },
+  },
+  {
+    name: "wait_delegation",
+    description:
+      "Wait until a delegation you queued finishes and return the peer's reply — ONE call instead of repeated checks. Use it after your own remaining work is done; it returns immediately if the task already finished.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The task id delegate_bot returned." },
+        timeout_seconds: { type: "integer", description: "give up waiting after this many seconds; default 60, max 240" },
+      },
+      required: ["task_id"],
+    },
+  },
+  {
     name: "create_bot",
     description:
       "Create a specialist bot in your section. Only a section's Chief of Staff may use this. The new bot inherits the Chief's engine, starts with connected apps and automatic approvals disabled, and can then receive work through delegate_bot. Create only the smallest useful team (maximum four per turn).",
@@ -382,8 +407,32 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const r = await api(`/api/internal/delegate-bot`, { method: "POST", body: JSON.stringify(body) });
     if (r.error) return { text: `Couldn't queue the delegation: ${r.error}`, isError: true };
     // Fire-and-forget by contract: the harness returns immediately, the
-    // peer turn runs after our current turn finishes.
-    return { text: typeof r.message === "string" ? r.message : "Delegation queued." };
+    // peer turn runs after our current turn finishes. The task id is the
+    // bot's claim ticket for the outcome.
+    const note = typeof r.message === "string" ? r.message : "Delegation queued.";
+    const suffix = typeof r.taskId === "string" && r.taskId
+      ? ` Task id: ${r.taskId} — after your own work is done, read the outcome with check_delegation or block on it with wait_delegation.`
+      : "";
+    return { text: `${note}${suffix}` };
+  }
+  if (name === "check_delegation" || name === "wait_delegation") {
+    const taskId = String(args.task_id ?? "").trim();
+    if (!/^[\w-]{4,64}$/.test(taskId)) {
+      return { text: `${name} needs the "task_id" that delegate_bot returned, e.g. {"task_id":"1f0c2f4e-..."}.`, isError: true };
+    }
+    const timeout = Math.min(Math.max(Math.trunc(Number(args.timeout_seconds) || 60), 1), 240);
+    const waitMs = name === "wait_delegation" ? timeout * 1000 : 0;
+    const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, wait_ms: String(waitMs) });
+    const r = await api(`/api/internal/delegations/${encodeURIComponent(taskId)}?${query.toString()}`);
+    const who = typeof r.toBotName === "string" && r.toBotName ? `@${r.toBotName}` : "the peer";
+    if (r.status === "done") return { text: `${who} finished task ${taskId}:\n${String(r.result || "(no reply text)")}` };
+    if (r.status === "queued") {
+      return { text: `Task ${taskId} is still queued — ${who} hasn't picked it up yet${waitMs ? ` after ${timeout}s` : ""}. Keep working and check again later.` };
+    }
+    if (r.status === "running") {
+      return { text: `Task ${taskId} is running with ${who}${waitMs ? ` (still going after ${timeout}s)` : ""}. Check again shortly.` };
+    }
+    return { text: `Task ${taskId} ended without a reply — ${String(r.status ?? "unknown")}${r.result ? `: ${String(r.result)}` : ""}.`, isError: true };
   }
   if (name === "create_bot") {
     const botName = String(args.name ?? "").trim();
