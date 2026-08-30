@@ -4075,7 +4075,6 @@ const server = createServer(async (req, res) => {
         if (depth >= MAX_COMMS_DEPTH) return json(res, 200, { error: "message chains are limited to one hop" });
         const target = store.bot(toBotId);
         if (!target) return json(res, 404, { error: "no such bot" });
-        if (target.busy) return json(res, 200, { busy: true });
         // An unknown sender used to fall through: no mirroring AND no
         // approval, while still running the peer turn. That made an
         // unresolvable id the cheapest way past the gate, so it is now a
@@ -4089,6 +4088,25 @@ const server = createServer(async (req, res) => {
         if (!store.taskByThread(from.id, fromThreadId)) {
           return json(res, 403, { error: "source thread does not belong to sender" });
         }
+        // A busy peer used to be a flat bounce ("try again later") — a
+        // dead-end mid-turn that models rarely retry, so the exchange just
+        // evaporated. Demote the synchronous ask into a durable handoff
+        // instead: the message waits in the delegation ledger (bounded busy
+        // retries, receipts, restart-safe) and the asker gets a task id it
+        // can check next turn. If the ledger refuses (cap/depth), fall back
+        // to the plain busy bounce rather than dropping the refusal reason.
+        const queueBusyFallback = () => {
+          const queued = queueDelegation(
+            commsBus,
+            from,
+            { toBotId, message, reason: "asked while busy", depth },
+            MAX_COMMS_DEPTH,
+            fromThreadId,
+          );
+          if (queued.result !== "ok" || !queued.id) return json(res, 200, { busy: true });
+          return json(res, 200, { busy: true, taskId: queued.id, toBotName: target.name });
+        };
+        if (target.busy) return queueBusyFallback();
         let currentFrom = from;
         let currentTarget = target;
 
@@ -4124,7 +4142,7 @@ const server = createServer(async (req, res) => {
           if (!store.taskByThread(freshFrom.id, fromThreadId)) {
             return json(res, 404, { error: "source task no longer exists" });
           }
-          if (freshTarget.busy) return json(res, 200, { busy: true });
+          if (freshTarget.busy) return queueBusyFallback();
           currentFrom = freshFrom;
           currentTarget = freshTarget;
         }
