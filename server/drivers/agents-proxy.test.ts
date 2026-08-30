@@ -17,7 +17,9 @@ let stub: Server;
 let stubPort = 0;
 let lastAuth: string | undefined;
 let lastAskBody: any = null;
-let askResponse: unknown = { botName: "Helper", text: "hi from helper" };
+/** What the stub harness returns from /api/internal/ask-bot. */
+type StubAskResponse = { botName?: string; text?: string; busy?: boolean; taskId?: string; toBotName?: string; error?: string };
+let askResponse: StubAskResponse = { botName: "Helper", text: "hi from helper" };
 let lastDelegateBody: any = null;
 let lastDelegationUrl: string | null = null;
 let delegationStatusResponse: unknown = { status: "done", toBotName: "Helper", result: "All done." };
@@ -239,6 +241,18 @@ describe("agents-proxy MCP surface", () => {
     askResponse = { busy: true };
     const res = await callTool("ask_bot", { bot_id: "bot-helper", message: "ping" });
     expect(res.result.content[0].text).toContain("busy");
+    expect(res.result.isError).toBeFalsy();
+  });
+
+  it("turns a busy+queued reply into delegation guidance with the task id", async () => {
+    askResponse = { busy: true, taskId: "task-9", toBotName: "Helper" };
+    const res = await callTool("ask_bot", { bot_id: "bot-helper", message: "ping" });
+    const text = res.result.content[0].text;
+    expect(text).toContain("Helper is busy");
+    expect(text).toContain("queued as a delegation");
+    expect(text).toContain("task-9");
+    expect(text).toContain("check_delegation");
+    expect(text).toContain("wait_delegation");
     expect(res.result.isError).toBeFalsy();
   });
 

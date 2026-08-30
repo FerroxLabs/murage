@@ -83,8 +83,17 @@ describe("roomResponders", () => {
 describe("comms e2e (fake ACP fleet)", () => {
   let child: ChildProcess;
   let home: string;
+  let gateFile = "";
   let stderr = "";
 
+  const waitUntil = async (predicate: () => Promise<boolean>, timeout: number, what: string): Promise<void> => {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      if (await predicate()) return;
+      if (Date.now() > deadline) throw new Error(`${what}. stderr: ${stderr.slice(-2000)}`);
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  };
   const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
@@ -98,6 +107,7 @@ describe("comms e2e (fake ACP fleet)", () => {
     chmodSync(FAKE_CLI, 0o755);
     chmodSync(FAKE_AGY_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "omb-comms-test-"));
+    gateFile = join(home, "helper-gate");
     mkdirSync(join(home, ".openmausbot"), { recursive: true });
     writeFileSync(
       join(home, ".openmausbot", "config.json"),
@@ -152,6 +162,14 @@ describe("comms e2e (fake ACP fleet)", () => {
           helperHang: {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "hang" },
+            config: { cli: FAKE_CLI, fullAuto: true },
+          },
+          // a deterministic busy window: turns hold open until the gate
+          // file exists, then echo their prompt (the ask_bot busy-fallback
+          // e2e frees the peer by writing the file).
+          helperGate: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: gateFile },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
         },
@@ -504,6 +522,75 @@ describe("comms e2e (fake ACP fleet)", () => {
       expect(askerBot.busy).toBeFalsy();
     },
     45_000,
+  );
+
+  // ── ask_bot busy fallback ───────────────────────────────────────────
+  // A used to get a flat "busy — try again later" when B was mid-turn: a
+  // dead-end that models rarely retry, so the exchange evaporated (#583).
+  // Now the harness demotes the ask into a durable delegation: A's reply
+  // carries the task id, the queue chip lands on A's thread, and once B's
+  // blocked turn settles the queued message actually runs on B.
+  it(
+    "queues an ask_bot to a busy peer as a delegation and delivers it once the peer frees up",
+    async () => {
+      // determinism: the ask-peer CLI asks the FIRST visible bot, so hide
+      // everything previous tests left behind before creating the pair.
+      for (const existing of (await api("GET", "/api/bots")).body.bots) {
+        await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
+      }
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, {
+        name: "GateHelper",
+        modelSelection: { instanceId: "helperGate", model: "fake-model" },
+      });
+      const asker = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${asker.id}`, {
+        name: "GateAsker",
+        modelSelection: { instanceId: "grok", model: "fake-model" },
+      });
+
+      // make the peer busy: its echo-gated turn holds open until the gate
+      // file exists
+      expect((await api("POST", `/api/bots/${helper.id}/messages`, { text: "hold the line" })).status).toBe(202);
+      await waitUntil(async () => {
+        const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
+        return Boolean(current?.busy);
+      }, 10_000, "helper never went busy");
+
+      // A asks the busy peer — the proxy's reply must be the queued-as-
+      // delegation guidance, not a dead-end bounce
+      expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "ask @GateHelper something" })).status).toBe(202);
+      let askerBot: any;
+      await waitUntil(async () => {
+        askerBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        const reply = askerBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
+        return Boolean(reply?.text?.includes("queued as a delegation") && !askerBot.busy);
+      }, 25_000, "asker never got the queued-fallback reply");
+      const askerReply = askerBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
+      expect(askerReply.text).toContain("Task id:");
+      expect(askerReply.text).toContain("wait_delegation");
+      // the queue is visible on A's thread as the standard delegation chip
+      expect(askerBot.messages.some(
+        (m: any) => m.kind === "activity" && m.tool?.name === "Delegated to @GateHelper: asked while busy",
+      )).toBe(true);
+
+      // free the peer: its blocked turn completes, which triggers the
+      // drain retry, and the queued message runs as a real depth-1 turn
+      writeFileSync(gateFile, "go");
+      let helperBot: any;
+      await waitUntil(async () => {
+        helperBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === helper.id);
+        const delivered = helperBot.messages.some(
+          (m: any) => m.role === "user" && m.kind === "text" && m.text?.includes("ping from fake"),
+        );
+        return Boolean(delivered && !helperBot.busy);
+      }, 30_000, "queued message never reached the freed peer");
+      const inbound = helperBot.messages.find(
+        (m: any) => m.role === "user" && m.kind === "text" && m.text?.includes("ping from fake"),
+      );
+      expect(inbound.text).toContain("[Delegated by @GateAsker");
+    },
+    60_000,
   );
 
   // ── delegation terminal-state mirroring ─────────────────────────────
