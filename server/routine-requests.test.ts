@@ -945,6 +945,6 @@ describe("cross-bot routine targeting", () => {
     expect(result).toMatchObject({ claimed: true, state: "invalid", status: 404 });
     expect(routines.listRoutines()).toHaveLength(0);
     // the refusal is written back onto the card so the user sees why
-    expect(store.messagesFor("thread-a")[0]?.card.held).toMatch(/no longer exists/);
+    expect(store.messagesFor("thread-a")[0]?.card?.held).toMatch(/no longer exists/);
   });
 });
