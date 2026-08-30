@@ -71,6 +71,24 @@ function mutationAffectsOverlay(record: MutationRecord): boolean {
   );
 }
 
+function sameSurfaceState(left: BrowserSurfaceState | null, right: BrowserSurfaceState): boolean {
+  return Boolean(
+    left &&
+      left.botId === right.botId &&
+      left.open === right.open &&
+      left.url === right.url &&
+      left.title === right.title &&
+      left.loading === right.loading &&
+      left.canGoBack === right.canGoBack &&
+      left.canGoForward === right.canGoForward &&
+      left.visible === right.visible &&
+      left.partition === right.partition &&
+      left.profile === right.profile &&
+      left.mode === right.mode &&
+      left.code === right.code,
+  );
+}
+
 /** "Work Microsoft" → "work-microsoft"; collisions get a numeric suffix. */
 export function profileIdFor(name: string, taken: BrowserProfile[]): string {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32) || "profile";
@@ -134,6 +152,9 @@ export function BrowserPanel({
   const [addingProfile, setAddingProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
   const [profileBusy, setProfileBusy] = useState(false);
+  const acceptSurface = useCallback((next: BrowserSurfaceState) => {
+    setSurface((current) => (sameSurfaceState(current, next) ? current : next));
+  }, []);
   const botId = bot.id;
   const profiles = state.config?.browserProfiles ?? [];
   // a profile that was deleted falls back to the bot's own session; Guest is
@@ -162,7 +183,7 @@ export function BrowserPanel({
       bridge
         .layout(botId, target, activePartition, size)
         .then((next) => {
-          if (alive) setSurface(next);
+          if (alive) acceptSurface(next);
         })
         .catch((cause) => {
           if (alive) setError(cause instanceof Error ? cause.message : String(cause));
@@ -202,14 +223,14 @@ export function BrowserPanel({
       // but nothing may paint over the chat.
       void bridge.layout(botId, null).catch(() => {});
     };
-  }, [bridge, botId, pageVisible, activePartition, size]);
+  }, [bridge, botId, pageVisible, activePartition, size, acceptSurface]);
 
   useEffect(() => {
     if (!bridge) return;
     return bridge.onState((next) => {
-      if (next.botId === botId) setSurface(next);
+      if (next.botId === botId) acceptSurface(next);
     });
-  }, [bridge, botId]);
+  }, [bridge, botId, acceptSurface]);
 
   useEffect(() => {
     // Keep the synchronous guard set until React has folded the successful

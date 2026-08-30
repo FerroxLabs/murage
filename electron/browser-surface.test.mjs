@@ -158,11 +158,15 @@ function fakeView(partition) {
     webContents,
     bounds: null,
     visible: null,
+    setBoundsCalls: [],
+    setVisibleCalls: [],
     setBounds: (bounds) => {
       view.bounds = bounds;
+      view.setBoundsCalls.push(bounds);
     },
     setVisible: (visible) => {
       view.visible = visible;
+      view.setVisibleCalls.push(visible);
     },
     getBounds: () => view.bounds ?? { x: 0, y: 0, width: 800, height: 600 },
     calls,
@@ -338,6 +342,38 @@ describe("browser surface manager", () => {
     manager.layout("bot-a", { x: 0, y: 0, width: 1100, height: 700 }, "", "expanded");
     expect(views[0].calls.at(-1)).toEqual(["disableDeviceEmulation"]);
     expect(manager.state("bot-a").mode).toBe("expanded");
+  });
+
+  it("does not reapply unchanged bounds, visibility, or compact emulation", () => {
+    const { manager, views } = harness();
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    const view = views[0];
+    const initialBoundsCalls = view.setBoundsCalls.length;
+    const initialVisibleCalls = view.setVisibleCalls.length;
+    const initialEmulationCalls = view.calls.filter(([name]) => name === "enableDeviceEmulation").length;
+
+    manager.layout("bot-a", { ...BOUNDS }, "", "compact");
+    manager.layout("bot-a", { ...BOUNDS }, "", "compact");
+
+    expect(view.setBoundsCalls).toHaveLength(initialBoundsCalls);
+    expect(view.setVisibleCalls).toHaveLength(initialVisibleCalls);
+    expect(view.calls.filter(([name]) => name === "enableDeviceEmulation")).toHaveLength(initialEmulationCalls);
+  });
+
+  it("moves without resetting emulation and reapplies it only when compact scale changes", () => {
+    const { manager, views } = harness();
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    const view = views[0];
+
+    manager.layout("bot-a", { ...BOUNDS, x: 80, y: 90 }, "", "compact");
+    expect(view.setBoundsCalls.at(-1)).toEqual({ ...BOUNDS, x: 80, y: 90 });
+    expect(view.calls.filter(([name]) => name === "enableDeviceEmulation")).toHaveLength(1);
+
+    manager.layout("bot-a", { ...BOUNDS, x: 80, y: 90, width: 320 }, "", "compact");
+    const emulationCalls = view.calls.filter(([name]) => name === "enableDeviceEmulation");
+    expect(emulationCalls).toHaveLength(2);
+    expect(emulationCalls.at(-1)[1].viewSize).toEqual(VIEWPORT);
+    expect(emulationCalls.at(-1)[1].scale).toBeCloseTo(0.25, 4);
   });
 
   it("navigates only to web pages and answers with the page's elements plus a scroll hint", async () => {

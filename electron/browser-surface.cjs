@@ -495,6 +495,16 @@ function createBrowserSurfaceManager({
     };
   };
 
+  const sameBounds = (left, right) =>
+    Boolean(
+      left &&
+        right &&
+        left.x === right.x &&
+        left.y === right.y &&
+        left.width === right.width &&
+        left.height === right.height,
+    );
+
   const emitState = (entry) => {
     if (active.get(entry.botId) === entry) emit(stateFor(entry));
   };
@@ -858,6 +868,7 @@ function createBrowserSurfaceManager({
       visible: false,
       bounds: null,
       mode: null,
+      emulationKey: null,
       refs: null,
       refKind: "ax",
       refIntegrity: null,
@@ -1320,6 +1331,9 @@ function createBrowserSurfaceManager({
     entry.mode = mode;
     if (mode === "compact" && entry.bounds) {
       const scale = Math.min(entry.bounds.width / VIEWPORT.width, entry.bounds.height / VIEWPORT.height);
+      const boundedScale = Math.max(0.1, Math.min(1, scale));
+      const emulationKey = `compact:${boundedScale}`;
+      if (entry.emulationKey === emulationKey) return;
       try {
         contents.enableDeviceEmulation({
           screenPosition: "desktop",
@@ -1327,12 +1341,15 @@ function createBrowserSurfaceManager({
           viewPosition: { x: 0, y: 0 },
           deviceScaleFactor: 0,
           viewSize: { ...VIEWPORT },
-          scale: Math.max(0.1, Math.min(1, scale)),
+          scale: boundedScale,
         });
+        entry.emulationKey = emulationKey;
       } catch {}
     } else {
+      if (entry.emulationKey === "expanded") return;
       try {
         contents.disableDeviceEmulation();
+        entry.emulationKey = "expanded";
       } catch {}
     }
   };
@@ -1679,17 +1696,23 @@ function createBrowserSurfaceManager({
       if (bounds === null || bounds === undefined) {
         const entry = active.get(botIdOf(botId));
         if (!entry) return closedState(botIdOf(botId));
-        entry.visible = false;
-        entry.view.setVisible(false);
+        if (entry.visible) {
+          entry.visible = false;
+          entry.view.setVisible(false);
+        }
         return stateFor(entry);
       }
       const entry = ensure(botId, profile);
       const normalized = normalizeDesktopWorkspaceBounds(bounds, owner.getContentSize());
-      entry.bounds = normalized;
-      entry.view.setBounds(normalized);
+      if (!sameBounds(entry.bounds, normalized)) {
+        entry.bounds = normalized;
+        entry.view.setBounds(normalized);
+      }
       applyMode(entry, mode === "expanded" ? "expanded" : "compact");
-      entry.visible = true;
-      entry.view.setVisible(true);
+      if (!entry.visible) {
+        entry.visible = true;
+        entry.view.setVisible(true);
+      }
       return stateFor(entry);
     },
 
