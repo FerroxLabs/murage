@@ -18,7 +18,7 @@ let stubPort = 0;
 let lastAuth: string | undefined;
 let lastAskBody: any = null;
 /** What the stub harness returns from /api/internal/ask-bot. */
-type StubAskResponse = { botName?: string; text?: string; busy?: boolean; taskId?: string; toBotName?: string; error?: string };
+type StubAskResponse = { botName?: string; text?: string; busy?: boolean; timeout?: boolean; waitedMs?: number; taskId?: string; toBotName?: string; error?: string };
 let askResponse: StubAskResponse = { botName: "Helper", text: "hi from helper" };
 let lastDelegateBody: any = null;
 let lastDelegationUrl: string | null = null;
@@ -251,6 +251,18 @@ describe("agents-proxy MCP surface", () => {
     expect(text).toContain("Helper is busy");
     expect(text).toContain("queued as a delegation");
     expect(text).toContain("task-9");
+    expect(text).toContain("check_delegation");
+    expect(text).toContain("wait_delegation");
+    expect(res.result.isError).toBeFalsy();
+  });
+
+  it("renders a timeout conversion with the task id and guidance", async () => {
+    askResponse = { timeout: true, taskId: "task-42", toBotName: "Helper", waitedMs: 240_000 };
+    const res = await callTool("ask_bot", { bot_id: "bot-helper", message: "ping" });
+    const text = res.result.content[0].text;
+    expect(text).toContain("Helper is still working after 4 minutes");
+    expect(text).toContain("converted to a delegation");
+    expect(text).toContain("task-42");
     expect(text).toContain("check_delegation");
     expect(text).toContain("wait_delegation");
     expect(res.result.isError).toBeFalsy();
