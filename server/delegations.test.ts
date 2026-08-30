@@ -5,7 +5,7 @@
 // stays out of these — the integration happens in comms.test.ts (the full
 // e2e through the agents proxy + fake ACP CLI).
 import { rmSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CommsBus } from "./comms-visibility.ts";
 import { DATA_DIR } from "./config.ts";
@@ -18,6 +18,7 @@ import {
   pendingDelegationSnapshot,
   queueDelegation,
   recordDelegationReceipt,
+  releaseDelegationsWaitingOn,
   threadsWaitingOn,
   _pendingCount,
 } from "./delegations.ts";
@@ -367,6 +368,23 @@ describe("drainDelegations", () => {
     expect(runTargetCalls[0]!.commsDepth).toBe(1);
   });
 
+  it("does not ask twice when this exact fallback was already approved as ask_bot", async () => {
+    store.patchBot(from.id, { approvePeerComms: true });
+    queueDelegation(commsBus, from, {
+      toBotId: target.id,
+      message: "do this",
+      depth: 0,
+      approvalAlreadyGranted: true,
+    }, 1);
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(runTargetCalls[0]).toMatchObject({ toBotId: target.id, commsDepth: 1 });
+    expect(store.messagesFor(from.threadId).some((message) => message.card?.tool === "delegate_bot")).toBe(false);
+  });
+
   it("emits a denial chip and skips runTarget when the user denies", async () => {
     store.patchBot(from.id, { approvePeerComms: true });
     queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
@@ -446,11 +464,20 @@ describe("delegations survive a restart", () => {
   afterEach(() => _resetPending());
 
   it("writes the queue to disk on queue, and clears it on drain and discard", async () => {
-    expect(queueDelegation(buses.commsBus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1)).toMatchObject({ result: "ok" });
+    expect(queueDelegation(buses.commsBus, from, {
+      toBotId: target.id,
+      message: "do this",
+      depth: 0,
+      approvalAlreadyGranted: true,
+    }, 1)).toMatchObject({ result: "ok" });
     expect(existsSync(file())).toBe(true);
     const onDisk = JSON.parse(readFileSync(file(), "utf8")) as Record<string, unknown[]>;
     expect(onDisk[from.threadId]).toHaveLength(1);
-    expect(onDisk[from.threadId][0]).toMatchObject({ toBotId: target.id, message: "do this" });
+    expect(onDisk[from.threadId][0]).toMatchObject({
+      toBotId: target.id,
+      message: "do this",
+      approvalAlreadyGranted: true,
+    });
 
     discardDelegations(buses.commsBus, from.threadId);
     expect(JSON.parse(readFileSync(file(), "utf8"))[from.threadId]).toBeUndefined();
@@ -591,6 +618,9 @@ describe("busy retries and receipts", () => {
     for (let round = 1; round < MAX_BUSY_ATTEMPTS; round++) {
       drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
       await waitFor(() => chipCount(`retry ${round}/`) === 1);
+      // One retry is charged per distinct busy period. Releasing the wait
+      // models that turn settling before another turn claims the target.
+      expect(releaseDelegationsWaitingOn(target.id)).toEqual([from.threadId]);
     }
     drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
     await waitFor(() => _pendingCount(from.threadId) === 0);
@@ -600,6 +630,30 @@ describe("busy retries and receipts", () => {
       toBotName: "Helper",
       sourceThreadId: from.threadId,
     });
+  });
+
+  it("does not burn busy retries when an unrelated drain is requested", async () => {
+    store.patchBot(target.id, { busy: true });
+    const queued = queueDelegation(commsBus, from, { toBotId: target.id, message: "later", depth: 0 }, 1);
+    const taskId = queued.id!;
+    const runTarget = vi.fn();
+
+    drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => chipCount("retry 1/") === 1);
+
+    // A source-thread redrain can happen while an approval for another
+    // item settles. It must not count the same continuously busy turn again.
+    for (let index = 0; index < MAX_BUSY_ATTEMPTS + 1; index++) {
+      drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(pendingDelegationInfo(taskId)?.attempts).toBe(1);
+    expect(chipCount("canceled — still busy after")).toBe(0);
+
+    store.patchBot(target.id, { busy: false });
+    expect(releaseDelegationsWaitingOn(target.id)).toEqual([from.threadId]);
+    drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1);
   });
 
   it("persists receipts across a restart and prunes the drawer by count", () => {

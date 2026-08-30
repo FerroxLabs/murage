@@ -96,7 +96,7 @@ import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
 import { searchMessages } from "./message-db.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
-import { _loadPending, discardDelegations, drainDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, threadsWaitingOn, type QueueResult } from "./delegations.ts";
+import { _loadPending, discardDelegations, drainDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, type QueueResult } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -1193,6 +1193,7 @@ const watchdog = new TurnWatchdog({
         stopScreenPoller(currentBot.id);
         if (activeVpsThreads.get(currentBot.id) === turn.threadId) activeVpsThreads.delete(currentBot.id);
         store.setActivity(currentBot.id, "idle");
+        retryDelegationsWaitingOn(currentBot.id);
         // The grace fallback replaces a missing turn.completed event. Release
         // every kind of work that may have queued behind this bot, including
         // connector and credential continuations.
@@ -1778,6 +1779,7 @@ bus.subscribe((event: RuntimeEvent) => {
         if (speakingBot?.busy) {
           store.setActivity(speakingBot.id, "idle");
           store.patchBot(speakingBot.id, { unread: true });
+          retryDelegationsWaitingOn(speakingBot.id);
         }
       }
       // A delegated turn's terminal state belongs in the A⇄B channel:
@@ -1797,7 +1799,13 @@ bus.subscribe((event: RuntimeEvent) => {
 // (target threadId → channel) lets the main fold mirror the delegated
 // turn's TERMINAL state into the A⇄B channel when it completes — the
 // channel stays the full record of the handoff, not just its request.
-const delegationWatch = new Map<string, { channelId?: string; toBotId: string; taskId?: string; sourceThreadId?: string }>();
+const delegationWatch = new Map<string, {
+  channelId?: string;
+  toBotId: string;
+  toBotName?: string;
+  taskId?: string;
+  sourceThreadId?: string;
+}>();
 
 /** Consume one delegated-turn watch and mirror exactly one terminal state.
  * Some harness paths settle a busy bot without a provider turn.completed
@@ -1825,6 +1833,31 @@ function finalizeDelegationWatch(
     });
   }
   const target = store.bot(watched.toBotId);
+  const targetName = target?.name ?? watched.toBotName ?? watched.toBotId;
+  const source = watched.sourceThreadId ? store.botByThread(watched.sourceThreadId) : undefined;
+  if (source && watched.sourceThreadId) {
+    if (ok && reply.trim()) {
+      const sourceReply: Omit<Message, "id" | "at"> = {
+        role: "bot",
+        kind: "text",
+        text: `@${targetName} replied to the delegated task:\n\n${reply.trim()}`,
+      };
+      if (target) sourceReply.from = { botId: target.id, name: target.name, color: target.color };
+      store.appendMessage(watched.sourceThreadId, sourceReply);
+    } else {
+      store.appendMessage(watched.sourceThreadId, {
+        role: "bot",
+        kind: "activity",
+        tool: {
+          name: ok
+            ? `Delegation to @${targetName} completed without a text reply`
+            : `Delegation to @${targetName} failed — ${failureName}`,
+          ok,
+        },
+      });
+    }
+    store.patchBot(source.id, { unread: true });
+  }
   const channel = watched.channelId ? store.group(watched.channelId) : undefined;
   if (!target || !channel) return true;
   if (ok && reply.trim()) mirrorReply(commsBus, target, reply, channel);
@@ -1874,7 +1907,16 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     // harness (Node's default), which in the packaged app kills the server
     // child. Every delegation failure has to land as a chip instead.
     const targetThreadId = store.bot(toBotId)?.threadId;
-    if (targetThreadId) delegationWatch.set(targetThreadId, { channelId: channel?.id, toBotId, taskId, sourceThreadId });
+    const target = store.bot(toBotId);
+    if (targetThreadId) {
+      delegationWatch.set(targetThreadId, {
+        channelId: channel?.id,
+        toBotId,
+        toBotName: target?.name,
+        taskId,
+        sourceThreadId,
+      });
+    }
     let failureReported = false;
     const reportStartFailure = (error: unknown) => {
       if (failureReported) return;
@@ -1882,12 +1924,13 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
       const bot = store.bot(toBotId);
       const why = error instanceof Error ? error.message : String(error);
       if (targetThreadId) {
-        finalizeDelegationWatch(
+        const finalized = finalizeDelegationWatch(
           targetThreadId,
           false,
           "",
           `Delegated turn could not start — ${why.slice(0, 120)}`,
         );
+        if (finalized) return;
       }
       const source = store.botByThread(sourceThreadId);
       if (!source) return;
@@ -1909,6 +1952,24 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     });
 };
 
+// Most waiting handoffs retry from a target's turn.completed event. Some
+// setup, cancellation, room, watchdog, and provider-reload paths release a
+// bot without that event, so every explicit idle release calls this same
+// coalesced retry hook. The microtask lets the releasing state machine finish
+// before another turn claims the bot.
+const delegationRetryBots = new Set<string>();
+function retryDelegationsWaitingOn(botId: string): void {
+  if (delegationRetryBots.has(botId)) return;
+  delegationRetryBots.add(botId);
+  queueMicrotask(() => {
+    delegationRetryBots.delete(botId);
+    if (store.bot(botId)?.busy) return;
+    for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
+      drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
+    }
+  });
+}
+
 bus.subscribe((event: RuntimeEvent) => {
   if (shouldIgnoreProviderEvent(event)) return;
   if (event.type !== "turn.completed") return;
@@ -1921,11 +1982,7 @@ bus.subscribe((event: RuntimeEvent) => {
   // found it busy earlier were kept queued (bounded retries) on their own
   // source threads, and this is the moment they get their retry.
   const settledBot = store.botByThread(event.threadId);
-  if (settledBot) {
-    for (const waitingThread of threadsWaitingOn(settledBot.id)) {
-      if (waitingThread !== event.threadId) drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
-    }
-  }
+  if (settledBot) retryDelegationsWaitingOn(settledBot.id);
 });
 
 // ── steer-queue drain: messages sent while the bot was busy ────────────
@@ -2611,6 +2668,7 @@ async function startTurn(
         opts?.onDispatchError?.(e.message);
         if (ownsLatestGeneration && store.bot(bot.id)?.busy) {
           store.setActivity(bot.id, "idle");
+          retryDelegationsWaitingOn(bot.id);
         }
         if (ownsLatestGeneration) {
           drainQueuedSends();
@@ -2627,6 +2685,7 @@ async function startTurn(
         tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
       });
       store.setActivity(bot.id, "idle");
+      retryDelegationsWaitingOn(bot.id);
       opts?.onDispatchError?.(message);
       // a dispatch failure never emits turn.completed, so the settle-driven
       // drain would strand anything queued behind this turn
@@ -3136,7 +3195,10 @@ async function runGroupMemberTurn(
   const browserReadyBot = store.bot(readyBot.id);
   if (isCancelled?.() || !browserReadyBot || !browserReadyBot.busy) {
     await releaseBrowserCapabilityForThread(threadId);
-    if (browserReadyBot?.busy) store.setActivity(browserReadyBot.id, "idle");
+    if (browserReadyBot?.busy) {
+      store.setActivity(browserReadyBot.id, "idle");
+      retryDelegationsWaitingOn(browserReadyBot.id);
+    }
     return false;
   }
 
@@ -3279,7 +3341,10 @@ async function runGroupMemberTurn(
       store.patchGroup(currentGroup.id, { busyBotId: null, unread: true });
     }
     const currentBot = store.bot(bot.id);
-    if (currentBot?.busy) store.setActivity(currentBot.id, "idle");
+    if (currentBot?.busy) {
+      store.setActivity(currentBot.id, "idle");
+      retryDelegationsWaitingOn(currentBot.id);
+    }
     watchdog.settle(threadId);
     drainQueuedSends();
     drainConnectorResumes();
@@ -3293,7 +3358,10 @@ async function runGroupMemberTurn(
   if (store.group(group.id)?.busyBotId === bot.id) {
     groupSpeakers.delete(threadId);
     store.patchGroup(group.id, { busyBotId: null, unread: true });
-    if (store.bot(bot.id)?.busy) store.setActivity(bot.id, "idle");
+    if (store.bot(bot.id)?.busy) {
+      store.setActivity(bot.id, "idle");
+      retryDelegationsWaitingOn(bot.id);
+    }
   }
   if (outcome === "dispatch_failed") {
     await releaseBrowserCapabilityForThread(threadId);
@@ -3871,6 +3939,7 @@ async function reloadProviders() {
       tool: { name: "error: turn interrupted — provider settings changed", ok: false },
     });
     store.setActivity(b.id, "idle");
+    retryDelegationsWaitingOn(b.id);
   }
   // killed turns settle here without a turn.completed event, so anything
   // queued behind them drains now — onto the freshly loaded fleet
@@ -4127,11 +4196,11 @@ const server = createServer(async (req, res) => {
         // retries, receipts, restart-safe) and the asker gets a task id it
         // can check next turn. If the ledger refuses (cap/depth), fall back
         // to the plain busy bounce rather than dropping the refusal reason.
-        const queueBusyFallback = () => {
+        const queueBusyFallback = (approvalAlreadyGranted = false) => {
           const queued = queueDelegation(
             commsBus,
             from,
-            { toBotId, message, reason: "asked while busy", depth },
+            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted },
             MAX_COMMS_DEPTH,
             fromThreadId,
           );
@@ -4174,7 +4243,10 @@ const server = createServer(async (req, res) => {
           if (!store.taskByThread(freshFrom.id, fromThreadId)) {
             return json(res, 404, { error: "source task no longer exists" });
           }
-          if (freshTarget.busy) return queueBusyFallback();
+          // The user just approved this exact ask_bot request. Preserve that
+          // decision if it has to become an async handoff; asking twice makes
+          // the fallback look stuck behind a second, surprising card.
+          if (freshTarget.busy) return queueBusyFallback(true);
           currentFrom = freshFrom;
           currentTarget = freshTarget;
         }
