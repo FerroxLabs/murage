@@ -18,6 +18,8 @@ The first version includes:
 - Nearby computers, a manual address, and a six-digit code under **Other ways
   to connect** when the QR path is unavailable.
 - Secure per-device trust, device listing, and revocation.
+- Multiple saved computers with a one-tap switcher. Each pairing has its own
+  Keychain credential, and only the selected computer is connected at a time.
 - Bot and room lists, paged transcripts, sending, interruption, and unread
   state.
 - Approvals and questions, including narrow “always allow” grants.
@@ -168,6 +170,13 @@ local port cannot inherit the public route.
 4. If scanning is unavailable, open **Other ways to connect** for a nearby
    computer, manual address, or six-digit code.
 5. Revoking the phone on the Mac removes its access and lets it pair again.
+
+To add another Mac, open **Settings → Computers → Connect another computer**
+on the iPhone and scan that Mac's QR. The existing computer stays usable if
+the new pairing fails or is cancelled. Switching computers replaces the live
+event stream and in-memory chat state, but keeps every saved pairing; removing
+one computer deletes only that computer's Keychain credential from the phone.
+An app upgrade migrates the previous single saved pairing automatically.
 
 The Mac must remain awake with OpenMausBot running for chats, approvals, and
 routines to work, including through hosted HTTPS or Tailscale.
