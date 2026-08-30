@@ -78,11 +78,14 @@ describe("OpenAICompatDriver", () => {
 
     await inst.refreshModels?.();
 
+    // Every option carries `custom: true`: this engine advertises
+    // `access: "custom"`, and the picker renders only custom-flagged options
+    // for such engines — an unflagged one is invisible in its own picker.
     expect(inst.models).toEqual({
       default: "vendor/model-a",
       options: [
-        { id: "vendor/model-a", label: "Model A" },
-        { id: "vendor/model-b", label: "vendor/model-b" },
+        { id: "vendor/model-a", label: "Model A", custom: true },
+        { id: "vendor/model-b", label: "vendor/model-b", custom: true },
       ],
     });
     await inst.dispose();
