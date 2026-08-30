@@ -180,6 +180,9 @@ describe("comms e2e (fake ACP fleet)", () => {
       HOME: home,
       USERPROFILE: home,
       OMB_PORT: String(PORT),
+      // e2e-friendly ask ceiling: the timeout-conversion test needs the
+      // synchronous wait to end while the gated peer turn is still open
+      OMB_ASK_BOT_TIMEOUT_MS: "8000",
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     // Without SystemRoot, winsock fails to initialize in the child.
@@ -695,6 +698,63 @@ describe("comms e2e (fake ACP fleet)", () => {
     90_000,
   );
 
+  // ── ask_bot timeout conversion ──────────────────────────────────────
+  // A peer that is legitimately slow (rendering, long tool runs) used to
+  // hit ask_bot's fixed ceiling and the reply was simply lost — the other
+  // half of "the bots don't respond to each other" (#583's user report).
+  // Now the timed-out ask becomes a delegation claim ticket and the reply
+  // lands on the asker's thread when the peer's turn finally settles.
+  it(
+    "converts a timed-out ask into a delegation and delivers the late reply",
+    async () => {
+      rmSync(gateFile, { force: true });
+      for (const existing of (await api("GET", "/api/bots")).body.bots) {
+        await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
+      }
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, {
+        name: "SlowHelper",
+        modelSelection: { instanceId: "helperGate", model: "fake-model" },
+      });
+      const asker = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${asker.id}`, {
+        name: "SlowAsker",
+        modelSelection: { instanceId: "grok", model: "fake-model" },
+      });
+
+      // the ask starts the peer's gated turn, which stays open well past
+      // the 8s ceiling — the asker must get a claim ticket, not a drop
+      expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "ask @SlowHelper for the numbers" })).status).toBe(202);
+      let askerBot: any;
+      await waitUntil(async () => {
+        askerBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        const reply = askerBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
+        return Boolean(reply?.text?.includes("converted to a delegation") && !askerBot.busy);
+      }, 30_000, "asker never got the timeout-conversion reply");
+      const conversionReply = askerBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
+      expect(conversionReply.text).toContain("Task id:");
+      expect(conversionReply.text).toContain("wait_delegation");
+      expect(askerBot.messages.some(
+        (m: any) => m.kind === "activity" && m.tool?.name === "@SlowHelper is still working — ask converted to a delegation",
+      )).toBe(true);
+
+      // free the peer: its held turn completes and the late reply lands on
+      // the asker's thread through the delegation watch — nothing is lost
+      writeFileSync(gateFile, "go");
+      await waitUntil(async () => {
+        askerBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        return askerBot.messages.some(
+          (m: any) => m.kind === "text" && m.role === "bot"
+            && m.text?.includes("replied to the delegated task")
+            && m.text?.includes("ping from fake"),
+        );
+      }, 30_000, "late reply never landed on the asker's thread");
+      const helperBot = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
+      expect(helperBot.busy).toBeFalsy();
+    },
+    75_000,
+  );
+
   // ── delegation terminal-state mirroring ─────────────────────────────
   // A delegated turn is fire-and-forget. Its result is returned to the
   // initiating chat and mirrored into the A⇄B channel. These tests pin a
@@ -847,7 +907,7 @@ describe("comms e2e (fake ACP fleet)", () => {
           ? state.groups.find((g: any) => g.id === note.comm.groupId)
           : undefined;
         const terminal = channel?.messages.some(
-          (m: any) => m.kind === "activity" && m.tool?.ok === false && m.tool?.name?.includes("did not finish"),
+          (m: any) => m.kind === "activity" && m.tool?.ok === false && /did not finish — .+/.test(m.tool?.name ?? ""),
         );
         if (terminal) break;
         if (Date.now() > deadline) {

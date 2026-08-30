@@ -89,6 +89,7 @@ import {
   type ProviderInstance,
   type RequestOutcome,
   type RuntimeEvent,
+  newId,
 } from "./contracts.ts";
 import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
 
@@ -594,14 +595,21 @@ function controlIntegration(botId: string) {
 /** Run a turn on `targetBotId` and resolve with its assistant text — the
  * synchronous half of ask_bot. Subscribes to the bus, folds assistant_text
  * for that thread, resolves on turn.completed (or a 4-min ceiling). */
-function askBotAndWait(targetBotId: string, message: string, depth: number, fromBotId?: string): Promise<string> {
+type AskBotOutcome = {
+  status: "reply" | "failed" | "timeout" | "error";
+  text: string;
+  /** Provider's stop reason when the turn completed not-ok. */
+  stopReason?: string | null;
+};
+
+function askBotAndWait(targetBotId: string, message: string, depth: number, fromBotId?: string): Promise<AskBotOutcome> {
   const target = store.bot(targetBotId);
-  if (!target) return Promise.resolve("(no such bot)");
+  if (!target) return Promise.resolve({ status: "error", text: "(no such bot)" });
   const threadId = target.threadId;
   return new Promise((resolve) => {
     let text = "";
     let done = false;
-    const finish = (out: string) => {
+    const finish = (out: AskBotOutcome) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
@@ -617,16 +625,19 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
       if (e.type === "item.completed" && e.itemType === "assistant_text") {
         text += (text ? "\n" : "") + e.text;
       } else if (e.type === "turn.completed") {
-        finish(text || "(the bot finished without a text reply)");
+        if (e.ok) finish({ status: "reply", text: text || "(the bot finished without a text reply)" });
+        else finish({ status: "failed", text, stopReason: e.stopReason ?? null });
       }
     });
-    const timer = setTimeout(() => finish(text || "(timed out waiting for the bot to reply)"), 4 * 60_000);
+    // Timing out does NOT stop the peer's turn — the caller decides whether
+    // the still-running work becomes a delegation claim ticket instead.
+    const timer = setTimeout(() => finish({ status: "timeout", text }), ASK_BOT_TIMEOUT_MS);
     startTurn(targetBotId, message, {
       commsDepth: depth + 1,
       unattended: isUnattended(fromBotId),
-      onDispatchError: (reason) => finish(`(couldn't start that bot: ${reason})`),
+      onDispatchError: (reason) => finish({ status: "error", text: `(couldn't start that bot: ${reason})` }),
     }).catch((err) =>
-      finish(`(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})`),
+      finish({ status: "error", text: `(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})` }),
     );
   });
 }
@@ -1174,6 +1185,9 @@ const repeats = new RepeatDetector({ thresholds: [5, 10, 20], maxKeysPerThread: 
 // activity-based, so an hour-long turn that keeps streaming is never
 // touched, and turns parked on a human approval are exempt.
 const TURN_STALL_MS = Math.max(60_000, Number(process.env.OMB_TURN_STALL_MS) || 20 * 60_000);
+/** How long ask_bot waits synchronously before the ask is converted into a
+ * delegation claim ticket (the peer's turn keeps running either way). */
+const ASK_BOT_TIMEOUT_MS = Math.max(5_000, Number(process.env.OMB_ASK_BOT_TIMEOUT_MS) || 4 * 60_000);
 const roomStallCompletions = new RoomTurnStallRegistry();
 const watchdog = new TurnWatchdog({
   stallMs: TURN_STALL_MS,
@@ -1802,7 +1816,10 @@ bus.subscribe((event: RuntimeEvent) => {
       // the request was mirrored there when the delegation drained, and a
       // channel that only ever shows requests is half a record. Mirror the
       // reply on success; mirror a failed/stopped terminal chip otherwise.
-      finalizeDelegationWatch(event.threadId, event.ok, reply);
+      const delegationFailureName = !event.ok && event.stopReason?.trim()
+        ? `Delegated turn did not finish — ${event.stopReason.trim().slice(0, 120)}`
+        : undefined;
+      finalizeDelegationWatch(event.threadId, event.ok, reply, delegationFailureName);
       // group busy/unread settle in the group turn engine, which knows
       // whether more member turns are queued behind this one
       break;
@@ -4575,7 +4592,39 @@ const server = createServer(async (req, res) => {
         const channel = getOrCreateChannel(store, currentFrom, currentTarget);
         mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
         const prefixed = `[Message from @${currentFrom.name}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
-        const reply = await askBotAndWait(toBotId, prefixed, depth, fromBotId);
+        const outcome = await askBotAndWait(toBotId, prefixed, depth, fromBotId);
+        if (outcome.status === "timeout" && !delegationWatch.has(currentTarget.threadId)) {
+          // The peer's turn is still running — only the wait ended. Convert
+          // the ask into a delegation claim ticket: the watch mirrors the
+          // terminal state into the channel AND the asker's thread when the
+          // turn settles, and check/wait_delegation read the same receipt.
+          // Losing the reply was the old behavior, and it read as "the bots
+          // don't respond to each other".
+          const taskId = newId();
+          delegationWatch.set(currentTarget.threadId, {
+            channelId: channel.id,
+            toBotId,
+            toBotName: currentTarget.name,
+            taskId,
+            sourceThreadId: fromThreadId,
+          });
+          store.appendMessage(fromThreadId, {
+            role: "bot",
+            kind: "activity",
+            tool: { name: `@${currentTarget.name} is still working — ask converted to a delegation` },
+          });
+          return json(res, 200, { timeout: true, taskId, toBotName: currentTarget.name, waitedMs: ASK_BOT_TIMEOUT_MS });
+        }
+        if (outcome.status === "failed" && !outcome.text.trim()) {
+          // No partial answer to hand back — mirror the failure where the
+          // exchange lives, with the provider's reason instead of silence.
+          const why = outcome.stopReason?.trim() ? ` — ${outcome.stopReason.trim().slice(0, 120)}` : "";
+          mirrorActivity(commsBus, currentTarget, channel, `Turn failed${why}`, false);
+          return json(res, 200, { botName: currentTarget.name, text: `(the bot's turn failed${why})` });
+        }
+        const reply = outcome.status === "timeout"
+          ? outcome.text || "(timed out waiting for the bot to reply)"
+          : outcome.text;
         mirrorReply(commsBus, currentTarget, reply, channel);
         return json(res, 200, { botName: currentTarget.name, text: reply });
       }
