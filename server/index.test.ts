@@ -486,6 +486,28 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("refuses a room whose every member is archived", async () => {
+    const [archived, active] = await Promise.all([api("POST", "/api/bots"), api("POST", "/api/bots")]).then(
+      (created) => created.map((response) => response.body.bot),
+    );
+    await api("PATCH", `/api/bots/${archived.id}`, { hidden: true });
+    try {
+      const refused = await api("POST", "/api/groups", { name: "All archived", memberIds: [archived.id] });
+      expect(refused.status).toBe(400);
+      expect(refused.body.error).toMatch(/at least one active bot/i);
+
+      // one active member is enough — the archived one may still ride along
+      const created = await api("POST", "/api/groups", {
+        name: "Mixed roster",
+        memberIds: [archived.id, active.id],
+      });
+      expect(created.status).toBe(201);
+      await api("DELETE", `/api/groups/${created.body.group.id}`);
+    } finally {
+      for (const bot of [archived, active]) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("deduplicates repeated room members while preserving their first-seen order", async () => {
     const [first, second] = await Promise.all([api("POST", "/api/bots"), api("POST", "/api/bots")]).then(
       (created) => created.map((response) => response.body.bot),

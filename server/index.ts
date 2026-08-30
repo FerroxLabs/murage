@@ -722,6 +722,15 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
   }
   const memberIds = [...new Set(value as string[])];
   if (!memberIds.length) return { ok: false, error: "a channel needs at least one bot" };
+  // A room whose every member is archived accepts messages and answers none of
+  // them — the failure only surfaces later, as "… is archived and can't
+  // respond" on the first turn. Refuse it here, where the mistake is made.
+  if (memberIds.every((id) => store.bot(id)?.hidden)) {
+    return {
+      ok: false,
+      error: "a channel needs at least one active bot — every member given is archived",
+    };
+  }
   return { ok: true, memberIds };
 }
 let bootSelection = { instanceId: "", model: "" };
