@@ -10,7 +10,7 @@
 // turned it into `node <script>` on Windows too, so the e2e half now runs
 // everywhere alongside the mention-resolution units.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,7 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
+const FAKE_AGY_CLI = join(SERVER_DIR, "testing", "fake-agy-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -95,6 +96,7 @@ describe("comms e2e (fake ACP fleet)", () => {
 
   beforeAll(async () => {
     chmodSync(FAKE_CLI, 0o755);
+    chmodSync(FAKE_AGY_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "omb-comms-test-"));
     mkdirSync(join(home, ".openmausbot"), { recursive: true });
     writeFileSync(
@@ -108,6 +110,14 @@ describe("comms e2e (fake ACP fleet)", () => {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "ask-peer" },
             config: { cli: FAKE_CLI, fullAuto: true },
+          },
+          // Normal Gemini 3.x bots use Antigravity print mode rather than
+          // the standalone Gemini ACP driver. This instance proves its
+          // leased global MCP mount reaches the same agents proxy safely.
+          geminiAsker: {
+            driver: "antigravityAgent",
+            environment: { FAKE_AGY_MODE: "ask-peer" },
+            config: { cli: FAKE_AGY_CLI, fullAuto: true },
           },
           // a separate asker instance for the async-handoff e2e. B can stay
           // on `grok` because its depth-1 turn runs without the agents
@@ -253,6 +263,93 @@ describe("comms e2e (fake ACP fleet)", () => {
       expect(helperBot.busy).toBeFalsy();
     },
     40_000,
+  );
+
+  it(
+    "lets a Gemini Antigravity bot call a peer through the temporary agents MCP mount",
+    async () => {
+      // A unique section makes list_bots deterministic even though this
+      // suite deliberately keeps earlier bots around to exercise the real
+      // persisted fleet. Only these two teammates can see one another.
+      const section = "Gemini agents MCP e2e";
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, {
+        name: "Gemini Helper",
+        section,
+        modelSelection: { instanceId: "grok", model: "fake-model" },
+      });
+      const asker = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${asker.id}`, {
+        name: "Gemini Asker",
+        section,
+        modelSelection: { instanceId: "geminiAsker", model: "gemini-3.7-flash-high" },
+      });
+
+      const send = await api("POST", `/api/bots/${asker.id}/messages`, {
+        text: "Ask the other bot for a status check.",
+      });
+      expect(send.status).toBe(202);
+
+      const deadline = Date.now() + 30_000;
+      let state: any;
+      let askerBot: any;
+      let helperBot: any;
+      for (;;) {
+        state = (await api("GET", "/api/bots")).body;
+        askerBot = state.bots.find((bot: any) => bot.id === asker.id);
+        helperBot = state.bots.find((bot: any) => bot.id === helper.id);
+        const peerReply = askerBot.messages.some(
+          (message: any) =>
+            message.kind === "text"
+            && message.role === "bot"
+            && message.text?.includes("peer says: Gemini Helper replied:"),
+        );
+        const helperReplied = helperBot.messages.some(
+          (message: any) =>
+            message.kind === "text"
+            && message.role === "bot"
+            && message.text?.includes("hello from fake acp"),
+        );
+        if (peerReply && helperReplied && !askerBot.busy && !helperBot.busy) break;
+        if (Date.now() > deadline) {
+          throw new Error(
+            `Gemini never got its peer reply. asker tail: ${JSON.stringify(askerBot.messages.slice(-8))}\n`
+              + `helper tail: ${JSON.stringify(helperBot.messages.slice(-6))}\n`
+              + `stderr: ${stderr.slice(-2000)}`,
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+
+      // This is the peer's actual depth-1 output, not a mocked bridge
+      // acknowledgement. The lack of a nested "peer says" also pins the
+      // one-hop recursion guard: the invoked helper received no agents MCP.
+      const askerReply = askerBot.messages.findLast(
+        (message: any) => message.kind === "text" && message.role === "bot",
+      );
+      expect(askerReply.text).toContain("peer says: Gemini Helper replied:");
+      expect(askerReply.text).toContain("hello from fake acp");
+      const helperReply = helperBot.messages.findLast(
+        (message: any) => message.kind === "text" && message.role === "bot",
+      );
+      expect(helperReply.text).toContain("hello from fake acp");
+      expect(helperReply.text).not.toContain("peer says:");
+
+      const inbound = helperBot.messages.find(
+        (message: any) => message.kind === "text" && message.role === "user",
+      );
+      expect(inbound.text).toContain("[Message from @Gemini Asker");
+      expect(inbound.text).toContain("ping from fake Gemini");
+
+      // Antigravity's global MCP config briefly carries a bearer token for
+      // this one process. It must be gone once the turn exits so neither a
+      // later bot nor the user's own agy session can inherit the capability.
+      await expect.poll(
+        () => existsSync(join(home, ".gemini", "config", "mcp_config.json")),
+        { timeout: 5_000 },
+      ).toBe(false);
+    },
+    45_000,
   );
 
   it(

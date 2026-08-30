@@ -1,5 +1,5 @@
 // Gemini CLI harness support — Google's `gemini` CLI over ACP stdio
-// (`gemini --experimental-acp`). Rides the generic runtime in acp/core.ts.
+// (`gemini --acp`). Rides the generic runtime in acp/core.ts.
 //
 // RETIRED FROM THE DEFAULT FLEET: Google stopped serving Gemini CLI requests
 // for the free/Pro/Ultra tiers on 2026-06-18 and pointed everyone at the
@@ -88,7 +88,9 @@ const support: AcpSupport = {
   loginNote:
     "Gemini CLI needs a GEMINI_API_KEY, a Vertex AI setup, or an enterprise Code Assist login — consumer Google logins stopped working on 2026-06-18 (use the Antigravity engine for those accounts)",
 
-  spawnArgs: (_config, turn) => ["--experimental-acp", ...(turn.model ? ["-m", turn.model] : [])],
+  // --acp is the stable Gemini CLI surface. --experimental-acp remains an
+  // alias for older releases, but using it now emits a deprecation warning.
+  spawnArgs: (_config, turn) => ["--acp", ...(turn.model ? ["-m", turn.model] : [])],
   credentialEnv: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
 
   pickAuthMethod: (methods) => {
