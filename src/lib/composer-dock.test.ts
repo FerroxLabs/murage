@@ -15,4 +15,8 @@ describe("transcriptEndPad", () => {
   it("does not go negative", () => {
     expect(transcriptEndPad(-4)).toBe("calc(0px + 0.75rem)");
   });
+
+  it("uses a one-line empty-composer fallback, not the old two-row slot", () => {
+    expect(transcriptEndPad(Number.NaN)).toBe("calc(64px + 0.75rem)");
+  });
 });

@@ -59,9 +59,9 @@ interface QueuedGroupSend {
   draft: ComposerDraftSnapshot;
 }
 
-/** Composer chip for Auto mode. Same `autoApprove` bit as the profile switch
- * — picking Auto mode here turns that on. The chip only changes its name,
- * not its color. */
+/** Composer chip for Auto mode. Compact label (Ask / Auto); the menu still
+ * uses the full names. Same `autoApprove` bit as the profile switch — picking
+ * Auto mode here turns that on. The chip only changes its name, not its color. */
 function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto: boolean) => void }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -95,7 +95,7 @@ function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto
         className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
       >
         {on ? <ShieldCheck size={14} className="opacity-70" /> : <Hand size={14} className="opacity-70" />}
-        {on ? "Auto mode" : "Ask for approval"}
+        {on ? "Auto" : "Ask"}
       </button>
 
       {open && (
@@ -658,13 +658,14 @@ export function Composer({
           onNotice={setAttachmentNotice}
         />
         <div className="relative">
-          {/* App-ground from the pill's bottom radius down, full-bleed.
-              Bubbles may tuck into the pill; they must not paint under it. */}
+          {/* App-ground from the pill midline down, full-bleed. Bubbles may
+              tuck into the top half of the radius; they must not show below
+              center — including the corner pockets around the paperclip. */}
           <div
             aria-hidden
-            className="absolute -left-5 -right-5 top-[calc(100%-1.5rem)] h-[50vh] bg-app"
+            className="absolute -left-5 -right-5 top-1/2 h-[50vh] bg-app"
           />
-        <div className="relative grid grid-cols-[auto_1fr_auto] items-center gap-x-2 rounded-3xl bg-raised px-3 pb-2 pt-1">
+        <div className="relative z-[1] flex items-end gap-1 rounded-3xl bg-raised px-2 py-1.5">
           <input
             ref={fileInput}
             type="file"
@@ -677,7 +678,7 @@ export function Composer({
             }}
           />
           {!locked && (
-            <div className="col-start-1 row-start-2 mt-1 flex items-center gap-1">
+            <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => fileInput.current?.click()}
@@ -788,9 +789,9 @@ export function Composer({
                   : `Message ${bot?.name ?? ""}`
           }
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
-            className="col-span-full row-start-1 max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto self-center bg-transparent px-1 py-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
+            className="max-h-[9rem] min-h-6 min-w-0 flex-1 resize-none overflow-y-auto self-center bg-transparent px-1 py-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
           />
-          <div className="col-start-3 row-start-2 mt-1 flex items-center gap-1">
+          <div className="flex items-center gap-1">
           {busy && !locked && (
           <button
             onClick={() => {
