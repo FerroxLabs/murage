@@ -27,6 +27,7 @@
   --animate-caret: caret-blink 1s step-end infinite;
   --animate-msg-in: msg-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-shimmer: shimmer 2s linear infinite;
+  --animate-status-pulse: status-pulse 1.6s steps(2, jump-none) infinite;
 
   /* Defaults = Midnight. Kept here so the app is never unstyled. */
   --color-app: #070707;
@@ -381,6 +382,14 @@ body {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }
+/* Long-lived activity dots: steps() + holds draw a handful of compositor
+   frames per cycle instead of one per vsync. Indicators that run for
+   minutes must not continuously repaint; stagger via animation-delay. */
+@keyframes status-pulse {
+  0%, 100% { opacity: 0.25; }
+  30% { opacity: 1; }
+  60% { opacity: 0.25; }
+}
 .thinking-shimmer {
   background: linear-gradient(90deg, var(--color-ink-secondary) 40%, var(--color-ink) 50%, var(--color-ink-secondary) 60%);
   background-size: 200% 100%;
@@ -390,6 +399,7 @@ body {
 }
 @media (prefers-reduced-motion: reduce) {
   .animate-caret, .animate-msg-in, .animate-shimmer { animation: none; }
+  .animate-status-pulse { animation: none; opacity: 0.6; }
   .thinking-shimmer { background: none; color: var(--color-ink-secondary); }
   .turn-mascot-in, .turn-mascot-out, .turn-answer { animation: none; }
   /* The drawer still moves, it just arrives instantly. */

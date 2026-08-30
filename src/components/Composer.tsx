@@ -348,11 +348,10 @@ export function Composer({
     },
     [draftId, restoreDraft],
   );
-  const pendingChip = group
-    ? queued?.text
-    : bot
-      ? state.pendingQueued?.[bot.threadId]?.map((entry) => entry.text).join("\n")
-      : undefined;
+  // 1:1 queued sends render as ghost rows in the transcript tail (each with
+  // its own cancel); the composer chip remains only for rooms, whose queue
+  // is local to this component.
+  const pendingChip = group ? queued?.text : undefined;
   // a chip on its own is a message: the send control has to appear for it
   const fileInput = useRef<HTMLInputElement>(null);
   const [autoWarn, setAutoWarn] = useState(false);
@@ -580,16 +579,7 @@ export function Composer({
             </span>
             <button
               type="button"
-              onClick={() => {
-                if (group) {
-                  clearQueued();
-                  return;
-                }
-                if (!bot) return;
-                for (const entry of state.pendingQueued?.[bot.threadId] ?? []) {
-                  dispatch({ type: "cancelQueued", botId: bot.id, queueId: entry.queueId });
-                }
-              }}
+              onClick={clearQueued}
               aria-label="Cancel queued message"
               title="Cancel queued message"
               className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"

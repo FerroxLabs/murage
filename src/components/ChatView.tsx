@@ -12,7 +12,6 @@ import {
   Crown,
   Folder,
   ListTree,
-  Loader2,
   Monitor,
   MessageSquareReply,
   Pencil,
@@ -24,6 +23,7 @@ import {
   Webhook,
   X,
 } from "lucide-react";
+import { WorkingDots } from "@/components/WorkingIndicator";
 import { cachedInput, costCaption, formatTokens, formatUsd, hasFiniteCost, usageChip, usageDetail } from "@/lib/usage";
 import {
   useStore,
@@ -131,7 +131,7 @@ function TaskTimeline({ messages, busy }: { messages: Message[]; busy: boolean }
                     : event.state === "complete"
                       ? "bg-success"
                       : event.state === "running"
-                        ? "animate-pulse bg-accent"
+                        ? "animate-status-pulse bg-accent"
                         : "bg-ink-secondary",
                 )}
               />
@@ -508,22 +508,6 @@ function Bubble({
           {formatTime(message.at)}
         </span>
       </div>
-      {/* busy-gated so a flag stranded by a server restart shows nothing */}
-      {user && message.queued && bot.busy && (
-        <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
-          <Clock size={11} aria-hidden="true" />
-          <span>Queued — sends when this turn finishes</span>
-          <button
-            type="button"
-            onClick={() => dispatch({ type: "cancelQueued", botId: bot.id, queueId: message.queueId ?? message.id })}
-            aria-label="Cancel queued message"
-            title="Cancel queued message"
-            className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
-          >
-            <X size={11} strokeWidth={2.5} />
-          </button>
-        </div>
-      )}
       <ReactionChips threadId={bot.threadId} message={message} align={user ? "right" : "left"} />
       {versions.length > 1 && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">
@@ -584,7 +568,7 @@ function ActivityChip({ message }: { message: Message }) {
         )}
       >
         {tool.ok === undefined ? (
-          <Loader2 size={13} className="animate-spin" />
+          <WorkingDots size={3.5} />
         ) : failed ? (
           <X size={13} />
         ) : (
@@ -927,6 +911,12 @@ export function ChatView({ bot }: { bot: Bot }) {
     return () => clearTimeout(timer);
   }, [lastMessage?.id, lastMessage?.role, lastMessage?.kind, lastMessage?.text]);
   const presenceVisible = waiting || popping !== null;
+  // Wall-clock anchor for the working row's elapsed readout — set when the
+  // turn starts, cleared when it settles, reset on bot switch.
+  const [busySince, setBusySince] = useState<number | null>(null);
+  useEffect(() => {
+    setBusySince(bot.busy ? Date.now() : null);
+  }, [bot.busy, bot.id]);
 
   // regenerate = fork the last user message with the same text — reuses the
   // existing branch machinery, so the old answer stays reachable via ‹ ›
@@ -1009,11 +999,13 @@ export function ChatView({ bot }: { bot: Bot }) {
     setTranscriptWindow((w) => ({ ...w, end: nextEnd >= messages.length ? null : nextEnd }));
   };
 
-  // keyboard is a scroll gesture too (upstream lesson): PageUp/Home break
-  // follow like an upward wheel; the at-end onScroll check re-arms it
+  // keyboard is a scroll gesture too (upstream lesson): PageUp/Home/ArrowUp
+  // break follow like an upward wheel; the at-end onScroll check re-arms it.
+  // ArrowUp only counts outside inputs — in the composer it edits, not scrolls.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "PageUp" || (e.key === "Home" && !(e.target instanceof HTMLTextAreaElement))) {
+      const typing = e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
+      if (e.key === "PageUp" || ((e.key === "Home" || e.key === "ArrowUp") && !typing)) {
         setBottomFollow(false);
       }
     };
@@ -1075,7 +1067,7 @@ export function ChatView({ bot }: { bot: Bot }) {
               <Crown size={11} /> Chief of Staff
             </span>
           )}
-          {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
+          {bot.busy && <WorkingDots className="text-ink-secondary" />}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -1164,7 +1156,13 @@ export function ChatView({ bot }: { bot: Bot }) {
       <div className="relative min-h-0 flex-1">
       <div
         ref={scrollRef}
-        className="h-full overflow-x-hidden overflow-y-auto px-5 [overflow-anchor:none]"
+        className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain px-5 [overflow-anchor:none]"
+        onPointerDown={(e) => {
+          // grabbing the scrollbar is a scroll gesture too — the lane lives
+          // past the content box (clientWidth excludes it)
+          const el = scrollRef.current;
+          if (el && e.target === el && e.nativeEvent.offsetX >= el.clientWidth) setBottomFollow(false);
+        }}
         onWheel={(e) => {
           if (e.deltaY < 0) setBottomFollow(false);
           else if (atEnd()) setBottomFollow(true);
@@ -1234,7 +1232,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           {provisioning && (
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary">
-                <Loader2 size={13} className="animate-spin" />
+                <WorkingDots size={3.5} />
                 Setting up this bot's computer…
               </div>
             </div>
@@ -1253,6 +1251,7 @@ export function ChatView({ bot }: { bot: Bot }) {
             visible={presenceVisible}
             label={activityLabel}
             answering={popping !== null}
+            since={busySince}
           >
             {popping ? (
               <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
@@ -1262,6 +1261,33 @@ export function ChatView({ bot }: { bot: Bot }) {
               </div>
             ) : null}
           </TurnPresence>
+          {/* Ghost tail: 1:1 sends made mid-turn wait in the server's steer
+              queue and stay off the transcript until drain (they must never
+              become the active leaf). These rows are that queue made visible,
+              in send order, each with its own cancel. */}
+          {bot.busy &&
+            (state.pendingQueued[bot.threadId] ?? []).map((entry) => (
+              <div key={entry.queueId} className="flex flex-col items-end">
+                <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink-secondary">
+                  {entry.text}
+                </div>
+                <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
+                  <Clock size={11} aria-hidden="true" />
+                  <span>Queued — sends when this turn finishes</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      dispatch({ type: "cancelQueued", botId: bot.id, queueId: entry.queueId })
+                    }
+                    aria-label="Cancel queued message"
+                    title="Cancel queued message"
+                    className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
+                  >
+                    <X size={11} strokeWidth={2.5} />
+                  </button>
+                </div>
+              </div>
+            ))}
         </div>
       </div>
 
