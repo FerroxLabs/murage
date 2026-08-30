@@ -74,6 +74,35 @@ describe("redactSecrets", () => {
     expect(out).toContain('"1"'); // a non-secret value is untouched
   });
 
+  it("still content-redacts an ACP env entry whose name is not secret-shaped", () => {
+    // A credential can land under an ordinary-looking variable name (a
+    // custom env var, a feature flag someone repurposed) — the ACP
+    // {name,value} shortcut must not skip the content pass just because
+    // the NAME alone doesn't scream "secret".
+    const alpha = "abcdefghijklmnopqrstuvwxyz0123456789";
+    const leaked = `sk-ant-api03-${alpha}`;
+    const sessionNew = {
+      params: {
+        mcpServers: [
+          {
+            name: "custom",
+            env: [
+              { name: "SESSION_CONFIG", value: leaked },
+              { name: "FEATURE_FLAG", value: "enabled" },
+            ],
+          },
+        ],
+      },
+    };
+
+    const out = flat(redactSecrets(sessionNew));
+    expect(out).not.toContain(leaked);
+    expect(out).toContain("SESSION_CONFIG");
+    expect(out).toContain("FEATURE_FLAG");
+    expect(out).toContain("enabled");
+    expect(out).toMatch(/«redacted \d+ chars»/);
+  });
+
   it("leaves ordinary protocol traffic alone", () => {
     const update = {
       method: "session/update",

@@ -66,7 +66,7 @@ function Step({ n, title, done, children }: { n: number; title: string; done: bo
       </div>
       <div className="min-w-0 flex-1">
         <div className={cn("text-[14px]", done ? "text-ink-secondary line-through" : "text-ink")}>{title}</div>
-        {!done && children && <div className="mt-2 flex flex-col items-start gap-2">{children}</div>}
+        {!done && children && <div className="mt-2 flex flex-col items-start gap-2 [&>*]:max-w-full">{children}</div>}
       </div>
     </div>
   );

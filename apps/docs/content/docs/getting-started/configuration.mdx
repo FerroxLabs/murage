@@ -32,6 +32,26 @@ Local agent chat works without these credentials.
 
 Source and headless runs can set supported environment variables before starting the harness. The app-level settings are preferable for normal packaged use because they validate inputs and keep secret values out of the renderer.
 
+### Per-instance Claude tool scope
+
+Source and headless installations can give separate Claude instances different built-in tool sets in `~/.openmausbot/config.json`:
+
+```json
+{
+  "instances": {
+    "claude-browser": {
+      "driver": "claudeAgent",
+      "config": {
+        "tools": ["Read", "WebFetch", "WebSearch"],
+        "disallowedTools": ["Bash(git *)", "Edit", "Write"]
+      }
+    }
+  }
+}
+```
+
+`tools` selects Claude's available built-ins; an explicit empty array disables every built-in, while omitting it keeps Claude's default set. `disallowedTools` applies Claude tool-name patterns as an additional deny list. These settings do not grant or pre-approve MCP integrations, which remain controlled by the instance's mounted integrations and OpenMausBot permission flow.
+
 <Callout type="warn" title="Do not put secrets in prompts">
   A prompt becomes conversation history and may be sent to an agent provider. Use App Settings or environment configuration for credentials.
 </Callout>

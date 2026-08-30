@@ -27,6 +27,7 @@
   --animate-caret: caret-blink 1s step-end infinite;
   --animate-msg-in: msg-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-shimmer: shimmer 2s linear infinite;
+  --animate-status-pulse: status-pulse 1.6s steps(2, jump-none) infinite;
 
   /* Defaults = Midnight. Kept here so the app is never unstyled. */
   --color-app: #070707;
@@ -336,6 +337,42 @@ body {
   from { transform: translateY(4px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
+/* mascot arrives at the tail */
+@keyframes turn-mascot-in {
+  from { opacity: 0; transform: scale(0.82); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes turn-mascot-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.88); }
+}
+/* the reply grows up from the mascot, staying on the left edge */
+@keyframes turn-answer-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.84);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.turn-mascot-in {
+  transform-origin: 18px 18px;
+  animation: turn-mascot-in 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.turn-mascot-out {
+  transform-origin: 18px 18px;
+  animation: turn-mascot-out 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.turn-answer {
+  transform-origin: 18px 100%;
+  animation: turn-answer-in 0.48s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* last line of text → mascot ≈ 5mm (bubble py-2.5 already contributes 10px) */
+.turn-mascot-tight {
+  margin-top: max(0px, calc(5mm - 10px));
+}
 /* "Thinking…" label sheen while the model reasons */
 @keyframes shimmer {
   from { background-position: 200% 50%; }
@@ -344,6 +381,14 @@ body {
 @keyframes reduced-loader-pulse {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
+}
+/* Long-lived activity dots: steps() + holds draw a handful of compositor
+   frames per cycle instead of one per vsync. Indicators that run for
+   minutes must not continuously repaint; stagger via animation-delay. */
+@keyframes status-pulse {
+  0%, 100% { opacity: 0.25; }
+  30% { opacity: 1; }
+  60% { opacity: 0.25; }
 }
 .thinking-shimmer {
   background: linear-gradient(90deg, var(--color-ink-secondary) 40%, var(--color-ink) 50%, var(--color-ink-secondary) 60%);
@@ -354,7 +399,9 @@ body {
 }
 @media (prefers-reduced-motion: reduce) {
   .animate-caret, .animate-msg-in, .animate-shimmer { animation: none; }
+  .animate-status-pulse { animation: none; opacity: 0.6; }
   .thinking-shimmer { background: none; color: var(--color-ink-secondary); }
+  .turn-mascot-in, .turn-mascot-out, .turn-answer { animation: none; }
   /* The drawer still moves, it just arrives instantly. */
   aside { transition: none; }
 }

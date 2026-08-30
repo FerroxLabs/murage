@@ -11,11 +11,12 @@
 // approves everything. Real per-action approval cards are a future path via
 // native ACP (agy issue #31), which would reuse acp/core.ts like grok/gemini.
 //
-// Computer use: agy has no per-turn MCP flag, so the bot's computer (cloud
-// box / Local VM / VPS) is mounted by upserting one key into the global
-// `~/.gemini/config/mcp_config.json` before each spawn — see
-// ensureAntigravityComputerMcp below. Full-auto instances only; the host
-// desktop stays off (no approval channel in print mode, ever).
+// MCP tools: agy has no per-turn MCP flag, so the bot's computer (cloud box /
+// Local VM / VPS) and its OpenMaus teammate tools are mounted by upserting
+// OpenMaus-owned keys into the global `~/.gemini/config/mcp_config.json`
+// before each spawn — see ensureAntigravityMcpServers below. Full-auto
+// instances only; the host desktop stays off (no approval channel in print
+// mode, ever).
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -124,29 +125,44 @@ export function readAntigravityModelCatalog(env: Record<string, string | undefin
 // against agy 1.1.19, whose embedded docs list exactly two locations — the
 // global `~/.gemini/config/mcp_config.json` and per-plugin files — and whose
 // `agy mcp list` ignores `.gemini/{settings,mcp_config}.json` in the cwd.
-// So the bot's computer is mounted by upserting ONE key into the global file
+// So OpenMaus tools are mounted by upserting two reserved keys into the global file
 // right before each spawn: every other byte of the user's config is
 // preserved, and a malformed file starts from a fresh object instead of
 // failing the turn (the ensureOpenCodeInjectModel discipline).
 export const ANTIGRAVITY_COMPUTER_MCP_KEY = "openmausbot-computer";
+export const ANTIGRAVITY_AGENTS_MCP_KEY = "openmausbot-agents";
 
-export interface AntigravityComputerMcpServer {
+export interface AntigravityMcpServer {
   command: string;
   args: string[];
   env: Record<string, string>;
 }
 
-// agy's MCP file is machine-global. Hold this lease for the complete child
-// lifetime so two Antigravity turns cannot see each other's computer tokens.
-let antigravityComputerMcpLease: Promise<void> = Promise.resolve();
+/** Backward-compatible name retained for callers of the computer-only helper. */
+export type AntigravityComputerMcpServer = AntigravityMcpServer;
 
-async function acquireAntigravityComputerMcpLease(): Promise<() => void> {
-  const previous = antigravityComputerMcpLease;
+const ANTIGRAVITY_OWNED_MCP_KEYS = [
+  ANTIGRAVITY_COMPUTER_MCP_KEY,
+  ANTIGRAVITY_AGENTS_MCP_KEY,
+] as const;
+type AntigravityOwnedMcpKey = (typeof ANTIGRAVITY_OWNED_MCP_KEYS)[number];
+export interface AntigravityMcpServers {
+  [ANTIGRAVITY_COMPUTER_MCP_KEY]?: AntigravityMcpServer;
+  [ANTIGRAVITY_AGENTS_MCP_KEY]?: AntigravityMcpServer;
+}
+
+// agy's MCP file is machine-global. Hold this lease for the complete child
+// lifetime so two Antigravity turns cannot see each other's computer, control,
+// or bot-communication tokens.
+let antigravityMcpLease: Promise<void> = Promise.resolve();
+
+async function acquireAntigravityMcpLease(): Promise<() => void> {
+  const previous = antigravityMcpLease;
   let unlock: (() => void) | undefined;
   const current = new Promise<void>((resolve) => {
     unlock = resolve;
   });
-  antigravityComputerMcpLease = previous.then(() => current);
+  antigravityMcpLease = previous.then(() => current);
   await previous;
   let released = false;
   return () => {
@@ -192,12 +208,28 @@ export function antigravityComputerMcpServer(
   return null;
 }
 
-/** Upsert (server) or remove (null) the openmausbot-computer entry in the
- * global mcp_config.json. Only that one key is ever written; a turn without
- * a computer removes it so a previous turn's mount cannot leak tools — or
- * box/control tokens — into later turns or the user's own agy sessions. */
-export function ensureAntigravityComputerMcp(
-  server: AntigravityComputerMcpServer | null,
+/** The teammate MCP server for this turn, or null when the turn has none. */
+export function antigravityAgentsMcpServer(
+  integrations: SendTurnInput["integrations"],
+): AntigravityMcpServer | null {
+  const agents = integrations?.agents;
+  if (!agents) return null;
+  return { command: agents.command, args: [...agents.args], env: { ...agents.env } };
+}
+
+/** Build every OpenMaus-owned agy MCP entry for one turn. */
+export function antigravityMcpServers(integrations: SendTurnInput["integrations"]): AntigravityMcpServers {
+  const servers: AntigravityMcpServers = {};
+  const computer = antigravityComputerMcpServer(integrations);
+  const agents = antigravityAgentsMcpServer(integrations);
+  if (computer) servers[ANTIGRAVITY_COMPUTER_MCP_KEY] = computer;
+  if (agents) servers[ANTIGRAVITY_AGENTS_MCP_KEY] = agents;
+  return servers;
+}
+
+function ensureAntigravityOwnedMcpServers(
+  desired: AntigravityMcpServers,
+  ownedKeys: readonly AntigravityOwnedMcpKey[],
   env: Record<string, string | undefined> = process.env,
 ): () => void {
   const home = env.HOME || env.USERPROFILE || homedir();
@@ -213,12 +245,15 @@ export function ensureAntigravityComputerMcp(
   }
   const servers = { ...config.mcpServers };
   // Nothing to remove and nothing to add: leave the user's file untouched
-  // (don't create or reformat it on every computer-less turn).
-  if (!server && !(ANTIGRAVITY_COMPUTER_MCP_KEY in servers)) return () => {};
-  if (server) {
-    servers[ANTIGRAVITY_COMPUTER_MCP_KEY] = { command: server.command, args: server.args, env: server.env };
-  } else {
-    delete servers[ANTIGRAVITY_COMPUTER_MCP_KEY];
+  // (don't create or reformat it on every tool-less turn).
+  if (!ownedKeys.some((key) => desired[key] || key in servers)) return () => {};
+  for (const key of ownedKeys) {
+    const server = desired[key];
+    if (server) {
+      servers[key] = { command: server.command, args: [...server.args], env: { ...server.env } };
+    } else {
+      delete servers[key];
+    }
   }
   const directory = dirname(path);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -228,13 +263,17 @@ export function ensureAntigravityComputerMcp(
   writeFileSync(path, mounted, { mode: 0o600 });
   chmodSync(path, 0o600);
 
-  const hadOriginalEntry = ANTIGRAVITY_COMPUTER_MCP_KEY in (config.mcpServers ?? {});
-  const originalEntry = config.mcpServers?.[ANTIGRAVITY_COMPUTER_MCP_KEY];
+  const originalEntries = new Map(
+    ownedKeys.map((key) => [
+      key,
+      { had: key in (config.mcpServers ?? {}), value: config.mcpServers?.[key] },
+    ] as const),
+  );
 
   // Restore exactly what was present before this turn when nobody else touched
   // the file. A user's own agy process is outside our module-wide lease, so if
   // it edited the config concurrently, preserve that edit and restore only our
-  // one key instead of replacing (or deleting) the whole file.
+  // reserved keys instead of replacing (or deleting) the whole file.
   let restored = false;
   return () => {
     if (restored) return;
@@ -268,8 +307,11 @@ export function ensureAntigravityComputerMcp(
     if (!parsed.success) return;
     const currentConfig = parsed.data;
     const currentServers = { ...currentConfig.mcpServers };
-    if (hadOriginalEntry) currentServers[ANTIGRAVITY_COMPUTER_MCP_KEY] = originalEntry;
-    else delete currentServers[ANTIGRAVITY_COMPUTER_MCP_KEY];
+    for (const key of ownedKeys) {
+      const originalEntry = originalEntries.get(key)!;
+      if (originalEntry.had) currentServers[key] = originalEntry.value;
+      else delete currentServers[key];
+    }
     writeFileSync(
       path,
       `${JSON.stringify({ ...currentConfig, mcpServers: currentServers }, null, 2)}\n`,
@@ -277,6 +319,28 @@ export function ensureAntigravityComputerMcp(
     );
     chmodSync(path, 0o600);
   };
+}
+
+/** Upsert the current turn's OpenMaus MCP entries and remove absent ones.
+ * Both reserved keys are owned as one atomic mount, so a previous turn's
+ * computer or teammate token can never leak into the next agy process. */
+export function ensureAntigravityMcpServers(
+  servers: AntigravityMcpServers,
+  env: Record<string, string | undefined> = process.env,
+): () => void {
+  return ensureAntigravityOwnedMcpServers(servers, ANTIGRAVITY_OWNED_MCP_KEYS, env);
+}
+
+/** Backward-compatible computer-only mount helper. */
+export function ensureAntigravityComputerMcp(
+  server: AntigravityComputerMcpServer | null,
+  env: Record<string, string | undefined> = process.env,
+): () => void {
+  return ensureAntigravityOwnedMcpServers(
+    server ? { [ANTIGRAVITY_COMPUTER_MCP_KEY]: server } : {},
+    [ANTIGRAVITY_COMPUTER_MCP_KEY],
+    env,
+  );
 }
 
 function decodeConfig(raw: unknown): AntigravityConfig {
@@ -432,11 +496,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         return { turnId };
       }
 
-      // agy's config is global, so every turn — including one without a
-      // computer — owns the mount for its complete child lifetime. This keeps
+      // agy's config is global, so every turn — including one without any
+      // OpenMaus tools — owns the mount for its complete child lifetime. This keeps
       // overlapping turns from inheriting, replacing, or removing each
       // other's tools and credentials.
-      const releaseMcpLease = await acquireAntigravityComputerMcpLease();
+      const releaseMcpLease = await acquireAntigravityMcpLease();
       if (disposed) {
         releaseMcpLease();
         pending.delete(threadId);
@@ -445,7 +509,12 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       }
       let restoreMcp = () => {};
       try {
-        restoreMcp = ensureAntigravityComputerMcp(antigravityComputerMcpServer(turn.integrations), env);
+        // The capability gate in server/index.ts normally withholds these
+        // integrations in safe mode. Enforce the same boundary here so a
+        // direct adapter caller cannot expose token-bearing tools to a child
+        // that has no interactive permission channel.
+        const mountedIntegrations = config.fullAuto ? turn.integrations : undefined;
+        restoreMcp = ensureAntigravityMcpServers(antigravityMcpServers(mountedIntegrations), env);
       } catch (error) {
         releaseMcpLease();
         pending.delete(threadId);
@@ -610,6 +679,18 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 output: payload.usage.output_tokens || 0,
               });
             }
+            if (payload.status !== "SUCCESS") {
+              const errorMessage = typeof payload.message === "string" && payload.message 
+                ? payload.message 
+                : typeof payload.error === "string" && payload.error 
+                  ? payload.error 
+                  : `Model turn failed: ${payload.status || "unknown reason"}`;
+              emit({
+                ...base(threadId, turnId),
+                type: "runtime.error",
+                message: errorMessage,
+              });
+            }
             // result.usage is the turn total (the per-step agent_response
             // figures above are its parts, not additions to it)
             settle(
@@ -724,6 +805,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           // approval (see contracts.ts), which print mode cannot deliver in
           // any mode; that returns with the native ACP path (agy issue #31).
           computerMcp: config.fullAuto,
+          // The same approval limitation applies to bot-to-bot calls. The
+          // harness only injects the short-lived agents proxy when this flag
+          // is true, so safe-mode turns never expose a token they cannot use.
+          agentsMcp: config.fullAuto,
         },
         sendTurn,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),

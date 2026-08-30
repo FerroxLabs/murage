@@ -61,6 +61,16 @@ struct ChatView: View {
     /// live record instead of the snapshot that opened this screen.
     private var threadId: String { current.threadId }
 
+    /// A task changes a bot's thread, but it does not make it a new bot.
+    /// Intro history follows the chat itself so switching tasks cannot replay
+    /// a once-per-bot greeting.
+    private var islandIntroID: String {
+        switch current {
+        case let .bot(bot): "bot.\(bot.id)"
+        case let .room(room): "room.\(room.id)"
+        }
+    }
+
     private var messages: [Message] {
         session.state.visibleTranscript(forThread: threadId)
     }
@@ -220,8 +230,8 @@ struct ChatView: View {
                     case .never:
                         return
                     case .oncePerBot:
-                        guard !IslandSeen.contains(threadId, in: islandSeen) else { return }
-                        islandSeen = IslandSeen.adding(threadId, to: islandSeen)
+                        guard !IslandSeen.contains(islandIntroID, in: islandSeen) else { return }
+                        islandSeen = IslandSeen.adding(islandIntroID, to: islandSeen)
                     case .always:
                         break
                     }
@@ -325,7 +335,7 @@ struct ChatView: View {
             if listening { composerFocused = false }
         }
         .sheet(isPresented: $showingTasks) {
-            if case let .bot(bot) = current { TaskManagerView(bot: bot) }
+            if current.supportsTasks { TaskManagerView(chat: current) }
         }
         .sheet(isPresented: $showingProfile) {
             if case let .bot(bot) = current { AgentProfileView(bot: bot) }
@@ -530,6 +540,17 @@ struct ChatView: View {
                 subtitle: "Live view of what \(bot.name) is doing"
             ) { showingComputer = true })
         }
+        if case let .room(room) = current, room.dm != true {
+            out.append(PlusAction(
+                id: "task", systemImage: "plus.square.on.square", title: "New task",
+                subtitle: "Start a fresh conversation in \(room.name)",
+                disabled: current.busy || hasPendingApproval
+            ) { Task { await session.createTask(for: room, title: nil) } })
+            out.append(PlusAction(
+                id: "tasks", systemImage: "square.stack", title: "Tasks",
+                subtitle: "Switch, rename or remove one"
+            ) { showingTasks = true })
+        }
         out.append(PlusAction(
             id: "share", systemImage: "doc.plaintext", title: "Share transcript",
             subtitle: "This chat as Markdown"
@@ -563,7 +584,7 @@ struct ChatView: View {
     /// first one, or one that follows a gap of half an hour or more.
     private func startsANewStretch(at index: Int, in rows: [TranscriptRow]) -> Bool {
         guard index > 0 else { return true }
-        return rows[index].at - rows[index - 1].at > 30 * 60 * 1000
+        return rows[index].at - rows[index - 1].endAt > 30 * 60 * 1000
     }
 
     /// True when the next message is from someone else (or there is none),
@@ -618,7 +639,9 @@ struct ChatView: View {
                     isVisible: $showCommandHUD,
                     commands: current.isBot
                         ? CommandSkillHUDView.defaultCommands
-                        : CommandSkillHUDView.defaultCommands.filter { $0.id != "computer" && $0.id != "tasks" },
+                        : CommandSkillHUDView.defaultCommands.filter {
+                            $0.id != "computer" && (current.supportsTasks || $0.id != "tasks")
+                        },
                     accentColor: MausPalette.color(current.color)
                 ) { command in
                     switch command.id {
@@ -779,6 +802,7 @@ struct MessageRow: View {
                 HStack(spacing: 6) {
                     ForEach(reactionGroups(reactions), id: \.emoji) { group in
                         Button("\(group.emoji) \(group.count)") {
+                            Haptics.selection()
                             Task { await session.react(to: message, in: chat.threadId, emoji: group.emoji) }
                         }
                         .font(.system(size: 13))
@@ -808,17 +832,20 @@ struct MessageRow: View {
         }
         .contextMenu {
             ForEach(Self.reactionChoices, id: \.self) { emoji in
-                Button(emoji) { Task { await session.react(to: message, in: chat.threadId, emoji: emoji) } }
+                Button(emoji) {
+                    Haptics.selection()
+                    Task { await session.react(to: message, in: chat.threadId, emoji: emoji) }
+                }
             }
-            // Copy takes the whole reply in one tap; Select Text is for
-            // taking part of it, which the bubble itself cannot offer
-            // because long-press is already this menu.
-            if let body = message.text, !body.isEmpty {
+            if let text = message.text, !text.isEmpty {
                 Divider()
                 Button("Copy", systemImage: "doc.on.doc") {
-                    UIPasteboard.general.string = body
-                    Haptics.selection()
+                    PlatformBridge.copyToPasteboard(text)
                 }
+            }
+            // Copy above takes the whole reply. Selection happens in a sheet
+            // because long-press on the bubble already opens this menu.
+            if let body = message.text, !body.isEmpty {
                 Button("Select Text", systemImage: "selection.pin.in.out") {
                     selecting = SelectableText(text: body)
                 }
@@ -1107,6 +1134,7 @@ struct CardView: View {
                     HStack(spacing: 8) {
                         ForEach(card.options, id: \.self) { option in
                             Button {
+                                Haptics.selection()
                                 answering = true
                                 Task {
                                     await session.answer(chat: chat, card: card, choice: option)
@@ -1135,6 +1163,7 @@ struct CardView: View {
                     // never a string invented here.
                     if card.allowKey != nil, let allow = allowChoice, case let .bot(bot) = chat {
                         Button("Always allow this tool") {
+                            Haptics.selection()
                             answering = true
                             Task {
                                 await session.alwaysAllow(bot: bot, card: card)

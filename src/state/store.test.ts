@@ -3,15 +3,101 @@ import { describe, expect, it, vi } from "vitest";
 import {
   configStatusFromFrame,
   initialState,
+  loadSnapshotBoundary,
   openNotificationTarget,
   reducer,
+  visibleNotificationThread,
   type Bot,
+  type Group,
   type Message,
 } from "./store";
+import { openLiveEvents, type LiveEventSourceLike, type LiveEventsPlatform } from "../lib/live-events";
+
+type SnapshotFrame =
+  | { kind: "hello"; resumed: boolean; cursor: string }
+  | { kind: "message"; threadId: string; message: { id: string } };
+
+class SnapshotEventSource implements LiveEventSourceLike {
+  onopen: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onmessage: ((event: { data: string; lastEventId?: string }) => void) | null = null;
+  close = vi.fn();
+
+  constructor(readonly url: string) {}
+
+  message(frame: SnapshotFrame, lastEventId = "") {
+    this.onmessage?.({ data: JSON.stringify(frame), lastEventId });
+  }
+}
+
+describe("replacement snapshot boundary", () => {
+  it("flushes bot frames without reconnecting when a peripheral snapshot fails", async () => {
+    const sources: SnapshotEventSource[] = [];
+    const applied: unknown[] = [];
+    const pending: unknown[] = [];
+    const scheduleRetry = vi.fn();
+    let hydrated = false;
+    const platform: LiveEventsPlatform = {
+      createEventSource: (url) => {
+        const source = new SnapshotEventSource(url);
+        sources.push(source);
+        return source;
+      },
+      isOnline: () => true,
+      isVisible: () => true,
+      now: Date.now,
+    };
+    const stop = openLiveEvents(
+      {
+        onSnapshotRequired: async () => {
+          const chatReady = await loadSnapshotBoundary(
+            async () => {},
+            [{ key: "webhooks", load: async () => Promise.reject(new Error("webhooks unavailable")) }],
+            (part, error) => scheduleRetry(part.key, error),
+          );
+          if (chatReady) {
+            hydrated = true;
+            applied.push(...pending.splice(0));
+          }
+          return chatReady;
+        },
+        onFrame: (frame) => {
+          if (hydrated) applied.push(frame);
+          else pending.push(frame);
+        },
+        retryMinMs: 1,
+        retryMaxMs: 1,
+      },
+      platform,
+    );
+
+    sources[0]!.message({ kind: "hello", resumed: false, cursor: "stream00:4" });
+    sources[0]!.message(
+      { kind: "message", threadId: "bot-thread", message: { id: "user-1" } },
+      "stream00:5",
+    );
+    await vi.waitFor(() => expect(applied).toHaveLength(1));
+
+    expect(applied).toEqual([
+      { kind: "message", threadId: "bot-thread", message: { id: "user-1" } },
+    ]);
+    expect(scheduleRetry).toHaveBeenCalledWith("webhooks", expect.any(Error));
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.close).not.toHaveBeenCalled();
+    stop();
+  });
+});
 
 describe("notification routing", () => {
-  const bots = [{ id: "bot-1", threadId: "main-thread", tasks: [{ threadId: "detached-thread" }] }] as never;
-  const groups = [{ id: "room-1", threadId: "room-thread" }] as never;
+  const bots = [{ id: "bot-1", threadId: "main-thread", tasks: [{ threadId: "detached-thread" }] }];
+  const groups = [{
+    id: "room-1",
+    threadId: "room-thread",
+    tasks: [
+      { threadId: "room-thread", title: "Current", createdAt: 1 },
+      { threadId: "older-room-thread", title: "Older", createdAt: 0 },
+    ],
+  }];
 
   it("selects the bot and switches to the notification's exact task", () => {
     const dispatch = vi.fn();
@@ -34,12 +120,44 @@ describe("notification routing", () => {
     expect(dispatch.mock.calls.map(([action]) => action)).toEqual([{ type: "select", id: "room-1" }]);
   });
 
+  it("opens the room and restores the exact inactive channel task", () => {
+    const dispatch = vi.fn();
+
+    openNotificationTarget(dispatch, { botId: "bot-1", threadId: "older-room-thread" }, { bots, groups });
+
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+      { type: "select", id: "room-1" },
+      { type: "switchGroupTask", groupId: "room-1", threadId: "older-room-thread" },
+    ]);
+  });
+
   it("lands on a plain bot select for a thread it cannot place, not an error", () => {
     const dispatch = vi.fn();
 
     openNotificationTarget(dispatch, { botId: "bot-1", threadId: "deleted-task-thread" }, { bots, groups });
 
     expect(dispatch.mock.calls.map(([action]) => action)).toEqual([{ type: "select", id: "bot-1" }]);
+  });
+
+  it("identifies only the exact chat thread currently on screen", () => {
+    expect(visibleNotificationThread({
+      activeView: "chat",
+      selectedId: "bot-1",
+      bots,
+      groups,
+    })).toBe("main-thread");
+    expect(visibleNotificationThread({
+      activeView: "chat",
+      selectedId: "room-1",
+      bots,
+      groups,
+    })).toBe("room-thread");
+    expect(visibleNotificationThread({
+      activeView: "routines",
+      selectedId: "bot-1",
+      bots,
+      groups,
+    })).toBeNull();
   });
 });
 
@@ -70,6 +188,57 @@ describe("config status frames", () => {
       profile: { name: "Ian", email: "ian@example.test" },
       features: { skillRecorder: true },
     });
+  });
+});
+
+describe("task rename", () => {
+  it("updates the task title in local state immediately", () => {
+    const bot = {
+      id: "echo",
+      threadId: "t1",
+      name: "Echo",
+      title: "",
+      description: "",
+      notifications: true,
+      color: "green",
+      unread: false,
+      modelSelection: { instanceId: "x", model: "y" },
+      messages: [],
+      tasks: [
+        { threadId: "t1", title: "New task", createdAt: 1 },
+        { threadId: "t2", title: "Other", createdAt: 2 },
+      ],
+    } satisfies Bot;
+    const next = reducer(
+      { ...initialState, bots: [bot] },
+      { type: "renameTask", botId: bot.id, threadId: "t1", title: "Renamed" },
+    );
+    expect(next.bots[0]?.tasks?.find((task) => task.threadId === "t1")?.title).toBe("Renamed");
+    expect(next.bots[0]?.tasks?.find((task) => task.threadId === "t2")?.title).toBe("Other");
+  });
+
+  it("updates a channel task title in local state immediately", () => {
+    const group = {
+      id: "room",
+      threadId: "room-task-1",
+      name: "Launch",
+      memberIds: [],
+      defaultResponder: { kind: "everyone" },
+      bulletin: "",
+      unread: false,
+      createdAt: 1,
+      messages: [],
+      tasks: [
+        { threadId: "room-task-1", title: "New task", createdAt: 1 },
+        { threadId: "room-task-2", title: "Other", createdAt: 2 },
+      ],
+    } satisfies Group;
+    const next = reducer(
+      { ...initialState, groups: [group] },
+      { type: "renameGroupTask", groupId: group.id, threadId: "room-task-1", title: "Renamed" },
+    );
+    expect(next.groups[0]?.tasks?.find((task) => task.threadId === "room-task-1")?.title).toBe("Renamed");
+    expect(next.groups[0]?.tasks?.find((task) => task.threadId === "room-task-2")?.title).toBe("Other");
   });
 });
 
@@ -197,6 +366,51 @@ describe("cross-client bot creation", () => {
     });
 
     expect(greeted.bots[0]?.messages).toEqual([greeting]);
+  });
+});
+
+describe("canonical message races", () => {
+  it("does not rewind the active branch when POST repeats a user message after the reply", () => {
+    const sent = {
+      id: "sent",
+      role: "user",
+      kind: "text",
+      text: "Ship it",
+      at: 1,
+      parentId: null,
+    } satisfies Message;
+    const reply = {
+      id: "reply",
+      role: "bot",
+      kind: "text",
+      text: "Done",
+      at: 2,
+      parentId: sent.id,
+    } satisfies Message;
+    const bot = {
+      id: "race-bot",
+      threadId: "race-thread",
+      name: "Race",
+      title: "",
+      description: "",
+      notifications: true,
+      color: "green",
+      unread: false,
+      modelSelection: { instanceId: "codex", model: "default" },
+      messages: [sent, reply],
+      activeLeafId: reply.id,
+    } satisfies Bot;
+    const state = { ...initialState, bots: [bot] };
+
+    const next = reducer(state, {
+      type: "messageAdded",
+      threadId: bot.threadId,
+      message: sent,
+    });
+
+    expect(next).toBe(state);
+    expect(next.bots[0]?.activeLeafId).toBe(reply.id);
+    expect(next.bots[0]?.messages).toEqual([sent, reply]);
   });
 });
 
@@ -370,6 +584,41 @@ describe("pending queued chip", () => {
     expect(late.consumedQueueIds).toEqual({});
   });
 
+  it("reconciles a missed drain from hydration and rejects its late POST continuation", () => {
+    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const queued = reducer(withBot, {
+      type: "pendingQueued",
+      threadId: "t1",
+      queueId: "q-snapshot",
+      text: "already ran",
+    });
+    const canonical = {
+      id: "m-snapshot",
+      at: 100,
+      role: "user",
+      kind: "text",
+      text: "already ran",
+      queueId: "q-snapshot",
+    } satisfies Message;
+    const hydrated = reducer(queued, {
+      type: "hydrate",
+      bots: [{ ...bot, messages: [canonical] }],
+      groups: [],
+      computerControl: {},
+    });
+
+    expect(hydrated.pendingQueued).toEqual({});
+    expect(hydrated.consumedQueueIds["q-snapshot"]).toBe(true);
+    const late = reducer(hydrated, {
+      type: "pendingQueued",
+      threadId: "t1",
+      queueId: "q-snapshot",
+      text: "already ran",
+    });
+    expect(late.pendingQueued).toEqual({});
+    expect(late.consumedQueueIds["q-snapshot"]).toBeUndefined();
+  });
+
   it("bounds unmatched queue tombstones from other clients", () => {
     const withBot = reducer(initialState, { type: "botPatched", bot });
     let state = withBot;
@@ -393,5 +642,54 @@ describe("pending queued chip", () => {
     });
     expect(late.pendingQueued).toEqual({});
     expect(late.consumedQueueIds["foreign-99"]).toBeUndefined();
+  });
+
+  it("drops a cancelled pending chip without waiting for drain", () => {
+    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const queued = reducer(withBot, {
+      type: "pendingQueued",
+      threadId: "t1",
+      queueId: "q-drop",
+      text: "never mind",
+    });
+    const cancelled = reducer(queued, {
+      type: "cancelQueued",
+      botId: "b1",
+      queueId: "q-drop",
+    });
+    expect(cancelled.pendingQueued).toEqual({});
+  });
+});
+
+describe("messageAdded leaf adoption", () => {
+  const baseBot = {
+    id: "bot-1",
+    threadId: "thread-1",
+    messages: [
+      { id: "m1", at: 1, role: "bot", kind: "text", text: "turn done" },
+      { id: "m2", at: 2, parentId: "m1", role: "user", kind: "text", text: "next question" },
+    ],
+    activeLeafId: "m2",
+  } as never as Bot;
+  const state = { ...initialState, bots: [baseBot] };
+
+  it("adopts the leaf for a message chaining onto it", () => {
+    const next = reducer(state, {
+      type: "messageAdded",
+      threadId: "thread-1",
+      message: { id: "m3", at: 3, parentId: "m2", role: "bot", kind: "text", text: "reply" } as never as Message,
+    });
+    expect(next.bots[0].activeLeafId).toBe("m3");
+  });
+
+  it("keeps the leaf when a late artifact is chain-inserted mid-branch", () => {
+    // the settle-time screenshot arrives parented to m1 while m2 is the leaf
+    const next = reducer(state, {
+      type: "messageAdded",
+      threadId: "thread-1",
+      message: { id: "shot", at: 3, parentId: "m1", role: "bot", kind: "screen", png: "x" } as never as Message,
+    });
+    expect(next.bots[0].activeLeafId).toBe("m2"); // the user's message stays the tail
+    expect(next.bots[0].messages.map((m) => m.id)).toContain("shot");
   });
 });

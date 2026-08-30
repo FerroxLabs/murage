@@ -6,6 +6,7 @@ import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
+import { builtInBrowserEnabled } from "@/lib/feature-flags";
 import { requestNotificationPermission } from "@/lib/notify";
 import { botUsage, costCaption, formatTokens, formatUsd, hasFiniteCost } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
@@ -337,11 +338,13 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
         | "avatarUrl"
         | "avatarCrop"
         | "autoApprove"
+        | "autoReview"
         | "speakReplies"
         | "voice"
         | "chiefOfStaff"
         | "approvePeerComms"
         | "composio"
+        | "browser"
         | "modelSelection"
       >
     > & { acknowledgeLocalAuto?: boolean },
@@ -349,11 +352,18 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const activeState = stateForBot(bot);
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
+  const canAutoReview = engine?.capabilities?.approvalReview === true;
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
   const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
   const canUseVps = engine?.capabilities?.computerMcp === true && engine.driverKind !== "boxAgent";
   const connectedAppsConfigured = state.config?.composio?.configured === true;
   const connectedAppsEnabled = bot.composio !== false;
+  const canUseBrowser = engine?.capabilities?.browserMcp === true;
+  const desktopBrowser = Boolean(window.ogb?.browser);
+  const browserBlockedOnWindows = window.ogb?.platform === "win32" && !desktopBrowser;
+  const browserFeature = builtInBrowserEnabled(state.config);
+  const browserAllowed = bot.browser !== false;
+  const browserEnabled = browserFeature && browserAllowed;
   const sectionName = bot.section?.trim() || "General";
   const currentChief = state.bots.find(
     (candidate) =>
@@ -543,6 +553,43 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             </button>
           </div>
 
+          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+            <div>
+              <div className="text-[15px] font-medium text-ink">Browser</div>
+              <div className="mt-0.5 text-[13px] text-ink-secondary">
+                {!desktopBrowser
+                  ? browserBlockedOnWindows
+                    ? "The built-in browser is temporarily unavailable on Windows while Electron's production sandbox support is being verified."
+                    : "The built-in browser needs the OpenMausBot desktop app."
+                  : !browserFeature
+                    ? "The built-in browser is switched off under App Settings → Experimental."
+                    : !canUseBrowser
+                      ? "This bot's current engine cannot use the built-in browser."
+                      : browserEnabled
+                        ? "This bot has its own browser tab in the computer panel — its own logins, watchable and takeable at any time."
+                        : "Keep the built-in browser unavailable to this bot."}
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={browserEnabled}
+              aria-label="Give this bot a built-in browser"
+              disabled={!browserEnabled && (!desktopBrowser || !browserFeature || !canUseBrowser)}
+              onClick={() => patch({ browser: !browserAllowed })}
+              className={cn(
+                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                browserEnabled ? "bg-accent" : "bg-control",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
+                  browserEnabled ? "left-[21px]" : "left-[3px]",
+                )}
+              />
+            </button>
+          </div>
+
           <div className="rounded-xl bg-card p-4">
             <ModelPicker
               bot={bot}
@@ -702,6 +749,41 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 )}
               />
             </button>
+          </div>
+
+          <div className="rounded-xl bg-card p-4">
+            <div className="text-[15px] font-medium text-ink">Review routine approvals</div>
+            <div className="mt-0.5 text-[13px] text-ink-secondary">
+              {canAutoReview
+                ? "The same engine reviews ordinary approval cards. Existing safety rules, unattended turns, local-computer access, and questions still wait for you."
+                : "This engine cannot run an isolated review safely, so approval cards continue to wait for you."}
+            </div>
+            <div className="mt-3 flex gap-1 rounded-lg bg-inset p-0.5">
+              {(
+                [
+                  ["off", "Off", "Every undecided approval waits for you."],
+                  ["shadow", "Watch", "Record the review without answering the card."],
+                  ["enforce", "On", "Answer only reviews that return a strict approval."],
+                ] as const
+              ).map(([value, label, hint]) => {
+                const current = bot.autoReview === "shadow" || bot.autoReview === "enforce" ? bot.autoReview : "off";
+                const disabled = value !== "off" && !canAutoReview;
+                return (
+                  <button
+                    key={value}
+                    title={disabled ? "Not supported by this engine" : hint}
+                    disabled={disabled}
+                    onClick={() => patch({ autoReview: value })}
+                    className={cn(
+                      "flex-1 rounded-md px-2.5 py-1.5 text-[13px] font-medium disabled:cursor-not-allowed disabled:opacity-40",
+                      current === value ? "bg-raised text-ink" : "text-ink-secondary hover:text-ink",
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <VoiceSettings bot={bot} onPatch={patch} />

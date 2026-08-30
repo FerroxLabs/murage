@@ -89,6 +89,8 @@ public struct QuickReply: Codable, Hashable, Identifiable, Sendable {
     public static func decode(_ json: String) -> [QuickReply] {
         guard !json.isEmpty, let data = json.data(using: .utf8) else { return defaults }
         guard let decoded = try? JSONDecoder().decode([QuickReply].self, from: data) else { return defaults }
+        let ids = decoded.map { $0.id.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard ids.allSatisfy({ !$0.isEmpty }), Set(ids).count == ids.count else { return defaults }
         return decoded
     }
 }
@@ -115,6 +117,14 @@ public enum TranscriptRow: Identifiable, Hashable, Sendable {
     }
 
     public var at: Double { head.at }
+    /// The last timestamp covered by this row. Date separators compare the
+    /// next row with this value so a folded run cannot manufacture a gap.
+    public var endAt: Double {
+        switch self {
+        case let .message(message): message.at
+        case let .activityRun(items): items.last?.at ?? head.at
+        }
+    }
     public var role: Message.Role { head.role }
     public var kind: Message.Kind { head.kind }
     public var senderName: String? { head.from?.name }

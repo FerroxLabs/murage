@@ -16,7 +16,7 @@ const frame: NotifyFrame = {
   body: "All done",
 };
 
-function installNotification(permission: NotificationPermission) {
+function installNotification(permission: NotificationPermission, focused = false) {
   const notices: Array<{ title: string; options?: NotificationOptions; onclick: (() => void) | null }> = [];
   const requestPermission = vi.fn(async () => "granted" as NotificationPermission);
   class FakeNotification {
@@ -28,7 +28,7 @@ function installNotification(permission: NotificationPermission) {
     }
   }
   vi.stubGlobal("Notification", FakeNotification);
-  vi.stubGlobal("document", { hasFocus: () => false });
+  vi.stubGlobal("document", { hasFocus: () => focused });
   vi.stubGlobal("window", { focus: vi.fn() });
   return { notices, requestPermission };
 }
@@ -54,6 +54,22 @@ describe("desktop notifications", () => {
     showNotification(frame, vi.fn());
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ title: frame.title, options: { body: frame.body, tag: `openmausbot:${frame.botId}` } });
+  });
+
+  it("stays quiet only when the exact target thread is already visible", () => {
+    const { notices } = installNotification("granted", true);
+
+    showNotification(frame, vi.fn(), undefined, frame.threadId);
+
+    expect(notices).toHaveLength(0);
+  });
+
+  it("still alerts a focused app when another task is visible", () => {
+    const { notices } = installNotification("granted", true);
+
+    showNotification(frame, vi.fn(), undefined, "another-thread");
+
+    expect(notices).toHaveLength(1);
   });
 
   it("opens the exact detached task carried by the notification", () => {

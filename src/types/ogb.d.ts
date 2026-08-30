@@ -94,6 +94,36 @@ type SkillRecordingPayload = {
     };
   };
 
+  interface DesktopWorkspaceBounds {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }
+
+  interface BrowserSurfaceState {
+    botId: string;
+    open: boolean;
+    url: string;
+    title: string;
+    loading: boolean;
+    canGoBack: boolean;
+    canGoForward?: boolean;
+    visible: boolean;
+    partition?: string | null;
+    profile?: string | null;
+    mode?: "compact" | "expanded" | null;
+    code?: "renderer-gone" | "profile-changed" | "evicted";
+  }
+
+  interface DesktopWorkspaceState {
+    contextId: string;
+    open: boolean;
+    status: "opening" | "ready" | "error" | "closed";
+    interactive: boolean;
+    code?: "load-failed" | "renderer-gone";
+  }
+
   interface Window {
     ogb?: {
       platform: NodeJS.Platform;
@@ -159,6 +189,8 @@ type SkillRecordingPayload = {
       openInstallTerminal?(command: string): Promise<boolean>;
       /** Opens an http(s) link in the user's default browser. */
       openExternal?(url: string): Promise<boolean>;
+      /** Recolor the native window chrome for a skin; absent on older builds. */
+      applySkin?(skin: string): Promise<boolean>;
       /** Receives a GitHub package URL opened through openmausbot://install. */
       onPackageInstall?(cb: (url: string) => void): () => void;
       /** Updates the native Dock/taskbar unread indicator. */
@@ -171,6 +203,46 @@ type SkillRecordingPayload = {
         /** The current viewer state, for a panel to initialize from on mount. */
         currentState(): Promise<{ open: boolean; contextId: string | null }>;
         onState(cb: (state: { open: boolean; contextId: string | null }) => void): () => void;
+      };
+      /** Two Local VM viewers embedded in one app window. URLs are accepted
+       * only by main-process validation and never return over this bridge. */
+      /** The built-in browser surface; absent in a browser tab or an older shell. */
+      browser?: {
+        available(): Promise<boolean>;
+        state(botId: string): Promise<BrowserSurfaceState>;
+        layout(
+          botId: string,
+          bounds: DesktopWorkspaceBounds | null,
+          profile?: string,
+          mode?: "compact" | "expanded",
+        ): Promise<BrowserSurfaceState>;
+        navigate(botId: string, url: string, profile?: string): Promise<{ url: string; title: string }>;
+        back(botId: string, profile?: string): Promise<{ url: string; title: string }>;
+        forward?(botId: string, profile?: string): Promise<{ url: string; title: string }>;
+        /** Immediately gates native browser mutations while the durable
+         * server-side human-control snapshot catches up. */
+        setHumanControl?(botId: string, held: boolean, profile?: string): Promise<boolean>;
+        /** Native page focus/input means the person has taken the wheel. */
+        onUserInteraction?(cb: (event: { botId: string }) => void): () => void;
+        forgetProfile?(partitionId: string): Promise<{ dropped: number }>;
+        close(botId: string): Promise<boolean>;
+        onState(cb: (state: BrowserSurfaceState) => void): () => void;
+      };
+      desktopWorkspace?: {
+        open(input: {
+          contextId: string;
+          url: string;
+          title: string;
+          bounds: DesktopWorkspaceBounds;
+        }): Promise<DesktopWorkspaceState>;
+        layout(items: Array<{
+          contextId: string;
+          bounds: DesktopWorkspaceBounds;
+          visible: boolean;
+        }>): Promise<boolean>;
+        setInteractive(contextId: string | null): Promise<boolean>;
+        close(contextId?: string): Promise<boolean>;
+        onState(cb: (state: DesktopWorkspaceState) => void): () => void;
       };
       /** Native folder picker; resolves null when the user cancels. */
       pickFolder?(current?: string): Promise<string | null>;

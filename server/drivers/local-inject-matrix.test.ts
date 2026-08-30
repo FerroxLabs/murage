@@ -14,6 +14,7 @@ import { HermesAgentDriver, ensureHermesInjectProvider, hermesAcpModelId } from 
 import { ensureKimiInjectAlias, KimiAgentDriver } from "./acp/kimi.ts";
 import { ensureOpenCodeInjectModel } from "./acp/opencode-go.ts";
 import { ensureQwenInjectModel, QwenAgentDriver } from "./acp/qwen.ts";
+import { ensurePiInjectModel, PiDriver } from "./pi.ts";
 import { recordEvents } from "../testing/events.ts";
 import {
   applyClaudeInject,
@@ -540,10 +541,40 @@ describe("room turns must pass the picker model", () => {
   });
 });
 
+describe("Pi writer × hosts", () => {
+  it.each(UNIQUE_HOSTS)("stores $id in ~/.pi/agent/models.json as openai-completions", (host) => {
+    const home = scratchHome("omb-pi-mx-");
+    const split = ensurePiInjectModel(encodeInjectId(host.id, "gemma-4-31b-it-bf16"), {
+      HOME: home,
+      UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret",
+    });
+    expect(split).toEqual({ provider: host.id, modelId: "gemma-4-31b-it-bf16" });
+    const written = JSON.parse(readFileSync(join(home, ".pi", "agent", "models.json"), "utf8")) as {
+      providers: Record<
+        string,
+        { baseUrl: string; api: string; apiKey: string; models: Array<{ id: string }> }
+      >;
+    };
+    const row = written.providers[host.id];
+    expect(row.baseUrl).toBe(host.baseUrl);
+    expect(row.api).toBe("openai-completions");
+    expect(row.apiKey).toBe(hostApiKey(host, { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" }));
+    expect(row.models.map((m) => m.id)).toEqual(["gemma-4-31b-it-bf16"]);
+  });
+
+  it("leaves official pi slugs untouched", () => {
+    expect(ensurePiInjectModel("ollama-cloud/glm-5.2", { HOME: scratchHome("omb-pi-cloud-") })).toEqual({
+      provider: "ollama-cloud",
+      modelId: "glm-5.2",
+    });
+  });
+});
+
 describe("Cloud vs Local catalog access", () => {
-  it("Qwen and Hermes advertise access=custom", () => {
+  it("Qwen, Hermes, and pi advertise access=custom", () => {
     expect(QwenAgentDriver.metadata.access).toBe("custom");
     expect(HermesAgentDriver.metadata.access).toBe("custom");
+    expect(PiDriver.metadata.access).toBe("custom");
   });
 
   it("Kimi and Droid stay Cloud (subscription catalog + Custom)", () => {

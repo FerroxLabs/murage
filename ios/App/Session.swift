@@ -32,6 +32,7 @@ final class Session: ObservableObject {
 
     @Published private(set) var state = CompanionState()
     @Published private(set) var connection: Connection?
+    @Published private(set) var connections: [Connection] = []
     @Published private(set) var status: Status = .unpaired
     /// Transient, user-facing failures from an action they just took.
     @Published var actionError: String?
@@ -43,6 +44,9 @@ final class Session: ObservableObject {
     @Published private(set) var notificationAuthorizationResolved = false
     /// A short-lived desktop handoff waiting for PairingView to present it.
     @Published private(set) var pairingInvite: PairingInvite?
+    /// Pairing can be opened while another computer remains connected. The
+    /// working session is only replaced after the new credential commits.
+    @Published private(set) var pairingRequested = false
 
     /// A notification response that should be pushed by the roster's
     /// NavigationStack after the exact detached task has been activated.
@@ -92,7 +96,9 @@ final class Session: ObservableObject {
     /// paired client can be rebuilt after unlock.
     private var pendingNotification: NotificationTarget?
 
-    private static let connectionKey = "companion.connection"
+    private var registry = CompanionConnectionRegistry()
+    private static let connectionsKey = "companion.connections.v1"
+    private static let legacyConnectionKey = "companion.connection"
 
     // MARK: - Pairing
 
@@ -102,11 +108,33 @@ final class Session: ObservableObject {
             Task { @MainActor in await self?.openNotification(target) }
         }
 #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-store-preview"),
+        let arguments = ProcessInfo.processInfo.arguments
+        if (arguments.contains("-store-preview") || arguments.contains("-computer-switcher-preview")),
            let url = Bundle.main.url(forResource: "StorePreview", withExtension: "json"),
            let data = try? Data(contentsOf: url),
            let fleet = try? JSONDecoder().decode(Fleet.self, from: data) {
-            connection = Connection(name: "Preview Mac", host: "preview.tailnet.ts.net", port: 8810)
+            let preview = Connection(
+                id: "preview-current",
+                name: "Milind’s MacBook Pro",
+                host: "preview.tailnet.ts.net",
+                port: 8810
+            )
+            connection = preview
+            if arguments.contains("-computer-switcher-preview") {
+                let other = Connection(
+                    id: "preview-other",
+                    name: "MacBook Air",
+                    host: "air.tailnet.ts.net",
+                    port: 8810
+                )
+                registry = CompanionConnectionRegistry(
+                    connections: [preview, other],
+                    activeConnectionID: preview.id
+                )
+                connections = registry.connections
+            } else {
+                connections = [preview]
+            }
             state.hydrate(fleet)
             status = .live
             return
@@ -116,7 +144,8 @@ final class Session: ObservableObject {
         Task { await refreshNotificationAuthorization() }
     }
 
-    /// Rebuild the last connection at launch.
+    /// Rebuild the selected connection at launch, migrating the previous
+    /// single-computer record the first time a multi-computer build runs.
     ///
     /// Three outcomes, and keeping them apart is the whole point. No saved
     /// connection: stay unpaired. A saved connection whose token reads back:
@@ -127,9 +156,27 @@ final class Session: ObservableObject {
     /// only the first should ever send someone back to the pairing screen.
     private func restore() {
         restorePending = false
-        guard let data = UserDefaults.standard.data(forKey: Self.connectionKey),
-              let saved = try? JSONDecoder().decode(Connection.self, from: data)
-        else { return }
+        let restored = CompanionConnectionRegistryMigration.restore(
+            registryData: UserDefaults.standard.data(forKey: Self.connectionsKey),
+            legacyConnectionData: UserDefaults.standard.data(forKey: Self.legacyConnectionKey)
+        )
+        registry = restored.registry
+        connections = registry.connections
+        if restored.migratedLegacyConnection {
+            persistRegistry()
+            UserDefaults.standard.removeObject(forKey: Self.legacyConnectionKey)
+        }
+        restoreSelectedConnection()
+    }
+
+    /// Find the first selected pairing whose Keychain token still exists.
+    /// A missing token is a genuinely unusable saved record; a locked
+    /// Keychain is temporary and must leave the record untouched.
+    private func restoreSelectedConnection() {
+        guard let saved = registry.activeConnection else {
+            clearActiveConnection()
+            return
+        }
 
         let stored: String?
         do {
@@ -148,17 +195,15 @@ final class Session: ObservableObject {
             )
             return
         }
-        guard let stored else { return } // no token: genuinely not paired
+        guard let stored else {
+            registry.remove(id: saved.id)
+            persistRegistry()
+            connections = registry.connections
+            restoreSelectedConnection()
+            return
+        }
 
-        connection = saved
-        token = stored
-        // New connections honor the desktop's transport policy. Automatic
-        // walking is credential-safe: protected routes stay protected, while
-        // a legacy/local route is only tried when it was the exact saved route.
-        rotation = CandidateRotation(endpoints: saved.orderedEndpoints)
-        let first = rotation.currentEndpoint.map(saved.dialing) ?? saved
-        client = CompanionClient(connection: first, token: stored)
-        status = .connecting
+        configureActiveConnection(saved, token: stored)
     }
 
     /// Redeem a one-time pairing credential. On success the device token goes
@@ -199,8 +244,14 @@ final class Session: ObservableObject {
         if stored.endpoints?.isEmpty != false {
             stored.hosts = Array(stored.orderedHosts.prefix(8))
         }
+        if let existing = registry.matchingConnection(for: stored) {
+            stored.id = existing.id
+        }
 
         try Keychain.save(paired.token, for: stored.id)
+        let firstPairing = registry.connections.isEmpty
+        var updatedRegistry = registry
+        updatedRegistry.upsert(stored)
         // Write the first-pair education marker before making the connection
         // restorable. If the process stops between these writes, an orphan
         // marker is harmless while unpaired; the reverse order could restore
@@ -208,21 +259,28 @@ final class Session: ObservableObject {
         // RootView may not have received iOS's notification status yet, and
         // the app may be relaunched before that asynchronous lookup finishes.
         CompanionPairingCommitSequence.persist {
-            UserDefaults.standard.set(
-                true,
-                forKey: CompanionOnboardingPreferences.pendingNotificationOnboardingKey
-            )
+            if firstPairing {
+                UserDefaults.standard.set(
+                    true,
+                    forKey: CompanionOnboardingPreferences.pendingNotificationOnboardingKey
+                )
+            }
         } saveConnection: {
             UserDefaults.standard.set(
-                try? JSONEncoder().encode(stored),
-                forKey: Self.connectionKey
+                try? JSONEncoder().encode(updatedRegistry),
+                forKey: Self.connectionsKey
             )
         }
 
+        stopActiveRuntime()
         pairingInvite = CompanionPairingInvitePolicy.nextInvite(
             current: pairingInvite,
             after: .pairingSucceeded
         )
+        pairingRequested = false
+        registry = updatedRegistry
+        connections = registry.connections
+        UserDefaults.standard.removeObject(forKey: Self.legacyConnectionKey)
         self.connection = stored
         self.token = paired.token
         let liveRoutes = winner.map { route in
@@ -241,13 +299,6 @@ final class Session: ObservableObject {
     }
 
     func receivePairingURL(_ url: URL) {
-        guard CompanionPairingInvitePolicy.allowsIncomingInvite(
-            hasConnection: connection != nil,
-            pairingStateIsUnpaired: status == .unpaired
-        ) else {
-            actionError = "This phone is already paired. Unpair it in Settings before connecting it to another computer."
-            return
-        }
         guard let invite = PairingInvite.parse(url) else {
             actionError = "That pairing invitation is not valid. Start pairing again on your computer."
             return
@@ -256,6 +307,16 @@ final class Session: ObservableObject {
             current: pairingInvite,
             after: .received(invite)
         )
+        pairingRequested = true
+    }
+
+    func beginPairing() {
+        pairingRequested = true
+    }
+
+    func endPairing() {
+        pairingRequested = false
+        consumePairingInvite()
     }
 
     func consumePairingInvite() {
@@ -265,7 +326,73 @@ final class Session: ObservableObject {
         )
     }
 
+    func switchComputer(to id: String) {
+        guard let saved = registry.connection(id: id) else { return }
+        if connection?.id == id {
+            restartStream()
+            connect()
+            return
+        }
+
+        let stored: String?
+        do {
+            stored = try Keychain.token(for: id)
+        } catch {
+            actionError = (error as? KeychainError)?.isLocked == true
+                ? "Unlock this iPhone, then try switching computers again."
+                : error.localizedDescription
+            return
+        }
+        guard let stored else {
+            actionError = "This saved connection is no longer available on this iPhone. Remove it and pair again."
+            return
+        }
+
+        stopActiveRuntime()
+        registry.select(id: id)
+        persistRegistry()
+        connections = registry.connections
+        configureActiveConnection(saved, token: stored)
+        connect()
+    }
+
+    func forgetConnection(id: String) {
+        guard registry.connection(id: id) != nil else { return }
+        let wasActive = registry.activeConnectionID == id
+        if wasActive { stopActiveRuntime() }
+        Keychain.remove(id)
+        registry.remove(id: id)
+        persistRegistry()
+        connections = registry.connections
+        guard wasActive else { return }
+
+        connection = nil
+        client = nil
+        token = nil
+        rotation = CandidateRotation(hosts: [])
+        state = CompanionState()
+        resetAvatarCache()
+        NotificationCoordinator.shared.setBadge(0)
+        restoreSelectedConnection()
+        if connection != nil { connect() }
+        if connections.isEmpty {
+            UserDefaults.standard.removeObject(
+                forKey: CompanionOnboardingPreferences.pendingNotificationOnboardingKey
+            )
+        }
+    }
+
+    /// Compatibility for the existing revoked-pairing and detail actions:
+    /// sign out now means remove only the selected computer.
     func signOut() {
+        guard let id = connection?.id ?? registry.activeConnectionID else {
+            clearActiveConnection()
+            return
+        }
+        forgetConnection(id: id)
+    }
+
+    private func clearActiveConnection() {
         streamTask?.cancel()
         streamTask = nil
         endpointRefreshTask?.cancel()
@@ -276,11 +403,7 @@ final class Session: ObservableObject {
             current: pairingInvite,
             after: .signedOut
         )
-        if let id = connection?.id { Keychain.remove(id) }
-        UserDefaults.standard.removeObject(forKey: Self.connectionKey)
-        UserDefaults.standard.removeObject(
-            forKey: CompanionOnboardingPreferences.pendingNotificationOnboardingKey
-        )
+        pairingRequested = false
         connection = nil
         client = nil
         token = nil
@@ -289,6 +412,53 @@ final class Session: ObservableObject {
         resetAvatarCache()
         NotificationCoordinator.shared.setBadge(0)
         status = .unpaired
+    }
+
+    private func configureActiveConnection(_ saved: Connection, token stored: String) {
+        connection = saved
+        token = stored
+        // New connections honor the desktop's transport policy. Automatic
+        // walking is credential-safe: protected routes stay protected, while
+        // a legacy/local route is only tried when it was the exact saved route.
+        rotation = CandidateRotation(endpoints: saved.orderedEndpoints)
+        let first = rotation.currentEndpoint.map(saved.dialing) ?? saved
+        client = CompanionClient(connection: first, token: stored)
+        status = .connecting
+    }
+
+    private func stopActiveRuntime() {
+        streamGeneration += 1
+        streamTask?.cancel()
+        streamTask = nil
+        endpointRefreshTask?.cancel()
+        endpointRefreshTask = nil
+        restorePending = false
+        endLinger()
+        pendingNotification = nil
+        screenWatchers = 0
+        client = nil
+        token = nil
+        state = CompanionState()
+        resetAvatarCache()
+        NotificationCoordinator.shared.setBadge(0)
+    }
+
+    private func persistRegistry() {
+        if registry.connections.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.connectionsKey)
+        } else {
+            UserDefaults.standard.set(
+                try? JSONEncoder().encode(registry),
+                forKey: Self.connectionsKey
+            )
+        }
+    }
+
+    private func persistActiveConnection(_ updated: Connection) {
+        registry.upsert(updated, makeActive: false)
+        connection = updated
+        connections = registry.connections
+        persistRegistry()
     }
 
     // MARK: - Lifecycle
@@ -376,6 +546,7 @@ final class Session: ObservableObject {
     }
 
     private var lingerTask: UIBackgroundTaskIdentifier = .invalid
+    private var lingerSleep: Task<Void, Never>?
 
     /// Leaving the screen: keep the stream alive for the grace period iOS
     /// allows (~30 s) rather than cutting it at once, so an approval that
@@ -384,18 +555,27 @@ final class Session: ObservableObject {
     /// the cursor is written down at a known point.
     func linger() {
         guard streamTask != nil, lingerTask == .invalid else { disconnect(); return }
-        lingerTask = UIApplication.shared.beginBackgroundTask(withName: "companion.linger") { [weak self] in
+        // A previous request can leave a sleeper behind when iOS refuses the
+        // background assertion. Never let it outlive the assertion it belongs
+        // to or disconnect a later linger window.
+        lingerSleep?.cancel()
+        lingerSleep = nil
+        let task = UIApplication.shared.beginBackgroundTask(withName: "companion.linger") { [weak self] in
             // time is up before our own timer — the system wants us gone now
             self?.disconnect()
         }
-        Task { [weak self] in
+        guard task != .invalid else { disconnect(); return }
+        lingerTask = task
+        lingerSleep = Task { [weak self] in
             try? await Task.sleep(for: .seconds(25))
-            guard let self, self.lingerTask != .invalid else { return }
+            guard !Task.isCancelled, let self, self.lingerTask != .invalid else { return }
             self.disconnect()
         }
     }
 
     private func endLinger() {
+        lingerSleep?.cancel()
+        lingerSleep = nil
         guard lingerTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(lingerTask)
         lingerTask = .invalid
@@ -520,8 +700,7 @@ final class Session: ObservableObject {
         guard let winner = rotation.currentEndpoint, var updated = connection,
               updated.activeEndpoint?.url != winner.url else { return }
         updated.promote(winner)
-        connection = updated
-        UserDefaults.standard.set(try? JSONEncoder().encode(updated), forKey: Self.connectionKey)
+        persistActiveConnection(updated)
     }
 
     /// Learn routes enabled after this phone originally paired. The endpoint
@@ -544,11 +723,7 @@ final class Session: ObservableObject {
                 else { return }
 
                 updated.reconcile(metadata)
-                self.connection = updated
-                UserDefaults.standard.set(
-                    try? JSONEncoder().encode(updated),
-                    forKey: Self.connectionKey
-                )
+                self.persistActiveConnection(updated)
 
                 // Keep the currently live route first until this stream ends.
                 // CandidateRotation applies the same no-downgrade policy used
@@ -578,8 +753,7 @@ final class Session: ObservableObject {
             priority: 0
         ) else { return false }
         updated.resetRoutePolicy(selecting: endpoint)
-        connection = updated
-        UserDefaults.standard.set(try? JSONEncoder().encode(updated), forKey: Self.connectionKey)
+        persistActiveConnection(updated)
         rotation = CandidateRotation(endpoints: updated.orderedEndpoints)
         if let token {
             client = CompanionClient(connection: updated.dialing(endpoint), token: token)
@@ -751,11 +925,15 @@ final class Session: ObservableObject {
                 return state.bot(bot.id).map(Chat.bot)
             }
             if let groupId = hit.groupId,
-               let room = state.rooms.first(where: { $0.id == groupId }) {
+               var room = state.rooms.first(where: { $0.id == groupId }) {
+                if room.threadId != hit.threadId {
+                    room = try await client.switchTask(groupId: room.id, threadId: hit.threadId)
+                    state.apply(.room(room))
+                }
                 let page = try await client.messages(threadId: hit.threadId, around: hit.messageId)
                 state.merge(page, intoThread: hit.threadId)
                 focusedMessageId = hit.messageId
-                return .room(room)
+                return state.rooms.first(where: { $0.id == groupId }).map(Chat.room)
             }
         } catch { actionError = error.localizedDescription }
         return nil
@@ -788,6 +966,32 @@ final class Session: ObservableObject {
     func deleteTask(_ task: BotTask, for bot: Bot) async {
         guard let client else { return }
         do { state.apply(.bot(try await client.deleteTask(botId: bot.id, threadId: task.threadId))) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func createTask(for room: Room, title: String?) async {
+        guard let client else { return }
+        do { state.apply(.room(try await client.createTask(groupId: room.id, title: title))) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func switchTask(_ task: BotTask, for room: Room) async {
+        guard let client, task.threadId != room.threadId else { return }
+        do { state.apply(.room(try await client.switchTask(groupId: room.id, threadId: task.threadId))) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func renameTask(_ task: BotTask, for room: Room, title: String) async {
+        guard let client else { return }
+        do {
+            try await client.renameTask(groupId: room.id, threadId: task.threadId, title: title)
+            await refresh()
+        } catch { actionError = error.localizedDescription }
+    }
+
+    func deleteTask(_ task: BotTask, for room: Room) async {
+        guard let client else { return }
+        do { state.apply(.room(try await client.deleteTask(groupId: room.id, threadId: task.threadId))) }
         catch { actionError = error.localizedDescription }
     }
 
@@ -954,7 +1158,18 @@ final class Session: ObservableObject {
             // A room's approval/question notification carries the asker bot
             // with the ROOM's thread id — open the room rather than asking
             // the bot to switch to a thread it does not own (a 404).
-            if let room = state.rooms.first(where: { $0.threadId == target.threadId }) {
+            if var room = state.rooms.first(where: {
+                $0.threadId == target.threadId || ($0.tasks ?? []).contains(where: { $0.threadId == target.threadId })
+            }) {
+                if room.threadId != target.threadId {
+                    do {
+                        room = try await client.switchTask(groupId: room.id, threadId: target.threadId)
+                        state.apply(.room(room))
+                    } catch {
+                        // A stale notification should still open the channel's
+                        // current task instead of leaving the person nowhere.
+                    }
+                }
                 notificationChat = .room(room)
                 return
             }
@@ -1118,6 +1333,15 @@ enum Chat: Identifiable, Hashable {
     var isBot: Bool {
         if case .bot = self { return true }
         return false
+    }
+
+    var supportsTasks: Bool {
+        switch self {
+        case .bot: return true
+        // `tasks == nil` means an older paired desktop. Hide the affordance
+        // instead of sending it a route it does not know yet.
+        case let .room(room): return room.dm != true && room.tasks != nil
+        }
     }
 
     var subtitle: String {

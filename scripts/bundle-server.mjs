@@ -56,6 +56,7 @@ const ENTRY_POINTS = [
   "drivers/agents-proxy.ts",
   "drivers/dweb-proxy.ts",
   "drivers/phone-proxy.ts",
+  "drivers/browser-proxy.ts",
 ];
 
 await build({
@@ -70,6 +71,21 @@ await build({
   allowOverwrite: true,
   logLevel: "info",
   plugins: [yamlEsmPlugin],
+});
+
+// External MCP clients launch this as an independent stdio process. Keep its
+// source under scripts for a pleasant checkout command (`pnpm mcp`), but ship
+// the bundled output beside the packaged harness so release users do not need
+// the repository, TypeScript, pnpm, or node_modules.
+await build({
+  entryPoints: [join(root, "scripts", "mcp-server.ts")],
+  bundle: true,
+  platform: "node",
+  target: "node20",
+  format: "esm",
+  outfile: join(root, "dist-server", "mcp-server.js"),
+  allowOverwrite: true,
+  logLevel: "info",
 });
 
 // pi-mcp-extension.ts is NOT an OpenMausBot entry point: it is loaded by the

@@ -5,6 +5,7 @@
 // the two asks last. So selecting part of a reply happens here instead —
 // the same move Telegram and WhatsApp make, and for the same reason.
 import SwiftUI
+import UIKit
 
 struct SelectableTextSheet: View {
     let text: String
@@ -21,7 +22,7 @@ struct SelectableTextSheet: View {
                     .font(.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
-                    .accessibilityLabel("Message text, selectable")
+                    .accessibilityHint("Touch and hold to select part of this message")
             }
             .navigationTitle("Select Text")
             .navigationBarTitleDisplayMode(.inline)

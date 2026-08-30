@@ -233,7 +233,19 @@ public struct CompanionState: Sendable {
         case let .room(room):
             if let index = rooms.firstIndex(where: { $0.id == room.id }) {
                 var merged = room
-                merged.messages = rooms[index].messages
+                let previous = rooms[index]
+                // Ordinary room frames are metadata-only and preserve the
+                // active transcript. A task switch includes messages and is
+                // authoritative, just like a bot task switch.
+                if let replacement = room.messages {
+                    messages[room.threadId] = replacement
+                    hasMore[room.threadId] = room.hasMore ?? false
+                    merged.messages = replacement
+                    clearStream(previous.threadId)
+                    if previous.threadId != room.threadId { clearStream(room.threadId) }
+                } else {
+                    merged.messages = previous.messages
+                }
                 rooms[index] = merged
             } else {
                 rooms.append(room)

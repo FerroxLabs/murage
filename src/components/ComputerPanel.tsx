@@ -5,9 +5,12 @@
 // separate preview remains explicitly user-initiated. Auto never selects a
 // Linux user's desktop.
 import { useEffect, useRef, useState } from "react";
+import { z } from "zod";
 import {
-  CalendarDays,
   CalendarClock,
+  CalendarDays,
+  Columns2,
+  Globe,
   Hand,
   Loader2,
   Maximize2,
@@ -28,6 +31,9 @@ import { CloudBackendPicker } from "./CloudBackendPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { RoutineEditor } from "./RoutinesPage";
 import { AndroidDevicePanel, useAndroidUsbDevices } from "./AndroidDevicePanel";
+import { BrowserPanel } from "./BrowserPanel";
+import { builtInBrowserEnabled } from "@/lib/feature-flags";
+import { transitionComputerControlLease, type ComputerControlAction } from "@/lib/computer-control";
 import { LocalScreenPreview } from "./LocalScreenPreview";
 import { LinuxLocalControl } from "./LinuxLocalControl";
 import { MacLocalControl } from "./MacLocalControl";
@@ -80,6 +86,11 @@ interface LocalVmStatus {
   viewer_url: string;
 }
 
+const computerControlSnapshotSchema = z.object({
+  held: z.boolean().optional().default(false),
+  helpReason: z.string().nullable().optional().default(null),
+}).passthrough();
+
 function routineScheduleLabel(routine: Routine) {
   if (routine.schedule.type === "once") {
     return new Date(routine.schedule.at).toLocaleString([], {
@@ -108,7 +119,53 @@ function nextRunLabel(at: number | null) {
   return `${sameDay ? "Today" : date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
-export function ComputerPanel({ bot }: { bot: Bot }) {
+const PANEL_WIDTH_KEY = "omb-computer-panel-width";
+const PANEL_MIN_WIDTH = 360;
+const PANEL_MAX_WIDTH = 960;
+const PANEL_DEFAULT_WIDTH = 400;
+
+function readPanelWidth(): number {
+  try {
+    const stored = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+    if (Number.isFinite(stored) && stored >= PANEL_MIN_WIDTH && stored <= PANEL_MAX_WIDTH) return stored;
+  } catch {
+    /* storage blocked — default width */
+  }
+  return PANEL_DEFAULT_WIDTH;
+}
+
+export function ComputerPanel({
+  bot,
+  onOpenVmWorkspace,
+  onExpandBrowser,
+}: {
+  bot: Bot;
+  onOpenVmWorkspace?: (botId: string) => void;
+  onExpandBrowser?: (botId: string) => void;
+}) {
+  // The panel is a fixed column by default; a drag handle on its left edge
+  // makes it wide enough to actually read a page in the Browser tab.
+  const [panelWidth, setPanelWidth] = useState(readPanelWidth);
+  const resizeFrom = useRef<{ x: number; width: number } | null>(null);
+  const onResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    resizeFrom.current = { x: event.clientX, width: panelWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const onResizeMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeFrom.current) return;
+    const next = Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, resizeFrom.current.width + (resizeFrom.current.x - event.clientX)));
+    setPanelWidth(next);
+  };
+  const onResizeEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeFrom.current) return;
+    resizeFrom.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    try {
+      localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth));
+    } catch {
+      /* storage blocked — width lives for this session */
+    }
+  };
   const { state, dispatch } = useStore();
   const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
   const localAvailable = capabilities.localComputer.available;
@@ -135,9 +192,11 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creatingRoutine, setCreatingRoutine] = useState(false);
-  const [panelView, setPanelView] = useState<"computer" | "android">("computer");
+  const [panelView, setPanelView] = useState<"computer" | "android" | "browser">("computer");
   const androidStatus = useAndroidUsbDevices();
   const androidConnected = androidStatus.devices.length > 0;
+  // the built-in browser: a per-bot switch in Settings, and only the desktop app has one
+  const browserEnabled = builtInBrowserEnabled(state.config) && bot.browser !== false && Boolean(window.ogb?.browser);
   // bumped when a Box API key is saved inline, to re-run the spin-up flow
   const [retry, setRetry] = useState(0);
   const vmReadinessAttempts = useRef(0);
@@ -169,7 +228,8 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
 
   useEffect(() => {
     if (!androidConnected && panelView === "android") setPanelView("computer");
-  }, [androidConnected, panelView]);
+    if (!browserEnabled && panelView === "browser") setPanelView("computer");
+  }, [androidConnected, browserEnabled, panelView]);
   useEffect(() => {
     vmReadinessAttempts.current = 0;
   }, [bot.id, bot.computer]);
@@ -517,13 +577,14 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   useEffect(() => {
     let alive = true;
     api(`/api/bots/${bot.id}/computer/control`)
-      .then((snap) => {
+      .then((raw) => {
         if (!alive) return;
+        const snap = computerControlSnapshotSchema.parse(raw);
         dispatch({
           type: "computerControl",
           botId: bot.id,
           held: snap.held === true,
-          helpReason: typeof snap.helpReason === "string" ? snap.helpReason : null,
+          helpReason: snap.helpReason,
         });
       })
       .catch(() => {});
@@ -532,25 +593,52 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bot.id]);
-  const requestControl = async (action: "take" | "release" | "dismiss-help") => {
-    const snap = await api(`/api/bots/${bot.id}/computer/control`, {
+  const requestControl = async (action: ComputerControlAction) => {
+    const snap = computerControlSnapshotSchema.parse(await api(`/api/bots/${bot.id}/computer/control`, {
       method: "POST",
       body: JSON.stringify({ action }),
-    });
+    }));
     dispatch({
       type: "computerControl",
       botId: bot.id,
       held: snap.held === true,
-      helpReason: typeof snap.helpReason === "string" ? snap.helpReason : null,
+      helpReason: snap.helpReason,
     });
     return snap;
   };
 
-  const controlAction = (action: "take" | "release" | "dismiss-help") => {
+  const setNativeBrowserControl = async (held: boolean): Promise<boolean> => {
+    const setter = window.ogb?.browser?.setHumanControl;
+    if (!setter) return true;
+    const profile = bot.browserProfile === "guest" ? "guest" : bot.browserProfile ?? "";
+    return (await setter(bot.id, held, profile)) === true;
+  };
+
+  const transitionControl = async (action: ComputerControlAction) => {
+    // BrowserPanel performs the same two-phase transition itself. Every
+    // other computer surface must also gate Electron's direct browser host:
+    // the server hold is bot-wide, and a shell-capable agent can otherwise
+    // bypass the server proxy while the person drives Local VM/Box/VPS.
+    return transitionComputerControlLease({
+      action,
+      syncNativeBrowser: panelView !== "browser",
+      requestControl,
+      setNativeBrowserControl,
+    });
+  };
+
+  const controlAction = async (action: ComputerControlAction): Promise<boolean> => {
     setControlPending(true);
-    requestControl(action)
-      .catch((e) => setError(e.message))
-      .finally(() => setControlPending(false));
+    setError(null);
+    try {
+      await transitionControl(action);
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
+    } finally {
+      setControlPending(false);
+    }
   };
 
   const openDesktop = async () => {
@@ -567,7 +655,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     }
     try {
       if (!control.held) {
-        await requestControl("take");
+        await transitionControl("take");
         tookControl = true;
       }
 
@@ -593,7 +681,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
       fallbackTab?.close();
       // Release the bot before waiting on best-effort tunnel cleanup. A sick
       // SSH process must never leave the agent paused indefinitely.
-      if (tookControl) await requestControl("release").catch(() => {});
+      if (tookControl) await transitionControl("release").catch(() => {});
       if (phase === "ready" && cloudBackend === "vps") {
         await api(`/api/bots/${bot.id}/computer/viewer-close`, { method: "POST", body: "{}" }).catch(() => {});
       }
@@ -715,7 +803,20 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
 
   return (
     <>
-    <aside className="animate-panel-in flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
+    <aside
+      className="animate-panel-in relative flex h-full shrink-0 flex-col border-l border-hairline/40 bg-panel"
+      style={{ width: panelWidth }}
+    >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize panel"
+        onPointerDown={onResizeStart}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeEnd}
+        onPointerCancel={onResizeEnd}
+        className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent/40"
+      />
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3">
         <button
@@ -725,7 +826,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         >
           <Settings size={18} />
         </button>
-        {androidConnected ? (
+        {androidConnected || browserEnabled ? (
           <div className="flex overflow-hidden rounded-lg border border-hairline/40">
             <button
               onClick={() => setPanelView("computer")}
@@ -737,6 +838,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             >
               <Monitor size={13} /> Computer
             </button>
+            {androidConnected && (
             <button
               onClick={() => setPanelView("android")}
               aria-pressed={panelView === "android"}
@@ -747,6 +849,22 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             >
               <Smartphone size={13} /> Android
             </button>
+            )}
+            {browserEnabled && (
+            <button
+              onClick={() => {
+                setError(null);
+                setPanelView("browser");
+              }}
+              aria-pressed={panelView === "browser"}
+              className={cn(
+                "flex items-center gap-1.5 border-l border-hairline/40 px-2.5 py-1 text-[12.5px]",
+                panelView === "browser" ? "bg-control text-ink" : "text-ink-secondary hover:text-ink",
+              )}
+            >
+              <Globe size={13} /> Browser
+            </button>
+            )}
           </div>
         ) : (
           <span className="text-[15px] font-semibold text-ink">Computer</span>
@@ -759,7 +877,22 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
         </button>
       </div>
 
-      {panelView === "android" && androidConnected ? (
+      {panelView === "browser" && browserEnabled ? (
+        <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
+          <BrowserPanel
+            bot={bot}
+            control={control}
+            controlPending={controlPending}
+            onControl={controlAction}
+            onExpand={onExpandBrowser ? () => onExpandBrowser(bot.id) : undefined}
+          />
+          {error && (
+            <div role="alert" className="mt-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger">
+              {error}
+            </div>
+          )}
+        </div>
+      ) : panelView === "android" && androidConnected ? (
         <div className="flex-1 overflow-y-auto px-4 pt-2">
           <AndroidDevicePanel status={androidStatus} />
         </div>
@@ -913,6 +1046,22 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             </button>
           </div>
         )}
+
+        {phase === "vm" &&
+          vmStatus?.mode === "per-bot" &&
+          window.ogb?.desktopWorkspace &&
+          onOpenVmWorkspace && (
+            <button
+              type="button"
+              onClick={() => onOpenVmWorkspace(bot.id)}
+              disabled={pending !== null}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-accent/30 bg-accent/10 py-2 text-[13px] font-medium text-ink hover:bg-accent/15 disabled:opacity-50"
+              title="Watch two Local VM desktops together without pausing either bot"
+            >
+              <Columns2 size={14} />
+              Open two desktops
+            </button>
+          )}
 
         {/* Who is driving — take the wheel / hand it back */}
         {(phase === "ready" || phase === "vm") && control.helpReason && !control.held && (

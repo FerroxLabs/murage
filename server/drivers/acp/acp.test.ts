@@ -522,6 +522,18 @@ describe("ACP turns (fake CLI)", () => {
     expect(recorder.events.some((e) => e.provider === "geminiAgent")).toBe(true);
   });
 
+  it("starts Gemini CLI on its stable ACP surface", async () => {
+    const dump = join(scratch, "gemini-acp.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(GeminiAgentDriver);
+    await instance.adapter.sendTurn({ threadId: "t-gemini-acp", text: "go", model: "gemini-test" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const argv = JSON.parse(readFileSync(dump, "utf8")).argv as string[];
+    expect(argv).toEqual(["--acp", "-m", "gemini-test"]);
+    expect(argv).not.toContain("--experimental-acp");
+  });
+
   it("rejects a second turn while one is in flight", async () => {
     await create(GrokAgentDriver, "hang");
     await instance.adapter.sendTurn({ threadId: "t-busy", text: "one" });

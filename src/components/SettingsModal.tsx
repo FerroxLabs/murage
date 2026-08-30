@@ -3,10 +3,10 @@
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { Coins, KeyRound, Monitor, Search, Smartphone, Terminal, User, X } from "lucide-react";
+import { Coins, FlaskConical, Globe, KeyRound, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
-import { skillRecorderEnabled } from "@/lib/feature-flags";
+import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
 import { ApiKeyRow, VpsConnection } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
@@ -18,6 +18,10 @@ import { SkinPicker } from "./SkinPicker";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
 import { cn } from "@/lib/cn";
+import {
+  browserProfileDeletionBlockReason,
+  browserProfilesForPatch,
+} from "@/lib/browser-profiles";
 
 const SECTIONS: Array<{
   id: AppSettingsSection;
@@ -25,7 +29,8 @@ const SECTIONS: Array<{
   icon: typeof User;
   keywords: string[];
 }> = [
-  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates"] },
+  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls"] },
+  { id: "experimental", label: "Experimental", icon: FlaskConical, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
   { id: "connections", label: "Connections", icon: KeyRound, keywords: ["keys", "api", "composio", "box", "xai", "vps"] },
   { id: "engines", label: "Engines", icon: Terminal, keywords: ["models", "claude", "grok", "providers", "cli"] },
   { id: "companion", label: "Phone", icon: Smartphone, keywords: ["companion", "phone", "pair", "mobile"] },
@@ -141,9 +146,9 @@ function AnalyticsRow() {
   );
 }
 
-function ExperimentalFeaturesRow() {
+function ToolCallsRow() {
   const { state, dispatch } = useStore();
-  const enabled = skillRecorderEnabled(state.config);
+  const enabled = showToolCallsEnabled(state.config);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -154,13 +159,67 @@ function ExperimentalFeaturesRow() {
     try {
       const config: ConfigStatus = await api("/api/config", {
         method: "PATCH",
-        body: JSON.stringify({ features: { skillRecorder: !enabled } }),
+        body: JSON.stringify({ features: { showToolCalls: !enabled } }),
+      });
+      dispatch({ type: "configStatus", config });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save the tool-call setting.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Tool calls"
+      subtitle="Show each tool a bot runs in the transcript. Off by default — the mascot already shows that work is happening."
+    >
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-[14px] font-medium text-ink">Show tool calls</div>
+          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+            Named chips for Bash, search, and other tools. Errors and bot-to-bot messages still appear.
+          </div>
+        </div>
+        <button
+          role="switch"
+          aria-checked={enabled}
+          aria-label="Show tool calls in chat"
+          disabled={saving}
+          onClick={() => void toggle()}
+          className={`${cnSwitch(enabled)} disabled:cursor-wait disabled:opacity-50`}
+        >
+          <span className={cnKnob(enabled)} />
+        </button>
+      </div>
+      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
+    </Card>
+  );
+}
+
+function ExperimentalFeaturesRow() {
+  const { state, dispatch } = useStore();
+  const skillRecorder = skillRecorderEnabled(state.config);
+  const browser = builtInBrowserEnabled(state.config);
+  const desktopBrowser = Boolean(window.ogb?.browser);
+  const browserBlockedOnWindows = window.ogb?.platform === "win32" && !desktopBrowser;
+  const [saving, setSaving] = useState<"skillRecorder" | "browser" | null>(null);
+  const [error, setError] = useState("");
+
+  const toggle = async (feature: "skillRecorder" | "browser", next: boolean) => {
+    if (saving) return;
+    setSaving(feature);
+    setError("");
+    try {
+      const config: ConfigStatus = await api("/api/config", {
+        method: "PATCH",
+        body: JSON.stringify({ features: { [feature]: next } }),
       });
       dispatch({ type: "configStatus", config });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save the experimental feature setting.");
     } finally {
-      setSaving(false);
+      setSaving(null);
     }
   };
 
@@ -178,15 +237,193 @@ function ExperimentalFeaturesRow() {
         </div>
         <button
           role="switch"
-          aria-checked={enabled}
+          aria-checked={skillRecorder}
           aria-label="Show Teach a skill"
-          disabled={saving}
-          onClick={() => void toggle()}
-          className={`${cnSwitch(enabled)} disabled:cursor-wait disabled:opacity-50`}
+          disabled={saving !== null}
+          onClick={() => void toggle("skillRecorder", !skillRecorder)}
+          className={`${cnSwitch(skillRecorder)} disabled:cursor-wait disabled:opacity-50`}
         >
-          <span className={cnKnob(enabled)} />
+          <span className={cnKnob(skillRecorder)} />
         </button>
       </div>
+      <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
+        <div className="min-w-0">
+          <div className="text-[14px] font-medium text-ink">Built-in browser</div>
+          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+            {desktopBrowser
+              ? browser
+                ? "Enabled for this workspace. Each bot also has its own browser switch."
+                : "Off by default. Enable it to let supported bots use a browser tab you can watch and take over."
+              : browserBlockedOnWindows
+                ? "Temporarily unavailable on Windows while Electron's production sandbox support is being verified."
+                : "Needs the OpenMausBot desktop app."}
+          </div>
+        </div>
+        <button
+          role="switch"
+          aria-checked={browser}
+          aria-label="Enable the built-in browser"
+          disabled={saving !== null || (!browser && !desktopBrowser)}
+          onClick={() => void toggle("browser", !browser)}
+          className={`${cnSwitch(browser)} disabled:cursor-wait disabled:opacity-50`}
+        >
+          <span className={cnKnob(browser)} />
+        </button>
+      </div>
+      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
+    </Card>
+  );
+}
+
+/** Named browser sessions: rename or delete; deleting wipes that session's
+ * logins, storage and cache and sends any bot on it back to its own. */
+function BrowserProfilesRow() {
+  const { state, dispatch } = useStore();
+  const profiles = state.config?.browserProfiles ?? [];
+  const [busy, setBusy] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const [error, setError] = useState("");
+  // Windows temporarily gates the live browser surface, but upgraded users
+  // must still be able to rename or permanently erase existing sessions.
+  // The packaged server can perform that private lifecycle cleanup without
+  // exposing the browser renderer bridge.
+  if (!window.ogb || (!builtInBrowserEnabled(state.config) && profiles.length === 0)) return null;
+
+  const save = async (next: typeof profiles) => {
+    try {
+      const config: ConfigStatus = await api("/api/config", {
+        method: "PATCH",
+        body: JSON.stringify({ browserProfiles: browserProfilesForPatch(next) }),
+      });
+      dispatch({ type: "configStatus", config });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save browser profiles.");
+    } finally {
+      setBusy(null);
+      setRenaming(null);
+    }
+  };
+  const remove = async (id: string) => {
+    if (busy) return;
+    const profile = profiles.find((candidate) => candidate.id === id);
+    if (!profile) return;
+    const referencedBots = state.bots.filter((bot) => bot.browserProfile === id);
+    const blocked = browserProfileDeletionBlockReason(state.bots, id);
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
+    const botSummary = referencedBots.length
+      ? ` ${referencedBots.length === 1 ? referencedBots[0]!.name : `${referencedBots.length} bots`} will switch to their own browser sessions.`
+      : "";
+    if (!window.confirm(`Delete “${profile.name}”?${botSummary} This permanently signs out of this profile and erases its browser data.`)) {
+      return;
+    }
+    setBusy(id);
+    setError("");
+    try {
+      // The server commits the profile list and clears every bot reference as
+      // one transaction, then privately asks Electron to erase the partition.
+      // Never wipe browser data from the renderer before that commit succeeds:
+      // a rejected config save must leave the user's signed-in session intact.
+      const config: ConfigStatus = await api("/api/config", {
+        method: "PATCH",
+        body: JSON.stringify({
+          browserProfiles: browserProfilesForPatch(profiles.filter((candidate) => candidate.id !== id)),
+        }),
+      });
+      dispatch({ type: "configStatus", config });
+      // Packaged Electron receives the same post-commit cleanup privately
+      // from the server. Keep this idempotent fallback for split-process
+      // desktop development, where the server has no parent message port.
+      try {
+        await window.ogb?.browser?.forgetProfile?.(profile.partitionId ?? profile.id);
+      } catch {
+        setError("The profile was removed, but its local browser data could not be erased. Restart OpenMausBot before reusing that profile name.");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete the browser profile.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const rename = () => {
+    if (!renaming || busy) return;
+    const name = renaming.name.trim();
+    if (!name) return;
+    setBusy(renaming.id);
+    setError("");
+    void save(profiles.map((profile) => (profile.id === renaming.id ? { ...profile, name } : profile)));
+  };
+  const usersOf = (id: string) => state.bots.filter((bot) => !bot.hidden && bot.browserProfile === id).map((bot) => bot.name);
+
+  return (
+    <Card
+      title="Browser profiles"
+      subtitle="Named sign-in sessions any bot can use. Create one from a bot's Browser tab; sign in once and it stays."
+    >
+      {profiles.length === 0 ? (
+        <div className="text-[13px] text-ink-secondary">No profiles yet — pick "+ Add profile…" under a bot's browser.</div>
+      ) : (
+        <div className="flex flex-col divide-y divide-hairline/30">
+          {profiles.map((profile) => {
+            const users = usersOf(profile.id);
+            const editing = renaming?.id === profile.id;
+            return (
+              <div key={profile.id} className="flex items-center justify-between gap-3 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Globe size={14} className="shrink-0 text-ink-secondary" />
+                  {editing ? (
+                    <form
+                      className="flex items-center gap-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        rename();
+                      }}
+                    >
+                      <input
+                        autoFocus
+                        value={renaming.name}
+                        onChange={(event) => setRenaming({ id: profile.id, name: event.target.value })}
+                        maxLength={40}
+                        className="rounded-md bg-inset px-2 py-1 text-[13px] text-ink outline-none"
+                        aria-label="Profile name"
+                      />
+                      <button type="submit" disabled={busy !== null} className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-ink disabled:opacity-50">
+                        Save
+                      </button>
+                      <button type="button" onClick={() => setRenaming(null)} className="text-[12px] text-ink-secondary hover:text-ink">
+                        Cancel
+                      </button>
+                    </form>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setRenaming({ id: profile.id, name: profile.name })}
+                      className="truncate text-left text-[14px] font-medium text-ink hover:underline"
+                      title="Rename"
+                    >
+                      {profile.name}
+                    </button>
+                  )}
+                  <span className="truncate text-[12px] text-ink-secondary">
+                    {users.length ? `used by ${users.join(", ")}` : "not in use"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void remove(profile.id)}
+                  disabled={busy !== null}
+                  className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-50"
+                  title="Delete this profile and forget its logins"
+                >
+                  <Trash2 size={13} /> Delete
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
     </Card>
   );
@@ -384,10 +621,17 @@ export function SettingsModal() {
                 <Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
                   <RoomTurnTimeoutSettings />
                 </Card>
-                <ExperimentalFeaturesRow />
+                <ToolCallsRow />
                 <UpdatesRow />
                 <DiagnosticsRow />
                 <AnalyticsRow />
+              </>
+            )}
+
+            {section === "experimental" && (
+              <>
+                <ExperimentalFeaturesRow />
+                <BrowserProfilesRow />
               </>
             )}
 

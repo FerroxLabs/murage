@@ -24,11 +24,15 @@ const DRIVER_KIND = "openai-compat";
 
 // Default catalog — overwritten by /models when the endpoint answers.
 // Free-tier-friendly defaults so the picker is never empty.
+// Every option here is `custom`: this engine advertises `access: "custom"`,
+// and the picker renders only custom-flagged options for such engines. An
+// unflagged option lands in the official list the picker never shows, which
+// reads as "no models found" on a perfectly configured endpoint.
 const DEFAULT_MODELS: ModelCatalog = {
   default: "meta-llama/llama-3.3-70b-instruct",
   options: [
-    { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B (OpenRouter)" },
-    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (Groq)" },
+    { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B (OpenRouter)", custom: true },
+    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (Groq)", custom: true },
   ],
 };
 
@@ -39,11 +43,32 @@ export interface OpenAICompatConfig {
   apiKeyEnv: string;
   /** Direct API key if configured */
   key?: string;
+  /** Default model when a turn doesn't specify one (seeds the picker). */
+  model?: string;
+  /** OpenRouter upstream provider slug to pin (e.g. "fireworks"). Sent as
+   * `provider: { order: [provider], allow_fallbacks: false }` — but only to
+   * OpenRouter endpoints: strict OpenAI-compatible servers (Groq et al.)
+   * reject unknown top-level fields. */
+  provider?: string;
+}
+
+/** True when the configured base URL points at OpenRouter (openrouter.ai or
+ * a subdomain). Parses the hostname rather than substring-matching the whole
+ * URL, so lookalike domains and path segments don't count. */
+function isOpenRouterUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+  } catch {
+    return false;
+  }
 }
 
 function decodeConfig(raw: unknown): OpenAICompatConfig {
   const o = (raw ?? {}) as Record<string, unknown>;
   const envUrl = process.env.OPENAI_COMPAT_URL;
+  const envModel = process.env.OPENAI_COMPAT_MODEL;
+  const envProvider = process.env.OPENAI_COMPAT_PROVIDER;
   return {
     url:
       typeof o.url === "string" && o.url
@@ -53,6 +78,8 @@ function decodeConfig(raw: unknown): OpenAICompatConfig {
           : "https://openrouter.ai/api/v1",
     apiKeyEnv: typeof o.apiKeyEnv === "string" && o.apiKeyEnv ? o.apiKeyEnv : "OPENAI_COMPAT_API_KEY",
     key: typeof o.key === "string" && o.key ? o.key : undefined,
+    model: typeof o.model === "string" && o.model ? o.model : envModel || undefined,
+    provider: typeof o.provider === "string" && o.provider ? o.provider : envProvider || undefined,
   };
 }
 
@@ -92,7 +119,16 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       "";
     const listeners = new Set<RuntimeEventListener>();
     const active = new Map<string, { abort: AbortController; turnId: string }>();
-    let catalog = DEFAULT_MODELS;
+    // A configured default model seeds the picker so the intended model is
+    // pre-selected before /models refreshes the catalog from the endpoint.
+    let catalog: ModelCatalog = config.model
+      ? {
+          default: config.model,
+          options: DEFAULT_MODELS.options.some((o) => o.id === config.model)
+            ? DEFAULT_MODELS.options
+            : [{ id: config.model, label: config.model, custom: true }, ...DEFAULT_MODELS.options],
+        }
+      : DEFAULT_MODELS;
 
     const emit = (event: RuntimeEvent) => {
       for (const l of [...listeners]) l(event);
@@ -124,7 +160,16 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           authorization: `Bearer ${apiKey}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ model, messages, stream: opts.stream }),
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: opts.stream,
+          // OpenRouter routing: pin the upstream provider when configured —
+          // only on OpenRouter itself; strict endpoints reject the field.
+          ...(config.provider && isOpenRouterUrl(config.url)
+            ? { provider: { order: [config.provider], allow_fallbacks: false } }
+            : {}),
+        }),
         signal: opts.signal ?? AbortSignal.timeout(120_000),
       });
       if (!res.ok) {
@@ -218,10 +263,15 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
             typeof row.name === "string" && row.name.trim()
               ? row.name
               : id;
-          options.push({ id, label });
+          options.push({ id, label, custom: true });
         }
         if (options.length) {
-          catalog = { default: options[0].id, options };
+          // Keep a configured default selected; surface it even if the
+          // endpoint's catalog omits it.
+          const preferred =
+            config.model && (options.some((o) => o.id === config.model) ? config.model : null);
+          if (config.model && !preferred) options.unshift({ id: config.model, label: config.model, custom: true });
+          catalog = { default: config.model ?? options[0].id, options };
         }
       } catch {
         // keep DEFAULT_MODELS — never fail the instance on a catalog miss
@@ -289,12 +339,13 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
             source: "openai-compat.chat.completions",
             msg: { textLength: text.length, reasoningLength: reasoning.length, usage },
           });
-          if (text.trim()) {
+          const replyText = text.trim() ? text : reasoning;
+          if (replyText.trim()) {
             emit({
               ...base(threadId, turnId),
               type: "item.completed",
               itemType: "assistant_text",
-              text,
+              text: replyText,
             });
           }
           if (usage) {

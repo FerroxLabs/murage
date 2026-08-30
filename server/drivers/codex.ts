@@ -177,6 +177,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // Driver stdio MCP server. Codex sees the same computer tool surface.
           mountMcpServer(appServerArgs, env, "computer", turn.integrations.localComputer);
         }
+        if (turn.integrations?.browser) {
+          mountMcpServer(appServerArgs, env, "browser", turn.integrations.browser);
+        }
         if (turn.integrations?.phone) {
           const bridge = turn.integrations.phone;
           Object.assign(env, bridge.env);
@@ -202,7 +205,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         sawStreamDelta: false,
         // codex reports token usage as a running THREAD total; the harness
         // wants this turn's figure, so the last report is banked on settle
-        usage: undefined as { input: number; output: number } | undefined,
+        usage: undefined as { input: number; output: number; cachedInput?: number } | undefined,
       };
 
       const asks = new Map<string, (behavior: "allow" | "deny" | "answer", message?: string, source?: "user" | "timeout" | "system") => void>();
@@ -403,7 +406,18 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // `total` is the thread so far — a fresh app-server per turn
             // makes that this turn's figure too
             const turnUsage = p.tokenUsage?.last ?? p.tokenUsage?.total;
-            if (turnUsage) state.usage = { input: turnUsage.inputTokens ?? 0, output: turnUsage.outputTokens ?? 0 };
+            // codex's inputTokens already includes cachedInputTokens; the
+            // cached share is carried alongside so the UI can say how much
+            // of a turn was context re-read rather than new text
+            if (turnUsage) {
+              state.usage = {
+                input: turnUsage.inputTokens ?? 0,
+                output: turnUsage.outputTokens ?? 0,
+                ...(typeof turnUsage.cachedInputTokens === "number"
+                  ? { cachedInput: turnUsage.cachedInputTokens }
+                  : {}),
+              };
+            }
             const t = p.tokenUsage?.total;
             if (t) {
               emit({
@@ -411,6 +425,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 type: "thread.token-usage.updated",
                 input: t.inputTokens ?? 0,
                 output: t.outputTokens ?? 0,
+                ...(typeof t.cachedInputTokens === "number"
+                  ? { cachedInput: t.cachedInputTokens }
+                  : {}),
               });
             }
             break;
@@ -617,6 +634,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         composioMcp: true,
         agentsMcp: true,
         phoneMcp: true,
+        browserMcp: true,
         images: true,
         effortLevels: ["low", "medium", "high", "xhigh", "max"],
       },

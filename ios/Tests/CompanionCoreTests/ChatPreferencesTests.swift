@@ -97,6 +97,7 @@ final class ChatPreferencesTests: XCTestCase {
         XCTAssertEqual(rows[0].at, 500)
         XCTAssertEqual(rows[0].kind, .activity)
         XCTAssertEqual(rows[0].role, .bot)
+        XCTAssertEqual(rows[0].endAt, 900)
     }
 
     func testEmptyTranscriptStaysEmptyAtEveryLevel() {
@@ -135,6 +136,19 @@ final class ChatPreferencesTests: XCTestCase {
         // Distinct from a corrupt store: an explicit empty list means the
         // user cleared the row on purpose and it must stay cleared.
         XCTAssertEqual(QuickReply.decode(QuickReply.encode([])), [])
+    }
+
+    func testEmptyQuickReplyIDFallsBackToDefaults() {
+        let replies = [QuickReply(id: " ", title: "Deploy", prompt: "Deploy", icon: "paperplane")]
+        XCTAssertEqual(QuickReply.decode(QuickReply.encode(replies)), QuickReply.defaults)
+    }
+
+    func testDuplicateQuickReplyIDsFallBackToDefaults() {
+        let replies = [
+            QuickReply(id: "same", title: "Deploy", prompt: "Deploy", icon: "paperplane"),
+            QuickReply(id: "same", title: "Logs", prompt: "Show logs", icon: "doc.text"),
+        ]
+        XCTAssertEqual(QuickReply.decode(QuickReply.encode(replies)), QuickReply.defaults)
     }
 
     // MARK: - Island intro

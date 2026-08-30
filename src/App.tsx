@@ -17,8 +17,11 @@ import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
 import { CommandPalette } from "@/components/CommandPalette";
+import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
+import { BrowserWorkspace } from "@/components/BrowserWorkspace";
 import { SkillRecorderPage } from "@/components/SkillRecorderPage";
 import { TeamMapPage } from "@/components/TeamMapPage";
+import { heldComputerControlBotIds } from "@/lib/computer-control";
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -29,6 +32,11 @@ function Shell() {
   // turn the aside into a containing block for its fixed descendants (see
   // Sidebar.tsx's className comment).
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [localVmWorkspaceBotId, setLocalVmWorkspaceBotId] = useState<string | null>(null);
+  // the Browser tab, expanded into the main column (the small preview in
+  // the panel hands off to this and back)
+  const [browserWorkspaceBotId, setBrowserWorkspaceBotId] = useState<string | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
@@ -75,6 +83,18 @@ function Shell() {
     window.ogb?.setUnreadCount?.(unreadCount);
   }, [unreadCount]);
 
+  // Re-assert every authoritative positive hold in the process that owns the
+  // native browser. This covers initial hydration, SSE updates from another
+  // computer surface, and renderer reloads. Deliberately never mirror false:
+  // only a trusted two-phase release may open Electron's direct browser gate.
+  useEffect(() => {
+    const setter = window.ogb?.browser?.setHumanControl;
+    if (!setter) return;
+    for (const botId of heldComputerControlBotIds(state.computerControl)) {
+      void setter(botId, true).catch(() => {});
+    }
+  }, [state.computerControl]);
+
   // Warm connected-account state as soon as the local server is available.
   // The modal then opens with the correct Connect/Add account buttons and
   // quietly revalidates instead of rediscovering every account from scratch.
@@ -92,6 +112,48 @@ function Shell() {
   useEffect(() => {
     setDrawerOpen(false);
   }, [state.selectedId, state.activeView, state.pluginsOpen, state.settingsOpen]);
+
+  useEffect(() => {
+    if (
+      localVmWorkspaceBotId &&
+      (state.activeView !== "chat" || state.selectedId !== localVmWorkspaceBotId)
+    ) {
+      setLocalVmWorkspaceBotId(null);
+    }
+  }, [localVmWorkspaceBotId, state.activeView, state.selectedId]);
+
+  const openLocalVmWorkspace = (botId: string) => {
+    dispatch({ type: "toggleComputer", open: false });
+    setLocalVmWorkspaceBotId(botId);
+  };
+  const openBrowserWorkspace = (botId: string) => {
+    dispatch({ type: "toggleComputer", open: false });
+    setBrowserWorkspaceBotId(botId);
+  };
+  const closeBrowserWorkspace = () => {
+    setBrowserWorkspaceBotId(null);
+    dispatch({ type: "toggleComputer", open: true });
+  };
+  useEffect(() => {
+    if (browserWorkspaceBotId && (state.activeView !== "chat" || state.selectedId !== browserWorkspaceBotId)) {
+      setBrowserWorkspaceBotId(null);
+    }
+  }, [browserWorkspaceBotId, state.activeView, state.selectedId]);
+
+  const openComputerFromWorkspace = (botId: string) => {
+    setLocalVmWorkspaceBotId(null);
+    dispatch({ type: "select", id: botId });
+    dispatch({ type: "toggleComputer", open: true });
+  };
+
+  const nativeViewOverlayOpen =
+    drawerOpen ||
+    paletteOpen ||
+    state.settingsOpen ||
+    state.computerOpen ||
+    state.inspectorOpen ||
+    state.appSettingsOpen ||
+    state.pluginsOpen;
 
   // The viewer outlives ComputerPanel and can target any bot, so release control
   // here (always mounted) when a bot's viewer closes. release() is idempotent.
@@ -152,6 +214,15 @@ function Shell() {
         <RoutinesPage />
       ) : state.activeView === "skill-recorder" ? (
         <SkillRecorderPage />
+      ) : browserWorkspaceBotId && bot && bot.id === browserWorkspaceBotId ? (
+        <BrowserWorkspace bot={bot} onClose={closeBrowserWorkspace} />
+      ) : localVmWorkspaceBotId ? (
+        <LocalVmWorkspace
+          primaryBotId={localVmWorkspaceBotId}
+          overlayOpen={nativeViewOverlayOpen}
+          onClose={() => setLocalVmWorkspaceBotId(null)}
+          onOpenComputer={openComputerFromWorkspace}
+        />
       ) : noEngines ? (
         <NoEngines />
       ) : group ? (
@@ -172,13 +243,15 @@ function Shell() {
         </main>
       )}
       {state.settingsOpen && bot && <SettingsPanel bot={bot} />}
-      {state.computerOpen && bot && <ComputerPanel bot={bot} />}
+      {state.computerOpen && bot && (
+        <ComputerPanel bot={bot} onOpenVmWorkspace={openLocalVmWorkspace} onExpandBrowser={openBrowserWorkspace} />
+      )}
       {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
       {state.appSettingsOpen && <SettingsModal />}
       {state.pluginsOpen && <PluginsPanel />}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
-      <CommandPalette />
+      <CommandPalette onOpenChange={setPaletteOpen} />
       </div>
     </div>
   );

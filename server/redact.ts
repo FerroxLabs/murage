@@ -79,7 +79,13 @@ export function redactSecrets(input: unknown, depth = 0): unknown {
         typeof (item as { value?: unknown }).value === "string"
       ) {
         const entry = item as { name: string; value: string };
-        return isSecretName(entry.name) ? { ...entry, value: mask(entry.value) } : entry;
+        // A non-secret-shaped name (a custom env var, a feature flag) does
+        // not clear the value of suspicion — the same content pass every
+        // other string in this tree gets is what catches a credential
+        // someone stashed under an ordinary-looking name.
+        return isSecretName(entry.name)
+          ? { ...entry, value: mask(entry.value) }
+          : { ...entry, value: redactSecretsInText(entry.value) };
       }
       return redactSecrets(item, depth + 1);
     });
