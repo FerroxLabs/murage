@@ -32,6 +32,7 @@ const BOT_ID = process.env.OMB_BOT_ID ?? "";
 const THREAD_ID = process.env.OMB_THREAD_ID ?? "";
 const TOKEN = process.env.OMB_COMMS_TOKEN ?? "";
 const DEPTH = Number(process.env.OMB_TURN_DEPTH ?? "0") || 0;
+const SKILL_AUTHORING_ENABLED = process.env.OMB_SKILL_AUTHORING_ENABLED === "1";
 const MAX_CREATED_PER_TURN = 4;
 let createdThisTurn = 0;
 
@@ -323,7 +324,7 @@ const TOOLS = [
   {
     name: "skill_view",
     description:
-      "Read one imported skill's SKILL.md. Use this before updating an existing skill. Name is the hyphenated id from skills_list, for example file-expense.",
+      "Read one imported skill's SKILL.md. Use this to avoid creating a duplicate. Name is the hyphenated id from skills_list, for example file-expense.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -336,15 +337,15 @@ const TOOLS = [
   {
     name: "skill_manage",
     description:
-      "Stage a reusable SKILL.md for the user to confirm. This does NOT enable the skill. Use action create for a new skill and update to replace an existing one. After calling it, end the turn and do not claim the skill is live until the user confirms the in-app card.",
+      "Stage a new reusable SKILL.md for the user to review and enable. This does NOT enable the skill. Learned-skill updates are intentionally out of scope for this first version. After calling it, end the turn and do not claim the skill is active until the user confirms the in-app card.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         action: {
           type: "string",
-          enum: ["create", "update"],
-          description: "create = stage a new skill; update = stage a replacement for an imported skill of the same name.",
+          enum: ["create"],
+          description: "Use create to stage a new skill with a unique name.",
         },
         skill_md: {
           type: "string",
@@ -355,11 +356,20 @@ const TOOLS = [
           type: "string",
           description: "Optional one-line summary shown on the user's confirmation card.",
         },
+        source: {
+          type: "string",
+          description: "Required provenance label: the URL, folder, or 'conversation' used to author the skill.",
+        },
       },
-      required: ["action", "skill_md"],
+      required: ["action", "skill_md", "source"],
     },
   },
 ];
+
+const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_view", "skill_manage"]);
+const AVAILABLE_TOOLS = SKILL_AUTHORING_ENABLED
+  ? TOOLS
+  : TOOLS.filter((tool) => !SKILL_TOOL_NAMES.has(tool.name));
 
 type Json = Record<string, unknown>;
 type RoutineAction = "update" | "pause" | "resume" | "run_now" | "delete";
@@ -618,28 +628,32 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     return { text: String(r.text ?? "") };
   }
   if (name === "skill_manage") {
-    const action = args.action === "update" ? "update" : args.action === "create" ? "create" : "";
-    if (!action) {
-      return { text: 'skill_manage needs action "create" or "update". Example: {"action":"create","skill_md":"---\\nname: file-expense\\ndescription: Files an expense in the company portal.\\n---\\n\\n# File expense\\n"}.', isError: true };
+    if (args.action !== "create") {
+      return { text: 'skill_manage currently supports action "create" only.', isError: true };
     }
     const skillMd = typeof args.skill_md === "string" ? args.skill_md : "";
     if (!skillMd.trim()) {
       return { text: 'skill_manage needs skill_md: the full SKILL.md including YAML frontmatter.', isError: true };
+    }
+    const source = typeof args.source === "string" ? args.source.trim() : "";
+    if (!source) {
+      return { text: 'skill_manage needs source: the URL, folder, or "conversation" used to author the skill.', isError: true };
     }
     const r = await api("/api/internal/skills/stage", {
       method: "POST",
       body: JSON.stringify({
         fromBotId: BOT_ID,
         fromThreadId: THREAD_ID,
-        action,
+        action: "create",
         skill_md: skillMd,
         gist: typeof args.gist === "string" ? args.gist : undefined,
+        source,
       }),
     });
     const nameLabel = typeof r.name === "string" ? r.name : "the skill";
     const warningText = Array.isArray(r.warnings) && r.warnings.length ? `\n\nScan warnings (shown to the user):\n- ${r.warnings.join("\n- ")}` : "";
     return {
-      text: `A confirmation card is now visible to the user for ${action === "create" ? "new skill" : "updating"} “${nameLabel}”.${warningText}\n\nThis skill has not been enabled yet. End this turn and wait for the user to confirm or dismiss the card; do not claim the skill is live before confirmation.`,
+      text: `A confirmation card is now visible to the user for new skill “${nameLabel}”.${warningText}\n\nThe skill is staged and inactive. End this turn and wait for the user to review, enable, or dismiss the card.`,
     };
   }
   return { text: `Unknown tool: ${name}`, isError: true };
@@ -665,11 +679,11 @@ async function handle(msg: Json) {
       ok(id, {});
       return;
     case "tools/list":
-      ok(id, { tools: TOOLS });
+      ok(id, { tools: AVAILABLE_TOOLS });
       return;
     case "tools/call": {
       const name = params.name as string;
-      if (!TOOLS.some((t) => t.name === name)) return rpcErr(id, -32602, `Unknown tool: ${name}`);
+      if (!AVAILABLE_TOOLS.some((t) => t.name === name)) return rpcErr(id, -32602, `Unknown tool: ${name}`);
       try {
         const { text, isError } = await callTool(name, (params.arguments ?? {}) as Json);
         textResult(id, text, isError);

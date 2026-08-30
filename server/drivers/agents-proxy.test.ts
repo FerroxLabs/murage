@@ -174,6 +174,7 @@ beforeAll(async () => {
       OMB_THREAD_ID: "thread-asker-routine",
       OMB_COMMS_TOKEN: TOKEN,
       OMB_TURN_DEPTH: "0",
+      OMB_SKILL_AUTHORING_ENABLED: "1",
     },
     stdio: ["pipe", "pipe", "inherit"],
   });
@@ -555,7 +556,7 @@ describe("agents-proxy MCP surface", () => {
     const list = await rpc("tools/list");
     const manage = list.result.tools.find((t: { name: string }) => t.name === "skill_manage");
     expect(JSON.stringify(manage.inputSchema)).not.toMatch(/"(oneOf|anyOf|allOf|const|format)":/);
-    expect(manage.inputSchema.required).toEqual(["action", "skill_md"]);
+    expect(manage.inputSchema.required).toEqual(["action", "skill_md", "source"]);
 
     const listed = await callTool("skills_list", {});
     expect(listed.result.content[0].text).toContain("file-expense");
@@ -568,13 +569,15 @@ describe("agents-proxy MCP surface", () => {
       action: "create",
       skill_md: "---\nname: file-expense\ndescription: Files an expense in the company portal.\n---\n\n# File expense\n",
       gist: "Files an expense",
+      source: "conversation",
     });
     expect(lastSkillStageBody).toMatchObject({
       fromBotId: "bot-asker",
       fromThreadId: "thread-asker-routine",
       action: "create",
+      source: "conversation",
     });
-    expect(staged.result.content[0].text).toContain("has not been enabled");
-    expect(staged.result.content[0].text).not.toContain("is live");
+    expect(staged.result.content[0].text).toContain("staged and inactive");
+    expect(staged.result.content[0].text).not.toContain("active until");
   });
 });

@@ -295,6 +295,14 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
             : { ...operation },
       };
     }
+    if (card.skillRequest) {
+      card.skillRequest = {
+        ...card.skillRequest,
+        gist: redactSecretsInText(card.skillRequest.gist),
+        preview: redactSecretsInText(card.skillRequest.preview),
+        warnings: card.skillRequest.warnings.map((warning) => redactSecretsInText(warning)),
+      };
+    }
     out.card = card;
   }
   if (out.connector) {

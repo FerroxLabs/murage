@@ -35,6 +35,8 @@ describe("expandLearnTurnText", () => {
         expect(expanded).toContain("the REST client in ~/sdk");
         expect(expanded).toContain("skill_manage");
         expect(expanded).toContain("does not enable");
+        expect(expanded).toContain('source as the exact URL or folder');
+        expect(expanded).not.toContain('action="update"');
     });
 
     it("treats a bare /learn as 'what we just did'", () => {

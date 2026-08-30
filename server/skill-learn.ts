@@ -9,7 +9,6 @@
 export const LEARN_COMMAND = "/learn";
 export const LEARN_SOURCE_PREFIX = "learn:";
 export const LEARN_PROMPT_MARKER = "[/learn]";
-export const GIST_MAX = 240;
 export const LEARN_DESCRIPTION_SOFT_MAX = 60;
 
 /** True when the user's message is a `/learn` command (optionally with a request). */
@@ -57,8 +56,9 @@ export function buildLearnPrompt(userRequest: string): string {
     `THE REQUEST:\n${req}\n\n` +
     "Do this:\n" +
     "1. Inventory every source the user named, using the tools you already have — file tools for local paths, web fetch for URLs, and this conversation if they referred to something you just did. If the request is ambiguous about scope, make a reasonable choice and note it; do not stall.\n" +
-    "2. Check existing skills with skills_list. If one already covers this topic, load it with skill_view, then stage an update with skill_manage action=\"update\". Only when none matches, stage a new skill with skill_manage action=\"create\".\n" +
-    "3. skill_manage only STAGES the skill. It does not enable it. Tell the user the name and that it waits on their Enable card. Never claim the skill is live before they confirm.\n\n" +
+    "2. Check existing skills with skills_list. If one already covers this topic, inspect it with skill_view and tell the user it already exists; this first version never overwrites an existing skill. Otherwise call skill_manage with action=\"create\".\n" +
+    "3. Pass source as the exact URL or folder you used, or \"conversation\" when the conversation is the source.\n" +
+    "4. skill_manage only STAGES the skill. It does not enable it. Tell the user the name and that it waits on their review card before becoming active.\n\n" +
     AUTHORING_STANDARDS +
     "\n\nWhen done, tell the user the skill name and a one-line summary of what it captured."
   );

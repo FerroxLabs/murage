@@ -150,6 +150,8 @@ describe("ApprovalCard learned skills", () => {
           action: "create",
           name: "file-expense",
           gist: "Files an expense in the company portal.",
+          preview: "---\nname: file-expense\ndescription: Files an expense.\n---\n\n# File expense\n",
+          sha256: "abcdef0123456789".repeat(4),
           warnings: [],
           createdAt: 1,
         },
@@ -159,6 +161,9 @@ describe("ApprovalCard learned skills", () => {
     const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
     expect(markup).toContain("enable a learned skill");
     expect(markup).toContain("Files an expense in the company portal.");
+    expect(markup).toContain("Review the complete SKILL.md before enabling");
+    expect(markup).toContain("name: file-expense");
+    expect(markup).toContain("sha256 abcdef01");
 
     const spoken = spokenApprovalPrompt(
       { message, requestId: "skill-request", tool: "stage_skill", detail: message.card!.subtitle },

@@ -117,7 +117,7 @@ describe("install → review → enable lifecycle", () => {
 });
 
 describe("staged skill writes", () => {
-  it("lands a create as staged, not enabled, and only reaches the prompt after apply+enable", () => {
+  it("lands a create as staged and only enables the reviewed bytes on approval", () => {
     const staged = stageSkillWrite(bot, {
       action: "create",
       source: "learn:expense flow",
@@ -130,16 +130,13 @@ describe("staged skill writes", () => {
     expect(skillsSystemPrompt(bot)).toBe("");
     expect(listStagedSkillWrites(bot).map((entry) => entry.id)).toEqual([staged.id]);
 
-    const applied = applyStagedSkillWrite(bot, staged.id);
-    expect(applied).toMatchObject({ name: "file-expense", enabled: false, source: "learn:expense flow" });
+    const applied = applyStagedSkillWrite(bot, staged.id, { expectedSha256: staged.sha256 });
+    expect(applied).toMatchObject({ name: "file-expense", enabled: true, source: "learn:expense flow" });
     expect(listStagedSkillWrites(bot)).toEqual([]);
-    expect(skillsSystemPrompt(bot)).toBe("");
-
-    setSkillEnabled(bot, "file-expense", true);
     expect(skillsSystemPrompt(bot)).toContain("- file-expense:");
   });
 
-  it("rejects create when the name already exists, and update when it does not", () => {
+  it("rejects an existing or already-pending name", () => {
     installSkill(bot, "src", [{ path: "SKILL.md", content: SKILL("file-expense") }]);
     expect(
       "error" in
@@ -148,44 +145,75 @@ describe("staged skill writes", () => {
         files: [{ path: "SKILL.md", content: SKILL("file-expense") }],
       }),
     ).toBe(true);
-    expect(
-      "error" in
-      stageSkillWrite(bot, {
-        action: "update",
-        files: [{ path: "SKILL.md", content: SKILL("brand-new") }],
-      }),
-    ).toBe(true);
+    const first = stageSkillWrite(bot, {
+      action: "create",
+      files: [{ path: "SKILL.md", content: SKILL("brand-new") }],
+    });
+    expect("error" in first).toBe(false);
+    const duplicate = stageSkillWrite(bot, {
+      action: "create",
+      files: [{ path: "SKILL.md", content: SKILL("brand-new") }],
+    });
+    expect(duplicate).toMatchObject({ error: expect.stringContaining("waiting for confirmation") });
   });
 
-  it("applies an update in place without changing enabled, and reject drops the stage", () => {
-    installSkill(bot, "src", [{ path: "SKILL.md", content: SKILL("file-expense") }]);
-    setSkillEnabled(bot, "file-expense", true);
+  it("reject drops the stage without installing anything", () => {
     const staged = stageSkillWrite(bot, {
-      action: "update",
-      files: [
-        {
-          path: "SKILL.md",
-          content: SKILL("file-expense", "Files an expense and attaches the receipt."),
-        },
-      ],
+      action: "create",
+      files: [{ path: "SKILL.md", content: SKILL("file-expense") }],
     });
     if ("error" in staged) throw new Error(staged.error);
-    const applied = applyStagedSkillWrite(bot, staged.id);
-    expect(applied).toMatchObject({
-      name: "file-expense",
-      enabled: true,
-      description: "Files an expense and attaches the receipt.",
-    });
-    expect(skillsSystemPrompt(bot)).toContain("attaches the receipt");
-
-    const later = stageSkillWrite(bot, {
-      action: "update",
-      files: [{ path: "SKILL.md", content: SKILL("file-expense", "Should never apply.") }],
-    });
-    if ("error" in later) throw new Error(later.error);
-    expect(rejectStagedSkillWrite(bot, later.id)).toEqual({ rejected: true });
+    expect(rejectStagedSkillWrite(bot, staged.id)).toEqual({ rejected: true });
     expect(listStagedSkillWrites(bot)).toEqual([]);
-    expect(listSkills(bot)[0]?.description).toContain("attaches the receipt");
+    expect(listSkills(bot)).toEqual([]);
+  });
+
+  it("scrubs secrets before persisting or previewing learned instructions", () => {
+    const key = `sk-ant-api03-${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
+    const staged = stageSkillWrite(bot, {
+      action: "create",
+      gist: `Use ${key} for the API`,
+      source: `conversation ${key}`,
+      files: [{ path: "SKILL.md", content: `${SKILL("safe-skill")}\nAPI key: ${key}\n` }],
+    });
+    if ("error" in staged) throw new Error(staged.error);
+    expect(staged.gist).not.toContain(key);
+    expect(staged.source).not.toContain(key);
+    expect(staged.files[0]!.content).not.toContain(key);
+    expect(staged.files[0]!.content).toContain("«redacted");
+  });
+
+  it("rejects approval when its reviewed hash does not match", () => {
+    const staged = stageSkillWrite(bot, {
+      action: "create",
+      files: [{ path: "SKILL.md", content: SKILL("hash-bound") }],
+    });
+    if ("error" in staged) throw new Error(staged.error);
+    const applied = applyStagedSkillWrite(bot, staged.id, { expectedSha256: "0".repeat(64) });
+    expect(applied).toMatchObject({ error: expect.stringContaining("changed after review") });
+    expect(listSkills(bot)).toEqual([]);
+    expect(listStagedSkillWrites(bot)).toHaveLength(1);
+  });
+
+  it("replays approval safely if card settlement fails after installation", () => {
+    const staged = stageSkillWrite(bot, {
+      action: "create",
+      files: [{ path: "SKILL.md", content: SKILL("replay-safe") }],
+    });
+    if ("error" in staged) throw new Error(staged.error);
+    expect(() =>
+      applyStagedSkillWrite(bot, staged.id, {
+        expectedSha256: staged.sha256,
+        onApplied: () => {
+          throw new Error("simulated card write failure");
+        },
+      }),
+    ).toThrow("simulated card write failure");
+    expect(listSkills(bot)).toMatchObject([{ name: "replay-safe", enabled: true }]);
+
+    const replayed = applyStagedSkillWrite(bot, staged.id, { expectedSha256: staged.sha256 });
+    expect(replayed).toMatchObject({ name: "replay-safe", enabled: true });
+    expect(listStagedSkillWrites(bot)).toEqual([]);
   });
 });
 

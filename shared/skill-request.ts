@@ -5,7 +5,7 @@
  * index until the user confirms this card. Keeping the staged id on the
  * card lets confirmation survive a restart without asking the model again.
  */
-export type SkillRequestAction = "create" | "update";
+export type SkillRequestAction = "create";
 
 export interface SkillRequestCardData {
   version: 1;
@@ -16,6 +16,10 @@ export interface SkillRequestCardData {
   action: SkillRequestAction;
   name: string;
   gist: string;
+  /** Exact, secret-scrubbed SKILL.md shown as plain text before approval. */
+  preview: string;
+  /** Binds approval to the exact bytes shown in preview. */
+  sha256: string;
   warnings: string[];
   createdAt: number;
 }

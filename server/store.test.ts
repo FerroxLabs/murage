@@ -771,6 +771,34 @@ describe("Store redacts bot-authored secrets on write", () => {
     if (routineCard.card?.routineRequest?.operation.action !== "create") throw new Error("missing routine payload");
     expect(routineCard.card.routineRequest.operation.routine.name).not.toContain(key);
     expect(routineCard.card.routineRequest.operation.routine.instructions).not.toContain(key);
+    const skillCard = store.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "options",
+      card: {
+        title: "Enable learned skill?",
+        subtitle: "Review it first",
+        options: ["Enable", "Dismiss"],
+        requestId: "skill-request",
+        tool: "stage_skill",
+        skillRequest: {
+          version: 1,
+          requestId: "skill-request",
+          botId: bot.id,
+          threadId: bot.threadId,
+          stagedId: "staged-1",
+          action: "create",
+          name: "safe-skill",
+          gist: `Uses ${key}`,
+          preview: `---\nname: safe-skill\ndescription: Uses ${key}.\n---\n`,
+          sha256: "0".repeat(64),
+          warnings: [`Found ${key}`],
+          createdAt: 1,
+        },
+      },
+    });
+    expect(skillCard.card?.skillRequest?.gist).not.toContain(key);
+    expect(skillCard.card?.skillRequest?.preview).not.toContain(key);
+    expect(skillCard.card?.skillRequest?.warnings.join(" ")).not.toContain(key);
     const runCard = store.appendMessage(bot.threadId, {
       role: "bot",
       kind: "routine.run",

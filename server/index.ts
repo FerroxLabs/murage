@@ -294,7 +294,7 @@ const phoneProxyPath = SPAWNED_PROXIES.phone;
 // in the packaged app process.execPath is Electron — run the proxy as node
 const AGENTS_NODE_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 
-function agentsIntegration(botId: string, threadId: string, depth: number) {
+function agentsIntegration(botId: string, threadId: string, depth: number, skillAuthoring: boolean) {
   return {
     command: process.execPath,
     args: [agentsProxyPath],
@@ -305,6 +305,7 @@ function agentsIntegration(botId: string, threadId: string, depth: number) {
       OMB_THREAD_ID: threadId,
       OMB_COMMS_TOKEN: COMMS_TOKEN,
       OMB_TURN_DEPTH: String(depth),
+      OMB_SKILL_AUTHORING_ENABLED: skillAuthoring ? "1" : "0",
     },
   };
 }
@@ -2208,8 +2209,12 @@ async function startTurn(
   const fresh =
     !rewound &&
     engineIsFresh({ instanceId, lastInstanceId: task.lastInstanceId, resumeCursors: task.resumeCursors, transcript });
+  const skillAuthoring =
+    skillRecorderEnabled(cfg) &&
+    commsDepth < MAX_COMMS_DEPTH &&
+    instance.adapter.capabilities.agentsMcp === true;
   const { turnText, resume } = buildTurnContext({
-    text: promptWithReply(expandLearnTurnText(text), opts?.replyTo, cfg.profile?.name?.trim() || "User"),
+    text: promptWithReply(skillAuthoring ? expandLearnTurnText(text) : text, opts?.replyTo, cfg.profile?.name?.trim() || "User"),
     transcript,
     rewound,
     fresh,
@@ -2461,7 +2466,7 @@ async function startTurn(
         commsDepth < MAX_COMMS_DEPTH &&
         instance.adapter.capabilities.agentsMcp === true
       ) {
-        integrations.agents = agentsIntegration(bot.id, threadId, commsDepth);
+        integrations.agents = agentsIntegration(bot.id, threadId, commsDepth, skillAuthoring);
       }
       // @mentions in the user's message (the composer's tagging UI) become
       // an explicit delegation nudge — the agent still does the ask_bot call
@@ -2488,8 +2493,8 @@ async function startTurn(
       const routinePrompt = integrations.agents
         ? " If the user explicitly asks to list or review, schedule, run, or change routines, use list_routines and propose_routine or propose_routine_action. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation."
         : "";
-      const learnPrompt = integrations.agents
-        ? " If the user sends /learn or asks you to save a reusable procedure from this work, use skills_list, skill_view, and skill_manage. skill_manage only stages a SKILL.md — it does not enable it. Never claim the skill is live before the user confirms the in-app card."
+      const learnPrompt = skillAuthoring
+        ? " If the user sends /learn or asks you to save a reusable procedure from this work, use skills_list, skill_view, and skill_manage. Only create new skills, include the URL, folder, or conversation as source provenance, and wait for the user to review and enable the staged SKILL.md."
         : "";
 
       // (activeVpsThreads was already claimed above, before the provision or
@@ -3052,8 +3057,14 @@ async function runGroupMemberTurn(
     return true;
   }
   const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
+  const skillAuthoring =
+    skillRecorderEnabled(cfg) &&
+    hop === 0 &&
+    spoken.size === 1 &&
+    !cardContinuation &&
+    instance.adapter.capabilities.agentsMcp === true;
   if (hop < MAX_COMMS_DEPTH && instance.adapter.capabilities.agentsMcp === true) {
-    integrations.agents = agentsIntegration(bot.id, threadId, hop);
+    integrations.agents = agentsIntegration(bot.id, threadId, hop, skillAuthoring);
   }
   const selectedSkills = selectBundledSkills(
     serializeRoomContext(threadId, userName),
@@ -3158,14 +3169,14 @@ async function runGroupMemberTurn(
       "If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat.",
     integrations.agents &&
       "If the user explicitly asks to list or review, schedule, run, or change routines, use list_routines and propose_routine or propose_routine_action. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation.",
-    integrations.agents &&
-    "If the user sends /learn or asks you to save a reusable procedure from this work, use skills_list, skill_view, and skill_manage. skill_manage only stages a SKILL.md — it does not enable it. Never claim the skill is live before the user confirms the in-app card.",
+    skillAuthoring &&
+      "If the user sends /learn or asks you to save a reusable procedure from this work, use skills_list, skill_view, and skill_manage. Only create new skills, include the URL, folder, or conversation as source provenance, and wait for the user to review and enable the staged SKILL.md.",
   ]
     .filter(Boolean)
     .join("\n");
 
   const latestUser = [...store.activePath(threadId)].reverse().find((message) => message.role === "user" && message.kind === "text" && message.text);
-  const learnTurn = latestUser?.text ? expandLearnTurnText(latestUser.text) : "";
+  const learnTurn = skillAuthoring && latestUser?.text ? expandLearnTurnText(latestUser.text) : "";
   const learnBlock = learnTurn && learnTurn !== latestUser?.text ? `\n\n${learnTurn}` : "";
   const text = `${serializeRoomContext(threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation ? `\n\n${cardContinuation}` : ""
   }`;
@@ -3509,23 +3520,38 @@ function skillProposalPersistence(botId: string, threadId: string) {
     : { ok: true as const };
 }
 
-function skillCardCopy(staged: { action: "create" | "update"; name: string; gist: string; warnings: string[] }): {
+/** Listing endpoints expose lifecycle metadata, never the staged instructions
+ * themselves. The exact review copy lives only on the durable approval card. */
+function stagedSkillListing(staged: ReturnType<typeof listStagedSkillWrites>[number]) {
+  const { files: _files, ...listing } = staged;
+  return listing;
+}
+
+function skillCardCopy(staged: { action: "create"; name: string; gist: string; warnings: string[] }): {
   title: string;
   subtitle: string;
   tool: string;
 } {
   const warnings = staged.warnings.length ? `\n\nWarnings:\n- ${staged.warnings.join("\n- ")}` : "";
   return {
-    title: staged.action === "create" ? `Enable skill "${staged.name}"?` : `Update skill "${staged.name}"?`,
+    title: `Enable skill "${staged.name}"?`,
     subtitle: `${staged.gist || staged.name}${warnings}`,
-    tool: staged.action === "create" ? "stage_skill" : "update_skill",
+    tool: "stage_skill",
   };
 }
 
 function appendSkillRequestCard(args: {
   botId: string;
   threadId: string;
-  staged: { id: string; action: "create" | "update"; name: string; gist: string; warnings: string[] };
+  staged: {
+    id: string;
+    action: "create";
+    name: string;
+    gist: string;
+    files: Array<{ path: string; content: string }>;
+    sha256: string;
+    warnings: string[];
+  };
 }): { requestId: string; summary: string } {
   const requestId = randomUUID();
   const copy = skillCardCopy(args.staged);
@@ -3538,6 +3564,8 @@ function appendSkillRequestCard(args: {
     action: args.staged.action,
     name: args.staged.name,
     gist: args.staged.gist,
+    preview: args.staged.files.find((file) => file.path === "SKILL.md")?.content ?? "",
+    sha256: args.staged.sha256,
     warnings: args.staged.warnings,
     createdAt: Date.now(),
   };
@@ -3581,13 +3609,14 @@ function resolveSkillRequest(args: {
     return { claimed: true, status: 403, error: "this skill request belongs to a different bot" };
   }
   if (card.answered || card.dismissed) {
+    if (card.answered === "allow") rejectStagedSkillWrite(args.botId, request.stagedId);
     return { claimed: true, outcome: card.answered === "allow" ? "allowed-once" : "rejected", alreadySettled: true };
   }
   if (args.behavior !== "allow") {
-    rejectStagedSkillWrite(args.botId, request.stagedId);
     store.patchMessage(args.threadId, message.id, {
       card: { ...card, answered: "deny", dismissed: true },
     });
+    rejectStagedSkillWrite(args.botId, request.stagedId);
     appendDecision(DATA_DIR, {
       threadId: args.threadId,
       requestId: args.requestId,
@@ -3600,17 +3629,18 @@ function resolveSkillRequest(args: {
     });
     return { claimed: true, outcome: "rejected" };
   }
-  const applied = applyStagedSkillWrite(args.botId, request.stagedId);
+  const applied = applyStagedSkillWrite(args.botId, request.stagedId, {
+    expectedSha256: request.sha256,
+    onApplied: () => {
+      const patched = store.patchMessage(args.threadId, message.id, {
+        card: { ...card, answered: "allow" },
+      });
+      if (!patched) throw new Error("the learned-skill approval card is no longer available");
+    },
+  });
   if ("error" in applied) {
     return { claimed: true, status: 422, error: applied.error };
   }
-  if (request.action === "create" && !applied.enabled) {
-    const enabled = setSkillEnabled(args.botId, applied.name, true);
-    if ("error" in enabled) return { claimed: true, status: 422, error: enabled.error };
-  }
-  store.patchMessage(args.threadId, message.id, {
-    card: { ...card, answered: "allow" },
-  });
   appendDecision(DATA_DIR, {
     threadId: args.threadId,
     requestId: args.requestId,
@@ -4225,6 +4255,7 @@ const server = createServer(async (req, res) => {
         return json(res, 201, proposed);
       }
       if (method === "GET" && path === "/api/internal/skills") {
+        if (!skillRecorderEnabled(cfg)) return json(res, 403, { error: "learned skills are not enabled" });
         const fromBotId = String(url.searchParams.get("fromBotId") ?? "");
         const from = store.bot(fromBotId);
         if (!from) return json(res, 403, { error: "unknown sender" });
@@ -4234,11 +4265,12 @@ const server = createServer(async (req, res) => {
         }
         return json(res, 200, {
           skills: listSkills(from.id),
-          staged: listStagedSkillWrites(from.id),
+          staged: listStagedSkillWrites(from.id).map(stagedSkillListing),
         });
       }
       m = path.match(/^\/api\/internal\/skills\/([a-z0-9-]+)$/);
       if (m && method === "GET") {
+        if (!skillRecorderEnabled(cfg)) return json(res, 403, { error: "learned skills are not enabled" });
         const fromBotId = String(url.searchParams.get("fromBotId") ?? "");
         const from = store.bot(fromBotId);
         if (!from) return json(res, 403, { error: "unknown sender" });
@@ -4251,6 +4283,7 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { name: m[1], text });
       }
       if (method === "POST" && path === "/api/internal/skills/stage") {
+        if (!skillRecorderEnabled(cfg)) return json(res, 403, { error: "learned skills are not enabled" });
         const body = await readBody(req);
         const fromBotId = String(body.fromBotId ?? "");
         const from = store.bot(fromBotId);
@@ -4261,26 +4294,34 @@ const server = createServer(async (req, res) => {
         }
         const persistence = skillProposalPersistence(from.id, fromThreadId);
         if (!persistence.ok) return json(res, persistence.status, { error: persistence.error });
-        const action = body.action === "update" ? "update" : body.action === "create" ? "create" : "";
-        if (!action) return json(res, 400, { error: 'action must be "create" or "update"' });
+        const action = body.action === "create" ? "create" : "";
+        if (!action) return json(res, 400, { error: 'action must be "create"' });
         const skillMd = typeof body.skill_md === "string" ? body.skill_md : "";
         if (!skillMd.trim()) {
           return json(res, 400, { error: 'skill_manage needs skill_md: the full SKILL.md including YAML frontmatter, for example ---\\nname: file-expense\\ndescription: Files an expense in the company portal.\\n---\\n\\n# File expense\\n' });
         }
+        const source = typeof body.source === "string" ? body.source.trim() : "";
+        if (!source) return json(res, 400, { error: 'source must be a URL, folder, or "conversation"' });
         const staged = stageSkillWrite(from.id, {
           action,
           files: [{ path: "SKILL.md", content: skillMd }],
           gist: typeof body.gist === "string" ? body.gist : undefined,
-          source: learnSource(typeof body.source === "string" ? body.source : ""),
+          source: learnSource(source),
         });
         if ("error" in staged) return json(res, 422, { error: staged.error });
-        const card = appendSkillRequestCard({ botId: from.id, threadId: fromThreadId, staged });
+        let card: ReturnType<typeof appendSkillRequestCard>;
+        try {
+          card = appendSkillRequestCard({ botId: from.id, threadId: fromThreadId, staged });
+        } catch (error) {
+          rejectStagedSkillWrite(from.id, staged.id);
+          throw error;
+        }
         appendDecision(DATA_DIR, {
           threadId: fromThreadId,
           requestId: card.requestId,
           botId: from.id,
           botName: from.name,
-          tool: action === "create" ? "stage_skill" : "update_skill",
+          tool: "stage_skill",
           summary: card.summary,
           decision: "card-shown",
           source: "skill",
@@ -6099,7 +6140,10 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills$/);
     if (m && method === "GET") {
       if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
-      return json(res, 200, { skills: listSkills(m[1]), staged: listStagedSkillWrites(m[1]) });
+      return json(res, 200, {
+        skills: listSkills(m[1]),
+        staged: listStagedSkillWrites(m[1]).map(stagedSkillListing),
+      });
     }
     if (m && method === "POST") {
       if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
@@ -6503,7 +6547,7 @@ const server = createServer(async (req, res) => {
         (message) => message.card?.requestId === requestId && message.card.skillRequest,
       );
       if (skillCard?.card?.skillRequest) {
-        const skillBotId = skillCard.from?.botId ?? skillCard.card.skillRequest.botId ?? store.botByThread(threadId)?.id;
+        const skillBotId = skillCard.from?.botId ?? store.botByThread(threadId)?.id;
         if (!skillBotId) return json(res, 400, { error: "this skill request has no valid owner" });
         const skillOwner = store.bot(skillBotId);
         if (sendSkillResolution(res, resolveSkillRequest({

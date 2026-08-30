@@ -23,11 +23,14 @@
 //
 // Agent-authored skills (/learn + skill_manage) use the same store, but
 // land in staged.json first. A person confirms the in-app card before
-// applyStagedSkillWrite promotes them. Creates still start DISABLED.
+// applyStagedSkillWrite promotes and enables the exact bytes the person
+// reviewed.
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { writeFileAtomic } from "./atomic.ts";
+import { redactSecretsInText } from "./redact.ts";
 import { LEARN_SOURCE_PREFIX } from "./skill-learn.ts";
 import { workspaceDir } from "./workspace.ts";
 
@@ -45,6 +48,9 @@ export const INDEX_MAX_BYTES = 4_000;
 /** Agent-authored writes sit here until a person confirms the in-app card. */
 export const MAX_STAGED_SKILLS = 20;
 export const STAGED_GIST_MAX = 240;
+/** Learned skills are duplicated onto their durable review card. Keep that
+ * exact review payload bounded while leaving fetched skill imports unchanged. */
+export const STAGED_SKILL_FILE_MAX_BYTES = 32 * 1024;
 
 export function isSkillName(name: string): boolean {
   return name.length >= 1 && name.length <= SKILL_NAME_MAX && SKILL_NAME.test(name);
@@ -117,6 +123,9 @@ interface SkillManifestEntry {
   compatibility?: string;
   warnings: string[];
   skippedFiles: string[];
+  /** Makes approval replay safe if the process stops after promotion but
+   * before the confirmation card is durably settled. Never exposed to agents. */
+  appliedStageId?: string;
 }
 
 type SkillManifest = Record<string, SkillManifestEntry>;
@@ -141,7 +150,7 @@ function readManifest(botId: string): SkillManifest {
 
 function writeManifest(botId: string, manifest: SkillManifest): void {
   mkdirSync(skillsDir(botId), { recursive: true, mode: 0o700 });
-  writeFileSync(manifestPath(botId), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+  writeFileAtomic(manifestPath(botId), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
 }
 
 /** The native discovery dirs of the CLIs bots run. A skill enabled here is
@@ -188,10 +197,15 @@ export interface SkillListing {
   skippedFiles: string[];
 }
 
+function skillListing(name: string, entry: SkillManifestEntry): SkillListing {
+  const { appliedStageId: _, ...visible } = entry;
+  return { name, ...visible };
+}
+
 export function listSkills(botId: string): SkillListing[] {
   const manifest = readManifest(botId);
   return Object.entries(manifest)
-    .map(([name, entry]) => ({ name, ...entry }))
+    .map(([name, entry]) => skillListing(name, entry))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -212,58 +226,9 @@ export function installSkill(
   source: string,
   files: Array<{ path: string; content: string }>,
 ): SkillListing | { error: string } {
-  const skillMd = files.find((file) => file.path === "SKILL.md" || file.path.endsWith("/SKILL.md"));
-  if (!skillMd) return { error: "no SKILL.md found at that location" };
-  if (Buffer.byteLength(skillMd.content, "utf8") > SKILL_FILE_MAX_BYTES) {
-    return { error: `SKILL.md is larger than ${SKILL_FILE_MAX_BYTES / 1024}KB` };
-  }
-  const parsed = parseSkillMd(skillMd.content);
-  if ("error" in parsed) return parsed;
-
-  // markdown-only v1: everything else is recorded as skipped, not written
-  const prefix = skillMd.path.slice(0, skillMd.path.length - "SKILL.md".length);
-  const siblings = files.filter((file) => file !== skillMd && file.path.startsWith(prefix));
-  const markdown = siblings.filter(
-    (file) => file.path.toLowerCase().endsWith(".md") && Buffer.byteLength(file.content, "utf8") <= SKILL_FILE_MAX_BYTES,
-  );
-  const skippedFiles = siblings.filter((file) => !markdown.includes(file)).map((file) => file.path.slice(prefix.length));
-
-  const warnings = [
-    ...scanSkillText(skillMd.content),
-    ...markdown.flatMap((file) => scanSkillText(file.content).map((w) => `${file.path.slice(prefix.length)}: ${w}`)),
-  ];
-
-  const manifest = readManifest(botId);
-  if (manifest[parsed.name]) return { error: `a skill named "${parsed.name}" is already imported — remove it first` };
-
-  const dir = join(skillsDir(botId), parsed.name);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileSync(join(dir, "SKILL.md"), skillMd.content, { mode: 0o600 });
-  for (const file of markdown) {
-    const relative = file.path.slice(prefix.length);
-    // same gate as the skill name: single-level markdown files only in v1
-    if (!/^[\w][\w .-]{0,199}\.md$/i.test(relative)) {
-      skippedFiles.push(relative);
-      continue;
-    }
-    writeFileSync(join(dir, relative), file.content, { mode: 0o600 });
-  }
-
-  const entry: SkillManifestEntry = {
-    description: parsed.description,
-    enabled: false,
-    source,
-    sha256: createHash("sha256").update(skillMd.content).digest("hex"),
-    importedAt: new Date().toISOString(),
-    license: parsed.license,
-    compatibility: parsed.compatibility,
-    warnings,
-    skippedFiles,
-  };
-  manifest[parsed.name] = entry;
-  writeManifest(botId, manifest);
-  return { name: parsed.name, ...entry };
+  const prepared = preparedSkillFiles(files);
+  if ("error" in prepared) return prepared;
+  return installPreparedSkill(botId, source, prepared, { enabled: false });
 }
 
 export function setSkillEnabled(botId: string, name: string, enabled: boolean): SkillListing | { error: string } {
@@ -274,7 +239,7 @@ export function setSkillEnabled(botId: string, name: string, enabled: boolean): 
   entry.enabled = enabled;
   writeManifest(botId, manifest);
   syncSkillLinks(botId);
-  return { name, ...entry };
+  return skillListing(name, entry);
 }
 
 export function removeSkill(botId: string, name: string): { removed: true } | { error: string } {
@@ -288,7 +253,7 @@ export function removeSkill(botId: string, name: string): { removed: true } | { 
   return { removed: true };
 }
 
-export type StagedSkillAction = "create" | "update";
+export type StagedSkillAction = "create";
 
 export interface StagedSkillWrite {
   id: string;
@@ -297,6 +262,7 @@ export interface StagedSkillWrite {
   gist: string;
   source: string;
   files: Array<{ path: string; content: string }>;
+  sha256: string;
   warnings: string[];
   skippedFiles: string[];
   createdAt: string;
@@ -327,12 +293,19 @@ function readStaged(botId: string): StagedStore {
 
 function writeStaged(botId: string, store: StagedStore): void {
   mkdirSync(skillsDir(botId), { recursive: true, mode: 0o700 });
-  writeFileSync(stagedPath(botId), `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+  writeFileAtomic(stagedPath(botId), `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+}
+
+interface PreparedSkillFiles {
+  files: Array<{ path: string; content: string }>;
+  parsed: ParsedSkill;
+  warnings: string[];
+  skippedFiles: string[];
 }
 
 function preparedSkillFiles(
   files: Array<{ path: string; content: string }>,
-): { files: Array<{ path: string; content: string }>; parsed: ParsedSkill; warnings: string[]; skippedFiles: string[] } | { error: string } {
+): PreparedSkillFiles | { error: string } {
   const skillMd = files.find((file) => file.path === "SKILL.md" || file.path.endsWith("/SKILL.md"));
   if (!skillMd) return { error: "no SKILL.md found at that location" };
   if (Buffer.byteLength(skillMd.content, "utf8") > SKILL_FILE_MAX_BYTES) {
@@ -362,13 +335,76 @@ function preparedSkillFiles(
   return { files: normalized, parsed, warnings, skippedFiles };
 }
 
-function writeSkillFiles(botId: string, name: string, files: Array<{ path: string; content: string }>): void {
-  const dir = join(skillsDir(botId), name);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  for (const file of files) {
-    writeFileSync(join(dir, file.path), file.content, { mode: 0o600 });
+/** Stage a new directory, then publish it and its manifest entry together.
+ * A thrown manifest write removes the just-published directory, so callers
+ * never observe a half-installed skill. Existing skills are never replaced. */
+function commitNewSkillFiles(
+  botId: string,
+  name: string,
+  files: Array<{ path: string; content: string }>,
+  commitManifest: () => void,
+): void {
+  const root = skillsDir(botId);
+  const target = join(root, name);
+  const staged = join(root, `.install-${name}-${randomUUID()}`);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  let published = false;
+  try {
+    mkdirSync(staged, { mode: 0o700 });
+    for (const file of files) {
+      writeFileSync(join(staged, file.path), file.content, { mode: 0o600 });
+    }
+    renameSync(staged, target);
+    published = true;
+    commitManifest();
+  } catch (error) {
+    if (published) rmSync(target, { recursive: true, force: true });
+    else rmSync(staged, { recursive: true, force: true });
+    throw error;
   }
+}
+
+function installPreparedSkill(
+  botId: string,
+  source: string,
+  prepared: PreparedSkillFiles,
+  options: { enabled: boolean; appliedStageId?: string },
+): SkillListing | { error: string } {
+  const name = prepared.parsed.name;
+  const manifest = readManifest(botId);
+  const existing = manifest[name];
+  if (existing) {
+    if (options.appliedStageId && existing.appliedStageId === options.appliedStageId) {
+      return skillListing(name, existing);
+    }
+    return { error: `a skill named "${name}" is already imported — choose a different name` };
+  }
+  if (existsSync(join(skillsDir(botId), name))) {
+    return { error: `skill directory already exists without a manifest entry: ${name}` };
+  }
+  const skillMd = prepared.files[0]!.content;
+  const entry: SkillManifestEntry = {
+    description: prepared.parsed.description,
+    enabled: options.enabled,
+    source,
+    sha256: createHash("sha256").update(skillMd).digest("hex"),
+    importedAt: new Date().toISOString(),
+    license: prepared.parsed.license,
+    compatibility: prepared.parsed.compatibility,
+    warnings: prepared.warnings,
+    skippedFiles: prepared.skippedFiles,
+    appliedStageId: options.appliedStageId,
+  };
+  try {
+    commitNewSkillFiles(botId, name, prepared.files, () => {
+      manifest[name] = entry;
+      writeManifest(botId, manifest);
+    });
+  } catch (error) {
+    return { error: `skill import was rolled back: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (entry.enabled) syncSkillLinks(botId);
+  return skillListing(name, entry);
 }
 
 /** Agent-authored skill write: scanned and stored, never enabled. A person
@@ -383,23 +419,47 @@ export function stageSkillWrite(
     source?: string;
   },
 ): StagedSkillWrite | { error: string } {
-  const prepared = preparedSkillFiles(input.files);
+  if (input.action !== "create") return { error: 'learned skills currently support action "create" only' };
+  const redactedFiles = input.files.map((file) => ({
+    path: file.path,
+    content: redactSecretsInText(file.content),
+  }));
+  const candidate = redactedFiles.find((file) => file.path === "SKILL.md" || file.path.endsWith("/SKILL.md"));
+  if (candidate && Buffer.byteLength(candidate.content, "utf8") > STAGED_SKILL_FILE_MAX_BYTES) {
+    return { error: `learned SKILL.md files must be at most ${STAGED_SKILL_FILE_MAX_BYTES / 1024}KB` };
+  }
+  const prepared = preparedSkillFiles(redactedFiles);
   if ("error" in prepared) return prepared;
   const { parsed } = prepared;
   const manifest = readManifest(botId);
-  if (input.action === "create" && manifest[parsed.name]) {
-    return { error: `a skill named "${parsed.name}" is already imported — use action "update" to stage a replacement` };
-  }
-  if (input.action === "update" && !manifest[parsed.name]) {
-    return { error: `no imported skill named "${parsed.name}" — use action "create" to stage a new skill` };
+  if (manifest[parsed.name]) {
+    return { error: `a skill named "${parsed.name}" is already imported — choose a different name` };
   }
   const store = readStaged(botId);
+  const now = Date.now();
+  const maxAge = 30 * 24 * 60 * 60 * 1_000;
+  let pruned = false;
+  for (const [id, staged] of Object.entries(store.writes)) {
+    const createdAt = Date.parse(staged.createdAt);
+    if (manifest[staged.name]?.appliedStageId === id || !Number.isFinite(createdAt) || now - createdAt > maxAge) {
+      delete store.writes[id];
+      pruned = true;
+    }
+  }
+  if (pruned) writeStaged(botId, store);
   const open = Object.values(store.writes);
   if (open.length >= MAX_STAGED_SKILLS) {
     return { error: `confirm or reject an existing staged skill first (max ${MAX_STAGED_SKILLS})` };
   }
-  const gist = (input.gist ?? parsed.description).replace(/\s+/g, " ").trim().slice(0, STAGED_GIST_MAX);
-  const source = input.source?.trim() || `${LEARN_SOURCE_PREFIX}${parsed.name}`;
+  if (open.some((staged) => staged.name === parsed.name)) {
+    return { error: `a learned skill named "${parsed.name}" is already waiting for confirmation` };
+  }
+  const gist = redactSecretsInText(input.gist ?? parsed.description)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, STAGED_GIST_MAX);
+  const source = redactSecretsInText(input.source?.trim() || `${LEARN_SOURCE_PREFIX}${parsed.name}`);
+  const sha256 = createHash("sha256").update(prepared.files[0]!.content).digest("hex");
   const entry: StagedSkillWrite = {
     id: randomUUID(),
     action: input.action,
@@ -407,6 +467,7 @@ export function stageSkillWrite(
     gist: gist || parsed.description.slice(0, STAGED_GIST_MAX),
     source,
     files: prepared.files,
+    sha256,
     warnings: prepared.warnings,
     skippedFiles: prepared.skippedFiles,
     createdAt: new Date().toISOString(),
@@ -417,7 +478,10 @@ export function stageSkillWrite(
 }
 
 export function listStagedSkillWrites(botId: string): StagedSkillWrite[] {
-  return Object.values(readStaged(botId).writes).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const manifest = readManifest(botId);
+  return Object.values(readStaged(botId).writes)
+    .filter((entry) => manifest[entry.name]?.appliedStageId !== entry.id)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export function getStagedSkillWrite(botId: string, id: string): StagedSkillWrite | null {
@@ -432,56 +496,32 @@ export function rejectStagedSkillWrite(botId: string, id: string): { rejected: t
   return { rejected: true };
 }
 
-/** Promote a staged write into the imported-skill store. Create lands
- * DISABLED. Update replaces files in place and keeps the current enabled flag. */
-export function applyStagedSkillWrite(botId: string, id: string): SkillListing | { error: string } {
+/** Promote the exact reviewed bytes and enable them. `onApplied` settles the
+ * durable approval card before the stage is deleted, making a restart between
+ * those operations safe to replay through appliedStageId. */
+export function applyStagedSkillWrite(
+  botId: string,
+  id: string,
+  options: { expectedSha256?: string; onApplied?: (skill: SkillListing) => void } = {},
+): SkillListing | { error: string } {
   const store = readStaged(botId);
   const staged = store.writes[id];
   if (!staged) return { error: "no such staged skill" };
-  if (staged.action === "create") {
-    const installed = installSkill(botId, staged.source, staged.files);
-    if ("error" in installed) return installed;
-    delete store.writes[id];
-    writeStaged(botId, store);
-    return installed;
+  const prepared = preparedSkillFiles(staged.files);
+  if ("error" in prepared) return prepared;
+  const sha256 = createHash("sha256").update(prepared.files[0]!.content).digest("hex");
+  if (sha256 !== staged.sha256 || (options.expectedSha256 && sha256 !== options.expectedSha256)) {
+    return { error: "the staged skill changed after review — create a new proposal" };
   }
-  const replaced = replaceImportedSkill(botId, staged.name, staged.source, staged.files);
-  if ("error" in replaced) return replaced;
+  const installed = installPreparedSkill(botId, staged.source, prepared, {
+    enabled: true,
+    appliedStageId: id,
+  });
+  if ("error" in installed) return installed;
+  options.onApplied?.(installed);
   delete store.writes[id];
   writeStaged(botId, store);
-  return replaced;
-}
-
-function replaceImportedSkill(
-  botId: string,
-  name: string,
-  source: string,
-  files: Array<{ path: string; content: string }>,
-): SkillListing | { error: string } {
-  const prepared = preparedSkillFiles(files);
-  if ("error" in prepared) return prepared;
-  if (prepared.parsed.name !== name) {
-    return { error: `staged skill name "${prepared.parsed.name}" does not match "${name}"` };
-  }
-  const manifest = readManifest(botId);
-  const existing = manifest[name];
-  if (!existing) return { error: `no imported skill named "${name}"` };
-  writeSkillFiles(botId, name, prepared.files);
-  const skillMd = prepared.files.find((file) => file.path === "SKILL.md")!.content;
-  const entry: SkillManifestEntry = {
-    ...existing,
-    description: prepared.parsed.description,
-    source,
-    sha256: createHash("sha256").update(skillMd).digest("hex"),
-    license: prepared.parsed.license,
-    compatibility: prepared.parsed.compatibility,
-    warnings: prepared.warnings,
-    skippedFiles: prepared.skippedFiles,
-  };
-  manifest[name] = entry;
-  writeManifest(botId, manifest);
-  syncSkillLinks(botId);
-  return { name, ...entry };
+  return installed;
 }
 
 /** The skills block appended to a bot's system prompt: enabled skills only,

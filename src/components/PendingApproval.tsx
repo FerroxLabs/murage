@@ -10,6 +10,7 @@
 import { memo } from "react";
 import { useStore, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 
 interface ApprovalLabels {
   [tool: string]: string;
@@ -68,9 +69,7 @@ export function spokenApprovalPrompt(pending: Pending, requester: string): strin
 
 function label(pending: Pending): string {
   if (isSkillApproval(pending)) {
-    return pending.message.card?.skillRequest?.action === "update"
-      ? "Confirm this skill update"
-      : "Enable this learned skill";
+    return "Enable this learned skill";
   }
   if (isRoutineApproval(pending)) {
     return pending.message.card?.routineRequest?.operation.action === "create"
@@ -113,9 +112,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
         <span className="text-[13px] text-ink">{label(pending)}</span>
         <span className="font-mono text-[11px] text-ink-secondary">
           {isSkillApproval(pending)
-            ? pending.message.card?.skillRequest?.action === "update"
-              ? "update_skill"
-              : "stage_skill"
+            ? "stage_skill"
             : isRoutineApproval(pending)
             ? pending.message.card?.routineRequest?.operation.action === "create"
               ? "schedule_routine"
@@ -131,6 +128,9 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
       >
         {pending.detail}
       </pre>
+      {pending.message.card?.skillRequest && (
+        <SkillRequestPreview request={pending.message.card.skillRequest} />
+      )}
       {pending.held && <div className="mt-2 text-[12px] text-warning">{pending.held}</div>}
     </div>
   );

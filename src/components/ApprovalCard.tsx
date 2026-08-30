@@ -7,6 +7,7 @@
 import { Check, ShieldCheck, X } from "lucide-react";
 import { type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 
 interface ToolLabels {
   [tool: string]: string;
@@ -23,7 +24,6 @@ const ROUTINE_SETTLED_LABEL = {
 
 const SKILL_SETTLED_LABEL = {
   create: "Skill enabled",
-  update: "Skill updated",
 } as const;
 
 /** The tool's own name is noise to a human: mcp__ogb__computer_batch is
@@ -41,7 +41,6 @@ function toolLabel(tool?: string): string {
     schedule_routine: "schedule a routine",
     manage_routine: "change a routine",
     stage_skill: "enable a learned skill",
-    update_skill: "update a skill",
   };
   return nice[tool] ?? bare;
 }
@@ -66,7 +65,7 @@ export function ApprovalCard({
   const displayTool = isRoutineRequest
     ? routineAction === "create" ? "schedule_routine" : "manage_routine"
     : isSkillRequest
-      ? skillAction === "update" ? "update_skill" : "stage_skill"
+      ? "stage_skill"
     : card.tool;
 
   return (
@@ -92,6 +91,8 @@ export function ApprovalCard({
       >
         {card.subtitle}
       </pre>
+
+      {card.skillRequest && <SkillRequestPreview request={card.skillRequest} />}
 
       {card.held && (
         <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
