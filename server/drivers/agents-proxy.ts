@@ -35,6 +35,7 @@ const TOKEN = process.env.OMB_COMMS_TOKEN ?? "";
 const DEPTH = Number(process.env.OMB_TURN_DEPTH ?? "0") || 0;
 const MAX_CREATED_PER_TURN = 4;
 let createdThisTurn = 0;
+const delegationTaskIdsThisTurn = new Set<string>();
 
 const WEEKDAYS = [
   "monday",
@@ -400,6 +401,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       // The peer's turn outlived the synchronous wait, so the harness
       // converted the ask into a delegation — the reply is not lost.
       const taskId = String(r.taskId ?? "").trim();
+      if (taskId) delegationTaskIdsThisTurn.add(taskId);
       const waitedMinutes = Math.max(1, Math.round((Number(r.waitedMs) || 0) / 60_000));
       return {
         text: `${r.toBotName ?? "That bot"} is still working after ${waitedMinutes} minute${waitedMinutes === 1 ? "" : "s"} — the ask was converted to a delegation so the reply is not lost. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use check_delegation in a later turn only if the user asks for status.`,
@@ -410,6 +412,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       // task id is the asker's claim ticket for the eventual reply.
       const taskId = String(r.taskId ?? "").trim();
       if (taskId) {
+        delegationTaskIdsThisTurn.add(taskId);
         return {
           text: `${r.toBotName ?? "That bot"} is busy right now, so your message was queued as a delegation instead — it runs after your current turn ends. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use check_delegation in a later turn only if the user asks for status.`,
         };
@@ -438,8 +441,10 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     // peer turn runs after our current turn finishes. The task id is the
     // bot's claim ticket for the outcome.
     const note = typeof r.message === "string" ? r.message : "Delegation queued.";
-    const suffix = typeof r.taskId === "string" && r.taskId
-      ? ` Task id: ${r.taskId}. Acknowledge the assignment and finish your turn; the result will be delivered to this conversation automatically. Do not check or wait for it in this turn.`
+    const taskId = typeof r.taskId === "string" ? r.taskId.trim() : "";
+    if (taskId) delegationTaskIdsThisTurn.add(taskId);
+    const suffix = taskId
+      ? ` Task id: ${taskId}. Acknowledge the assignment and finish your turn; the result will be delivered to this conversation automatically. Do not check or wait for it in this turn.`
       : "";
     return { text: `${note}${suffix}` };
   }
@@ -447,6 +452,12 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const taskId = String(args.task_id ?? "").trim();
     if (!/^[\w-]{4,64}$/.test(taskId)) {
       return { text: `${name} needs the "task_id" that delegate_bot returned, e.g. {"task_id":"1f0c2f4e-..."}.`, isError: true };
+    }
+    if (delegationTaskIdsThisTurn.has(taskId)) {
+      return {
+        text: `Task ${taskId} was delegated during this turn. Finish your response now so the other bot can work; its result will be delivered to this conversation automatically. Do not check or wait for a newly delegated task until a later turn.`,
+        isError: true,
+      };
     }
     const timeout = Math.min(Math.max(Math.trunc(Number(args.timeout_seconds) || 60), 1), 240);
     const waitMs = name === "wait_delegation" ? timeout * 1000 : 0;

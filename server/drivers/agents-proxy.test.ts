@@ -265,6 +265,13 @@ describe("agents-proxy MCP surface", () => {
     expect(text).toContain("delivered to this conversation automatically");
     expect(text).not.toContain("wait_delegation");
     expect(res.result.isError).toBeFalsy();
+
+    lastDelegationUrl = null;
+    const check = await callTool("check_delegation", { task_id: "task-9" });
+    expect(check.result.isError).toBe(true);
+    expect(check.result.content[0].text).toContain("delegated during this turn");
+    expect(check.result.content[0].text).toContain("Finish your response now");
+    expect(lastDelegationUrl).toBeNull();
   });
 
   it("renders a timeout conversion with the task id and guidance", async () => {
@@ -278,6 +285,13 @@ describe("agents-proxy MCP surface", () => {
     expect(text).toContain("delivered to this conversation automatically");
     expect(text).not.toContain("wait_delegation");
     expect(res.result.isError).toBeFalsy();
+
+    lastDelegationUrl = null;
+    const wait = await callTool("wait_delegation", { task_id: "task-42", timeout_seconds: 240 });
+    expect(wait.result.isError).toBe(true);
+    expect(wait.result.content[0].text).toContain("delegated during this turn");
+    expect(wait.result.content[0].text).toContain("delivered to this conversation automatically");
+    expect(lastDelegationUrl).toBeNull();
   });
 
   it("surfaces the harness's depth refusal as a tool error", async () => {
@@ -351,7 +365,7 @@ describe("agents-proxy MCP surface", () => {
     expect(lastCredentialBody).toBeNull();
   });
 
-  it("hands the delegator its task id without inviting a same-turn wait", async () => {
+  it("hands back the task id and rejects sequential same-turn status calls", async () => {
     delegateResponse = {
       queued: true,
       taskId: "task-abc123",
@@ -362,6 +376,16 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.content[0].text).toContain("delivered to this conversation automatically");
     expect(res.result.content[0].text).toContain("Do not check or wait for it in this turn");
     expect(res.result.content[0].text).not.toContain("wait_delegation");
+
+    lastDelegationUrl = null;
+    for (const name of ["check_delegation", "wait_delegation"]) {
+      const status = await callTool(name, { task_id: "task-abc123", timeout_seconds: 240 });
+      expect(status.result.isError).toBe(true);
+      expect(status.result.content[0].text).toContain("delegated during this turn");
+      expect(status.result.content[0].text).toContain("Finish your response now");
+      expect(status.result.content[0].text).toContain("delivered to this conversation automatically");
+    }
+    expect(lastDelegationUrl).toBeNull();
     delegateResponse = { queued: true, message: "Delegation queued." };
   });
 
@@ -378,15 +402,15 @@ describe("agents-proxy MCP surface", () => {
     expect(bad.result.content[0].text).toContain('"task_id"');
     expect(lastDelegationUrl).toBeNull(); // guidance is free
 
-    const done = await callTool("check_delegation", { task_id: "task-abc123" });
-    expect(done.result.content[0].text).toContain("@Helper finished task task-abc123");
+    const done = await callTool("check_delegation", { task_id: "task-earlier123" });
+    expect(done.result.content[0].text).toContain("@Helper finished task task-earlier123");
     expect(done.result.content[0].text).toContain("All done.");
-    expect(lastDelegationUrl).toContain("/api/internal/delegations/task-abc123?");
+    expect(lastDelegationUrl).toContain("/api/internal/delegations/task-earlier123?");
     expect(lastDelegationUrl).toContain("wait_ms=0");
     expect(lastDelegationUrl).toContain("fromBotId=bot-asker");
 
     delegationStatusResponse = { status: "queued", toBotName: "Helper" };
-    const waiting = await callTool("wait_delegation", { task_id: "task-abc123", timeout_seconds: 45 });
+    const waiting = await callTool("wait_delegation", { task_id: "task-earlier123", timeout_seconds: 45 });
     expect(waiting.result.content[0].text).toContain("still queued");
     expect(waiting.result.content[0].text).toContain("after 45s");
     expect(lastDelegationUrl).toContain("wait_ms=45000");

@@ -9,12 +9,12 @@ const transcript = [
 
 describe("buildTurnContext", () => {
   it("passes text through untouched on a plain resumed turn", () => {
-    const out = buildTurnContext({ text: "hi", transcript, rewound: false, fresh: false, replaysNatively: false });
+    const out = buildTurnContext({ text: "hi", transcript, rewound: false, fresh: false, externallyUpdated: false, replaysNatively: false });
     expect(out).toEqual({ turnText: "hi", resume: true });
   });
 
   it("replays inline on rewind, exactly like the existing behaviour", () => {
-    const out = buildTurnContext({ text: "hi", transcript, rewound: true, fresh: false, replaysNatively: false });
+    const out = buildTurnContext({ text: "hi", transcript, rewound: true, fresh: false, externallyUpdated: false, replaysNatively: false });
     expect(out.resume).toBe(false);
     expect(out.turnText).toContain("rewound this conversation");
     expect(out.turnText).toContain("User: my dog is named Biscuit");
@@ -22,7 +22,7 @@ describe("buildTurnContext", () => {
   });
 
   it("replays inline for a fresh engine with prior history — the model-switch fix", () => {
-    const out = buildTurnContext({ text: "hi", transcript, rewound: false, fresh: true, replaysNatively: false });
+    const out = buildTurnContext({ text: "hi", transcript, rewound: false, fresh: true, externallyUpdated: false, replaysNatively: false });
     expect(out.resume).toBe(false);
     expect(out.turnText).toContain("joining this conversation");
     expect(out.turnText).not.toContain("rewound"); // distinct marker, distinct preamble
@@ -31,15 +31,39 @@ describe("buildTurnContext", () => {
   });
 
   it("never wraps for native-replay drivers — they get history via SendTurnInput.transcript", () => {
-    for (const flags of [{ rewound: true, fresh: false }, { rewound: false, fresh: true }]) {
+    for (const flags of [
+      { rewound: true, fresh: false, externallyUpdated: false },
+      { rewound: false, fresh: true, externallyUpdated: false },
+      { rewound: false, fresh: false, externallyUpdated: true },
+    ]) {
       const out = buildTurnContext({ text: "hi", transcript, ...flags, replaysNatively: true });
       expect(out.turnText).toBe("hi");
+      expect(out.resume).toBe(false);
     }
   });
 
   it("does not wrap a fresh engine on an empty thread — nothing to replay", () => {
-    const out = buildTurnContext({ text: "hi", transcript: [], rewound: false, fresh: true, replaysNatively: false });
+    const out = buildTurnContext({ text: "hi", transcript: [], rewound: false, fresh: true, externallyUpdated: false, replaysNatively: false });
     expect(out).toEqual({ turnText: "hi", resume: false });
+  });
+
+  it("replays an out-of-band teammate result before the next user turn", () => {
+    const updated = [
+      ...transcript,
+      { role: "assistant" as const, text: "@Worker replied to the delegated task:\n\nfinished the report" },
+    ];
+    const out = buildTurnContext({
+      text: "what did they find?",
+      transcript: updated,
+      rewound: false,
+      fresh: false,
+      externallyUpdated: true,
+      replaysNatively: false,
+    });
+    expect(out.resume).toBe(false);
+    expect(out.turnText).toContain("received an update outside your provider session");
+    expect(out.turnText).toContain("@Worker replied to the delegated task");
+    expect(out.turnText.endsWith("what did they find?")).toBe(true);
   });
 });
 

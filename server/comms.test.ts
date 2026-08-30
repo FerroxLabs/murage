@@ -614,6 +614,21 @@ describe("comms e2e (fake ACP fleet)", () => {
               && message.text?.includes("long delegated task"),
           );
         }, 20_000, "worker result did not return to the Chief conversation");
+
+        // The result is not only visible in storage/UI. It was appended
+        // outside the Chief provider's native session, so the next resumed
+        // turn must replay it into model context before answering.
+        expect((await api("POST", `/api/bots/${chief.id}/messages`, {
+          text: "CHIEF_RESULT_CONTEXT: what did LongWorker report?",
+        })).status).toBe(202);
+        await waitUntil(async () => {
+          chiefBot = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === chief.id);
+          return chiefBot.messages.some(
+            (message: any) =>
+              message.kind === "text"
+              && message.text === "chief saw delegated result: long delegated task",
+          );
+        }, 20_000, "Chief provider did not receive the delegated result on its next turn");
       } finally {
         writeFileSync(gateFile, "go");
         await waitUntil(async () => {

@@ -386,6 +386,27 @@ function handle(msg: any) {
         );
       };
       const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
+      if (mode === "chief-delegate" && promptText.includes("CHIEF_RESULT_CONTEXT")) {
+        const sawDelegatedResult =
+          promptText.includes("@LongWorker replied to the delegated task")
+          && promptText.includes("long delegated task");
+        out({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: {
+                text: sawDelegatedResult
+                  ? "chief saw delegated result: long delegated task"
+                  : "chief did not see delegated result",
+              },
+            },
+          },
+        });
+        complete();
+        return;
+      }
       if (
         mode === "chief-delegate"
         && agentsMcp

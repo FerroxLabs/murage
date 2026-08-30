@@ -118,6 +118,7 @@ import {
   roomResponders,
   sectionKey,
   Store,
+  type BotRecord,
   type GroupDefaultResponder,
   type GroupRecord,
   type Message,
@@ -1833,6 +1834,31 @@ const delegationWatch = new Map<string, {
   sourceThreadId?: string;
 }>();
 
+// Provider-native sessions only know about messages produced inside their
+// own turns. A delegated result is appended later by the harness, so mark the
+// source task with a persisted, impossible-to-resume owner. Its next turn
+// will replay the active branch once before replacing this marker with the
+// real provider instance id. A unique suffix also closes the setup race: if
+// another result arrives while that replay is launching, the newer marker is
+// left intact for one more replay instead of being accidentally consumed.
+const EXTERNAL_CONTEXT_MARKER_PREFIX = "__openmaus_external_context__:";
+
+function isExternalContextMarker(value: string | undefined): boolean {
+  return Boolean(value?.startsWith(EXTERNAL_CONTEXT_MARKER_PREFIX));
+}
+
+function markTaskContextExternallyUpdated(bot: BotRecord, threadId: string): void {
+  const task = store.taskByThread(bot.id, threadId);
+  if (!task) return;
+  task.resumeCursors = {};
+  task.lastInstanceId = `${EXTERNAL_CONTEXT_MARKER_PREFIX}${randomUUID()}`;
+  // patchBot persists the task mutation and broadcasts unread/context state.
+  // The legacy cursor mirror follows only the task currently open in chat.
+  const patch: Partial<BotRecord> = { unread: true };
+  if (bot.threadId === threadId) patch.resumeCursors = {};
+  store.patchBot(bot.id, patch);
+}
+
 /** Consume one delegated-turn watch and mirror exactly one terminal state.
  * Some harness paths settle a busy bot without a provider turn.completed
  * event, so they call this same finalizer explicitly. */
@@ -1882,7 +1908,7 @@ function finalizeDelegationWatch(
         },
       });
     }
-    store.patchBot(source.id, { unread: true });
+    markTaskContextExternallyUpdated(source, watched.sourceThreadId);
   }
   const channel = watched.channelId ? store.group(watched.channelId) : undefined;
   if (!target || !channel) return true;
@@ -2282,16 +2308,26 @@ async function startTurn(
   // rewound: the OTHER instances' cursors are left alone (a rewind wipes
   // them all), and "fresh" is decided by who ran the last turn, not by
   // whether we hold a cursor — see engineIsFresh.
+  const externalContextMarker = isExternalContextMarker(task.lastInstanceId)
+    ? task.lastInstanceId
+    : undefined;
   const fresh =
     !rewound &&
+    !externalContextMarker &&
     engineIsFresh({ instanceId, lastInstanceId: task.lastInstanceId, resumeCursors: task.resumeCursors, transcript });
   const { turnText, resume } = buildTurnContext({
     text: promptWithReply(text, opts?.replyTo, cfg.profile?.name?.trim() || "User"),
     transcript,
     rewound,
     fresh,
+    externallyUpdated: Boolean(externalContextMarker),
     replaysNatively: instance.driverKind === "grok",
   });
+  // Snapshot the cursor alongside the context decision. An external result
+  // can arrive during async computer/setup work and clear the task cursor;
+  // this already-built turn must either keep its old session or replay on the
+  // following turn, never start a blank session with no transcript.
+  const resumeCursor = resume ? task.resumeCursors[instanceId] : undefined;
 
   const persona = [
     `You are ${bot.name}, a personal bot in OpenMausBot.`,
@@ -2615,7 +2651,7 @@ async function startTurn(
         // a rewound thread never resumes the abandoned branch's session
         // the active task's own session — another task's cursor would
         // resume the wrong conversation and defeat the context bubble
-        resumeCursor: resume ? task.resumeCursors[instanceId] : undefined,
+        resumeCursor,
         transcript,
         system:
           persona +
@@ -2667,7 +2703,12 @@ async function startTurn(
       // dispatched: the rewind is spent, and the old cursors are dead
       if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
       // and this engine now owns the thread's most recent turn
-      store.markTaskDispatched(bot.id, threadId, instanceId);
+      // Consume exactly the external-update generation this turn replayed.
+      // If a newer delegated result landed during setup, its unique marker
+      // differs and must survive so the next turn also receives that update.
+      if (!isExternalContextMarker(task.lastInstanceId) || task.lastInstanceId === externalContextMarker) {
+        store.markTaskDispatched(bot.id, threadId, instanceId);
+      }
       // a turn can settle before dispatch returns, and a poller started
       // after its own turn.completed would never be torn down — it would
       // keep polling the box forever, carrying dead per-turn state. busy
