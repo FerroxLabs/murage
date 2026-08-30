@@ -4,7 +4,9 @@ import { useLayoutEffect, useState, type RefObject } from "react";
  * this far above the composer when the pane is scrolled to the end. */
 export const TRANSCRIPT_GAP = "0.75rem";
 
-const FALLBACK_COMPOSER_PX = 96;
+/** Empty one-line pill (~44px) plus the dock's `pb-3`. ResizeObserver
+ * replaces this as soon as the real composer mounts. */
+const FALLBACK_COMPOSER_PX = 64;
 
 export function transcriptEndPad(composerHeightPx: number): string {
   const height = Number.isFinite(composerHeightPx)
