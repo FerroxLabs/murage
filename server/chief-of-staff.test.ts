@@ -51,7 +51,12 @@ describe("chiefOfStaffSystemPrompt", () => {
     expect(prompt).not.toContain("Secret");
     expect(prompt).not.toContain("Scout");
     expect(prompt).not.toContain("Atlas —");
-    expect(prompt).toContain("Use ask_bot");
+    expect(prompt).toContain("use delegate_bot");
+    expect(prompt).toContain("keeps you available to the user");
+    expect(prompt).toContain("delivers the teammate's completed result back into this conversation automatically");
+    expect(prompt).toContain("Do not call wait_delegation");
+    expect(prompt).toContain("Use ask_bot only for a brief consultation");
+    expect(prompt).toContain("Never use ask_bot for an assigned task");
     expect(prompt).toContain("use create_bot");
   });
 
@@ -59,7 +64,7 @@ describe("chiefOfStaffSystemPrompt", () => {
     const prompt = chiefOfStaffSystemPrompt("chief", bots, false);
 
     expect(prompt).toContain("cannot contact teammates");
-    expect(prompt).not.toContain("Use ask_bot");
+    expect(prompt).not.toContain("delegate_bot");
   });
 
   it("includes trusted OpenMaus status only when the Chief caller supplies it", () => {

@@ -138,6 +138,13 @@ describe("comms e2e (fake ACP fleet)", () => {
             environment: { FAKE_ACP_MODE: "delegate-peer" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
+          // A Chief that delegates only on the first assignment prompt, then
+          // answers ordinary follow-ups while the worker remains gated.
+          chiefAsync: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "chief-delegate" },
+            config: { cli: FAKE_CLI, fullAuto: true },
+          },
           chiefCreator: {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "create-peer" },
@@ -541,6 +548,99 @@ describe("comms e2e (fake ACP fleet)", () => {
     45_000,
   );
 
+  it(
+    "keeps a Chief available while its delegated teammate is still working",
+    async () => {
+      for (const existing of (await api("GET", "/api/bots")).body.bots) {
+        await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
+      }
+      rmSync(gateFile, { force: true });
+
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, {
+        name: "LongWorker",
+        section: "Operations",
+        modelSelection: { instanceId: "helperGate", model: "fake-model" },
+      });
+      const chief = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${chief.id}`, {
+        name: "Atlas",
+        section: "Operations",
+        chiefOfStaff: true,
+        modelSelection: { instanceId: "chiefAsync", model: "fake-model" },
+      });
+
+      try {
+        expect((await api("POST", `/api/bots/${chief.id}/messages`, {
+          text: "ASSIGN_TO_PEER: have @LongWorker handle the long task.",
+        })).status).toBe(202);
+
+        let chiefBot: any;
+        let helperBot: any;
+        await waitUntil(async () => {
+          const state = (await api("GET", "/api/bots")).body.bots;
+          chiefBot = state.find((bot: any) => bot.id === chief.id);
+          helperBot = state.find((bot: any) => bot.id === helper.id);
+          const acknowledged = chiefBot.messages.some(
+            (message: any) => message.kind === "text" && message.text?.includes("assigned: Delegation queued"),
+          );
+          return Boolean(acknowledged && !chiefBot.busy && helperBot.busy);
+        }, 30_000, "Chief did not become available while its teammate worked");
+
+        // The worker is deliberately held open. A second message must start
+        // and finish on the Chief before that worker is released.
+        expect(helperBot.busy).toBe(true);
+        expect((await api("POST", `/api/bots/${chief.id}/messages`, {
+          text: "CHIEF_FOLLOW_UP: are you still available while that runs?",
+        })).status).toBe(202);
+        await waitUntil(async () => {
+          const state = (await api("GET", "/api/bots")).body.bots;
+          chiefBot = state.find((bot: any) => bot.id === chief.id);
+          helperBot = state.find((bot: any) => bot.id === helper.id);
+          const answeredFollowUp = chiefBot.messages.some(
+            (message: any) => message.kind === "text" && message.text?.includes("hello from fake acp"),
+          );
+          return Boolean(answeredFollowUp && !chiefBot.busy && helperBot.busy);
+        }, 20_000, "Chief stayed tied to the delegated worker");
+
+        writeFileSync(gateFile, "go");
+        await waitUntil(async () => {
+          chiefBot = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === chief.id);
+          return chiefBot.messages.some(
+            (message: any) =>
+              message.kind === "text"
+              && message.from?.botId === helper.id
+              && message.text?.includes("replied to the delegated task")
+              && message.text?.includes("long delegated task"),
+          );
+        }, 20_000, "worker result did not return to the Chief conversation");
+
+        // The result is not only visible in storage/UI. It was appended
+        // outside the Chief provider's native session, so the next resumed
+        // turn must replay it into model context before answering.
+        expect((await api("POST", `/api/bots/${chief.id}/messages`, {
+          text: "CHIEF_RESULT_CONTEXT: what did LongWorker report?",
+        })).status).toBe(202);
+        await waitUntil(async () => {
+          chiefBot = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === chief.id);
+          return chiefBot.messages.some(
+            (message: any) =>
+              message.kind === "text"
+              && message.text === "chief saw delegated result: long delegated task",
+          );
+        }, 20_000, "Chief provider did not receive the delegated result on its next turn");
+      } finally {
+        writeFileSync(gateFile, "go");
+        await waitUntil(async () => {
+          const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === helper.id);
+          return !current?.busy;
+        }, 10_000, "gated helper did not settle during cleanup").catch(() => {});
+        rmSync(gateFile, { force: true });
+      }
+    },
+    60_000,
+  );
+
   // ── ask_bot busy fallback ───────────────────────────────────────────
   // A used to get a flat "busy — try again later" when B was mid-turn: a
   // dead-end that models rarely retry, so the exchange evaporated (#583).
@@ -585,7 +685,8 @@ describe("comms e2e (fake ACP fleet)", () => {
       }, 25_000, "asker never got the queued-fallback reply");
       const askerReply = askerBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
       expect(askerReply.text).toContain("Task id:");
-      expect(askerReply.text).toContain("wait_delegation");
+      expect(askerReply.text).toContain("delivered to this conversation automatically");
+      expect(askerReply.text).not.toContain("wait_delegation");
       // the queue is visible on A's thread as the standard delegation chip
       expect(askerBot.messages.some(
         (m: any) => m.kind === "activity" && m.tool?.name === "Delegated to @GateHelper: asked while busy",
@@ -733,7 +834,8 @@ describe("comms e2e (fake ACP fleet)", () => {
       }, 30_000, "asker never got the timeout-conversion reply");
       const conversionReply = askerBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
       expect(conversionReply.text).toContain("Task id:");
-      expect(conversionReply.text).toContain("wait_delegation");
+      expect(conversionReply.text).toContain("delivered to this conversation automatically");
+      expect(conversionReply.text).not.toContain("wait_delegation");
       expect(askerBot.messages.some(
         (m: any) => m.kind === "activity" && m.tool?.name === "@SlowHelper is still working — ask converted to a delegation",
       )).toBe(true);

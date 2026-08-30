@@ -27,6 +27,8 @@ describe("liveActivityLabel", () => {
     expect(liveActivityLabel(activity("Bash: pnpm test"))).toBe("Running a command");
     expect(liveActivityLabel(activity("mcp__computer__click"))).toBe("Using the computer");
     expect(liveActivityLabel(activity("web_search"))).toBe("Searching the web");
+    expect(liveActivityLabel(activity("delegate_bot"))).toBe("Handing off a task");
+    expect(liveActivityLabel(activity("ask_bot"))).toBe("Asking a teammate");
   });
 
   it("does not present bot-to-bot communication chips as the active action", () => {

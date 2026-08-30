@@ -14,6 +14,8 @@
 //                     peer, and reply with what the peer said — the comms e2e)
 //                   | delegate-peer (same as ask-peer but uses delegate_bot —
 //                     returns immediately, the peer runs after our turn)
+//                   | chief-delegate (delegates only for an ASSIGN_TO_PEER
+//                     prompt; ordinary follow-ups stay responsive)
 //                   | create-peer (a Chief creates a specialist, then delegates
 //                     work to it through the returned id)
 //                   | echo-gated (reply by echoing the full prompt, and when
@@ -383,6 +385,56 @@ function handle(msg: any) {
             : { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } },
         );
       };
+      const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
+      if (mode === "chief-delegate" && promptText.includes("CHIEF_RESULT_CONTEXT")) {
+        const sawDelegatedResult =
+          promptText.includes("@LongWorker replied to the delegated task")
+          && promptText.includes("long delegated task");
+        out({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: {
+                text: sawDelegatedResult
+                  ? "chief saw delegated result: long delegated task"
+                  : "chief did not see delegated result",
+              },
+            },
+          },
+        });
+        complete();
+        return;
+      }
+      if (
+        mode === "chief-delegate"
+        && agentsMcp
+        && promptText.includes("ASSIGN_TO_PEER")
+        && !promptText.includes("CHIEF_FOLLOW_UP")
+      ) {
+        void driveMcp(agentsMcp, [
+          { name: "list_bots", args: () => ({}) },
+          {
+            name: "delegate_bot",
+            args: (list) => ({
+              bot_id: /id: ([\w-]+)/.exec(list)?.[1] ?? "",
+              message: "long delegated task",
+              reason: "background assignment",
+            }),
+          },
+        ])
+          .then((reply) => {
+            out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `assigned: ${reply}` } } } });
+            complete();
+          })
+          .catch((e) => {
+            const message = e instanceof Error ? e.message : String(e);
+            out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `delegate error: ${message}` } } } });
+            complete();
+          });
+        return;
+      }
       if (mode === "ask-peer" && agentsMcp) {
         // the comms e2e: reach a peer bot through the injected agents proxy
         // and reply with whatever it said (the peer's fake runs plain happy
@@ -438,7 +490,6 @@ function handle(msg: any) {
         // echoing the WHOLE prompt (system + turn text) lets a test assert
         // both what a drained turn was sent and what it was NOT sent (e.g.
         // the webhook untrusted-data paragraph a steered turn must not get)
-        const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
         const finish = () => {
           out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `echo: ${promptText}` } } } });
           complete();
