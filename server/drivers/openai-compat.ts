@@ -24,11 +24,15 @@ const DRIVER_KIND = "openai-compat";
 
 // Default catalog — overwritten by /models when the endpoint answers.
 // Free-tier-friendly defaults so the picker is never empty.
+// Every option here is `custom`: this engine advertises `access: "custom"`,
+// and the picker renders only custom-flagged options for such engines. An
+// unflagged option lands in the official list the picker never shows, which
+// reads as "no models found" on a perfectly configured endpoint.
 const DEFAULT_MODELS: ModelCatalog = {
   default: "meta-llama/llama-3.3-70b-instruct",
   options: [
-    { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B (OpenRouter)" },
-    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (Groq)" },
+    { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B (OpenRouter)", custom: true },
+    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (Groq)", custom: true },
   ],
 };
 
@@ -122,7 +126,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           default: config.model,
           options: DEFAULT_MODELS.options.some((o) => o.id === config.model)
             ? DEFAULT_MODELS.options
-            : [{ id: config.model, label: config.model }, ...DEFAULT_MODELS.options],
+            : [{ id: config.model, label: config.model, custom: true }, ...DEFAULT_MODELS.options],
         }
       : DEFAULT_MODELS;
 
@@ -259,14 +263,14 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
             typeof row.name === "string" && row.name.trim()
               ? row.name
               : id;
-          options.push({ id, label });
+          options.push({ id, label, custom: true });
         }
         if (options.length) {
           // Keep a configured default selected; surface it even if the
           // endpoint's catalog omits it.
           const preferred =
             config.model && (options.some((o) => o.id === config.model) ? config.model : null);
-          if (config.model && !preferred) options.unshift({ id: config.model, label: config.model });
+          if (config.model && !preferred) options.unshift({ id: config.model, label: config.model, custom: true });
           catalog = { default: config.model ?? options[0].id, options };
         }
       } catch {
