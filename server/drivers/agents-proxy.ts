@@ -283,11 +283,18 @@ const TOOLS = [
   {
     name: "propose_routine",
     description:
-      "Prepare a new routine after the user explicitly asks to schedule recurring or future work. Call list_routines first for relative dates or times so you use its authoritative current time and timezone. This only creates a durable confirmation card; it does NOT enable the routine. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. After calling it, end the turn and do not claim the routine exists until the user confirms the card.",
+      "Prepare a new routine after the user explicitly asks to schedule recurring or future work. Call list_routines first for relative dates or times so you use its authoritative current time and timezone. This only creates a durable confirmation card; it does NOT enable the routine. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. After calling it, end the turn and do not claim the routine exists until the user confirms the card. If the user asks for the routine to run as ANOTHER bot in your section, call list_bots and pass that bot's id as for_bot_id.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: ROUTINE_FIELDS_SCHEMA,
+      properties: {
+        ...ROUTINE_FIELDS_SCHEMA,
+        for_bot_id: {
+          type: "string",
+          description:
+            "Only when the user asks to schedule this routine for ANOTHER bot in your section: that bot's id from list_bots. Omit to schedule it for yourself. The routine then belongs to that bot and each run uses its engine and permissions.",
+        },
+      },
       required: ["name", "instructions", "schedule"],
     },
   },
@@ -500,6 +507,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     if (!routine.name || !routine.instructions || !routine.schedule) {
       return { text: "propose_routine needs name, instructions, and schedule.", isError: true };
     }
+    const forBotId = String(args.for_bot_id ?? "").trim();
     const r = await api("/api/internal/routine-requests", {
       method: "POST",
       body: JSON.stringify({
@@ -507,6 +515,8 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
         fromThreadId: THREAD_ID,
         action: "create",
         routine,
+        // JSON.stringify drops the key entirely when no target was named
+        forBotId: forBotId || undefined,
       }),
     });
     return confirmationResult(r, `the new routine “${routine.name}”`);

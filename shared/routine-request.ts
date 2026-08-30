@@ -24,8 +24,17 @@ export interface RoutineRequestDefinition {
 
 export type RoutineRequestChanges = Partial<RoutineRequestDefinition>;
 
+/** Another bot in the proposer's section that the routine is scheduled for.
+ * Captured (id + display name) when the card is created so the card stays
+ * meaningful if the bot is later renamed; authority over the card remains
+ * with the proposing conversation. */
+export interface RoutineRequestTargetBot {
+  botId: string;
+  name: string;
+}
+
 export type RoutineRequestOperation =
-  | { action: "create"; routine: RoutineRequestDefinition }
+  | { action: "create"; routine: RoutineRequestDefinition; forBot?: RoutineRequestTargetBot }
   | { action: "update"; routineId: string; expectedUpdatedAt: number; changes: RoutineRequestChanges }
   | { action: "pause"; routineId: string; expectedUpdatedAt: number }
   | { action: "resume"; routineId: string; expectedUpdatedAt: number }

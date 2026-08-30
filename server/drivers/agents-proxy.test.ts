@@ -395,6 +395,21 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.isError).toBeFalsy();
   });
 
+  it("forwards for_bot_id when the routine is for another bot", async () => {
+    lastRoutineRequestBody = null;
+    const res = await callTool("propose_routine", {
+      name: "Teammate brief",
+      instructions: "Summarize for the teammate.",
+      schedule: { type: "weekly", time: "08:00", weekdays: ["tuesday"] },
+      for_bot_id: "bot-helper",
+    });
+    expect(lastRoutineRequestBody.forBotId).toBe("bot-helper");
+    // the target rides beside the routine definition, never inside it
+    expect(lastRoutineRequestBody.routine).not.toHaveProperty("forBotId");
+    expect(lastRoutineRequestBody.routine).not.toHaveProperty("for_bot_id");
+    expect(res.result.isError).toBeFalsy();
+  });
+
   it("proposes a one-time routine with the explicit-offset timestamp intact", async () => {
     await callTool("propose_routine", {
       name: "Send follow-up",
