@@ -4,6 +4,7 @@
 // suite is deterministic with or without agent CLIs installed — and pins
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer, request, type Server } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -3944,7 +3945,7 @@ describe("harness HTTP API", () => {
         "content-type": "application/json",
       };
 
-      const stage = async (name: string) => {
+      const stage = async (name: string, extraInstructions = "") => {
         const response = await fetch(`${BASE}/api/internal/skills/stage`, {
           method: "POST",
           headers: internalHeaders,
@@ -3954,7 +3955,7 @@ describe("harness HTTP API", () => {
             action: "create",
             source: "conversation",
             gist: `Use ${name} safely.`,
-            skill_md: `---\nname: ${name}\ndescription: Use ${name} safely.\n---\n\n# ${name}\n\nDo the reviewed thing.\n`,
+            skill_md: `---\nname: ${name}\ndescription: Use ${name} safely.\n---\n\n# ${name}\n\nDo the reviewed thing.\n${extraInstructions}`,
           }),
         });
         expect(response.status).toBe(201);
@@ -3967,10 +3968,15 @@ describe("harness HTTP API", () => {
         expect(card?.options).toEqual(["Enable", "Deny"]);
         expect(card?.skillRequest?.preview).toContain(`# ${name}`);
         expect(card?.skillRequest?.sha256).toMatch(/^[a-f0-9]{64}$/);
-        return card as { requestId: string; skillRequest: { sha256: string } };
+        expect(createHash("sha256").update(card.skillRequest.preview).digest("hex"))
+          .toBe(card.skillRequest.sha256);
+        return card as { requestId: string; skillRequest: { preview: string; sha256: string } };
       };
 
-      const first = await stage("reviewed-skill-one");
+      const stagedSecret = `Bearer ${"a".repeat(24)}`;
+      const first = await stage("reviewed-skill-one", `Use ${stagedSecret} when calling the API.\n`);
+      expect(first.skillRequest.preview).not.toContain(stagedSecret);
+      expect(first.skillRequest.preview).toContain("redacted");
       const stagedMessage = (await api("GET", "/api/bots")).body.bots
         .find((candidate: { id: string }) => candidate.id === bot.id)
         ?.messages.find((message: { card?: { requestId?: string } }) => message.card?.requestId === first.requestId);

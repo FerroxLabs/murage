@@ -2,6 +2,7 @@
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -296,15 +297,32 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       };
     }
     if (card.skillRequest) {
+      const originalPreview = card.skillRequest.preview;
+      const preview = originalPreview === undefined
+        ? undefined
+        : redactSecretsInText(originalPreview);
+      // Current skill proposals are scrubbed before staging and their digest
+      // binds the card to the exact SKILL.md bytes that apply will install.
+      // Keep that binding only when this store-wide safety pass is a no-op and
+      // the supplied digest already matches the persisted preview. A caller
+      // that bypassed staging (or an older malformed card) is therefore
+      // safely deny-only instead of showing one document and approving
+      // another.
+      const previewSha256 = preview !== undefined && preview === originalPreview
+        ? createHash("sha256").update(preview).digest("hex")
+        : undefined;
+      const sha256 = card.skillRequest.sha256 !== undefined
+        && card.skillRequest.sha256 === previewSha256
+        ? card.skillRequest.sha256
+        : undefined;
       card.skillRequest = {
         ...card.skillRequest,
         gist: redactSecretsInText(card.skillRequest.gist),
         source: typeof card.skillRequest.source === "string"
           ? redactSecretsInText(card.skillRequest.source)
           : undefined,
-        preview: typeof card.skillRequest.preview === "string"
-          ? redactSecretsInText(card.skillRequest.preview)
-          : undefined,
+        preview,
+        sha256,
         warnings: card.skillRequest.warnings.map((warning) => redactSecretsInText(warning)),
       };
     }

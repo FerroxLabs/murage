@@ -1,6 +1,7 @@
 // Store persistence contract: bots.json + messages-<threadId>.json are
 // the durable record — everything here must survive a process restart
 // except `busy`, which never does (no turn survives one either).
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -821,7 +822,39 @@ describe("Store redacts bot-authored secrets on write", () => {
     expect(skillCard.card?.skillRequest?.gist).not.toContain(key);
     expect(skillCard.card?.skillRequest?.source).not.toContain(key);
     expect(skillCard.card?.skillRequest?.preview).not.toContain(key);
+    expect(skillCard.card?.skillRequest?.sha256).toBeUndefined();
     expect(skillCard.card?.skillRequest?.warnings.join(" ")).not.toContain(key);
+
+    const reviewedPreview = "---\nname: reviewed-skill\ndescription: Already scrubbed.\n---\n";
+    const reviewedSha256 = createHash("sha256").update(reviewedPreview).digest("hex");
+    const reviewedSkillCard = store.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "options",
+      card: {
+        title: "Enable reviewed skill?",
+        subtitle: "Review it first",
+        options: ["Enable", "Deny"],
+        requestId: "reviewed-skill-request",
+        tool: "stage_skill",
+        skillRequest: {
+          version: 1,
+          requestId: "reviewed-skill-request",
+          botId: bot.id,
+          threadId: bot.threadId,
+          stagedId: "staged-2",
+          action: "create",
+          name: "reviewed-skill",
+          gist: "Already scrubbed.",
+          source: "learn:reviewed-skill",
+          preview: reviewedPreview,
+          sha256: reviewedSha256,
+          warnings: [],
+          createdAt: 2,
+        },
+      },
+    });
+    expect(reviewedSkillCard.card?.skillRequest?.preview).toBe(reviewedPreview);
+    expect(reviewedSkillCard.card?.skillRequest?.sha256).toBe(reviewedSha256);
     const runCard = store.appendMessage(bot.threadId, {
       role: "bot",
       kind: "routine.run",
