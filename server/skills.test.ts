@@ -248,6 +248,54 @@ describe("install → review → enable lifecycle", () => {
     });
   });
 
+  it("revokes app-owned native links when the skills root is replaced", () => {
+    installSkill(bot, "src", [{ path: "SKILL.md", content: SKILL("root-replaced") }]);
+    setSkillEnabled(bot, "root-replaced", true);
+    const root = workspaceDir(bot);
+    const skillsRoot = join(root, "skills");
+    const outsideRoot = join(scratch, "replacement-skills");
+    const outsideSkill = join(outsideRoot, "root-replaced");
+    mkdirSync(outsideSkill, { recursive: true });
+    writeFileSync(join(outsideSkill, "SKILL.md"), SKILL("root-replaced", "Attacker-controlled replacement."));
+
+    rmSync(skillsRoot, { recursive: true, force: true });
+    symlinkSync(outsideRoot, skillsRoot, process.platform === "win32" ? "junction" : "dir");
+
+    // Before reconciliation, each app-created link now reaches the unreviewed
+    // replacement through the unchanged workspace/skills/<name> target.
+    for (const dir of [".claude/skills", ".agents/skills", ".grok/skills"]) {
+      expect(realpathSync(join(root, dir, "root-replaced"))).toBe(realpathSync(outsideSkill));
+    }
+
+    expect(skillsSystemPrompt(bot)).toBe("");
+    expect(lstatSync(skillsRoot).isSymbolicLink()).toBe(true);
+    for (const dir of [".claude/skills", ".agents/skills", ".grok/skills"]) {
+      expect(() => lstatSync(join(root, dir, "root-replaced"))).toThrow();
+    }
+  });
+
+  it("preserves a user-replaced native link while revoking the other app links", () => {
+    installSkill(bot, "src", [{ path: "SKILL.md", content: SKILL("root-replaced-user-link") }]);
+    setSkillEnabled(bot, "root-replaced-user-link", true);
+    const root = workspaceDir(bot);
+    const userTarget = join(scratch, "user-native-target");
+    mkdirSync(userTarget, { recursive: true });
+    const userLink = join(root, ".claude", "skills", "root-replaced-user-link");
+    rmSync(userLink, { force: true });
+    symlinkSync(userTarget, userLink, process.platform === "win32" ? "junction" : "dir");
+
+    const outsideRoot = join(scratch, "replacement-skills-user-link");
+    mkdirSync(join(outsideRoot, "root-replaced-user-link"), { recursive: true });
+    rmSync(join(root, "skills"), { recursive: true, force: true });
+    symlinkSync(outsideRoot, join(root, "skills"), process.platform === "win32" ? "junction" : "dir");
+
+    expect(skillsSystemPrompt(bot)).toBe("");
+    expect(realpathSync(userLink)).toBe(realpathSync(userTarget));
+    for (const dir of [".agents/skills", ".grok/skills"]) {
+      expect(() => lstatSync(join(root, dir, "root-replaced-user-link"))).toThrow();
+    }
+  });
+
   it("skips a native discovery directory that is a symlink", () => {
     installSkill(bot, "src", [{ path: "SKILL.md", content: SKILL("native-boundary") }]);
     const root = workspaceDir(bot);

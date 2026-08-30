@@ -340,6 +340,22 @@ function nativeLinkPointsToSkill(link: string, target: string): boolean {
   }
 }
 
+/** True only when the link text itself names the expected workspace path.
+ * Unlike nativeLinkPointsToSkill, this never resolves the skill target. It is
+ * therefore safe to use after the bot has replaced `skills/` with a symlink:
+ * resolving both paths in that state would merely prove that they reach the
+ * same attacker-controlled replacement. */
+function nativeLinkDirectlyTargetsSkill(link: string, target: string): boolean {
+  try {
+    if (!lstatSync(link).isSymbolicLink()) return false;
+    const rawTarget = readlinkSync(link);
+    const resolvedTarget = resolve(dirname(link), rawTarget.replace(/^\\\\\?\\/, ""));
+    return comparablePath(resolvedTarget) === comparablePath(target);
+  } catch {
+    return false;
+  }
+}
+
 function writeManifest(botId: string, manifest: SkillManifest): void {
   mkdirSync(skillStateDir(botId), { recursive: true, mode: 0o700 });
   writeFileAtomic(manifestPath(botId), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
@@ -350,16 +366,59 @@ function writeManifest(botId: string, manifest: SkillManifest): void {
  * support load it themselves with their own progressive disclosure. */
 const NATIVE_SKILL_DIRS = [".claude/skills", ".agents/skills", ".grok/skills"];
 
+/** Revoke native links without following an unsafe `skills/` root. An enabled
+ * app link otherwise starts resolving into the bot-controlled replacement.
+ * Compare the link text, not its real path, so a user-replaced same-name link
+ * remains untouched. */
+function removeNativeLinksForUnsafeSkillsRoot(
+  botId: string,
+  root: string,
+  previouslyManaged: string[],
+): void {
+  const retry = new Set<string>();
+  for (const dir of NATIVE_SKILL_DIRS) {
+    const linkDir = nativeLinkDirectory(root, dir, false);
+    if (!linkDir) {
+      // The directory may become safe again later, so retain the registry as
+      // a cleanup hint without following its current replacement.
+      for (const name of previouslyManaged) retry.add(name);
+      continue;
+    }
+    let existing: string[];
+    try {
+      existing = readdirSync(linkDir).filter(isSkillName);
+    } catch {
+      for (const name of previouslyManaged) retry.add(name);
+      continue;
+    }
+    for (const name of new Set([...existing, ...previouslyManaged])) {
+      const link = join(linkDir, name);
+      const target = join(root, "skills", name);
+      if (!nativeLinkDirectlyTargetsSkill(link, target)) continue;
+      try {
+        rmSync(link, { recursive: true, force: true });
+      } catch {
+        retry.add(name);
+      }
+    }
+  }
+  writeManagedLinks(botId, [...retry]);
+}
+
 /** Recreate the native-discovery links from the manifest. Links, not copies,
  * so disable/remove has exactly one source of truth; junctions on Windows
  * because directory symlinks there need privileges junctions do not. */
 export function syncSkillLinks(botId: string): void {
-  const manifest = readManifest(botId);
   const root = workspaceDir(botId);
-  // A bot can edit its workspace. Never follow a replaced skills root while
-  // deciding which native links are safe to publish or remove.
-  if (directoryEntryState(skillsDir(botId)) === "unsafe") return;
   const previouslyManaged = readManagedLinks(botId);
+  // A bot can edit its workspace. Never follow a replaced skills root while
+  // deciding which native links are safe to publish. Existing app links must
+  // still be revoked, or they start resolving into the replacement.
+  if (directoryEntryState(skillsDir(botId)) === "unsafe") {
+    removeNativeLinksForUnsafeSkillsRoot(botId, root, previouslyManaged);
+    return;
+  }
+  const manifest = readManifest(botId);
   const enabled = Object.entries(manifest).filter(
     ([name, entry]) => entry.enabled && skillContentMatches(botId, name, entry.sha256),
   );
