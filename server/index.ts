@@ -1750,10 +1750,19 @@ bus.subscribe((event: RuntimeEvent) => {
           // the screenshot-in-chat moment. One fresh capture first, so the
           // frame shows the turn's END state (the final tool's poke may
           // still be in flight).
+          //
+          // The capture is slow (a real screenshot round trip) and the bot
+          // is already idle, so a fast follow-up send or the steer-queue
+          // drain can land BEFORE the frame does. Anchor the frame to the
+          // turn's actual last message now, and chain-insert it there when
+          // it arrives — otherwise the user's next message ends up stranded
+          // above the screenshot (the browser-mode ordering bug).
+          const settleLeafId = store.activePath(event.threadId).at(-1)?.id;
           void finalScreenFrame(bot.id).then((frame) => {
             // the bot may have been deleted while the capture ran
             if (frame && store.bot(bot.id)) {
-              pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
+              if (group) pushMessage({ role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
+              else store.insertMessageAfter(event.threadId, settleLeafId, { role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
             }
           }).finally(clearVpsTurn);
         } else if (vpsTurn) {

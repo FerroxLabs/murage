@@ -660,3 +660,36 @@ describe("pending queued chip", () => {
     expect(cancelled.pendingQueued).toEqual({});
   });
 });
+
+describe("messageAdded leaf adoption", () => {
+  const baseBot = {
+    id: "bot-1",
+    threadId: "thread-1",
+    messages: [
+      { id: "m1", at: 1, role: "bot", kind: "text", text: "turn done" },
+      { id: "m2", at: 2, parentId: "m1", role: "user", kind: "text", text: "next question" },
+    ],
+    activeLeafId: "m2",
+  } as never as Bot;
+  const state = { ...initialState, bots: [baseBot] };
+
+  it("adopts the leaf for a message chaining onto it", () => {
+    const next = reducer(state, {
+      type: "messageAdded",
+      threadId: "thread-1",
+      message: { id: "m3", at: 3, parentId: "m2", role: "bot", kind: "text", text: "reply" } as never as Message,
+    });
+    expect(next.bots[0].activeLeafId).toBe("m3");
+  });
+
+  it("keeps the leaf when a late artifact is chain-inserted mid-branch", () => {
+    // the settle-time screenshot arrives parented to m1 while m2 is the leaf
+    const next = reducer(state, {
+      type: "messageAdded",
+      threadId: "thread-1",
+      message: { id: "shot", at: 3, parentId: "m1", role: "bot", kind: "screen", png: "x" } as never as Message,
+    });
+    expect(next.bots[0].activeLeafId).toBe("m2"); // the user's message stays the tail
+    expect(next.bots[0].messages.map((m) => m.id)).toContain("shot");
+  });
+});

@@ -934,6 +934,11 @@ export function reducer(state: AppState, action: Action): AppState {
       if (bot.messages.some((message) => message.id === action.message.id)) return state;
       // every server-side append chains onto (and becomes) the active leaf
       const next = updateBot(state, bot.id, (b) => {
+        // A message chains onto the leaf → it becomes the leaf (the normal
+        // append). A message parented elsewhere is a chain-insert of a late
+        // turn artifact (settle-time screenshot) — the leaf must stay put,
+        // or the follow-up send it raced would fall off the active branch.
+        const adoptsLeaf = (action.message.parentId ?? null) === (b.activeLeafId ?? null);
         let messages = [...b.messages, action.message];
         // base64 screen frames are big; a long computer-use session would
         // grow memory without bound. Keep the newest few frames' pixels and
@@ -946,7 +951,7 @@ export function reducer(state: AppState, action: Action): AppState {
             messages = messages.map((m) => (dropIds.has(m.id) ? { ...m, png: undefined } : m));
           }
         }
-        return { ...b, messages, activeLeafId: action.message.id };
+        return { ...b, messages, activeLeafId: adoptsLeaf ? action.message.id : b.activeLeafId };
       });
       const motion =
         action.message.kind === "options"

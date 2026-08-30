@@ -983,6 +983,34 @@ export class Store {
     return full;
   }
 
+  /** Insert a message into the active chain directly after `anchorId` — the
+   * home for turn artifacts that finish AFTER the world moved on (the
+   * settle-time screen capture races a fast follow-up send, which used to
+   * leave the user's message stranded above the screenshot). When the anchor
+   * is still the leaf this is a plain append; otherwise the anchor's
+   * children are re-parented onto the inserted message, so the transcript
+   * reads turn → artifact → follow-up and the leaf stays where it was. */
+  insertMessageAfter(threadId: string, anchorId: string | undefined, message: Omit<Message, "id" | "at">): Message {
+    const t = this.thread(threadId);
+    const anchorExists = anchorId !== undefined && t.messages.some((m) => m.id === anchorId);
+    if (!anchorExists || t.activeLeafId === anchorId) return this.appendMessage(threadId, message);
+    const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
+    const children = t.messages.filter((m) => m.parentId === anchorId);
+    t.messages.push(full);
+    mdb.appendMessage(threadId, full);
+    if (full.kind === "screen") {
+      for (const pruned of this.pruneScreenFrames(t)) {
+        mdb.updateMessage(threadId, pruned);
+        this.emit({ type: "message.patch", threadId, message: pruned });
+      }
+    }
+    this.emit({ type: "message", threadId, message: full });
+    // announced after the insert so no client ever sees two siblings
+    // claiming the same parent
+    for (const child of children) this.patchMessage(threadId, child.id, { parentId: full.id });
+    return full;
+  }
+
   /** Hide the first-run quiz on this thread, if it is still open. */
   dismissOnboardingCard(threadId: string): Message | null {
     const t = this.thread(threadId);
