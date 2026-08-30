@@ -394,6 +394,15 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       method: "POST",
       body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, toBotId, message, depth: DEPTH }),
     });
+    if (r.timeout) {
+      // The peer's turn outlived the synchronous wait, so the harness
+      // converted the ask into a delegation — the reply is not lost.
+      const taskId = String(r.taskId ?? "").trim();
+      const waitedMinutes = Math.max(1, Math.round((Number(r.waitedMs) || 0) / 60_000));
+      return {
+        text: `${r.toBotName ?? "That bot"} is still working after ${waitedMinutes} minute${waitedMinutes === 1 ? "" : "s"} — the ask was converted to a delegation so the reply is not lost. Task id: ${taskId}. Finish your own turn; next turn read the outcome with check_delegation or block on it with wait_delegation.`,
+      };
+    }
     if (r.busy) {
       // The harness queues the message as a delegation when it can; the
       // task id is the asker's claim ticket for the eventual reply.
