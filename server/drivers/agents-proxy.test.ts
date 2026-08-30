@@ -44,10 +44,9 @@ let lastRoutineRequestBody: any = null;
 let lastSkillQuery = "";
 let lastSkillStageBody: any = null;
 let skillsResponse: unknown = {
-  skills: [{ name: "file-expense", description: "Files an expense.", enabled: false }],
-  staged: [],
+  skills: [{ name: "file-expense", description: "UNREVIEWED IMPORT INSTRUCTIONS", enabled: false }],
+  staged: [{ name: "pending-skill", action: "create", gist: "UNREVIEWED GIST", source: "UNREVIEWED SOURCE" }],
 };
-let skillViewResponse: unknown = { name: "file-expense", text: "---\nname: file-expense\n---\nDo it.\n" };
 let skillStageResponse: unknown = { name: "file-expense", action: "create", gist: "Files an expense.", warnings: [] };
 
 let child: ChildProcess;
@@ -147,11 +146,6 @@ beforeAll(async () => {
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify(skillsResponse));
     }
-    if (req.method === "GET" && req.url?.startsWith("/api/internal/skills/")) {
-      lastSkillQuery = req.url;
-      res.writeHead(200, { "content-type": "application/json" });
-      return res.end(JSON.stringify(skillViewResponse));
-    }
     if (req.method === "POST" && req.url === "/api/internal/skills/stage") {
       let data = "";
       req.on("data", (c) => (data += c));
@@ -217,7 +211,6 @@ describe("agents-proxy MCP surface", () => {
       "propose_routine",
       "propose_routine_action",
       "skills_list",
-      "skill_view",
       "skill_manage",
     ]);
   });
@@ -589,10 +582,9 @@ describe("agents-proxy MCP surface", () => {
 
     const listed = await callTool("skills_list", {});
     expect(listed.result.content[0].text).toContain("file-expense");
+    expect(listed.result.content[0].text).toContain("pending-skill");
+    expect(listed.result.content[0].text).not.toContain("UNREVIEWED");
     expect(lastSkillQuery).toContain("fromBotId=bot-asker");
-
-    const viewed = await callTool("skill_view", { name: "file-expense" });
-    expect(viewed.result.content[0].text).toContain("name: file-expense");
 
     const staged = await callTool("skill_manage", {
       action: "create",

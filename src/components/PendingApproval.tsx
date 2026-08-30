@@ -11,6 +11,7 @@ import { memo } from "react";
 import { useStore, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
+import { reviewedSkillSha256 } from "../../shared/skill-request";
 
 interface ApprovalLabels {
   [tool: string]: string;
@@ -152,6 +153,9 @@ export function PendingApprovalActions({
   const isRoutineRequest = isRoutineApproval(pending);
   const isSkillRequest = isSkillApproval(pending);
   const durableRequest = isRoutineRequest || isSkillRequest;
+  const reviewedSha256 = pending.message.card?.skillRequest
+    ? reviewedSkillSha256(pending.message.card.skillRequest)
+    : undefined;
   const decide = (behavior: "allow" | "deny", always = false) =>
     dispatch({
       type: "decideRequest",
@@ -159,6 +163,7 @@ export function PendingApprovalActions({
       requestId: pending.requestId,
       behavior,
       message: behavior === "deny" ? "Denied by the user." : undefined,
+      reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
       alwaysAllow: always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
     });
 
@@ -174,7 +179,7 @@ export function PendingApprovalActions({
         onClick={() => decide("deny")}
         className={cn(base, "border border-danger/40 text-danger hover:bg-danger/10")}
       >
-        {durableRequest ? "Cancel" : "Deny"}
+        {isRoutineRequest ? "Cancel" : "Deny"}
       </button>
       {!durableRequest && bot && pending.allowKey && (
         <button
@@ -187,7 +192,11 @@ export function PendingApprovalActions({
       )}
       <button
         onClick={() => decide("allow")}
-        className={cn(base, "bg-accent font-medium text-white hover:brightness-110")}
+        disabled={isSkillRequest && !reviewedSha256}
+        className={cn(
+          base,
+          "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40",
+        )}
       >
         {isSkillRequest ? "Enable" : isRoutineRequest ? "Confirm" : "Allow once"}
       </button>

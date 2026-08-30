@@ -45,7 +45,11 @@ final class LiveActivityCoordinator {
                 headline: update.kind == .needsYou ? "\(bot.name) needs you" : "\(bot.name) is working",
                 line: update.line.isEmpty ? (update.card?.title ?? "") : update.line,
                 requestId: update.card?.isPending == true ? update.card?.requestId : nil,
-                options: update.card?.isPending == true ? (update.card?.options ?? []) : [],
+                // A Live Activity cannot show the reviewed SKILL.md. Keep the
+                // alert, but withhold action buttons until the user opens chat.
+                options: update.card?.isPending == true && update.card?.skillRequest == nil
+                    ? (update.card?.options ?? [])
+                    : [],
                 isPermission: update.card?.isPermission ?? false,
                 since: since[bot.id]?.at ?? Date()
             )

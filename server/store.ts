@@ -299,7 +299,12 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       card.skillRequest = {
         ...card.skillRequest,
         gist: redactSecretsInText(card.skillRequest.gist),
-        preview: redactSecretsInText(card.skillRequest.preview),
+        source: typeof card.skillRequest.source === "string"
+          ? redactSecretsInText(card.skillRequest.source)
+          : undefined,
+        preview: typeof card.skillRequest.preview === "string"
+          ? redactSecretsInText(card.skillRequest.preview)
+          : undefined,
         warnings: card.skillRequest.warnings.map((warning) => redactSecretsInText(warning)),
       };
     }
@@ -1097,10 +1102,14 @@ export class Store {
     const t = this.thread(threadId);
     const idx = t.messages.findIndex((m) => m.id === messageId);
     if (idx === -1) return null;
-    t.messages[idx] = { ...t.messages[idx], ...patch, card: patch.card ?? t.messages[idx].card };
-    mdb.updateMessage(threadId, t.messages[idx]);
-    this.emit({ type: "message.patch", threadId, message: t.messages[idx] });
-    return t.messages[idx];
+    const next = { ...t.messages[idx], ...patch, card: patch.card ?? t.messages[idx].card };
+    // SQLite is the durable source of truth. Persist before changing memory so
+    // a failed write cannot make this process believe a card was answered
+    // while a restart would still show it as pending.
+    mdb.updateMessage(threadId, next);
+    t.messages[idx] = next;
+    this.emit({ type: "message.patch", threadId, message: next });
+    return next;
   }
 
   bot(id: string) {
@@ -1167,6 +1176,12 @@ export class Store {
     // transcripts: deleting a bot deletes what it knew
     try {
       rmSync(workspaceDir(id), { recursive: true, force: true });
+    } catch {}
+    // Approval state deliberately lives outside the bot-writable workspace.
+    // It still belongs to the bot, so deleting the bot must remove staged
+    // proposals, manifests, and native-link ownership records with it.
+    try {
+      rmSync(join(DATA_DIR, "skill-state", id), { recursive: true, force: true });
     } catch {}
     this.saveBots();
     this.emit({ type: "bot.deleted", botId: id });

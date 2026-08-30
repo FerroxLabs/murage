@@ -168,6 +168,19 @@ describe("redactSecretsInText", () => {
     expect(redactSecretsInText('curl -H "Authorization: Bearer abc.def-ghi_jkl123456789"')).toBe('curl -H "Authorization: Bearer «redacted 24 chars»"');
   });
 
+  it("is byte-for-byte idempotent for PEM blocks", () => {
+    const privateKeyBody = "c3VwZXItc2VjcmV0LXByaXZhdGUta2V5LWJ5dGVz";
+    const pem = [
+      "-----BEGIN PRIVATE KEY-----",
+      privateKeyBody,
+      "-----END PRIVATE KEY-----",
+    ].join("\n");
+    const once = redactSecretsInText(`before\n${pem}\nafter`);
+
+    expect(redactSecretsInText(once)).toBe(once);
+    expect(once).toContain(`«redacted ${privateKeyBody.length} chars»`);
+  });
+
   it("masks the value of a secret-shaped key=value or key: value, keeping the key", () => {
     expect(redactSecretsInText("export DATABASE_PASSWORD=hunter2hunter2")).toBe("export DATABASE_PASSWORD=«redacted 14 chars»");
     expect(redactSecretsInText('{"api_key": "abcd1234efgh5678"}')).toBe('{"api_key": "«redacted 16 chars»"}');
@@ -193,5 +206,15 @@ describe("redactSecretsInText", () => {
     const out = redactSecrets({ command: "curl -H 'Authorization: Bearer abcdefghijklmnop'", note: "fine" }) as Record<string, string>;
     expect(out.command).toContain("«redacted");
     expect(out.note).toBe("fine");
+  });
+
+  it("is idempotent for structurally identified credentials", () => {
+    const input = {
+      apiKey: "abcdefgh12345678",
+      env: [{ name: "OMB_COMMS_TOKEN", value: "abcdefghijklmnop" }],
+    };
+    const once = redactSecrets(input);
+
+    expect(redactSecrets(once)).toEqual(once);
   });
 });

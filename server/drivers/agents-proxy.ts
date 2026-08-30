@@ -325,21 +325,8 @@ const TOOLS = [
   {
     name: "skills_list",
     description:
-      "List this bot's imported skills (enabled and disabled) and any staged skill writes waiting for the user to confirm. Use this before skill_view or skill_manage. Listing does not enable anything.",
+      "List this bot's imported skills (enabled and disabled) and any staged skill writes waiting for the user to confirm. Use this before skill_manage to avoid duplicate names. Listing does not enable anything.",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
-  },
-  {
-    name: "skill_view",
-    description:
-      "Read one imported skill's SKILL.md. Use this to avoid creating a duplicate. Name is the hyphenated id from skills_list, for example file-expense.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        name: { type: "string", description: "Skill name from skills_list, lowercase hyphenated." },
-      },
-      required: ["name"],
-    },
   },
   {
     name: "skill_manage",
@@ -373,7 +360,7 @@ const TOOLS = [
   },
 ];
 
-const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_view", "skill_manage"]);
+const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_manage"]);
 const AVAILABLE_TOOLS = SKILL_AUTHORING_ENABLED
   ? TOOLS
   : TOOLS.filter((tool) => !SKILL_TOOL_NAMES.has(tool.name));
@@ -627,25 +614,22 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const live = skills.length
       ? skills.map((skill) => {
         const row = skill as Json;
-        return `- ${row.name}${row.enabled ? "" : " (disabled)"}: ${row.description ?? ""}`;
+        // Disabled imports have not been reviewed yet. Never return their
+        // description to the authoring model: a hostile description is still
+        // prompt content. Names and lifecycle status are sufficient for
+        // duplicate detection.
+        return `- ${row.name}${row.enabled ? " (enabled)" : " (disabled)"}`;
       }).join("\n")
       : "(none)";
     const pending = staged.length
       ? staged.map((entry) => {
         const row = entry as Json;
-        return `- ${row.action} ${row.name}: ${row.gist ?? ""}`;
+        // A pending proposal is also unreviewed. Keep its gist and source out
+        // of provider-visible tool output until the person approves it.
+        return `- ${row.action} ${row.name}`;
       }).join("\n")
       : "(none)";
     return { text: `Imported skills:\n${live}\n\nStaged (waiting for the user to confirm):\n${pending}` };
-  }
-  if (name === "skill_view") {
-    const skillName = String(args.name ?? "").trim();
-    if (!skillName) {
-      return { text: 'skill_view needs "name", for example {"name":"file-expense"}.', isError: true };
-    }
-    const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });
-    const r = await api(`/api/internal/skills/${encodeURIComponent(skillName)}?${query.toString()}`);
-    return { text: String(r.text ?? "") };
   }
   if (name === "skill_manage") {
     if (args.action !== "create") {

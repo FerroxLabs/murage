@@ -16,10 +16,20 @@ export interface SkillRequestCardData {
   action: SkillRequestAction;
   name: string;
   gist: string;
+  /** Human-readable provenance retained with the installed skill. Optional
+   * while old persisted cards are still present in a user's transcript. */
+  source?: string;
   /** Exact, secret-scrubbed SKILL.md shown as plain text before approval. */
-  preview: string;
+  preview?: string;
   /** Binds approval to the exact bytes shown in preview. */
-  sha256: string;
+  sha256?: string;
   warnings: string[];
   createdAt: number;
+}
+
+/** The hash a current client may echo after it displayed the complete
+ * proposal. Old cards deliberately return undefined and remain deny-only. */
+export function reviewedSkillSha256(request: SkillRequestCardData): string | undefined {
+  if (!request.preview || !request.sha256 || !/^[a-f0-9]{64}$/i.test(request.sha256)) return undefined;
+  return request.sha256;
 }

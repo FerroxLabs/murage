@@ -117,28 +117,45 @@ struct NeedsYouIsland: View {
                         }
 
                         if let card = shown.card, card.isPending {
-                            HStack(spacing: 8) {
-                                ForEach(card.options, id: \.self) { option in
+                            Group {
+                                if card.skillRequest != nil {
                                     Button {
-                                        Haptics.selection()
-                                        answering = true
-                                        Task {
-                                            await session.answer(chat: shown.chat, card: card, choice: option)
-                                            answering = false
-                                            dismiss()
-                                        }
+                                        open(shown.chat)
+                                        dismiss()
                                     } label: {
-                                        Text(option)
-                                            .font(.system(size: 15, weight: .semibold))
-                                            .foregroundStyle(CardStyle.isRefusal(option) ? .white : .white)
+                                        Label("Open chat to review", systemImage: "doc.text.magnifyingglass")
+                                            .font(.system(size: 14, weight: .semibold))
+                                            .foregroundStyle(.white)
                                             .frame(maxWidth: .infinity)
                                             .frame(height: 40)
-                                            .background(
-                                                Capsule().fill(CardStyle.isRefusal(option) ? Color.white.opacity(0.16) : MausPalette.color(shown.chat.color))
-                                            )
+                                            .background(Capsule().fill(MausPalette.color(shown.chat.color)))
                                     }
                                     .buttonStyle(.plain)
-                                    .disabled(answering)
+                                } else {
+                                    HStack(spacing: 8) {
+                                        ForEach(card.options, id: \.self) { option in
+                                            Button {
+                                                Haptics.selection()
+                                                answering = true
+                                                Task {
+                                                    await session.answer(chat: shown.chat, card: card, choice: option)
+                                                    answering = false
+                                                    dismiss()
+                                                }
+                                            } label: {
+                                                Text(option)
+                                                    .font(.system(size: 15, weight: .semibold))
+                                                    .foregroundStyle(.white)
+                                                    .frame(maxWidth: .infinity)
+                                                    .frame(height: 40)
+                                                    .background(
+                                                        Capsule().fill(CardStyle.isRefusal(option) ? Color.white.opacity(0.16) : MausPalette.color(shown.chat.color))
+                                                    )
+                                            }
+                                            .buttonStyle(.plain)
+                                            .disabled(answering)
+                                        }
+                                    }
                                 }
                             }
                             .padding(.horizontal, 20)

@@ -18,7 +18,7 @@ import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
-import type { SkillRequestCardData } from "../../shared/skill-request";
+import { reviewedSkillSha256, type SkillRequestCardData } from "../../shared/skill-request";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
@@ -571,6 +571,8 @@ export type Action =
       requestId: string;
       behavior: "allow" | "deny" | "answer";
       message?: string;
+      /** Exact proposal hash displayed by a current learned-skill client. */
+      reviewedSha256?: string;
       /** remember this exact grant (the server's allowKey) for the bot */
       alwaysAllow?: { botId: string; key: string };
       /** Local UI recovery hook for voice flows. Never sent to the server. */
@@ -1540,6 +1542,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 requestId: action.requestId,
                 behavior: action.behavior,
                 message: action.message,
+                reviewedSha256: action.reviewedSha256,
               }),
             }).catch((error) => {
               showError(error);
@@ -1568,14 +1571,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
           const card = bot?.messages.find((m) => m.id === action.messageId)?.card;
           if (card?.requestId) {
-            const behavior =
-              action.answer === "Allow" ? "allow" : action.answer === "Deny" ? "deny" : "answer";
+            const normalizedAnswer = action.answer.trim().toLowerCase();
+            const behavior = card.skillRequest
+              ? ["enable", "allow"].includes(normalizedAnswer) ? "allow" : "deny"
+              : action.answer === "Allow" ? "allow" : action.answer === "Deny" ? "deny" : "answer";
             api(`/api/bots/${action.botId}/respond`, {
               method: "POST",
               body: JSON.stringify({
                 requestId: card.requestId,
                 behavior,
                 message: behavior === "answer" ? action.answer : undefined,
+                reviewedSha256: behavior === "allow" && card.skillRequest
+                  ? reviewedSkillSha256(card.skillRequest)
+                  : undefined,
               }),
             }).catch(showError);
           } else {

@@ -1,12 +1,13 @@
 // Store persistence contract: bots.json + messages-<threadId>.json are
 // the durable record — everything here must survive a process restart
 // except `busy`, which never does (no turn survives one either).
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
+import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
 import { Store, type BotRecord } from "./store.ts";
 
@@ -390,6 +391,22 @@ describe("Store", () => {
     expect(store.patchMessage(bot.threadId, "nope", {})).toBeNull();
   });
 
+  it("keeps memory and SQLite pending when a card patch cannot persist", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const card = store.messagesFor(bot.threadId)[1]!;
+    const update = vi.spyOn(mdb, "updateMessage").mockImplementationOnce(() => {
+      throw new Error("simulated SQLite failure");
+    });
+    expect(() => store.patchMessage(bot.threadId, card.id, {
+      card: { ...card.card!, answered: "allow" },
+    })).toThrow("simulated SQLite failure");
+    update.mockRestore();
+
+    expect(store.messagesFor(bot.threadId).find((message) => message.id === card.id)?.card?.answered).toBeUndefined();
+    expect(new Store(selection).messagesFor(bot.threadId).find((message) => message.id === card.id)?.card?.answered).toBeUndefined();
+  });
+
 
   it("setResumeCursor persists per-instance continuations", () => {
     const store = new Store(selection);
@@ -510,12 +527,16 @@ describe("Store", () => {
   it("deleteBot removes the bot and its durable transcript", () => {
     const store = new Store(selection);
     const bot = store.createBot();
+    const skillState = join(DATA_DIR, "skill-state", bot.id);
+    mkdirSync(skillState, { recursive: true });
+    writeFileSync(join(skillState, "staged.json"), '{"writes":{}}');
     // the transcript is durable — a fresh Store sees the seeded messages
     expect(new Store(selection).messagesFor(bot.threadId).length).toBeGreaterThan(0);
 
     expect(store.deleteBot(bot.id)).toBe(true);
     expect(store.bot(bot.id)).toBeNull();
     expect(new Store(selection).messagesFor(bot.threadId)).toHaveLength(0);
+    expect(existsSync(skillState)).toBe(false);
     expect(store.deleteBot(bot.id)).toBe(false);
   });
   it("migrates a pre-branching flat transcript file", () => {
@@ -789,6 +810,7 @@ describe("Store redacts bot-authored secrets on write", () => {
           action: "create",
           name: "safe-skill",
           gist: `Uses ${key}`,
+          source: `learn:${key}`,
           preview: `---\nname: safe-skill\ndescription: Uses ${key}.\n---\n`,
           sha256: "0".repeat(64),
           warnings: [`Found ${key}`],
@@ -797,6 +819,7 @@ describe("Store redacts bot-authored secrets on write", () => {
       },
     });
     expect(skillCard.card?.skillRequest?.gist).not.toContain(key);
+    expect(skillCard.card?.skillRequest?.source).not.toContain(key);
     expect(skillCard.card?.skillRequest?.preview).not.toContain(key);
     expect(skillCard.card?.skillRequest?.warnings.join(" ")).not.toContain(key);
     const runCard = store.appendMessage(bot.threadId, {
