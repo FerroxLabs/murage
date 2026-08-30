@@ -52,6 +52,25 @@ final class OnboardingTests: XCTestCase {
         )
     }
 
+    func testPairedUserCanAddAnotherComputer() {
+        XCTAssertEqual(
+            CompanionOnboardingRouter.route(for: .init(
+                pairingState: .paired,
+                hasSeenWelcome: true,
+                pairingRequested: true
+            )),
+            .pairing
+        )
+        XCTAssertEqual(
+            CompanionOnboardingRouter.route(for: .init(
+                pairingState: .paired,
+                hasSeenWelcome: true,
+                hasPendingPairingInvite: true
+            )),
+            .pairing
+        )
+    }
+
     func testJustPairedUserSeesNotificationExplanationOnceThenChats() {
         XCTAssertEqual(
             CompanionOnboardingRouter.route(for: .init(
@@ -224,11 +243,6 @@ final class OnboardingTests: XCTestCase {
             after: .pairingSucceeded
         )
         XCTAssertNil(pending)
-        XCTAssertFalse(CompanionPairingInvitePolicy.allowsIncomingInvite(
-            hasConnection: true,
-            pairingStateIsUnpaired: true
-        ), "a published connection closes the deep-link race before status updates")
-
         pending = CompanionPairingInvitePolicy.nextInvite(
             current: deferred,
             after: .signedOut

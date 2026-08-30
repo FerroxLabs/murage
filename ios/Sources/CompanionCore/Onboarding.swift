@@ -57,17 +57,10 @@ public enum CompanionPairingInviteEvent: Equatable, Sendable {
     case signedOut
 }
 
-/// Pure invite lifecycle shared by Session and sequence tests. In particular,
-/// a connection published just before status changes must still reject a new
-/// invite, and terminal pairing/account events always empty the queue.
+/// Pure invite lifecycle shared by Session and sequence tests. A paired phone
+/// may receive another computer's invite; PairingView keeps the current
+/// connection alive until the new credential is safely committed.
 public enum CompanionPairingInvitePolicy {
-    public static func allowsIncomingInvite(
-        hasConnection: Bool,
-        pairingStateIsUnpaired: Bool
-    ) -> Bool {
-        !hasConnection && pairingStateIsUnpaired
-    }
-
     public static func nextInvite(
         current: PairingInvite?,
         after event: CompanionPairingInviteEvent
@@ -156,6 +149,9 @@ public enum CompanionOnboardingRouter {
         case .revoked:
             return .revoked
         case .paired:
+            if context.pairingRequested || context.hasPendingPairingInvite {
+                return .pairing
+            }
             if context.notificationOnboardingPending,
                !context.hasSeenNotificationPrompt,
                context.notificationAuthorization == .notDetermined {

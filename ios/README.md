@@ -69,7 +69,7 @@ ios/
     SpeechDictation.swift        on-device speech recognition, press-to-stop
     ComputerView.swift           opt-in live view of a bot's computer
     MarkdownText.swift           the supported Markdown presentation layer
-    SettingsView.swift           status, and unpair
+    SettingsView.swift           status, computer switcher, and pairing removal
 ```
 
 ## Building
