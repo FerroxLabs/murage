@@ -3,18 +3,22 @@
 // the full bubble pops in above the mascot (same left edge).
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { WorkingTimer } from "@/components/WorkingIndicator";
 
 export function TurnPresence({
   avatar,
   visible,
   label = "Thinking",
   answering = false,
+  since = null,
   children,
 }: {
   avatar: ReactNode;
   visible: boolean;
   label?: string;
   answering?: boolean;
+  /** Turn start (epoch ms) — shows a self-ticking elapsed readout while working. */
+  since?: number | null;
   children?: ReactNode;
 }) {
   const [mounted, setMounted] = useState(visible);
@@ -56,8 +60,13 @@ export function TurnPresence({
       >
         {avatar}
         {showWorking ? (
-          <span className="thinking-shimmer animate-shimmer text-[13px] leading-none" aria-live="polite">
-            {label}
+          <span className="flex items-baseline gap-2 leading-none">
+            <span className="thinking-shimmer animate-shimmer text-[13px]" aria-live="polite">
+              {label}
+            </span>
+            {since !== null && (
+              <WorkingTimer since={since} className="text-[11.5px] text-ink-secondary/70" />
+            )}
           </span>
         ) : null}
       </div>
