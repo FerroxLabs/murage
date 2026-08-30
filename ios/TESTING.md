@@ -282,7 +282,8 @@ Not built yet, so not bugs:
   APNs relay with project-owned Apple credentials.
 - **No call mode, spoken replies, or routine management.** Composer dictation,
   tasks, SQLite transcript search/export,
-  reactions, and edit/version switching are available from the conversation UI.
+  reactions, message copying, and edit/version switching are available from
+  the conversation UI.
 
 (Two entries that used to sit on this list have since shipped: replies stream
 token by token as the provider emits them, and each bot has a computer panel —

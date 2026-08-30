@@ -486,6 +486,28 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("refuses a room whose every member is archived", async () => {
+    const [archived, active] = await Promise.all([api("POST", "/api/bots"), api("POST", "/api/bots")]).then(
+      (created) => created.map((response) => response.body.bot),
+    );
+    await api("PATCH", `/api/bots/${archived.id}`, { hidden: true });
+    try {
+      const refused = await api("POST", "/api/groups", { name: "All archived", memberIds: [archived.id] });
+      expect(refused.status).toBe(400);
+      expect(refused.body.error).toMatch(/at least one active bot/i);
+
+      // one active member is enough — the archived one may still ride along
+      const created = await api("POST", "/api/groups", {
+        name: "Mixed roster",
+        memberIds: [archived.id, active.id],
+      });
+      expect(created.status).toBe(201);
+      await api("DELETE", `/api/groups/${created.body.group.id}`);
+    } finally {
+      for (const bot of [archived, active]) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("deduplicates repeated room members while preserving their first-seen order", async () => {
     const [first, second] = await Promise.all([api("POST", "/api/bots"), api("POST", "/api/bots")]).then(
       (created) => created.map((response) => response.body.bot),
@@ -3659,6 +3681,62 @@ describe("harness HTTP API", () => {
       expect(duplicate.body.alreadySettled).toBe(true);
       expect((await api("GET", "/api/routines")).body.routines
         .filter((routine: { botId: string }) => routine.botId === bot.id)).toHaveLength(1);
+
+      // A routine proposed "for another bot" binds to that bot, not the sender.
+      const badTarget = await fetch(`${BASE}/api/internal/routine-requests`, {
+        method: "POST",
+        headers: internalHeaders,
+        body: JSON.stringify({
+          fromBotId: bot.id,
+          fromThreadId: bot.threadId,
+          action: "create",
+          forBotId: "bot-that-does-not-exist",
+          routine: {
+            name: "Nowhere brief",
+            instructions: "Should never be scheduled.",
+            schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] },
+            runOn: "maus",
+          },
+        }),
+      });
+      expect(badTarget.status).toBe(404);
+      expect(z.object({ error: z.string() }).parse(await badTarget.json()).error).toMatch(/list_bots/);
+
+      const teammate = (await api("POST", "/api/bots", {})).body.bot;
+      const crossProposed = await fetch(`${BASE}/api/internal/routine-requests`, {
+        method: "POST",
+        headers: internalHeaders,
+        body: JSON.stringify({
+          fromBotId: bot.id,
+          fromThreadId: bot.threadId,
+          action: "create",
+          forBotId: teammate.id,
+          routine: {
+            name: "Teammate brief",
+            instructions: "Summarize for the teammate every weekday.",
+            schedule: { type: "weekly", time: "08:30", weekdays: ["monday"] },
+            runOn: "maus",
+            durationMinutes: 30,
+          },
+        }),
+      });
+      expect(crossProposed.status).toBe(201);
+      const crossProposal = z.object({ requestId: z.string() }).passthrough().parse(await crossProposed.json());
+      // the card is confirmed in the proposer's conversation and says who it is for
+      const crossState = (await api("GET", "/api/bots")).body;
+      const crossCard = crossState.bots
+        .find((candidate: { id: string }) => candidate.id === bot.id)
+        ?.messages.find((message: { card?: { requestId?: string } }) => message.card?.requestId === crossProposal.requestId);
+      expect(crossCard?.card.title).toContain(`for @${teammate.name}`);
+      const crossConfirmed = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+        requestId: crossProposal.requestId,
+        behavior: "allow",
+      });
+      expect(crossConfirmed).toMatchObject({ status: 200, body: { routineAction: "create" } });
+      const crossRoutine = (await api("GET", "/api/routines")).body.routines
+        .find((routine: { id: string }) => routine.id === crossConfirmed.body.resultId);
+      expect(crossRoutine).toMatchObject({ botId: teammate.id, sourceThreadId: bot.threadId });
+      await api("DELETE", `/api/bots/${teammate.id}`);
 
       // The initial fixture turn is deliberately hung. Once it is stopped,
       // force a deterministic dispatch failure by choosing the configured

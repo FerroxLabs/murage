@@ -25,6 +25,10 @@ export interface DelegationItem {
   toBotId: string;
   message: string;
   reason?: string;
+  /** The user already approved this exact peer message while it was still
+   * an ask_bot request. If that peer became busy before dispatch, the
+   * fallback handoff must not ask them to approve the same action twice. */
+  approvalAlreadyGranted?: boolean;
   /** The source bot's comms depth (0 for a user-initiated turn). The
    * delegated-to bot runs at `depth + 1`, which equals MAX_COMMS_DEPTH
    * (= 1) for a user turn — so the peer has no agents integration, and
@@ -40,6 +44,10 @@ interface PendingDelegationItem extends DelegationItem {
    * the target is busy, and is retried when any of the target's turns
    * settles — up to MAX_BUSY_ATTEMPTS. */
   attempts: number;
+  /** True after this item observed the target's current busy period. Other
+   * queue activity must not count that same period again; the target's idle
+   * transition clears this marker before the next retry. */
+  waitingOnBusy?: boolean;
 }
 
 export type DelegationOutcome = "done" | "failed" | "denied" | "busy_gave_up" | "dropped" | "error";
@@ -127,14 +135,28 @@ export function pendingDelegationInfo(id: string): { sourceThreadId: string; toB
   return null;
 }
 
-/** Source threads holding a handoff that already waited on this busy bot at
- * least once — the set a target's settling turn re-drains. Fresh items
- * (attempts 0) are excluded: they run when their SOURCE turn settles, and
- * draining them early would start the peer before the delegator finished. */
+/** Source threads currently waiting for this busy bot — the set its idle
+ * transition re-drains. Fresh items are excluded: they run when their SOURCE
+ * turn settles, and draining them early would start the peer too soon. */
 export function threadsWaitingOn(toBotId: string): string[] {
   return [...pendingDelegations.entries()]
-    .filter(([, items]) => items.some((item) => item.toBotId === toBotId && item.attempts > 0))
+    .filter(([, items]) => items.some((item) => item.toBotId === toBotId && item.waitingOnBusy === true))
     .map(([threadId]) => threadId);
+}
+
+/** Mark a target's observed busy period as finished and return the source
+ * threads that should be retried. This makes retries count distinct busy
+ * periods, not unrelated drain requests on the same source thread. */
+export function releaseDelegationsWaitingOn(toBotId: string): string[] {
+  const threads = threadsWaitingOn(toBotId);
+  if (!threads.length) return threads;
+  for (const threadId of threads) {
+    for (const item of pendingDelegations.get(threadId) ?? []) {
+      if (item.toBotId === toBotId) delete item.waitingOnBusy;
+    }
+  }
+  savePending();
+  return threads;
 }
 
 function savePending(): void {
@@ -160,14 +182,17 @@ export function _loadPending(): void {
           typeof item.message !== "string" ||
           !Number.isFinite(item.depth)
         ) return [];
-        return [{
+        const loaded: PendingDelegationItem = {
           id: typeof item.id === "string" && item.id ? item.id : newId(),
           toBotId: item.toBotId,
           message: item.message,
           ...(typeof item.reason === "string" ? { reason: item.reason } : {}),
           depth: Math.max(0, Math.trunc(item.depth!)),
           attempts: Number.isFinite(item.attempts) ? Math.max(0, Math.trunc(item.attempts!)) : 0,
-        }];
+        };
+        if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
+        if (item.waitingOnBusy === true) loaded.waitingOnBusy = true;
+        return [loaded];
       });
       if (items.length) pendingDelegations.set(threadId, items);
     }
@@ -406,7 +431,9 @@ async function processOne(
     return "settled";
   }
   if (target.busy) {
+    if (item.waitingOnBusy) return "requeued";
     item.attempts += 1;
+    item.waitingOnBusy = true;
     if (item.attempts < MAX_BUSY_ATTEMPTS) {
       savePending();
       bus.store.appendMessage(sourceThreadId, {
@@ -431,7 +458,11 @@ async function processOne(
     });
     return "settled";
   }
-  if (sender.approvePeerComms) {
+  if (item.waitingOnBusy) {
+    delete item.waitingOnBusy;
+    savePending();
+  }
+  if (sender.approvePeerComms && !item.approvalAlreadyGranted) {
     const verdict = await requestPeerApproval(
       approvalBus,
       sender,
@@ -464,7 +495,9 @@ async function processOne(
     const currentSender = bus.store.bot(from.id);
     if (!current || !currentSender || !bus.store.taskByThread(currentSender.id, sourceThreadId)) return "settled";
     if (current.busy) {
+      if (item.waitingOnBusy) return "requeued";
       item.attempts += 1;
+      item.waitingOnBusy = true;
       if (item.attempts < MAX_BUSY_ATTEMPTS) {
         savePending();
         bus.store.appendMessage(sourceThreadId, {

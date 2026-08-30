@@ -679,6 +679,18 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 output: payload.usage.output_tokens || 0,
               });
             }
+            if (payload.status !== "SUCCESS") {
+              const errorMessage = typeof payload.message === "string" && payload.message 
+                ? payload.message 
+                : typeof payload.error === "string" && payload.error 
+                  ? payload.error 
+                  : `Model turn failed: ${payload.status || "unknown reason"}`;
+              emit({
+                ...base(threadId, turnId),
+                type: "runtime.error",
+                message: errorMessage,
+              });
+            }
             // result.usage is the turn total (the per-step agent_response
             // figures above are its parts, not additions to it)
             settle(

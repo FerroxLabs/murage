@@ -790,6 +790,12 @@ struct MessageRow: View {
                     Task { await session.react(to: message, in: chat.threadId, emoji: emoji) }
                 }
             }
+            if let text = message.text, !text.isEmpty {
+                Divider()
+                Button("Copy", systemImage: "doc.on.doc") {
+                    PlatformBridge.copyToPasteboard(text)
+                }
+            }
             if message.role == .user, message.kind == .text, case let .bot(bot) = chat {
                 Divider()
                 Button("Edit and retry", systemImage: "pencil") {

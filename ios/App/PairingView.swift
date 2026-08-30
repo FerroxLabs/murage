@@ -399,15 +399,17 @@ struct PairingView: View {
     @MainActor
     private func submit(_ connection: Connection, credential: String) async {
         failure = nil
+        var succeeded = false
         defer {
             submission.finish()
             // A deep link received during the commit cannot replace the
             // consent screen. If this request failed, present it only after
             // the in-flight request has fully settled.
-            if session.connection == nil {
-                accept(session.pairingInvite)
-            } else {
+            if succeeded {
                 session.consumePairingInvite()
+                onCancel()
+            } else {
+                accept(session.pairingInvite)
             }
         }
         let cameFromScanner = scannedCredential != nil
@@ -421,6 +423,7 @@ struct PairingView: View {
                 pairRequestId: requestId
             )
             pairRequestId = nil
+            succeeded = true
         } catch {
             if cameFromScanner {
                 if error is PairingRouteError {

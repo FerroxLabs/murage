@@ -96,7 +96,7 @@ import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
 import { searchMessages } from "./message-db.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
-import { _loadPending, discardDelegations, drainDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, threadsWaitingOn, type QueueResult } from "./delegations.ts";
+import { _loadPending, discardDelegations, drainDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, type QueueResult } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -571,7 +571,7 @@ const routineRequestSourceSchema = {
   fromThreadId: z.string().min(1).max(128),
 };
 const routineRequestEnvelopeSchema = z.discriminatedUnion("action", [
-  z.object({ ...routineRequestSourceSchema, action: z.literal("create"), routine: z.unknown() }).strict(),
+  z.object({ ...routineRequestSourceSchema, action: z.literal("create"), routine: z.unknown(), forBotId: z.unknown().optional() }).strict(),
   z.object({
     ...routineRequestSourceSchema,
     action: z.literal("update"),
@@ -729,6 +729,15 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
   }
   const memberIds = [...new Set(value as string[])];
   if (!memberIds.length) return { ok: false, error: "a channel needs at least one bot" };
+  // A room whose every member is archived accepts messages and answers none of
+  // them — the failure only surfaces later, as "… is archived and can't
+  // respond" on the first turn. Refuse it here, where the mistake is made.
+  if (memberIds.every((id) => store.bot(id)?.hidden)) {
+    return {
+      ok: false,
+      error: "a channel needs at least one active bot — every member given is archived",
+    };
+  }
   return { ok: true, memberIds };
 }
 let bootSelection = { instanceId: "", model: "" };
@@ -1200,6 +1209,7 @@ const watchdog = new TurnWatchdog({
         stopScreenPoller(currentBot.id);
         if (activeVpsThreads.get(currentBot.id) === turn.threadId) activeVpsThreads.delete(currentBot.id);
         store.setActivity(currentBot.id, "idle");
+        retryDelegationsWaitingOn(currentBot.id);
         // The grace fallback replaces a missing turn.completed event. Release
         // every kind of work that may have queued behind this bot, including
         // connector and credential continuations.
@@ -1785,6 +1795,7 @@ bus.subscribe((event: RuntimeEvent) => {
         if (speakingBot?.busy) {
           store.setActivity(speakingBot.id, "idle");
           store.patchBot(speakingBot.id, { unread: true });
+          retryDelegationsWaitingOn(speakingBot.id);
         }
       }
       // A delegated turn's terminal state belongs in the A⇄B channel:
@@ -1804,7 +1815,13 @@ bus.subscribe((event: RuntimeEvent) => {
 // (target threadId → channel) lets the main fold mirror the delegated
 // turn's TERMINAL state into the A⇄B channel when it completes — the
 // channel stays the full record of the handoff, not just its request.
-const delegationWatch = new Map<string, { channelId?: string; toBotId: string; taskId?: string; sourceThreadId?: string }>();
+const delegationWatch = new Map<string, {
+  channelId?: string;
+  toBotId: string;
+  toBotName?: string;
+  taskId?: string;
+  sourceThreadId?: string;
+}>();
 
 /** Consume one delegated-turn watch and mirror exactly one terminal state.
  * Some harness paths settle a busy bot without a provider turn.completed
@@ -1832,6 +1849,31 @@ function finalizeDelegationWatch(
     });
   }
   const target = store.bot(watched.toBotId);
+  const targetName = target?.name ?? watched.toBotName ?? watched.toBotId;
+  const source = watched.sourceThreadId ? store.botByThread(watched.sourceThreadId) : undefined;
+  if (source && watched.sourceThreadId) {
+    if (ok && reply.trim()) {
+      const sourceReply: Omit<Message, "id" | "at"> = {
+        role: "bot",
+        kind: "text",
+        text: `@${targetName} replied to the delegated task:\n\n${reply.trim()}`,
+      };
+      if (target) sourceReply.from = { botId: target.id, name: target.name, color: target.color };
+      store.appendMessage(watched.sourceThreadId, sourceReply);
+    } else {
+      store.appendMessage(watched.sourceThreadId, {
+        role: "bot",
+        kind: "activity",
+        tool: {
+          name: ok
+            ? `Delegation to @${targetName} completed without a text reply`
+            : `Delegation to @${targetName} failed — ${failureName}`,
+          ok,
+        },
+      });
+    }
+    store.patchBot(source.id, { unread: true });
+  }
   const channel = watched.channelId ? store.group(watched.channelId) : undefined;
   if (!target || !channel) return true;
   if (ok && reply.trim()) mirrorReply(commsBus, target, reply, channel);
@@ -1881,7 +1923,16 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     // harness (Node's default), which in the packaged app kills the server
     // child. Every delegation failure has to land as a chip instead.
     const targetThreadId = store.bot(toBotId)?.threadId;
-    if (targetThreadId) delegationWatch.set(targetThreadId, { channelId: channel?.id, toBotId, taskId, sourceThreadId });
+    const target = store.bot(toBotId);
+    if (targetThreadId) {
+      delegationWatch.set(targetThreadId, {
+        channelId: channel?.id,
+        toBotId,
+        toBotName: target?.name,
+        taskId,
+        sourceThreadId,
+      });
+    }
     let failureReported = false;
     const reportStartFailure = (error: unknown) => {
       if (failureReported) return;
@@ -1889,12 +1940,13 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
       const bot = store.bot(toBotId);
       const why = error instanceof Error ? error.message : String(error);
       if (targetThreadId) {
-        finalizeDelegationWatch(
+        const finalized = finalizeDelegationWatch(
           targetThreadId,
           false,
           "",
           `Delegated turn could not start — ${why.slice(0, 120)}`,
         );
+        if (finalized) return;
       }
       const source = store.botByThread(sourceThreadId);
       if (!source) return;
@@ -1916,6 +1968,24 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     });
 };
 
+// Most waiting handoffs retry from a target's turn.completed event. Some
+// setup, cancellation, room, watchdog, and provider-reload paths release a
+// bot without that event, so every explicit idle release calls this same
+// coalesced retry hook. The microtask lets the releasing state machine finish
+// before another turn claims the bot.
+const delegationRetryBots = new Set<string>();
+function retryDelegationsWaitingOn(botId: string): void {
+  if (delegationRetryBots.has(botId)) return;
+  delegationRetryBots.add(botId);
+  queueMicrotask(() => {
+    delegationRetryBots.delete(botId);
+    if (store.bot(botId)?.busy) return;
+    for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
+      drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
+    }
+  });
+}
+
 bus.subscribe((event: RuntimeEvent) => {
   if (shouldIgnoreProviderEvent(event)) return;
   if (event.type !== "turn.completed") return;
@@ -1928,11 +1998,7 @@ bus.subscribe((event: RuntimeEvent) => {
   // found it busy earlier were kept queued (bounded retries) on their own
   // source threads, and this is the moment they get their retry.
   const settledBot = store.botByThread(event.threadId);
-  if (settledBot) {
-    for (const waitingThread of threadsWaitingOn(settledBot.id)) {
-      if (waitingThread !== event.threadId) drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
-    }
-  }
+  if (settledBot) retryDelegationsWaitingOn(settledBot.id);
 });
 
 // ── steer-queue drain: messages sent while the bot was busy ────────────
@@ -2626,6 +2692,7 @@ async function startTurn(
         opts?.onDispatchError?.(e.message);
         if (ownsLatestGeneration && store.bot(bot.id)?.busy) {
           store.setActivity(bot.id, "idle");
+          retryDelegationsWaitingOn(bot.id);
         }
         if (ownsLatestGeneration) {
           drainQueuedSends();
@@ -2642,6 +2709,7 @@ async function startTurn(
         tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
       });
       store.setActivity(bot.id, "idle");
+      retryDelegationsWaitingOn(bot.id);
       opts?.onDispatchError?.(message);
       // a dispatch failure never emits turn.completed, so the settle-driven
       // drain would strand anything queued behind this turn
@@ -2824,6 +2892,17 @@ const routineRequests = new RoutineRequestService({
   routines,
   cloudReady: cloudRoutineReadiness,
   canPersist: routineProposalPersistence,
+  // Cross-bot routines: the confirmation card can sit open indefinitely, so
+  // the target is re-authorized when the user confirms, not just at proposal.
+  validateTarget: (proposerBotId, target) => {
+    const proposer = store.bot(proposerBotId);
+    const targetBot = store.bot(target.botId);
+    if (!targetBot) return `@${target.name} no longer exists, so this routine cannot be scheduled for it`;
+    if (!proposer || sectionKey(targetBot.section) !== sectionKey(proposer.section)) {
+      return `@${target.name} is no longer in this section, so this routine cannot be scheduled for it`;
+    }
+    return null;
+  },
 });
 const ROUTINE_WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
 const routineTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -3146,7 +3225,10 @@ async function runGroupMemberTurn(
   const browserReadyBot = store.bot(readyBot.id);
   if (isCancelled?.() || !browserReadyBot || !browserReadyBot.busy) {
     await releaseBrowserCapabilityForThread(threadId);
-    if (browserReadyBot?.busy) store.setActivity(browserReadyBot.id, "idle");
+    if (browserReadyBot?.busy) {
+      store.setActivity(browserReadyBot.id, "idle");
+      retryDelegationsWaitingOn(browserReadyBot.id);
+    }
     return false;
   }
 
@@ -3293,7 +3375,10 @@ async function runGroupMemberTurn(
       store.patchGroup(currentGroup.id, { busyBotId: null, unread: true });
     }
     const currentBot = store.bot(bot.id);
-    if (currentBot?.busy) store.setActivity(currentBot.id, "idle");
+    if (currentBot?.busy) {
+      store.setActivity(currentBot.id, "idle");
+      retryDelegationsWaitingOn(currentBot.id);
+    }
     watchdog.settle(threadId);
     drainQueuedSends();
     drainConnectorResumes();
@@ -3307,7 +3392,10 @@ async function runGroupMemberTurn(
   if (store.group(group.id)?.busyBotId === bot.id) {
     groupSpeakers.delete(threadId);
     store.patchGroup(group.id, { busyBotId: null, unread: true });
-    if (store.bot(bot.id)?.busy) store.setActivity(bot.id, "idle");
+    if (store.bot(bot.id)?.busy) {
+      store.setActivity(bot.id, "idle");
+      retryDelegationsWaitingOn(bot.id);
+    }
   }
   if (outcome === "dispatch_failed") {
     await releaseBrowserCapabilityForThread(threadId);
@@ -4050,6 +4138,7 @@ async function reloadProviders() {
       tool: { name: "error: turn interrupted — provider settings changed", ok: false },
     });
     store.setActivity(b.id, "idle");
+    retryDelegationsWaitingOn(b.id);
   }
   // killed turns settle here without a turn.completed event, so anything
   // queued behind them drains now — onto the freshly loaded fleet
@@ -4224,12 +4313,33 @@ const server = createServer(async (req, res) => {
         const fromThreadId = body.fromThreadId;
         const owner = connectorThread(from.id, fromThreadId);
         if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
+        // "Make a routine for @B": resolve the target up front so the model
+        // gets a teaching error now, not a mis-bound routine later. Omitted
+        // (or the sender's own id) keeps the schedule-for-self path unchanged.
+        let forBot: { botId: string; name: string } | undefined;
+        if (body.action === "create" && body.forBotId !== undefined) {
+          const parsedForBotId = z.string().max(128).safeParse(body.forBotId);
+          const forBotId = parsedForBotId.success ? parsedForBotId.data.trim() : "";
+          if (!forBotId) {
+            return json(res, 400, { error: 'for_bot_id must be a bot id from list_bots, e.g. { "for_bot_id": "bot-abc123" }' });
+          }
+          if (forBotId !== from.id) {
+            const target = store.bot(forBotId);
+            if (!target) {
+              return json(res, 404, { error: "no bot with that id — call list_bots and copy the exact id from the result" });
+            }
+            if (sectionKey(target.section) !== sectionKey(from.section)) {
+              return json(res, 403, { error: "that bot belongs to a different section" });
+            }
+            forBot = { botId: target.id, name: target.name };
+          }
+        }
         const persistence = routineProposalPersistence(from.id, fromThreadId);
         if (!persistence.ok) {
           return json(res, persistence.status, { error: persistence.error });
         }
         const proposedInput = body.action === "create"
-          ? { action: body.action, routine: body.routine }
+          ? { action: body.action, routine: body.routine, forBot }
           : body.action === "update"
             ? { action: body.action, routineId: body.routineId, changes: body.changes }
             : { action: body.action, routineId: body.routineId };
@@ -4346,7 +4456,6 @@ const server = createServer(async (req, res) => {
         if (depth >= MAX_COMMS_DEPTH) return json(res, 200, { error: "message chains are limited to one hop" });
         const target = store.bot(toBotId);
         if (!target) return json(res, 404, { error: "no such bot" });
-        if (target.busy) return json(res, 200, { busy: true });
         // An unknown sender used to fall through: no mirroring AND no
         // approval, while still running the peer turn. That made an
         // unresolvable id the cheapest way past the gate, so it is now a
@@ -4360,6 +4469,25 @@ const server = createServer(async (req, res) => {
         if (!store.taskByThread(from.id, fromThreadId)) {
           return json(res, 403, { error: "source thread does not belong to sender" });
         }
+        // A busy peer used to be a flat bounce ("try again later") — a
+        // dead-end mid-turn that models rarely retry, so the exchange just
+        // evaporated. Demote the synchronous ask into a durable handoff
+        // instead: the message waits in the delegation ledger (bounded busy
+        // retries, receipts, restart-safe) and the asker gets a task id it
+        // can check next turn. If the ledger refuses (cap/depth), fall back
+        // to the plain busy bounce rather than dropping the refusal reason.
+        const queueBusyFallback = (approvalAlreadyGranted = false) => {
+          const queued = queueDelegation(
+            commsBus,
+            from,
+            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted },
+            MAX_COMMS_DEPTH,
+            fromThreadId,
+          );
+          if (queued.result !== "ok" || !queued.id) return json(res, 200, { busy: true });
+          return json(res, 200, { busy: true, taskId: queued.id, toBotName: target.name });
+        };
+        if (target.busy) return queueBusyFallback();
         let currentFrom = from;
         let currentTarget = target;
 
@@ -4395,7 +4523,10 @@ const server = createServer(async (req, res) => {
           if (!store.taskByThread(freshFrom.id, fromThreadId)) {
             return json(res, 404, { error: "source task no longer exists" });
           }
-          if (freshTarget.busy) return json(res, 200, { busy: true });
+          // The user just approved this exact ask_bot request. Preserve that
+          // decision if it has to become an async handoff; asking twice makes
+          // the fallback look stuck behind a second, surprising card.
+          if (freshTarget.busy) return queueBusyFallback(true);
           currentFrom = freshFrom;
           currentTarget = freshTarget;
         }
