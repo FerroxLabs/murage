@@ -691,7 +691,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const reason = result?.stopReason;
             if (reason === "end_turn") settle(true, null);
             else if (reason === "cancelled") settle(true, "cancelled");
-            else settle(false, reason ?? "failed");
+            else {
+              const errorMessage = typeof result?.error === "string" && result.error
+                ? result.error
+                : typeof result?.message === "string" && result.message
+                  ? result.message
+                  : `Model turn failed: ${reason ?? "unknown error"}`;
+              emit({
+                ...base(threadId, turnId),
+                type: "runtime.error",
+                message: errorMessage,
+              });
+              settle(false, reason ?? "failed");
+            }
           } catch (e) {
             if (!state.settled) {
               const message = e instanceof Error ? e.message : String(e);
