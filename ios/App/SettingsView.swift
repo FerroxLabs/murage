@@ -7,6 +7,8 @@ import UIKit
 struct SettingsView: View {
     @EnvironmentObject private var session: Session
     @State private var enablingNotifications = false
+    @AppStorage(PrefKey.activityDetail) private var activityDetail = ActivityDetail.full.rawValue
+    @AppStorage(PrefKey.islandIntro) private var islandIntro = IslandIntro.oncePerBot.rawValue
     private let onConnect: (() -> Void)?
 
     init(onConnect: (() -> Void)? = nil) {
@@ -59,6 +61,46 @@ struct SettingsView: View {
                 }
             } footer: {
                 Text("Alerts arrive while OpenMausBot is open or was recently in the background. Closed-app delivery is not available yet.")
+            }
+
+            Section {
+                Picker(selection: $activityDetail) {
+                    ForEach(ActivityDetail.allCases, id: \.rawValue) { level in
+                        Text(level.label).tag(level.rawValue)
+                    }
+                } label: {
+                    Label {
+                        Text("Activity")
+                    } icon: {
+                        SettingsIcon(symbol: "wrench.and.screwdriver.fill", color: .purple)
+                    }
+                }
+
+                Picker(selection: $islandIntro) {
+                    ForEach(IslandIntro.allCases, id: \.rawValue) { option in
+                        Text(option.label).tag(option.rawValue)
+                    }
+                } label: {
+                    Label {
+                        Text("Bot intro animation")
+                    } icon: {
+                        SettingsIcon(symbol: "sparkles", color: .pink)
+                    }
+                }
+
+                NavigationLink {
+                    QuickRepliesEditor()
+                } label: {
+                    Label {
+                        Text("Quick Replies")
+                    } icon: {
+                        SettingsIcon(symbol: "bolt.fill", color: .yellow)
+                    }
+                }
+            } header: {
+                Text("Chat")
+            } footer: {
+                Text(ActivityDetail(rawValue: activityDetail)?.caption ?? "")
             }
 
             if session.connection != nil {
