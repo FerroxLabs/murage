@@ -2541,8 +2541,8 @@ async function startTurn(
         integrations.agents = agentsIntegration(bot.id, threadId, commsDepth);
       }
       // @mentions in the user's message (the composer's tagging UI) become
-      // an explicit delegation nudge — the agent still does the ask_bot call
-      // itself, so the harness stays the single owner of turns/permissions
+      // an explicit coordination nudge. The agent still chooses the matching
+      // peer tool, so the harness stays the single owner of turns/permissions.
       const tagged = integrations.agents
         ? mentionedBots(
             text,
@@ -2557,7 +2557,7 @@ async function startTurn(
             openMausStatusSystemPrompt(),
           )
         : integrations.agents && sectionPeers.length > 0
-          ? "You can work with the other bots in your section through the agents tools — list_bots shows who's available, ask_bot sends one of them a message and returns their reply."
+          ? "You can work with the other bots in your section through the agents tools. list_bots shows who's available. Use delegate_bot for assigned or independent work so you remain available; use ask_bot only for a short consultation whose reply is required in your current answer."
           : "";
       const credentialPrompt = integrations.agents
         ? " If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat."
@@ -2651,8 +2651,8 @@ async function startTurn(
             : "") +
           (tagged.length
             ? ` The user tagged ${tagged
-                .map((t) => `@${t.name} (ask_bot bot_id ${t.id})`)
-                .join(" and ")} in their message — bring them in with ask_bot and fold their reply into your answer.`
+                .map((t) => `@${t.name} (bot_id ${t.id})`)
+                .join(" and ")} in their message. If they assigned independent work, use delegate_bot and finish your turn without waiting; use ask_bot only if their short reply is required in this answer.`
             : ""),
         integrations,
         cwd,

@@ -172,7 +172,7 @@ afterAll(async () => {
 });
 
 describe("agents-proxy MCP surface", () => {
-  it("answers the MCP handshake and lists all eight tools", async () => {
+  it("answers the MCP handshake and lists the coordination tools", async () => {
     const init = await rpc("initialize", { protocolVersion: "2024-11-05" });
     expect(init.result.serverInfo.name).toContain("agents");
     const list = await rpc("tools/list");
@@ -188,6 +188,14 @@ describe("agents-proxy MCP surface", () => {
       "propose_routine",
       "propose_routine_action",
     ]);
+    const ask = list.result.tools.find((tool: { name: string }) => tool.name === "ask_bot");
+    const delegate = list.result.tools.find((tool: { name: string }) => tool.name === "delegate_bot");
+    const wait = list.result.tools.find((tool: { name: string }) => tool.name === "wait_delegation");
+    expect(ask.description).toContain("SYNCHRONOUS consultation");
+    expect(ask.description).toContain("Do not use for assigning work");
+    expect(delegate.description).toContain("DEFAULT FOR ASSIGNING WORK");
+    expect(delegate.description).toContain("delivered automatically");
+    expect(wait.description).toContain("Never call it in the same turn as delegate_bot");
   });
 
   it("publishes a flat routine schedule schema that survives provider conversion", async () => {
@@ -220,6 +228,8 @@ describe("agents-proxy MCP surface", () => {
     const text = res.result.content[0].text;
     expect(text).toContain("Helper");
     expect(text).toContain("bot-helper");
+    expect(text).toContain("Assign work with delegate_bot");
+    expect(text).toContain("Use ask_bot only for a short answer");
     expect(lastAuth).toBe(`Bearer ${TOKEN}`);
   });
 
@@ -252,7 +262,8 @@ describe("agents-proxy MCP surface", () => {
     expect(text).toContain("queued as a delegation");
     expect(text).toContain("task-9");
     expect(text).toContain("check_delegation");
-    expect(text).toContain("wait_delegation");
+    expect(text).toContain("delivered to this conversation automatically");
+    expect(text).not.toContain("wait_delegation");
     expect(res.result.isError).toBeFalsy();
   });
 
@@ -264,7 +275,8 @@ describe("agents-proxy MCP surface", () => {
     expect(text).toContain("converted to a delegation");
     expect(text).toContain("task-42");
     expect(text).toContain("check_delegation");
-    expect(text).toContain("wait_delegation");
+    expect(text).toContain("delivered to this conversation automatically");
+    expect(text).not.toContain("wait_delegation");
     expect(res.result.isError).toBeFalsy();
   });
 
@@ -339,7 +351,7 @@ describe("agents-proxy MCP surface", () => {
     expect(lastCredentialBody).toBeNull();
   });
 
-  it("hands the delegator its task id and the tools to read the outcome", async () => {
+  it("hands the delegator its task id without inviting a same-turn wait", async () => {
     delegateResponse = {
       queued: true,
       taskId: "task-abc123",
@@ -347,7 +359,9 @@ describe("agents-proxy MCP surface", () => {
     };
     const res = await callTool("delegate_bot", { bot_id: "bot-helper", message: "do the thing" });
     expect(res.result.content[0].text).toContain("Task id: task-abc123");
-    expect(res.result.content[0].text).toContain("wait_delegation");
+    expect(res.result.content[0].text).toContain("delivered to this conversation automatically");
+    expect(res.result.content[0].text).toContain("Do not check or wait for it in this turn");
+    expect(res.result.content[0].text).not.toContain("wait_delegation");
     delegateResponse = { queued: true, message: "Delegation queued." };
   });
 

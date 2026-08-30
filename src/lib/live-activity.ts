@@ -12,7 +12,8 @@ const FALLBACK_LABELS: Array<[RegExp, string]> = [
   [/\b(?:click|type|keypress|press|scroll|computer)\b/i, "Using the computer"],
   [/\b(?:open_url|navigate)\b/i, "Opening a page"],
   [/\b(?:list_bots|list_agents)\b/i, "Checking who's around"],
-  [/\b(?:ask_bot|delegate_bot|send_message)\b/i, "Asking a teammate"],
+  [/\bdelegate_bot\b/i, "Handing off a task"],
+  [/\b(?:ask_bot|send_message)\b/i, "Asking a teammate"],
 ];
 
 function sentenceCase(value: string): string {

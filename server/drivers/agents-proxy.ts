@@ -2,14 +2,14 @@
 // agent process (via the "agents" integration). Exposes eight tools that
 // let one bot talk to another, routed back through the harness so the
 // harness stays the single owner of turns, permissions, and recursion
-// limits:
+// limits. The coordination tools are:
 //
 //   list_bots()                          → the other bots in this section + their status
 //   ask_bot(bot_id, msg)                 → send msg to that bot, wait, return its reply
 //   delegate_bot(bot_id, msg, reason?)   → hand the task to a peer ASYNC: returns
 //                                          immediately, the peer runs after your
-//                                          current turn finishes, the user sees
-//                                          the peer's reply as its own turn
+//                                          current turn finishes, the result is
+//                                          delivered to the source conversation
 //   create_bot(name, role, instructions) → Chiefs can add a specialist to
 //                                          their own section
 //   request_credential(id, reason?)       → show a secure, allowlisted key card
@@ -185,13 +185,13 @@ const TOOLS = [
   {
     name: "list_bots",
     description:
-      "List the other bots (agents) in your OpenMausBot section you can message, with their model and whether they're busy. Call this before ask_bot to discover who's available.",
+      "List the other bots (agents) in your OpenMausBot section, with their model and whether they're busy. Call this before delegate_bot or ask_bot to discover who's available. Use delegate_bot for assignments; use ask_bot only for a short consultation needed inline.",
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "ask_bot",
     description:
-      "Send a message to another bot in your section and wait for its reply. Use it to delegate a subtask to a specialist bot or ask a peer a question. The other bot runs a full turn under its own model and permissions; the reply is returned to you as text. Returns promptly with a note if that bot is busy.",
+      "SYNCHRONOUS consultation: send a short question to another bot and stay blocked until its reply is returned inline. Use only when that reply is required to write your current response. Do not use for assigning work, background tasks, or potentially long work; use delegate_bot for those. Returns promptly with a note if that bot is busy.",
     inputSchema: {
       type: "object",
       properties: {
@@ -204,7 +204,7 @@ const TOOLS = [
   {
     name: "delegate_bot",
     description:
-      "Hand a task to another bot ASYNCHRONOUSLY: returns immediately and the peer runs after your current turn finishes. Use this when you want to keep working or hand off a long-running subtask without waiting. The user sees the peer's reply as its own turn; you do NOT receive the reply inline.",
+      "DEFAULT FOR ASSIGNING WORK. Hand a task to another bot asynchronously: this returns immediately, your turn can end, and you remain available while the peer works. The peer starts after your current turn finishes and its result is delivered automatically to the originating conversation. Acknowledge the assignment; do not call check_delegation or wait_delegation in this same turn.",
     inputSchema: {
       type: "object",
       properties: {
@@ -218,7 +218,7 @@ const TOOLS = [
   {
     name: "check_delegation",
     description:
-      "Check what happened to a delegation you queued with delegate_bot, without waiting: still queued, running, or finished — and the peer's reply once it is done.",
+      "In a later turn, check what happened to a delegation without waiting: still queued, running, or finished. Do not poll this immediately after delegate_bot; completion is delivered to the conversation automatically.",
     inputSchema: {
       type: "object",
       properties: {
@@ -230,7 +230,7 @@ const TOOLS = [
   {
     name: "wait_delegation",
     description:
-      "Wait until a delegation you queued finishes and return the peer's reply — ONE call instead of repeated checks. Use it after your own remaining work is done; it returns immediately if the task already finished.",
+      "BLOCKING status tool for a delegation from an earlier turn. Use only when the user explicitly asks you to wait for that earlier task. Never call it in the same turn as delegate_bot: a fresh delegation cannot start until your current turn ends, and its result will arrive automatically.",
     inputSchema: {
       type: "object",
       properties: {
@@ -384,7 +384,9 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       const about = b.description ? ` (${String(b.description).slice(0, 120)})` : "";
       return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${b.busy ? ", busy" : ""}]`;
     });
-    return { text: `Other bots you can message with ask_bot:\n${lines.join("\n")}` };
+    return {
+      text: `Other bots in your section:\n${lines.join("\n")}\n\nAssign work with delegate_bot. Use ask_bot only for a short answer you need inline.`,
+    };
   }
   if (name === "ask_bot") {
     const toBotId = String(args.bot_id ?? "").trim();
@@ -400,7 +402,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       const taskId = String(r.taskId ?? "").trim();
       const waitedMinutes = Math.max(1, Math.round((Number(r.waitedMs) || 0) / 60_000));
       return {
-        text: `${r.toBotName ?? "That bot"} is still working after ${waitedMinutes} minute${waitedMinutes === 1 ? "" : "s"} — the ask was converted to a delegation so the reply is not lost. Task id: ${taskId}. Finish your own turn; next turn read the outcome with check_delegation or block on it with wait_delegation.`,
+        text: `${r.toBotName ?? "That bot"} is still working after ${waitedMinutes} minute${waitedMinutes === 1 ? "" : "s"} — the ask was converted to a delegation so the reply is not lost. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use check_delegation in a later turn only if the user asks for status.`,
       };
     }
     if (r.busy) {
@@ -409,7 +411,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       const taskId = String(r.taskId ?? "").trim();
       if (taskId) {
         return {
-          text: `${r.toBotName ?? "That bot"} is busy right now, so your message was queued as a delegation instead — it runs after your current turn ends. Task id: ${taskId}. Next turn, read the outcome with check_delegation or block on it with wait_delegation.`,
+          text: `${r.toBotName ?? "That bot"} is busy right now, so your message was queued as a delegation instead — it runs after your current turn ends. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use check_delegation in a later turn only if the user asks for status.`,
         };
       }
       return { text: `That bot is busy right now — try again after it finishes.` };
@@ -437,7 +439,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     // bot's claim ticket for the outcome.
     const note = typeof r.message === "string" ? r.message : "Delegation queued.";
     const suffix = typeof r.taskId === "string" && r.taskId
-      ? ` Task id: ${r.taskId} — after your own work is done, read the outcome with check_delegation or block on it with wait_delegation.`
+      ? ` Task id: ${r.taskId}. Acknowledge the assignment and finish your turn; the result will be delivered to this conversation automatically. Do not check or wait for it in this turn.`
       : "";
     return { text: `${note}${suffix}` };
   }
