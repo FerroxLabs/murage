@@ -318,9 +318,9 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       card.skillRequest = {
         ...card.skillRequest,
         gist: redactSecretsInText(card.skillRequest.gist),
-        source: typeof card.skillRequest.source === "string"
-          ? redactSecretsInText(card.skillRequest.source)
-          : undefined,
+        source: card.skillRequest.source === undefined
+          ? undefined
+          : redactSecretsInText(card.skillRequest.source),
         preview,
         sha256,
         warnings: card.skillRequest.warnings.map((warning) => redactSecretsInText(warning)),
