@@ -564,7 +564,7 @@ const routineRequestSourceSchema = {
   fromThreadId: z.string().min(1).max(128),
 };
 const routineRequestEnvelopeSchema = z.discriminatedUnion("action", [
-  z.object({ ...routineRequestSourceSchema, action: z.literal("create"), routine: z.unknown() }).strict(),
+  z.object({ ...routineRequestSourceSchema, action: z.literal("create"), routine: z.unknown(), forBotId: z.unknown().optional() }).strict(),
   z.object({
     ...routineRequestSourceSchema,
     action: z.literal("update"),
@@ -2809,6 +2809,17 @@ const routineRequests = new RoutineRequestService({
   routines,
   cloudReady: cloudRoutineReadiness,
   canPersist: routineProposalPersistence,
+  // Cross-bot routines: the confirmation card can sit open indefinitely, so
+  // the target is re-authorized when the user confirms, not just at proposal.
+  validateTarget: (proposerBotId, target) => {
+    const proposer = store.bot(proposerBotId);
+    const targetBot = store.bot(target.botId);
+    if (!targetBot) return `@${target.name} no longer exists, so this routine cannot be scheduled for it`;
+    if (!proposer || sectionKey(targetBot.section) !== sectionKey(proposer.section)) {
+      return `@${target.name} is no longer in this section, so this routine cannot be scheduled for it`;
+    }
+    return null;
+  },
 });
 const ROUTINE_WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
 const routineTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -4034,12 +4045,33 @@ const server = createServer(async (req, res) => {
         const fromThreadId = body.fromThreadId;
         const owner = connectorThread(from.id, fromThreadId);
         if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
+        // "Make a routine for @B": resolve the target up front so the model
+        // gets a teaching error now, not a mis-bound routine later. Omitted
+        // (or the sender's own id) keeps the schedule-for-self path unchanged.
+        let forBot: { botId: string; name: string } | undefined;
+        if (body.action === "create" && body.forBotId !== undefined) {
+          const parsedForBotId = z.string().max(128).safeParse(body.forBotId);
+          const forBotId = parsedForBotId.success ? parsedForBotId.data.trim() : "";
+          if (!forBotId) {
+            return json(res, 400, { error: 'for_bot_id must be a bot id from list_bots, e.g. { "for_bot_id": "bot-abc123" }' });
+          }
+          if (forBotId !== from.id) {
+            const target = store.bot(forBotId);
+            if (!target) {
+              return json(res, 404, { error: "no bot with that id — call list_bots and copy the exact id from the result" });
+            }
+            if (sectionKey(target.section) !== sectionKey(from.section)) {
+              return json(res, 403, { error: "that bot belongs to a different section" });
+            }
+            forBot = { botId: target.id, name: target.name };
+          }
+        }
         const persistence = routineProposalPersistence(from.id, fromThreadId);
         if (!persistence.ok) {
           return json(res, persistence.status, { error: persistence.error });
         }
         const proposedInput = body.action === "create"
-          ? { action: body.action, routine: body.routine }
+          ? { action: body.action, routine: body.routine, forBot }
           : body.action === "update"
             ? { action: body.action, routineId: body.routineId, changes: body.changes }
             : { action: body.action, routineId: body.routineId };

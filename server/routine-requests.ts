@@ -70,8 +70,14 @@ const routineToolChangesSchema = routineToolDefinitionSchema.partial().refine(
   "Choose at least one routine field to update",
 );
 
+/** Resolved and authorized by the harness route (existence + same section)
+ * before it reaches this service; re-authorized again at confirm time. */
+const targetBotSchema = z.object({
+  botId: z.string().min(1).max(128),
+  name: z.string().min(1).max(80),
+}).strict();
 const routineProposalSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("create"), routine: routineToolDefinitionSchema }).strict(),
+  z.object({ action: z.literal("create"), routine: routineToolDefinitionSchema, forBot: targetBotSchema.optional() }).strict(),
   z.object({ action: z.literal("update"), routineId: z.string().max(128), changes: routineToolChangesSchema }).strict(),
   z.object({ action: z.literal("pause"), routineId: z.string().max(128) }).strict(),
   z.object({ action: z.literal("resume"), routineId: z.string().max(128) }).strict(),
@@ -107,7 +113,7 @@ const storedManageBase = {
   expectedUpdatedAt: z.number().int().nonnegative(),
 };
 const storedOperationSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("create"), routine: storedDefinitionSchema }).strict(),
+  z.object({ action: z.literal("create"), routine: storedDefinitionSchema, forBot: targetBotSchema.optional() }).strict(),
   z.object({ action: z.literal("update"), ...storedManageBase, changes: storedChangesSchema }).strict(),
   z.object({ action: z.literal("pause"), ...storedManageBase }).strict(),
   z.object({ action: z.literal("resume"), ...storedManageBase }).strict(),
@@ -180,6 +186,10 @@ export interface RoutineRequestServiceOptions {
     botId: string,
     threadId: string,
   ) => { ok: true } | { ok: false; status: number; error: string };
+  /** Re-authorizes a cross-bot target (the card can sit open while the target
+   * bot is deleted or moved to another section). Returns the sentence to
+   * refuse with, or null to allow. Checked at propose AND confirm time. */
+  validateTarget?: (proposerBotId: string, target: { botId: string; name: string }) => string | null;
 }
 
 export interface ProposeRoutineRequestArgs {
@@ -343,7 +353,12 @@ function normalizedOperation(
   now: number,
 ): RoutineRequestOperation {
   if (validated.action === "create") {
-    return { action: "create", routine: normalizeDefinition(validated.routine, now) };
+    const operation: Extract<RoutineRequestOperation, { action: "create" }> = {
+      action: "create",
+      routine: normalizeDefinition(validated.routine, now),
+    };
+    if (validated.forBot) operation.forBot = validated.forBot;
+    return operation;
   }
   const id = routineId(validated.routineId);
   const current = ownedRoutine(manager, id, botId);
@@ -426,7 +441,9 @@ function cardCopy(
   const actionCopy = ACTION_COPY[operation.action];
   const actionLabel = actionCopy.title;
   const name = redactSecretsInText(definition?.name ?? "routine");
-  const title = `${actionLabel} “${name}”?`;
+  const forBot = operation.action === "create" ? operation.forBot : undefined;
+  const forSuffix = forBot ? ` for @${redactSecretsInText(forBot.name)}` : "";
+  const title = `${actionLabel} “${name}”${forSuffix}?`;
   if (!definition) {
     return {
       title,
@@ -459,10 +476,11 @@ function cardCopy(
   const visibleInstructions = redactSecretsInText(definition.instructions);
   return {
     title,
-    summary: `${actionLabel} “${name}” · ${when} · ${destination} · ${definition.durationMinutes} min${status}`,
+    summary: `${actionLabel} “${name}”${forSuffix} · ${when} · ${destination} · ${definition.durationMinutes} min${status}`,
     detail: [
       `Action: ${actionCopy.detail}`,
       `Name: ${name}`,
+      ...(forBot ? [`For: @${redactSecretsInText(forBot.name)} — each run uses that bot's engine and permissions`] : []),
       `Schedule: ${when}`,
       `Next run: ${nextDescription}`,
       `Runs on: ${destination}`,
@@ -587,6 +605,7 @@ export class RoutineRequestService {
   private readonly timeZone: () => string;
   private readonly cloudReady?: () => Promise<{ ready: boolean; reason?: string }>;
   private readonly canPersist?: RoutineRequestServiceOptions["canPersist"];
+  private readonly validateTarget?: RoutineRequestServiceOptions["validateTarget"];
 
   constructor(options: RoutineRequestServiceOptions) {
     this.store = options.store;
@@ -595,6 +614,7 @@ export class RoutineRequestService {
     this.timeZone = options.timeZone ?? (() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
     this.cloudReady = options.cloudReady;
     this.canPersist = options.canPersist;
+    this.validateTarget = options.validateTarget;
   }
 
   async propose(args: ProposeRoutineRequestArgs): Promise<RoutineProposalResult> {
@@ -606,6 +626,10 @@ export class RoutineRequestService {
       throw new RoutineRequestError(schemaIssue(parsedProposal.error, "Invalid routine proposal"));
     }
     const operation = normalizedOperation(this.routines, botId, parsedProposal.data, at);
+    if (operation.action === "create" && operation.forBot && this.validateTarget) {
+      const refusal = this.validateTarget(botId, operation.forBot);
+      if (refusal) throw new RoutineRequestError(refusal, 403);
+    }
     await this.requireCloudReadiness(operation);
     // The readiness probe is asynchronous. Another request can edit or
     // delete the routine while it is in flight, so re-check the captured
@@ -768,6 +792,10 @@ export class RoutineRequestService {
         return { claimed: true, state: "denied" };
       }
       revalidateOperation(payload.operation, this.routines, payload.botId, this.now());
+      if (payload.operation.action === "create" && payload.operation.forBot && this.validateTarget) {
+        const refusal = this.validateTarget(payload.botId, payload.operation.forBot);
+        if (refusal) throw new RoutineRequestError(refusal, 404);
+      }
       const resultId = this.apply(payload, message.id, fingerprint);
       return this.settleApplied(args.threadId, message.id, card, payload, resultId);
     } catch (error) {
@@ -859,7 +887,7 @@ export class RoutineRequestService {
     const operation = payload.operation;
     switch (operation.action) {
       case "create":
-        return this.routines.create(inputFromDefinition(operation.routine, payload.botId), {
+        return this.routines.create(inputFromDefinition(operation.routine, operation.forBot?.botId ?? payload.botId), {
           requestId: payload.requestId,
           messageId,
           botId: payload.botId,

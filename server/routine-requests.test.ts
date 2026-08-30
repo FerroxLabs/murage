@@ -861,3 +861,90 @@ describe("RoutineRequestService", () => {
     })).rejects.toThrow(/new future time/);
   });
 });
+
+describe("cross-bot routine targeting", () => {
+  function targetedHarness(validateTarget?: (proposerBotId: string, target: { botId: string; name: string }) => string | null) {
+    const clock = { now: Date.parse("2026-08-28T10:00:00Z") };
+    const dir = mkdtempSync(join(tmpdir(), "omb-routine-target-"));
+    tempDirs.push(dir);
+    const routines = new RoutineManager({
+      file: join(dir, "routines.json"),
+      now: () => clock.now,
+      botState: () => "busy",
+      createTask: () => null,
+      startTurn: async () => {},
+    });
+    const store = new MemoryStore();
+    const service = new RoutineRequestService({
+      store,
+      routines,
+      now: () => clock.now,
+      timeZone: () => "Asia/Kolkata",
+      validateTarget,
+    });
+    return { routines, service, store };
+  }
+
+  const forOps = { forBot: { botId: "bot-b", name: "Ops" } };
+
+  it("binds the confirmed routine to the named target bot, not the proposer", async () => {
+    const { routines, service, store } = targetedHarness();
+    const proposed = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: { ...createProposal(), ...forOps },
+    });
+    const card = store.messagesFor("thread-a")[0]?.card;
+    expect(card?.title).toContain("for @Ops");
+    expect(card?.subtitle).toContain("engine and permissions");
+    expect(card?.routineRequest?.operation).toMatchObject({ action: "create", forBot: forOps.forBot });
+
+    const result = service.resolve({
+      botId: "bot-a",
+      threadId: "thread-a",
+      requestId: proposed.requestId,
+      behavior: "allow",
+    });
+    expect(result).toMatchObject({ claimed: true, state: "applied", action: "create" });
+    const created = routines.listRoutines();
+    expect(created).toHaveLength(1);
+    expect(created[0].botId).toBe("bot-b");
+  });
+
+  it("still schedules for the proposer when no target is named", async () => {
+    const { routines, service } = targetedHarness();
+    const proposed = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
+    service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposed.requestId, behavior: "allow" });
+    expect(routines.listRoutines()[0]?.botId).toBe("bot-a");
+  });
+
+  it("refuses at propose time when the target fails authorization", async () => {
+    const { service } = targetedHarness(() => "@Ops belongs to a different section");
+    await expect(service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: { ...createProposal(), ...forOps },
+    })).rejects.toMatchObject({ message: "@Ops belongs to a different section", status: 403 });
+  });
+
+  it("re-checks the target at confirm time — a deleted bot refuses without creating anything", async () => {
+    let gone = false;
+    const { routines, service, store } = targetedHarness(() => (gone ? "@Ops no longer exists, so this routine cannot be scheduled for it" : null));
+    const proposed = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-a",
+      proposal: { ...createProposal(), ...forOps },
+    });
+    gone = true;
+    const result = service.resolve({
+      botId: "bot-a",
+      threadId: "thread-a",
+      requestId: proposed.requestId,
+      behavior: "allow",
+    });
+    expect(result).toMatchObject({ claimed: true, state: "invalid", status: 404 });
+    expect(routines.listRoutines()).toHaveLength(0);
+    // the refusal is written back onto the card so the user sees why
+    expect(store.messagesFor("thread-a")[0]?.card?.held).toMatch(/no longer exists/);
+  });
+});
