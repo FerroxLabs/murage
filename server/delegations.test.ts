@@ -367,6 +367,23 @@ describe("drainDelegations", () => {
     expect(runTargetCalls[0]!.commsDepth).toBe(1);
   });
 
+  it("does not ask twice when this exact fallback was already approved as ask_bot", async () => {
+    store.patchBot(from.id, { approvePeerComms: true });
+    queueDelegation(commsBus, from, {
+      toBotId: target.id,
+      message: "do this",
+      depth: 0,
+      approvalAlreadyGranted: true,
+    }, 1);
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(runTargetCalls[0]).toMatchObject({ toBotId: target.id, commsDepth: 1 });
+    expect(store.messagesFor(from.threadId).some((message) => message.card?.tool === "delegate_bot")).toBe(false);
+  });
+
   it("emits a denial chip and skips runTarget when the user denies", async () => {
     store.patchBot(from.id, { approvePeerComms: true });
     queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
@@ -446,11 +463,20 @@ describe("delegations survive a restart", () => {
   afterEach(() => _resetPending());
 
   it("writes the queue to disk on queue, and clears it on drain and discard", async () => {
-    expect(queueDelegation(buses.commsBus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1)).toMatchObject({ result: "ok" });
+    expect(queueDelegation(buses.commsBus, from, {
+      toBotId: target.id,
+      message: "do this",
+      depth: 0,
+      approvalAlreadyGranted: true,
+    }, 1)).toMatchObject({ result: "ok" });
     expect(existsSync(file())).toBe(true);
     const onDisk = JSON.parse(readFileSync(file(), "utf8")) as Record<string, unknown[]>;
     expect(onDisk[from.threadId]).toHaveLength(1);
-    expect(onDisk[from.threadId][0]).toMatchObject({ toBotId: target.id, message: "do this" });
+    expect(onDisk[from.threadId][0]).toMatchObject({
+      toBotId: target.id,
+      message: "do this",
+      approvalAlreadyGranted: true,
+    });
 
     discardDelegations(buses.commsBus, from.threadId);
     expect(JSON.parse(readFileSync(file(), "utf8"))[from.threadId]).toBeUndefined();

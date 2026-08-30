@@ -10,7 +10,7 @@
 // turned it into `node <script>` on Windows too, so the e2e half now runs
 // everywhere alongside the mention-resolution units.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -461,7 +461,15 @@ describe("comms e2e (fake ACP fleet)", () => {
         const helperReplied = helperBot.messages.some(
           (m: any) => m.role === "bot" && m.kind === "text" && m.text?.includes("hello from fake acp"),
         );
-        if (askerDelegated && note && helperReplied && !helperBot.busy) break;
+        const resultReturned = askerBot.messages.some(
+          (m: any) =>
+            m.role === "bot"
+            && m.kind === "text"
+            && m.from?.botId === helper.id
+            && m.text?.includes("replied to the delegated task")
+            && m.text?.includes("hello from fake acp"),
+        );
+        if (askerDelegated && note && helperReplied && resultReturned && !helperBot.busy) break;
         if (Date.now() > deadline) {
           throw new Error(
             `delegate handoff never settled. asker busy=${askerBot.busy} helper busy=${helperBot.busy}\n` +
@@ -473,10 +481,16 @@ describe("comms e2e (fake ACP fleet)", () => {
         await new Promise((r) => setTimeout(r, 250));
       }
 
-      // A's reply is the queue-ack text the proxy returns, NOT a peer reply
-      const askerFinal = askerBot.messages.findLast((m: any) => m.kind === "text" && m.role === "bot");
-      expect(askerFinal.text).toContain("delegated:");
-      expect(askerFinal.text).not.toContain("hello from fake acp");
+      // A first writes the queue acknowledgement; when B finishes, a
+      // separate attributed result arrives in the same source conversation.
+      const queueAck = askerBot.messages.find(
+        (m: any) => m.kind === "text" && m.role === "bot" && m.text?.includes("delegated:"),
+      );
+      expect(queueAck.text).not.toContain("hello from fake acp");
+      const returnedResult = askerBot.messages.find(
+        (m: any) => m.kind === "text" && m.from?.botId === helper.id && m.text?.includes("replied to the delegated task"),
+      );
+      expect(returnedResult.text).toContain("hello from fake acp");
 
       // A's comm chip links to the channel, attributed to @Helper
       expect(note).toBeTruthy();
@@ -589,15 +603,103 @@ describe("comms e2e (fake ACP fleet)", () => {
         (m: any) => m.role === "user" && m.kind === "text" && m.text?.includes("ping from fake"),
       );
       expect(inbound.text).toContain("[Delegated by @GateAsker");
+      await waitUntil(async () => {
+        askerBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        return askerBot.messages.some(
+          (m: any) =>
+            m.kind === "text"
+            && m.from?.botId === helper.id
+            && m.text?.includes("replied to the delegated task")
+            && m.text?.includes("ping from fake"),
+        );
+      }, 10_000, "queued peer reply never returned to the initiating chat");
     },
     60_000,
   );
 
+  it(
+    "retries a busy fallback after provider reload without asking for approval twice",
+    async () => {
+      rmSync(gateFile, { force: true });
+      for (const existing of (await api("GET", "/api/bots")).body.bots) {
+        await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
+      }
+      const helper = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${helper.id}`, {
+        name: "ReloadHelper",
+        modelSelection: { instanceId: "helperGate", model: "fake-model" },
+      });
+      const asker = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${asker.id}`, {
+        name: "ReloadAsker",
+        modelSelection: { instanceId: "grok", model: "fake-model" },
+        approvePeerComms: true,
+      });
+
+      // Start the ask while B is idle so the normal ask_bot approval card is
+      // the first and only human decision for this exact peer message.
+      expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "ask @ReloadHelper something" })).status).toBe(202);
+      let approvalCard: any;
+      await waitUntil(async () => {
+        const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        approvalCard = current.messages.find(
+          (m: any) => m.kind === "options" && m.card?.tool === "ask_bot" && !m.card?.answered,
+        );
+        return Boolean(approvalCard);
+      }, 20_000, "initial ask_bot approval card never appeared");
+
+      // B becomes busy while the approval is open. After Allow, ask_bot has
+      // to fall back to the durable queue, but that queue inherits Allow.
+      expect((await api("POST", `/api/bots/${helper.id}/messages`, { text: "hold until reload" })).status).toBe(202);
+      await waitUntil(async () => {
+        const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === helper.id);
+        return Boolean(current?.busy);
+      }, 10_000, "helper never became busy behind the approval card");
+      expect((await api("POST", `/api/bots/${asker.id}/respond`, {
+        requestId: approvalCard.card.requestId,
+        behavior: "allow",
+      })).status).toBe(200);
+
+      await waitUntil(async () => {
+        const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        const queued = current.messages.some(
+          (m: any) => m.kind === "text" && m.text?.includes("queued as a delegation"),
+        );
+        const waiting = current.messages.some(
+          (m: any) => m.kind === "activity" && m.tool?.name?.includes("waiting — they're busy"),
+        );
+        return queued && waiting && !current.busy;
+      }, 25_000, "approved ask was not retained as a waiting delegation");
+
+      // Provider reload releases B without turn.completed. The explicit idle
+      // retry must still pick up the waiting handoff on the rebuilt fleet.
+      expect((await api("PUT", "/api/config", { xai: { key: `xai_retry_${Date.now()}` } })).status).toBe(200);
+      writeFileSync(gateFile, "go");
+
+      let finalAsker: any;
+      await waitUntil(async () => {
+        finalAsker = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === asker.id);
+        return finalAsker.messages.some(
+          (m: any) =>
+            m.kind === "text"
+            && m.from?.botId === helper.id
+            && m.text?.includes("replied to the delegated task")
+            && m.text?.includes("ping from fake"),
+        );
+      }, 30_000, "provider reload left the waiting delegation stranded");
+
+      const approvalCards = finalAsker.messages.filter((m: any) => m.kind === "options");
+      expect(approvalCards.filter((m: any) => m.card?.tool === "ask_bot")).toHaveLength(1);
+      expect(approvalCards.some((m: any) => m.card?.tool === "delegate_bot")).toBe(false);
+    },
+    90_000,
+  );
+
   // ── delegation terminal-state mirroring ─────────────────────────────
-  // A delegated turn is fire-and-forget: nobody waits for B, so the ONLY
-  // place a human would ever see how it ended is the A⇄B channel. These
-  // tests pin a successful empty reply plus both non-happy terminal states:
-  // the delegated turn crashed, and the delegated turn never started.
+  // A delegated turn is fire-and-forget. Its result is returned to the
+  // initiating chat and mirrored into the A⇄B channel. These tests pin a
+  // successful empty reply plus both non-happy terminal states: the
+  // delegated turn crashed, and the delegated turn never started.
   it(
     "mirrors a successful delegated turn with no reply as a completed terminal chip",
     async () => {

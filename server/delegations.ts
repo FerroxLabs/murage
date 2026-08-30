@@ -25,6 +25,10 @@ export interface DelegationItem {
   toBotId: string;
   message: string;
   reason?: string;
+  /** The user already approved this exact peer message while it was still
+   * an ask_bot request. If that peer became busy before dispatch, the
+   * fallback handoff must not ask them to approve the same action twice. */
+  approvalAlreadyGranted?: boolean;
   /** The source bot's comms depth (0 for a user-initiated turn). The
    * delegated-to bot runs at `depth + 1`, which equals MAX_COMMS_DEPTH
    * (= 1) for a user turn — so the peer has no agents integration, and
@@ -160,14 +164,16 @@ export function _loadPending(): void {
           typeof item.message !== "string" ||
           !Number.isFinite(item.depth)
         ) return [];
-        return [{
+        const loaded: PendingDelegationItem = {
           id: typeof item.id === "string" && item.id ? item.id : newId(),
           toBotId: item.toBotId,
           message: item.message,
           ...(typeof item.reason === "string" ? { reason: item.reason } : {}),
           depth: Math.max(0, Math.trunc(item.depth!)),
           attempts: Number.isFinite(item.attempts) ? Math.max(0, Math.trunc(item.attempts!)) : 0,
-        }];
+        };
+        if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
+        return [loaded];
       });
       if (items.length) pendingDelegations.set(threadId, items);
     }
@@ -431,7 +437,7 @@ async function processOne(
     });
     return "settled";
   }
-  if (sender.approvePeerComms) {
+  if (sender.approvePeerComms && !item.approvalAlreadyGranted) {
     const verdict = await requestPeerApproval(
       approvalBus,
       sender,
