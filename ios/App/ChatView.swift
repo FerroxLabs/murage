@@ -38,6 +38,11 @@ struct ChatView: View {
     @State private var islandVisible = false
     @State private var facePhase: CGFloat = 0
 
+    @AppStorage(PrefKey.islandIntro) private var islandIntro = IslandIntro.oncePerBot.rawValue
+    @AppStorage(PrefKey.islandSeen) private var islandSeen = ""
+    @AppStorage(PrefKey.activityDetail) private var activityDetail = ActivityDetail.full.rawValue
+    @AppStorage(PrefKey.quickReplies) private var quickReplies = ""
+
     /// The live bubble's scroll target. A constant because there is at most
     /// one per chat and it has no message id to borrow.
     static let liveBubbleId = "companion.live"
@@ -56,8 +61,31 @@ struct ChatView: View {
     /// live record instead of the snapshot that opened this screen.
     private var threadId: String { current.threadId }
 
+    /// A task changes a bot's thread, but it does not make it a new bot.
+    /// Intro history follows the chat itself so switching tasks cannot replay
+    /// a once-per-bot greeting.
+    private var islandIntroID: String {
+        switch current {
+        case let .bot(bot): "bot.\(bot.id)"
+        case let .room(room): "room.\(room.id)"
+        }
+    }
+
     private var messages: [Message] {
         session.state.visibleTranscript(forThread: threadId)
+    }
+
+    /// The transcript as the reader has asked to see it: every chip, folded
+    /// runs, or none at all.
+    private var rows: [TranscriptRow] {
+        transcriptRows(messages, detail: ActivityDetail(rawValue: activityDetail) ?? .full)
+    }
+
+    /// The composer's chip row, as edited in Settings.
+    private var storedChips: [ActionChipItem] {
+        QuickReply.decode(quickReplies).map {
+            ActionChipItem(id: $0.id, title: $0.title, icon: $0.icon, prompt: $0.prompt)
+        }
     }
 
     /// Unread elsewhere — what the back pill's badge counts, like Messages.
@@ -70,7 +98,7 @@ struct ChatView: View {
         // Read the transcript once for this render. Pagination changes the
         // array as a unit; repeatedly reaching through ObservableObject for
         // every row only recomputes the same value.
-        let transcript = messages
+        let transcript = rows
         // A VStack with the composer as a sibling, rather than a scroll view
         // with `.safeAreaInset`. The inset version sized itself to its
         // content, so a short transcript left the composer floating in the
@@ -107,25 +135,30 @@ struct ChatView: View {
                             .padding(.vertical, 8)
                         }
 
-                        ForEach(Array(transcript.enumerated()), id: \.element.id) { index, message in
+                        ForEach(Array(transcript.enumerated()), id: \.element.id) { index, row in
                             VStack(alignment: .leading, spacing: 6) {
                                 // a gap in time is worth marking; a timestamp
                                 // on every message is just noise
                                 if startsANewStretch(at: index, in: transcript) {
-                                    Text(RelativeStamp.separator(message.date))
+                                    Text(RelativeStamp.separator(row.head.date))
                                         .font(.system(size: 12, weight: .medium))
                                         .foregroundStyle(Color.secondary.opacity(0.7))
                                         .frame(maxWidth: .infinity)
                                         .padding(.top, 10)
                                         .padding(.bottom, 4)
                                 }
-                                MessageRow(
-                                    chat: current,
-                                    message: message,
-                                    endsRun: endsRun(at: index, in: transcript)
-                                )
+                                switch row {
+                                case let .message(message):
+                                    MessageRow(
+                                        chat: current,
+                                        message: message,
+                                        endsRun: endsRun(at: index, in: transcript)
+                                    )
+                                case let .activityRun(items):
+                                    ActivityRunChip(items: items)
+                                }
                             }
-                            .id(message.id)
+                            .id(row.id)
                         }
 
                         // The reply as it is typed. It sits after the last
@@ -190,6 +223,18 @@ struct ChatView: View {
                 .task {
                     // grow, hold a beat, shrink — the face rides along
                     guard !reduceMotion else { return }
+                    // The intro is a greeting, and a greeting repeated every
+                    // time you open a chat stops being one.
+                    let intro = IslandIntro(rawValue: islandIntro) ?? .oncePerBot
+                    switch intro {
+                    case .never:
+                        return
+                    case .oncePerBot:
+                        guard !IslandSeen.contains(islandIntroID, in: islandSeen) else { return }
+                        islandSeen = IslandSeen.adding(islandIntroID, to: islandSeen)
+                    case .always:
+                        break
+                    }
                     islandVisible = true
                     try? await Task.sleep(for: .milliseconds(40))
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { islandExpanded = true; facePhase = 1 }
@@ -537,19 +582,19 @@ struct ChatView: View {
 
     /// True when this message opens a fresh stretch of conversation — the
     /// first one, or one that follows a gap of half an hour or more.
-    private func startsANewStretch(at index: Int, in messages: [Message]) -> Bool {
+    private func startsANewStretch(at index: Int, in rows: [TranscriptRow]) -> Bool {
         guard index > 0 else { return true }
-        return messages[index].at - messages[index - 1].at > 30 * 60 * 1000
+        return rows[index].at - rows[index - 1].endAt > 30 * 60 * 1000
     }
 
     /// True when the next message is from someone else (or there is none),
     /// which is where a run of bubbles gets its tail — one per run, like
     /// every messaging app, rather than one per bubble.
-    private func endsRun(at index: Int, in messages: [Message]) -> Bool {
-        guard index + 1 < messages.count else { return true }
-        let this = messages[index], next = messages[index + 1]
+    private func endsRun(at index: Int, in rows: [TranscriptRow]) -> Bool {
+        guard index + 1 < rows.count else { return true }
+        let this = rows[index], next = rows[index + 1]
         if this.role != next.role { return true }
-        if this.from?.name != next.from?.name { return true }
+        if this.senderName != next.senderName { return true }
         // a card or a tool chip between two texts breaks the run visually
         return next.kind != .text
     }
@@ -610,8 +655,8 @@ struct ChatView: View {
                     }
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if draft.isEmpty && !current.busy && !hasPendingApproval {
-                PredictiveActionChipsView(accentColor: MausPalette.color(current.color)) { chip in
+            } else if draft.isEmpty && !current.busy && !hasPendingApproval && !storedChips.isEmpty {
+                PredictiveActionChipsView(chips: storedChips, accentColor: MausPalette.color(current.color)) { chip in
                     submit(chip.prompt)
                 }
                 .transition(.opacity)
@@ -734,6 +779,8 @@ struct MessageRow: View {
     @EnvironmentObject private var session: Session
     @State private var editingText = ""
     @State private var showingEdit = false
+    /// The text being selected, and the sheet's presentation in one value.
+    @State private var selecting: SelectableText?
 
     private static let reactionChoices = ["👍", "❤️", "😂", "🎉", "👀"]
 
@@ -796,6 +843,13 @@ struct MessageRow: View {
                     PlatformBridge.copyToPasteboard(text)
                 }
             }
+            // Copy above takes the whole reply. Selection happens in a sheet
+            // because long-press on the bubble already opens this menu.
+            if let body = message.text, !body.isEmpty {
+                Button("Select Text", systemImage: "selection.pin.in.out") {
+                    selecting = SelectableText(text: body)
+                }
+            }
             if message.role == .user, message.kind == .text, case let .bot(bot) = chat {
                 Divider()
                 Button("Edit and retry", systemImage: "pencil") {
@@ -818,6 +872,7 @@ struct MessageRow: View {
         } message: {
             Text("This creates a new version and continues from there.")
         }
+        .sheet(item: $selecting) { SelectableTextSheet(text: $0.text) }
     }
 
     @ViewBuilder
@@ -853,6 +908,12 @@ struct MessageRow: View {
 private struct ShareFile: Identifiable {
     let url: URL
     var id: String { url.path }
+}
+
+/// A message's text on its way to the selection sheet.
+struct SelectableText: Identifiable {
+    let id = UUID()
+    let text: String
 }
 
 private struct ActivityShareSheet: UIViewControllerRepresentable {
