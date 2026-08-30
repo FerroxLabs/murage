@@ -277,6 +277,8 @@ final class DecodingTests: XCTestCase {
         XCTAssertEqual(card.responseBehavior(for: "Always allow"), "allow")
         XCTAssertEqual(card.responseBehavior(for: "Deny"), "deny")
         XCTAssertEqual(card.responseBehavior(for: " deny "), "deny")
+        XCTAssertEqual(card.responseBehavior(for: "Cancel"), "deny")
+        XCTAssertEqual(card.responseBehavior(for: "Dismiss"), "deny")
         XCTAssertTrue(card.shouldRememberPermission(for: "Always allow"))
         XCTAssertFalse(card.shouldRememberPermission(for: "Allow"))
         XCTAssertFalse(card.shouldRememberPermission(for: " deny "))
@@ -288,6 +290,52 @@ final class DecodingTests: XCTestCase {
         var dismissed = card
         dismissed.dismissed = true
         XCTAssertFalse(dismissed.isPending)
+    }
+
+    func testDecodesAReviewedSkillRequest() throws {
+        let json = """
+        {
+          "id": "skill-card", "role": "bot", "kind": "options", "at": 1786742413762,
+          "card": {
+            "title": "Enable skill?", "subtitle": "Files expenses.",
+            "options": ["Enable", "Deny"], "requestId": "req-skill", "tool": "stage_skill",
+            "skillRequest": {
+              "version": 1, "requestId": "req-skill", "botId": "bot-1", "threadId": "thread-1",
+              "stagedId": "staged-1", "action": "create", "name": "file-expense",
+              "gist": "Files expenses.", "source": "learn:conversation",
+              "preview": "---\\nname: file-expense\\n---\\n", "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", "warnings": [],
+              "createdAt": 1786742413762
+            }
+          }
+        }
+        """
+        let card = try XCTUnwrap(try JSONDecoder().decode(Message.self, from: Data(json.utf8)).card)
+        XCTAssertEqual(card.skillRequest?.name, "file-expense")
+        XCTAssertEqual(card.skillRequest?.source, "learn:conversation")
+        XCTAssertEqual(card.skillRequest?.reviewedSha256, "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
+        XCTAssertEqual(card.responseBehavior(for: "Enable"), "allow")
+        XCTAssertEqual(card.responseBehavior(for: "Deny"), "deny")
+    }
+
+    func testOldSkillCardStillDecodesButCannotBeApproved() throws {
+        let json = """
+        {
+          "id": "legacy-skill", "role": "bot", "kind": "options", "at": 1786742413762,
+          "card": {
+            "title": "Enable skill?", "subtitle": "Old proposal.",
+            "options": ["Enable", "Dismiss"], "requestId": "req-old", "tool": "stage_skill",
+            "skillRequest": {
+              "version": 1, "requestId": "req-old", "botId": "bot-1", "threadId": "thread-1",
+              "stagedId": "staged-old", "action": "create", "name": "old-skill",
+              "gist": "Old proposal.", "warnings": [], "createdAt": 1786742413762
+            }
+          }
+        }
+        """
+        let card = try XCTUnwrap(try JSONDecoder().decode(Message.self, from: Data(json.utf8)).card)
+        XCTAssertEqual(card.skillRequest?.name, "old-skill")
+        XCTAssertNil(card.skillRequest?.reviewedSha256)
+        XCTAssertEqual(card.responseBehavior(for: "Dismiss"), "deny")
     }
 
     func testAQuestionSendsItsChoiceAsAnAnswer() throws {

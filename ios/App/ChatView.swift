@@ -1124,6 +1124,42 @@ struct CardView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                if let skill = card.skillRequest {
+                    if let preview = skill.preview, let sha256 = skill.reviewedSha256 {
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack {
+                                Text("Review the complete SKILL.md")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Spacer()
+                                Text("sha256 \(String(sha256.prefix(8)))")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(Color.secondary)
+                            }
+                            Text("Source: \(skill.source ?? "Unknown")")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.secondary)
+                                .textSelection(.enabled)
+                            ScrollView(.vertical) {
+                                Text(preview)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(Color.primary)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 220)
+                            .padding(10)
+                            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    } else {
+                        Label(
+                            "This proposal was created by an older build and cannot be safely enabled. Deny it and ask the bot to create it again.",
+                            systemImage: "exclamationmark.shield"
+                        )
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                    }
+                }
+
                 if let held = card.held {
                     Label(held, systemImage: "exclamationmark.shield")
                         .font(.system(size: 13))
@@ -1151,7 +1187,11 @@ struct CardView: View {
                                     )
                             }
                             .buttonStyle(.plain)
-                            .disabled(answering)
+                            .disabled(
+                                answering ||
+                                    (card.skillRequest != nil && !Self.isRefusal(option) &&
+                                        card.skillRequest?.reviewedSha256 == nil)
+                            )
                         }
                     }
                     .padding(.top, 2)

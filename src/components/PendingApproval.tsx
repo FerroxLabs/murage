@@ -10,6 +10,8 @@
 import { memo } from "react";
 import { useStore, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { SkillRequestPreview } from "@/components/SkillRequestPreview";
+import { reviewedSkillSha256 } from "../../shared/skill-request";
 
 interface ApprovalLabels {
   [tool: string]: string;
@@ -31,6 +33,10 @@ export function isRoutineApproval(pending: Pending): boolean {
   return Boolean(pending.message.card?.routineRequest);
 }
 
+export function isSkillApproval(pending: Pending): boolean {
+  return Boolean(pending.message.card?.skillRequest);
+}
+
 /** Open approvals on a thread, oldest first — answered/dismissed drop out. */
 export function pendingApprovals(messages: Message[]): Pending[] {
   return messages
@@ -50,6 +56,11 @@ export function pendingApprovals(messages: Message[]): Pending[] {
  * let the user review those details on screen instead of reading them all. */
 export function spokenApprovalPrompt(pending: Pending, requester: string): string {
   const isRoutineRequest = isRoutineApproval(pending);
+  const isSkillRequest = isSkillApproval(pending);
+  if (isSkillRequest) {
+    const title = pending.message.card?.title.trim() || "Enable this skill?";
+    return `${requester} asks: ${title}${/[.!?]$/.test(title) ? "" : "."} Review the skill on screen. Should I enable it?`;
+  }
   if (!isRoutineRequest) {
     return `${requester} wants to ${pending.tool}. ${pending.detail}. Should I allow it?`;
   }
@@ -58,6 +69,9 @@ export function spokenApprovalPrompt(pending: Pending, requester: string): strin
 }
 
 function label(pending: Pending): string {
+  if (isSkillApproval(pending)) {
+    return "Enable this learned skill";
+  }
   if (isRoutineApproval(pending)) {
     return pending.message.card?.routineRequest?.operation.action === "create"
       ? "Confirm this routine"
@@ -86,7 +100,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
   return (
     <div
       role="region"
-      aria-label={isRoutineApproval(pending) ? "Pending routine confirmation" : "Pending approval"}
+      aria-label={isSkillApproval(pending) ? "Pending skill confirmation" : isRoutineApproval(pending) ? "Pending routine confirmation" : "Pending approval"}
       className="rounded-t-2xl border-b border-hairline/50 bg-control/40 px-4 py-3"
     >
       <div className="flex flex-wrap items-center gap-2" aria-live="polite">
@@ -98,7 +112,9 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
         )}
         <span className="text-[13px] text-ink">{label(pending)}</span>
         <span className="font-mono text-[11px] text-ink-secondary">
-          {isRoutineApproval(pending)
+          {isSkillApproval(pending)
+            ? "stage_skill"
+            : isRoutineApproval(pending)
             ? pending.message.card?.routineRequest?.operation.action === "create"
               ? "schedule_routine"
               : "manage_routine"
@@ -108,11 +124,14 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
       {/* never truncated — long commands wrap and scroll */}
       <pre
         tabIndex={0}
-        aria-label={isRoutineApproval(pending) ? "Routine details to review" : "Approval details to review"}
+        aria-label={isSkillApproval(pending) ? "Skill details to review" : isRoutineApproval(pending) ? "Routine details to review" : "Approval details to review"}
         className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-ink"
       >
         {pending.detail}
       </pre>
+      {pending.message.card?.skillRequest && (
+        <SkillRequestPreview request={pending.message.card.skillRequest} />
+      )}
       {pending.held && <div className="mt-2 text-[12px] text-warning">{pending.held}</div>}
     </div>
   );
@@ -132,6 +151,11 @@ export function PendingApprovalActions({
 }) {
   const { dispatch } = useStore();
   const isRoutineRequest = isRoutineApproval(pending);
+  const isSkillRequest = isSkillApproval(pending);
+  const durableRequest = isRoutineRequest || isSkillRequest;
+  const reviewedSha256 = pending.message.card?.skillRequest
+    ? reviewedSkillSha256(pending.message.card.skillRequest)
+    : undefined;
   const decide = (behavior: "allow" | "deny", always = false) =>
     dispatch({
       type: "decideRequest",
@@ -139,13 +163,14 @@ export function PendingApprovalActions({
       requestId: pending.requestId,
       behavior,
       message: behavior === "deny" ? "Denied by the user." : undefined,
+      reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
       alwaysAllow: always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
     });
 
   const base = "rounded-full px-3.5 py-1.5 text-[13.5px] transition-colors";
   return (
     <div className="flex flex-wrap items-center justify-end gap-2 px-2 py-2">
-      {!isRoutineRequest && (
+      {!durableRequest && (
         <button onClick={onCancelTurn} className={cn(base, "text-ink-secondary hover:bg-control hover:text-ink")}>
           Cancel turn
         </button>
@@ -156,7 +181,7 @@ export function PendingApprovalActions({
       >
         {isRoutineRequest ? "Cancel" : "Deny"}
       </button>
-      {!isRoutineRequest && bot && pending.allowKey && (
+      {!durableRequest && bot && pending.allowKey && (
         <button
           onClick={() => decide("allow", true)}
           title={`Stop asking ${bot.name} about ${pending.allowKey}`}
@@ -167,9 +192,13 @@ export function PendingApprovalActions({
       )}
       <button
         onClick={() => decide("allow")}
-        className={cn(base, "bg-accent font-medium text-white hover:brightness-110")}
+        disabled={isSkillRequest && !reviewedSha256}
+        className={cn(
+          base,
+          "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40",
+        )}
       >
-        {isRoutineRequest ? "Confirm" : "Allow once"}
+        {isSkillRequest ? "Enable" : isRoutineRequest ? "Confirm" : "Allow once"}
       </button>
     </div>
   );

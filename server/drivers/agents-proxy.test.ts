@@ -41,6 +41,13 @@ let routinesResponse: unknown = {
   ],
 };
 let lastRoutineRequestBody: any = null;
+let lastSkillQuery = "";
+let lastSkillStageBody: any = null;
+let skillsResponse: unknown = {
+  skills: [{ name: "file-expense", description: "UNREVIEWED IMPORT INSTRUCTIONS", enabled: false }],
+  staged: [{ name: "pending-skill", action: "create", gist: "UNREVIEWED GIST", source: "UNREVIEWED SOURCE" }],
+};
+let skillStageResponse: unknown = { name: "file-expense", action: "create", gist: "Files an expense.", warnings: [] };
 
 let child: ChildProcess;
 const pending = new Map<number, (msg: any) => void>();
@@ -134,6 +141,21 @@ beforeAll(async () => {
       });
       return;
     }
+    if (req.method === "GET" && req.url?.startsWith("/api/internal/skills?")) {
+      lastSkillQuery = req.url;
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify(skillsResponse));
+    }
+    if (req.method === "POST" && req.url === "/api/internal/skills/stage") {
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        lastSkillStageBody = JSON.parse(data);
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(JSON.stringify(skillStageResponse));
+      });
+      return;
+    }
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "unknown" }));
   });
@@ -148,6 +170,7 @@ beforeAll(async () => {
       OMB_THREAD_ID: "thread-asker-routine",
       OMB_COMMS_TOKEN: TOKEN,
       OMB_TURN_DEPTH: "0",
+      OMB_SKILL_AUTHORING_ENABLED: "1",
     },
     stdio: ["pipe", "pipe", "inherit"],
   });
@@ -172,7 +195,7 @@ afterAll(async () => {
 });
 
 describe("agents-proxy MCP surface", () => {
-  it("answers the MCP handshake and lists the coordination tools", async () => {
+  it("answers the MCP handshake and lists the agents tools", async () => {
     const init = await rpc("initialize", { protocolVersion: "2024-11-05" });
     expect(init.result.serverInfo.name).toContain("agents");
     const list = await rpc("tools/list");
@@ -187,6 +210,8 @@ describe("agents-proxy MCP surface", () => {
       "list_routines",
       "propose_routine",
       "propose_routine_action",
+      "skills_list",
+      "skill_manage",
     ]);
     const ask = list.result.tools.find((tool: { name: string }) => tool.name === "ask_bot");
     const delegate = list.result.tools.find((tool: { name: string }) => tool.name === "delegate_bot");
@@ -597,5 +622,33 @@ describe("agents-proxy MCP surface", () => {
   it("requires bot_id and message", async () => {
     const res = await callTool("ask_bot", { bot_id: "", message: "" });
     expect(res.result.isError).toBe(true);
+  });
+
+  it("lists, views, and stages skills without enabling them", async () => {
+    const list = await rpc("tools/list");
+    const manage = list.result.tools.find((t: { name: string }) => t.name === "skill_manage");
+    expect(JSON.stringify(manage.inputSchema)).not.toMatch(/"(oneOf|anyOf|allOf|const|format)":/);
+    expect(manage.inputSchema.required).toEqual(["action", "skill_md", "source"]);
+
+    const listed = await callTool("skills_list", {});
+    expect(listed.result.content[0].text).toContain("file-expense");
+    expect(listed.result.content[0].text).toContain("pending-skill");
+    expect(listed.result.content[0].text).not.toContain("UNREVIEWED");
+    expect(lastSkillQuery).toContain("fromBotId=bot-asker");
+
+    const staged = await callTool("skill_manage", {
+      action: "create",
+      skill_md: "---\nname: file-expense\ndescription: Files an expense in the company portal.\n---\n\n# File expense\n",
+      gist: "Files an expense",
+      source: "conversation",
+    });
+    expect(lastSkillStageBody).toMatchObject({
+      fromBotId: "bot-asker",
+      fromThreadId: "thread-asker-routine",
+      action: "create",
+      source: "conversation",
+    });
+    expect(staged.result.content[0].text).toContain("staged and inactive");
+    expect(staged.result.content[0].text).not.toContain("active until");
   });
 });

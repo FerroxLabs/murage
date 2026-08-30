@@ -4,6 +4,7 @@
 // suite is deterministic with or without agent CLIs installed — and pins
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer, request, type Server } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -3587,6 +3588,11 @@ describe("harness HTTP API", () => {
       const dump = JSON.parse(readFileSync(fakeClaudeDump, "utf8"));
       const token = dump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN;
       expect(token).toMatch(/^[a-f0-9]{48}$/);
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots")).body;
+        return state.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.busy;
+      }, { timeout: 5_000 }).toBe(false);
       const internalHeaders = {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
@@ -3915,6 +3921,136 @@ describe("harness HTTP API", () => {
       if (legacyRoutineId) await api("DELETE", `/api/routines/${legacyRoutineId}`);
       if (orphanRoutineId) await api("DELETE", `/api/routines/${orphanRoutineId}`);
       if (routineId) await api("DELETE", `/api/routines/${routineId}`);
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("only enables the exact learned-skill proposal a current client reviewed", async () => {
+    const bot = (await api("POST", "/api/bots", {})).body.bot;
+    try {
+      expect((await api("PATCH", "/api/config", { features: { skillRecorder: true } })).status).toBe(200);
+      expect((await api("PATCH", `/api/bots/${bot.id}`, {
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      })).status).toBe(200);
+
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "prepare a skill" })).status).toBe(202);
+      await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
+      const dump = JSON.parse(readFileSync(fakeClaudeDump, "utf8"));
+      const token = dump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN;
+      expect(token).toMatch(/^[a-f0-9]{48}$/);
+      const internalHeaders = {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      };
+
+      const stage = async (name: string, extraInstructions = "") => {
+        const response = await fetch(`${BASE}/api/internal/skills/stage`, {
+          method: "POST",
+          headers: internalHeaders,
+          body: JSON.stringify({
+            fromBotId: bot.id,
+            fromThreadId: bot.threadId,
+            action: "create",
+            source: "conversation",
+            gist: `Use ${name} safely.`,
+            skill_md: `---\nname: ${name}\ndescription: Use ${name} safely.\n---\n\n# ${name}\n\nDo the reviewed thing.\n${extraInstructions}`,
+          }),
+        });
+        expect(response.status).toBe(201);
+        const state = (await api("GET", "/api/bots")).body;
+        const card = state.bots
+          .find((candidate: { id: string }) => candidate.id === bot.id)
+          ?.messages.find((message: { card?: { skillRequest?: { name?: string } } }) =>
+            message.card?.skillRequest?.name === name,
+          )?.card;
+        expect(card?.options).toEqual(["Enable", "Deny"]);
+        expect(card?.skillRequest?.preview).toContain(`# ${name}`);
+        expect(card?.skillRequest?.sha256).toMatch(/^[a-f0-9]{64}$/);
+        expect(createHash("sha256").update(card.skillRequest.preview).digest("hex"))
+          .toBe(card.skillRequest.sha256);
+        return card as { requestId: string; skillRequest: { preview: string; sha256: string } };
+      };
+
+      const stagedSecret = `Bearer ${"a".repeat(24)}`;
+      const first = await stage("reviewed-skill-one", `Use ${stagedSecret} when calling the API.\n`);
+      expect(first.skillRequest.preview).not.toContain(stagedSecret);
+      expect(first.skillRequest.preview).toContain("redacted");
+      const stagedMessage = (await api("GET", "/api/bots")).body.bots
+        .find((candidate: { id: string }) => candidate.id === bot.id)
+        ?.messages.find((message: { card?: { requestId?: string } }) => message.card?.requestId === first.requestId);
+      expect((await api("PATCH", `/api/bots/${bot.id}/cards/${stagedMessage.id}`, {
+        answered: "allow",
+      })).status).toBe(409);
+      const missingHash = await api("POST", `/api/bots/${bot.id}/respond`, {
+        requestId: first.requestId,
+        behavior: "allow",
+      });
+      expect(missingHash.status).toBe(409);
+      expect(missingHash.body.error).toMatch(/reviewedSha256/);
+
+      const wrongHash = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+        requestId: first.requestId,
+        behavior: "allow",
+        reviewedSha256: "0".repeat(64),
+      });
+      expect(wrongHash.status).toBe(409);
+      expect(wrongHash.body.error).toMatch(/reviewedSha256/);
+
+      const approvedByBotRoute = await api("POST", `/api/bots/${bot.id}/respond`, {
+        requestId: first.requestId,
+        behavior: "allow",
+        reviewedSha256: first.skillRequest.sha256,
+      });
+      expect(approvedByBotRoute).toMatchObject({ status: 200, body: { outcome: "allowed-once" } });
+
+      const second = await stage("reviewed-skill-two");
+      const approvedByThreadRoute = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+        requestId: second.requestId,
+        behavior: "allow",
+        reviewedSha256: second.skillRequest.sha256,
+      });
+      expect(approvedByThreadRoute).toMatchObject({ status: 200, body: { outcome: "allowed-once" } });
+
+      const denied = await stage("reviewed-skill-denied");
+      const deniedWithoutHash = await api("POST", `/api/threads/${bot.threadId}/respond`, {
+        requestId: denied.requestId,
+        behavior: "deny",
+      });
+      expect(deniedWithoutHash).toMatchObject({ status: 200, body: { outcome: "rejected" } });
+
+      // Deleting the only transcript that owns a pending card must also drop
+      // its bot-scoped stage; otherwise the invisible proposal reserves its
+      // name until the 30-day expiry.
+      await stage("deleted-task-skill");
+      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+      await expect.poll(async () => {
+        const state = (await api("GET", "/api/bots")).body;
+        return state.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.busy;
+      }, { timeout: 5_000 }).toBe(false);
+      const nextTask = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "next task" });
+      expect(nextTask).toMatchObject({ status: 201 });
+      const nextThreadId = nextTask.body.task.threadId as string;
+      expect((await api("DELETE", `/api/bots/${bot.id}/tasks/${bot.threadId}`)).status).toBe(200);
+
+      const listing = await fetch(
+        `${BASE}/api/internal/skills?fromBotId=${encodeURIComponent(bot.id)}&fromThreadId=${encodeURIComponent(nextThreadId)}`,
+        { headers: internalHeaders },
+      );
+      expect(listing.status).toBe(200);
+      const inventory = await listing.json() as {
+        skills: Array<{ name: string; enabled: boolean }>;
+        staged: Array<{ name: string }>;
+      };
+      expect(inventory.skills).toMatchObject([
+        { name: "reviewed-skill-one", enabled: true },
+        { name: "reviewed-skill-two", enabled: true },
+      ]);
+      expect(inventory.skills.some((skill) => skill.name === "reviewed-skill-denied")).toBe(false);
+      expect(inventory.staged).toEqual([]);
+    } finally {
+      await api("PATCH", "/api/config", { features: { skillRecorder: false } });
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       await api("DELETE", `/api/bots/${bot.id}`);
     }

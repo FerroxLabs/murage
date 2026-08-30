@@ -790,13 +790,20 @@ final class Session: ObservableObject {
             threadId: chat.threadId,
             requestId: requestId,
             choice: choice,
-            isPermission: card.isPermission
+            isPermission: card.isPermission,
+            reviewedSha256: card.skillRequest?.reviewedSha256
         )
     }
 
     /// The same answer, from something that only has the ids — the Live
     /// Activity's buttons.
-    func answer(threadId: String, requestId: String, choice: String, isPermission: Bool) async {
+    func answer(
+        threadId: String,
+        requestId: String,
+        choice: String,
+        isPermission: Bool,
+        reviewedSha256: String? = nil
+    ) async {
         await perform {
             // Permission cards answer allow/deny; a question answers with
             // the chosen text. The harness tells them apart by `behavior`.
@@ -805,7 +812,8 @@ final class Session: ObservableObject {
                 try await $0.respond(
                     threadId: threadId,
                     requestId: requestId,
-                    behavior: behavior
+                    behavior: behavior,
+                    reviewedSha256: behavior == "allow" ? reviewedSha256 : nil
                 )
             } else {
                 try await $0.respond(threadId: threadId, requestId: requestId, behavior: "answer", message: choice)

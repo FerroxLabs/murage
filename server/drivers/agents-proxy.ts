@@ -1,8 +1,8 @@
 // Agent-to-agent comms MCP proxy — spawned as an MCP server inside a bot's
-// agent process (via the "agents" integration). Exposes eight tools that
-// let one bot talk to another, routed back through the harness so the
-// harness stays the single owner of turns, permissions, and recursion
-// limits. The coordination tools are:
+// agent process (via the "agents" integration). Exposes peer, routine, and
+// skill tools routed back through the harness so the harness stays the
+// single owner of turns, permissions, and recursion limits. The coordination
+// tools are:
 //
 //   list_bots()                          → the other bots in this section + their status
 //   ask_bot(bot_id, msg)                 → send msg to that bot, wait, return its reply
@@ -33,6 +33,7 @@ const BOT_ID = process.env.OMB_BOT_ID ?? "";
 const THREAD_ID = process.env.OMB_THREAD_ID ?? "";
 const TOKEN = process.env.OMB_COMMS_TOKEN ?? "";
 const DEPTH = Number(process.env.OMB_TURN_DEPTH ?? "0") || 0;
+const SKILL_AUTHORING_ENABLED = process.env.OMB_SKILL_AUTHORING_ENABLED === "1";
 const MAX_CREATED_PER_TURN = 4;
 let createdThisTurn = 0;
 const delegationTaskIdsThisTurn = new Set<string>();
@@ -323,7 +324,48 @@ const TOOLS = [
       required: ["routine_id", "action"],
     },
   },
+  {
+    name: "skills_list",
+    description:
+      "List this bot's imported skills (enabled and disabled) and any staged skill writes waiting for the user to confirm. Use this before skill_manage to avoid duplicate names. Listing does not enable anything.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+  },
+  {
+    name: "skill_manage",
+    description:
+      "Stage a new reusable SKILL.md for the user to review and enable. This does NOT enable the skill. Learned-skill updates are intentionally out of scope for this first version. After calling it, end the turn and do not claim the skill is active until the user confirms the in-app card.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["create"],
+          description: "Use create to stage a new skill with a unique name.",
+        },
+        skill_md: {
+          type: "string",
+          description:
+            "The full SKILL.md including YAML frontmatter. Example: ---\\nname: file-expense\\ndescription: Files an expense in the company portal.\\n---\\n\\n# File expense\\n",
+        },
+        gist: {
+          type: "string",
+          description: "Optional one-line summary shown on the user's confirmation card.",
+        },
+        source: {
+          type: "string",
+          description: "Required provenance label: the URL, folder, or 'conversation' used to author the skill.",
+        },
+      },
+      required: ["action", "skill_md", "source"],
+    },
+  },
 ];
+
+const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_manage"]);
+const AVAILABLE_TOOLS = SKILL_AUTHORING_ENABLED
+  ? TOOLS
+  : TOOLS.filter((tool) => !SKILL_TOOL_NAMES.has(tool.name));
 
 type Json = Record<string, unknown>;
 type RoutineAction = "update" | "pause" | "resume" | "run_now" | "delete";
@@ -584,6 +626,63 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     });
     return confirmationResult(r, `${action.replace("_", " ")} on routine ${routineId}`);
   }
+  if (name === "skills_list") {
+    const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });
+    const r = await api(`/api/internal/skills?${query.toString()}`);
+    const skills = Array.isArray(r.skills) ? r.skills : [];
+    const staged = Array.isArray(r.staged) ? r.staged : [];
+    if (!skills.length && !staged.length) {
+      return { text: "This bot has no imported skills and nothing staged. Use skill_manage action=\"create\" to stage one for the user to confirm." };
+    }
+    const live = skills.length
+      ? skills.map((skill) => {
+        const row = skill as Json;
+        // Disabled imports have not been reviewed yet. Never return their
+        // description to the authoring model: a hostile description is still
+        // prompt content. Names and lifecycle status are sufficient for
+        // duplicate detection.
+        return `- ${row.name}${row.enabled ? " (enabled)" : " (disabled)"}`;
+      }).join("\n")
+      : "(none)";
+    const pending = staged.length
+      ? staged.map((entry) => {
+        const row = entry as Json;
+        // A pending proposal is also unreviewed. Keep its gist and source out
+        // of provider-visible tool output until the person approves it.
+        return `- ${row.action} ${row.name}`;
+      }).join("\n")
+      : "(none)";
+    return { text: `Imported skills:\n${live}\n\nStaged (waiting for the user to confirm):\n${pending}` };
+  }
+  if (name === "skill_manage") {
+    if (args.action !== "create") {
+      return { text: 'skill_manage currently supports action "create" only.', isError: true };
+    }
+    const skillMd = typeof args.skill_md === "string" ? args.skill_md : "";
+    if (!skillMd.trim()) {
+      return { text: 'skill_manage needs skill_md: the full SKILL.md including YAML frontmatter.', isError: true };
+    }
+    const source = typeof args.source === "string" ? args.source.trim() : "";
+    if (!source) {
+      return { text: 'skill_manage needs source: the URL, folder, or "conversation" used to author the skill.', isError: true };
+    }
+    const r = await api("/api/internal/skills/stage", {
+      method: "POST",
+      body: JSON.stringify({
+        fromBotId: BOT_ID,
+        fromThreadId: THREAD_ID,
+        action: "create",
+        skill_md: skillMd,
+        gist: typeof args.gist === "string" ? args.gist : undefined,
+        source,
+      }),
+    });
+    const nameLabel = typeof r.name === "string" ? r.name : "the skill";
+    const warningText = Array.isArray(r.warnings) && r.warnings.length ? `\n\nScan warnings (shown to the user):\n- ${r.warnings.join("\n- ")}` : "";
+    return {
+      text: `A confirmation card is now visible to the user for new skill “${nameLabel}”.${warningText}\n\nThe skill is staged and inactive. End this turn and wait for the user to review, enable, or dismiss the card.`,
+    };
+  }
   return { text: `Unknown tool: ${name}`, isError: true };
 }
 
@@ -607,11 +706,11 @@ async function handle(msg: Json) {
       ok(id, {});
       return;
     case "tools/list":
-      ok(id, { tools: TOOLS });
+      ok(id, { tools: AVAILABLE_TOOLS });
       return;
     case "tools/call": {
       const name = params.name as string;
-      if (!TOOLS.some((t) => t.name === name)) return rpcErr(id, -32602, `Unknown tool: ${name}`);
+      if (!AVAILABLE_TOOLS.some((t) => t.name === name)) return rpcErr(id, -32602, `Unknown tool: ${name}`);
       try {
         const { text, isError } = await callTool(name, (params.arguments ?? {}) as Json);
         textResult(id, text, isError);

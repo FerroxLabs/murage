@@ -26,7 +26,7 @@ import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
 import { MausAvatar } from "./Avatar";
-import { isRoutineApproval, pendingApprovals, spokenApprovalPrompt } from "./PendingApproval";
+import { isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt } from "./PendingApproval";
 import { cn } from "@/lib/cn";
 import { track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -227,7 +227,12 @@ function Call({ bot }: { bot: Bot }) {
 
   // the approval we last asked about aloud, so a card that stays open
   // while the user thinks is not re-read every render
-  const askedApproval = useRef<{ requestId: string; routine: boolean; submitted: boolean } | null>(null);
+  const askedApproval = useRef<{
+    requestId: string;
+    routine: boolean;
+    skill: boolean;
+    submitted: boolean;
+  } | null>(null);
   const askedQuestion = useRef<{ requestId: string; messageId: string } | null>(null);
   const phaseRef = useRef<Phase>(initialPhase);
   const alive = useRef(true);
@@ -322,6 +327,11 @@ function Call({ bot }: { bot: Bot }) {
         }
         if (YES.test(said) || NO.test(said)) {
           const allow = YES.test(said);
+          if (allow && open.skill) {
+            setHeard("");
+            void sayThenListen("Open this chat to review the complete skill before enabling it. You can say no now to deny it.");
+            return;
+          }
           // Keep this request claimed until the server's durable card patch
           // arrives. Clearing it here lets a render in that network gap read
           // and submit the same approval again.
@@ -428,10 +438,13 @@ function Call({ bot }: { bot: Bot }) {
       askedApproval.current = {
         requestId: approval.requestId,
         routine: isRoutineApproval(approval),
+        skill: isSkillApproval(approval),
         submitted: false,
       };
       spokenIds.current.add(approval.message.id);
-      void sayThenListen(spokenApprovalPrompt(approval, bot.name));
+      void sayThenListen(isSkillApproval(approval)
+        ? `${bot.name} wants to enable a learned skill. Open this chat to review the complete skill before enabling it. You can say no to deny it.`
+        : spokenApprovalPrompt(approval, bot.name));
       return;
     }
     if (

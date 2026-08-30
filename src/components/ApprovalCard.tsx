@@ -7,6 +7,7 @@
 import { Check, ShieldCheck, X } from "lucide-react";
 import { type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 
 interface ToolLabels {
   [tool: string]: string;
@@ -19,6 +20,10 @@ const ROUTINE_SETTLED_LABEL = {
   resume: "Routine resumed",
   run_now: "Routine run queued",
   delete: "Routine deleted",
+} as const;
+
+const SKILL_SETTLED_LABEL = {
+  create: "Skill enabled",
 } as const;
 
 /** The tool's own name is noise to a human: mcp__ogb__computer_batch is
@@ -35,6 +40,7 @@ function toolLabel(tool?: string): string {
     WebSearch: "search the web",
     schedule_routine: "schedule a routine",
     manage_routine: "change a routine",
+    stage_skill: "enable a learned skill",
   };
   return nice[tool] ?? bare;
 }
@@ -51,10 +57,15 @@ export function ApprovalCard({
   if (!card) return null;
   const settled = card.answered;
   const isRoutineRequest = Boolean(card.routineRequest);
+  const isSkillRequest = Boolean(card.skillRequest);
   const routineAction = card.routineRequest?.operation.action;
+  const skillAction = card.skillRequest?.action;
   const routineSettledLabel = routineAction ? ROUTINE_SETTLED_LABEL[routineAction] : undefined;
+  const skillSettledLabel = skillAction ? SKILL_SETTLED_LABEL[skillAction] : undefined;
   const displayTool = isRoutineRequest
     ? routineAction === "create" ? "schedule_routine" : "manage_routine"
+    : isSkillRequest
+      ? "stage_skill"
     : card.tool;
 
   return (
@@ -75,11 +86,13 @@ export function ApprovalCard({
       {/* what, exactly */}
       <pre
         tabIndex={0}
-        aria-label={isRoutineRequest ? "Routine details" : "Approval details"}
+        aria-label={isRoutineRequest ? "Routine details" : isSkillRequest ? "Skill details" : "Approval details"}
         className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink"
       >
         {card.subtitle}
       </pre>
+
+      {card.skillRequest && <SkillRequestPreview request={card.skillRequest} />}
 
       {card.held && (
         <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
@@ -93,16 +106,16 @@ export function ApprovalCard({
         {settled === "allow" ? (
           <>
             <Check size={14} className="text-success" />
-            {routineSettledLabel ?? (isRoutineRequest ? "Routine confirmed" : "Allowed")}
+            {skillSettledLabel ?? routineSettledLabel ?? (isRoutineRequest ? "Routine confirmed" : isSkillRequest ? "Skill confirmed" : "Allowed")}
           </>
         ) : settled ? (
           <>
-            <X size={14} /> {isRoutineRequest ? "Cancelled" : "Denied"}
+            <X size={14} /> {isRoutineRequest || isSkillRequest ? "Cancelled" : "Denied"}
           </>
         ) : (
           <>
             <ShieldCheck size={14} className="text-accent" />
-            {isRoutineRequest ? "Waiting for your confirmation below" : "Waiting for your answer below"}
+            {isRoutineRequest || isSkillRequest ? "Waiting for your confirmation below" : "Waiting for your answer below"}
           </>
         )}
       </div>

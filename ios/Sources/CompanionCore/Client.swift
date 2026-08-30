@@ -837,9 +837,16 @@ public struct CompanionClient: Sendable {
     /// Addressed by thread rather than by bot on purpose: a request raised
     /// inside a room belongs to whichever member is speaking, and the
     /// harness already knows which that is.
-    public func respond(threadId: String, requestId: String, behavior: String, message: String? = nil) async throws {
+    public func respond(
+        threadId: String,
+        requestId: String,
+        behavior: String,
+        message: String? = nil,
+        reviewedSha256: String? = nil
+    ) async throws {
         var body: [String: Any] = ["requestId": requestId, "behavior": behavior]
         if let message { body["message"] = message }
+        if let reviewedSha256 { body["reviewedSha256"] = reviewedSha256 }
         try await send(try makeRequest("POST", "/api/threads/\(threadId)/respond", body: body))
     }
 
