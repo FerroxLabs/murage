@@ -1,8 +1,7 @@
 // Agent-to-agent comms MCP proxy — spawned as an MCP server inside a bot's
-// agent process (via the "agents" integration). Exposes eight tools that
-// let one bot talk to another, routed back through the harness so the
-// harness stays the single owner of turns, permissions, and recursion
-// limits:
+// agent process (via the "agents" integration). Exposes peer, routine, and
+// skill tools routed back through the harness so the harness stays the
+// single owner of turns, permissions, and recursion limits:
 //
 //   list_bots()                          → the other bots in this section + their status
 //   ask_bot(bot_id, msg)                 → send msg to that bot, wait, return its reply
@@ -315,6 +314,51 @@ const TOOLS = [
       required: ["routine_id", "action"],
     },
   },
+  {
+    name: "skills_list",
+    description:
+      "List this bot's imported skills (enabled and disabled) and any staged skill writes waiting for the user to confirm. Use this before skill_view or skill_manage. Listing does not enable anything.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+  },
+  {
+    name: "skill_view",
+    description:
+      "Read one imported skill's SKILL.md. Use this before updating an existing skill. Name is the hyphenated id from skills_list, for example file-expense.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string", description: "Skill name from skills_list, lowercase hyphenated." },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "skill_manage",
+    description:
+      "Stage a reusable SKILL.md for the user to confirm. This does NOT enable the skill. Use action create for a new skill and update to replace an existing one. After calling it, end the turn and do not claim the skill is live until the user confirms the in-app card.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["create", "update"],
+          description: "create = stage a new skill; update = stage a replacement for an imported skill of the same name.",
+        },
+        skill_md: {
+          type: "string",
+          description:
+            "The full SKILL.md including YAML frontmatter. Example: ---\\nname: file-expense\\ndescription: Files an expense in the company portal.\\n---\\n\\n# File expense\\n",
+        },
+        gist: {
+          type: "string",
+          description: "Optional one-line summary shown on the user's confirmation card.",
+        },
+      },
+      required: ["action", "skill_md"],
+    },
+  },
 ];
 
 type Json = Record<string, unknown>;
@@ -541,6 +585,62 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       body: JSON.stringify(body),
     });
     return confirmationResult(r, `${action.replace("_", " ")} on routine ${routineId}`);
+  }
+  if (name === "skills_list") {
+    const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });
+    const r = await api(`/api/internal/skills?${query.toString()}`);
+    const skills = Array.isArray(r.skills) ? r.skills : [];
+    const staged = Array.isArray(r.staged) ? r.staged : [];
+    if (!skills.length && !staged.length) {
+      return { text: "This bot has no imported skills and nothing staged. Use skill_manage action=\"create\" to stage one for the user to confirm." };
+    }
+    const live = skills.length
+      ? skills.map((skill) => {
+        const row = skill as Json;
+        return `- ${row.name}${row.enabled ? "" : " (disabled)"}: ${row.description ?? ""}`;
+      }).join("\n")
+      : "(none)";
+    const pending = staged.length
+      ? staged.map((entry) => {
+        const row = entry as Json;
+        return `- ${row.action} ${row.name}: ${row.gist ?? ""}`;
+      }).join("\n")
+      : "(none)";
+    return { text: `Imported skills:\n${live}\n\nStaged (waiting for the user to confirm):\n${pending}` };
+  }
+  if (name === "skill_view") {
+    const skillName = String(args.name ?? "").trim();
+    if (!skillName) {
+      return { text: 'skill_view needs "name", for example {"name":"file-expense"}.', isError: true };
+    }
+    const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });
+    const r = await api(`/api/internal/skills/${encodeURIComponent(skillName)}?${query.toString()}`);
+    return { text: String(r.text ?? "") };
+  }
+  if (name === "skill_manage") {
+    const action = args.action === "update" ? "update" : args.action === "create" ? "create" : "";
+    if (!action) {
+      return { text: 'skill_manage needs action "create" or "update". Example: {"action":"create","skill_md":"---\\nname: file-expense\\ndescription: Files an expense in the company portal.\\n---\\n\\n# File expense\\n"}.', isError: true };
+    }
+    const skillMd = typeof args.skill_md === "string" ? args.skill_md : "";
+    if (!skillMd.trim()) {
+      return { text: 'skill_manage needs skill_md: the full SKILL.md including YAML frontmatter.', isError: true };
+    }
+    const r = await api("/api/internal/skills/stage", {
+      method: "POST",
+      body: JSON.stringify({
+        fromBotId: BOT_ID,
+        fromThreadId: THREAD_ID,
+        action,
+        skill_md: skillMd,
+        gist: typeof args.gist === "string" ? args.gist : undefined,
+      }),
+    });
+    const nameLabel = typeof r.name === "string" ? r.name : "the skill";
+    const warningText = Array.isArray(r.warnings) && r.warnings.length ? `\n\nScan warnings (shown to the user):\n- ${r.warnings.join("\n- ")}` : "";
+    return {
+      text: `A confirmation card is now visible to the user for ${action === "create" ? "new skill" : "updating"} “${nameLabel}”.${warningText}\n\nThis skill has not been enabled yet. End this turn and wait for the user to confirm or dismiss the card; do not claim the skill is live before confirmation.`,
+    };
   }
   return { text: `Unknown tool: ${name}`, isError: true };
 }

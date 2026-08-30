@@ -5,13 +5,17 @@ import { join } from "node:path";
 
 import { removeTempDir } from "./testing/cleanup.ts";
 import {
+  applyStagedSkillWrite,
   installSkill,
   listSkills,
+  listStagedSkillWrites,
   parseSkillMd,
+  rejectStagedSkillWrite,
   removeSkill,
   scanSkillText,
   setSkillEnabled,
   skillsSystemPrompt,
+  stageSkillWrite,
 } from "./skills.ts";
 import { parseSkillSource } from "./skill-fetch.ts";
 import { workspaceDir } from "./workspace.ts";
@@ -109,6 +113,79 @@ describe("install → review → enable lifecycle", () => {
     expect(removeSkill(bot, "temp-skill")).toEqual({ removed: true });
     expect(listSkills(bot)).toEqual([]);
     expect("error" in removeSkill(bot, "temp-skill")).toBe(true);
+  });
+});
+
+describe("staged skill writes", () => {
+  it("lands a create as staged, not enabled, and only reaches the prompt after apply+enable", () => {
+    const staged = stageSkillWrite(bot, {
+      action: "create",
+      source: "learn:expense flow",
+      gist: "File an expense from the portal",
+      files: [{ path: "SKILL.md", content: SKILL("file-expense", "Files an expense in the company portal.") }],
+    });
+    expect(staged).toMatchObject({ name: "file-expense", action: "create" });
+    if ("error" in staged) throw new Error(staged.error);
+    expect(listSkills(bot)).toEqual([]);
+    expect(skillsSystemPrompt(bot)).toBe("");
+    expect(listStagedSkillWrites(bot).map((entry) => entry.id)).toEqual([staged.id]);
+
+    const applied = applyStagedSkillWrite(bot, staged.id);
+    expect(applied).toMatchObject({ name: "file-expense", enabled: false, source: "learn:expense flow" });
+    expect(listStagedSkillWrites(bot)).toEqual([]);
+    expect(skillsSystemPrompt(bot)).toBe("");
+
+    setSkillEnabled(bot, "file-expense", true);
+    expect(skillsSystemPrompt(bot)).toContain("- file-expense:");
+  });
+
+  it("rejects create when the name already exists, and update when it does not", () => {
+    installSkill(bot, "src", [{ path: "SKILL.md", content: SKILL("file-expense") }]);
+    expect(
+      "error" in
+      stageSkillWrite(bot, {
+        action: "create",
+        files: [{ path: "SKILL.md", content: SKILL("file-expense") }],
+      }),
+    ).toBe(true);
+    expect(
+      "error" in
+      stageSkillWrite(bot, {
+        action: "update",
+        files: [{ path: "SKILL.md", content: SKILL("brand-new") }],
+      }),
+    ).toBe(true);
+  });
+
+  it("applies an update in place without changing enabled, and reject drops the stage", () => {
+    installSkill(bot, "src", [{ path: "SKILL.md", content: SKILL("file-expense") }]);
+    setSkillEnabled(bot, "file-expense", true);
+    const staged = stageSkillWrite(bot, {
+      action: "update",
+      files: [
+        {
+          path: "SKILL.md",
+          content: SKILL("file-expense", "Files an expense and attaches the receipt."),
+        },
+      ],
+    });
+    if ("error" in staged) throw new Error(staged.error);
+    const applied = applyStagedSkillWrite(bot, staged.id);
+    expect(applied).toMatchObject({
+      name: "file-expense",
+      enabled: true,
+      description: "Files an expense and attaches the receipt.",
+    });
+    expect(skillsSystemPrompt(bot)).toContain("attaches the receipt");
+
+    const later = stageSkillWrite(bot, {
+      action: "update",
+      files: [{ path: "SKILL.md", content: SKILL("file-expense", "Should never apply.") }],
+    });
+    if ("error" in later) throw new Error(later.error);
+    expect(rejectStagedSkillWrite(bot, later.id)).toEqual({ rejected: true });
+    expect(listStagedSkillWrites(bot)).toEqual([]);
+    expect(listSkills(bot)[0]?.description).toContain("attaches the receipt");
   });
 });
 

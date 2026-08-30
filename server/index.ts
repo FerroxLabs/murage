@@ -147,14 +147,20 @@ import {
   SECTION_CONTEXT_MAX_BYTES,
 } from "./section-context.ts";
 import {
+  applyStagedSkillWrite,
   installSkill,
   listSkills,
+  listStagedSkillWrites,
   readSkillFile,
+  rejectStagedSkillWrite,
   removeSkill,
   setSkillEnabled,
   skillsSystemPrompt,
+  stageSkillWrite,
 } from "./skills.ts";
 import { fetchSkillFromSource } from "./skill-fetch.ts";
+import { expandLearnTurnText, learnSource } from "./skill-learn.ts";
+import type { SkillRequestCardData } from "../shared/skill-request.ts";
 import { readCuaConnection } from "./local-computer.ts";
 import { LocalVmIdleTimer } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
@@ -1116,7 +1122,7 @@ function closeOpenApprovals(threadId: string): void {
   for (const message of store.messagesFor(threadId)) {
     const card = message.card;
     if (!card?.requestId || card.answered || card.dismissed) continue;
-    if (card.routineRequest) continue;
+    if (card.routineRequest || card.skillRequest) continue;
     store.patchMessage(threadId, message.id, { card: { ...card, answered: "unavailable", dismissed: true } });
     askMessageByRequest.delete(`${threadId}:${card.requestId}`);
   }
@@ -2203,7 +2209,7 @@ async function startTurn(
     !rewound &&
     engineIsFresh({ instanceId, lastInstanceId: task.lastInstanceId, resumeCursors: task.resumeCursors, transcript });
   const { turnText, resume } = buildTurnContext({
-    text: promptWithReply(text, opts?.replyTo, cfg.profile?.name?.trim() || "User"),
+    text: promptWithReply(expandLearnTurnText(text), opts?.replyTo, cfg.profile?.name?.trim() || "User"),
     transcript,
     rewound,
     fresh,
@@ -2482,6 +2488,9 @@ async function startTurn(
       const routinePrompt = integrations.agents
         ? " If the user explicitly asks to list or review, schedule, run, or change routines, use list_routines and propose_routine or propose_routine_action. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation."
         : "";
+      const learnPrompt = integrations.agents
+        ? " If the user sends /learn or asks you to save a reusable procedure from this work, use skills_list, skill_view, and skill_manage. skill_manage only stages a SKILL.md — it does not enable it. Never claim the skill is live before the user confirms the in-app card."
+        : "";
 
       // (activeVpsThreads was already claimed above, before the provision or
       // reuse await, so the backend guards saw this turn the whole time.)
@@ -2559,6 +2568,7 @@ async function startTurn(
           (coordinationPrompt ? ` ${coordinationPrompt}` : "") +
           credentialPrompt +
           routinePrompt +
+          learnPrompt +
           sectionContextSystemPrompt(bot.section) +
           (privateWorkspace ? memorySystemPrompt(bot.id) + skillsSystemPrompt(bot.id) : "") +
           skillInstructions +
@@ -3148,12 +3158,16 @@ async function runGroupMemberTurn(
       "If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat.",
     integrations.agents &&
       "If the user explicitly asks to list or review, schedule, run, or change routines, use list_routines and propose_routine or propose_routine_action. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation.",
+    integrations.agents &&
+    "If the user sends /learn or asks you to save a reusable procedure from this work, use skills_list, skill_view, and skill_manage. skill_manage only stages a SKILL.md — it does not enable it. Never claim the skill is live before the user confirms the in-app card.",
   ]
     .filter(Boolean)
     .join("\n");
 
-  const text = `${serializeRoomContext(threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)${
-    cardContinuation ? `\n\n${cardContinuation}` : ""
+  const latestUser = [...store.activePath(threadId)].reverse().find((message) => message.role === "user" && message.kind === "text" && message.text);
+  const learnTurn = latestUser?.text ? expandLearnTurnText(latestUser.text) : "";
+  const learnBlock = learnTurn && learnTurn !== latestUser?.text ? `\n\n${learnTurn}` : "";
+  const text = `${serializeRoomContext(threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation ? `\n\n${cardContinuation}` : ""
   }`;
 
   // same workspace + memory as a 1:1 turn — the room is a different
@@ -3475,6 +3489,152 @@ function routineProposalPersistence(botId: string, threadId: string) {
   return openRequests >= 8
     ? { ok: false as const, status: 429, error: "confirm or cancel an existing routine proposal first" }
     : { ok: true as const };
+}
+
+function skillProposalPersistence(botId: string, threadId: string) {
+  if (!store.bot(botId)) {
+    return { ok: false as const, status: 403, error: "unknown sender" };
+  }
+  if (!connectorThread(botId, threadId)) {
+    return { ok: false as const, status: 403, error: "source conversation does not belong to sender" };
+  }
+  const openRequests = store.activePath(threadId).filter(
+    (message) =>
+      message.card?.skillRequest?.botId === botId &&
+      !message.card.answered &&
+      !message.card.dismissed,
+  ).length;
+  return openRequests >= 8
+    ? { ok: false as const, status: 429, error: "confirm or cancel an existing learned-skill card first" }
+    : { ok: true as const };
+}
+
+function skillCardCopy(staged: { action: "create" | "update"; name: string; gist: string; warnings: string[] }): {
+  title: string;
+  subtitle: string;
+  tool: string;
+} {
+  const warnings = staged.warnings.length ? `\n\nWarnings:\n- ${staged.warnings.join("\n- ")}` : "";
+  return {
+    title: staged.action === "create" ? `Enable skill "${staged.name}"?` : `Update skill "${staged.name}"?`,
+    subtitle: `${staged.gist || staged.name}${warnings}`,
+    tool: staged.action === "create" ? "stage_skill" : "update_skill",
+  };
+}
+
+function appendSkillRequestCard(args: {
+  botId: string;
+  threadId: string;
+  staged: { id: string; action: "create" | "update"; name: string; gist: string; warnings: string[] };
+}): { requestId: string; summary: string } {
+  const requestId = randomUUID();
+  const copy = skillCardCopy(args.staged);
+  const payload: SkillRequestCardData = {
+    version: 1,
+    requestId,
+    botId: args.botId,
+    threadId: args.threadId,
+    stagedId: args.staged.id,
+    action: args.staged.action,
+    name: args.staged.name,
+    gist: args.staged.gist,
+    warnings: args.staged.warnings,
+    createdAt: Date.now(),
+  };
+  const from = store.bot(args.botId);
+  store.appendMessage(args.threadId, {
+    role: "bot",
+    kind: "options",
+    from: from ? { botId: from.id, name: from.name, color: from.color } : undefined,
+    card: {
+      title: copy.title,
+      subtitle: copy.subtitle,
+      options: ["Enable", "Dismiss"],
+      requestId,
+      tool: copy.tool,
+      skillRequest: payload,
+    },
+  });
+  return {
+    requestId,
+    summary: `${copy.title} ${args.staged.gist}`.trim(),
+  };
+}
+
+function resolveSkillRequest(args: {
+  botId: string;
+  botName?: string;
+  threadId: string;
+  requestId: string;
+  behavior: "allow" | "deny" | "answer";
+}):
+  | { claimed: false }
+  | { claimed: true; status: number; error: string }
+  | { claimed: true; outcome: "allowed-once" | "rejected"; alreadySettled?: true } {
+  const message = store.messagesFor(args.threadId).find(
+    (candidate) => candidate.card?.requestId === args.requestId && candidate.card.skillRequest,
+  );
+  const card = message?.card;
+  const request = card?.skillRequest;
+  if (!request || !card || !message) return { claimed: false };
+  if (request.botId !== args.botId) {
+    return { claimed: true, status: 403, error: "this skill request belongs to a different bot" };
+  }
+  if (card.answered || card.dismissed) {
+    return { claimed: true, outcome: card.answered === "allow" ? "allowed-once" : "rejected", alreadySettled: true };
+  }
+  if (args.behavior !== "allow") {
+    rejectStagedSkillWrite(args.botId, request.stagedId);
+    store.patchMessage(args.threadId, message.id, {
+      card: { ...card, answered: "deny", dismissed: true },
+    });
+    appendDecision(DATA_DIR, {
+      threadId: args.threadId,
+      requestId: args.requestId,
+      botId: args.botId,
+      botName: args.botName,
+      tool: card.tool,
+      summary: card.subtitle,
+      decision: "user-denied",
+      source: "user",
+    });
+    return { claimed: true, outcome: "rejected" };
+  }
+  const applied = applyStagedSkillWrite(args.botId, request.stagedId);
+  if ("error" in applied) {
+    return { claimed: true, status: 422, error: applied.error };
+  }
+  if (request.action === "create" && !applied.enabled) {
+    const enabled = setSkillEnabled(args.botId, applied.name, true);
+    if ("error" in enabled) return { claimed: true, status: 422, error: enabled.error };
+  }
+  store.patchMessage(args.threadId, message.id, {
+    card: { ...card, answered: "allow" },
+  });
+  appendDecision(DATA_DIR, {
+    threadId: args.threadId,
+    requestId: args.requestId,
+    botId: args.botId,
+    botName: args.botName,
+    tool: card.tool,
+    summary: card.subtitle,
+    decision: "user-approved",
+    source: "user",
+  });
+  return { claimed: true, outcome: "allowed-once" };
+}
+
+function sendSkillResolution(
+  res: ServerResponse,
+  result: ReturnType<typeof resolveSkillRequest>,
+): boolean {
+  if (!result.claimed) return false;
+  if ("error" in result) {
+    json(res, result.status, { error: result.error });
+    return true;
+  }
+  json(res, 200, { ok: true, outcome: result.outcome, alreadySettled: result.alreadySettled });
+  return true;
 }
 
 function connectorMessage(botId: string, threadId: string, messageId: string) {
@@ -4063,6 +4223,76 @@ const server = createServer(async (req, res) => {
           source: "routine",
         });
         return json(res, 201, proposed);
+      }
+      if (method === "GET" && path === "/api/internal/skills") {
+        const fromBotId = String(url.searchParams.get("fromBotId") ?? "");
+        const from = store.bot(fromBotId);
+        if (!from) return json(res, 403, { error: "unknown sender" });
+        const fromThreadId = String(url.searchParams.get("fromThreadId") ?? from.threadId);
+        if (!connectorThread(from.id, fromThreadId)) {
+          return json(res, 403, { error: "source conversation does not belong to sender" });
+        }
+        return json(res, 200, {
+          skills: listSkills(from.id),
+          staged: listStagedSkillWrites(from.id),
+        });
+      }
+      m = path.match(/^\/api\/internal\/skills\/([a-z0-9-]+)$/);
+      if (m && method === "GET") {
+        const fromBotId = String(url.searchParams.get("fromBotId") ?? "");
+        const from = store.bot(fromBotId);
+        if (!from) return json(res, 403, { error: "unknown sender" });
+        const fromThreadId = String(url.searchParams.get("fromThreadId") ?? from.threadId);
+        if (!connectorThread(from.id, fromThreadId)) {
+          return json(res, 403, { error: "source conversation does not belong to sender" });
+        }
+        const text = readSkillFile(from.id, m[1]!);
+        if (text === null) return json(res, 404, { error: "no such skill" });
+        return json(res, 200, { name: m[1], text });
+      }
+      if (method === "POST" && path === "/api/internal/skills/stage") {
+        const body = await readBody(req);
+        const fromBotId = String(body.fromBotId ?? "");
+        const from = store.bot(fromBotId);
+        if (!from) return json(res, 403, { error: "unknown sender" });
+        const fromThreadId = String(body.fromThreadId ?? from.threadId);
+        if (!connectorThread(from.id, fromThreadId)) {
+          return json(res, 403, { error: "source conversation does not belong to sender" });
+        }
+        const persistence = skillProposalPersistence(from.id, fromThreadId);
+        if (!persistence.ok) return json(res, persistence.status, { error: persistence.error });
+        const action = body.action === "update" ? "update" : body.action === "create" ? "create" : "";
+        if (!action) return json(res, 400, { error: 'action must be "create" or "update"' });
+        const skillMd = typeof body.skill_md === "string" ? body.skill_md : "";
+        if (!skillMd.trim()) {
+          return json(res, 400, { error: 'skill_manage needs skill_md: the full SKILL.md including YAML frontmatter, for example ---\\nname: file-expense\\ndescription: Files an expense in the company portal.\\n---\\n\\n# File expense\\n' });
+        }
+        const staged = stageSkillWrite(from.id, {
+          action,
+          files: [{ path: "SKILL.md", content: skillMd }],
+          gist: typeof body.gist === "string" ? body.gist : undefined,
+          source: learnSource(typeof body.source === "string" ? body.source : ""),
+        });
+        if ("error" in staged) return json(res, 422, { error: staged.error });
+        const card = appendSkillRequestCard({ botId: from.id, threadId: fromThreadId, staged });
+        appendDecision(DATA_DIR, {
+          threadId: fromThreadId,
+          requestId: card.requestId,
+          botId: from.id,
+          botName: from.name,
+          tool: action === "create" ? "stage_skill" : "update_skill",
+          summary: card.summary,
+          decision: "card-shown",
+          source: "skill",
+        });
+        return json(res, 201, {
+          stagedId: staged.id,
+          name: staged.name,
+          action: staged.action,
+          gist: staged.gist,
+          warnings: staged.warnings,
+          summary: card.summary,
+        });
       }
       if (method === "POST" && path === "/api/internal/ask-bot") {
         const body = await readBody(req);
@@ -5869,7 +6099,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills$/);
     if (m && method === "GET") {
       if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
-      return json(res, 200, { skills: listSkills(m[1]) });
+      return json(res, 200, { skills: listSkills(m[1]), staged: listStagedSkillWrites(m[1]) });
     }
     if (m && method === "POST") {
       if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
@@ -6243,6 +6473,13 @@ const server = createServer(async (req, res) => {
         requestId: String(body.requestId),
         behavior,
       })) return;
+      if (sendSkillResolution(res, resolveSkillRequest({
+        botId: bot.id,
+        botName: bot.name,
+        threadId: bot.threadId,
+        requestId: String(body.requestId),
+        behavior,
+      }))) return;
       // peer-approval intercept: harness-native cards carry a requestId
       // that lives in peer-approval's pending map. Resolve them here so
       // the provider adapter never sees a request it didn't raise.
@@ -6262,6 +6499,21 @@ const server = createServer(async (req, res) => {
       const behavior = requestBehavior(body.behavior);
       if (!behavior) return json(res, 400, { error: "behavior must be allow, deny, or answer" });
       const requestId = String(body.requestId);
+      const skillCard = store.messagesFor(threadId).find(
+        (message) => message.card?.requestId === requestId && message.card.skillRequest,
+      );
+      if (skillCard?.card?.skillRequest) {
+        const skillBotId = skillCard.from?.botId ?? skillCard.card.skillRequest.botId ?? store.botByThread(threadId)?.id;
+        if (!skillBotId) return json(res, 400, { error: "this skill request has no valid owner" });
+        const skillOwner = store.bot(skillBotId);
+        if (sendSkillResolution(res, resolveSkillRequest({
+          botId: skillBotId,
+          botName: skillOwner?.name,
+          threadId,
+          requestId,
+          behavior,
+        }))) return;
+      }
       const routineCard = store.messagesFor(threadId).find(
         (message) => message.card?.requestId === requestId && message.card.routineRequest,
       );

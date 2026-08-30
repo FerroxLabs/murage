@@ -16,6 +16,7 @@ import { redactSecretsInText } from "./redact.ts";
 import { botAvatarProfile, type BotAvatarCrop } from "../shared/bot-avatar.ts";
 import type { RoutineRequestCardData } from "../shared/routine-request.ts";
 import type { RoutineRunCardData } from "../shared/routine-run.ts";
+import type { SkillRequestCardData } from "../shared/skill-request.ts";
 
 export type MausColor =
   | "green"
@@ -56,6 +57,9 @@ export interface OptionCardData {
   /** A durable chat-created routine proposal. The scheduler only applies it
    * after this card is explicitly confirmed by the user. */
   routineRequest?: RoutineRequestCardData;
+  /** A durable learned-skill proposal. The skill stays staged until the
+   * user confirms this card — it never rides the prompt before that. */
+  skillRequest?: SkillRequestCardData;
 }
 
 export interface ConnectorCardData {

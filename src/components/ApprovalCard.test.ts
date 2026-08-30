@@ -127,3 +127,44 @@ describe("ApprovalCard routine proposals", () => {
     expect(spoken.length).toBeLessThan(200);
   });
 });
+
+describe("ApprovalCard learned skills", () => {
+  it("describes a staged skill as enablement rather than a raw tool call", () => {
+    const message: Message = {
+      id: "skill-card",
+      role: "bot",
+      kind: "options",
+      at: 1,
+      card: {
+        title: 'Enable skill "file-expense"?',
+        subtitle: "Files an expense in the company portal.",
+        options: ["Enable", "Dismiss"],
+        requestId: "skill-request",
+        tool: "stage_skill",
+        skillRequest: {
+          version: 1,
+          requestId: "skill-request",
+          botId: "bot-1",
+          threadId: "thread-1",
+          stagedId: "staged-1",
+          action: "create",
+          name: "file-expense",
+          gist: "Files an expense in the company portal.",
+          warnings: [],
+          createdAt: 1,
+        },
+      },
+    };
+
+    const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
+    expect(markup).toContain("enable a learned skill");
+    expect(markup).toContain("Files an expense in the company portal.");
+
+    const spoken = spokenApprovalPrompt(
+      { message, requestId: "skill-request", tool: "stage_skill", detail: message.card!.subtitle },
+      "Mochi",
+    );
+    expect(spoken).toContain('Enable skill "file-expense"?');
+    expect(spoken).toContain("Should I enable it?");
+  });
+});
