@@ -24,7 +24,6 @@ import {
   Loader2,
   Paperclip,
   Pause,
-  Phone,
   Play,
   Plus,
   Repeat2,
@@ -37,13 +36,11 @@ import {
 } from "lucide-react";
 
 import { BotAvatar } from "@/components/Avatar";
-import { CallTargetButton } from "@/components/CallView";
 import { pathForFile } from "@/components/ComposerAttachments";
 import { CalendarSidebar } from "@/components/routines/CalendarSidebar";
 import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { WebhooksPanel } from "@/components/WebhooksPanel";
 import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/lib/calendar-calls";
-import { startCall } from "@/lib/call";
 import { cn } from "@/lib/cn";
 import {
   imageAttachmentFromFile,
@@ -841,6 +838,7 @@ function EventDetails({
   onClose,
   onEdit,
   onCallChanged,
+  onOpenRoom,
 }: {
   item: CalendarEventItem;
   bots: Bot[];
@@ -848,6 +846,7 @@ function EventDetails({
   onClose: () => void;
   onEdit: () => void;
   onCallChanged: (id: string | null) => void;
+  onOpenRoom: (id: string) => void;
 }) {
   const { dispatch } = useStore();
   const [working, setWorking] = useState(false);
@@ -863,6 +862,7 @@ function EventDetails({
   const description = call?.description ?? routine?.prompt ?? run?.prompt ?? "";
   const attachments = call?.attachments ?? routine?.attachments ?? run?.attachments ?? [];
   const group = call && call.botIds.length > 1 ? groups.find((candidate) => sameMembers(candidate, call.botIds)) : undefined;
+  const roomId = call?.botIds.length === 1 ? primary?.id : group?.id;
 
   const invoke = async (path: string, method = "POST") => {
     setWorking(true);
@@ -888,13 +888,11 @@ function EventDetails({
         body: JSON.stringify({
           name: call.name,
           memberIds: call.botIds,
-          setup: { bulletin: call.description, defaultResponder: { kind: "mentions" } },
+          setup: { bulletin: call.description, defaultResponder: { kind: "everyone" } },
         }),
       });
       dispatch({ type: "groupPatched", group: created });
-      dispatch({ type: "select", id: created.id });
-      setTimeout(() => startCall(created.id), 0);
-      onClose();
+      onOpenRoom(created.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -945,13 +943,8 @@ function EventDetails({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-hairline/40 px-4 py-3">
-          {call && call.botIds.length === 1 && primary && (
-            <div className="flex items-center gap-2 rounded-lg bg-accent/10 pl-2 pr-1 text-[12px] font-medium text-accent"><span>Join call</span><CallTargetButton targetId={primary.id} targetName={primary.name} voices={[primary.voice]} setupBotId={primary.id} requireExplicitVoices={false} onStart={() => { dispatch({ type: "select", id: primary.id }); onClose(); }} /></div>
-          )}
-          {call && call.botIds.length > 1 && group && (
-            <div className="flex items-center gap-2 rounded-lg bg-accent/10 pl-2 pr-1 text-[12px] font-medium text-accent"><span>Join call</span><CallTargetButton targetId={group.id} targetName={group.name} voices={invited.map((bot) => bot.voice)} setupBotId={invited.find((bot) => !bot.voice)?.id ?? invited[0]?.id} requireExplicitVoices onStart={() => { dispatch({ type: "select", id: group.id }); onClose(); }} /></div>
-          )}
-          {call && call.botIds.length > 1 && !group && <button onClick={createRoomAndJoin} disabled={working} className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><Phone size={14} />Create room &amp; join</button>}
+          {roomId && <button onClick={() => onOpenRoom(roomId)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110"><ExternalLink size={13} />Join room</button>}
+          {call && call.botIds.length > 1 && !group && <button onClick={createRoomAndJoin} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><ExternalLink size={13} />Create room &amp; join</button>}
           {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}/run`)} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><Play size={13} />Run now</button>}
           {run?.threadId && primary && <button onClick={() => { dispatch({ type: "select", id: primary.id }); dispatch({ type: "switchTask", botId: primary.id, threadId: run.threadId! }); onClose(); }} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"><ExternalLink size={13} />Open task</button>}
           {run && ["queued", "running", "waiting"].includes(run.status) && <button onClick={() => void invoke(`/api/routine-runs/${run.id}/cancel`)} disabled={working} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"><X size={13} />Cancel run</button>}
@@ -1002,7 +995,7 @@ export function RoutineEditor({
   return <EventEditor seed={{ kind: "routine", at, durationMinutes: routine?.durationMinutes ?? 30, botIds: lockedBotId ? [lockedBotId] : routine ? [routine.botId] : [], routine }} bots={bots} lockedBotId={lockedBotId} defaultRunOn={defaultRunOn} onClose={onClose} onSavedCall={() => {}} />;
 }
 
-export function RoutinesPage({ onBack }: { onBack: () => void }) {
+export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpenRoom: (id: string) => void }) {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const backButtonRef = useRef<HTMLButtonElement>(null);
@@ -1196,7 +1189,7 @@ export function RoutinesPage({ onBack }: { onBack: () => void }) {
 
       {quick && <><div className="fixed inset-0 z-40 bg-black/25" onMouseDown={() => setQuick(null)} /><QuickComposer seed={quick} bots={visibleBots} onClose={() => setQuick(null)} onMore={(seed) => { setQuick(null); setEditor(seed); }} onSavedRoutine={(routine) => dispatch({ type: "routinePatched", routine })} onSavedCall={upsertCall} /></>}
       {editor && <EventEditor seed={editor} bots={visibleBots} onClose={() => setEditor(null)} onSavedCall={upsertCall} />}
-      {liveSelected && <EventDetails item={liveSelected} bots={state.bots} groups={state.groups} onClose={() => setSelected(null)} onEdit={() => { const seed: EventSeed = liveSelected.kind === "call" ? { kind: "call", at: liveSelected.at, durationMinutes: liveSelected.call.durationMinutes, botIds: liveSelected.call.botIds, call: liveSelected.call } : { kind: "routine", at: liveSelected.at, durationMinutes: liveSelected.routine?.durationMinutes ?? liveSelected.run?.durationMinutes ?? 30, botIds: [liveSelected.routine?.botId ?? liveSelected.run?.botId ?? ""].filter(Boolean), routine: liveSelected.routine ?? undefined }; setSelected(null); setEditor(seed); }} onCallChanged={(id) => { if (id) setCalls((current) => current.filter((call) => call.id !== id)); else void loadCalls(); }} />}
+      {liveSelected && <EventDetails item={liveSelected} bots={state.bots} groups={state.groups} onClose={() => setSelected(null)} onEdit={() => { const seed: EventSeed = liveSelected.kind === "call" ? { kind: "call", at: liveSelected.at, durationMinutes: liveSelected.call.durationMinutes, botIds: liveSelected.call.botIds, call: liveSelected.call } : { kind: "routine", at: liveSelected.at, durationMinutes: liveSelected.routine?.durationMinutes ?? liveSelected.run?.durationMinutes ?? 30, botIds: [liveSelected.routine?.botId ?? liveSelected.run?.botId ?? ""].filter(Boolean), routine: liveSelected.routine ?? undefined }; setSelected(null); setEditor(seed); }} onCallChanged={(id) => { if (id) setCalls((current) => current.filter((call) => call.id !== id)); else void loadCalls(); }} onOpenRoom={onOpenRoom} />}
       {pausedOpen && <PausedList routines={paused} bots={state.bots} onClose={() => setPausedOpen(false)} onEdit={(routine) => { setPausedOpen(false); const at = routine.schedule.type === "once" ? routine.schedule.at : atLocalTime(Date.now(), routine.schedule.time); setEditor({ kind: "routine", at, durationMinutes: routine.durationMinutes, botIds: [routine.botId], routine }); }} />}
     </main>
   );

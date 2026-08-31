@@ -169,6 +169,9 @@ function Shell() {
     }
     dispatch({ type: "select", id: state.selectedId });
   }, [dispatch, state.config, state.selectedId]);
+  const openCalendarRoom = useCallback((id: string) => {
+    dispatch({ type: "select", id });
+  }, [dispatch]);
 
   const nativeViewOverlayOpen =
     drawerOpen ||
@@ -235,7 +238,7 @@ function Shell() {
       {state.activeView === "team-map" ? (
         <TeamMapPage />
       ) : state.activeView === "routines" ? (
-        <RoutinesPage onBack={closeCalendar} />
+        <RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} />
       ) : state.activeView === "skill-recorder" ? (
         <SkillRecorderPage />
       ) : browserWorkspaceBotId && bot && bot.id === browserWorkspaceBotId ? (
