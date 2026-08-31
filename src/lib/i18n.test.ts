@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveLocale, setLocale, t } from "./i18n";
 import { locales } from "@/locales";
+import { en } from "@/locales/en";
 
 afterEach(() => {
   setLocale("en");
@@ -31,10 +32,38 @@ describe("t", () => {
     expect(t("engines.cloud")).toBe("Cloud");
   });
 
-  it("setLocale reports the fallback that actually took effect", () => {
-    // only "en" ships today — any tag resolves back to it
-    expect(setLocale("de-AT")).toBe("en");
+  it("setLocale reports the locale that actually took effect", () => {
+    // a shipped base pack catches its regional variants…
+    expect(setLocale("de-AT")).toBe("de");
+    expect(t("engines.local")).toBe("Lokal");
+    // …and a genuinely unknown tag falls back to English
+    expect(setLocale("xx-YY")).toBe("en");
     expect(t("engines.local")).toBe("Local");
+  });
+
+  it("resolves every registered locale to itself", () => {
+    const available = new Set(Object.keys(locales));
+    for (const code of available) {
+      expect(resolveLocale(code, available)).toBe(code);
+    }
+  });
+
+  it("routes common system tags onto the shipped packs", () => {
+    const available = new Set(Object.keys(locales));
+    expect(resolveLocale("zh-CN", available)).toBe("zh");
+    expect(resolveLocale("ja-JP", available)).toBe("ja");
+    expect(resolveLocale("pt-BR", available)).toBe("pt-br");
+    expect(resolveLocale("pt-PT", available)).toBe("pt");
+    expect(resolveLocale("hi-IN", available)).toBe("hi");
+  });
+
+  it("every registered pack carries only known keys with non-empty values", () => {
+    for (const pack of Object.values(locales)) {
+      for (const [key, value] of Object.entries(pack)) {
+        expect(Object.hasOwn(en, key)).toBe(true);
+        expect((value ?? "").trim().length).toBeGreaterThan(0);
+      }
+    }
   });
 
   it("overlays a partial pack and falls back to English for missing keys", () => {
