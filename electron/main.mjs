@@ -17,7 +17,13 @@ import {
 } from "./skill-recorder.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
-import { buildDiagnosticsReport, decodeLogTail, diagnosticsFileName } from "./diagnostics.mjs";
+import {
+  buildDiagnosticsReport,
+  diagnosticsFileName,
+  formatDesktopCrashRecord,
+  installDesktopCrashListeners,
+  readSafeLogTail,
+} from "./diagnostics.mjs";
 import { migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
@@ -345,7 +351,10 @@ function composioBrokerUrl() {
 // why stdio is piped, not inherited — under a Finder/Explorer launch the
 // parent's stdio leads nowhere and a failed boot is otherwise undiagnosable.
 const LOG_DIR = app.getPath("logs");
+const DESKTOP_CRASH_LOG = path.join(LOG_DIR, "desktop-crashes.log");
+const DESKTOP_CRASH_LOG_MAX_BYTES = 512 * 1024;
 let logStream = null;
+let desktopShutdownStarted = false;
 import {
   companionAdvertisedHostedUrl,
   companionEnabledAtRest,
@@ -386,6 +395,74 @@ function slog(line) {
     /* logging must never break startup */
   }
 }
+
+// The server stream is intentionally asynchronous, but a fatal main-process
+// exception may terminate Electron before such a write is flushed. Crash
+// metadata gets its own tiny synchronous file. The formatter admits only a
+// fixed set of fields, so renderer URLs, page titles, exception messages and
+// absolute paths never land on disk or in a public bug report.
+function recordDesktopCrash(event) {
+  let handle = null;
+  try {
+    const record = formatDesktopCrashRecord(event);
+    if (!record) return;
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+
+    const flags =
+      fs.constants.O_WRONLY |
+      fs.constants.O_APPEND |
+      (process.platform === "win32" ? 0 : fs.constants.O_NOFOLLOW);
+    let before = null;
+    try {
+      before = fs.lstatSync(DESKTOP_CRASH_LOG);
+      if (!before.isFile() || before.nlink !== 1) return;
+      handle = fs.openSync(DESKTOP_CRASH_LOG, flags);
+    } catch (error) {
+      if (error?.code !== "ENOENT") return;
+      // O_EXCL makes first creation race-safe on Windows, where O_NOFOLLOW is
+      // unavailable, as well as on POSIX.
+      try {
+        handle = fs.openSync(
+          DESKTOP_CRASH_LOG,
+          flags | fs.constants.O_CREAT | fs.constants.O_EXCL,
+          0o600,
+        );
+      } catch {
+        return;
+      }
+    }
+
+    const stats = fs.fstatSync(handle);
+    // A hard-linked or non-regular target is not an app-owned crash log.
+    if (!stats.isFile() || stats.nlink !== 1) return;
+    if (before && (before.dev !== stats.dev || before.ino !== stats.ino)) return;
+    // A renderer crash loop must not grow a persistent log without bound.
+    // The diagnostics export reads only a bounded tail, so dropping older
+    // crash metadata here preserves the useful part of the record.
+    if (stats.size >= DESKTOP_CRASH_LOG_MAX_BYTES) fs.ftruncateSync(handle, 0);
+    if (process.platform !== "win32") fs.fchmodSync(handle, 0o600);
+    fs.writeFileSync(handle, `[${new Date().toISOString()}] ${record}\n`, "utf8");
+  } catch {
+    /* crash diagnostics must never change app lifecycle */
+  } finally {
+    if (handle !== null) {
+      try {
+        fs.closeSync(handle);
+      } catch {}
+    }
+  }
+}
+
+// uncaughtExceptionMonitor observes Node's fatal path without converting it
+// into a handled exception. In particular, an unhandled rejection still
+// follows Node's normal exit behaviour after its metadata is persisted.
+installDesktopCrashListeners({
+  appTarget: app,
+  processTarget: process,
+  record: recordDesktopCrash,
+  isShuttingDown: () => desktopShutdownStarted,
+  mainWebContents: () => mainWindow?.webContents ?? null,
+});
 
 // ── managed companion connection ───────────────────────────────────────
 // Account onboarding provisions one remote Cloudflare Tunnel per desktop,
@@ -637,25 +714,6 @@ function ensureCompanionAccountService() {
   return companionAccountService;
 }
 
-const LOG_TAIL_BYTES = 256 * 1024;
-
-function readLogTail(logPath) {
-  try {
-    const size = fs.statSync(logPath).size;
-    const start = Math.max(0, size - LOG_TAIL_BYTES);
-    const handle = fs.openSync(logPath, "r");
-    try {
-      const buffer = Buffer.alloc(size - start);
-      fs.readSync(handle, buffer, 0, buffer.length, start);
-      return decodeLogTail(buffer, start > 0);
-    } finally {
-      fs.closeSync(handle);
-    }
-  } catch {
-    return null;
-  }
-}
-
 // Everything the bug-report bundle needs. The config summary comes from the
 // server's own booleans-only /api/config status (credentials are never
 // echoed), and the log goes through the redactor in diagnostics.mjs — so the
@@ -668,7 +726,8 @@ async function gatherDiagnostics() {
     .then((res) => (res.ok ? res.json() : null))
     .catch(() => null);
   const logPath = path.join(LOG_DIR, "server.log");
-  const log = readLogTail(logPath);
+  const log = readSafeLogTail(logPath);
+  const desktopLog = readSafeLogTail(DESKTOP_CRASH_LOG);
   return buildDiagnosticsReport({
     appInfo: {
       version: app.getVersion(),
@@ -680,6 +739,7 @@ async function gatherDiagnostics() {
       uptimeSeconds: Math.round(process.uptime()),
     },
     configSummary: serverStatus ?? {},
+    desktopLogTail: desktopLog?.tail ?? "",
     logTail: log?.tail ?? "",
   });
 }
@@ -2009,6 +2069,7 @@ process.once("SIGINT", requestSignalQuit);
 process.once("SIGTERM", requestSignalQuit);
 
 app.on("before-quit", (e) => {
+  desktopShutdownStarted = true;
   if (cuaCleanedUp) return;
   e.preventDefault();
   try {
