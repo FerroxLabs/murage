@@ -141,7 +141,7 @@ struct SettingsView: View {
 
     private var notificationAccessibilityHint: String {
         if notificationsAreEnabled { return "Notifications are enabled" }
-        if session.notificationAuthorization == .denied { return "Opens iPhone Settings" }
+        if session.notificationAuthorization == .denied { return "Opens device Settings" }
         return "Asks for permission to send notifications"
     }
 
@@ -299,14 +299,14 @@ struct ConnectedComputersView: View {
             ),
             titleVisibility: .visible
         ) {
-            Button("Remove from this iPhone", role: .destructive) {
+            Button("Remove from this device", role: .destructive) {
                 guard let pendingRemoval else { return }
                 session.forgetConnection(id: pendingRemoval.id)
                 self.pendingRemoval = nil
             }
             Button("Cancel", role: .cancel) { pendingRemoval = nil }
         } message: {
-            Text("This removes the saved connection from this iPhone only.")
+            Text("This removes the saved connection from this device only.")
         }
     }
 }
@@ -404,7 +404,7 @@ struct ConnectionSecurityView: View {
                 }
 
                 Section {
-                    Button("Remove connection from this iPhone", role: .destructive) {
+                    Button("Remove connection from this device", role: .destructive) {
                         confirmingSignOut = true
                     }
                 }
@@ -432,13 +432,13 @@ struct ConnectionSecurityView: View {
             isPresented: $confirmingSignOut,
             titleVisibility: .visible
         ) {
-            Button("Remove from this iPhone", role: .destructive) {
+            Button("Remove from this device", role: .destructive) {
                 session.signOut()
                 dismiss()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the connection from this iPhone only. It does not revoke this phone on your Mac. To remove Mac-side access, open OpenMausBot → Settings → Phone and remove this device.")
+            Text("This removes the connection from this device only. It does not revoke this device on your Mac. To remove Mac-side access, open OpenMausBot → Settings → Phone and remove it there.")
         }
     }
 
@@ -451,9 +451,9 @@ struct ConnectionSecurityView: View {
         case let .offline(reason):
             return reason
         case .unauthorized:
-            return "This phone was removed from the computer. Pair it again to reconnect."
+            return "This device was removed from the computer. Pair it again to reconnect."
         case .unpaired:
-            return "This phone is not paired with a computer."
+            return "This device is not paired with a computer."
         }
     }
 

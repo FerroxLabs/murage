@@ -86,7 +86,7 @@ struct ComputerView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(openingDesktop)
-                    Text("Interactive VNC session. Access must be enabled for this phone in the Mac's Phone settings.")
+                    Text("Interactive VNC session. Access must be enabled for this device in the Mac's Phone settings.")
                         .font(.caption)
                         .foregroundStyle(Color.white.opacity(0.6))
                         .multilineTextAlignment(.center)
@@ -100,7 +100,7 @@ struct ComputerView: View {
             Button("Cancel", role: .cancel) {}
             Button("Open desktop") { Task { await openDesktop() } }
         } message: {
-            Text("This gives this phone full control of the cloud computer, including anything signed in inside it.")
+            Text("This gives this device full control of the cloud computer, including anything signed in inside it.")
         }
         .sheet(
             isPresented: Binding(

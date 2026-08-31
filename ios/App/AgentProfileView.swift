@@ -80,7 +80,7 @@ struct AgentProfileView: View {
                 } header: {
                     Text("Avatar")
                 } footer: {
-                    Text("PNG, JPEG, GIF, or WebP, up to 10 MB. Images are stored on your paired computer and loaded with this phone's pairing token.")
+                    Text("PNG, JPEG, GIF, or WebP, up to 10 MB. Images are stored on your paired computer and loaded with this device's pairing token.")
                 }
 
                 Section {
@@ -94,8 +94,8 @@ struct AgentProfileView: View {
                     Text("Generate an avatar")
                 } footer: {
                     Text(imageGenerationReady
-                         ? "Generation uses the shared image provider configured on your computer. No provider key is sent to or stored on this phone."
-                         : "To generate images, configure the shared image provider in OpenMausBot on your computer. Provider keys cannot be added from a phone.")
+                         ? "Generation uses the shared image provider configured on your computer. No provider key is sent to or stored on this device."
+                         : "To generate images, configure the shared image provider in OpenMausBot on your computer. Provider keys cannot be added from this device.")
                 }
 
                 Section("Identity") {

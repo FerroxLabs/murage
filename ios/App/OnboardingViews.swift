@@ -21,7 +21,7 @@ struct CompanionWelcomeView: View {
                     Text("Take your bots with you")
                         .font(.largeTitle.bold())
                         .multilineTextAlignment(.center)
-                    Text("Open chats, approve actions, and send new work from your iPhone.")
+                    Text("Open chats, approve actions, and send new work from this device.")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -41,7 +41,7 @@ struct CompanionWelcomeView: View {
                     WelcomeBenefit(
                         icon: "lock.shield.fill",
                         title: "Private by design",
-                        detail: "You choose which trusted computer this phone connects to."
+                        detail: "You choose which trusted computer this device connects to."
                     )
                 }
                 .padding(.top, 4)
@@ -128,7 +128,7 @@ struct UnpairedHomeView: View {
                     VStack(spacing: 8) {
                         Text("Connect when you're ready")
                             .font(.title2.bold())
-                        Text("Pair this iPhone with OpenMausBot to see your chats and respond to your bots.")
+                        Text("Pair this device with OpenMausBot to see your chats and respond to your bots.")
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)

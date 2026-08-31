@@ -186,7 +186,7 @@ final class Session: ObservableObject {
             restorePending = true
             status = .offline(
                 (error as? KeychainError)?.isLocked == true
-                    ? "Unlock this phone to reach your computer."
+                    ? "Unlock this device to reach your computer."
                     : error.localizedDescription
             )
             return
@@ -331,12 +331,12 @@ final class Session: ObservableObject {
             stored = try Keychain.token(for: id)
         } catch {
             actionError = (error as? KeychainError)?.isLocked == true
-                ? "Unlock this iPhone, then try switching computers again."
+                ? "Unlock this device, then try switching computers again."
                 : error.localizedDescription
             return
         }
         guard let stored else {
-            actionError = "This saved connection is no longer available on this iPhone. Remove it and pair again."
+            actionError = "This saved connection is no longer available on this device. Remove it and pair again."
             return
         }
 
@@ -1152,7 +1152,7 @@ final class Session: ObservableObject {
                 pendingNotification = target
                 connect()
             } else {
-                actionError = "Pair this phone with your computer to open that task."
+                actionError = "Pair this device with your computer to open that task."
             }
             return
         }

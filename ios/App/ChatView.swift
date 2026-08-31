@@ -183,7 +183,8 @@ struct ChatView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: CompanionLayout.chatWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                 }
                 // The header lives in the scroll view's top safe area: the
                 // transcript starts below it and scrolls under it — that is
@@ -222,7 +223,7 @@ struct ChatView: View {
                 }
                 .task {
                     // grow, hold a beat, shrink — the face rides along
-                    guard !reduceMotion else { return }
+                    guard CompanionLayout.supportsIslandPresentation, !reduceMotion else { return }
                     // The intro is a greeting, and a greeting repeated every
                     // time you open a chat stops being one.
                     let intro = IslandIntro(rawValue: islandIntro) ?? .oncePerBot
@@ -387,6 +388,8 @@ struct ChatView: View {
         .padding(.horizontal, 16)
         .padding(.top, 4)
         .padding(.bottom, 8)
+        .frame(maxWidth: CompanionLayout.headerWidth)
+        .frame(maxWidth: .infinity)
         .background(
             Rectangle()
                 .fill(.ultraThinMaterial)
@@ -503,11 +506,11 @@ struct ChatView: View {
                     }
                 }
                 .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: CompanionLayout.chatWidth, alignment: .leading)
                 .glassSheet(cornerRadius: 30)
-                .padding(.leading, 12)
-                .padding(.trailing, 44)
+                .padding(.horizontal, 12)
                 .padding(.bottom, 70)
+                .frame(maxWidth: .infinity)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             .transition(.opacity)
@@ -768,6 +771,8 @@ struct ChatView: View {
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 8)
+        .frame(maxWidth: CompanionLayout.chatWidth)
+        .frame(maxWidth: .infinity)
     }
 }
 

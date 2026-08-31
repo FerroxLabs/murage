@@ -43,7 +43,7 @@ struct PairingScannerSheet: View {
                     ContentUnavailableView {
                         Label("Scanner unavailable", systemImage: "qrcode.viewfinder")
                     } description: {
-                        Text("Use this iPhone's Camera app to scan the QR code, or enter the address and code manually.")
+                        Text("Use the Camera app to scan the QR code, or enter the address and code manually.")
                     }
                 } else {
                     ZStack(alignment: .bottom) {

@@ -454,7 +454,7 @@ struct NewSectionSheet: View {
                 VStack(alignment: .leading, spacing: 7) {
                     Text("What should this section be called?")
                         .font(.system(size: 24, weight: .bold, design: .rounded))
-                    Text("It will appear on both your phone and computer.")
+                    Text("It will appear on both this device and your computer.")
                         .font(.system(size: 15))
                         .foregroundStyle(Color.secondary)
                 }

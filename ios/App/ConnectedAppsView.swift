@@ -65,7 +65,7 @@ struct ConnectedAppsView: View {
                     ContentUnavailableView(
                         "Connected apps need setup",
                         systemImage: "link.badge.plus",
-                        description: Text("Configure Composio on your computer first. Provider credentials are never returned to this phone.")
+                        description: Text("Configure Composio on your computer first. Provider credentials are never returned to this device.")
                     )
                 }
             }

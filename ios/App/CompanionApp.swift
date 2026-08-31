@@ -182,7 +182,7 @@ struct UnpairedView: View {
     var body: some View {
         NavigationStack {
             ContentUnavailableView {
-                Label("This phone was unpaired", systemImage: "lock.slash")
+                Label("This device was unpaired", systemImage: "lock.slash")
             } description: {
                 Text("The connection was removed on your computer. Pair again to keep using your chats here.")
             } actions: {

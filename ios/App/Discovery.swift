@@ -132,7 +132,7 @@ final class Discovery: ObservableObject {
     private static func failureMessage(for error: NWError) -> String {
         if case let .dns(code) = error,
            Int(code) == kDNSServiceErr_PolicyDenied {
-            return "Local Network access is off. Enable it in iPhone Settings, or enter a Tailscale address below."
+            return "Local Network access is off. Enable it in Settings, or enter a Tailscale address below."
         }
         return "Local discovery isn't available right now. Enter the address shown in Phone settings."
     }
