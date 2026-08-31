@@ -2708,6 +2708,30 @@ describe("harness HTTP API", () => {
     await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
   });
 
+  it("mounts the verification skill into a real turn when its trigger appears", async () => {
+    const bot = (await api("POST", "/api/bots", {})).body.bot;
+    try {
+      expect((await api("PATCH", `/api/bots/${bot.id}`, {
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      })).status).toBe(200);
+      rmSync(fakeClaudeDump, { force: true });
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, {
+        text: "/create-verification-skill for my notes app",
+      })).status).toBe(202);
+      await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
+      const seen = JSON.parse(readFileSync(fakeClaudeDump, "utf8"));
+      const system = seen.argv[seen.argv.indexOf("--append-system-prompt") + 1] ?? "";
+      // the skill's instructions ride the system prompt the agent receives
+      expect(system).toContain('<openmaus-skill id="create-verification-skill"');
+      // the sibling is only MENTIONED by create's handoff text — it must not
+      // be mounted as its own skill on an untriggered turn
+      expect(system).not.toContain('<openmaus-skill id="maintain-verification-skill"');
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("keeps Teach a skill off by default and persists an explicit opt-in", async () => {
     const before = await api("GET", "/api/config");
     expect(before.status).toBe(200);
