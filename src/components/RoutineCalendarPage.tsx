@@ -7,8 +7,10 @@ import {
   useState,
   type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
+  type CSSProperties,
 } from "react";
 import {
+  ArrowLeft,
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
@@ -38,6 +40,7 @@ import { BotAvatar } from "@/components/Avatar";
 import { CallTargetButton } from "@/components/CallView";
 import { pathForFile } from "@/components/ComposerAttachments";
 import { CalendarSidebar } from "@/components/routines/CalendarSidebar";
+import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { WebhooksPanel } from "@/components/WebhooksPanel";
 import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/lib/calendar-calls";
 import { startCall } from "@/lib/call";
@@ -999,8 +1002,10 @@ export function RoutineEditor({
   return <EventEditor seed={{ kind: "routine", at, durationMinutes: routine?.durationMinutes ?? 30, botIds: lockedBotId ? [lockedBotId] : routine ? [routine.botId] : [], routine }} bots={bots} lockedBotId={lockedBotId} defaultRunOn={defaultRunOn} onClose={onClose} onSavedCall={() => {}} />;
 }
 
-export function RoutinesPage() {
+export function RoutinesPage({ onBack }: { onBack: () => void }) {
   const { state, dispatch } = useStore();
+  const { capabilities } = useDesktopCapabilities();
+  const backButtonRef = useRef<HTMLButtonElement>(null);
   const [section, setSection] = useState<"calendar" | "webhooks">("calendar");
   const [viewDays, setViewDays] = useState<1 | 3 | 7>(7);
   const [anchor, setAnchor] = useState(() => startOfDay(Date.now()));
@@ -1024,6 +1029,7 @@ export function RoutinesPage() {
     }
   }, []);
   useEffect(() => { void loadCalls(); }, [loadCalls]);
+  useEffect(() => { backButtonRef.current?.focus({ preventScroll: true }); }, []);
 
   const items = useMemo<CalendarEventItem[]>(() => {
     const routineItems = projectedRoutineItems(state.routines, state.routineRuns, rangeStart, rangeEnd).map((item) => ({ ...item, kind: "routine" as const }));
@@ -1045,6 +1051,13 @@ export function RoutinesPage() {
   const paused = state.routines.filter((routine) => !routine.enabled && (routine.schedule.type === "daily" || routine.schedule.at > Date.now()));
   const running = state.routineRuns.filter((run) => ["queued", "running", "waiting"].includes(run.status)).length;
   const unseenFailures = state.routineRuns.filter((run) => ["failed", "missed"].includes(run.status) && !run.seenAt).length;
+  const macInset = capabilities.windowChrome === "mac-inset";
+  const windowDragStyle = macInset
+    ? ({ WebkitAppRegion: "drag" } as CSSProperties)
+    : undefined;
+  const windowNoDragStyle = macInset
+    ? ({ WebkitAppRegion: "no-drag" } as CSSProperties)
+    : undefined;
 
   const setView = (days: 1 | 3 | 7) => {
     setViewDays(days);
@@ -1109,16 +1122,30 @@ export function RoutinesPage() {
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
-      <header className="shrink-0 border-b border-hairline/35 bg-app px-4 py-3 pl-11 md:pl-4">
+      <header
+        className={cn("shrink-0 border-b border-hairline/35 bg-app py-3 pr-4", macInset ? "pl-[86px]" : "pl-4")}
+        style={windowDragStyle}
+      >
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            ref={backButtonRef}
+            onClick={onBack}
+            aria-label="Back"
+            title="Back"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
+            style={windowNoDragStyle}
+          >
+            <ArrowLeft size={18} />
+          </button>
           <div className="mr-3 flex items-center gap-2"><CalendarDays size={21} className="text-accent" /><h1 className="text-[18px] font-semibold tracking-tight text-ink">Calendar</h1></div>
-          <div className="flex items-center rounded-lg border border-hairline/50 bg-panel p-0.5">
+          <div className="flex items-center rounded-lg border border-hairline/50 bg-panel p-0.5" style={windowNoDragStyle}>
             <button onClick={() => setAnchor((current) => addDays(current, -viewDays))} className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Previous dates"><ChevronLeft size={16} /></button>
             <button onClick={goToday} className="rounded-md px-3 py-1.5 text-[12px] font-medium text-ink hover:bg-raised">Today</button>
             <button onClick={() => setAnchor((current) => addDays(current, viewDays))} className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Next dates"><ChevronRight size={16} /></button>
           </div>
           <div className="min-w-[220px] px-2 text-[15px] font-medium text-ink">{calendarRangeLabel(rangeStart, viewDays)}</div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2" style={windowNoDragStyle}>
             {running > 0 && <span className="hidden items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1.5 text-[10.5px] text-accent sm:flex"><Loader2 size={11} className="animate-spin" />{running} active</span>}
             {unseenFailures > 0 && <span className="hidden items-center gap-1.5 rounded-full bg-danger/10 px-2.5 py-1.5 text-[10.5px] text-danger sm:flex"><CircleAlert size={11} />{unseenFailures}</span>}
             {paused.length > 0 && <button onClick={() => setPausedOpen(true)} className="hidden items-center gap-1.5 rounded-full border border-hairline/50 px-2.5 py-1.5 text-[10.5px] text-ink-secondary hover:bg-raised sm:flex"><Pause size={11} />{paused.length}</button>}
@@ -1126,7 +1153,7 @@ export function RoutinesPage() {
             <select value={viewDays} onChange={(event) => setView(Number(event.target.value) as 1 | 3 | 7)} className="rounded-lg border border-hairline/50 bg-panel px-2.5 py-2 text-[11.5px] text-ink outline-none focus:border-accent"><option value={1}>Day</option><option value={3}>3 days</option><option value={7}>Week</option></select>
           </div>
         </div>
-        <div className="mt-2 flex items-center gap-1">
+        <div className="mt-2 flex items-center gap-1" style={windowNoDragStyle}>
           <button onClick={() => setSection("calendar")} className={cn("rounded-lg px-3 py-1.5 text-[11.5px] font-medium", section === "calendar" ? "bg-accent/12 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>Routines &amp; calls</button>
           <button onClick={() => setSection("webhooks")} className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11.5px] font-medium", section === "webhooks" ? "bg-accent/12 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}><Webhook size={12} />Webhooks{state.webhooks.length > 0 && <span className="rounded-full bg-accent/15 px-1.5 text-[9px]">{state.webhooks.length}</span>}</button>
           {error && <button onClick={() => setError("")} className="ml-auto flex items-center gap-1.5 rounded-lg bg-danger/10 px-2.5 py-1.5 text-[10.5px] text-danger"><CircleAlert size={11} />{error}<X size={11} /></button>}
