@@ -130,6 +130,39 @@ public enum TranscriptRow: Identifiable, Hashable, Sendable {
     public var senderName: String? { head.from?.name }
 }
 
+/// The one line a roster row shows under a chat's name.
+///
+/// Folded by the same rule as the transcript, and for the same reason: a
+/// reader who has turned activity off has said they do not want to see tool
+/// calls, and the roster is where they see the most of them — one per chat,
+/// on the screen they spend the most time on. Reading the preview off the
+/// raw last message made "Hidden" mean "hidden in one place".
+public func rosterPreview(_ messages: [Message], detail: ActivityDetail) -> String {
+    guard let last = transcriptRows(messages, detail: detail).last else { return "" }
+    switch last {
+    case let .message(message):
+        return previewText(of: message)
+    case let .activityRun(items):
+        let running = items.contains { $0.tool?.ok == nil }
+        return "\(running ? "Running" : "Ran") \(items.count) steps"
+    }
+}
+
+/// What a single message reads as in a roster row.
+func previewText(of message: Message) -> String {
+    switch message.kind {
+    case .text: return message.text ?? ""
+    // a pending card's question is the preview; the roster row already
+    // says "waiting on you" beside it
+    case .options:
+        guard let card = message.card else { return "" }
+        return card.isPending && !card.subtitle.isEmpty ? card.subtitle : card.title
+    case .activity: return message.tool?.name ?? ""
+    case .screen: return "Screenshot"
+    case .unknown: return message.text ?? ""
+    }
+}
+
 /// Folds a transcript to the requested level of detail.
 ///
 /// A failed step is never folded away: the reason to turn activity down is

@@ -10,6 +10,7 @@ import CompanionCore
 struct ChatListView: View {
     @EnvironmentObject private var session: Session
     @State private var query = ""
+    @AppStorage(PrefKey.activityDetail) private var activityDetail = ActivityDetail.full.rawValue
     /// Driven so that making a bot can open it. Value-based navigation alone
     /// cannot push without a tap, and a new bot appearing silently at the
     /// bottom of the roster is a poor answer to pressing +.
@@ -447,8 +448,11 @@ struct ChatListView: View {
 
     // MARK: - Data
 
+    /// The reader's activity level, which the roster preview folds by.
+    private var activity: ActivityDetail { ActivityDetail(rawValue: activityDetail) ?? .full }
+
     private var chats: [ChatSummary] {
-        let all = session.state.chatSummaries
+        let all = session.state.chatSummaries(activity: activity)
         guard !query.isEmpty else {
             // rooms live in the strip; the list is bots
             return all.filter { if case .bot = $0.chat { return true } else { return false } }
@@ -462,7 +466,7 @@ struct ChatListView: View {
 
     private func summaries(for bots: [Bot]) -> [ChatSummary] {
         let ids = Set(bots.map(\.id))
-        return session.state.chatSummaries.filter { summary in
+        return session.state.chatSummaries(activity: activity).filter { summary in
             if case let .bot(bot) = summary.chat { return ids.contains(bot.id) }
             return false
         }

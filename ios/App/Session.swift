@@ -1405,16 +1405,20 @@ extension CompanionState {
     /// so the same transcript was being traversed dozens of times per frame
     /// to produce an answer that had not changed. One pass, then sort the
     /// results.
-    var chatSummaries: [ChatSummary] {
+    /// - Parameter activity: how much of a bot's working-out the reader has
+    ///   asked to see. The preview honours it the same way the transcript
+    ///   does; `lastActivity` deliberately does not, because a thread that
+    ///   just ran a tool has still moved and should still rise in the list.
+    func chatSummaries(activity: ActivityDetail = .full) -> [ChatSummary] {
         let bots = self.bots.filter { $0.hidden != true }.map(Chat.bot)
         let rooms = self.rooms.map(Chat.room)
         return (bots + rooms)
             .map { chat in
-                let last = visibleTranscript(forThread: chat.threadId).last
+                let messages = visibleTranscript(forThread: chat.threadId)
                 return ChatSummary(
                     chat: chat,
-                    preview: Self.preview(of: last),
-                    lastActivity: last?.at ?? 0,
+                    preview: rosterPreview(messages, detail: activity),
+                    lastActivity: messages.last?.at ?? 0,
                     pinned: Self.pinned(chat)
                 )
             }
@@ -1430,20 +1434,4 @@ extension CompanionState {
         return false
     }
 
-    /// The one line a roster row shows under the name, from whichever kind of
-    /// message landed last.
-    private static func preview(of last: Message?) -> String {
-        guard let last else { return "" }
-        switch last.kind {
-        case .text: return last.text ?? ""
-        // a pending card's question is the preview; the roster row already
-        // says "waiting on you" beside it
-        case .options:
-            guard let card = last.card else { return "" }
-            return card.isPending && !card.subtitle.isEmpty ? card.subtitle : card.title
-        case .activity: return last.tool?.name ?? ""
-        case .screen: return "Screenshot"
-        case .unknown: return last.text ?? ""
-        }
-    }
 }
