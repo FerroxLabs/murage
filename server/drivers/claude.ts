@@ -761,6 +761,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           active.delete(threadId);
           live.turn = null;
           closeSession(threadId, "stdin write failed");
+          retryState.delete(threadId);
           if (mcpConfigPath) {
             try {
               rmSync(dirname(mcpConfigPath), { recursive: true, force: true });
