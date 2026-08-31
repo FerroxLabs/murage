@@ -208,6 +208,28 @@ describe("ClaudeDriver.decodeConfig", () => {
       }
     },
   );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects instead of returning an occupied path when every candidate is unavailable",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "omb-broker-unavailable-"));
+      const heldOne = join(dir, "held-one.sock");
+      const heldTwo = join(dir, "held-two.sock");
+      mkdirSync(heldOne);
+      mkdirSync(heldTwo);
+      try {
+        await expect(
+          createPermissionBroker({
+            socketPaths: [heldOne, heldTwo],
+            onAsk: () => {},
+            onResolve: () => {},
+          }),
+        ).rejects.toThrow(/could not bind a local socket/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("ClaudeDriver turns (fake CLI)", () => {

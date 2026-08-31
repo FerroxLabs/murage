@@ -398,6 +398,10 @@ export async function createPermissionBroker(opts: {
       break;
     }
   }
+  // Never hand the proxy an occupied candidate when every bind failed. That
+  // could connect it to a stale (or unrelated) listener instead of this
+  // broker, defeating the fail-closed boundary.
+  if (!server) throw new Error("claude: permission broker could not bind a local socket");
   const drain = () => {
     for (const p of [...pending.values()]) {
       const { behavior, message } = systemEndedReply(p.ask.kind);
@@ -712,7 +716,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       let mcpConfigPath: string | null = null;
       if (Object.keys(mcpServers).length) {
         mcpConfigPath = join(mkdtempSync(join(tmpdir(), "omb-mcp-")), "mcp.json");
-        writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers }), { mode: 0o600 });
         args.push("--mcp-config", mcpConfigPath);
         args.push("--allowedTools", allowed.join(","));
       }
@@ -739,6 +742,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           active.delete(threadId);
           live.turn = null;
           closeSession(threadId, "stdin write failed");
+          if (mcpConfigPath) {
+            try {
+              rmSync(dirname(mcpConfigPath), { recursive: true, force: true });
+            } catch {}
+          }
           throw new Error("claude session stdin is not writable");
         }
         // the MCP config was for the first spawn; nothing to clean here
@@ -751,64 +759,94 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
       if (live) closeSession(threadId, "spawn contract changed");
 
-      // Only create a broker for a new process. A compatible retained process
-      // keeps its existing proxy connection and broker across turns.
-      if (socketPath) {
-        // remembers which tool each pending ask came from, so the resolved
-        // event can scope approvals to real desktop-control tools only
-        const askTools = new Map<string, string | undefined>();
-        broker = await createPermissionBroker({
-          socketPaths: brokerSocketCandidates(threadId),
-          isActive: () => Boolean(sessions.get(threadId)?.turn),
-          onAsk: (ask) => {
-            const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
-            askTools.set(ask.id, typeof ask.tool === "string" ? ask.tool : undefined);
-            emit({
-              ...base(threadId, eventTurnId),
-              type: "request.opened",
-              requestId: ask.id,
-              requestType: ask.kind,
-              tool: ask.tool,
-              summary: askSummary(ask),
-              approvalScope:
-                typeof ask.tool === "string" && controlsHost && ask.tool.startsWith("mcp__computer")
-                  ? "local-computer"
-                  : undefined,
-              choices: Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
-            });
-          },
-          onResolve: (resolved) => {
-            const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
-            emit({
-              ...base(threadId, eventTurnId),
-              type: "request.resolved",
-              requestId: resolved.id,
-              behavior: resolved.behavior,
-              source: resolved.source,
-              approvalScope:
-                controlsHost && typeof askTools.get(resolved.id) === "string" && askTools.get(resolved.id)!.startsWith("mcp__computer") ? "local-computer" : undefined,
-            });
-            askTools.delete(resolved.id);
-          },
-        });
-        // A fallback bind means the deterministic pipe is still held by an
-        // earlier process's child. The proxy learns its path from argv, so
-        // point it at the pipe we actually bound. argsKey deliberately keeps
-        // the base path: the nonce is not part of the spawn contract, and a
-        // retained session keeps its own broker object anyway.
-        if (broker.socketPath !== socketPath && mcpConfigPath) {
-          mcpServers.ogb = { command: process.execPath, args: [PERM_PROXY_PATH, broker.socketPath], env: { ...NODE_ENV_FLAG } };
+      // Until sessions.set() below, this turn owns every launch resource.
+      // Any bind, private-config or synchronous spawn failure must release
+      // them here rather than leave a live listener or credential temp file.
+      const cleanupUnownedLaunch = () => {
+        broker?.close();
+        broker = undefined;
+        if (mcpConfigPath) {
+          try {
+            rmSync(dirname(mcpConfigPath), { recursive: true, force: true });
+          } catch {}
+          mcpConfigPath = null;
+        }
+        retryState.delete(threadId);
+      };
+
+      try {
+        // Only create a broker for a new process. A compatible retained
+        // process keeps its existing proxy connection and broker across turns.
+        if (socketPath) {
+          // remembers which tool each pending ask came from, so the resolved
+          // event can scope approvals to real desktop-control tools only
+          const askTools = new Map<string, string | undefined>();
+          broker = await createPermissionBroker({
+            socketPaths: brokerSocketCandidates(threadId),
+            isActive: () => Boolean(sessions.get(threadId)?.turn),
+            onAsk: (ask) => {
+              const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
+              askTools.set(ask.id, typeof ask.tool === "string" ? ask.tool : undefined);
+              emit({
+                ...base(threadId, eventTurnId),
+                type: "request.opened",
+                requestId: ask.id,
+                requestType: ask.kind,
+                tool: ask.tool,
+                summary: askSummary(ask),
+                approvalScope:
+                  typeof ask.tool === "string" && controlsHost && ask.tool.startsWith("mcp__computer")
+                    ? "local-computer"
+                    : undefined,
+                choices: Array.isArray(ask.input?.choices) ? (ask.input.choices as string[]).slice(0, 5) : undefined,
+              });
+            },
+            onResolve: (resolved) => {
+              const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
+              emit({
+                ...base(threadId, eventTurnId),
+                type: "request.resolved",
+                requestId: resolved.id,
+                behavior: resolved.behavior,
+                source: resolved.source,
+                approvalScope:
+                  controlsHost && typeof askTools.get(resolved.id) === "string" && askTools.get(resolved.id)!.startsWith("mcp__computer") ? "local-computer" : undefined,
+              });
+              askTools.delete(resolved.id);
+            },
+          });
+          // A fallback bind means the deterministic pipe is still held by an
+          // earlier process's child. The proxy learns its path from argv, so
+          // point it at the pipe we actually bound. argsKey deliberately keeps
+          // the base path: the nonce is not part of the spawn contract, and a
+          // retained session keeps its own broker object anyway.
+          if (broker.socketPath !== socketPath && mcpConfigPath) {
+            mcpServers.ogb = { command: process.execPath, args: [PERM_PROXY_PATH, broker.socketPath], env: { ...NODE_ENV_FLAG } };
+          }
+        }
+
+        // Write once, only after the broker has selected its real endpoint.
+        if (mcpConfigPath) {
           writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers }), { mode: 0o600 });
         }
+        if (sessionId) args.push("--resume", sessionId);
+        else args.push("--session-id", newSessionId!);
+      } catch (error) {
+        cleanupUnownedLaunch();
+        throw error;
       }
-      if (sessionId) args.push("--resume", sessionId);
-      else args.push("--session-id", newSessionId!);
 
-      const child = spawnCli(config.cli, args, {
-        cwd,
-        env,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      let child: ReturnType<typeof spawnCli>;
+      try {
+        child = spawnCli(config.cli, args, {
+          cwd,
+          env,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      } catch (error) {
+        cleanupUnownedLaunch();
+        throw error;
+      }
       const session: Session = {
         child,
         broker,
