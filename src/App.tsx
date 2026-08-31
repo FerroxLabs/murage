@@ -22,6 +22,7 @@ import { SkillRecorderPage } from "@/components/SkillRecorderPage";
 import { TeamMapPage } from "@/components/TeamMapPage";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
+import { setLocale } from "@/lib/i18n";
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -34,6 +35,15 @@ function Shell() {
   // turn the aside into a containing block for its fixed descendants (see
   // Sidebar.tsx's className comment).
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Apply the configured UI language the moment config arrives or changes;
+  // "" follows the system. The epoch bump re-renders extracted strings —
+  // t() reads a module variable, so React needs this nudge.
+  const language = state.config?.language ?? "";
+  const [, setLocaleEpoch] = useState(0);
+  useEffect(() => {
+    setLocale(language || globalThis.navigator?.language);
+    setLocaleEpoch((epoch) => epoch + 1);
+  }, [language]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [localVmWorkspaceBotId, setLocalVmWorkspaceBotId] = useState<string | null>(null);
   // the Browser tab, expanded into the main column (the small preview in
