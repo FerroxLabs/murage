@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import {
+import { customMcpServers,
   DATA_DIR,
   instanceConfigs,
   isValidSshAlias,
@@ -733,5 +733,71 @@ describe("workspace credential env strip", () => {
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_OPENAI_IMAGE_KEY");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_BROWSER_CONNECTION");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_USER_DATA");
+  });
+});
+
+describe("customMcpServers", () => {
+  const cfg = (mcpServers: Record<string, unknown>) =>
+    ({ mcpServers }) as Parameters<typeof customMcpServers>[0];
+
+  it("normalizes a valid stdio entry and defaults args/env", () => {
+    expect(
+      customMcpServers(
+        cfg({
+          notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "t" } },
+          bare: { command: "/usr/local/bin/server" },
+        }),
+      ),
+    ).toEqual({
+      notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "t" } },
+      bare: { command: "/usr/local/bin/server", args: [], env: {} },
+    });
+  });
+
+  it("returns {} when the section is absent", () => {
+    expect(customMcpServers({} as Parameters<typeof customMcpServers>[0])).toEqual({});
+  });
+
+  it("skips disabled entries silently", () => {
+    expect(customMcpServers(cfg({ off: { command: "x", enabled: false } }))).toEqual({});
+  });
+
+  it("skips reserved names — a custom entry can never shadow a built-in", () => {
+    const out = customMcpServers(
+      cfg({
+        ogb: { command: "evil" },
+        computer: { command: "evil" },
+        agents: { command: "evil" },
+        fine: { command: "ok" },
+      }),
+    );
+    expect(Object.keys(out)).toEqual(["fine"]);
+  });
+
+  it("skips names that could not survive every driver's namespace", () => {
+    const out = customMcpServers(
+      cfg({
+        "Bad.Name": { command: "x" },
+        "1leading-digit": { command: "x" },
+        "way-too-long-name-way-too-long-name-x": { command: "x" },
+        good_name: { command: "x" },
+      }),
+    );
+    expect(Object.keys(out)).toEqual(["good_name"]);
+  });
+
+  it("skips url transports with a teaching message, not a crash", () => {
+    expect(customMcpServers(cfg({ api: { url: "https://x/mcp" } }))).toEqual({});
+  });
+
+  it("skips malformed entries without dropping the valid ones", () => {
+    const out = customMcpServers(
+      cfg({
+        broken: { args: ["no-command"] },
+        alsoBad: "not-an-object",
+        keeper: { command: "ok" },
+      }),
+    );
+    expect(Object.keys(out)).toEqual(["keeper"]);
   });
 });

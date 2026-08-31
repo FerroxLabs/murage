@@ -327,6 +327,7 @@ the composer mic) — see [`docs/voice-mode.md`](docs/voice-mode.md) for the des
 
 Contributions welcome — the driver SPI in [`server/contracts.ts`](server/contracts.ts) is deliberately
 small; adding a provider is one file in [`server/drivers/`](server/drivers/) plus a one-line registration.
+Users can add their own MCP tool servers with zero code via [`docs/custom-mcp-servers.md`](docs/custom-mcp-servers.md).
 
 ## Support the project
 

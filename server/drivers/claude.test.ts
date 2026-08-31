@@ -412,6 +412,43 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(allowed).toContain("mcp__agents");
   });
 
+  it("mounts custom MCP servers without pre-allowing their tools", async () => {
+    await create();
+    const dump = join(scratch, "custom-mcp.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-custom-mcp",
+      text: "hi",
+      integrations: {
+        custom: {
+          notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-notes" } },
+        },
+        agents: {
+          command: process.execPath,
+          args: ["/fake/agents-proxy.js"],
+          env: { OMB_HARNESS_URL: "http://127.0.0.1:1", OMB_BOT_ID: "b1", OMB_COMMS_TOKEN: "tok", OMB_TURN_DEPTH: "0" },
+        },
+      },
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    // the server reaches the CLI through the private mcp-config file…
+    expect(seen.mcpConfig.mcpServers.notes).toMatchObject({
+      command: "npx",
+      args: ["-y", "@x/notes-mcp"],
+      env: { NOTES_TOKEN: "tok-notes" },
+    });
+    // …but its tools are NOT pre-allowed: acceptEdits denies unlisted tools,
+    // which routes every custom call through the ogb broker into a card.
+    const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
+    expect(allowed).toContain("mcp__agents");
+    expect(allowed).not.toContain("mcp__notes");
+    // and its credential value stays out of argv
+    expect(JSON.stringify(seen.argv)).not.toContain("tok-notes");
+  });
+
   it("passes normalized available and denied built-in tool sets to Claude", async () => {
     await create(undefined, {}, {
       tools: ["Read", "WebFetch"],

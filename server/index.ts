@@ -90,6 +90,7 @@ import {
   DATA_DIR,
   EVENTS_DIR,
   NATIVE_DIR,
+  customMcpServers,
 } from "./config.ts";
 import { ComputerControl } from "./computer-control.ts";
 import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts";
@@ -2597,6 +2598,13 @@ async function startTurn(
         const connection = await connectedAppsIntegration(bot.id, threadId);
         if (connection) integrations.composio = connection;
       }
+      // user-configured MCP servers (config.json mcpServers): same rule as
+      // composio — only to a driver that can mount them. Their tools are
+      // never pre-allowed, so every call rides the normal permission flow.
+      if (instance.adapter.capabilities.customMcp === true) {
+        const custom = customMcpServers(cfg);
+        if (Object.keys(custom).length) integrations.custom = custom;
+      }
       // CLI engines work inside the bot's own workspace directory rather
       // than the user's home: a bot with file tools and acceptEdits gets a
       // desk, not the whole house — and the workspace is where its
@@ -3459,6 +3467,11 @@ async function runGroupMemberTurn(
     });
     onDispatchError?.(message);
     return true;
+  }
+  // user-configured MCP servers: same gating as the 1:1 site above.
+  if (instance.adapter.capabilities.customMcp === true) {
+    const custom = customMcpServers(cfg);
+    if (Object.keys(custom).length) integrations.custom = custom;
   }
   // Connected-app discovery is intentionally awaited before a provider owns
   // the bot. An interrupt during that setup window must still stop the queued

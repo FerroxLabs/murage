@@ -283,6 +283,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             env: acpEnv(local.env ?? {}),
           });
         }
+        // user-configured servers, after the built-ins: a residual name
+        // collision keeps the built-in (reserved names are filtered at the
+        // config boundary; this is defense in depth).
+        for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
+          if (servers.some((existing) => existing.name === name)) continue;
+          servers.push({ name, command: server.command, args: server.args, env: acpEnv(server.env) });
+        }
         return servers;
       };
 
@@ -753,6 +760,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           capabilities: {
             sessionModelSwitch: "unsupported",
             agentsMcp: true,
+        customMcp: true,
             computerMcp: true,
             composioMcp: true,
             browserMcp: true,

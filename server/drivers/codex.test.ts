@@ -190,6 +190,40 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.env.OMB_COMMS_TOKEN).toBe("per-boot-token");
   });
 
+  it("mounts custom MCP servers on-request while built-ins stay pre-quieted", async () => {
+    await create();
+    const dump = join(scratch, "custom-mcp.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    expect(instance.adapter.capabilities.customMcp).toBe(true);
+
+    await instance.adapter.sendTurn({
+      threadId: "t-custom-mcp",
+      text: "go",
+      integrations: {
+        custom: {
+          notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-notes" } },
+        },
+        composio: {
+          command: process.execPath,
+          args: ["/tmp/connector-proxy.js"],
+          env: { OMB_COMMS_TOKEN: "per-boot-token" },
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    const argv = seen.argv.join(" ");
+    expect(argv).toContain("mcp_servers.notes.command");
+    // env value stays in the child env; argv carries names only
+    expect(argv).toContain("NOTES_TOKEN");
+    expect(argv).not.toContain("tok-notes");
+    expect(seen.env.NOTES_TOKEN).toBe("tok-notes");
+    // the built-in keeps codex's pre-quieted approval mode; the custom
+    // server does NOT — its tool calls arrive as approval cards
+    expect(argv).toContain('mcp_servers.openmausbot_connectors.default_tools_approval_mode');
+    expect(argv).not.toContain('mcp_servers.notes.default_tools_approval_mode');
+  });
+
   it("mounts peer-agent comms without placing the comms token in argv", async () => {
     await create();
     const dump = join(scratch, "agents.json");
