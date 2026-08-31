@@ -32,6 +32,9 @@ function fakeView(partition) {
   let hitRelated = true;
   let richRefsValid = true;
   let richHit = true;
+  let devicePixelRatio = 2;
+  let emulationFailures = 0;
+  let domScrollAtPoint = false;
   const injectedContexts = new Set();
   let mainWorldSpoofed = false;
   const fieldClassifications = new Map([
@@ -81,7 +84,14 @@ function fakeView(partition) {
       url = next;
       title = next === "about:blank" ? "" : "Loaded";
     },
-    enableDeviceEmulation: (options) => calls.push(["enableDeviceEmulation", options]),
+    reload: () => calls.push(["reload"]),
+    enableDeviceEmulation: (options) => {
+      calls.push(["enableDeviceEmulation", options]);
+      if (emulationFailures > 0) {
+        emulationFailures -= 1;
+        throw new Error("fixture emulation failure");
+      }
+    },
     disableDeviceEmulation: () => calls.push(["disableDeviceEmulation"]),
     close: () => calls.push(["close"]),
     capturePage: async () => ({
@@ -128,6 +138,7 @@ function fakeView(partition) {
         if (method === "Runtime.callFunctionOn") return { result: { value: { chosen: ["India"] } } };
         if (method === "Runtime.evaluate") {
           const expression = String(params.expression);
+          if (expression === "window.devicePixelRatio") return { result: { value: devicePixelRatio } };
           if (expression.includes("document.activeElement")) return { result: { objectId: "active-element" } };
           if (expression === "/*injected*/") {
             injectedContexts.add(params.contextId);
@@ -145,6 +156,7 @@ function fakeView(partition) {
           }
           if (expression.includes("focusRef")) return { result: { value: true } };
           if (expression.includes("elementForRef")) return { result: { objectId: "obj-e1" } };
+          if (expression.includes("__ombScrollAtPoint")) return { result: { value: domScrollAtPoint } };
           if (expression.includes("scrollingElement")) return { result: { value: { top: 0, height: 2400, view: 800 } } };
           return { result: { value: pageText } };
         }
@@ -198,6 +210,15 @@ function fakeView(partition) {
     },
     setRichHit: (hit) => {
       richHit = hit === true;
+    },
+    setDevicePixelRatio: (value) => {
+      devicePixelRatio = Number(value);
+    },
+    failNextEmulation: () => {
+      emulationFailures += 1;
+    },
+    setDomScrollAtPoint: (value) => {
+      domScrollAtPoint = value === true;
     },
     setSensitive: (objectId, value = true) => {
       fieldClassifications.set(objectId, value ? "sensitive" : "ordinary");
@@ -332,7 +353,7 @@ describe("browser surface manager", () => {
     expect(() => manager.layout("../bad", BOUNDS)).toThrow(/bot id/);
   });
 
-  it("scales the fixed desktop viewport into the compact box and shows it 1:1 when expanded", () => {
+  it("scales the same fixed desktop viewport to fit compact and expanded boxes", () => {
     const { manager, views } = harness();
     manager.layout("bot-a", BOUNDS, "", "compact");
     const emulation = views[0].calls.find(([name]) => name === "enableDeviceEmulation")[1];
@@ -340,7 +361,11 @@ describe("browser surface manager", () => {
     // 400/1280 = 0.3125 and 250/800 = 0.3125 — fit on both axes
     expect(emulation.scale).toBeCloseTo(0.3125, 4);
     manager.layout("bot-a", { x: 0, y: 0, width: 1100, height: 700 }, "", "expanded");
-    expect(views[0].calls.at(-1)).toEqual(["disableDeviceEmulation"]);
+    const expanded = views[0].calls.filter(([name]) => name === "enableDeviceEmulation").at(-1)[1];
+    expect(expanded.viewSize).toEqual(VIEWPORT);
+    expect(expanded.screenSize).toEqual(VIEWPORT);
+    expect(expanded.scale).toBeCloseTo(0.859375, 6);
+    expect(views[0].calls.some(([name]) => name === "disableDeviceEmulation")).toBe(false);
     expect(manager.state("bot-a").mode).toBe("expanded");
   });
 
@@ -360,6 +385,18 @@ describe("browser surface manager", () => {
     expect(view.calls.filter(([name]) => name === "enableDeviceEmulation")).toHaveLength(initialEmulationCalls);
   });
 
+  it("raises a hidden native view when its surface becomes visible again", () => {
+    const { manager, owner, views } = harness();
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    manager.layout("bot-a", null, "", "compact");
+    manager.layout("bot-b", BOUNDS, "", "compact");
+    expect(owner.contentView.children).toEqual([views[0], views[1]]);
+
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    expect(owner.contentView.children).toEqual([views[1], views[0]]);
+    expect(views[0].visible).toBe(true);
+  });
+
   it("moves without resetting emulation and reapplies it only when compact scale changes", () => {
     const { manager, views } = harness();
     manager.layout("bot-a", BOUNDS, "", "compact");
@@ -374,6 +411,54 @@ describe("browser surface manager", () => {
     expect(emulationCalls).toHaveLength(2);
     expect(emulationCalls.at(-1)[1].viewSize).toEqual(VIEWPORT);
     expect(emulationCalls.at(-1)[1].scale).toBeCloseTo(0.25, 4);
+  });
+
+  it("reapplies compact emulation after a main-frame navigation commits", () => {
+    const { manager, views } = harness();
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    const view = views[0];
+    expect(view.calls.filter(([name]) => name === "enableDeviceEmulation")).toHaveLength(1);
+
+    view.listeners.get("did-navigate")?.();
+
+    const emulationCalls = view.calls.filter(([name]) => name === "enableDeviceEmulation");
+    expect(emulationCalls).toHaveLength(2);
+    expect(emulationCalls.at(-1)[1]).toMatchObject({
+      viewSize: VIEWPORT,
+      screenSize: VIEWPORT,
+    });
+  });
+
+  it("reapplies expanded fixed-viewport emulation after a main-frame navigation commits", () => {
+    const { manager, views } = harness();
+    manager.layout("bot-a", { x: 10, y: 20, width: 960, height: 700 }, "", "expanded");
+    const view = views[0];
+    expect(view.calls.filter(([name]) => name === "enableDeviceEmulation")).toHaveLength(1);
+
+    view.listeners.get("did-navigate")?.();
+
+    const emulationCalls = view.calls.filter(([name]) => name === "enableDeviceEmulation");
+    expect(emulationCalls).toHaveLength(2);
+    expect(emulationCalls.at(-1)[1]).toMatchObject({
+      viewSize: VIEWPORT,
+      screenSize: VIEWPORT,
+      scale: 0.75,
+    });
+  });
+
+  it("retries a commit-time emulation failure when loading finishes", () => {
+    const { manager, views } = harness();
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    const view = views[0];
+    view.failNextEmulation();
+
+    view.listeners.get("did-navigate")?.();
+    expect(view.calls.filter(([name]) => name === "enableDeviceEmulation")).toHaveLength(2);
+    view.listeners.get("did-stop-loading")?.();
+
+    const emulationCalls = view.calls.filter(([name]) => name === "enableDeviceEmulation");
+    expect(emulationCalls).toHaveLength(3);
+    expect(emulationCalls.at(-1)[1]).toMatchObject({ viewSize: VIEWPORT, scale: 0.3125 });
   });
 
   it("navigates only to web pages and answers with the page's elements plus a scroll hint", async () => {
@@ -393,6 +478,16 @@ describe("browser surface manager", () => {
     const untrustedLoadAt = views[0].calls.findIndex(([name, url]) => name === "loadURL" && url === "https://example.com/");
     expect(protocolReadyAt).toBeGreaterThanOrEqual(0);
     expect(untrustedLoadAt).toBeGreaterThan(protocolReadyAt);
+  });
+
+  it("reloads the active page without manufacturing a new history entry", async () => {
+    const { manager, views } = harness();
+    await manager.navigate("bot-a", "https://example.com");
+
+    await manager.reload("bot-a", "", { source: "user" });
+
+    expect(views[0].calls.filter(([name]) => name === "reload")).toHaveLength(1);
+    expect(views[0].calls.filter(([name]) => name === "loadURL")).toHaveLength(2);
   });
 
   it("blocks DNS-private redirects without replaying public redirects or form navigations as GETs", async () => {
@@ -518,6 +613,48 @@ describe("browser surface manager", () => {
     expect(views[1].calls.some(([name]) => name === "close")).toBe(false);
   });
 
+  it("applies compact bounds when switching profiles after the old surface was hidden", () => {
+    const { manager, views } = harness();
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    manager.layout("bot-a", null, "", "compact");
+
+    manager.layout("bot-a", BOUNDS, "work", "compact");
+
+    expect(views).toHaveLength(2);
+    expect(views[1].bounds).toEqual(BOUNDS);
+    expect(views[1].visible).toBe(true);
+    expect(views[1].calls.find(([name]) => name === "enableDeviceEmulation")?.[1]).toMatchObject({
+      viewSize: VIEWPORT,
+      screenSize: VIEWPORT,
+    });
+  });
+
+  it("ignores a stale profile-scoped hide after another profile is active", () => {
+    const { manager, views } = harness();
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    manager.layout("bot-a", BOUNDS, "work", "compact");
+
+    const state = manager.layout("bot-a", null, "", "compact");
+
+    expect(state).toMatchObject({ profile: "work", visible: true });
+    expect(views[1].visible).toBe(true);
+    manager.layout("bot-a", null, "work", "compact");
+    expect(views[1].visible).toBe(false);
+  });
+
+  it("ignores cleanup from an older layout owner on the same profile", () => {
+    const { manager, views } = harness();
+    manager.layout("bot-a", BOUNDS, "", "compact", "compact-owner");
+    manager.layout("bot-a", { ...BOUNDS, width: 800, height: 500 }, "", "expanded", "expanded-owner");
+
+    const state = manager.layout("bot-a", null, "", "compact", "compact-owner");
+
+    expect(state).toMatchObject({ profile: "", visible: true, mode: "expanded" });
+    expect(views[0].visible).toBe(true);
+    manager.layout("bot-a", null, "", "expanded", "expanded-owner");
+    expect(views[0].visible).toBe(false);
+  });
+
   it("reuses a cold own-profile view after the active shared profile is removed", async () => {
     const { manager, views } = harness();
     manager.layout("bot-a", BOUNDS, "", "compact");
@@ -602,6 +739,38 @@ describe("browser surface manager", () => {
     expect(manager.list().map(({ botId }) => botId)).toEqual(["bot-b"]);
   });
 
+  it("serializes concurrent agent operations on the same browser entry", async () => {
+    const { manager, views } = harness();
+    await manager.navigate("bot-a", "https://example.com");
+    const original = views[0].webContents.debugger.sendCommand;
+    let resume;
+    let markStarted;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    let paused = false;
+    views[0].webContents.debugger.sendCommand = async (method, params) => {
+      if (!paused && method === "Input.dispatchMouseEvent" && params?.type === "mouseMoved") {
+        paused = true;
+        markStarted();
+        await new Promise((resolve) => { resume = resolve; });
+      }
+      return original(method, params);
+    };
+
+    const first = manager.click("bot-a", "b11");
+    await started;
+    const second = manager.click("bot-a", "b11");
+    await Promise.resolve();
+    // The first movement is paused before the fake records it. If the second
+    // operation interleaved, its movement would already be visible here.
+    expect(cdpCalls(views[0]).filter(([name]) => name === "Input.dispatchMouseEvent")).toHaveLength(0);
+    resume();
+    await Promise.all([first, second]);
+    expect(cdpCalls(views[0]).filter(([name]) => name === "Input.dispatchMouseEvent").map(([, params]) => params.type)).toEqual([
+      "mouseMoved", "mousePressed", "mouseReleased",
+      "mouseMoved", "mousePressed", "mouseReleased",
+    ]);
+  });
+
   it("clicks at the centre of a known ref and refuses stale or unknown ones", async () => {
     const { manager, views } = harness();
     await manager.navigate("bot-a", "https://example.com");
@@ -617,6 +786,66 @@ describe("browser surface manager", () => {
     // a navigation invalidates every ref until the next snapshot
     views[0].listeners.get("did-navigate")?.();
     await expect(manager.click("bot-a", "b11")).rejects.toThrow(/changed since/);
+  });
+
+  it("maps fixed-viewport CSS coordinates into compact and expanded native surfaces", async () => {
+    const { manager, views } = harness();
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    await manager.navigate("bot-a", "https://example.com");
+    await manager.click("bot-a", "b11");
+
+    let pointer = cdpCalls(views[0]).filter(([name]) => name === "Input.dispatchMouseEvent").map(([, params]) => params);
+    expect(pointer.slice(-3)).toEqual([
+      { type: "mouseMoved", x: 18.75, y: 12.5 },
+      { type: "mousePressed", x: 18.75, y: 12.5, button: "left", clickCount: 1 },
+      { type: "mouseReleased", x: 18.75, y: 12.5, button: "left", clickCount: 1 },
+    ]);
+    const compactHitTest = cdpCalls(views[0]).filter(([name]) => name === "DOM.getNodeForLocation").at(-1)[1];
+    expect(compactHitTest).toMatchObject({ x: 60, y: 40 });
+
+    manager.layout("bot-a", { x: 0, y: 0, width: 800, height: 600 }, "", "expanded");
+    await manager.click("bot-a", "b11");
+    pointer = cdpCalls(views[0]).filter(([name]) => name === "Input.dispatchMouseEvent").map(([, params]) => params);
+    expect(pointer.slice(-3)).toEqual([
+      { type: "mouseMoved", x: 37.5, y: 25 },
+      { type: "mousePressed", x: 37.5, y: 25, button: "left", clickCount: 1 },
+      { type: "mouseReleased", x: 37.5, y: 25, button: "left", clickCount: 1 },
+    ]);
+
+    await manager.scroll("bot-a", "down", 600);
+    expect(cdpCalls(views[0]).filter(([name]) => name === "Input.dispatchMouseEvent").slice(-2).map(([, params]) => params)).toEqual([
+      { type: "mouseMoved", x: 400, y: 250 },
+      { type: "mouseWheel", x: 400, y: 250, deltaX: 0, deltaY: 600 },
+    ]);
+  });
+
+  it("scrolls a standard DOM container deterministically before using the compositor fallback", async () => {
+    const { manager, views } = harness({ platform: "linux" });
+    await manager.navigate("bot-a", "https://example.com");
+    views[0].setDomScrollAtPoint(true);
+
+    await manager.scroll("bot-a", "down", 600);
+
+    const scrollEvaluation = cdpCalls(views[0]).findLast(([name, params]) =>
+      name === "Runtime.evaluate" && String(params.expression).includes("__ombScrollAtPoint"));
+    expect(scrollEvaluation?.[1].expression).toContain('{"x":640,"y":400,"deltaX":0,"deltaY":600}');
+    expect(cdpCalls(views[0]).filter(([name, params]) =>
+      name === "Input.dispatchMouseEvent" && params.type === "mouseWheel")).toHaveLength(0);
+  });
+
+  it("emits a real double-click sequence instead of only a detail-2 pair", async () => {
+    const { manager, views } = harness();
+    await manager.navigate("bot-a", "https://example.com");
+    await manager.click("bot-a", "b11", { clickCount: 2 });
+    const pointer = cdpCalls(views[0])
+      .filter(([name, params]) => name === "Input.dispatchMouseEvent" && params.type !== "mouseMoved")
+      .map(([, params]) => ({ type: params.type, clickCount: params.clickCount }));
+    expect(pointer).toEqual([
+      { type: "mousePressed", clickCount: 1 },
+      { type: "mouseReleased", clickCount: 1 },
+      { type: "mousePressed", clickCount: 2 },
+      { type: "mouseReleased", clickCount: 2 },
+    ]);
   });
 
   it("invalidates relabelled refs and refuses a late overlay before mouse-down", async () => {
@@ -644,6 +873,95 @@ describe("browser surface manager", () => {
     await manager.navigate("bot-a", "https://example.org", "", { source: "user" });
     expect(manager.setHumanControl("bot-a", false, "")).toBe(true);
     await expect(manager.click("bot-a", "b11")).resolves.toBeTruthy();
+  });
+
+  it.each(["mouseDown", "contextMenu", "mouseWheel"])("keeps compact human %s input watch-only while expanding", async (type) => {
+    const interactions = [];
+    const { manager, views } = harness({ onUserInteraction: (event) => interactions.push(event) });
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    await manager.navigate("bot-a", "https://example.com");
+    const event = { preventDefault: vi.fn() };
+    views[0].listeners.get("before-mouse-event")?.(event, {
+      type,
+      button: type === "contextMenu" ? "right" : "left",
+      x: 300,
+      y: 180,
+    });
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(interactions).toEqual([{ botId: "bot-a", profile: "" }]);
+    if (type === "mouseDown") {
+      // Model the renderer responding immediately to the takeover before the
+      // native release for the same gesture arrives.
+      manager.layout("bot-a", { x: 0, y: 0, width: 900, height: 650 }, "", "expanded");
+      const release = { preventDefault: vi.fn() };
+      views[0].listeners.get("before-mouse-event")?.(release, { type: "mouseUp", button: "left", x: 300, y: 180 });
+      expect(release.preventDefault).toHaveBeenCalledOnce();
+    }
+    manager.setHumanControl("bot-a", false, "");
+    await expect(manager.read("bot-a")).resolves.toMatchObject({ title: "Loaded" });
+  });
+
+  it("reopens an already-controlled compact browser without activating its page", async () => {
+    const interactions = [];
+    const { manager, views } = harness({ onUserInteraction: (event) => interactions.push(event) });
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    manager.setHumanControl("bot-a", true, "");
+    const event = { preventDefault: vi.fn() };
+    views[0].listeners.get("before-mouse-event")?.(event, { type: "mouseDown", button: "left", x: 200, y: 100 });
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(interactions).toEqual([{ botId: "bot-a", profile: "" }]);
+  });
+
+  it("shields the inertial tail of a compact wheel gesture after expansion", () => {
+    const interactions = [];
+    const { manager, views } = harness({ onUserInteraction: (event) => interactions.push(event) });
+    manager.layout("bot-a", BOUNDS, "", "compact");
+
+    const first = { preventDefault: vi.fn() };
+    views[0].listeners.get("before-mouse-event")?.(first, { type: "mouseWheel", deltaY: 120 });
+    manager.layout("bot-a", { x: 0, y: 0, width: 900, height: 650 }, "", "expanded");
+    const inertia = { preventDefault: vi.fn() };
+    views[0].listeners.get("before-mouse-event")?.(inertia, { type: "mouseWheel", deltaY: 80 });
+
+    expect(first.preventDefault).toHaveBeenCalledOnce();
+    expect(inertia.preventDefault).toHaveBeenCalledOnce();
+    expect(interactions).toEqual([{ botId: "bot-a", profile: "" }]);
+  });
+
+  it("preserves the originating profile on terminal surface events", () => {
+    const { manager, views, states } = harness();
+    manager.layout("bot-a", BOUNDS, "work", "compact");
+    views[0].listeners.get("render-process-gone")?.();
+
+    expect(states.at(-1)).toMatchObject({
+      botId: "bot-a",
+      open: false,
+      profile: "work",
+      partition: "persist:openmausbot-browser-profile-work",
+      mode: "compact",
+      code: "renderer-gone",
+    });
+  });
+
+  it("does not shield synthetic agent clicks in the compact surface", async () => {
+    const interactions = [];
+    const { manager, views } = harness({ onUserInteraction: (event) => interactions.push(event) });
+    manager.layout("bot-a", BOUNDS, "", "compact");
+    await manager.navigate("bot-a", "https://example.com");
+    await manager.click("bot-a", "b11");
+    const pressed = cdpCalls(views[0]).findLast(([name, params]) =>
+      name === "Input.dispatchMouseEvent" && params.type === "mousePressed")[1];
+    const event = { preventDefault: vi.fn() };
+    views[0].listeners.get("before-mouse-event")?.(event, {
+      type: "mouseDown",
+      button: pressed.button,
+      x: pressed.x,
+      y: pressed.y,
+    });
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(interactions).toEqual([]);
+    expect(manager.controlLease("bot-a", "")).toMatchObject({ held: false });
   });
 
   it("does not mistake a just-finished CDP input event for a human click", async () => {
@@ -898,10 +1216,69 @@ describe("browser surface manager", () => {
     const enter = cdpCalls(views[0]).find(([name, params]) => name === "Input.dispatchKeyEvent" && params.key === "Enter" && params.type === "keyDown");
     expect(enter?.[1]).toMatchObject({ type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
     await manager.scroll("bot-a", "down");
+    expect(cdpCalls(views[0]).findLast(([name, params]) => name === "Input.dispatchMouseEvent" && params.type === "mouseMoved")?.[1])
+      .toMatchObject({ x: 640, y: 400 });
     expect(cdpCalls(views[0]).find(([name, params]) => name === "Input.dispatchMouseEvent" && params.type === "mouseWheel")[1]).toMatchObject({ x: 640, y: 400, deltaX: 0, deltaY: 600 });
     await expect(manager.scroll("bot-a", "sideways")).rejects.toThrow(/direction/);
     const shot = await manager.screenshot("bot-a");
     expect(shot).toMatchObject({ format: "jpeg", width: 1024, height: 640, png: Buffer.from("cdp-jpeg").toString("base64") });
+    expect(cdpCalls(views[0]).find(([name]) => name === "Page.captureScreenshot")[1].clip).toMatchObject({
+      width: 1280,
+      height: 800,
+      scale: 0.4,
+    });
+  });
+
+  it("normalizes a narrow capturePage fallback to the fixed screenshot size", async () => {
+    const { manager, views } = harness();
+    await manager.navigate("bot-a", "https://example.com");
+    const originalSendCommand = views[0].webContents.debugger.sendCommand;
+    views[0].webContents.debugger.sendCommand = async (method, params) => {
+      if (method === "Page.captureScreenshot") throw new Error("fixture protocol capture failure");
+      return originalSendCommand(method, params);
+    };
+    const resize = vi.fn(({ width, height }) => ({
+      getSize: () => ({ width, height }),
+      toJPEG: () => Buffer.from("fallback-jpeg"),
+    }));
+    views[0].webContents.capturePage = async () => ({
+      getSize: () => ({ width: 400, height: 250 }),
+      resize,
+      toJPEG: () => Buffer.from("unscaled-jpeg"),
+    });
+
+    await expect(manager.screenshot("bot-a")).resolves.toMatchObject({
+      format: "jpeg",
+      width: 1024,
+      height: 640,
+      png: Buffer.from("fallback-jpeg").toString("base64"),
+    });
+    expect(resize).toHaveBeenCalledWith({ width: 1024, height: 640 });
+  });
+
+  it("uses normalized native capture on Linux without issuing a hanging CDP screenshot", async () => {
+    const { manager, views } = harness({ platform: "linux" });
+    manager.layout("bot-a", { x: 10, y: 20, width: 820, height: 600 }, "", "expanded");
+    await manager.navigate("bot-a", "https://example.com");
+    const resize = vi.fn(({ width, height }) => ({
+      getSize: () => ({ width, height }),
+      toJPEG: () => Buffer.from("linux-native-jpeg"),
+    }));
+    views[0].webContents.capturePage = vi.fn(async () => ({
+      getSize: () => ({ width: 400, height: 250 }),
+      resize,
+      toJPEG: () => Buffer.from("unscaled-jpeg"),
+    }));
+
+    await expect(manager.screenshot("bot-a")).resolves.toMatchObject({
+      format: "jpeg",
+      width: 1024,
+      height: 640,
+      png: Buffer.from("linux-native-jpeg").toString("base64"),
+    });
+    expect(cdpCalls(views[0]).some(([name]) => name === "Page.captureScreenshot")).toBe(false);
+    expect(views[0].webContents.capturePage).toHaveBeenCalledWith({ x: 0, y: 0, width: 820, height: 513 });
+    expect(resize).toHaveBeenCalledWith({ width: 1024, height: 640 });
   });
 
   it("refuses screenshots with populated protected fields and discards captures that overlap takeover", async () => {
