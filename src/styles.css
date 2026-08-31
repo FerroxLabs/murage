@@ -66,6 +66,7 @@
      bottom of this file, which is what makes them take effect) */
   --color-accent-ink: #ffffff;
   --color-danger-ink: #ffffff;
+  --color-success-ink: #072114;
   --color-scrollbar: #3d3d3d;
   /* second speed line of the mascot — contrasts against the app ground */
   --color-maus-line: #fcfcfc;
@@ -100,6 +101,7 @@
   --color-success: #38d591;
   --color-danger: #ff5667;
   --color-danger-ink: #ffffff;
+  --color-success-ink: #072114;
   --color-warning: #ff9800;
   --color-scrollbar: #3d3d3d;
   --color-maus-line: #fcfcfc;
@@ -145,6 +147,7 @@
   --color-success: #3f6b47;
   --color-danger: #a33a32;
   --color-danger-ink: #ffffff;
+  --color-success-ink: #ffffff;
   --color-warning: #7a5f31;       /* darkened → 4.98:1 */
   --color-scrollbar: #c9c0ae;
   --color-maus-line: #6b6559;
@@ -197,6 +200,7 @@
   --color-success: #57b078;
   --color-danger: #e0685e;        /* a lamp, not a paint chip */
   --color-danger-ink: #1c0d0b;
+  --color-success-ink: #1c150c;
   --color-warning: #dfa441;
   --color-scrollbar: #3d3529;
   --color-maus-line: #b0a696;
@@ -255,6 +259,7 @@
   --color-success: #2f6b4f;
   --color-danger: #a8382f;
   --color-danger-ink: #ffffff;
+  --color-success-ink: #ffffff;
   --color-warning: #7a5a2a;
   --color-scrollbar: #a6b8b6;
   --color-maus-line: #4d5c5b;
@@ -895,7 +900,7 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Filled accent / danger surfaces
+   Filled accent / danger / success surfaces
 
    Components hardcode `text-white` on these fills (~20 call sites). That works
    only as long as every skin's accent is dark enough to carry white — which
@@ -909,6 +914,9 @@ body {
 }
 .bg-danger {
   color: var(--color-danger-ink);
+}
+.bg-success {
+  color: var(--color-success-ink);
 }
 
 /* Disabled buttons.

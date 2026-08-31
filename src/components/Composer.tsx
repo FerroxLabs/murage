@@ -34,6 +34,7 @@ import { goalCoordinatorForComposer, groupComposerHint, roomRespondersForCompose
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { ReplyQuote } from "./ReplyQuote";
+import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -360,7 +361,18 @@ export function Composer({
   // its own cancel); the composer chip remains only for rooms, whose queue
   // is local to this component.
   const pendingChip = group ? queued?.text : undefined;
-  // a chip on its own is a message: the send control has to appear for it
+  const pendingCount = group
+    ? queued
+      ? 1
+      : 0
+    : bot
+      ? (state.pendingQueued[bot.threadId] ?? []).length
+      : 0;
+  const canInject = composerCanInjectNow(busy, locked, pendingCount);
+  const interruptTurn = () => {
+    if (group) dispatch({ type: "interruptGroup", groupId: group.id });
+    else if (bot) dispatch({ type: "interrupt", botId: bot.id });
+  };
   const fileInput = useRef<HTMLInputElement>(null);
   const [autoWarn, setAutoWarn] = useState(false);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -590,7 +602,7 @@ export function Composer({
           <div className="mb-2 flex items-center gap-2 rounded-lg border border-hairline/40 bg-panel px-3 py-2 text-[12.5px] text-ink-secondary">
             <Clock size={13} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">
-              Queued — sends when {busyName} finishes: “{pendingChip}”
+              Queued — wait, or inject now: “{pendingChip}”
             </span>
             <button
               type="button"
@@ -647,10 +659,7 @@ export function Composer({
               pending={approval}
               threadId={threadId}
               bot={approvalBot}
-              onCancelTurn={() => {
-                if (group) dispatch({ type: "interruptGroup", groupId: group.id });
-                else if (bot) dispatch({ type: "interrupt", botId: bot.id });
-              }}
+              onCancelTurn={interruptTurn}
             />
           </div>
         )}
@@ -814,6 +823,8 @@ export function Composer({
               ? "Answer the approval above to continue"
               : recording
               ? "Listening…"
+              : canInject
+                ? `${busyName} is working — inject now to interrupt with the queued message`
               : busy && canSteer
                 ? `${busyName} is working — Enter sends this into the running turn`
               : busy
@@ -830,12 +841,13 @@ export function Composer({
             className="max-h-[9rem] min-h-6 min-w-0 flex-1 resize-none overflow-y-auto self-center bg-transparent px-1 py-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
           />
           <div className="flex items-center gap-1">
-          {busy && !locked && (
+          {/* Inject is stop-then-steer made visible. The square stop would
+              drain the same queue, so it yields while a send is waiting.
+              Cancelling the ghost/chip brings Stop back. */}
+          {canInject && <ComposerInjectNow onInject={interruptTurn} />}
+          {busy && !locked && !canInject && (
           <button
-            onClick={() => {
-              if (group) dispatch({ type: "interruptGroup", groupId: group.id });
-              else if (bot) dispatch({ type: "interrupt", botId: bot.id });
-            }}
+            onClick={interruptTurn}
             aria-label="Stop this turn"
             className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink"
             title="Stop"

@@ -97,6 +97,7 @@ const PAIRS = [
   ["--color-ink", "--color-bubble-user", 4.5],
   ["--color-accent-ink", "--color-accent", 4.5],
   ["--color-danger-ink", "--color-danger", 4.5],
+  ["--color-success-ink", "--color-success", 4.5],
   ["--color-accent-text", "--color-app", 4.5],
   ["--color-accent-text", "--color-panel", 4.5],
   ["--color-accent-text", "--color-card", 4.5],

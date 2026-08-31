@@ -1275,7 +1275,7 @@ export function ChatView({ bot }: { bot: Bot }) {
                 </div>
                 <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
                   <Clock size={11} aria-hidden="true" />
-                  <span>Queued — sends when this turn finishes</span>
+                  <span>Queued — wait, or inject now</span>
                   <button
                     type="button"
                     onClick={() =>
