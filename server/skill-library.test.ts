@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadUserSkills, mergeSkills, parseSkillManifest, skillInstructionsFor, type BundledSkill } from "./skill-library.ts";
+import { loadBundledSkills, loadUserSkills, mergeSkills, parseSkillManifest, selectBundledSkills, skillInstructionsFor, type BundledSkill } from "./skill-library.ts";
 
 const phone: BundledSkill = {
   directory: "/skills/phone-harness",
@@ -63,5 +63,44 @@ describe("bundled skill library", () => {
     const file = join(root, "not-a-directory");
     writeFileSync(file, "nope");
     expect(loadUserSkills(file)).toEqual([]);
+  });
+});
+
+describe("bundled verification skills", () => {
+  const skills = loadBundledSkills(join(process.cwd(), "skills"));
+
+  it("ship enabled with valid manifests", () => {
+    const ids = skills.map((skill) => skill.manifest.id);
+    expect(ids).toContain("create-verification-skill");
+    expect(ids).toContain("maintain-verification-skill");
+    for (const skill of skills) {
+      expect(skill.manifest.defaultEnabled).toBe(true);
+      expect(skill.instructions.startsWith("---")).toBe(true);
+    }
+  });
+
+  it("the slash form and natural phrasing both select create, and only create", () => {
+    for (const text of [
+      "/create-verification-skill for my notes app",
+      "can you make a verification skill so you can prove changes work",
+    ]) {
+      const selected = selectBundledSkills(text, [], skills).map((skill) => skill.manifest.id);
+      expect(selected).toContain("create-verification-skill");
+      expect(selected).not.toContain("maintain-verification-skill");
+    }
+  });
+
+  it("maintenance phrasing selects maintain without dragging in create", () => {
+    const selected = selectBundledSkills("/maintain-verification-skill for atlas", [], skills)
+      .map((skill) => skill.manifest.id);
+    expect(selected).toContain("maintain-verification-skill");
+    expect(selected).not.toContain("create-verification-skill");
+  });
+
+  it("ordinary chat selects neither", () => {
+    const selected = selectBundledSkills("please verify the numbers in this invoice", [], skills)
+      .map((skill) => skill.manifest.id);
+    expect(selected).not.toContain("create-verification-skill");
+    expect(selected).not.toContain("maintain-verification-skill");
   });
 });
