@@ -62,8 +62,9 @@ import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
 import { useFocusMessage } from "@/lib/focus-message";
-import { groupActivityRuns } from "@/lib/activity-runs";
+import { groupTranscript } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
+import { TurnNarrationRun } from "./TurnNarrationRun";
 import { webhookMessageView } from "@/lib/webhook-message";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
@@ -82,6 +83,7 @@ import { useReplyDraft } from "@/lib/drafts";
  * bury the conversation; bots get full markdown. */
 const USER_COLLAPSE_CHARS = 600;
 const USER_COLLAPSE_LINES = 8;
+const noop = () => {};
 
 /** "Today" / "Yesterday" / "Mon, Aug 11" — real dates, not a hardcoded label. */
 function dayLabel(at: number): string {
@@ -633,9 +635,9 @@ const MessagesList = memo(function MessagesList({
 }) {
   const { state, dispatch } = useStore();
   const showToolCalls = showToolCallsEnabled(state.config);
-  // Fold finished tool chips into runs, so a stretch of them cannot bury
-  // what the bot actually said. Hidden unless Settings → Tool calls is on.
-  const items = useMemo(() => groupActivityRuns(messages), [messages]);
+  // Finished tool chips become compact runs; settled assistant narration
+  // becomes one reversible turn row while the terminal answer stays visible.
+  const items = useMemo(() => groupTranscript(messages), [messages]);
   // A search hit inside a folded run has to open it: the fold keeps the
   // row out of the DOM, and there is nothing for the scroll to land on.
   const focus = state.focusMessage;
@@ -658,9 +660,38 @@ const MessagesList = memo(function MessagesList({
       )}
       {items.map((item, i) => {
         const previous = items[i - 1];
-        const prev = previous && (previous.kind === "run" ? previous.messages.at(-1) : previous.message);
-        const first = item.kind === "run" ? item.messages[0] : item.message;
+        const prev = previous && (previous.kind === "message" ? previous.message : previous.messages.at(-1));
+        const first = item.kind === "message" ? item.message : item.messages[0];
         const newDay = !prev || new Date(prev.at).toDateString() !== new Date(first.at).toDateString();
+        if (item.kind === "turn") {
+          return (
+            <div key={item.id} className="contents">
+              {newDay && <DaySeparator at={first.at} />}
+              <TurnNarrationRun
+                label={item.label}
+                forceOpen={item.messages.some((message) => message.id === focusedId)}
+              >
+                {item.messages.map((message) => (
+                  <div key={message.id} className="contents" data-mid={message.id}>
+                    <Bubble
+                      bot={bot}
+                      message={message}
+                      editing={false}
+                      isLastBotText={false}
+                      onStartEdit={noop}
+                      onCancelEdit={noop}
+                      onSubmitEdit={noop}
+                      replyTarget={message.replyToId
+                        ? bot.messages.find((candidate) => candidate.id === message.replyToId)
+                        : undefined}
+                      onReply={() => onReply(message)}
+                    />
+                  </div>
+                ))}
+              </TurnNarrationRun>
+            </div>
+          );
+        }
         if (item.kind === "run") {
           if (!showToolCalls) return null;
           return (

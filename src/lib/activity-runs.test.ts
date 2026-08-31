@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeRun, groupActivityRuns } from "./activity-runs";
+import { describeRun, groupActivityRuns, groupTranscript } from "./activity-runs";
 import type { Message } from "@/state/store";
 
 let seq = 0;
@@ -103,5 +103,61 @@ describe("describeRun", () => {
     expect(describeRun([tool("Edit"), tool("Bash"), tool("Write"), tool("Grep"), tool("Read")])).toBe(
       "5 steps · Edit, Bash, Write +2 more",
     );
+  });
+});
+
+describe("groupTranscript", () => {
+  const assistant = (
+    body: string,
+    turnId: string,
+    turnTerminal = false,
+    at = ++seq * 1_000,
+  ): Message => ({
+    id: `m${++seq}`,
+    at,
+    role: "bot",
+    kind: "text",
+    text: body,
+    turnId,
+    turnTerminal,
+  });
+
+  it("folds settled progress messages and leaves the terminal answer visible", () => {
+    const user: Message = { id: "u1", at: 1_000, role: "user", kind: "text", text: "check todoist" };
+    const first = assistant("I'm checking connected apps.", "turn-1", false, 2_000);
+    const second = assistant("I'm reading your tasks.", "turn-1", false, 3_000);
+    const final = assistant("You have three tasks.", "turn-1", true, 5_000);
+
+    const items = groupTranscript([user, first, second, final]);
+    expect(items.map((item) => item.kind)).toEqual(["message", "turn", "message"]);
+    expect(items[1]).toMatchObject({
+      kind: "turn",
+      id: "turn:turn-1",
+      label: "Worked for 4s",
+      messages: [first, second],
+    });
+    expect(items[2].kind === "message" && items[2].message).toBe(final);
+  });
+
+  it("keeps every message visible until the turn settles", () => {
+    const first = assistant("Checking.", "turn-live");
+    const second = assistant("Still checking.", "turn-live");
+    expect(groupTranscript([first, second]).map((item) => item.kind)).toEqual(["message", "message"]);
+  });
+
+  it("keeps a lone terminal message as the answer", () => {
+    const only = assistant("I could not finish, but here is what I found.", "turn-short", true);
+    expect(groupTranscript([only])).toEqual([{ kind: "message", message: only }]);
+  });
+
+  it("does not fold narration from a different turn", () => {
+    const older = assistant("Previous answer.", "turn-old");
+    const progress = assistant("Checking.", "turn-new");
+    const final = assistant("Done.", "turn-new", true);
+    expect(groupTranscript([older, progress, final]).map((item) => item.kind)).toEqual([
+      "message",
+      "turn",
+      "message",
+    ]);
   });
 });

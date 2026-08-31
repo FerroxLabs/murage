@@ -97,6 +97,10 @@ export interface Message {
   tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
+  /** Provider turn that produced this message. */
+  turnId?: string;
+  /** Last assistant text item from a settled provider turn. */
+  turnTerminal?: boolean;
   /** screen messages: a frame of the bot's computer (base64) */
   png?: string;
   mime?: string;

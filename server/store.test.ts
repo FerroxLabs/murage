@@ -65,6 +65,28 @@ describe("Store", () => {
     expect(store.messagesFor(bot.threadId)[1]?.card?.dismissed).toBeUndefined();
   });
 
+  it("marks only the last assistant message from a settled provider turn as terminal", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    const progress = store.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "text",
+      text: "Checking connected apps.",
+      turnId: "turn-1",
+    });
+    const final = store.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "text",
+      text: "Here are your tasks.",
+      turnId: "turn-1",
+    });
+
+    expect(store.markTerminalAssistantMessage(bot.threadId, "turn-1")?.id).toBe(final.id);
+    expect(store.messagesFor(bot.threadId).find((message) => message.id === progress.id)?.turnTerminal).toBeUndefined();
+    expect(store.messagesFor(bot.threadId).find((message) => message.id === final.id)?.turnTerminal).toBe(true);
+    expect(new Store(selection).messagesFor(bot.threadId).find((message) => message.id === final.id)?.turnTerminal).toBe(true);
+  });
+
   it("createBot with seedMessages:false starts with an empty transcript", () => {
     const store = new Store(selection);
     const bot = store.createBot({ name: "Imported" }, { seedMessages: false });

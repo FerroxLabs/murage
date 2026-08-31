@@ -4,6 +4,7 @@ import {
   GROUP_GOAL_CONTROL_OPEN,
   GROUP_GOAL_MAX_TURNS,
   groupGoalAssignmentKey,
+  groupGoalCompletionTurnId,
   parseGroupGoalDecision,
   resolveGroupGoalMember,
   selectGroupGoalCoordinator,
@@ -16,6 +17,11 @@ const members = [
 ];
 
 describe("group goal runs", () => {
+  it("keeps the bound provider identity when a completion event omits its turn id", () => {
+    expect(groupGoalCompletionTurnId(undefined, "bound-turn")).toBe("bound-turn");
+    expect(groupGoalCompletionTurnId("event-turn", "bound-turn")).toBe("event-turn");
+  });
+
   it("strips and validates a coordinator decision", () => {
     const parsed = parseGroupGoalDecision(
       `I am asking Scout to verify it.\n${GROUP_GOAL_CONTROL_OPEN}`

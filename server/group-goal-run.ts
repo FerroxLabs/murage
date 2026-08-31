@@ -22,6 +22,16 @@ export interface ParsedGroupGoalDecision {
   decision: GroupGoalDecision | null;
 }
 
+/** Turn-scoped events normally identify themselves. A coordinator completion
+ * can omit that field after its guard was already bound by turn.started; keep
+ * the bound identity so its public transcript message still settles cleanly. */
+export function groupGoalCompletionTurnId(
+  eventTurnId: string | undefined,
+  boundTurnId: string | undefined,
+): string | undefined {
+  return eventTurnId ?? boundTurnId;
+}
+
 const bounded = (value: unknown, max: number): string =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
 

@@ -115,6 +115,13 @@ export interface Message {
    * model saw it mid-turn, so the transcript marks it — a reader should
    * know the reply above it may already account for this line */
   steered?: boolean;
+  /** Provider turn that produced this message. Assistant output can arrive
+   * in several pieces around tool calls; the UI uses this identity to keep
+   * those pieces together without discarding them. */
+  turnId?: string;
+  /** The last assistant text item from a settled provider turn. Earlier text
+   * with the same turnId is progress narration, not another final answer. */
+  turnTerminal?: boolean;
   /** screen messages: a frame of the bot's computer (base64 image) */
   png?: string;
   mime?: string;
@@ -1009,6 +1016,21 @@ export class Store {
       cur = cur.parentId ? byId.get(cur.parentId) : undefined;
     }
     return path.reverse();
+  }
+
+  /** Mark the last assistant text on the active branch as this turn's final
+   * visible answer. If a provider ends after commentary without emitting a
+   * separate answer, that commentary remains visible as the safe fallback. */
+  markTerminalAssistantMessage(threadId: string, turnId: string): Message | null {
+    const path = this.activePath(threadId);
+    for (let i = path.length - 1; i >= 0; i -= 1) {
+      const message = path[i];
+      if (message.role === "bot" && message.kind === "text" && message.turnId === turnId) {
+        if (message.turnTerminal) return message;
+        return this.patchMessage(threadId, message.id, { turnTerminal: true });
+      }
+    }
+    return null;
   }
 
   appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
