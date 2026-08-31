@@ -42,6 +42,7 @@ describe("what the app may do", () => {
     ["GET", "/api/companion/endpoints"],
     ["GET", "/api/bots"],
     ["POST", "/api/bots"],
+    ["POST", "/api/sidebar-sections"],
     ["POST", "/api/bots/bot_123/messages"],
     ["POST", "/api/bots/bot_123/interrupt"],
     ["POST", "/api/bots/bot_123/read"],
@@ -165,6 +166,9 @@ describe("what it may not", () => {
     expect(allowed("GET", "/api/groups/room-1")).toBe(false);
     expect(allowed("PATCH", "/api/bots/bot_123")).toBe(false);
     expect(allowed("PATCH", "/api/bots/bot_123/profile/execution-policy")).toBe(false);
+    expect(allowed("GET", "/api/sidebar-sections")).toBe(false);
+    expect(allowed("PATCH", "/api/sidebar-sections")).toBe(false);
+    expect(allowed("POST", "/api/sidebar-sections/extra")).toBe(false);
     expect(allowed("PUT", "/api/config")).toBe(false);
     expect(allowed("GET", "/api/attachments/../config.json")).toBe(false);
     expect(allowed("POST", "/api/routine-runs/run_1/cancel")).toBe(false);

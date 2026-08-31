@@ -1252,6 +1252,118 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("files a sidebar section atomically, trims and dedupes, and preserves its Chief", async () => {
+    const incumbent = (await api("POST", "/api/bots")).body.bot;
+    const incoming = (await api("POST", "/api/bots")).body.bot;
+    const teammate = (await api("POST", "/api/bots")).body.bot;
+    try {
+      await api("PATCH", `/api/bots/${incumbent.id}`, { section: "Launch", chiefOfStaff: true });
+      await api("PATCH", `/api/bots/${incoming.id}`, { section: "Research" });
+      await api("PATCH", `/api/bots/${teammate.id}`, { section: "Personal" });
+
+      const stream = await openSse(`${BASE}/api/events`);
+      try {
+        await stream.until((frame) => frame.kind === "hello");
+        const created = await api("POST", "/api/sidebar-sections", {
+          name: "  Launch  ",
+          botIds: [incoming.id, teammate.id, incoming.id],
+        });
+        expect(created.status).toBe(200);
+        expect(created.body.section).toBe("Launch");
+        expect(created.body.bots.map((bot: { id: string }) => bot.id)).toEqual([
+          incoming.id,
+          teammate.id,
+        ]);
+        expect(created.body.bots.find((bot: { id: string }) => bot.id === incoming.id))
+          .toMatchObject({ section: "Launch" });
+        expect(Boolean(created.body.bots.find((bot: { id: string }) => bot.id === incoming.id)?.chiefOfStaff))
+          .toBe(false);
+
+        for (const id of [incoming.id, teammate.id]) {
+          const frame = await stream.until(
+            (candidate) => candidate.kind === "bot" && candidate.bot?.id === id,
+          );
+          expect(frame.bot.section).toBe("Launch");
+        }
+
+        const bots = (await api("GET", "/api/bots")).body.bots;
+        expect(bots.find((bot: { id: string }) => bot.id === incumbent.id))
+          .toMatchObject({ section: "Launch", chiefOfStaff: true });
+      } finally {
+        stream.close();
+      }
+    } finally {
+      for (const bot of [incumbent, incoming, teammate]) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("rejects a sidebar section Chief collision without changing any bot", async () => {
+    const incumbent = (await api("POST", "/api/bots")).body.bot;
+    const incoming = (await api("POST", "/api/bots")).body.bot;
+    const teammate = (await api("POST", "/api/bots")).body.bot;
+    try {
+      await api("PATCH", `/api/bots/${incumbent.id}`, { section: "Launch", chiefOfStaff: true });
+      await api("PATCH", `/api/bots/${incoming.id}`, { section: "Research", chiefOfStaff: true });
+      await api("PATCH", `/api/bots/${teammate.id}`, { section: "Personal" });
+
+      const response = await api("POST", "/api/sidebar-sections", {
+        name: "Launch",
+        botIds: [incoming.id, teammate.id],
+      });
+      expect(response).toEqual({
+        status: 409,
+        body: {
+          error: "A section can have only one Chief of Staff. Choose one Chief or use a section without one.",
+        },
+      });
+
+      const bots = (await api("GET", "/api/bots")).body.bots;
+      expect(bots.find((bot: { id: string }) => bot.id === incumbent.id))
+        .toMatchObject({ section: "Launch", chiefOfStaff: true });
+      expect(bots.find((bot: { id: string }) => bot.id === incoming.id))
+        .toMatchObject({ section: "Research", chiefOfStaff: true });
+      expect(bots.find((bot: { id: string }) => bot.id === teammate.id))
+        .toMatchObject({ section: "Personal" });
+      expect(Boolean(bots.find((bot: { id: string }) => bot.id === teammate.id)?.chiefOfStaff))
+        .toBe(false);
+    } finally {
+      for (const bot of [incumbent, incoming, teammate]) await api("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("rejects malformed or unavailable sidebar section targets without partially filing bots", async () => {
+    const visible = (await api("POST", "/api/bots")).body.bot;
+    const hidden = (await api("POST", "/api/bots")).body.bot;
+    try {
+      await api("PATCH", `/api/bots/${visible.id}`, { section: "Original" });
+      await api("PATCH", `/api/bots/${hidden.id}`, { hidden: true, chiefOfStaff: false });
+
+      for (const body of [
+        { name: "   ", botIds: [visible.id] },
+        { name: "S".repeat(61), botIds: [visible.id] },
+        { name: "Work", botIds: [] },
+        { name: "Work", botIds: ["not/an/id"] },
+        { name: "Work", botIds: [visible.id], extra: true },
+      ]) {
+        expect((await api("POST", "/api/sidebar-sections", body)).status).toBe(400);
+      }
+      expect((await api("POST", "/api/sidebar-sections", {
+        name: "Work",
+        botIds: [visible.id, "missing"],
+      })).status).toBe(404);
+      expect((await api("POST", "/api/sidebar-sections", {
+        name: "Work",
+        botIds: [visible.id, hidden.id],
+      })).status).toBe(404);
+
+      const bots = (await api("GET", "/api/bots")).body.bots;
+      expect(bots.find((bot: { id: string }) => bot.id === visible.id)?.section).toBe("Original");
+    } finally {
+      await api("DELETE", `/api/bots/${visible.id}`);
+      await api("DELETE", `/api/bots/${hidden.id}`);
+    }
+  });
+
   it("explains when archived room members cannot respond", async () => {
     const archived = (await api("POST", "/api/bots")).body.bot;
     const active = (await api("POST", "/api/bots")).body.bot;

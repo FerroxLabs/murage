@@ -10,6 +10,15 @@
 // a phone client is a weekend of work rather than a rewrite.
 import Foundation
 
+public struct SidebarSection: Identifiable, Hashable, Sendable {
+    public var name: String
+    public var chiefs: [Bot]
+    public var bots: [Bot]
+    public var channels: [Room]
+
+    public var id: String { name }
+}
+
 public struct CompanionState: Sendable {
     public var bots: [Bot] = []
     public var rooms: [Room] = []
@@ -74,6 +83,78 @@ public struct CompanionState: Sendable {
 
     public func room(forThread threadId: String) -> Room? {
         rooms.first { $0.threadId == threadId }
+    }
+
+    /// User-named sidebar sections in the same natural order as the desktop:
+    /// first appearance among bots, then channels. Section ordering is not a
+    /// server record yet, so neither client can synchronize its local manual
+    /// reordering with the other one.
+    public var sidebarSections: [SidebarSection] {
+        let visibleBots = bots.filter { $0.hidden != true }
+        let visibleChannels = rooms.filter { $0.dm != true }
+        let sectionChiefs = visibleBots.filter {
+            $0.chiefOfStaff == true && Self.sectionName($0.section) != nil
+        }
+        let sectionBots = visibleBots.filter {
+            $0.chiefOfStaff != true && !Self.isSidebarPinned($0) && Self.sectionName($0.section) != nil
+        }
+        var names: [String] = []
+        // Match the desktop's natural order: ordinary bots, Chiefs, then
+        // channels. Manual desktop-only ordering remains local by design.
+        for raw in sectionBots.map(\.section) + sectionChiefs.map(\.section) + visibleChannels.map(\.section) {
+            guard let name = Self.sectionName(raw), !names.contains(name) else { continue }
+            names.append(name)
+        }
+        return names.map { name in
+            SidebarSection(
+                name: name,
+                chiefs: sectionChiefs.filter { Self.sectionName($0.section) == name },
+                bots: sectionBots.filter { Self.sectionName($0.section) == name },
+                channels: visibleChannels.filter { Self.sectionName($0.section) == name }
+            )
+        }
+    }
+
+    public var unsectionedChief: Bot? {
+        bots.first {
+            $0.hidden != true
+                && $0.chiefOfStaff == true
+                && Self.sectionName($0.section) == nil
+        }
+    }
+
+    public var unsectionedBots: [Bot] {
+        bots.filter {
+            $0.hidden != true
+                && $0.chiefOfStaff != true
+                && !Self.isSidebarPinned($0)
+                && Self.sectionName($0.section) == nil
+        }
+    }
+
+    /// Pinned is a virtual desktop/mobile bucket. A bot keeps its saved
+    /// section underneath so unpinning returns it to the same context.
+    public var pinnedBots: [Bot] {
+        bots.filter { $0.hidden != true && Self.isSidebarPinned($0) }
+    }
+
+    public var unsectionedChannels: [Room] {
+        rooms.filter { $0.dm != true && Self.sectionName($0.section) == nil }
+    }
+
+    public var botChats: [Room] {
+        rooms.filter { $0.dm == true }
+    }
+
+    private static func sectionName(_ raw: String?) -> String? {
+        guard let name = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else {
+            return nil
+        }
+        return name
+    }
+
+    private static func isSidebarPinned(_ bot: Bot) -> Bool {
+        bot.pinned == true && bot.chiefOfStaff != true
     }
 
     /// Every unanswered approval or question, newest first. This is the

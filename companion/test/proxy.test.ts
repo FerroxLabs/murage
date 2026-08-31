@@ -344,6 +344,33 @@ describe("the sidecar in front of an unmodified harness", () => {
     }
   });
 
+  it("files bots through only the narrow atomic organizer route", async () => {
+    const listed = await device("GET", "/api/bots");
+    const first = listed.body.bots[0];
+    const second = (await device("POST", "/api/bots")).body.bot;
+
+    const partial = await device("POST", "/api/sidebar-sections", {
+      body: { name: "Mobile", botIds: [first.id, "missing"] },
+    });
+    expect(partial.status).toBe(404);
+    const afterFailure = await device("GET", "/api/bots");
+    expect(afterFailure.body.bots.find((bot: { id: string }) => bot.id === first.id)?.section)
+      .toBe(first.section);
+
+    const filed = await device("POST", "/api/sidebar-sections", {
+      body: { name: "  Mobile  ", botIds: [first.id, second.id, first.id] },
+    });
+    expect(filed.status).toBe(200);
+    expect(filed.body.section).toBe("Mobile");
+    expect(filed.body.bots.map((bot: { id: string }) => bot.id)).toEqual([first.id, second.id]);
+    expect(filed.body.bots.every((bot: { section?: string }) => bot.section === "Mobile")).toBe(true);
+
+    const smuggled = await device("POST", "/api/sidebar-sections", {
+      body: { name: "Unsafe", botIds: [first.id], autoApprove: true },
+    });
+    expect(smuggled.status).toBe(400);
+  });
+
   it("only remembers an always-allow key carried by a pending card", async () => {
     const { body } = await device("GET", "/api/bots");
     const bot = body.bots[0];

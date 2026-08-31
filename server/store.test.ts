@@ -380,6 +380,80 @@ describe("Store", () => {
     expect(reloaded.bot(second.id)?.chiefOfStaff).toBe(false);
   });
 
+  it("files visible bots atomically without changing Chief roles", () => {
+    const store = new Store(selection);
+    const incumbent = store.createBot({ section: "Launch" });
+    const incoming = store.createBot({ section: "Research" });
+    const teammate = store.createBot({ section: "Personal" });
+    store.setChiefOfStaff(incumbent.id);
+
+    const result = store.setBotsSection([incoming.id, teammate.id, incoming.id], "Launch");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`unexpected section assignment failure: ${result.reason}`);
+    expect(result.bots.map((bot) => bot.id)).toEqual([incoming.id, teammate.id]);
+    expect(store.bot(incumbent.id)).toMatchObject({ section: "Launch", chiefOfStaff: true });
+    expect(store.bot(incoming.id)?.section).toBe("Launch");
+    expect(Boolean(store.bot(incoming.id)?.chiefOfStaff)).toBe(false);
+    expect(store.bot(teammate.id)?.section).toBe("Launch");
+    expect(store.bots.filter((bot) => bot.section === "Launch" && bot.chiefOfStaff)).toHaveLength(1);
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(incumbent.id)).toMatchObject({ section: "Launch", chiefOfStaff: true });
+    expect(reloaded.bot(incoming.id)?.section).toBe("Launch");
+    expect(Boolean(reloaded.bot(incoming.id)?.chiefOfStaff)).toBe(false);
+    expect(reloaded.bot(teammate.id)?.section).toBe("Launch");
+    expect(reloaded.bots.filter((bot) => bot.section === "Launch" && bot.chiefOfStaff).map((bot) => bot.id))
+      .toEqual([incumbent.id]);
+  });
+
+  it("rejects unavailable or Chief-conflicting section assignments without changing bots", () => {
+    const store = new Store(selection);
+    const incumbent = store.createBot({ section: "Launch" });
+    const incoming = store.createBot({ section: "Research" });
+    const teammate = store.createBot({ section: "Personal" });
+    const hidden = store.createBot({ section: "Private" });
+    store.setChiefOfStaff(incumbent.id);
+    store.setChiefOfStaff(incoming.id);
+    store.patchBot(hidden.id, { hidden: true });
+
+    const snapshot = () => store.bots.map((bot) => ({
+      id: bot.id,
+      section: bot.section,
+      chief: bot.chiefOfStaff,
+    }));
+    const before = snapshot();
+
+    expect(store.setBotsSection([teammate.id, "missing"], "Launch"))
+      .toEqual({ ok: false, reason: "unavailable" });
+    expect(store.setBotsSection([teammate.id, hidden.id], "Launch"))
+      .toEqual({ ok: false, reason: "unavailable" });
+    expect(store.setBotsSection([incoming.id, teammate.id], "Launch"))
+      .toEqual({ ok: false, reason: "chief-conflict" });
+    expect(snapshot()).toEqual(before);
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(incumbent.id)).toMatchObject({ section: "Launch", chiefOfStaff: true });
+    expect(reloaded.bot(incoming.id)).toMatchObject({ section: "Research", chiefOfStaff: true });
+    expect(reloaded.bot(teammate.id)?.section).toBe("Personal");
+    expect(Boolean(reloaded.bot(teammate.id)?.chiefOfStaff)).toBe(false);
+  });
+
+  it("does not change memory or emit section updates when the atomic write fails", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({ section: "Original" });
+    const changes: string[] = [];
+    store.onChange((change) => {
+      if (change.type === "bot") changes.push(change.botId);
+    });
+    (store as unknown as { saveBots: (bots?: BotRecord[]) => void }).saveBots = () => {
+      throw new Error("disk unavailable");
+    };
+
+    expect(() => store.setBotsSection([bot.id], "Research")).toThrow("disk unavailable");
+    expect(store.bot(bot.id)?.section).toBe("Original");
+    expect(changes).toEqual([]);
+  });
+
   it("patchMessage merges card patches and returns null for unknown ids", () => {
     const store = new Store(selection);
     const bot = store.createBot();

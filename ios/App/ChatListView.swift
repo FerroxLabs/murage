@@ -1,11 +1,9 @@
 // The roster.
 //
-// Messages-shaped: a glass header, your groups across the top, every bot
-// below with the unread dot in the bot's own colour at the left edge, and a
-// glass bar floating at the bottom. The bar's pill is Updates — only the
-// bots that need you, are working, or have something you have not read —
-// beside round search and new-bot buttons. Everything scrolls under the
-// glass, which is the whole point of the glass.
+// Messages-shaped: a glass header, built-in and user-named sidebar sections,
+// channels as compact tiles, and bot conversations as rows. The floating bar
+// keeps Updates, search, organization and new-bot actions within one thumb's
+// reach while everything scrolls beneath the glass.
 import SwiftUI
 import CompanionCore
 
@@ -21,6 +19,7 @@ struct ChatListView: View {
     @State private var searchOpen = false
     @State private var showingUpdates = false
     @State private var showingNewGroup = false
+    @State private var showingNewSection = false
     @FocusState private var searchFocused: Bool
 
     /// Room for the floating bar, so the last row can scroll clear of it.
@@ -36,60 +35,49 @@ struct ChatListView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         if query.isEmpty {
-                            groupsStrip
-                            sectionLabel("Bots")
-                                .padding(.top, 18)
-                                .padding(.bottom, 4)
-                        }
-
-                        if !query.isEmpty, !searchHits.isEmpty {
-                            HStack {
-                                sectionLabel("Messages")
-                                Spacer()
-                                if searching { ProgressView().controlSize(.small) }
-                            }
-                            .padding(.top, 10)
-                            .padding(.bottom, 4)
-
-                            ForEach(searchHits) { hit in
-                                Button {
-                                    Task {
-                                        if let chat = await session.open(hit) {
-                                            Haptics.selection()
-                                            path.append(chat)
-                                        }
-                                    }
-                                } label: {
-                                    SearchHitRow(hit: hit)
+                            rosterSections
+                        } else {
+                            if !searchHits.isEmpty {
+                                HStack {
+                                    sectionLabel("Messages")
+                                    Spacer()
+                                    if searching { ProgressView().controlSize(.small) }
                                 }
-                                .buttonStyle(.plain)
-                                .padding(.horizontal, 16)
-                            }
-                            sectionLabel("Chats")
-                                .padding(.top, 14)
+                                .padding(.top, 10)
                                 .padding(.bottom, 4)
-                        }
 
-                        let rows = chats
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, summary in
-                            NavigationLink(value: summary.chat) {
-                                ChatRow(
-                                    chat: summary.chat,
-                                    preview: summary.preview,
-                                    at: summary.lastActivity,
-                                    state: MausState.forChat(summary.chat, in: session.state),
-                                    waiting: waitingChats.contains(summary.chat.id),
-                                    last: index == rows.count - 1
-                                )
+                                ForEach(searchHits) { hit in
+                                    Button {
+                                        Task {
+                                            if let chat = await session.open(hit) {
+                                                Haptics.selection()
+                                                path.append(chat)
+                                            }
+                                        }
+                                    } label: {
+                                        SearchHitRow(hit: hit)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal, 16)
+                                }
+                                sectionLabel("Chats")
+                                    .padding(.top, 14)
+                                    .padding(.bottom, 4)
+                            } else if searching {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.top, 24)
                             }
-                            .buttonStyle(.plain)
+
+                            botRows(chats)
                         }
                     }
                     .padding(.bottom, Self.barClearance)
                 }
                 .refreshable { await session.refresh() }
                 .overlay {
-                    if chats.isEmpty && searchHits.isEmpty {
+                    if rosterIsEmpty {
                         ContentUnavailableView(
                             query.isEmpty ? "No bots yet" : "Nothing matches",
                             systemImage: query.isEmpty ? "bubble.left.and.bubble.right" : "magnifyingglass",
@@ -127,10 +115,12 @@ struct ChatListView: View {
                 }
             }
 #if DEBUG
-            // `-store-preview -open-first`: land on the first chat, for the
-            // screenshot harness and for looking at the chat screen without
-            // a pairing.
+            // Preview-only routes let the screenshot harness reach screens
+            // that normally require a paired computer and a tap.
             .task {
+                if ProcessInfo.processInfo.arguments.contains("-open-new-section") {
+                    showingNewSection = true
+                }
                 if ProcessInfo.processInfo.arguments.contains("-open-first"),
                    path.isEmpty, let first = chats.first {
                     path.append(first.chat)
@@ -148,6 +138,9 @@ struct ChatListView: View {
                     showingNewGroup = false
                     path.append(Chat.room(room))
                 }
+            }
+            .sheet(isPresented: $showingNewSection) {
+                NewSectionSheet()
             }
             .task(id: query) {
                 let expected = query
@@ -221,19 +214,76 @@ struct ChatListView: View {
         }
     }
 
-    // MARK: - Groups
+    // MARK: - Sidebar sections
 
-    private var groupsStrip: some View {
+    @ViewBuilder
+    private var rosterSections: some View {
+        if let chief = session.state.unsectionedChief {
+            botRows(summaries(for: [chief]))
+        }
+
+        let pinned = summaries(for: session.state.pinnedBots)
+        if !pinned.isEmpty {
+            sectionLabel("Pinned")
+                .padding(.top, 2)
+                .padding(.bottom, 4)
+            botRows(pinned)
+        }
+
+        channelsStrip(
+            title: "Channels",
+            rooms: session.state.unsectionedChannels,
+            showsCreate: true
+        )
+
+        if !session.state.botChats.isEmpty {
+            channelsStrip(title: "Bot chats", rooms: session.state.botChats, showsCreate: false)
+        }
+
+        let unsectioned = summaries(for: session.state.unsectionedBots)
+        if !unsectioned.isEmpty {
+            sectionLabel("Bots")
+                .padding(.top, 18)
+                .padding(.bottom, 4)
+            botRows(unsectioned)
+        }
+
+        ForEach(session.state.sidebarSections) { section in
+            VStack(alignment: .leading, spacing: 0) {
+                sectionLabel(section.name)
+                    .padding(.top, 18)
+                    .padding(.bottom, section.chiefs.isEmpty && !section.channels.isEmpty ? 10 : 4)
+                if !section.chiefs.isEmpty {
+                    botRows(summaries(for: section.chiefs))
+                }
+                if !section.channels.isEmpty {
+                    channelTiles(section.channels, showsCreate: false)
+                        .padding(.top, section.chiefs.isEmpty ? 0 : 8)
+                        .padding(.bottom, section.bots.isEmpty ? 4 : 8)
+                }
+                botRows(summaries(for: section.bots))
+            }
+        }
+    }
+
+    private func channelsStrip(title: String, rooms: [Room], showsCreate: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("Groups")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(session.state.rooms) { room in
-                        NavigationLink(value: Chat.room(room)) {
-                            GroupTile(room: room)
-                        }
-                        .buttonStyle(.plain)
+            sectionLabel(title)
+            channelTiles(rooms, showsCreate: showsCreate)
+        }
+        .padding(.top, 2)
+    }
+
+    private func channelTiles(_ rooms: [Room], showsCreate: Bool) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(rooms) { room in
+                    NavigationLink(value: Chat.room(room)) {
+                        GroupTile(room: room)
                     }
+                    .buttonStyle(.plain)
+                }
+                if showsCreate {
                     Button {
                         Haptics.selection()
                         showingNewGroup = true
@@ -241,12 +291,28 @@ struct ChatListView: View {
                         GroupTile(room: nil)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("New group")
+                    .accessibilityLabel("New channel")
                 }
-                .padding(.horizontal, 16)
             }
+            .padding(.horizontal, 16)
         }
-        .padding(.top, 2)
+    }
+
+    @ViewBuilder
+    private func botRows(_ rows: [ChatSummary]) -> some View {
+        ForEach(Array(rows.enumerated()), id: \.element.id) { index, summary in
+            NavigationLink(value: summary.chat) {
+                ChatRow(
+                    chat: summary.chat,
+                    preview: summary.preview,
+                    at: summary.lastActivity,
+                    state: MausState.forChat(summary.chat, in: session.state),
+                    waiting: waitingChats.contains(summary.chat.id),
+                    last: index == rows.count - 1
+                )
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     // MARK: - Bottom bar
@@ -288,34 +354,95 @@ struct ChatListView: View {
                     .frame(height: 52)
                     .glassCapsule()
                 } else {
-                    UpdatesPill(updates: session.state.updates) {
-                        Haptics.selection()
-                        showingUpdates = true
+                    ViewThatFits(in: .horizontal) {
+                        expandedBottomActions
+                        compactBottomActions
                     }
-                        .frame(height: 52)
-
-                    GlassButton(systemImage: "magnifyingglass", size: 48, weight: .semibold) {
-                        Haptics.selection()
-                        searchOpen = true
-                        searchFocused = true
-                    }
-                    .accessibilityLabel("Search")
-
-                    GlassButton(systemImage: "square.and.pencil", size: 48, weight: .medium) {
-                        Task {
-                            if let bot = await session.createBot() {
-                                Haptics.success()
-                                path.append(Chat.bot(bot))
-                            }
-                        }
-                    }
-                    .accessibilityLabel("New bot")
                 }
             }
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
         .animation(.snappy(duration: 0.25), value: searchOpen)
+    }
+
+    private var expandedBottomActions: some View {
+        HStack(spacing: 8) {
+            updatesButton
+                .frame(width: 180)
+            searchButton
+            sectionButton
+            newBotButton
+        }
+    }
+
+    private var compactBottomActions: some View {
+        HStack(spacing: 8) {
+            updatesButton
+                .frame(minWidth: 148)
+            searchButton
+            Menu {
+                Button("New section", systemImage: "folder.badge.plus", action: openNewSection)
+                    .disabled(!hasVisibleBots)
+                Button("New bot", systemImage: "square.and.pencil", action: createBot)
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(Color.primary)
+                    .frame(width: 48, height: 48)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .glassCapsule()
+            .accessibilityLabel("Create")
+        }
+    }
+
+    private var updatesButton: some View {
+        UpdatesPill(updates: session.state.updates) {
+            Haptics.selection()
+            showingUpdates = true
+        }
+        .frame(height: 52)
+    }
+
+    private var searchButton: some View {
+        GlassButton(systemImage: "magnifyingglass", size: 48, weight: .semibold) {
+            Haptics.selection()
+            searchOpen = true
+            searchFocused = true
+        }
+        .accessibilityLabel("Search")
+    }
+
+    private var sectionButton: some View {
+        GlassButton(systemImage: "folder.badge.plus", size: 48, weight: .medium, action: openNewSection)
+            .disabled(!hasVisibleBots)
+            .opacity(hasVisibleBots ? 1 : 0.45)
+            .accessibilityLabel("New section")
+    }
+
+    private var newBotButton: some View {
+        GlassButton(systemImage: "square.and.pencil", size: 48, weight: .medium, action: createBot)
+            .accessibilityLabel("New bot")
+    }
+
+    private var hasVisibleBots: Bool {
+        session.state.bots.contains { $0.hidden != true }
+    }
+
+    private func openNewSection() {
+        Haptics.selection()
+        showingNewSection = true
+    }
+
+    private func createBot() {
+        Task {
+            if let bot = await session.createBot() {
+                Haptics.success()
+                path.append(Chat.bot(bot))
+            }
+        }
     }
 
     // MARK: - Data
@@ -333,8 +460,23 @@ struct ChatListView: View {
         }
     }
 
+    private func summaries(for bots: [Bot]) -> [ChatSummary] {
+        let ids = Set(bots.map(\.id))
+        return session.state.chatSummaries.filter { summary in
+            if case let .bot(bot) = summary.chat { return ids.contains(bot.id) }
+            return false
+        }
+    }
+
     private var waitingChats: Set<String> {
         Set(session.state.pendingApprovals.compactMap { session.state.chat(forThread: $0.threadId)?.id })
+    }
+
+    private var rosterIsEmpty: Bool {
+        if query.isEmpty {
+            return session.state.bots.allSatisfy { $0.hidden == true } && session.state.rooms.isEmpty
+        }
+        return chats.isEmpty && searchHits.isEmpty && !searching
     }
 
     private func sectionLabel(_ text: String) -> some View {
@@ -389,7 +531,7 @@ struct GroupTile: View {
             }
             .frame(width: 64, height: 64)
 
-            Text(room?.name ?? "New group")
+            Text(room?.name ?? "New channel")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(room == nil ? Color.secondary : Color.primary)
                 .lineLimit(1)

@@ -12,7 +12,7 @@ same harness the desktop app talks to, through the restricted sidecar described 
 
 Built and verified against a real harness on both a simulator and an iPhone:
 QR handoff, Bonjour discovery, manual LAN and Tailscale pairing, the roster, paged chat,
-streaming replies, the computer view, and — the one that matters — an approval
+streaming replies, shared sidebar sections, the computer view, and — the one that matters — an approval
 raised by a bot on the Mac, answered on the phone, with the bot carrying on.
 
 The event stream deliberately reads raw bytes rather than
@@ -44,6 +44,7 @@ ios/
     SSE.swift                    line parser + URLSession event stream
     Client.swift                 every call the phone is allowed to make
     Store.swift                  the fold: frames → state
+    SectionSelection.swift       pure swipe/dwell selection state + grid hit testing
     Dictation.swift              composer text + transcript join
   Tests/CompanionCoreTests/
     Fixtures/                    captured from a real server — do not hand-edit
@@ -61,10 +62,11 @@ ios/
     PairingScanner.swift         native QR camera, permission and recovery UI
     Glass.swift                  the one material the chrome is made of (Liquid Glass on 26+)
     SpeechBubble.swift           the bubble shape; the tail is the reference vector, scaled
-    ChatListView.swift           roster: glass header, groups strip, bots, the Updates bar
+    ChatListView.swift           roster: channels and shared desktop/mobile sections
     Updates.swift                what the Updates pill shows — only bots doing something
     UpdatesSheet.swift           the pill opened: needs you / working / to review
-    NewGroupSheet.swift          make a room from the phone
+    NewGroupSheet.swift          make a channel from the phone
+    NewSectionSheet.swift        tap or swipe bots together into a section
     ChatView.swift               transcript, tailed bubbles, approval cards, composer
     SpeechDictation.swift        on-device speech recognition, press-to-stop
     ComputerView.swift           opt-in live view of a bot's computer
@@ -126,11 +128,13 @@ here by simply not having the methods:
 | Send messages, make a bot or a room | Manage pairing or revoke devices |
 | **Answer approvals and questions** | Drive the Local VM or this computer |
 | Interrupt a bot, mark chats read | Reach `/api/internal/*` |
+| File visible bots into one sidebar section | Use general bot or room `PATCH` routes |
 | Fetch screen images on demand | Load the packaged desktop UI |
 | Open an explicitly enabled cloud desktop | Provision, sleep or run shell commands on cloud computers |
 
 Marking a chat read and remembering an approval use purpose-built server
-verbs. The sidecar does not expose the general bot or room `PATCH` routes,
+verbs. Section creation likewise uses one strict atomic batch route. The
+sidecar does not expose the general bot or room `PATCH` routes,
 because those can also change execution policy, computers, connected apps, and
 working directories.
 

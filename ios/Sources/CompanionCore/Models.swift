@@ -213,6 +213,8 @@ public struct Bot: Codable, Hashable, Identifiable, Sendable {
     public var busy: Bool?
     public var pinned: Bool?
     public var hidden: Bool?
+    /// Desktop sidebar section. Missing or blank means the built-in Bots area.
+    public var section: String?
     public var chiefOfStaff: Bool?
     public var autoApprove: Bool?
     public var alwaysAllow: [String]?
@@ -263,6 +265,8 @@ public struct Room: Codable, Hashable, Identifiable, Sendable {
     public var unread: Bool
     public var createdAt: Double
     public var dm: Bool?
+    /// Desktop sidebar section. Missing or blank means the built-in Channels area.
+    public var section: String?
     public var busyBotId: String?
     /// Independent user conversations in this channel. Bot-to-bot rooms
     /// omit tasks because their transcript is the canonical private chat.
@@ -882,6 +886,10 @@ struct ActiveBranchResponse: Codable, Sendable {
 
 struct BotResponse: Codable, Sendable {
     var bot: Bot
+}
+struct SidebarSectionResponse: Codable, Sendable {
+    var section: String
+    var bots: [Bot]
 }
 struct RoomResponse: Codable, Sendable {
     var group: Room

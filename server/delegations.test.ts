@@ -328,6 +328,31 @@ describe("drainDelegations", () => {
     expect(runTargetCalls).toEqual([]);
   });
 
+  it("drops a queued handoff when section assignment separates the bots before dispatch", async () => {
+    const queued = queueDelegation(
+      commsBus,
+      from,
+      { toBotId: target.id, message: "do this", depth: 0 },
+      1,
+    );
+    expect(store.setBotsSection([target.id], "Elsewhere").ok).toBe(true);
+
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+
+    await waitFor(() => findDelegationReceipt(queued.id!) && _pendingCount(from.threadId) === 0);
+    expect(findDelegationReceipt(queued.id!)).toMatchObject({
+      status: "dropped",
+      result: expect.stringContaining("different sections"),
+    });
+    expect(runTargetCalls).toEqual([]);
+    expect(
+      store.messagesFor(from.threadId).some((message) =>
+        message.tool?.name.includes("bots now belong to different sections")),
+    ).toBe(true);
+  });
+
   it("keeps the handoff queued with a 'waiting' chip when the target is currently busy", async () => {
     store.patchBot(target.id, { busy: true });
     queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", depth: 0 }, 1);
@@ -366,6 +391,29 @@ describe("drainDelegations", () => {
     await waitFor(() => runTargetCalls.length === 1);
     expect(runTargetCalls[0]!.toBotId).toBe(target.id);
     expect(runTargetCalls[0]!.commsDepth).toBe(1);
+  });
+
+  it("rechecks sections after a pending human approval before dispatch", async () => {
+    store.patchBot(from.id, { approvePeerComms: true });
+    const queued = queueDelegation(
+      commsBus,
+      from,
+      { toBotId: target.id, message: "do this", depth: 0 },
+      1,
+    );
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+
+    const card = await waitFor(() =>
+      store.messagesFor(from.threadId).find((message) => message.card?.requestId),
+    );
+    expect(store.setBotsSection([target.id], "Elsewhere").ok).toBe(true);
+    resolvePeerComms(approvalBus, card.card!.requestId!, "allow");
+
+    await waitFor(() => findDelegationReceipt(queued.id!) && _pendingCount(from.threadId) === 0);
+    expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "dropped" });
+    expect(runTargetCalls).toEqual([]);
   });
 
   it("does not ask twice when this exact fallback was already approved as ask_bot", async () => {

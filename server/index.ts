@@ -287,6 +287,10 @@ function authorizedComms(header: string | string[] | undefined): boolean {
 // A→B is allowed but B→C (and A→B→A loops) never start.
 const MAX_COMMS_DEPTH = 1;
 const MAX_WORKSPACE_BOTS = 100;
+const createSidebarSectionSchema = z.object({
+  name: z.string(),
+  botIds: z.array(z.string().regex(/^[\w-]+$/)).min(1).max(MAX_WORKSPACE_BOTS),
+}).strict();
 const createGroupTaskRequestSchema = z.object({ title: z.string().optional() });
 // Resolved from the server root — see server/proxy-paths.ts. This descending
 // path happened to survive bundling, but it goes through the same anchor so
@@ -5975,6 +5979,30 @@ const server = createServer(async (req, res) => {
       const patched = store.toggleReaction(m[1], m[2], emoji, typeof body.by === "string" ? body.by : "user");
       if (!patched) return json(res, 404, { error: "no such message" });
       return json(res, 200, { message: patched });
+    }
+    if (method === "POST" && path === "/api/sidebar-sections") {
+      const parsed = createSidebarSectionSchema.safeParse(await readBody(req));
+      if (!parsed.success) {
+        return json(res, 400, { error: "name and one to 100 valid botIds are required" });
+      }
+      const name = parsed.data.name.trim();
+      if (!name) return json(res, 400, { error: "name is required" });
+      if (name.length > 60) {
+        return json(res, 400, { error: "name must be at most 60 characters" });
+      }
+      const botIds = [...new Set(parsed.data.botIds)];
+      const result = store.setBotsSection(botIds, name);
+      if (!result.ok) {
+        if (result.reason === "chief-conflict") {
+          return json(res, 409, {
+            error: "A section can have only one Chief of Staff. Choose one Chief or use a section without one.",
+          });
+        }
+        return json(res, 404, { error: "one or more bots are unavailable" });
+      }
+      // This files bots under a derived label; it does not create a durable
+      // section resource, and an identical retry is an ordinary no-op.
+      return json(res, 200, { section: name, bots: result.bots.map(wireBot) });
     }
     if (method === "POST" && path === "/api/bots") {
       const body = await readBody(req);

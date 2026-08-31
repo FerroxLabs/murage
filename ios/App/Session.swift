@@ -864,6 +864,22 @@ final class Session: ObservableObject {
         }
     }
 
+    /// Create a sidebar section by assigning its complete starting set in one
+    /// request. The server commits the batch before returning, then these
+    /// folds make the roster move immediately instead of waiting for SSE.
+    @discardableResult
+    func assignSection(name: String, botIds: [String]) async -> [Bot]? {
+        guard let client else { return nil }
+        do {
+            let bots = try await client.assignSection(name: name, botIds: botIds)
+            for bot in bots { state.apply(.bot(bot)) }
+            return bots
+        } catch {
+            actionError = error.localizedDescription
+            return nil
+        }
+    }
+
     func interrupt(bot: Bot) async {
         await perform { try await $0.interrupt(botId: bot.id) }
     }

@@ -63,6 +63,9 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // the fleet, and making a bot
   { method: "GET", path: /^\/api\/bots$/ },
   { method: "POST", path: /^\/api\/bots$/ },
+  // One narrow, atomic organizer write. This can only file visible bots;
+  // unlike the desktop's broad PATCH it cannot alter execution policy.
+  { method: "POST", path: /^\/api\/sidebar-sections$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/interrupt$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/read$/ },

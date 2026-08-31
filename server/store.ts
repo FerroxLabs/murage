@@ -744,8 +744,8 @@ export class Store {
     }
   }
 
-  private saveBots() {
-    writeFileAtomic(BOTS_FILE, JSON.stringify(this.bots, null, 2));
+  private saveBots(bots: BotRecord[] = this.bots) {
+    writeFileAtomic(BOTS_FILE, JSON.stringify(bots, null, 2));
   }
 
   private saveGroups() {
@@ -1213,6 +1213,54 @@ export class Store {
     this.saveBots();
     this.emit({ type: "bot", botId: id });
     return bot;
+  }
+
+  /** File visible bots into one sidebar section as a single durable write.
+   *
+   * This deliberately stages the complete next file before touching the
+   * live records. A missing/hidden target therefore changes nothing, and a
+   * failed atomic write cannot leave memory ahead of disk. A Chief collision
+   * is refused rather than silently removing somebody's coordinator role. */
+  setBotsSection(
+    botIds: string[],
+    section: string,
+  ): { ok: true; bots: BotRecord[] } | { ok: false; reason: "unavailable" | "chief-conflict" } {
+    const ids = [...new Set(botIds)];
+    const targets = ids.map((id) => this.bot(id));
+    if (targets.some((bot) => !bot || bot.hidden)) return { ok: false, reason: "unavailable" };
+
+    const targetSection = sectionKey(section);
+    const selected = targets as BotRecord[];
+    const destinationChiefIds = new Set([
+      ...selected.filter((bot) => bot.chiefOfStaff).map((bot) => bot.id),
+      ...this.bots
+        .filter((bot) => bot.chiefOfStaff && sectionKey(bot.section) === targetSection)
+        .map((bot) => bot.id),
+    ]);
+    if (destinationChiefIds.size > 1) return { ok: false, reason: "chief-conflict" };
+
+    const patches = new Map<string, Partial<BotRecord>>();
+    for (const bot of selected) {
+      patches.set(bot.id, { section: targetSection || undefined });
+    }
+
+    const changedIds = new Set<string>();
+    const nextBots = this.bots.map((bot) => {
+      const patch = patches.get(bot.id);
+      if (!patch) return bot;
+      const next = { ...bot, ...patch };
+      if (JSON.stringify(next) !== JSON.stringify(bot)) changedIds.add(bot.id);
+      return next;
+    });
+    if (changedIds.size) {
+      this.saveBots(nextBots);
+      for (const bot of this.bots) {
+        const patch = patches.get(bot.id);
+        if (patch) Object.assign(bot, patch);
+      }
+      for (const botId of changedIds) this.emit({ type: "bot", botId });
+    }
+    return { ok: true, bots: ids.map((id) => this.bot(id)!) };
   }
 
   /** The one way runtime state changes. Sets `activity` and derives `busy`

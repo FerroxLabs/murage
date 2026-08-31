@@ -38,6 +38,71 @@ final class StoreTests: XCTestCase {
         }
     }
 
+    func testSidebarSectionsGroupBotsAndChannelsInNaturalOrder() throws {
+        let source = try fleet()
+        var researchBot = try XCTUnwrap(source.bots.first)
+        researchBot.id = "research-1"
+        researchBot.section = "Research"
+
+        var personalBot = researchBot
+        personalBot.id = "personal-1"
+        personalBot.section = "Personal"
+
+        var secondResearchBot = researchBot
+        secondResearchBot.id = "research-2"
+        secondResearchBot.pinned = true
+
+        var researchChief = researchBot
+        researchChief.id = "research-chief"
+        researchChief.chiefOfStaff = true
+        researchChief.pinned = true
+
+        var unsectionedChief = researchBot
+        unsectionedChief.id = "default-chief"
+        unsectionedChief.section = nil
+        unsectionedChief.chiefOfStaff = true
+
+        var pinnedOnlyBot = researchBot
+        pinnedOnlyBot.id = "pinned-only"
+        pinnedOnlyBot.section = "Pinned only"
+        pinnedOnlyBot.pinned = true
+
+        var hiddenBot = researchBot
+        hiddenBot.id = "hidden"
+        hiddenBot.section = "Secret"
+        hiddenBot.hidden = true
+
+        var researchChannel = try XCTUnwrap(source.groups.first)
+        researchChannel.id = "research-channel"
+        researchChannel.section = "Research"
+
+        var generalChannel = researchChannel
+        generalChannel.id = "general-channel"
+        generalChannel.section = "  "
+
+        var directChat = researchChannel
+        directChat.id = "direct-chat"
+        directChat.dm = true
+
+        var state = CompanionState()
+        state.bots = [
+            researchChief, researchBot, personalBot, secondResearchBot,
+            pinnedOnlyBot, unsectionedChief, hiddenBot,
+        ]
+        state.rooms = [generalChannel, researchChannel, directChat]
+
+        XCTAssertEqual(state.sidebarSections.map(\.name), ["Research", "Personal"])
+        XCTAssertEqual(state.sidebarSections[0].chiefs.map(\.id), ["research-chief"])
+        XCTAssertEqual(state.sidebarSections[0].bots.map(\.id), ["research-1"])
+        XCTAssertEqual(state.sidebarSections[0].channels.map(\.id), ["research-channel"])
+        XCTAssertTrue(state.sidebarSections[1].channels.isEmpty)
+        XCTAssertEqual(state.unsectionedChief?.id, "default-chief")
+        XCTAssertTrue(state.unsectionedBots.isEmpty)
+        XCTAssertEqual(state.pinnedBots.map(\.id), ["research-2", "pinned-only"])
+        XCTAssertEqual(state.unsectionedChannels.map(\.id), ["general-channel"])
+        XCTAssertEqual(state.botChats.map(\.id), ["direct-chat"])
+    }
+
     // MARK: - Messages
 
     func testAppendsAndPatchesInPlace() throws {

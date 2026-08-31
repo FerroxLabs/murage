@@ -824,6 +824,21 @@ public struct CompanionClient: Sendable {
         return try await send(try makeRequest("POST", "/api/groups", body: body), as: CreatedRoom.self).group
     }
 
+    /// File several bots under one shared desktop/mobile sidebar heading.
+    /// This uses a narrow batch route instead of the desktop's general bot
+    /// PATCH, so a paired phone can change organization without gaining any
+    /// execution-policy controls and without leaving a half-created section.
+    public func assignSection(name: String, botIds: [String]) async throws -> [Bot] {
+        try await send(
+            try makeRequest(
+                "POST",
+                "/api/sidebar-sections",
+                body: ["name": name, "botIds": botIds]
+            ),
+            as: SidebarSectionResponse.self
+        ).bots
+    }
+
     public func send(text: String, toBot botId: String) async throws {
         try await send(try makeRequest("POST", "/api/bots/\(botId)/messages", body: ["text": text]))
     }

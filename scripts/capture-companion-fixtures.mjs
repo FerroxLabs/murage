@@ -190,6 +190,12 @@ async function main() {
   const created = await json(`${SIDECAR}/api/bots`, asDevice({ method: "POST" }));
   const bot = created.body.bot;
   if (!bot) throw new Error(`could not create a bot: ${JSON.stringify(created.body)}`);
+  const filed = await json(`${SIDECAR}/api/sidebar-sections`, asDevice({
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Fixtures", botIds: [bot.id] }),
+  }));
+  if (filed.status !== 200) throw new Error(`could not file fixture bot: ${JSON.stringify(filed.body)}`);
 
   console.log("capturing frames");
   const frames = await captureFrames(4, async () => {
@@ -210,18 +216,17 @@ async function main() {
 
   // ── a room, so the paged fleet has a group in it ───────────────────────
   //
-  // Created directly on the harness: room creation is deliberately not on
-  // the sidecar's allowlist, so this is setup the phone cannot perform —
-  // like the harness boot itself. Everything after it goes back through the
-  // sidecar. Five messages, so a capture capped at three below has a page
-  // boundary to show: the decoding test pins messages == 3 and
+  // Created directly on the harness so the fixture can also exercise the
+  // desktop-owned section field on a channel. Everything after it goes back
+  // through the sidecar. Five messages, so a capture capped at three below
+  // has a page boundary to show: the decoding test pins messages == 3 and
   // hasMore == true, and this is what makes those numbers deterministic
   // rather than an accident of whichever harness the fixtures were last
   // captured against.
   const madeRoom = await json(`${HARNESS}/api/groups`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "Fixtures", memberIds: [bot.id] }),
+    body: JSON.stringify({ name: "Fixtures", memberIds: [bot.id], section: "Fixtures" }),
   });
   const room = madeRoom.body.group;
   if (!room) throw new Error(`could not create a room: ${JSON.stringify(madeRoom.body)}`);

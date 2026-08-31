@@ -1,4 +1,4 @@
-// Make a room from the phone: a name, and which bots are in it.
+// Make a channel from the phone: a name, and which bots are in it.
 //
 // The harness names it after the first member if the name is left blank,
 // which is what the desktop's dialog does too — one rule, two screens.
@@ -19,7 +19,7 @@ struct NewGroupSheet: View {
         NavigationStack {
             List {
                 Section {
-                    TextField("Group name (optional)", text: $name)
+                    TextField("Channel name (optional)", text: $name)
                         .autocorrectionDisabled()
                 }
                 Section("Bots") {
@@ -46,7 +46,7 @@ struct NewGroupSheet: View {
                     }
                 }
             }
-            .navigationTitle("New group")
+            .navigationTitle("New channel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

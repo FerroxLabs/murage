@@ -209,23 +209,30 @@ On the phone, in order:
      same SSID and neither discovery nor a typed address gets through, the
      network is isolating its clients and there is nothing to fix on either
      machine.
-2. **The roster loads**, matching what the desktop shows.
-3. **Send a message** from the phone. It should appear on the desktop too — same
+2. **The roster loads**, matching what the desktop shows. Named sections contain
+   both their channels and bots; unfiled channels and bots stay in their built-in
+   areas.
+3. **Make a section.** Tap the folder-plus button, tap one bot normally, then
+   hold another and glide through the grid. Pausing on each tile should select
+   it with one haptic; moving back through the path should remove only its tail.
+   Name and save the section, then confirm the same bots move together on the
+   desktop. A failed save must leave the selection intact.
+4. **Send a message** from the phone. It should appear on the desktop too — same
    harness, two clients.
-4. **The approval.** This is the whole product. Ask a bot to do something that
+5. **The approval.** This is the whole product. Ask a bot to do something that
    needs permission (`run \`ls\` in my home directory` is enough for most
    engines). The card should reach the phone; answering it there should
    unblock the bot on the laptop.
-5. **Reconnect.** Background the app for a minute while the bot keeps working,
+6. **Reconnect.** Background the app for a minute while the bot keeps working,
    then come back. The transcript should catch up *without* a visible reload —
    that is the resumable stream doing its job. Watch the harness log to confirm
    it replayed rather than re-hydrated.
-6. **Dictate.** Open a chat, tap the mic, speak, and tap it again. Partial
+7. **Dictate.** Open a chat, tap the mic, speak, and tap it again. Partial
    words should replace each other in the composer rather than duplicate,
    and the result should remain editable before sending. The first attempt
    requests Microphone and Speech Recognition access. Locking or
    backgrounding the phone mid-sentence must release the mic.
-7. **Revoke.** Remove the device in Settings → Companion on the computer. The
+8. **Revoke.** Remove the device in Settings → Companion on the computer. The
    phone should land on "This phone was unpaired" rather than silently failing.
 
 ---

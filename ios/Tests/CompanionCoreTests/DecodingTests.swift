@@ -56,6 +56,18 @@ final class DecodingTests: XCTestCase {
         XCTAssertNil(fleet.bots.first?.hasMore)
     }
 
+    func testStorePreviewRemainsADecodableFleet() throws {
+        let iosDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let data = try Data(contentsOf: iosDirectory.appendingPathComponent("App/StorePreview.json"))
+        let fleet = try JSONDecoder().decode(Fleet.self, from: data)
+
+        XCTAssertFalse(fleet.bots.isEmpty)
+        XCTAssertFalse(fleet.groups.isEmpty)
+    }
+
     func testOldAndNewAvatarProfilesDecodeTogether() throws {
         let oldBot = try XCTUnwrap(decode(Fleet.self, "bots-full").bots.first)
         XCTAssertNil(oldBot.avatarUrl)
@@ -129,6 +141,33 @@ final class DecodingTests: XCTestCase {
         let fleet = try JSONDecoder().decode(Fleet.self, from: Data(json.utf8))
         XCTAssertEqual(fleet.bots.first?.cloudBackend, "vps")
         XCTAssertNil(fleet.bots.last?.cloudBackend)
+    }
+
+    func testDecodesSidebarSectionsOnBotsAndChannels() throws {
+        let json = """
+        {
+          "bots": [
+            {
+              "id":"b1","threadId":"t1","name":"Scout","title":"","description":"",
+              "notifications":true,"color":"green","unread":false,"section":"Research",
+              "modelSelection":{"instanceId":"i1","model":"m1"},"createdAt":1
+            }
+          ],
+          "groups": [
+            {
+              "id":"g1","threadId":"gt1","name":"Launch","memberIds":["b1"],
+              "defaultResponder":{"kind":"mentions"},"bulletin":"","unread":false,
+              "createdAt":2,"section":"Research"
+            }
+          ]
+        }
+        """
+        let fleet = try JSONDecoder().decode(Fleet.self, from: Data(json.utf8))
+
+        XCTAssertEqual(fleet.bots.first?.section, "Research")
+        XCTAssertEqual(fleet.groups.first?.section, "Research")
+        XCTAssertNil(try decode(Fleet.self, "bots-full").bots.first?.section,
+                     "older computers that omit sections remain compatible")
     }
 
     func testDecodesMultipleConnectedAccountsAndNoAuthToolkit() throws {

@@ -19,7 +19,7 @@ import { getOrCreateChannel, mirrorExchange, type CommsBus } from "./comms-visib
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
 import { requestPeerApproval, type ApprovalBus } from "./peer-approval.ts";
-import type { BotRecord, GroupRecord } from "./store.ts";
+import { sectionKey, type BotRecord, type GroupRecord } from "./store.ts";
 
 export interface DelegationItem {
   toBotId: string;
@@ -430,6 +430,9 @@ async function processOne(
     });
     return "settled";
   }
+  if (dropIfSectionsChanged(bus, sender, target, sourceThreadId, item)) {
+    return "settled";
+  }
   if (target.busy) {
     if (item.waitingOnBusy) return "requeued";
     item.attempts += 1;
@@ -494,6 +497,9 @@ async function processOne(
     const current = bus.store.bot(item.toBotId);
     const currentSender = bus.store.bot(from.id);
     if (!current || !currentSender || !bus.store.taskByThread(currentSender.id, sourceThreadId)) return "settled";
+    if (dropIfSectionsChanged(bus, currentSender, current, sourceThreadId, item)) {
+      return "settled";
+    }
     if (current.busy) {
       if (item.waitingOnBusy) return "requeued";
       item.attempts += 1;
@@ -531,6 +537,35 @@ async function processOne(
   const prefixed = `[Delegated by @${sender.name}, another bot in this OpenMausBot workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
   await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id);
   return "settled";
+}
+
+/** Section membership is an execution boundary, not just sidebar styling.
+ * A queued handoff may wait through a turn, a busy target, or human approval,
+ * so the permission granted when it was queued must be checked again at the
+ * final dispatch edge. */
+function dropIfSectionsChanged(
+  bus: CommsBus,
+  sender: BotRecord,
+  target: BotRecord,
+  sourceThreadId: string,
+  item: PendingDelegationItem,
+): boolean {
+  if (sectionKey(sender.section) === sectionKey(target.section)) return false;
+  const result = `@${sender.name} and @${target.name} now belong to different sections`;
+  recordDelegationReceipt({
+    id: item.id,
+    sourceThreadId,
+    toBotId: target.id,
+    toBotName: target.name,
+    status: "dropped",
+    result,
+  });
+  bus.store.appendMessage(sourceThreadId, {
+    role: "bot",
+    kind: "activity",
+    tool: { name: `Delegation to @${target.name} canceled — bots now belong to different sections`, ok: false },
+  });
+  return true;
 }
 
 /** Test helper: how many items remain queued for a thread. */
