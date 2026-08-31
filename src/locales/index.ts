@@ -27,3 +27,16 @@ export const locales: Record<string, LocalePack> = {
   "pt-br": ptBr,
   zh,
 };
+
+/** Pickable languages for the settings dropdown. Alias keys ("pt") are
+ * routing, not choices, so they are not listed here. */
+export const localeChoices: ReadonlyArray<{ code: string; label: string }> = [
+  { code: "en", label: "English" },
+  { code: "de", label: "Deutsch" },
+  { code: "es", label: "Español" },
+  { code: "fr", label: "Français" },
+  { code: "hi", label: "हिन्दी" },
+  { code: "ja", label: "日本語" },
+  { code: "pt-br", label: "Português (Brasil)" },
+  { code: "zh", label: "中文" },
+];

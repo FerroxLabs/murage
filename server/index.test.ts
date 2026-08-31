@@ -2640,6 +2640,18 @@ describe("harness HTTP API", () => {
     expect(nothing.status).toBe(400);
   });
 
+  it("round-trips the UI language and clears it back to system", async () => {
+    const set = await api("PUT", "/api/config", { language: "de" });
+    expect(set.status).toBe(200);
+    expect(set.body.language).toBe("de");
+    const after = await api("GET", "/api/config");
+    expect(after.body.language).toBe("de");
+
+    const cleared = await api("PUT", "/api/config", { language: "" });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.language).toBe("");
+  });
+
   it("validates and persists the global room turn timeout", async () => {
     const before = await api("GET", "/api/config");
     expect(before.status).toBe(200);

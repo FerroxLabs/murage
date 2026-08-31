@@ -7,6 +7,7 @@ import { Coins, FlaskConical, Globe, KeyRound, Monitor, Search, Smartphone, Term
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
+import { localeChoices } from "@/locales";
 import { ApiKeyRow, VpsConnection } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
@@ -138,6 +139,53 @@ function AnalyticsRow() {
           setOn(next);
         }}
       />
+    </Card>
+  );
+}
+
+function LanguageRow() {
+  const { state, dispatch } = useStore();
+  const current = state.config?.language ?? "";
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async (language: string) => {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const config: ConfigStatus = await api("/api/config", {
+        method: "PATCH",
+        body: JSON.stringify({ language }),
+      });
+      dispatch({ type: "configStatus", config });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save the language.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Language"
+      subtitle="The app follows your system language unless you pick one here. Only part of the interface is translated so far — untranslated text stays in English."
+    >
+      <select
+        value={current}
+        disabled={saving}
+        aria-label="App language"
+        onChange={(event) => void save(event.target.value)}
+        className="w-full max-w-[280px] rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 text-[13.5px] text-ink disabled:cursor-wait disabled:opacity-50"
+      >
+        <option value="">System</option>
+        {localeChoices.map(({ code, label }) => (
+          <option key={code} value={code}>
+            {label}
+          </option>
+        ))}
+      </select>
+      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
     </Card>
   );
 }
@@ -603,7 +651,8 @@ export function SettingsModal() {
                 <Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
                   <RoomTurnTimeoutSettings />
                 </Card>
-                <ToolCallsRow />
+                <LanguageRow />
+          <ToolCallsRow />
                 <UpdatesRow />
                 <DiagnosticsRow />
                 <AnalyticsRow />

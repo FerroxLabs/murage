@@ -251,6 +251,9 @@ const appConfigSchema = z.object({
   imageGen: z.object({ key: optionalText }).optional(),
   /** Non-secret profile details shown in the sidebar. */
   profile: z.object({ name: optionalText, email: optionalText }).optional(),
+  /** UI language override (BCP-47, lowercase). Empty/absent = follow the
+   * system language. Unknown tags degrade to English in the renderer. */
+  language: optionalText,
   rooms: roomConfigSchema.optional(),
   localVm: localVmConfigSchema.optional(),
   features: featureConfigSchema.optional(),
@@ -270,6 +273,7 @@ const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
   mcpServers?: Record<string, unknown>;
+  language?: string;
   xai?: { key?: string; url?: string };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
@@ -586,6 +590,8 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     disk[key] = merged;
   }
   if (checkedPatch.vps !== undefined) disk.vps = normalizeVpsConfig(checkedPatch.vps);
+  // scalar, not a section: the merge loop above only walks objects
+  if (checkedPatch.language !== undefined) disk.language = checkedPatch.language;
   // the whole list is the unit of change: an add or a delete arrives as the
   // new list, never as a per-item merge
   if (checkedPatch.browserProfiles !== undefined) {
