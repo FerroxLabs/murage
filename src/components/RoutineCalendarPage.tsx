@@ -1006,6 +1006,8 @@ export function RoutinesPage({ onBack }: { onBack: () => void }) {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const backButtonRef = useRef<HTMLButtonElement>(null);
+  const [leaving, setLeaving] = useState(false);
+  const exitTimerRef = useRef<number | null>(null);
   const [section, setSection] = useState<"calendar" | "webhooks">("calendar");
   const [viewDays, setViewDays] = useState<1 | 3 | 7>(7);
   const [anchor, setAnchor] = useState(() => startOfDay(Date.now()));
@@ -1068,6 +1070,25 @@ export function RoutinesPage({ onBack }: { onBack: () => void }) {
     setSelected(null);
     setQuick({ kind: "routine", at: nextHour(), durationMinutes: 30, botIds: [], ...seed });
   }, []);
+  const finishClose = useCallback(() => {
+    if (exitTimerRef.current === null) return;
+    window.clearTimeout(exitTimerRef.current);
+    exitTimerRef.current = null;
+    onBack();
+  }, [onBack]);
+  const close = () => {
+    if (leaving) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      onBack();
+      return;
+    }
+    setLeaving(true);
+    exitTimerRef.current = window.setTimeout(finishClose, 220);
+  };
+
+  useEffect(() => () => {
+    if (exitTimerRef.current !== null) window.clearTimeout(exitTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1121,7 +1142,12 @@ export function RoutinesPage({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
+    <main
+      className={cn("flex h-full min-w-0 flex-1 flex-col bg-app", leaving ? "pointer-events-none animate-workspace-out" : "animate-workspace-in")}
+      onAnimationEnd={(event) => {
+        if (leaving && event.target === event.currentTarget) finishClose();
+      }}
+    >
       <header
         className={cn("shrink-0 border-b border-hairline/35 bg-app py-3 pr-4", macInset ? "pl-[86px]" : "pl-4")}
         style={windowDragStyle}
@@ -1130,7 +1156,7 @@ export function RoutinesPage({ onBack }: { onBack: () => void }) {
           <button
             type="button"
             ref={backButtonRef}
-            onClick={onBack}
+            onClick={close}
             aria-label="Back"
             title="Back"
             className="flex size-9 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
