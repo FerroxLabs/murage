@@ -3,8 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   MAX_ROOM_TURN_TIMEOUT_MINUTES,
   MIN_ROOM_TURN_TIMEOUT_MINUTES,
-  createExclusiveSaveGate,
-  saveRoomTurnTimeoutMinutes,
+  parseRoomTurnTimeoutMinutes,
 } from "@/lib/room-turn-timeout";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 
@@ -15,37 +14,34 @@ export function RoomTurnTimeoutSettings() {
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const saveGateRef = useRef(createExclusiveSaveGate());
+  const saveInFlight = useRef(false);
 
   useEffect(() => {
     if (!dirty) setValue(String(confirmedMinutes));
   }, [confirmedMinutes, dirty]);
 
   const save = async () => {
-    if (!dirty || !saveGateRef.current.tryStart()) return;
+    if (!dirty || saveInFlight.current) return;
+    const parsed = parseRoomTurnTimeoutMinutes(value);
+    if (!parsed.ok) {
+      setError(parsed.error);
+      return;
+    }
+    saveInFlight.current = true;
     setSaving(true);
     try {
-      let savedConfig: ConfigStatus | undefined;
-      const result = await saveRoomTurnTimeoutMinutes(value, async (minutes) => {
-        const config = await api("/api/config", {
-          method: "PUT",
-          body: JSON.stringify({ rooms: { turnTimeoutMinutes: minutes } }),
-        });
-        savedConfig = config;
-        return config.rooms.turnTimeoutMinutes;
+      const config: ConfigStatus = await api("/api/config", {
+        method: "PUT",
+        body: JSON.stringify({ rooms: { turnTimeoutMinutes: parsed.minutes } }),
       });
-
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-
-      if (savedConfig) dispatch({ type: "configStatus", config: savedConfig });
-      setValue(String(result.minutes));
+      dispatch({ type: "configStatus", config });
+      setValue(String(config.rooms.turnTimeoutMinutes));
       setDirty(false);
       setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save the channel turn limit.");
     } finally {
-      saveGateRef.current.finish();
+      saveInFlight.current = false;
       setSaving(false);
     }
   };

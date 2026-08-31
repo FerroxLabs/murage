@@ -3,7 +3,6 @@ import { Loader2, Menu } from "lucide-react";
 import { StoreProvider, useStore } from "@/state/store";
 import { Onboarding } from "@/components/Onboarding";
 import { emailGateDone, initAnalytics } from "@/lib/analytics";
-import { unreadConversationCount } from "@/lib/unread";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
@@ -25,7 +24,9 @@ import { heldComputerControlBotIds } from "@/lib/computer-control";
 
 function Shell() {
   const { state, dispatch } = useStore();
-  const unreadCount = unreadConversationCount(state.bots, state.groups);
+  const unreadCount =
+    state.bots.filter((bot) => !bot.hidden && bot.unread).length +
+    state.groups.filter((group) => group.unread).length;
   // Mobile-only drawer state. Above md, none of these properties are emitted
   // at all — Sidebar scopes every mobile class with max-md: rather than
   // cancelling them with md:, which would still emit a translate value and

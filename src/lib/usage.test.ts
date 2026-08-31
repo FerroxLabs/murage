@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { botUsage, cachedInput, costCaption, formatTokens, formatUsd, sumUsage, usageChip, usageDetail } from "./usage";
+import { botUsage, cachedInput, costCaption, formatTaskTokens, formatTokens, formatUsd, sumUsage, usageChip, usageDetail } from "./usage";
 
 describe("usage formatting", () => {
   it("formats token counts compactly", () => {
@@ -8,6 +8,18 @@ describe("usage formatting", () => {
     expect(formatTokens(12_400)).toBe("12.4k");
     expect(formatTokens(120_000)).toBe("120k");
     expect(formatTokens(2_300_000)).toBe("2.3M");
+  });
+
+  it("formats task-picker token counts without showing unused tasks", () => {
+    expect(formatTaskTokens(0)).toBeNull();
+    expect(formatTaskTokens(Number.NaN)).toBeNull();
+    expect(formatTaskTokens(1)).toBe("1 token");
+    expect(formatTaskTokens(842)).toBe("842 tokens");
+    expect(formatTaskTokens(1000)).toBe("1k");
+    expect(formatTaskTokens(12_350)).toBe("12.4k");
+    expect(formatTaskTokens(999_949)).toBe("999.9k");
+    expect(formatTaskTokens(999_950)).toBe("1M");
+    expect(formatTaskTokens(123_456_789)).toBe("123.5M");
   });
 
   it("keeps small dollar amounts visible", () => {

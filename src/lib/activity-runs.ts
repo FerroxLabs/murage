@@ -56,8 +56,7 @@ export function groupActivityRuns(messages: Message[]): TranscriptItem[] {
 const MAX_NAMES = 3;
 
 /** The one line a folded run has to earn its place with: how much work it
- * was, which tools did it, and whether anything failed — the last being the
- * only reason you would open it. */
+ * was and which tools did it. Failed steps are never folded. */
 export function describeRun(messages: Message[]): string {
   const counts = new Map<string, number>();
   for (const message of messages) {
@@ -67,6 +66,5 @@ export function describeRun(messages: Message[]): string {
   const names = [...counts].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name));
   const shown = names.slice(0, MAX_NAMES).join(", ");
   const rest = names.length > MAX_NAMES ? ` +${names.length - MAX_NAMES} more` : "";
-  const failed = messages.filter((message) => message.tool?.ok === false).length;
-  return `${messages.length} steps · ${shown}${rest}${failed ? ` · ${failed} failed` : ""}`;
+  return `${messages.length} steps · ${shown}${rest}`;
 }

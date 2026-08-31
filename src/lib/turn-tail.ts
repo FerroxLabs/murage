@@ -14,13 +14,12 @@ import type { Message } from "@/state/store";
  */
 export function showWorkingDots(
   busy: boolean | undefined,
-  streaming: string | undefined,
   lastMessage: Message | undefined,
   /** rooms: the bot currently speaking. A settled reply from a PREVIOUS
    * speaker doesn't cover this one — its dots are real information. */
   speakerBotId?: string,
 ): boolean {
-  if (!busy || streaming) return false;
+  if (!busy) return false;
   if (!lastMessage) return true;
   const settledReply = lastMessage.role === "bot" && lastMessage.kind === "text";
   if (!settledReply) return true;

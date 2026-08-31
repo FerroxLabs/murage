@@ -15,6 +15,7 @@ import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
+import { Switch } from "./SettingsPrimitives";
 
 function Field({
   label,
@@ -208,22 +209,12 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
                   <div className="truncate font-mono text-[12.5px] text-ink">{skill.name}</div>
                   <div className="mt-0.5 line-clamp-2 text-[11.5px] text-ink-secondary">{skill.description}</div>
                 </div>
-                <button
-                  role="switch"
-                  aria-checked={skill.enabled}
+                <Switch
+                  checked={skill.enabled}
                   aria-label={`${skill.enabled ? "Disable" : "Enable"} ${skill.name}`}
                   disabled={working === skill.name}
                   onClick={() => void toggle(skill)}
-                  className={cn(
-                    "relative h-6 w-10 shrink-0 rounded-full transition-colors disabled:opacity-40",
-                    skill.enabled ? "bg-accent" : "bg-control",
-                  )}
-                >
-                  <span className={cn(
-                    "absolute top-[3px] size-[18px] rounded-full bg-white transition-all",
-                    skill.enabled ? "left-[19px]" : "left-[3px]",
-                  )} />
-                </button>
+                />
                 <button
                   aria-label={`Remove ${skill.name}`}
                   title="Remove skill"
@@ -674,25 +665,14 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 <div className="text-[15px] font-medium text-ink">Chief of Staff</div>
                 <div className="text-[11.5px] text-ink-secondary">One for {sectionName}</div>
               </div>
-              <button
-                role="switch"
-                aria-checked={Boolean(bot.chiefOfStaff)}
+              <Switch
+                checked={Boolean(bot.chiefOfStaff)}
                 aria-label="Chief of Staff"
                 disabled={!bot.chiefOfStaff && !canCoordinate}
                 onClick={() => patch({ chiefOfStaff: !bot.chiefOfStaff })}
                 title={!bot.chiefOfStaff && !canCoordinate ? "This engine cannot contact other bots" : undefined}
-                className={cn(
-                  "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                  bot.chiefOfStaff ? "bg-accent" : "bg-control",
-                )}
-              >
-                <span
-                  className={cn(
-                    "absolute top-[3px] size-5 rounded-full bg-white transition-all",
-                    bot.chiefOfStaff ? "left-[21px]" : "left-[3px]",
-                  )}
-                />
-              </button>
+                className="disabled:cursor-not-allowed"
+              />
             </div>
             <div className="mt-3 text-[13px] leading-relaxed text-ink-secondary">
               {bot.chiefOfStaff && !canCoordinate
@@ -718,25 +698,14 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                   : "Let this bot talk to teammates on its own, without a confirmation step."}
               </div>
             </div>
-            <button
-              role="switch"
-              aria-checked={Boolean(bot.approvePeerComms)}
+            <Switch
+              checked={Boolean(bot.approvePeerComms)}
               aria-label="Ask me before contacting other bots"
               disabled={!bot.approvePeerComms && !canCoordinate}
               onClick={() => patch({ approvePeerComms: !bot.approvePeerComms })}
               title={!bot.approvePeerComms && !canCoordinate ? "This engine cannot contact other bots" : undefined}
-              className={cn(
-                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                bot.approvePeerComms ? "bg-accent" : "bg-control",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
-                  bot.approvePeerComms ? "left-[21px]" : "left-[3px]",
-                )}
-              />
-            </button>
+              className="disabled:cursor-not-allowed"
+            />
           </div>
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
@@ -752,9 +721,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                       : "Keep your connected apps unavailable to this bot."}
               </div>
             </div>
-            <button
-              role="switch"
-              aria-checked={connectedAppsEnabled}
+            <Switch
+              checked={connectedAppsEnabled}
               aria-label="Allow this bot to use connected apps"
               disabled={
                 !connectedAppsEnabled && (!connectedAppsConfigured || !canUseConnectedApps)
@@ -767,18 +735,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                     ? "This engine cannot use connected apps"
                     : undefined
               }
-              className={cn(
-                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                connectedAppsEnabled ? "bg-accent" : "bg-control",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
-                  connectedAppsEnabled ? "left-[21px]" : "left-[3px]",
-                )}
-              />
-            </button>
+              className="disabled:cursor-not-allowed"
+            />
           </div>
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
@@ -798,24 +756,13 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                         : "Keep the built-in browser unavailable to this bot."}
               </div>
             </div>
-            <button
-              role="switch"
-              aria-checked={browserEnabled}
+            <Switch
+              checked={browserEnabled}
               aria-label="Give this bot a built-in browser"
               disabled={!browserEnabled && (!desktopBrowser || !browserFeature || !canUseBrowser)}
               onClick={() => patch({ browser: !browserAllowed })}
-              className={cn(
-                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                browserEnabled ? "bg-accent" : "bg-control",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
-                  browserEnabled ? "left-[21px]" : "left-[3px]",
-                )}
-              />
-            </button>
+              className="disabled:cursor-not-allowed"
+            />
           </div>
 
           <div className="rounded-xl bg-card p-4">
@@ -915,23 +862,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                         Allow Auto to create or wake this bot's managed container when needed.
                       </div>
                     </div>
-                    <button
-                      role="switch"
-                      aria-checked={Boolean(bot.autoStartVps)}
+                    <Switch
+                      checked={Boolean(bot.autoStartVps)}
                       aria-label="Start VPS automatically"
                       onClick={() => patch({ autoStartVps: !bot.autoStartVps })}
-                      className={cn(
-                        "relative h-6 w-11 shrink-0 rounded-full transition-colors",
-                        bot.autoStartVps ? "bg-accent" : "bg-control",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "absolute top-[3px] size-[18px] rounded-full bg-white transition-all",
-                          bot.autoStartVps ? "left-[22px]" : "left-[4px]",
-                        )}
-                      />
-                    </button>
+                    />
                   </div>
                 )}
               </>
@@ -959,26 +894,14 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                   : "Approve each action yourself. Turn on to let this bot keep working without stopping to ask."}
               </div>
             </div>
-            <button
-              role="switch"
-              aria-checked={Boolean(bot.autoApprove)}
+            <Switch
+              checked={Boolean(bot.autoApprove)}
               aria-label="Auto mode"
               onClick={() => {
                 if (!bot.autoApprove && bot.computer === "local") setLocalAutoWarning("auto");
                 else patch({ autoApprove: !bot.autoApprove });
               }}
-              className={cn(
-                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
-                bot.autoApprove ? "bg-accent" : "bg-control",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
-                  bot.autoApprove ? "left-[21px]" : "left-[3px]",
-                )}
-              />
-            </button>
+            />
           </div>
 
           <div className="rounded-xl bg-card p-4">
@@ -1027,27 +950,15 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 Get notified when this agent finishes or needs input
               </div>
             </div>
-            <button
-              role="switch"
-              aria-checked={bot.notifications}
+            <Switch
+              checked={bot.notifications}
               aria-label="Agent notifications"
               onClick={() => {
                 const enabled = !bot.notifications;
                 if (enabled) void requestNotificationPermission();
                 patch({ notifications: enabled });
               }}
-              className={cn(
-                "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
-                bot.notifications ? "bg-accent" : "bg-control",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-[3px] size-5 rounded-full bg-white transition-all",
-                  bot.notifications ? "left-[21px]" : "left-[3px]",
-                )}
-              />
-            </button>
+            />
           </div>
         </div>
       </div>

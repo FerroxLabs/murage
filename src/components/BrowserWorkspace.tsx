@@ -5,15 +5,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Globe, X } from "lucide-react";
 import { z } from "zod";
-import { useStore, type Bot } from "@/state/store";
+import { api, useStore, type Bot } from "@/state/store";
 import { BrowserPanel } from "./BrowserPanel";
-
-async function api(path: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(path, { headers: { "content-type": "application/json" }, ...init });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
-  return body;
-}
 
 const controlSnapshotSchema = z.looseObject({
   held: z.boolean().optional().default(false),

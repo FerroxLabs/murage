@@ -2,7 +2,7 @@
 // Reads the skin blocks out of src/styles.css and measures every text/surface
 // pair the components actually produce. Run it after touching a palette:
 //
-//   node scripts/check-skin-contrast.mjs
+//   pnpm check:contrast
 //
 // It parses the CSS rather than taking a second copy of the values, so the
 // check can never pass against a palette that is no longer the shipped one.
@@ -46,9 +46,11 @@ function parseSkins(source) {
   return skins;
 }
 
-function parseHex(hex) {
-  const h = hex.replace("#", "").trim();
-  const full = h.length === 3 ? [...h].map((c) => c + c).join("") : h;
+function parseHex(value) {
+  const match = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(value.trim());
+  if (!match) return null;
+  const h = match[1];
+  const full = h.length <= 4 ? Array.from(h, (c) => c + c).join("") : h;
   return {
     r: parseInt(full.slice(0, 2), 16),
     g: parseInt(full.slice(2, 4), 16),
@@ -78,7 +80,9 @@ function luminance({ r, g, b }) {
 
 function contrast(fgHex, bgHex) {
   const bg = parseHex(bgHex);
-  const fg = flatten(parseHex(fgHex), bg);
+  const parsedFg = parseHex(fgHex);
+  if (!parsedFg || !bg || bg.a !== 1) return null;
+  const fg = flatten(parsedFg, bg);
   const [hi, lo] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
   return (hi + 0.05) / (lo + 0.05);
 }
@@ -132,14 +136,19 @@ const PAIRS = [
 ];
 
 const skins = parseSkins(css);
-// Midnight is shipped as a faithful copy of upstream, contrast gaps included;
-// it is reported but not allowed to fail the run.
-const ADVISORY = new Set(["midnight"]);
+// Midnight faithfully keeps two upstream contrast gaps. They may improve, but
+// must not get worse; every other below-target pair is a regression.
+const BASELINE_FLOORS = new Map([
+  ["midnight|--color-accent-ink|--color-accent", 3.65],
+  ["midnight|--color-danger-ink|--color-danger", 3.10],
+]);
+const BASELINE_DRIFT = 0.01;
 
 let failed = false;
 for (const [id, tokens] of skins) {
   const problems = [];
   const missing = [];
+  const unmeasurable = [];
   let measured = 0;
   for (const [fg, bg, min] of PAIRS) {
     // A pair we cannot measure is reported, never silently skipped: an
@@ -148,24 +157,37 @@ for (const [id, tokens] of skins) {
       missing.push(!tokens[fg] ? fg : bg);
       continue;
     }
-    measured++;
     const ratio = contrast(tokens[fg], tokens[bg]);
+    if (ratio === null) {
+      unmeasurable.push({ fg, bg, fgValue: tokens[fg], bgValue: tokens[bg] });
+      continue;
+    }
+    measured++;
     if (ratio < min) problems.push({ fg, bg, ratio, min });
   }
-  const advisory = ADVISORY.has(id);
+  let skinFailed = missing.length > 0 || unmeasurable.length > 0;
   if (missing.length) {
     console.log(`✗ ${id} — undefined token(s): ${[...new Set(missing)].join(", ")}`);
-    if (!advisory) failed = true;
+  }
+  for (const { fg, bg, fgValue, bgValue } of unmeasurable) {
+    console.log(`✗ ${id} — cannot measure ${fg} on ${bg} (${fgValue} on ${bgValue})`);
   }
   if (problems.length === 0) {
-    if (!missing.length) console.log(`✓ ${id} — ${measured} pairs, none below target`);
+    if (!skinFailed) console.log(`✓ ${id} — ${measured} pairs, none below target`);
+    if (skinFailed) failed = true;
     continue;
   }
-  console.log(`${advisory ? "~" : "✗"} ${id}${advisory ? " (advisory — upstream copy)" : ""}`);
-  for (const { fg, bg, ratio, min } of problems) {
-    console.log(`    ${fg} on ${bg}: ${ratio.toFixed(2)}:1 (needs ${min}:1)`);
+  for (const { fg, bg, ratio } of problems) {
+    const floor = BASELINE_FLOORS.get(`${id}|${fg}|${bg}`);
+    if (floor === undefined || ratio < floor - BASELINE_DRIFT) skinFailed = true;
   }
-  if (!advisory) failed = true;
+  console.log(`${skinFailed ? "✗" : "~"} ${id}${skinFailed ? "" : " (known upstream gaps)"}`);
+  for (const { fg, bg, ratio, min } of problems) {
+    const floor = BASELINE_FLOORS.get(`${id}|${fg}|${bg}`);
+    const baseline = floor === undefined ? "" : `; baseline ${floor.toFixed(2)}:1`;
+    console.log(`    ${fg} on ${bg}: ${ratio.toFixed(2)}:1 (needs ${min}:1${baseline})`);
+  }
+  if (skinFailed) failed = true;
 }
 
 process.exit(failed ? 1 : 0);

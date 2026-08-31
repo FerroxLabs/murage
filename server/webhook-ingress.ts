@@ -24,29 +24,24 @@ function json(res: ServerResponse, status: number, body: JsonValue): void {
   res.end(JSON.stringify(body));
 }
 
-function readRawBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let raw = "";
-    let bytes = 0;
-    let done = false;
-    const fail = (status: number, message: string) => {
-      if (done) return;
-      done = true;
-      reject(Object.assign(new Error(message), { status }));
-    };
-    req.on("data", (chunk) => {
-      if (done) return;
-      bytes += Buffer.byteLength(chunk);
-      if (bytes > MAX_WEBHOOK_BODY_BYTES) return fail(413, "Webhook body is too large");
-      raw += chunk;
-    });
-    req.on("end", () => {
-      if (done) return;
-      done = true;
-      resolve(raw);
-    });
-    req.on("error", () => fail(400, "Could not read webhook body"));
-  });
+async function readRawBody(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  try {
+    for await (const chunk of req) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytes += buffer.length;
+      if (bytes > MAX_WEBHOOK_BODY_BYTES) {
+        throw Object.assign(new Error("Webhook body is too large"), { status: 413 });
+      }
+      chunks.push(buffer);
+    }
+  } catch (error) {
+    const parsed = statusErrorSchema.safeParse(error);
+    if (parsed.success && parsed.data.status === 413) throw error;
+    throw Object.assign(new Error("Could not read webhook body"), { status: 400 });
+  }
+  return Buffer.concat(chunks, bytes).toString("utf8");
 }
 
 function parsePayload(raw: string, contentType: string): JsonValue {

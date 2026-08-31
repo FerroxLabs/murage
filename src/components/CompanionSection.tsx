@@ -18,7 +18,7 @@ import {
 } from "./PhoneSetupFlow";
 import { companionPairingMode } from "../lib/phone-setup";
 import { ConnectionDetail } from "./ConnectionDetail";
-import { Card } from "./SettingsPrimitives";
+import { Card, Switch } from "./SettingsPrimitives";
 
 export {
   companionAccountActionError,
@@ -154,9 +154,8 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                     <div className="text-[12px] text-ink">Allow computer view</div>
                     <div className="mt-0.5 text-[11px] text-ink-secondary">Full interactive access from this phone.</div>
                   </div>
-                  <button
-                    role="switch"
-                    aria-checked={device.cloudDesktopAccess}
+                  <Switch
+                    checked={device.cloudDesktopAccess}
                     aria-label={`Computer view access for ${device.name}`}
                     disabled={c.busy}
                     onClick={() =>
@@ -164,10 +163,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                         companion.cloudDesktop(device.id, !device.cloudDesktopAccess),
                       )
                     }
-                    className={cnSwitch(device.cloudDesktopAccess)}
-                  >
-                    <span className={cnKnob(device.cloudDesktopAccess)} />
-                  </button>
+                  />
                 </div>
               </li>
             ))}
@@ -187,16 +183,12 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                 Turn off all phone connections to this computer.
               </div>
             </div>
-            <button
-              role="switch"
-              aria-checked={state.enabled}
+            <Switch
+              checked={state.enabled}
               aria-label="Phone access"
               disabled={c.busy}
               onClick={() => void c.act((companion) => (state.enabled ? companion.stop() : companion.start()))}
-              className={cnSwitch(state.enabled)}
-            >
-              <span className={cnKnob(state.enabled)} />
-            </button>
+            />
           </div>
 
           <div className="flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
@@ -206,16 +198,12 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                 Keeps phone access and scheduled work available while the screen is off.
               </div>
             </div>
-            <button
-              role="switch"
-              aria-checked={state.keepAwake}
+            <Switch
+              checked={state.keepAwake}
               aria-label="Keep this computer awake while Phone access is on"
               disabled={c.busy || !state.enabled}
               onClick={() => void c.act((companion) => companion.keepAwake(!state.keepAwake))}
-              className={cnSwitch(state.keepAwake)}
-            >
-              <span className={cnKnob(state.keepAwake)} />
-            </button>
+            />
           </div>
 
           <div className="border-t border-hairline/30 pt-4">
@@ -326,8 +314,3 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
     </div>
   );
 }
-
-const cnSwitch = (on: boolean) =>
-  `relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-40 ${on ? "bg-accent" : "bg-control"}`;
-const cnKnob = (on: boolean) =>
-  `absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white transition-all ${on ? "left-[21px]" : "left-[3px]"}`;

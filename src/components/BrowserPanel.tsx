@@ -22,7 +22,7 @@ import {
 import { usePageVisible } from "@/lib/page-visible";
 import { cn } from "@/lib/cn";
 import { transitionBrowserControlLease } from "@/lib/computer-control";
-import { useStore, type Bot, type BotAnnouncement, type BrowserProfile } from "@/state/store";
+import { api, useStore, type Bot, type BotAnnouncement, type BrowserProfile } from "@/state/store";
 import { browserProfilePartitionId, browserProfilesForPatch } from "@/lib/browser-profiles";
 import { useNativeViewObscured } from "@/hooks/use-native-view-obscured";
 import { aspectFitNativeViewBounds } from "@/lib/local-vm-workspace";
@@ -37,13 +37,6 @@ const OWN_PROFILE = "";
 const GUEST_PROFILE = "guest";
 
 export type BrowserSurfacePresentation = "connecting" | "empty" | "loading" | "ready" | "failed";
-
-async function api(path: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(path, { headers: { "content-type": "application/json" }, ...init });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
-  return body;
-}
 
 function elementBounds(element: HTMLElement | null): DesktopWorkspaceBounds | null {
   const rect = element?.getBoundingClientRect();

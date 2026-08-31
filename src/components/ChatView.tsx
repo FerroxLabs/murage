@@ -889,7 +889,7 @@ export function ChatView({ bot }: { bot: Bot }) {
   const waiting = Boolean(
     bot.busy &&
       bot.activity !== "waiting-on-you" &&
-      showWorkingDots(bot.busy, undefined, lastMessage),
+      showWorkingDots(bot.busy, lastMessage),
   );
   const wasWaiting = useRef(false);
   const [popping, setPopping] = useState<{ id: string; text: string } | null>(null);

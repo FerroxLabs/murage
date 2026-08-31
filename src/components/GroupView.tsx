@@ -861,7 +861,7 @@ export function GroupView({ group }: { group: Group }) {
   const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined;
   const activityLabel = liveActivityLabel(lastGroupMessage);
   const waiting = Boolean(
-    speaker && showWorkingDots(true, undefined, group.messages.at(-1), speaker.id),
+    speaker && showWorkingDots(true, group.messages.at(-1), speaker.id),
   );
   const wasWaiting = useRef(false);
   const [popping, setPopping] = useState<{ id: string; text: string; botId?: string } | null>(null);

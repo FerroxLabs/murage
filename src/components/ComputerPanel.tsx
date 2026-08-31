@@ -22,7 +22,7 @@ import {
   Smartphone,
   X,
 } from "lucide-react";
-import { useStore, type Bot } from "@/state/store";
+import { api, useStore, type Bot } from "@/state/store";
 import type { Routine } from "@/lib/routines";
 import { ApiKeyRow } from "./ApiKeys";
 import { cn } from "@/lib/cn";
@@ -38,6 +38,7 @@ import { LocalScreenPreview } from "./LocalScreenPreview";
 import { LinuxLocalControl } from "./LinuxLocalControl";
 import { MacLocalControl } from "./MacLocalControl";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
+import { Switch } from "./SettingsPrimitives";
 import {
   autoSelectsLocalComputer,
   instanceSupportsLocalComputer,
@@ -45,18 +46,19 @@ import {
   localComputerDisabledReason,
   localComputerSelectable,
 } from "@/lib/local-computer";
-import { vpsComputerNeedsReplacement, type VpsComputerStatus } from "@/lib/vps-computer";
 import {
   readComputerPanelView,
   writeComputerPanelView,
   type ComputerPanelView,
 } from "@/lib/computer-panel-view";
 
-async function api(path: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(path, { headers: { "content-type": "application/json" }, ...init });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
-  return body;
+interface VpsComputerStatus {
+  configured: boolean;
+  imageMatches: boolean;
+  managed: boolean;
+  container: "running" | "stopped" | "missing";
+  ready: boolean;
+  problem: string | null;
 }
 
 type Phase =
@@ -401,7 +403,7 @@ export function ComputerPanel({
           // a managed container from the previous release. Provision refuses
           // to overwrite it by design, so surface the explicit replacement
           // path instead of automatically issuing a request that can only 409.
-          if (vpsComputerNeedsReplacement(status)) {
+          if (status.managed && status.container !== "missing" && !status.imageMatches) {
             setError(status.problem);
             setPhase("vps-incompatible");
             return;
@@ -1289,27 +1291,15 @@ export function ComputerPanel({
                       Off by default. When enabled, Auto may create or wake this bot's managed container.
                     </div>
                   </div>
-                  <button
-                    role="switch"
-                    aria-checked={Boolean(bot.autoStartVps)}
+                  <Switch
+                    checked={Boolean(bot.autoStartVps)}
                     aria-label="Start VPS automatically"
                     onClick={() => dispatch({
                       type: "updateBot",
                       botId: bot.id,
                       patch: { autoStartVps: !bot.autoStartVps },
                     })}
-                    className={cn(
-                      "relative h-6 w-11 shrink-0 rounded-full transition-colors",
-                      bot.autoStartVps ? "bg-accent" : "bg-control",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "absolute top-[3px] size-[18px] rounded-full bg-white transition-all",
-                        bot.autoStartVps ? "left-[22px]" : "left-[4px]",
-                      )}
-                    />
-                  </button>
+                  />
                 </div>
               )}
             </>

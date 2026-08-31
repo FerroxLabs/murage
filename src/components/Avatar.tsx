@@ -33,14 +33,6 @@ const GRADIENT_SILHOUETTE: CursorSilhouette = {
   body: DEFAULT_SILHOUETTE.body.replace(/fill="#000000"/g, 'fill="{{GRADIENT}}"'),
 };
 
-/**
- * Legacy face-placement knobs from the Maus body era. The cursor mascot
- * places its own face; these remain only so the preview harness's sliders
- * keep compiling — the matching props are accepted and ignored.
- */
-export const FACE_X = 80;
-export const FACE_Y = 102;
-export const FACE_SCALE = 0.47;
 export const EYE_SCALE = 1.12;
 export const MOUTH_WEIGHT = 11;
 
@@ -131,11 +123,6 @@ export type MausAvatarProps = {
   trackPointer?: boolean;
   /** Run the animation. Off renders the state's resting face. */
   animated?: boolean;
-  /** Legacy Maus face-placement knobs — accepted, ignored. */
-  eyeSpacing?: number;
-  faceX?: number;
-  faceY?: number;
-  faceScale?: number;
 };
 
 function MausAvatarComponent(

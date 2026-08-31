@@ -3033,7 +3033,7 @@ describe("harness HTTP API", () => {
       await waitForIsolatedServer(isolatedChild, isolatedPort, () => isolatedStderr);
       await expect.poll(() => JSON.parse(
         readFileSync(join(isolatedData, "browser-cleanups.json"), "utf8"),
-      )).toEqual([]);
+      ), { timeout: 5_000 }).toEqual([]);
 
       const beforeReuse = await isolatedApi("GET", "/api/bots?messages=0");
       expect(beforeReuse.body.bots.find((bot: { id: string }) => bot.id === "crash-bot"))

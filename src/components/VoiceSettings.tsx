@@ -10,6 +10,7 @@ import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
 import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { speaker } from "@/lib/tts";
 import { cn } from "@/lib/cn";
+import { Switch } from "./SettingsPrimitives";
 
 const SAMPLE = "Morning. Overnight the tests went green, and I left two notes for you in the thread.";
 
@@ -217,23 +218,11 @@ export function VoiceSettings({
             Speak this agent's answers as they arrive, even from another chat.
           </div>
         </div>
-        <button
-          role="switch"
-          aria-checked={Boolean(bot.speakReplies)}
+        <Switch
+          checked={Boolean(bot.speakReplies)}
           aria-label="Read this bot's replies aloud"
           onClick={() => onPatch({ speakReplies: !bot.speakReplies })}
-          className={cn(
-            "relative h-[26px] w-[44px] shrink-0 rounded-full transition-colors",
-            bot.speakReplies ? "bg-accent" : "bg-control",
-          )}
-        >
-          <span
-            className={cn(
-              "absolute top-[3px] size-5 rounded-full bg-white transition-all",
-              bot.speakReplies ? "left-[21px]" : "left-[3px]",
-            )}
-          />
-        </button>
+        />
       </div>
 
       {error && <div role="alert" className="mt-2 text-[12px] text-danger">{error}</div>}

@@ -541,7 +541,6 @@ export type Action =
   | { type: "switchGroupTask"; groupId: string; threadId: string }
   | { type: "renameGroupTask"; groupId: string; threadId: string; title: string }
   | { type: "deleteGroupTask"; groupId: string; threadId: string }
-  | { type: "toggleReaction"; threadId: string; messageId: string; emoji: string }
   | { type: "interruptGroup"; groupId: string }
   | { type: "instances"; instances: InstanceInfo[] }
   | { type: "configStatus"; config: ConfigStatus }
@@ -1138,24 +1137,6 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         groups: state.groups.map((g) => (g.id === action.groupId ? { ...g, ...action.patch } : g)),
       };
-    case "toggleReaction": {
-      const toggle = (m: Message): Message => {
-        if (m.id !== action.messageId) return m;
-        const reactions = m.reactions ?? [];
-        const at = reactions.findIndex((r) => r.emoji === action.emoji && r.by === "user");
-        const next = at >= 0 ? reactions.filter((_, i) => i !== at) : [...reactions, { emoji: action.emoji, by: "user" }];
-        return { ...m, reactions: next.length ? next : undefined };
-      };
-      return {
-        ...state,
-        bots: state.bots.map((b) =>
-          b.threadId === action.threadId ? { ...b, messages: b.messages.map(toggle) } : b,
-        ),
-        groups: state.groups.map((g) =>
-          g.threadId === action.threadId ? { ...g, messages: g.messages.map(toggle) } : g,
-        ),
-      };
-    }
     // handled entirely by the async wrapper
     case "pendingQueued": {
       if (state.consumedQueueIds[action.queueId]) {
@@ -1698,12 +1679,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "deleteGroup":
           api(`/api/groups/${action.groupId}`, { method: "DELETE" }).catch(showError);
-          break;
-        case "toggleReaction":
-          api(`/api/threads/${action.threadId}/messages/${action.messageId}/reactions`, {
-            method: "POST",
-            body: JSON.stringify({ emoji: action.emoji, by: "user" }),
-          }).catch(showError);
           break;
         case "setModel":
           api(`/api/bots/${action.botId}`, {

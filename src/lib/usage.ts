@@ -36,6 +36,21 @@ export function formatTokens(n: number): string {
 }
 const trim = (x: number) => (x >= 100 ? Math.round(x).toString() : x.toFixed(1).replace(/\.0$/, ""));
 
+/** Task-picker variant: hide unused tasks and spell out small counts. */
+export function formatTaskTokens(total: number): string | null {
+  if (!Number.isFinite(total) || total < 1) return null;
+  const n = Math.trunc(total);
+  if (n < 1000) return n === 1 ? "1 token" : `${n} tokens`;
+  const kTenths = Math.round(n / 100);
+  if (kTenths < 10_000) return `${formatTenths(kTenths)}k`;
+  return `${formatTenths(Math.round(n / 100_000))}M`;
+}
+
+const formatTenths = (value: number) => {
+  const fraction = value % 10;
+  return fraction === 0 ? `${value / 10}` : `${(value - fraction) / 10}.${fraction}`;
+};
+
 /** Dollars, with enough precision that a cheap turn isn't "$0.00". */
 export function formatUsd(usd: number): string {
   if (!hasFiniteCost(usd)) return "";

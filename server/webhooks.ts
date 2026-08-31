@@ -8,36 +8,14 @@ import { DATA_DIR } from "./config.ts";
 import type { RoutineRunOn } from "./routines.ts";
 import { parseJson, schemaIssue, type JsonValue } from "./schema.ts";
 
-export interface WebhookTrigger {
-  id: string;
-  endpointId: string;
-  name: string;
-  prompt: string;
-  botId: string;
-  runOn: RoutineRunOn;
-  enabled: boolean;
-  createdAt: number;
-  updatedAt: number;
-  lastReceivedAt?: number;
-  lastRunId?: string;
-  deliveryCount: number;
-  /** New UI-created hooks capture one authenticated request before they can run. */
-  verificationPending?: boolean;
-  verifiedAt?: number;
-  verificationSample?: WebhookVerificationSample;
-  /** Optional event-name allowlist. Empty means every event type. */
-  eventTypes?: string[];
-}
-
-export interface WebhookTriggerInput {
-  name: string;
-  prompt: string;
-  botId: string;
-  runOn?: RoutineRunOn;
-  enabled?: boolean;
-  verificationPending?: boolean;
-  eventTypes?: string[];
-}
+export type WebhookTriggerInput = z.input<typeof triggerInputSchema>;
+export type WebhookVerificationSample = z.output<typeof verificationSampleSchema>;
+export type WebhookAttempt = z.output<typeof webhookAttemptSchema>;
+export type WebhookAttemptOutcome = WebhookAttempt["outcome"];
+type StoredWebhookTrigger = z.output<typeof storedWebhookSchema>;
+export type WebhookTrigger = Omit<StoredWebhookTrigger, "secretHash">;
+type DeliveryReceipt = z.output<typeof deliveryReceiptSchema>;
+type WebhookFile = z.output<typeof webhookFileSchema>;
 
 type CleanWebhookInput = Omit<
   WebhookTrigger,
@@ -51,45 +29,6 @@ type CleanWebhookInput = Omit<
   | "verifiedAt"
   | "verificationSample"
 >;
-
-export interface WebhookVerificationSample {
-  receivedAt: number;
-  eventName?: string;
-  contentType?: string;
-  preview: string;
-}
-
-export type WebhookAttemptOutcome = "accepted" | "captured" | "duplicate" | "ignored" | "rejected";
-
-export interface WebhookAttempt {
-  id: string;
-  webhookId: string;
-  receivedAt: number;
-  outcome: WebhookAttemptOutcome;
-  statusCode: number;
-  eventName?: string;
-  preview?: string;
-  deliveryId?: string;
-  runId?: string;
-  reason?: string;
-}
-
-interface StoredWebhookTrigger extends WebhookTrigger {
-  secretHash: string;
-}
-
-interface DeliveryReceipt {
-  key: string;
-  runId: string;
-  at: number;
-}
-
-interface WebhookFile {
-  version: 1;
-  webhooks: StoredWebhookTrigger[];
-  deliveries: DeliveryReceipt[];
-  attempts?: WebhookAttempt[];
-}
 
 interface CreatedWebhook {
   webhook: WebhookTrigger;

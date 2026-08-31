@@ -9,7 +9,7 @@ import { Check, ChevronDown, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useStore, formatTime, type Bot, type Group, type Task } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE } from "@/lib/compact-chip";
-import { formatTokens } from "@/lib/format-tokens";
+import { formatTaskTokens } from "@/lib/usage";
 import { nextRename } from "@/lib/rename";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
@@ -52,7 +52,7 @@ export function filterTasks<T extends { title: string }>(tasks: readonly T[], qu
  * total reads faster than a split; the split lives in the hover title. */
 function TaskUsage({ usage }: { usage: Task["usage"] }) {
   if (!usage) return null;
-  const label = formatTokens(usage.input + usage.output);
+  const label = formatTaskTokens(usage.input + usage.output);
   if (!label) return null;
   return (
     <span title={`${usage.input.toLocaleString()} in · ${usage.output.toLocaleString()} out`}>
@@ -198,7 +198,7 @@ function ConversationTaskPicker({
   // the picker button stays as-is — a token count next to a truncated title
   // and count would crowd it; the open task's tally rides the hover title
   const u = current?.usage;
-  const currentLabel = u ? formatTokens(u.input + u.output) : null;
+  const currentLabel = u ? formatTaskTokens(u.input + u.output) : null;
   const switchTitle =
     u && currentLabel
       ? `Switch task · ${currentLabel} (${u.input.toLocaleString()} in · ${u.output.toLocaleString()} out)`

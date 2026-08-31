@@ -1,5 +1,33 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { Check, Copy } from "lucide-react";
+import { cn } from "@/lib/cn";
+
+export function Switch({
+  checked,
+  className,
+  ...props
+}: Omit<ComponentProps<"button">, "children" | "role" | "aria-checked"> & { checked: boolean }) {
+  return (
+    <button
+      {...props}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      className={cn(
+        "relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-40",
+        checked ? "bg-accent" : "bg-control",
+        className,
+      )}
+    >
+      <span
+        className={cn(
+          "absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white transition-all",
+          checked ? "left-[21px]" : "left-[3px]",
+        )}
+      />
+    </button>
+  );
+}
 
 export function Card({
   title,

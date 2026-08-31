@@ -92,6 +92,7 @@ describe("OpenAICompatDriver", () => {
   });
 
   it("includes streamed token totals in turn.completed", async () => {
+    const anySignal = vi.spyOn(AbortSignal, "any");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string | URL | Request) => {
@@ -118,6 +119,7 @@ describe("OpenAICompatDriver", () => {
     const completed = await recorder.until((event) => event.type === "turn.completed");
 
     expect(completed).toMatchObject({ ok: true, usage: { input: 12, output: 3 } });
+    expect(anySignal).not.toHaveBeenCalled();
     recorder.stop();
     await inst.dispose();
   });

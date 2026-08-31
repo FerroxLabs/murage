@@ -12,7 +12,7 @@ import { useUpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
 import { LocalComputerSection } from "./LocalComputerSection";
 import { CompanionSection } from "./CompanionSection";
-import { Card } from "./SettingsPrimitives";
+import { Card, Switch } from "./SettingsPrimitives";
 import { UsageSection } from "./UsageSection";
 import { SkinPicker } from "./SkinPicker";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
@@ -129,19 +129,15 @@ function AnalyticsRow() {
       title="Usage analytics"
       subtitle="Anonymous product events — app opened, which features get used. Never conversations, prompts, file contents, or bot output. Your email is only attached if you shared it during setup."
     >
-      <button
-        role="switch"
-        aria-checked={on}
+      <Switch
+        checked={on}
         aria-label="Send usage analytics"
         onClick={() => {
           const next = !on;
           setAnalyticsEnabled(next);
           setOn(next);
         }}
-        className={cnSwitch(on)}
-      >
-        <span className={cnKnob(on)} />
-      </button>
+      />
     </Card>
   );
 }
@@ -181,16 +177,13 @@ function ToolCallsRow() {
             Named chips for Bash, search, and other tools. Errors and bot-to-bot messages still appear.
           </div>
         </div>
-        <button
-          role="switch"
-          aria-checked={enabled}
+        <Switch
+          checked={enabled}
           aria-label="Show tool calls in chat"
           disabled={saving}
           onClick={() => void toggle()}
-          className={`${cnSwitch(enabled)} disabled:cursor-wait disabled:opacity-50`}
-        >
-          <span className={cnKnob(enabled)} />
-        </button>
+          className="disabled:cursor-wait disabled:opacity-50"
+        />
       </div>
       {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
     </Card>
@@ -235,16 +228,13 @@ function ExperimentalFeaturesRow() {
             Show the workflow recorder and let supported bots stage skills with /learn.
           </div>
         </div>
-        <button
-          role="switch"
-          aria-checked={skillRecorder}
+        <Switch
+          checked={skillRecorder}
           aria-label="Show Teach a skill"
           disabled={saving !== null}
           onClick={() => void toggle("skillRecorder", !skillRecorder)}
-          className={`${cnSwitch(skillRecorder)} disabled:cursor-wait disabled:opacity-50`}
-        >
-          <span className={cnKnob(skillRecorder)} />
-        </button>
+          className="disabled:cursor-wait disabled:opacity-50"
+        />
       </div>
       <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
         <div className="min-w-0">
@@ -259,16 +249,13 @@ function ExperimentalFeaturesRow() {
                 : "Needs the OpenMausBot desktop app."}
           </div>
         </div>
-        <button
-          role="switch"
-          aria-checked={browser}
+        <Switch
+          checked={browser}
           aria-label="Enable the built-in browser"
           disabled={saving !== null || (!browser && !desktopBrowser)}
           onClick={() => void toggle("browser", !browser)}
-          className={`${cnSwitch(browser)} disabled:cursor-wait disabled:opacity-50`}
-        >
-          <span className={cnKnob(browser)} />
-        </button>
+          className="disabled:cursor-wait disabled:opacity-50"
+        />
       </div>
       {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
     </Card>
@@ -428,11 +415,6 @@ function BrowserProfilesRow() {
     </Card>
   );
 }
-
-const cnSwitch = (on: boolean) =>
-  `relative h-6 w-11 shrink-0 rounded-full transition-colors ${on ? "bg-accent" : "bg-control"}`;
-const cnKnob = (on: boolean) =>
-  `absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white transition-all ${on ? "left-[21px]" : "left-[3px]"}`;
 
 /** Writes a redacted diagnostics file to a location the user picks. The
  * report holds versions, configured-or-not booleans and the server.log tail —

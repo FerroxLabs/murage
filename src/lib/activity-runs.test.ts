@@ -104,8 +104,4 @@ describe("describeRun", () => {
       "5 steps · Edit, Bash, Write +2 more",
     );
   });
-
-  it("says how many steps failed, because that is the reason to open it", () => {
-    expect(describeRun([tool("Edit"), tool("Bash", false)])).toBe("2 steps · Edit, Bash · 1 failed");
-  });
 });

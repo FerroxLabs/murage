@@ -91,6 +91,7 @@ describe("MinimaxDriver", () => {
   });
 
   it("streams content and usage with the MiniMax OpenAI contract", async () => {
+    const anySignal = vi.spyOn(AbortSignal, "any");
     let request: RequestInit | undefined;
     vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       request = init;
@@ -121,6 +122,7 @@ describe("MinimaxDriver", () => {
       stream_options: { include_usage: true },
     });
     expect(request?.signal).toBeInstanceOf(AbortSignal);
+    expect(anySignal).toHaveBeenCalledTimes(1);
     expect(completed).toMatchObject({ ok: true, usage: { input: 12, output: 3 } });
     recorder.stop();
     await instance.dispose();
