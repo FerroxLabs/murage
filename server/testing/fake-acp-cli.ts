@@ -100,6 +100,7 @@ const dumpEnv = Object.fromEntries(
     "KIMI_MODEL_PROVIDER_TYPE",
     "KIMI_MODEL_DISPLAY_NAME",
     "TEST_TURN_MODEL",
+    "MY_AGENT_TOKEN",
   ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]] as const)),
 );
 const dumpState: Record<string, unknown> = { argv, env: dumpEnv };
