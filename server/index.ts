@@ -9,6 +9,7 @@ import { extname, join } from "node:path";
 
 import { z } from "zod";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
+import { escapeAttribute } from "../src/lib/composer-attachments.ts";
 import {
   CREDENTIAL_TARGETS,
   credentialResumeOutcome,
@@ -170,7 +171,7 @@ import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import * as vps from "./vps-computer.ts";
 import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
-import { CalendarCallManager } from "./calendar-calls.ts";
+import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import {
   BUILT_IN_BROWSER_SYSTEM_PROMPT,
   applyDesktopBrowserConnectionMessage,
@@ -2908,6 +2909,7 @@ routines = new RoutineManager({
 });
 calendarCalls = new CalendarCallManager({
   botExists: (botId) => Boolean(store.bot(botId)),
+  onDue: deliverCalendarCall,
 });
 const recoveryOwners = routines.routineRequestReceiptOwners();
 if (recoveryOwners.length > 0) {
@@ -3606,6 +3608,44 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message, sendId
   const tracked = next.finally(() => finishGroupTurnOperation(groupId, operation));
   groupQueues.set(groupId, tracked.catch(() => {}));
   return message;
+}
+
+function sameCalendarRoster(group: GroupRecord, botIds: readonly string[]): boolean {
+  if (group.dm || group.memberIds.length !== botIds.length) return false;
+  const wanted = new Set(botIds);
+  return group.memberIds.every((id) => wanted.has(id));
+}
+
+function ensureCalendarCallRoom(call: CalendarCall): GroupRecord {
+  const linked = call.roomId ? store.group(call.roomId) : undefined;
+  let group = linked && sameCalendarRoster(linked, call.botIds) && !roomSetupPending(linked)
+    ? linked
+    : undefined;
+  group ??= store.createGroup(call.name, call.botIds, false, undefined, {
+    bulletin: "",
+    defaultResponder: { kind: "everyone" },
+    completed: true,
+  });
+  if (call.roomId !== group.id) calendarCalls!.linkRoom(call.id, group.id);
+  return group;
+}
+
+function deliverCalendarCall(call: CalendarCall, scheduledFor: number): void {
+  // A one-bot calendar entry remains a reminder that opens that bot's chat.
+  // Multi-bot entries are rooms and begin with the shared event prompt.
+  if (call.botIds.length < 2) return;
+  const group = ensureCalendarCallRoom(call);
+  const text = [
+    `@everyone ${call.description.trim() || call.name}`,
+    ...call.attachments.map((attachment) =>
+      `<${attachment.kind === "image" ? "attached-image" : "attached-file"} path="${escapeAttribute(attachment.path)}" />`
+    ),
+  ].join("\n\n");
+  const sendId = `calendar_${call.id}_${scheduledFor}`;
+  const threadIds = new Set([group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)]);
+  const messages = [...threadIds].flatMap((threadId) => store.messagesFor(threadId));
+  if (messages.some((message) => message.sendId === sendId)) return;
+  startGroupTurn(group.id, text, undefined, sendId);
 }
 
 function roomSetupPending(group: GroupRecord): boolean {
@@ -5017,9 +5057,7 @@ const server = createServer(async (req, res) => {
       return run ? json(res, 200, { run }) : json(res, 404, { error: "no such active run" });
     }
 
-    // ── scheduled calls ────────────────────────────────────────────────
-    // Calls are calendar plans, not unattended jobs. The renderer opens the
-    // existing live call UI only after the user clicks Join.
+    // ── scheduled room sessions ────────────────────────────────────────
     if (path === "/api/calendar-calls" && method === "GET") {
       return json(res, 200, { calls: calendarCalls!.list() });
     }
@@ -5030,10 +5068,19 @@ const server = createServer(async (req, res) => {
         throw Object.assign(error instanceof Error ? error : new Error(String(error)), { status: 400 });
       }
     }
+    const calendarCallRoomMatch = path.match(/^\/api\/calendar-calls\/([\w-]+)\/room$/);
+    if (calendarCallRoomMatch && method === "POST") {
+      const call = calendarCalls!.get(calendarCallRoomMatch[1]);
+      if (!call) return json(res, 404, { error: "no such scheduled call" });
+      if (call.botIds.length < 2) {
+        return json(res, 400, { error: "single-bot events open that bot's chat directly" });
+      }
+      const group = ensureCalendarCallRoom(call);
+      return json(res, 200, { group: { ...publicGroupState(group), messages: store.messagesFor(group.threadId) } });
+    }
     const calendarCallMatch = path.match(/^\/api\/calendar-calls\/([\w-]+)$/);
     if (calendarCallMatch && method === "PATCH") {
-      const exists = calendarCalls!.list().some((call) => call.id === calendarCallMatch[1]);
-      if (!exists) return json(res, 404, { error: "no such scheduled call" });
+      if (!calendarCalls!.get(calendarCallMatch[1])) return json(res, 404, { error: "no such scheduled call" });
       try {
         return json(res, 200, { call: calendarCalls!.update(calendarCallMatch[1], await readBody(req)) });
       } catch (error) {
@@ -7850,6 +7897,8 @@ const server = createServer(async (req, res) => {
   }
 });
 
+calendarCalls.start();
+
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`openmausbot server on http://127.0.0.1:${PORT}`);
 });
@@ -7861,6 +7910,7 @@ const gracefulShutdown = createGracefulShutdown({
       vps.closeAllVpsDesktopTunnels();
       watchdog.stop();
       routines?.stop();
+      calendarCalls?.stop();
       webhookIngress?.server.close();
     },
     () => releaseAllBrowserCapabilities(),

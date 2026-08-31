@@ -24,7 +24,6 @@
 @theme {
   --animate-panel-in: panel-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-workspace-in: workspace-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
-  --animate-workspace-out: workspace-out 0.14s cubic-bezier(0.4, 0, 1, 1) both;
   --animate-pop-in: pop-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-caret: caret-blink 1s step-end infinite;
   --animate-msg-in: msg-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
@@ -328,10 +327,6 @@ body {
 @keyframes workspace-in {
   from { opacity: 0.92; }
   to { opacity: 1; }
-}
-@keyframes workspace-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
 }
 @keyframes pop-in {
   from { transform: scale(0.96) translateY(6px); opacity: 0; }
