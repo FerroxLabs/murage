@@ -136,6 +136,25 @@ how chat routine proposals failed in the field hours after 0.1.38 shipped (#544)
 - A schema test should assert the tool surface stays flat
   (see `server/drivers/agents-proxy.test.ts` — it regexp-guards the serialized schema).
 
+## Adding a language
+
+The renderer's strings live in typed catalogs under `src/locales/`. English
+(`src/locales/en.ts`) is the source of truth; a language is one file plus a
+one-line registration, exactly like a provider driver:
+
+1. Copy `src/locales/en.ts` to `src/locales/<code>.ts` (lowercase BCP-47
+   tag: `de.ts`, `pt-br.ts`) and translate the values. Keys you leave out
+   fall back to English — partial packs are fine and expected while the
+   extraction is still spreading through the UI.
+2. Register it in `src/locales/index.ts`.
+3. The app follows the system language (`navigator.language`, with base-tag
+   fallback). There is no in-app picker yet, so verify by switching your OS
+   language.
+
+Only a slice of the UI is extracted so far. Move strings into the catalog
+with `t("…")` as you touch components — never in big sweeps, which conflict
+with everything.
+
 ## Platform rules
 
 - The harness (`server/`) must stay portable Node. Anything macOS-only (TCC, Swift helpers,
