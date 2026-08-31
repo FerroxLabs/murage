@@ -60,6 +60,7 @@ function mountMcpServer(
   env: Record<string, string | undefined>,
   name: string,
   server: StdioMcpServer,
+  preApproved = true,
 ): void {
   Object.assign(env, server.env);
   const prefix = `mcp_servers.${name}`;
@@ -69,8 +70,12 @@ function mountMcpServer(
     // Values stay in the child environment; argv contains names only so
     // credentials never appear in process listings or diagnostics.
     "-c", `${prefix}.env_vars=${JSON.stringify(Object.keys(server.env))}`,
-    "-c", `${prefix}.default_tools_approval_mode="auto"`,
   );
+  // Harness-owned servers are pre-quieted; a user-configured server keeps
+  // codex's on-request policy so its tool calls become approval cards.
+  if (preApproved) {
+    appServerArgs.push("-c", `${prefix}.default_tools_approval_mode="auto"`);
+  }
 }
 
 export const CodexDriver: ProviderDriver<CodexConfig> = {
@@ -179,6 +184,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         if (turn.integrations?.browser) {
           mountMcpServer(appServerArgs, env, "browser", turn.integrations.browser);
+        }
+        for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
+          mountMcpServer(appServerArgs, env, name, server, false);
         }
         if (turn.integrations?.phone) {
           const bridge = turn.integrations.phone;
@@ -633,6 +641,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         localComputerMcp: true,
         composioMcp: true,
         agentsMcp: true,
+      customMcp: true,
         phoneMcp: true,
         browserMcp: true,
         images: true,

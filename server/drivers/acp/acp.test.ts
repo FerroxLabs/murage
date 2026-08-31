@@ -451,6 +451,30 @@ describe("ACP turns (fake CLI)", () => {
     expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
   });
 
+  it("mounts user-configured custom MCP servers after the built-ins", async () => {
+    await create();
+    const dump = join(scratch, "custom-dump.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await instance.adapter.sendTurn({
+      threadId: "t-custom-mcp",
+      text: "go",
+      integrations: {
+        custom: {
+          notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-1" } },
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpServers).toContainEqual({
+      name: "notes",
+      command: "npx",
+      args: ["-y", "@x/notes-mcp"],
+      env: [{ name: "NOTES_TOKEN", value: "tok-1" }],
+    });
+    expect(instance.adapter.capabilities.customMcp).toBe(true);
+  });
+
   it("surfaces a permission ask as request.opened and completes once allowed", async () => {
     await create(GrokAgentDriver, "permission");
     await instance.adapter.sendTurn({
