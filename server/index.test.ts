@@ -17,7 +17,7 @@ import { z } from "zod";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
-import { IMAGE_MAX_BYTES } from "./attachments.ts";
+import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -1493,6 +1493,121 @@ describe("harness HTTP API", () => {
       body: Buffer.alloc(IMAGE_MAX_BYTES + 1),
     });
     expect(tooBig.status).toBe(413);
+
+    const uploadId = "11111111-1111-4111-8111-111111111111";
+    const idempotent = await fetch(`${BASE}/api/attachments?uploadId=${uploadId}`, {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: new Uint8Array(png),
+    });
+    expect(idempotent.status).toBe(201);
+    const idempotentResult = (await idempotent.json()) as { path: string };
+    const retry = await fetch(`${BASE}/api/attachments?uploadId=${uploadId}`, {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: new Uint8Array(png),
+    });
+    expect(retry.status).toBe(201);
+    expect((await retry.json() as { path: string }).path).toBe(idempotentResult.path);
+
+    const conflictingRetry = await fetch(`${BASE}/api/attachments?uploadId=${uploadId}`, {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: new Uint8Array([1, 2, 3]),
+    });
+    expect(conflictingRetry.status).toBe(409);
+
+    const malformedId = await fetch(`${BASE}/api/attachments?uploadId=..%2Fescape`, {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: new Uint8Array(png),
+    });
+    expect(malformedId.status).toBe(400);
+  });
+
+  it("streams shared documents safely into the local attachments directory", async () => {
+    const contents = Buffer.from("name,score\nAda,10\n");
+    const saved = await fetch(`${BASE}/api/files?name=${encodeURIComponent("scores.exe")}`, {
+      method: "POST",
+      headers: { "content-type": "text/csv; charset=utf-8" },
+      body: contents,
+    });
+    expect(saved.status).toBe(201);
+    const result = (await saved.json()) as { path: string; name: string; mime: string; bytes: number };
+    expect(result).toMatchObject({ name: "scores.csv", mime: "text/csv", bytes: contents.byteLength });
+    expect(result.path).toMatch(/[\\/]attachments[\\/][0-9a-f-]+\.csv$/);
+    expect(readFileSync(result.path).equals(contents)).toBe(true);
+    if (process.platform !== "win32") {
+      expect(statSync(dirname(result.path)).mode & 0o777).toBe(0o700);
+      expect(statSync(result.path).mode & 0o777).toBe(0o600);
+    }
+
+    const unsupported = await fetch(`${BASE}/api/files?name=payload.zip`, {
+      method: "POST",
+      headers: { "content-type": "application/zip" },
+      body: Buffer.from("archive"),
+    });
+    expect(unsupported.status).toBe(400);
+
+    const missingName = await fetch(`${BASE}/api/files`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: Buffer.from("hello"),
+    });
+    expect(missingName.status).toBe(400);
+
+    for (const name of ["..%2F..%2Fsecret.txt", "..%5C..%5Csecret.txt", "..%252F..%252Fsecret.txt"]) {
+      const traversal = await fetch(`${BASE}/api/files?name=${name}`, {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: Buffer.from("hello"),
+      });
+      expect(traversal.status, name).toBe(400);
+    }
+
+    const empty = await fetch(`${BASE}/api/files?name=empty.pdf`, {
+      method: "POST",
+      headers: { "content-type": "application/pdf" },
+      body: Buffer.alloc(0),
+    });
+    expect(empty.status).toBe(400);
+
+    const tooBig = await fetch(`${BASE}/api/files?name=large.pdf`, {
+      method: "POST",
+      headers: { "content-type": "application/pdf" },
+      body: Buffer.alloc(FILE_MAX_BYTES + 1),
+    });
+    expect(tooBig.status).toBe(413);
+
+    const uploadId = "22222222-2222-4222-8222-222222222222";
+    const first = await fetch(`${BASE}/api/files?name=notes.txt&uploadId=${uploadId}`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: Buffer.from("retry-safe"),
+    });
+    expect(first.status).toBe(201);
+    const firstResult = (await first.json()) as { path: string };
+    const retry = await fetch(`${BASE}/api/files?name=notes.txt&uploadId=${uploadId}`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: Buffer.from("retry-safe"),
+    });
+    expect(retry.status).toBe(201);
+    expect((await retry.json() as { path: string }).path).toBe(firstResult.path);
+
+    const conflictingRetry = await fetch(`${BASE}/api/files?name=notes.txt&uploadId=${uploadId}`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: Buffer.from("different"),
+    });
+    expect(conflictingRetry.status).toBe(409);
+
+    const malformedId = await fetch(`${BASE}/api/files?name=notes.txt&uploadId=not-a-uuid`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: Buffer.from("hello"),
+    });
+    expect(malformedId.status).toBe(400);
   });
 
   it("persists only app-owned bot avatars and supported crop shapes", async () => {

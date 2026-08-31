@@ -207,6 +207,18 @@ const forwardHeaders = (req: IncomingMessage): Record<string, string> => {
   };
   const contentType = req.headers["content-type"];
   if (contentType) out["content-type"] = String(contentType);
+  // Preserve a trustworthy byte count for bounded raw uploads. Without it,
+  // the harness must grow its disk-quota reservation as each streamed chunk
+  // arrives. Node has already parsed this as one request header; keep an
+  // additional canonical-decimal check before replaying it upstream.
+  const contentLength = req.headers["content-length"];
+  if (
+    typeof contentLength === "string"
+    && /^(?:0|[1-9]\d*)$/.test(contentLength)
+    && Number.isSafeInteger(Number(contentLength))
+  ) {
+    out["content-length"] = contentLength;
+  }
   // Last-Event-ID is how a reconnecting client asks for the gap. Dropping it
   // would turn every resume into a full re-hydration, silently.
   const lastEventId = req.headers["last-event-id"];

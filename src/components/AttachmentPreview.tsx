@@ -3,9 +3,9 @@
 // resolves them through attachmentImageUrl rather than loading them as URLs.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Download, ImageOff, Maximize2, X } from "lucide-react";
+import { Download, FileText, ImageOff, Maximize2, X } from "lucide-react";
 
-import { attachmentBasename, attachmentImageUrl } from "@/lib/composer-attachments";
+import { attachmentBasename, attachmentImageUrl, type TranscriptFileAttachment } from "@/lib/composer-attachments";
 import { cn } from "@/lib/cn";
 
 export interface PreviewImage {
@@ -163,5 +163,25 @@ export function AttachedImageGallery({ paths, className }: { paths: string[]; cl
       </div>
       {selected && <AttachmentPreviewDialog image={selected} onClose={() => setSelected(null)} />}
     </>
+  );
+}
+
+/** A transcript file is a local prompt reference, not a public download.
+ * Show what was sent without turning an untrusted stored path into a link. */
+export function AttachedFileChips({ files, className }: { files: TranscriptFileAttachment[]; className?: string }) {
+  if (files.length === 0) return null;
+  return (
+    <div className={cn("mb-2 flex max-w-full flex-wrap justify-end gap-1.5", className)}>
+      {files.map((file, index) => (
+        <span
+          key={`${file.path}:${index}`}
+          title={file.name}
+          className="flex max-w-[260px] items-center gap-1.5 rounded-lg border border-hairline/40 bg-inset/70 px-2.5 py-1.5 text-[12px] text-ink-secondary"
+        >
+          <FileText size={13} className="shrink-0" aria-hidden="true" />
+          <span className="truncate text-ink">{file.name}</span>
+        </span>
+      ))}
+    </div>
   );
 }

@@ -931,6 +931,10 @@ struct TextBubble: View {
     let chat: Chat
     var tailed = true
 
+    private var attachedContent: AttachedMessageContent {
+        AttachedMessageContent.parse(message.text ?? "")
+    }
+
     private var parsedDiff: (filename: String, diff: String)? {
         guard message.role != .user, let source = message.text else { return nil }
         let text = source.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1027,11 +1031,29 @@ struct TextBubble: View {
                 } else if let table = parsedTable {
                     SQLResultTableView(columns: table.headers, rows: table.rows)
                 } else if mine {
-                    Text(message.text ?? "")
-                        .font(.system(size: 17))
-                        .foregroundStyle(BubbleColor.mineText)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
+                    let shared = attachedContent
+                    ForEach(Array(shared.attachments.enumerated()), id: \.offset) { _, attachment in
+                        Label(
+                            attachment.name,
+                            systemImage: attachment.kind == .image ? "photo" : "doc"
+                        )
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                        .foregroundStyle(BubbleColor.mineText.opacity(0.82))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(BubbleColor.mineText.opacity(0.10), in: Capsule())
+                        .accessibilityLabel(
+                            "\(attachment.kind == .image ? "Image" : "File"): \(attachment.name)"
+                        )
+                    }
+                    if !shared.text.isEmpty {
+                        Text(shared.text)
+                            .font(.system(size: 17))
+                            .foregroundStyle(BubbleColor.mineText)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } else {
                     MarkdownText(source: message.text ?? "")
                         .foregroundStyle(Color.primary)

@@ -351,15 +351,136 @@ public enum APIError: Error, LocalizedError, Sendable {
     }
 }
 
+/// The exact conversation a retriable send belongs to. Carrying the thread
+/// as well as the bot/room id prevents a Share Extension retry from landing
+/// in a different task if the desktop switches tasks while iOS is suspended.
+public enum MessageDestination: Hashable, Sendable {
+    case bot(id: String, threadId: String)
+    case room(id: String, threadId: String)
+}
+
+public enum SharedAttachmentKind: Hashable, Sendable {
+    case image
+    case file
+}
+
+/// A file which has already crossed to the Mac. The path is deliberately the
+/// server's absolute path rather than the phone's temporary provider URL.
+public struct SharedAttachmentReference: Hashable, Sendable {
+    public let path: String
+    public let kind: SharedAttachmentKind
+    public let displayName: String?
+
+    public init(path: String, kind: SharedAttachmentKind, displayName: String? = nil) {
+        self.path = path
+        self.kind = kind
+        self.displayName = displayName
+    }
+}
+
+/// Builds the same tagged prompt as the desktop composer without making the
+/// extension know about server paths or XML escaping. Kept pure so share-sheet
+/// input can be tested without loading UIKit or an extension context.
+public enum SharedMessageComposer {
+    public static func compose(
+        instruction: String,
+        text: [String],
+        urls: [URL],
+        attachments: [SharedAttachmentReference]
+    ) -> String {
+        var parts: [String] = []
+        appendNonempty(instruction, to: &parts)
+        var seenText = Set<String>()
+        for value in text {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, seenText.insert(trimmed).inserted { parts.append(trimmed) }
+        }
+
+        var seenURLs = Set<String>()
+        for url in urls {
+            let value = url.absoluteString
+            if seenURLs.insert(value).inserted { appendNonempty(value, to: &parts) }
+        }
+
+        for attachment in attachments {
+            let tag = attachment.kind == .image ? "attached-image" : "attached-file"
+            if attachment.kind == .file,
+               let displayName = attachment.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !displayName.isEmpty {
+                parts.append(
+                    "<attached-file path=\"\(escapeAttribute(attachment.path))\" " +
+                    "name=\"\(escapeAttribute(displayName))\" />"
+                )
+            } else {
+                parts.append("<\(tag) path=\"\(escapeAttribute(attachment.path))\" />")
+            }
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    private static func appendNonempty(_ value: String, to parts: inout [String]) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { parts.append(trimmed) }
+    }
+
+    private static func escapeAttribute(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\t", with: "&#9;")
+            .replacingOccurrences(of: "\r", with: "&#13;")
+            .replacingOccurrences(of: "\n", with: "&#10;")
+    }
+}
+
+private struct FileUploadResponse: Decodable {
+    let path: String
+    let name: String
+    let mime: String
+    let bytes: Int
+}
+
+public struct UploadedFile: Hashable, Sendable {
+    public let path: String
+    public let name: String
+
+    public init(path: String, name: String) {
+        self.path = path
+        self.name = name
+    }
+}
+
+private struct InstanceCapabilityResponse: Decodable {
+    struct Entry: Decodable {
+        struct Capabilities: Decodable { let images: Bool? }
+        let instanceId: String
+        let capabilities: Capabilities?
+    }
+
+    let instances: [Entry]
+}
+
 public struct CompanionClient: Sendable {
+    public static let maximumImageUploadBytes = 10 * 1_024 * 1_024
+    public static let maximumFileUploadBytes = 25 * 1_024 * 1_024
+
     public let connection: Connection
     private let token: String?
     private let session: URLSession
+    private let requestTimeout: TimeInterval
 
-    public init(connection: Connection, token: String?, session: URLSession = .shared) {
+    public init(
+        connection: Connection,
+        token: String?,
+        session: URLSession = .shared,
+        requestTimeout: TimeInterval = 20
+    ) {
         self.connection = connection
         self.token = token
         self.session = session
+        self.requestTimeout = min(max(requestTimeout, 1), 150)
     }
 
     // MARK: - Requests
@@ -378,7 +499,7 @@ public struct CompanionClient: Sendable {
         // network; if it does not answer in twenty seconds it is not going
         // to. The default sixty leaves someone watching a spinner long
         // enough to assume the app is broken rather than the address wrong.
-        request.timeoutInterval = 20
+        request.timeoutInterval = requestTimeout
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -648,6 +769,19 @@ public struct CompanionClient: Sendable {
         try await send(try makeRequest("GET", "/api/instances"), as: InstanceList.self).instances
     }
 
+    /// The image capability is intentionally queried independently from the
+    /// general Instance model: older servers omit it, which must mean false
+    /// for a share that would otherwise send an unreadable image prompt.
+    public func imageCapableInstanceIDs() async throws -> Set<String> {
+        let response = try await send(
+            try makeRequest("GET", "/api/instances"),
+            as: InstanceCapabilityResponse.self
+        )
+        return Set(response.instances.compactMap { entry in
+            entry.capabilities?.images == true ? entry.instanceId : nil
+        })
+    }
+
     public func config() async throws -> ConfigStatus {
         try await send(try makeRequest("GET", "/api/config"), as: ConfigStatus.self)
     }
@@ -729,18 +863,98 @@ public struct CompanionClient: Sendable {
         ).bot
     }
 
-    public func uploadAvatar(data: Data, mime: String) async throws -> String {
+    /// Upload raw image bytes and return the path the agent can open on its
+    /// Mac. This is also the primitive used by avatar upload and sharing.
+    public func uploadImage(
+        data: Data,
+        mime: String,
+        uploadId: String? = nil
+    ) async throws -> String {
         let allowed = ["image/png", "image/jpeg", "image/gif", "image/webp"]
-        guard allowed.contains(mime), data.count <= 10 * 1_024 * 1_024 else {
+        let normalizedMime = mime.lowercased()
+        guard Self.validUploadID(uploadId) else { throw APIError.badURL }
+        guard allowed.contains(normalizedMime),
+              data.count <= Self.maximumImageUploadBytes
+        else {
             throw APIError.transport("Choose a PNG, JPEG, GIF, or WebP image up to 10 MB.")
         }
-        var request = try makeRequest("POST", "/api/attachments")
-        request.setValue(mime, forHTTPHeaderField: "Content-Type")
+        var request = try makeRequest(
+            "POST",
+            "/api/attachments",
+            query: uploadId.map { [URLQueryItem(name: "uploadId", value: $0)] } ?? []
+        )
+        request.setValue(normalizedMime, forHTTPHeaderField: "Content-Type")
         request.httpBody = data
         let saved = try await send(request, as: AttachmentResponse.self)
-        let name = URL(fileURLWithPath: saved.path).lastPathComponent
+        guard Self.validUploadedPath(saved.path) else {
+            throw APIError.transport("The uploaded image could not be used.")
+        }
+        return saved.path
+    }
+
+    public func uploadAvatar(data: Data, mime: String) async throws -> String {
+        let path = try await uploadImage(data: data, mime: mime)
+        let name = URL(fileURLWithPath: path).lastPathComponent
         guard !name.isEmpty, !name.contains("/") else { throw APIError.transport("The uploaded image could not be used.") }
         return "/api/attachments/\(name)"
+    }
+
+    /// Upload an ordinary document as raw bytes. The filename is display
+    /// metadata only; the server chooses the generated path on the Mac.
+    public func uploadFile(
+        data: Data,
+        name: String,
+        mime: String,
+        uploadId: String? = nil
+    ) async throws -> UploadedFile {
+        let displayName = URL(fileURLWithPath: name).lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedMime = mime.lowercased()
+        guard Self.validUploadID(uploadId) else { throw APIError.badURL }
+        guard !displayName.isEmpty,
+              displayName.utf8.count <= 255,
+              Self.validUploadMime(normalizedMime),
+              data.count <= Self.maximumFileUploadBytes
+        else {
+            throw APIError.transport("Choose a file up to 25 MB with a valid filename.")
+        }
+        var request = try makeRequest(
+            "POST",
+            "/api/files",
+            query: [URLQueryItem(name: "name", value: displayName)]
+                + (uploadId.map { [URLQueryItem(name: "uploadId", value: $0)] } ?? [])
+        )
+        request.setValue(normalizedMime, forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        let saved = try await send(request, as: FileUploadResponse.self)
+        let returnedName = saved.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.validUploadedPath(saved.path), Self.validUploadedName(returnedName) else {
+            throw APIError.transport("The uploaded file could not be used.")
+        }
+        return UploadedFile(path: saved.path, name: returnedName)
+    }
+
+    private static func validUploadMime(_ mime: String) -> Bool {
+        guard !mime.isEmpty, mime.utf8.count <= 127, mime.contains("/") else { return false }
+        return mime.utf8.allSatisfy { byte in
+            (48...57).contains(byte) || (65...90).contains(byte) || (97...122).contains(byte)
+                || [33, 35, 36, 38, 43, 45, 46, 47, 94, 95].contains(byte)
+        }
+    }
+
+    private static func validUploadID(_ uploadId: String?) -> Bool {
+        guard let uploadId else { return true }
+        return UUID(uuidString: uploadId)?.uuidString == uploadId.uppercased()
+    }
+
+    private static func validUploadedPath(_ path: String) -> Bool {
+        !path.isEmpty && path.utf8.count <= 4_096 && !path.contains("\0")
+    }
+
+    private static func validUploadedName(_ name: String) -> Bool {
+        !name.isEmpty && name.utf8.count <= 255
+            && !name.contains("/") && !name.contains("\\")
+            && !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
     }
 
     public func generateAvatar(botId: String, prompt: String) async throws -> Bot {
@@ -845,6 +1059,45 @@ public struct CompanionClient: Sendable {
 
     public func send(text: String, toRoom groupId: String) async throws {
         try await send(try makeRequest("POST", "/api/groups/\(groupId)/messages", body: ["text": text]))
+    }
+
+    /// Retry-safe send used by short-lived clients such as Share Extensions.
+    /// `sendId` names the logical send, while `threadId` freezes the selected
+    /// task so a retry can never drift to a newly active conversation.
+    public func send(
+        text: String,
+        to destination: MessageDestination,
+        sendId: String
+    ) async throws {
+        let route: String
+        let threadId: String
+        switch destination {
+        case let .bot(id, selectedThreadId):
+            guard Self.validRouteID(id) else { throw APIError.badURL }
+            route = "/api/bots/\(id)/messages"
+            threadId = selectedThreadId
+        case let .room(id, selectedThreadId):
+            guard Self.validRouteID(id) else { throw APIError.badURL }
+            route = "/api/groups/\(id)/messages"
+            threadId = selectedThreadId
+        }
+        guard Self.validRouteID(threadId), Self.validSendID(sendId) else { throw APIError.badURL }
+        try await send(try makeRequest(
+            "POST",
+            route,
+            body: ["text": text, "threadId": threadId, "sendId": sendId]
+        ))
+    }
+
+    private static func validRouteID(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.allSatisfy { byte in
+            (48...57).contains(byte) || (65...90).contains(byte) || (97...122).contains(byte)
+                || byte == 45 || byte == 95
+        }
+    }
+
+    private static func validSendID(_ value: String) -> Bool {
+        (16...80).contains(value.utf8.count) && validRouteID(value)
     }
 
     /// Answer an approval or a question.

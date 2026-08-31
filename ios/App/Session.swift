@@ -97,9 +97,6 @@ final class Session: ObservableObject {
     private var pendingNotification: NotificationTarget?
 
     private var registry = CompanionConnectionRegistry()
-    private static let connectionsKey = "companion.connections.v1"
-    private static let legacyConnectionKey = "companion.connection"
-
     // MARK: - Pairing
 
     init() {
@@ -156,15 +153,14 @@ final class Session: ObservableObject {
     /// only the first should ever send someone back to the pairing screen.
     private func restore() {
         restorePending = false
-        let restored = CompanionConnectionRegistryMigration.restore(
-            registryData: UserDefaults.standard.data(forKey: Self.connectionsKey),
-            legacyConnectionData: UserDefaults.standard.data(forKey: Self.legacyConnectionKey)
-        )
-        registry = restored.registry
+        registry = OpenMausSharedConnectionStore.loadRegistry()
         connections = registry.connections
-        if restored.migratedLegacyConnection {
-            persistRegistry()
-            UserDefaults.standard.removeObject(forKey: Self.legacyConnectionKey)
+        // The Share extension can target any saved computer, not only the
+        // one active at launch. Move every inactive pre-extension token into
+        // the shared Keychain group now; the active token is read below so
+        // its locked/error state can still drive the visible connection UI.
+        for saved in registry.connections where saved.id != registry.activeConnectionID {
+            _ = try? Keychain.token(for: saved.id)
         }
         restoreSelectedConnection()
     }
@@ -266,10 +262,7 @@ final class Session: ObservableObject {
                 )
             }
         } saveConnection: {
-            UserDefaults.standard.set(
-                try? JSONEncoder().encode(updatedRegistry),
-                forKey: Self.connectionsKey
-            )
+            OpenMausSharedConnectionStore.saveRegistry(updatedRegistry)
         }
 
         stopActiveRuntime()
@@ -280,7 +273,6 @@ final class Session: ObservableObject {
         pairingRequested = false
         registry = updatedRegistry
         connections = registry.connections
-        UserDefaults.standard.removeObject(forKey: Self.legacyConnectionKey)
         self.connection = stored
         self.token = paired.token
         let liveRoutes = winner.map { route in
@@ -444,14 +436,7 @@ final class Session: ObservableObject {
     }
 
     private func persistRegistry() {
-        if registry.connections.isEmpty {
-            UserDefaults.standard.removeObject(forKey: Self.connectionsKey)
-        } else {
-            UserDefaults.standard.set(
-                try? JSONEncoder().encode(registry),
-                forKey: Self.connectionsKey
-            )
-        }
+        OpenMausSharedConnectionStore.saveRegistry(registry)
     }
 
     private func persistActiveConnection(_ updated: Connection) {

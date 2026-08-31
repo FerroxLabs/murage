@@ -1,5 +1,5 @@
 // composeMessage with images, the image tag round-trip through
-// splitAttachedImages, and the mime gate the composer pastes through.
+// transcript attachment splitting, and the mime gate the composer pastes through.
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,7 +8,7 @@ import {
   attachmentImageUrl,
   composeMessage,
   isImageFile,
-  splitAttachedImages,
+  splitTranscriptAttachments,
   type ImageAttachment,
 } from "./composer-attachments";
 
@@ -65,26 +65,69 @@ describe("composeMessage with images", () => {
   });
 });
 
-describe("splitAttachedImages", () => {
+describe("splitTranscriptAttachments", () => {
   it("splits tags out of a stored message and returns the paths", () => {
     const stored =
       'look at this\n\n<attached-image path="/a/b/one.png" />\n\n<attached-image path="/a/b/two.jpg" />';
-    const { display, images } = splitAttachedImages(stored);
+    const { display, images, files } = splitTranscriptAttachments(stored);
     expect(display).toBe("look at this");
     expect(images).toEqual(["/a/b/one.png", "/a/b/two.jpg"]);
+    expect(files).toEqual([]);
   });
 
   it("unescapes attribute entities so the path round-trips", () => {
     const stored = '<attached-image path="/a/b/&amp;x.png" />';
-    const { images } = splitAttachedImages(stored);
+    const { images } = splitTranscriptAttachments(stored);
     expect(images).toEqual(["/a/b/&x.png"]);
+  });
+
+  it("hides file tags and uses their safe display names", () => {
+    const stored =
+      'review these\n\n<attached-file path="/tmp/one.pdf" name="Project &amp; plan.pdf" />\n\n' +
+      '<attached-file name="folder\\notes&#10;final.txt" path="C:\\saved\\generated.txt" />';
+    const { display, files } = splitTranscriptAttachments(stored);
+    expect(display).toBe("review these");
+    expect(files).toEqual([
+      { path: "/tmp/one.pdf", name: "Project & plan.pdf" },
+      { path: "C:\\saved\\generated.txt", name: "notes final.txt" },
+    ]);
+  });
+
+  it("uses the saved basename for old file tags without a name", () => {
+    const { display, files } = splitTranscriptAttachments(
+      '<attached-file path="/home/me/.openmausbot/attachments/report.pdf" />',
+    );
+    expect(display).toBe("");
+    expect(files).toEqual([
+      { path: "/home/me/.openmausbot/attachments/report.pdf", name: "report.pdf" },
+    ]);
+  });
+
+  it("does not decode unsupported or repeatedly encoded entities", () => {
+    const { files } = splitTranscriptAttachments(
+      '<attached-file path="/tmp/a.pdf" name="&amp;quot;draft&apos;.pdf" />',
+    );
+    expect(files[0]?.name).toBe("&quot;draft&apos;.pdf");
+  });
+
+  it("leaves malformed attachment tags visible", () => {
+    const stored = '<attached-file name="missing-path.pdf" />';
+    expect(splitTranscriptAttachments(stored)).toEqual({ display: stored, images: [], files: [] });
+  });
+
+  it("leaves inline and non-self-closing attachment examples visible", () => {
+    const stored =
+      'Example: <attached-file path="/tmp/inline.pdf" />\n' +
+      '<attached-image path="/tmp/not-self-closing.png">';
+    expect(splitTranscriptAttachments(stored)).toEqual({ display: stored, images: [], files: [] });
   });
 
   it("leaves plain text and other tags untouched", () => {
     const stored = '<pasted-text index="1">\nhi\n</pasted-text>';
-    const { display, images } = splitAttachedImages(stored);
+    const { display, images, files } = splitTranscriptAttachments(stored);
     expect(display).toBe(stored);
     expect(images).toEqual([]);
+    expect(files).toEqual([]);
   });
 });
 

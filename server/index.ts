@@ -30,7 +30,18 @@ import {
 import * as checkpoints from "./checkpoints.ts";
 import { appendDecision, readDecisions } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
-import { attachmentExists, extensionForMime, IMAGE_MAX_BYTES, readAttachment, saveImage, type SavedAttachment } from "./attachments.ts";
+import {
+  attachmentExists,
+  extensionForMime,
+  FILE_MAX_BYTES,
+  IMAGE_MAX_BYTES,
+  readAttachment,
+  saveFile,
+  saveImage,
+  saveImageUpload,
+  type SavedAttachment,
+  validateAttachmentUploadId,
+} from "./attachments.ts";
 import {
   avatarGenerationRequestSchema,
   avatarGenerationStateMatches,
@@ -5220,12 +5231,33 @@ const server = createServer(async (req, res) => {
     // Pasted/dropped images are stored as files and referenced by path in
     // the prompt (<attached-image path="…"/>); this pair of routes is the
     // save + serve. The POST takes raw bytes (base64 JSON would double the
-    // payload), so it needs its own reader rather than readBody.
+    // payload), so it needs its own reader rather than readBody. A share
+    // extension can add a UUID uploadId; retrying that UUID returns the same
+    // committed path instead of creating an orphan duplicate.
     if (method === "POST" && path === "/api/attachments") {
+      let uploadId: string | undefined;
+      try {
+        uploadId = validateAttachmentUploadId(url.searchParams.get("uploadId") ?? undefined);
+      } catch (error) {
+        req.resume();
+        throw error;
+      }
       const rawType = Array.isArray(req.headers["content-type"]) ? req.headers["content-type"][0] : req.headers["content-type"];
       const mime = rawType?.split(";")[0]?.trim().toLowerCase();
       if (!mime || !extensionForMime(mime)) {
         return json(res, 400, { error: "content-type must be an image type" });
+      }
+      const rawLength = Array.isArray(req.headers["content-length"])
+        ? req.headers["content-length"][0]
+        : req.headers["content-length"];
+      const declaredLength = rawLength === undefined ? undefined : Number(rawLength);
+      if (declaredLength !== undefined && (!Number.isSafeInteger(declaredLength) || declaredLength < 0)) {
+        req.resume();
+        return json(res, 400, { error: "content-length must be a non-negative integer" });
+      }
+      if (declaredLength !== undefined && declaredLength > IMAGE_MAX_BYTES) {
+        req.resume();
+        return json(res, 413, { error: `image exceeds ${IMAGE_MAX_BYTES} bytes` });
       }
       const saved = await new Promise<SavedAttachment>((resolve, reject) => {
         const chunks: Buffer[] = [];
@@ -5242,18 +5274,66 @@ const server = createServer(async (req, res) => {
           if (received > IMAGE_MAX_BYTES) return fail(413, `image exceeds ${IMAGE_MAX_BYTES} bytes`);
           chunks.push(chunk);
         });
-        req.on("end", () => {
+        req.on("end", async () => {
           if (settled) return;
           settled = true;
           try {
-            resolve(saveImage(Buffer.concat(chunks), mime));
+            resolve(await saveImageUpload(Buffer.concat(chunks), mime, uploadId));
           } catch (e) {
-            reject(Object.assign(e instanceof Error ? e : new Error(String(e)), { status: 400 }));
+            reject(e instanceof Error ? e : new Error(String(e)));
           }
         });
         req.on("error", (e) => fail(400, e instanceof Error ? e.message : String(e)));
       });
       return json(res, 201, saved);
+    }
+
+    // ── shared files ────────────────────────────────────────────────────
+    // The iOS share extension sends documents as raw bytes over the same
+    // authenticated companion connection as messages. saveFile writes each
+    // incoming chunk directly to disk, atomically commits it, and removes
+    // partial uploads on error. Its optional UUID uploadId is stable across
+    // route retries, while the aggregate store quota rejects rather than
+    // silently deleting files that old prompts may still reference.
+    if (method === "POST" && path === "/api/files") {
+      let uploadId: string | undefined;
+      try {
+        uploadId = validateAttachmentUploadId(url.searchParams.get("uploadId") ?? undefined);
+      } catch (error) {
+        req.resume();
+        throw error;
+      }
+      const name = url.searchParams.get("name");
+      if (!name) {
+        req.resume();
+        return json(res, 400, { error: "name is required" });
+      }
+      const rawType = Array.isArray(req.headers["content-type"])
+        ? req.headers["content-type"][0]
+        : req.headers["content-type"];
+      const rawLength = Array.isArray(req.headers["content-length"])
+        ? req.headers["content-length"][0]
+        : req.headers["content-length"];
+      const declaredLength = rawLength === undefined ? undefined : Number(rawLength);
+      if (declaredLength !== undefined && (!Number.isSafeInteger(declaredLength) || declaredLength < 0)) {
+        req.resume();
+        return json(res, 400, { error: "content-length must be a non-negative integer" });
+      }
+      if (declaredLength !== undefined && declaredLength > FILE_MAX_BYTES) {
+        req.resume();
+        return json(res, 413, { error: `file exceeds ${FILE_MAX_BYTES} bytes` });
+      }
+      try {
+        // Returning from this iterator must not destroy the request socket:
+        // the caller still needs to receive the useful 4xx response when the
+        // streamed byte count crosses the limit.
+        const chunks = req.iterator({ destroyOnReturn: false }) as AsyncIterable<Buffer>;
+        const saved = await saveFile(chunks, name, rawType ?? "", { uploadId, expectedBytes: declaredLength });
+        return json(res, 201, saved);
+      } catch (error) {
+        req.resume();
+        throw error;
+      }
     }
 
     // serving is name-locked to the attachments dir — readAttachment

@@ -9,6 +9,9 @@ account. A user may separately sign in on the desktop to enable the optional
 
 - The iOS app stores the selected computer address in iOS preferences and its
   pairing token in the iOS Keychain.
+- The iOS Share extension can access that selected computer metadata through a
+  private App Group and its pairing token through a shared Keychain access
+  group. No other app receives those values.
 - The computer remains the source of bots, transcripts, approvals, credentials,
   SQLite data, and screen images. OpenMausBot's hosted control plane does not
   store a copy of that content.
@@ -30,6 +33,17 @@ account. A user may separately sign in on the desktop to enable the optional
 - Connector tokens stay in the desktop operating system's encrypted credential
   store. Pairing and device tokens are not stored in the hosted control-plane
   database.
+- When a user explicitly chooses OpenMausBot from another app's Share sheet,
+  the selected text, link, image, or supported document is sent to the bot or
+  room the user confirms. Images and documents are stored in the attachments
+  directory on the user's computer with generated names and owner-only file
+  permissions. Individual images are limited to 10 MiB, documents to 25 MiB,
+  and the computer refuses new uploads after 512 MiB of attachments rather than
+  silently deleting files referenced by older conversations. Temporary iPhone
+  copies are removed after a completed send or cancellation. If iOS terminates
+  the extension mid-transfer, the next Share sheet session removes the abandoned
+  copy immediately; an OpenMausMobile foreground launch removes it once it is at
+  least 60 minutes old.
 - The app contains no advertising or analytics SDKs, does not track users
   across other companies' apps or websites, and does not sell personal data.
 

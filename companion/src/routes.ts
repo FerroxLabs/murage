@@ -105,6 +105,10 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // the harness; GET is a single bare generated filename, never a path.
   { method: "POST", path: /^\/api\/attachments$/ },
   { method: "GET", path: /^\/api\/attachments\/[\w-]+\.(?:png|jpe?g|gif|webp)$/i },
+  // Share-sheet documents are raw, capped at 25 MiB, and stored under a
+  // generated filename by the harness. The display name stays in the query;
+  // only this exact upload route crosses the companion boundary.
+  { method: "POST", path: /^\/api\/files$/ },
 
   // Renderer-neutral voice operations. Neither route reads or writes the
   // workspace ElevenLabs key; the phone receives labels or audio only.

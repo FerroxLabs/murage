@@ -52,7 +52,7 @@ import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
-import { AttachedImageGallery } from "./AttachmentPreview";
+import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
 import { ModelPicker } from "./ModelPicker";
 import { RenameTitle } from "./RenameTitle";
 import { TaskPicker } from "./TaskPicker";
@@ -65,7 +65,7 @@ import { useFocusMessage } from "@/lib/focus-message";
 import { groupActivityRuns } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
 import { webhookMessageView } from "@/lib/webhook-message";
-import { splitAttachedImages } from "@/lib/composer-attachments";
+import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 import { useComposerDockPad } from "@/lib/composer-dock";
 import {
@@ -314,8 +314,8 @@ function Bubble({
   const [expanded, setExpanded] = useState(false);
   const text = message.text ?? "";
   const webhookView = user ? webhookMessageView(text) : null;
-  const attachedImages = user && !webhookView ? splitAttachedImages(text) : null;
-  const visibleText = webhookView?.task ?? attachedImages?.display ?? text;
+  const attachments = user && !webhookView ? splitTranscriptAttachments(text) : null;
+  const visibleText = webhookView?.task ?? attachments?.display ?? text;
   const collapsible =
     user && !webhookView && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
 
@@ -420,14 +420,19 @@ function Bubble({
             </div>
           ) : user ? (
             <>
-              {attachedImages && attachedImages.images.length > 0 && (
-                <AttachedImageGallery paths={attachedImages.images} />
+              {attachments && attachments.images.length > 0 && (
+                <AttachedImageGallery paths={attachments.images} />
               )}
-              <div
-                className={cn(collapsible && "max-h-40 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]")}
-              >
-                {visibleText}
-              </div>
+              {attachments && attachments.files.length > 0 && (
+                <AttachedFileChips files={attachments.files} className={!visibleText ? "mb-0" : undefined} />
+              )}
+              {visibleText && (
+                <div
+                  className={cn(collapsible && "max-h-40 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]")}
+                >
+                  {visibleText}
+                </div>
+              )}
               {message.steered && (
                 <div className="mt-1 text-[11px] text-ink-secondary/70" title="Sent while the bot was working — it saw this before its next step, inside the same turn.">
                   sent mid-turn

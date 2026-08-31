@@ -28,7 +28,7 @@ import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
-import { AttachedImageGallery } from "./AttachmentPreview";
+import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
 import { GroupCallButton, GroupCallOverlay } from "./GroupCallView";
 
 import { ApprovalCard } from "./ApprovalCard";
@@ -43,7 +43,7 @@ import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-
 import { useComposerDockPad } from "@/lib/composer-dock";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
-import { splitAttachedImages } from "@/lib/composer-attachments";
+import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import {
   TRANSCRIPT_WINDOW_SIZE,
   expandWindowStart,
@@ -179,7 +179,7 @@ const Transcript = memo(function Transcript({
         const m = item.message;
         if (m.id === emergingId) return null;
         const user = m.role === "user";
-        const attachedImages = user && m.text ? splitAttachedImages(m.text) : null;
+        const attachments = user && m.text ? splitTranscriptAttachments(m.text) : null;
         const newCluster = !prev || prev.role !== m.role || prev.from?.botId !== m.from?.botId || newDay;
         const routineOwner = m.kind === "routine.run" ? memberOf(m.from?.botId) : undefined;
         const routineExecutionThreadId = m.routineRun?.executionThreadId;
@@ -254,10 +254,16 @@ const Transcript = memo(function Transcript({
                   })()}
                   {user ? (
                     <>
-                      {attachedImages && attachedImages.images.length > 0 && (
-                        <AttachedImageGallery paths={attachedImages.images} />
+                      {attachments && attachments.images.length > 0 && (
+                        <AttachedImageGallery paths={attachments.images} />
                       )}
-                      {attachedImages?.display ?? m.text}
+                      {attachments && attachments.files.length > 0 && (
+                        <AttachedFileChips
+                          files={attachments.files}
+                          className={!attachments.display ? "mb-0" : undefined}
+                        />
+                      )}
+                      {attachments?.display ?? m.text}
                     </>
                   ) : <ChatMarkdown text={m.text} />}
                 </div>

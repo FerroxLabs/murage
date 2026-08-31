@@ -223,20 +223,76 @@ export function escapeAttribute(value: string): string {
     .replaceAll("\n", "&#10;");
 }
 
-/** Split a stored user message into its display text and the images it
- * attached, for transcript rendering. The tag never shows in the bubble. */
-export function splitAttachedImages(text: string): { display: string; images: string[] } {
-  const images: string[] = [];
-  const display = text.replace(/<attached-image\s+path="([^"]*)"\s*\/?>(?:\s*\n)?/g, (_match, raw: string) => {
-    const path = raw
-      .replaceAll("&quot;", '"')
-      .replaceAll("&lt;", "<")
-      .replaceAll("&gt;", ">")
-      .replaceAll("&amp;", "&");
-    if (path) images.push(path);
-    return "";
+export type TranscriptFileAttachment = {
+  path: string;
+  name: string;
+};
+
+export type TranscriptAttachments = {
+  display: string;
+  images: string[];
+  files: TranscriptFileAttachment[];
+};
+
+/** Decode only entities emitted by escapeAttribute. A second encoded pass
+ * stays encoded, rather than turning attacker-controlled text into markup. */
+function decodeAttachmentAttribute(value: string): string {
+  return value.replace(/&(quot|lt|gt|amp);|&#(9|10|13);/g, (entity, named: string | undefined, numeric: string | undefined) => {
+    if (numeric === "9") return "\t";
+    if (numeric === "10") return "\n";
+    if (numeric === "13") return "\r";
+    if (named === "quot") return '"';
+    if (named === "lt") return "<";
+    if (named === "gt") return ">";
+    if (named === "amp") return "&";
+    return entity;
   });
-  return { display: display.trim(), images };
+}
+
+/** Keep transcript-provided names compact and visually honest. File chips
+ * are deliberately not links, but control and bidi characters can still
+ * make an untrusted name misleading. */
+function transcriptFileName(path: string, suppliedName?: string): string {
+  const decoded = suppliedName ? decodeAttachmentAttribute(suppliedName) : attachmentBasename(path);
+  const clean = (value: string) => Array.from(value, (character) => {
+    const code = character.codePointAt(0) ?? 0;
+    const control = code <= 31 || (code >= 127 && code <= 159);
+    const bidiControl = (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069);
+    return control || bidiControl ? " " : character;
+  }).join("").replace(/\s+/g, " ").trim();
+  const safe = clean(attachmentBasename(decoded));
+  const fallback = clean(attachmentBasename(path));
+  return Array.from(safe || fallback || "Attached file").slice(0, 180).join("");
+}
+
+/** Split a stored user message into its display text and attachments for
+ * transcript rendering. Prompt-only tags never show in the bubble. */
+export function splitTranscriptAttachments(text: string): TranscriptAttachments {
+  const images: string[] = [];
+  const files: TranscriptFileAttachment[] = [];
+  const display = text.replace(
+    /^[\t ]*<attached-(image|file)\b((?:[\t ]+[A-Za-z_:][\w:.-]*="[^"\r\n]*")*)[\t ]*\/>[\t ]*(?:\r?\n)?/gm,
+    (match, kind: "image" | "file", rawAttributes: string) => {
+      const attributes = new Map<string, string>();
+      for (const attribute of rawAttributes.matchAll(/\s+([A-Za-z_:][\w:.-]*)="([^"]*)"/g)) {
+        if (!attributes.has(attribute[1]!)) attributes.set(attribute[1]!, attribute[2]!);
+      }
+      const rawPath = attributes.get("path");
+      if (rawPath === undefined) return match;
+      const path = decodeAttachmentAttribute(rawPath);
+      if (!path) return match;
+      if (kind === "image") images.push(path);
+      else files.push({ path, name: transcriptFileName(path, attributes.get("name")) });
+      return "";
+    },
+  );
+  return { display: display.trim(), images, files };
+}
+
+/** Kept for callers outside the desktop bundle that used the old helper. */
+export function splitAttachedImages(text: string): { display: string; images: string[] } {
+  const { display, images } = splitTranscriptAttachments(text);
+  return { display, images };
 }
 
 /** The bare filename a saved attachment path ends in — what the serving

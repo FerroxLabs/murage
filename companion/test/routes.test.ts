@@ -21,6 +21,7 @@ describe("credentials", () => {
       status: 401,
       error: "pair this device from Phone settings in OpenMausBot on your computer",
     });
+    expect(ask("POST", "/api/files", false)?.status).toBe(401);
   });
 
   it("lets anyone curl liveness — it is the unauthenticated smoke test", () => {
@@ -70,6 +71,7 @@ describe("what the app may do", () => {
     ["GET", "/api/search"],
     ["POST", "/api/attachments"],
     ["GET", "/api/attachments/avatar-123.webp"],
+    ["POST", "/api/files"],
     ["GET", "/api/tts/voices"],
     ["POST", "/api/tts/speak"],
     ["GET", "/api/routines"],
@@ -171,6 +173,8 @@ describe("what it may not", () => {
     expect(allowed("POST", "/api/sidebar-sections/extra")).toBe(false);
     expect(allowed("PUT", "/api/config")).toBe(false);
     expect(allowed("GET", "/api/attachments/../config.json")).toBe(false);
+    expect(allowed("GET", "/api/files")).toBe(false);
+    expect(allowed("POST", "/api/files/anything")).toBe(false);
     expect(allowed("POST", "/api/routine-runs/run_1/cancel")).toBe(false);
     expect(allowed("DELETE", "/api/connectors/slack")).toBe(false);
     expect(allowed("GET", "/api/connectors/connected/all")).toBe(false);

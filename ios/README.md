@@ -15,6 +15,12 @@ QR handoff, Bonjour discovery, manual LAN and Tailscale pairing, the roster, pag
 streaming replies, shared sidebar sections, the computer view, and — the one that matters — an approval
 raised by a bot on the Mac, answered on the phone, with the bot carrying on.
 
+The app also installs an iOS Share extension. From any app's Share sheet, a
+person can choose **OpenMausBot**, review the paired computer and destination,
+add a note, and send selected text, a link, images, or documents directly to a
+bot or room. The extension remembers the last destination per computer, but it
+never sends silently: the destination is always visible before confirmation.
+
 The event stream deliberately reads raw bytes rather than
 `URLSession.AsyncBytes.lines`. Three easy-to-miss failure modes are covered by
 real `URLSession` tests:
@@ -52,6 +58,7 @@ ios/
     SSETests.swift               the parser, which is where this goes wrong
     StoreTests.swift             the fold
     DictationTests.swift         partials replace, they do not stack
+  AppShared/                     connection metadata + Keychain access shared by trusted targets
   App/                           SwiftUI, and everything that needs a device
     CompanionApp.swift           entry; owns when the stream lives and dies
     Session.swift                connection, lifecycle, actions
@@ -72,6 +79,7 @@ ios/
     ComputerView.swift           opt-in live view of a bot's computer
     MarkdownText.swift           the supported Markdown presentation layer
     SettingsView.swift           status, computer switcher, and pairing removal
+  ShareExtension/                native Share-sheet picker, item loading, upload, and send
 ```
 
 ## Building
@@ -126,6 +134,7 @@ here by simply not having the methods:
 |---|---|
 | Read bots, rooms and transcripts | Write API keys (`PUT /api/config`) |
 | Send messages, make a bot or a room | Manage pairing or revoke devices |
+| Share selected text, links, images and documents | Browse arbitrary files on the phone or Mac |
 | **Answer approvals and questions** | Drive the Local VM or this computer |
 | Interrupt a bot, mark chats read | Reach `/api/internal/*` |
 | File visible bots into one sidebar section | Use general bot or room `PATCH` routes |
@@ -184,6 +193,20 @@ the host computer remain unreachable through the companion.
   the SQLite transcript store and opens the exact task,
   branch, and message; the roster's "+" creates the same basic bot the desktop
   endpoint creates, then opens it.
+- **Share-sheet files cross one narrow boundary.** Images are limited to 10 MiB
+  each, supported documents to 25 MiB each, and the computer accepts at most
+  512 MiB of attachments in total before asking the user to clear space. The
+  extension copies temporary
+  provider files into its App Group before asynchronous work, uploads raw bytes
+  through the same paired connection, and sends only the Mac-local generated
+  path to the selected destination. Each share keeps a stable random upload ID,
+  so retrying a dropped route reuses the same file instead of making duplicates.
+  The Mac stores the file with a generated name and owner-only permissions; the
+  iPhone's temporary sandbox URL is never sent.
+  Keep the Share sheet open until it says **Sent**. This version does not hand a
+  partially uploaded file to a background transfer service if iOS closes the
+  extension; abandoned temporary copies are purged on the next share or app
+  foreground.
 
 ## Limits in this version
 
@@ -191,7 +214,8 @@ The live connection is foreground-only. Notification frames produce native
 banners, sounds, time-sensitive approval alerts, and an app badge while connected;
 the resume cursor replays alerts missed during a short background pause. There is
 no APNs delivery after the app is terminated, no call mode or spoken replies,
-and no hosted relay. Composer dictation is available.
+and no cloud-resident bot service. Optional hosted HTTPS is an encrypted route
+back to the user's computer, not a second transcript store. Composer dictation is available.
 Task management, SQLite transcript search,
 transcript sharing, reactions, and edit/version controls use narrow companion
 routes and the computer remains the source of truth. Tailscale is supported
