@@ -159,8 +159,11 @@ describe("ClaudeDriver.decodeConfig", () => {
       expect(candidates.length).toBeGreaterThan(1);
       expect(new Set(candidates).size).toBe(candidates.length);
     } else {
-      // unlink-then-listen always wins on POSIX; one candidate suffices
-      expect(candidates).toEqual([permissionSocketPath("t-candidates")]);
+      // macOS has a small Unix-socket path limit, so a deep HOME needs a
+      // short fallback under the OS temp root.
+      expect(candidates).toHaveLength(2);
+      expect(candidates[1]).toMatch(/omb-perm-[0-9a-f]{16}\.sock$/);
+      expect(candidates[1]).not.toBe(candidates[0]);
     }
   });
 

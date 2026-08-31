@@ -9,7 +9,7 @@
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -244,18 +244,22 @@ export function permissionSocketPath(threadId: string) {
   return brokerSocketPath(DATA_DIR, `${prefix}${digest}`);
 }
 
-/** Paths the broker may bind, tried in order. POSIX needs only the
- * deterministic path — unlink-then-listen always wins there. Windows named
- * pipes are never unlinkable, and a hung CLI child from an earlier server
- * process can hold the name open for MINUTES after its turn: the next turn's
- * listen then fails EADDRINUSE and every permission ask fail-closes into a
- * deny nobody can explain (seen live in a user's diagnostics). Fresh
- * suffixed fallbacks let the new broker bind immediately; the proxy child
- * learns the real path from its argv, so nothing else needs the name. Pipe
- * names have no sun_path length limit, so the longer tag is safe there. */
+/** Paths the broker may bind, tried in order. Windows named pipes are never
+ * unlinkable, and a hung CLI child from an earlier server process can hold a
+ * name for minutes, so fresh suffixes let the new broker bind immediately.
+ * POSIX gets a short temp fallback because macOS rejects Unix socket paths
+ * longer than its small `sun_path` limit; a deep test HOME or long username
+ * can otherwise make every approval silently unavailable. The proxy learns
+ * the actual bound path from its argv, so either fallback is transparent. */
 export function brokerSocketCandidates(threadId: string): string[] {
   const base = permissionSocketPath(threadId);
-  if (process.platform !== "win32") return [base];
+  if (process.platform !== "win32") {
+    const scope = createHash("sha256")
+      .update(`${DATA_DIR}\0${process.pid}\0${threadId}`)
+      .digest("hex")
+      .slice(0, 16);
+    return [base, join(tmpdir(), `omb-perm-${scope}.sock`)];
+  }
   return [
     base,
     `${base}-${randomBytes(3).toString("hex")}`,
@@ -371,13 +375,29 @@ export async function createPermissionBroker(opts: {
     try {
       unlinkSync(candidate);
     } catch {}
-    const outcome = await new Promise<"listening" | (Error & { code?: string })>((resolve) => {
+    let outcome = await new Promise<"listening" | (Error & { code?: string })>((resolve) => {
       attempt.once("listening", () => resolve("listening"));
       // SAFETY: net 'error' events carry syscall errors; the optional
       // `code` is only read defensively below.
       attempt.once("error", (error) => resolve(error as Error & { code?: string }));
       attempt.listen(candidate);
     });
+    // A fallback under the shared OS temp root must not be connectable by
+    // another local account. DATA_DIR is private already, but applying the
+    // same mode to every POSIX socket keeps the rule simple and fail-closed.
+    if (outcome === "listening" && process.platform !== "win32") {
+      try {
+        chmodSync(candidate, 0o600);
+      } catch (error) {
+        try {
+          attempt.close();
+        } catch {}
+        try {
+          unlinkSync(candidate);
+        } catch {}
+        outcome = error as Error & { code?: string };
+      }
+    }
     if (outcome === "listening") {
       if (index > 0) {
         console.error(`permission broker: ${opts.socketPaths[0]} is still held — bound fallback ${candidate}`);
@@ -392,8 +412,7 @@ export async function createPermissionBroker(opts: {
     try {
       attempt.close();
     } catch {}
-    const retryable = outcome.code === "EADDRINUSE" || outcome.code === "EACCES";
-    if (!retryable || index === opts.socketPaths.length - 1) {
+    if (index === opts.socketPaths.length - 1) {
       console.error(`permission broker unavailable on ${candidate}: ${outcome.message}`);
       break;
     }
