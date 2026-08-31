@@ -188,6 +188,16 @@ const DWEB_PROXY_PATH = SPAWNED_PROXIES.dweb;
 // makes it behave as plain node for the spawned MCP proxies (harmless in dev)
 const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 
+function removePrivateTempDir(filePath: string | null | undefined): boolean {
+  if (!filePath) return true;
+  try {
+    rmSync(dirname(filePath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── permission broker (ported from agentcal drivers/claude.js) ─────────
 // A headless run that hits a permission acceptEdits doesn't cover should
 // neither stall silently NOR get blanket-denied — it should ask the user.
@@ -546,6 +556,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       child: ReturnType<typeof spawnCli>;
       broker?: Awaited<ReturnType<typeof createPermissionBroker>>;
       mcpConfigPath: string | null;
+      systemPromptPath: string | null;
       /** the spawn contract — a different one means a fresh process */
       argsKey: string;
       /** the CLI's session id from `init`, what --resume takes later */
@@ -658,7 +669,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const injected = applyClaudeInject({ ...turnEnvironment }, turnModel);
       if (injected.model) args.push("--model", injected.model);
       if (turn.effort) args.push("--effort", turn.effort);
-      if (turn.system) args.push("--append-system-prompt", turn.system);
+
+      // A room prompt can contain section context, skills, memory, playbooks,
+      // and browser/agent instructions. Passing that text directly on argv
+      // exceeds Windows' CreateProcess command-line limit and surfaces as
+      // `spawn ENAMETOOLONG`. Claude accepts the same prompt from a file, so
+      // keep both the text and its potentially sensitive contents off argv.
+      let systemPromptPath: string | null = null;
 
       // integrations → MCP servers; pre-allow their tools (a headless
       // acceptEdits run silently denies anything unlisted)
@@ -750,11 +767,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
       const env = claudeEnvironment(turnModel, turnEnvironment);
       const cwd = turn.cwd ?? homedir();
-      // everything that shapes the process, minus session/turn specifics
-      // (the --mcp-config file is a fresh temp path each time; its CONTENT
-      // is what matters and mcpServers carries that)
-      const keyArgs = args.filter((a, i) => a !== "--mcp-config" && args[i - 1] !== "--mcp-config");
-      const argsKey = JSON.stringify({ args: keyArgs, mcpServers, cwd, model: injected.model ?? null, base: env.ANTHROPIC_BASE_URL ?? null });
+      // Everything that shapes the process, minus session/turn-specific temp
+      // paths. Their contents are represented directly in the key instead.
+      const privateFileFlags = new Set(["--mcp-config"]);
+      const keyArgs = args.filter((a, i) => !privateFileFlags.has(a) && !privateFileFlags.has(args[i - 1] ?? ""));
+      const argsKey = JSON.stringify({
+        args: keyArgs,
+        system: turn.system ?? null,
+        mcpServers,
+        cwd,
+        model: injected.model ?? null,
+        base: env.ANTHROPIC_BASE_URL ?? null,
+      });
 
       // Reuse the live process when it is idle, unchanged, and is the session
       // the harness wants resumed. Anything else: close it and spawn fresh
@@ -800,10 +824,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           } catch {}
           mcpConfigPath = null;
         }
+        if (systemPromptPath) {
+          removePrivateTempDir(systemPromptPath);
+          systemPromptPath = null;
+        }
         retryState.delete(threadId);
       };
 
       try {
+        // Create the prompt file only for a new process. A compatible live
+        // session has already consumed the same system prompt at launch.
+        if (turn.system) {
+          systemPromptPath = join(mkdtempSync(join(tmpdir(), "omb-system-")), "prompt.txt");
+          writeFileSync(systemPromptPath, turn.system, { mode: 0o600 });
+          args.push("--append-system-prompt-file", systemPromptPath);
+        }
         // Only create a broker for a new process. A compatible retained
         // process keeps its existing proxy connection and broker across turns.
         if (socketPath) {
@@ -880,6 +915,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         child,
         broker,
         mcpConfigPath,
+        systemPromptPath,
         argsKey,
         sessionId: sessionId ?? newSessionId,
         turn: { turnId, settled: false, sawStreamDelta: false },
@@ -911,6 +947,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             rmSync(dirname(session.mcpConfigPath), { recursive: true, force: true });
           } catch {}
           session.mcpConfigPath = null;
+        }
+        if (session.systemPromptPath) {
+          if (removePrivateTempDir(session.systemPromptPath)) session.systemPromptPath = null;
         }
         active.delete(threadId);
         session.turn = null;
@@ -1066,6 +1105,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               } catch {}
               session.mcpConfigPath = null;
             }
+            if (session.systemPromptPath) {
+              removePrivateTempDir(session.systemPromptPath);
+              session.systemPromptPath = null;
+            }
             sessions.delete(threadId);
             session.turn = null;
             retry.attempt++;
@@ -1133,6 +1176,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             rmSync(dirname(session.mcpConfigPath), { recursive: true, force: true });
           } catch {}
         }
+        removePrivateTempDir(session.systemPromptPath);
         if (sessions.get(threadId) === session) sessions.delete(threadId);
       });
 

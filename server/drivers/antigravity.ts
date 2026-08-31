@@ -1,8 +1,7 @@
-// Antigravity driver — Google's `agy` CLI in headless one-shot print mode
-// (`agy --print --output-format stream-json`), modeled on claude.ts but fully
-// self-contained. Per-turn CLI process; the conversation continues across
+// Antigravity driver — Google's `agy` CLI in headless stream-JSON mode,
+// modeled on claude.ts but fully self-contained. Per-turn CLI process; the conversation continues across
 // turns via `--conversation <id>` (the resumeCursor is agy's conversation_id).
-// Verified against agy 1.1.12.
+// Stream-JSON input requires agy 1.1.15 or newer.
 //
 // Unlike claude, print mode has NO interactive permission hook: there is no
 // per-action broker here. `--mode accept-edits` allows file edits but
@@ -44,6 +43,18 @@ import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "antigravityAgent";
+export const ANTIGRAVITY_STREAM_INPUT_MIN_VERSION = "1.1.15";
+
+export function supportsAntigravityStreamInput(version: string | null): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
+  if (!match) return false;
+  const actual = match.slice(1).map(Number);
+  const minimum = ANTIGRAVITY_STREAM_INPUT_MIN_VERSION.split(".").map(Number);
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (actual[index] !== minimum[index]) return actual[index] > minimum[index];
+  }
+  return true;
+}
 
 export interface AntigravityConfig {
   cli: string;
@@ -396,6 +407,17 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     const active = new Map<string, { stop: () => void; turnId: string }>();
     const pending = new Set<string>();
     let disposed = false;
+    let verifiedVersion: string | null | undefined;
+    const readVersion = () =>
+      new Promise<string | null>((resolve) => {
+        execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
+          resolve(err ? null : stdout.trim()),
+        );
+      });
+    const versionForTurn = async () => {
+      if (verifiedVersion === undefined) verifiedVersion = await readVersion();
+      return verifiedVersion;
+    };
     // every live agy child, tracked independently of `active`: a child can
     // hang AFTER emitting `result` (so it's already removed from `active`), and
     // dispose()/stopAll() must still be able to reap it. Removed on process exit.
@@ -436,6 +458,17 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       pending.add(threadId);
       const turnId = newId();
 
+      const version = await versionForTurn();
+      if (!supportsAntigravityStreamInput(version)) {
+        pending.delete(threadId);
+        const reason = version
+          ? `Antigravity CLI ${ANTIGRAVITY_STREAM_INPUT_MIN_VERSION}+ is required for safe prompt delivery (found ${version}). Run \`agy update\`.`
+          : `\`${config.cli}\` CLI not found`;
+        emit({ ...base(threadId, turnId), type: "runtime.error", message: reason });
+        emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "unsupported_cli", cost: null });
+        return { turnId };
+      }
+
       // Default cwd to a per-thread workspace under DATA_DIR — deliberately
       // NOT homedir(): a bot running unattended should not get the whole home
       // as its default sandbox. `--add-dir` grants agy access to that dir.
@@ -452,11 +485,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       }
       const cwd = turn.cwd ?? workspace;
 
-      // prompt is passed as the `--print` argv value: agy does NOT read the
-      // prompt from piped stdin in print mode — a bare `--print` produces zero
-      // output (verified against agy 1.1.12). Combine persona + text.
-      // Trade-off: a very large prompt could exceed argv limits (E2BIG),
-      // guarded below since stdin is not an option.
+      // agy 1.1.15+ accepts one JSON user event per line on stdin. Keep the
+      // complete room/persona payload there: Windows' CreateProcess command
+      // line is much smaller than the prompts a channel can legitimately
+      // build, and putting this on `--print <prompt>` caused ENAMETOOLONG.
       const prompt = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
       const resumeCursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
 
@@ -481,20 +513,6 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         armPostSettleCleanup();
         emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}) });
       };
-
-      // agy's print mode is argv-only, so a prompt beyond ARG_MAX would fail the
-      // spawn with E2BIG. Reject oversized prompts up front with a clear error
-      // instead of a cryptic spawn failure.
-      if (Buffer.byteLength(prompt) > 256 * 1024) {
-        emit({
-          ...base(threadId, turnId),
-          type: "runtime.error",
-          message: `prompt too large for Antigravity's argv-only print mode (${Buffer.byteLength(prompt)} bytes)`,
-        });
-        settle(false, "prompt_too_large");
-        pending.delete(threadId);
-        return { turnId };
-      }
 
       // agy's config is global, so every turn — including one without any
       // OpenMaus tools — owns the mount for its complete child lifetime. This keeps
@@ -530,7 +548,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       }
 
       const args = [
-        "--print", prompt, // print mode reads the prompt from this argv value
+        "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--print-timeout", "10m",
         "--add-dir", cwd,
@@ -549,7 +567,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         child = spawnCli(config.cli, args, {
           cwd,
           env,
-          stdio: ["ignore", "pipe", "pipe"], // prompt is on argv; stdin is unused
+          stdio: ["pipe", "pipe", "pipe"],
         });
       } catch (error) {
         try {
@@ -764,20 +782,129 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
+      // The official stream-json input envelope. Closing stdin after this
+      // single turn is intentional: agy finishes the active turn, emits its
+      // terminal result, then exits cleanly. Conversation continuity still
+      // uses --conversation on the next per-turn process.
+      const inputMessage = { event: "user", message: { content: prompt } };
+      appendNative(threadId, { dir: "out", source: "agy.stream", msg: inputMessage });
+      try {
+        child.stdin.end(`${JSON.stringify(inputMessage)}\n`);
+      } catch (error) {
+        emit({
+          ...base(threadId, turnId),
+          type: "runtime.error",
+          message: `could not send prompt to agy: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        stop();
+        settle(false, "stdin_write_failed");
+      }
+
       return { turnId };
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
-      const version = await new Promise<string | null>((resolve) => {
-        execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
-          resolve(err ? null : stdout.trim()),
-        );
-      });
+      const version = await readVersion();
+      verifiedVersion = version;
       if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+      if (!supportsAntigravityStreamInput(version)) {
+        return {
+          state: "unavailable",
+          reason: `Antigravity CLI ${ANTIGRAVITY_STREAM_INPUT_MIN_VERSION}+ is required. Run \`agy update\`.`,
+          version,
+        };
+      }
       // No auth field: agy auth is keyring-backed with no reliable file marker
       // (~/.gemini/antigravity-cli/ exists after first run even when logged
       // out), so any file heuristic would overstate "signed in". Leave undefined.
       return { state: "available", version };
+    };
+
+    const generateText = async (prompt: string): Promise<string> => {
+      const version = await versionForTurn();
+      if (!supportsAntigravityStreamInput(version)) {
+        throw new Error(
+          version
+            ? `Antigravity CLI ${ANTIGRAVITY_STREAM_INPUT_MIN_VERSION}+ is required (found ${version}). Run \`agy update\`.`
+            : `\`${config.cli}\` CLI not found`,
+        );
+      }
+
+      return new Promise<string>((resolve, reject) => {
+        let child: ReturnType<typeof spawnCli>;
+        try {
+          child = spawnCli(
+            config.cli,
+            [
+              "--input-format", "stream-json",
+              "--output-format", "stream-json",
+              "--model", "gemini-3.6-flash-low",
+            ],
+            { env, stdio: ["pipe", "pipe", "pipe"] },
+          );
+        } catch (error) {
+          reject(error);
+          return;
+        }
+        children.add(child);
+
+        let settled = false;
+        let response: string | null = null;
+        let resultError: Error | null = null;
+        let stdoutBuffer = "";
+        let stderr = "";
+        const timer = setTimeout(() => {
+          killCliTree(child);
+          finish(new Error("Antigravity text generation timed out"));
+        }, 60_000);
+        timer.unref?.();
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (error) reject(error);
+          else if (resultError) reject(resultError);
+          else if (response !== null) resolve(response);
+          else reject(new Error(stderr.trim() || "Antigravity exited before returning a result"));
+        };
+
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => {
+          stdoutBuffer += chunk;
+          let newline;
+          while ((newline = stdoutBuffer.indexOf("\n")) !== -1) {
+            const line = stdoutBuffer.slice(0, newline);
+            stdoutBuffer = stdoutBuffer.slice(newline + 1);
+            if (!line.trim()) continue;
+            try {
+              const event = JSON.parse(line);
+              if (event.event !== "result") continue;
+              const result = event.result ?? {};
+              if (result.status === "SUCCESS" && typeof result.response === "string") response = result.response;
+              else resultError = new Error(String(result.message ?? result.error ?? `Antigravity result: ${result.status ?? "unknown"}`));
+            } catch {
+              // Ignore non-protocol output; close below reports a missing result.
+            }
+          }
+        });
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk) => {
+          stderr = (stderr + chunk).slice(-8_192);
+        });
+        child.on("error", (error) => finish(error));
+        child.on("close", (code) => {
+          children.delete(child);
+          if (code === 0) finish();
+          else finish(new Error(stderr.trim() || `Antigravity exited ${code}`));
+        });
+
+        try {
+          child.stdin.end(`${JSON.stringify({ event: "user", message: { content: prompt } })}\n`);
+        } catch (error) {
+          killCliTree(child);
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
     };
 
     return {
@@ -823,15 +950,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           return () => listeners.delete(listener);
         },
       },
-      generateText: (prompt: string) =>
-        new Promise((resolve, reject) => {
-          execCli(
-            config.cli,
-            ["-p", prompt, "--output-format", "text", "--model", "gemini-3.6-flash-low"],
-            { timeout: 60_000, env },
-            (err, stdout) => (err ? reject(err) : resolve(stdout.trim())),
-          );
-        }),
+      generateText,
       dispose: async () => {
         disposed = true;
         for (const { stop } of active.values()) stop();

@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // Fake of the Antigravity `agy` CLI's print-mode stdio surface, for driver
-// tests of drivers/antigravity.ts. On `--version` it prints a version; on a
-// print-mode invocation (`--print <prompt> … --output-format stream-json`) it
-// reads the prompt from the `--print` ARGV value (the real CLI does NOT read a
-// piped prompt in print mode), then emits a canned NDJSON turn: init → tool
+// tests of drivers/antigravity.ts. On `--version` it prints a version; in
+// stream-json input mode it reads one user event from stdin, then emits a
+// canned NDJSON turn: init → tool
 // step (ACTIVE then DONE) → agent_response step with usage → result with
 // status SUCCESS. Deterministic, no network.
 //
@@ -132,15 +131,15 @@ const argv = process.argv.slice(2);
 if (process.env.FAKE_AGY_IGNORE_SIGTERM === "1") {
   process.on("SIGTERM", () => {});
 }
-if (process.env.FAKE_AGY_READY_FILE) {
-  writeFileSync(process.env.FAKE_AGY_READY_FILE, "ready");
-}
 if (process.env.FAKE_AGY_DUMP) {
   writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
 }
 if (argv.includes("--version")) {
-  console.log("1.1.12");
+  console.log(process.env.FAKE_AGY_VERSION ?? "1.1.22");
   process.exit(0);
+}
+if (process.env.FAKE_AGY_READY_FILE) {
+  writeFileSync(process.env.FAKE_AGY_READY_FILE, "ready");
 }
 
 const delayMs = Number(process.env.FAKE_AGY_DELAY_MS ?? 0);
@@ -159,11 +158,31 @@ if (process.env.FAKE_AGY_MCP_DUMP) {
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 const CONV = "conv-fake-123";
 
-// The prompt is the value that follows --print on argv (mirrors the driver,
-// which no longer pipes stdin). A bare --print with no value yields no turn.
-const printIdx = argv.indexOf("--print");
-const prompt = printIdx !== -1 ? argv[printIdx + 1] : undefined;
+const streamInput = argv[argv.indexOf("--input-format") + 1] === "stream-json";
+let prompt: string | undefined;
+if (streamInput) {
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) input += chunk;
+  const line = input.split("\n").find((candidate) => candidate.trim());
+  try {
+    const message = line ? JSON.parse(line) : null;
+    const content = message?.event === "user" ? message.message?.content : undefined;
+    prompt = typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.filter((block) => block?.type === "text").map((block) => block.text).join("")
+        : undefined;
+  } catch {}
+} else {
+  // Retained for tests of old callers; production prompt paths use stdin.
+  const printIdx = Math.max(argv.indexOf("--print"), argv.indexOf("-p"));
+  prompt = printIdx !== -1 ? argv[printIdx + 1] : undefined;
+}
 if (!prompt) process.exit(0);
+if (process.env.FAKE_AGY_DUMP) {
+  writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: process.env, prompt }, null, 2));
+}
 
 const toolName = mode === "ask-peer" ? "ask_bot" : "write_to_file";
 out({ event: "init", conversation_id: CONV, init: { cwd: process.cwd(), tools: ["run_command", "write_to_file", ...(mode === "ask-peer" ? ["list_bots", "ask_bot"] : [])], permission_mode: "accept-edits" } });

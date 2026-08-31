@@ -332,7 +332,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect((settled[0] as any).text).toBe("hello from fake claude");
   });
 
-  it("sends the prompt over stdin, never argv, and strips identity env vars", async () => {
+  it("keeps user and system prompts off argv and strips identity env vars", async () => {
     await create();
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
@@ -348,8 +348,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(JSON.stringify(seen.argv)).not.toContain("the secret prompt");
+    expect(JSON.stringify(seen.argv)).not.toContain("You are Testy.");
     expect(seen.prompt).toMatchObject({ type: "user", message: { role: "user", content: "the secret prompt" } });
-    expect(seen.argv).toContain("--append-system-prompt");
+    expect(seen.argv).toContain("--append-system-prompt-file");
+    expect(seen.systemPrompt).toBe("You are Testy.");
+    expect(existsSync(seen.argv[seen.argv.indexOf("--append-system-prompt-file") + 1])).toBe(false);
     expect(seen.argv).toContain("--session-id");
     expect(seen.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(seen.env.CLAUDECODE).toBeUndefined();
@@ -357,6 +360,21 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.XAI_API_KEY).toBeUndefined();
     expect(seen.env.BOX_TOKEN).toBeUndefined();
     expect(seen.env.OMB_TTS_KEY).toBeUndefined();
+  });
+
+  it("launches with a Windows-sized system prompt without putting it on argv", async () => {
+    await create();
+    const dump = join(scratch, "dump-long-system.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const system = `room instructions\n${"context-0123456789".repeat(8_000)}`;
+
+    await instance.adapter.sendTurn({ threadId: "t-long-system", text: "review this", system });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.systemPrompt).toBe(system);
+    expect(JSON.stringify(seen.argv)).not.toContain("room instructions");
+    expect(JSON.stringify(seen.argv).length).toBeLessThan(8_000);
   });
 
   it("uses instance credentials when launching an injected local model", async () => {

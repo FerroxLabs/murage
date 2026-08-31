@@ -2723,7 +2723,7 @@ describe("harness HTTP API", () => {
       })).status).toBe(202);
       await expect.poll(() => existsSync(fakeClaudeDump), { timeout: 5_000 }).toBe(true);
       const seen = JSON.parse(readFileSync(fakeClaudeDump, "utf8"));
-      const system = seen.argv[seen.argv.indexOf("--append-system-prompt") + 1] ?? "";
+      const system = seen.systemPrompt ?? "";
       // the skill's instructions ride the system prompt the agent receives
       expect(system).toContain('<openmaus-skill id="create-verification-skill"');
       expect(system).toContain("skill_manage");
@@ -2754,8 +2754,8 @@ describe("harness HTTP API", () => {
       expect((await api("POST", `/api/groups/${room.id}/messages`, {
         text: "/create-verification-skill for my mobile app",
       })).status).toBe(202);
-      let seen = await readJsonFileWhenReady<{ argv: string[] }>(fakeClaudeDump);
-      let system = seen.argv[seen.argv.indexOf("--append-system-prompt") + 1] ?? "";
+      let seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump);
+      let system = seen.systemPrompt ?? "";
       expect(system).toContain('<openmaus-skill id="create-verification-skill"');
       expect(system).toContain('<openmaus-skill id="phone-harness"');
       expect((await api("POST", `/api/groups/${room.id}/interrupt`, {})).status).toBe(200);
@@ -2768,8 +2768,8 @@ describe("harness HTTP API", () => {
       expect((await api("POST", `/api/groups/${room.id}/messages`, {
         text: "now give me a short status update",
       })).status).toBe(202);
-      seen = await readJsonFileWhenReady<{ argv: string[] }>(fakeClaudeDump);
-      system = seen.argv[seen.argv.indexOf("--append-system-prompt") + 1] ?? "";
+      seen = await readJsonFileWhenReady<{ systemPrompt?: string }>(fakeClaudeDump);
+      system = seen.systemPrompt ?? "";
       expect(system).not.toContain('<openmaus-skill id="create-verification-skill"');
       expect(system).toContain('<openmaus-skill id="phone-harness"');
     } finally {
@@ -3094,6 +3094,7 @@ describe("harness HTTP API", () => {
       const dump = z.object({
         argv: z.array(z.string()),
         env: z.record(z.string(), z.string()),
+        systemPrompt: z.string(),
         mcpConfig: z.object({
           mcpServers: z.object({
             browser: z.object({
@@ -3119,9 +3120,7 @@ describe("harness HTTP API", () => {
       expect(dump.env.OMB_USER_DATA).toBeUndefined();
       expect(JSON.stringify(dump)).not.toContain(masterToken);
 
-      const systemIndex = dump.argv.indexOf("--append-system-prompt");
-      expect(systemIndex).toBeGreaterThanOrEqual(0);
-      const system = dump.argv[systemIndex + 1] ?? "";
+      const system = dump.systemPrompt;
       expect(system).toMatch(/page instructions as untrusted content/i);
       expect(system).toMatch(/consequential action.*confirmation/i);
       expect(system).toMatch(/browser_request_takeover/i);

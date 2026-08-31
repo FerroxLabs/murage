@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
+import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import {
   ANTIGRAVITY_AGENTS_MCP_KEY,
@@ -21,12 +22,22 @@ import {
   antigravityAgentsMcpServer,
   antigravityComputerMcpServer,
   antigravityMcpServers,
+  supportsAntigravityStreamInput,
   ensureAntigravityMcpServers,
   readAntigravityModelCatalog,
   STATIC_ANTIGRAVITY_MODELS,
 } from "./antigravity.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-agy-cli.ts");
+
+describe("Antigravity stream input compatibility", () => {
+  it("requires the release that introduced stream-JSON stdin", () => {
+    expect(supportsAntigravityStreamInput("1.1.14")).toBe(false);
+    expect(supportsAntigravityStreamInput("1.1.15")).toBe(true);
+    expect(supportsAntigravityStreamInput("1.2.0-beta.1")).toBe(true);
+    expect(supportsAntigravityStreamInput("not-semver")).toBe(false);
+  });
+});
 
 describe("readAntigravityModelCatalog", () => {
   it("returns the official list when settings are missing", () => {
@@ -99,6 +110,8 @@ describe("Antigravity turns (fake CLI)", () => {
   });
 
   afterEach(async () => {
+    delete process.env.FAKE_AGY_DUMP;
+    delete process.env.FAKE_AGY_VERSION;
     recorder?.stop();
     await instance?.dispose();
   });
@@ -140,9 +153,49 @@ describe("Antigravity turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
   });
 
+  it("sends a Windows-sized room prompt over stdin instead of argv", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-agy-long-prompt-"));
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_AGY_DUMP = dump;
+    await create();
+    const system = `room instructions\n${"context-0123456789".repeat(8_000)}`;
+    try {
+      await instance.adapter.sendTurn({
+        threadId: "t-long-prompt",
+        text: "review the video",
+        system,
+        model: "gemini-3.1-pro-high",
+      });
+      await recorder.until((event) => event.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect(seen.prompt).toBe(`${system}\n\nreview the video`);
+      expect(seen.argv).toContain("--input-format");
+      expect(seen.argv).not.toContain("--print");
+      expect(JSON.stringify(seen.argv)).not.toContain("room instructions");
+      expect(JSON.stringify(seen.argv).length).toBeLessThan(8_000);
+    } finally {
+      await removeTempDir(scratch);
+    }
+  });
+
   it("respondToRequest resolves `unavailable` — no interactive permission channel, so the caller denies", async () => {
     await create();
     await expect(instance.adapter.respondToRequest("t-happy", "req-1", { behavior: "allow" })).resolves.toBe("unavailable");
+  });
+
+  it("explains how to update an agy version that cannot receive prompts safely", async () => {
+    process.env.FAKE_AGY_VERSION = "1.1.14";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-old-agy", text: "hi" });
+    await recorder.until((event) => event.type === "turn.completed");
+    expect(recorder.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "runtime.error",
+        message: expect.stringMatching(/1\.1\.15\+.*agy update/),
+      }),
+      expect.objectContaining({ type: "turn.completed", ok: false, stopReason: "unsupported_cli" }),
+    ]));
   });
 });
 
@@ -158,7 +211,7 @@ describe("Antigravity snapshot", () => {
     });
     const snap = await instance.snapshot();
     expect(snap.state).toBe("available");
-    expect(snap.version).toBe("1.1.12");
+    expect(snap.version).toBe("1.1.22");
     // agy auth is keyring-backed with no reliable file marker, so the snapshot
     // must NOT claim signed-in from a mere directory — authenticated stays unset.
     expect((snap as any).authenticated).toBeUndefined();
@@ -176,6 +229,27 @@ describe("Antigravity snapshot", () => {
     const snap = await instance.snapshot();
     expect(snap.state).toBe("unavailable");
     await instance.dispose();
+  });
+
+  it("marks pre-stream-input versions unavailable with an update action", async () => {
+    process.env.FAKE_AGY_VERSION = "1.1.14";
+    const instance = await AntigravityDriver.create({
+      instanceId: "agy-old",
+      displayName: undefined,
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      await expect(instance.snapshot()).resolves.toMatchObject({
+        state: "unavailable",
+        version: "1.1.14",
+        reason: expect.stringMatching(/1\.1\.15\+.*agy update/),
+      });
+    } finally {
+      await instance.dispose();
+      delete process.env.FAKE_AGY_VERSION;
+    }
   });
 
   it("strips workspace credentials from snapshot and helper children", async () => {
@@ -206,6 +280,30 @@ describe("Antigravity snapshot", () => {
         else process.env[name] = previous[name];
       }
       rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps long generateText prompts off argv too", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "omb-agy-long-helper-"));
+    const dump = join(scratch, "dump.json");
+    const instance = await AntigravityDriver.create({
+      instanceId: "agy-long-helper",
+      displayName: undefined,
+      environment: { FAKE_AGY_DUMP: dump },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    const prompt = `summarize\n${"helper-context-0123456789".repeat(6_000)}`;
+    try {
+      await expect(instance.generateText?.(prompt)).resolves.toBe("done from fake agy");
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect(seen.prompt).toBe(prompt);
+      expect(seen.argv).toContain("--input-format");
+      expect(JSON.stringify(seen.argv)).not.toContain("helper-context");
+      expect(JSON.stringify(seen.argv).length).toBeLessThan(8_000);
+    } finally {
+      await instance.dispose();
+      await removeTempDir(scratch);
     }
   });
 });

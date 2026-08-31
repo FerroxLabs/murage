@@ -7,7 +7,8 @@
 //   FAKE_CLAUDE_MODE   happy (default) | exit-early | hang | malformed
 //                      | stream (partial-message text deltas before the
 //                        whole-message frame, plus subagent noise to drop)
-//   FAKE_CLAUDE_DUMP   path to write {argv, env, prompt, mcpConfig} as JSON,
+//   FAKE_CLAUDE_DUMP   path to write {argv, env, prompt, systemPrompt,
+//                      mcpConfig} as JSON,
 //                      so the test can assert on argv shape and env hygiene.
 //                      mcpConfig is read back from the --mcp-config file the
 //                      way the real CLI reads it — the driver writes it to a
@@ -157,7 +158,19 @@ const playTurn = (prompt: JsonValue) => {
         /* leave null — the test will see it */
       }
     }
-    writeFileSync(process.env.FAKE_CLAUDE_DUMP, JSON.stringify({ pid: process.pid, argv, env: process.env, prompt, mcpConfig }, null, 2));
+    const systemPromptPath = argAfter("--append-system-prompt-file");
+    let systemPrompt: string | null = null;
+    if (systemPromptPath) {
+      try {
+        systemPrompt = readFileSync(systemPromptPath, "utf8");
+      } catch {
+        /* leave null — the test will see it */
+      }
+    }
+    writeFileSync(
+      process.env.FAKE_CLAUDE_DUMP,
+      JSON.stringify({ pid: process.pid, argv, env: process.env, prompt, systemPrompt, mcpConfig }, null, 2),
+    );
   }
 
   if (mode === "exit-early") {
