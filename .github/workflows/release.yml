@@ -58,7 +58,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
           v="v$(node -p "require('./package.json').version")"
-          if gh release view "$v" --repo milind-soni/murage-releases --json isDraft --jq .isDraft 2>/dev/null | grep -q false; then
+          if gh release view "$v" --repo FerroxLabs/murage-releases --json isDraft --jq .isDraft 2>/dev/null | grep -q false; then
             echo "::error::$v is already published on murage-releases — bump the version first"
             exit 1
           fi
@@ -386,15 +386,15 @@ jobs:
         run: |
           cd assets
           tag="v$VERSION"
-          if ! gh release view "$tag" --repo milind-soni/murage-releases > /dev/null 2>&1; then
-            gh release create "$tag" --repo milind-soni/murage-releases \
+          if ! gh release view "$tag" --repo FerroxLabs/murage-releases > /dev/null 2>&1; then
+            gh release create "$tag" --repo FerroxLabs/murage-releases \
               --draft --title "Murage $VERSION" \
-              --notes "Draft assembled by the release workflow from milind-soni/Murage@$SHA. Edit these notes, then publish."
+              --notes "Draft assembled by the release workflow from FerroxLabs/murage@$SHA. Edit these notes, then publish."
           fi
           for f in *; do
-            gh release upload "$tag" "$f" --repo milind-soni/murage-releases --clobber
+            gh release upload "$tag" "$f" --repo FerroxLabs/murage-releases --clobber
           done
-          echo "asset count: $(gh release view "$tag" --repo milind-soni/murage-releases --json assets --jq '.assets | length')"
+          echo "asset count: $(gh release view "$tag" --repo FerroxLabs/murage-releases --json assets --jq '.assets | length')"
 
       - name: Publish (only when asked to)
         if: ${{ inputs.publish }}
@@ -402,7 +402,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          gh release edit "v$VERSION" --repo milind-soni/murage-releases --draft=false --latest
+          gh release edit "v$VERSION" --repo FerroxLabs/murage-releases --draft=false --latest
           # a draft that LOOKS published is the 0.1.24 failure mode — verify
-          gh release view "v$VERSION" --repo milind-soni/murage-releases --json isDraft --jq .isDraft | grep -q false
+          gh release view "v$VERSION" --repo FerroxLabs/murage-releases --json isDraft --jq .isDraft | grep -q false
           echo "v$VERSION is live"

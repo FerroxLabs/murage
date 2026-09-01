@@ -15,7 +15,7 @@ protocols:
 # stranded on its installed version.
 publish:
   - provider: github
-    owner: milind-soni
+    owner: FerroxLabs
     repo: murage-releases
 
 directories:
@@ -162,7 +162,7 @@ linux:
   executableName: murage
   synopsis: Your own team of AI bots, in a chat app
   description: A local-first chat app for running a team of AI agents.
-  maintainer: Milind Soni <46266943+milind-soni@users.noreply.github.com>
+  maintainer: Ferrox Labs <sean@ferroxlabs.com>
   vendor: Murage
   syncDesktopName: true
   # The reviewed x64 CLI runtime is staged before packaging and remains

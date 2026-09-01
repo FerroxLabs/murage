@@ -27,8 +27,8 @@ The app is native Swift and uses XcodeGen; EAS commands do not apply.
 - Copy the localized text from `en-US/`.
 - Use `privacy-answers.md` and verify it still matches the binary.
 - Use `review-notes.md`, adding a real review contact in App Store Connect.
-- Support URL: `https://github.com/milind-soni/Murage/issues`
-- Privacy policy URL: `https://github.com/milind-soni/Murage/blob/main/docs/ios-privacy.md`
+- Support URL: `https://github.com/FerroxLabs/murage/issues`
+- Privacy policy URL: `https://github.com/FerroxLabs/murage/blob/main/docs/ios-privacy.md`
 - Choose manual release for 1.0; enable a phased release after the first production build is stable.
 
 The unsigned simulator CI proves compilation, not distribution signing. A TestFlight upload cannot be automated until the Apple team, App Store Connect record, and protected signing/API-key secrets exist.
