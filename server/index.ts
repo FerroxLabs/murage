@@ -31,6 +31,7 @@ import {
 import * as checkpoints from "./checkpoints.ts";
 import { appendDecision, readDecisions } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
+import { subscribe } from "./sendlane.ts";
 import {
   attachmentExists,
   extensionForMime,
@@ -8068,6 +8069,16 @@ const server = createServer(async (req, res) => {
     }
 
     // ── app config (API keys — never echoed back, booleans only) ──
+    if (method === "POST" && path === "/api/subscribe") {
+      // Fire-and-report: the renderer does not wait on Sendlane, and a failure
+      // here must never stop someone entering the app.
+      const payload = (await readBody(req)) as { email?: string; name?: string } | null;
+      const result = await subscribe(String(payload?.email ?? ""), payload?.name);
+      if (!result.ok && result.reason === "upstream") {
+        console.error(`sendlane subscribe failed (status ${result.status ?? "network"})`);
+      }
+      return json(res, 200, { ok: result.ok, reason: result.reason ?? null });
+    }
     if (method === "GET" && path === "/api/config") {
       return json(res, 200, configStatus());
     }
