@@ -16,8 +16,8 @@
 // animation engine is 1,600 lines and would show up as nothing at this size.
 import SwiftUI
 
-enum MausPalette {
-    /// src/lib/mascot.ts — MAUS_COLORS
+enum EmberPalette {
+    /// src/lib/mascot.ts — EMBER_COLORS
     private static let hex: [String: String] = [
         "green": "#009957",
         "blue": "#377FE6",
@@ -39,7 +39,7 @@ enum MausPalette {
 
 /// The mascot silhouette, as an SVG path. Absolute `M`, `C` and `Z` only —
 /// which is what makes the parser below twenty lines rather than a library.
-enum MausSilhouette {
+enum EmberSilhouette {
     static let path =
         """
         M0 0 C1.12815992 0.94880479 2.25705591 1.89673511 3.38671875 2.84375 C5.57657936 4.68528228
@@ -123,7 +123,7 @@ enum MausSilhouette {
 
     /// The transform that puts the margined face box into `rect`.
     static func fit(_ rect: CGRect) -> CGAffineTransform {
-        let side = MausFaceData.faceBox + margin * 2
+        let side = EmberFaceData.faceBox + margin * 2
         let k = min(rect.width, rect.height) / side
         return CGAffineTransform(translationX: margin, y: margin)
             .concatenating(CGAffineTransform(scaleX: k, y: k))
@@ -199,15 +199,15 @@ enum MausSilhouette {
 }
 
 /// A bot, at whatever size the row needs — and alive, exactly the way it is
-/// on the desktop. `MausFaceEngine` is a port of the frame loop in
-/// `MausMascotios/MausAvatar.tsx`: a state picks a pool of expressions and
+/// on the desktop. `EmberFaceEngine` is a port of the frame loop in
+/// `EmberMascotios/EmberAvatar.tsx`: a state picks a pool of expressions and
 /// drifts through them on its cadence, a spring morphs the eyes and mouth
 /// between them, it blinks on its own rhythm, and the body bobs, sways,
 /// breathes or jitters per state. Same data, same numbers, same face.
-struct MausAvatar: View {
+struct EmberAvatar: View {
     let color: String
     var size: CGFloat = 52
-    var state: MausState = .idle
+    var state: EmberState = .idle
     /// Animation is OPT-IN: a mounted face costs a 30fps Canvas redraw, and a
     /// roster of them once pegged the app (and SimRenderServer) all night.
     /// Pass true only where motion carries meaning — a busy bot, an open
@@ -218,7 +218,7 @@ struct MausAvatar: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @State private var engine = MausFaceEngine()
+    @State private var engine = EmberFaceEngine()
 
     var body: some View {
         // Even an opted-in face stops when the app is not active: nothing is
@@ -239,9 +239,9 @@ struct MausAvatar: View {
 /// The resting face for a state, drawn once and still. For places the
 /// engine cannot run — a widget, a Live Activity — where the system renders
 /// a snapshot and the face can only change between updates.
-struct MausFaceStill: View {
+struct EmberFaceStill: View {
     let color: String
-    var state: MausState = .idle
+    var state: EmberState = .idle
     var size: CGFloat = 52
     var comets: Bool = false
     /// The clock for the comets' phase; a different date is a different frame.
@@ -249,7 +249,7 @@ struct MausFaceStill: View {
 
     var body: some View {
         Canvas { context, canvasSize in
-            let engine = MausFaceEngine()
+            let engine = EmberFaceEngine()
             engine.setState(state, now: Date(timeIntervalSinceReferenceDate: 0))
             engine.draw(in: &context, size: canvasSize, color: color, bodyMotion: false, comets: comets, at: at)
         }
@@ -260,15 +260,15 @@ struct MausFaceStill: View {
 
 /// The face, frame by frame. One per drawn mascot; holds the morph in
 /// progress, the blink, and when the next expression or blink is due.
-final class MausFaceEngine {
-    private(set) var state: MausState = .idle
+final class EmberFaceEngine {
+    private(set) var state: EmberState = .idle
     private var expression = 0
-    private var currentRings: [[CGPoint]] = [MausFaceData.ring(0, eye: 0), MausFaceData.ring(0, eye: 1)]
-    private var targetRings: [[CGPoint]] = [MausFaceData.ring(0, eye: 0), MausFaceData.ring(0, eye: 1)]
-    private var currentMouth = MausFaceData.mouth(0)
-    private var targetMouth = MausFaceData.mouth(0)
-    private var currentGaze = MausFaceData.gaze(0)
-    private var targetGaze = MausFaceData.gaze(0)
+    private var currentRings: [[CGPoint]] = [EmberFaceData.ring(0, eye: 0), EmberFaceData.ring(0, eye: 1)]
+    private var targetRings: [[CGPoint]] = [EmberFaceData.ring(0, eye: 0), EmberFaceData.ring(0, eye: 1)]
+    private var currentMouth = EmberFaceData.mouth(0)
+    private var targetMouth = EmberFaceData.mouth(0)
+    private var currentGaze = EmberFaceData.gaze(0)
+    private var targetGaze = EmberFaceData.gaze(0)
     private var morph: CGFloat = 1
     private var velocity: CGFloat = 0
     private var blinkStart: Date?
@@ -284,15 +284,15 @@ final class MausFaceEngine {
     /// Spring stiffness for the morph, the desktop's default.
     private let spring: CGFloat = 7
 
-    func setState(_ new: MausState, now: Date) {
+    func setState(_ new: EmberState, now: Date) {
         guard !started || new != state else { return }
         started = true
         state = new
         stateStart = now
-        select(MausFaceData.pools[new]?.first ?? 0)
+        select(EmberFaceData.pools[new]?.first ?? 0)
         if last == nil { morph = 1; velocity = 0 } // first frame: rest on it, no morph in
-        nextExpressionAt = schedule(MausFaceData.expressionCadence[new], from: now)
-        nextBlinkAt = schedule(MausFaceData.blink[new], from: now)
+        nextExpressionAt = schedule(EmberFaceData.expressionCadence[new], from: now)
+        nextBlinkAt = schedule(EmberFaceData.blink[new], from: now)
     }
 
     private func schedule(_ range: (CGFloat, CGFloat)?, from now: Date) -> Date? {
@@ -302,14 +302,14 @@ final class MausFaceEngine {
     }
 
     private func select(_ index: Int) {
-        let i = ((index % MausFaceData.expressionCount) + MausFaceData.expressionCount) % MausFaceData.expressionCount
+        let i = ((index % EmberFaceData.expressionCount) + EmberFaceData.expressionCount) % EmberFaceData.expressionCount
         if i == expression && morph >= 1 { return }
         currentRings = displayedRings()
         currentMouth = displayedMouth()
         currentGaze = displayedGaze()
-        targetRings = [MausFaceData.ring(i, eye: 0), MausFaceData.ring(i, eye: 1)]
-        targetMouth = MausFaceData.mouth(i)
-        targetGaze = MausFaceData.gaze(i)
+        targetRings = [EmberFaceData.ring(i, eye: 0), EmberFaceData.ring(i, eye: 1)]
+        targetMouth = EmberFaceData.mouth(i)
+        targetGaze = EmberFaceData.gaze(i)
         expression = i
         morph = 0
         velocity = 0
@@ -325,14 +325,14 @@ final class MausFaceEngine {
         if !morph.isFinite { morph = 1; velocity = 0 }
 
         if let due = nextExpressionAt, now >= due {
-            let pool = MausFaceData.pools[state] ?? [0]
+            let pool = EmberFaceData.pools[state] ?? [0]
             let alternatives = pool.filter { $0 != expression }
             select(alternatives.randomElement() ?? pool[0])
-            nextExpressionAt = schedule(MausFaceData.expressionCadence[state], from: now)
+            nextExpressionAt = schedule(EmberFaceData.expressionCadence[state], from: now)
         }
         if let due = nextBlinkAt, now >= due {
             blinkStart = now
-            nextBlinkAt = schedule(MausFaceData.blink[state], from: now)
+            nextBlinkAt = schedule(EmberFaceData.blink[state], from: now)
         }
     }
 
@@ -355,7 +355,7 @@ final class MausFaceEngine {
         let bodyScale: CGFloat
     }
 
-    static let cometTrails: [MausState: CometSpec] = [
+    static let cometTrails: [EmberState: CometSpec] = [
         .orbit: CometSpec(count: 6, period: 3000, radius: 105, width: 5, span: 2.5, bodyScale: 0.72),
         .radar: CometSpec(count: 4, period: 2400, radius: 106, width: 4.5, span: 2.1, bodyScale: 0.72),
         .progress: CometSpec(count: 5, period: 2000, radius: 104, width: 4.8, span: 2.3, bodyScale: 0.74),
@@ -491,10 +491,10 @@ final class MausFaceEngine {
     /// for a still frame.
     func draw(in context: inout GraphicsContext, size: CGSize, color: String, bodyMotion: Bool, comets: Bool = false, at now: Date = Date()) {
         let rect = CGRect(origin: .zero, size: size)
-        context.concatenate(MausSilhouette.fit(rect))
+        context.concatenate(EmberSilhouette.fit(rect))
         let elapsed = CGFloat(now.timeIntervalSince(stateStart) * 1000)
         let spec = Self.cometTrails[state] ?? (comets ? Self.cometTrails[.orbit] : nil)
-        let centre = CGPoint(x: MausFaceData.faceBox / 2, y: MausFaceData.faceBox / 2)
+        let centre = CGPoint(x: EmberFaceData.faceBox / 2, y: EmberFaceData.faceBox / 2)
 
         let pieces = spec.map { self.comets($0, elapsed: elapsed, centre: centre, strength: 1) } ?? []
         for piece in pieces where !piece.front { context.fill(piece.path, with: piece.shading) }
@@ -508,7 +508,7 @@ final class MausFaceEngine {
             bodyContext.translateBy(x: -centre.x, y: -centre.y)
         }
         if bodyMotion {
-            bodyContext.concatenate(bodyTransform(MausFaceData.motion[state] ?? MausBodyMotion(), elapsed: elapsed))
+            bodyContext.concatenate(bodyTransform(EmberFaceData.motion[state] ?? EmberBodyMotion(), elapsed: elapsed))
         }
         drawBody(in: &bodyContext, color: color, now: now)
 
@@ -516,20 +516,20 @@ final class MausFaceEngine {
     }
 
     private func drawBody(in context: inout GraphicsContext, color: String, now: Date) {
-        let body = MausSilhouette.inFaceBox
-        let bounds = MausSilhouette.faceBoxBounds
+        let body = EmberSilhouette.inFaceBox
+        let bounds = EmberSilhouette.faceBoxBounds
         context.fill(body, with: .linearGradient(
-            Gradient(stops: MausPalette.gradientStops(color)),
+            Gradient(stops: EmberPalette.gradientStops(color)),
             startPoint: CGPoint(x: bounds.maxX, y: bounds.minY),
             endPoint: CGPoint(x: bounds.minX, y: bounds.maxY)
         ))
 
         // The face is painted on the body: clipped to it, anchored in it.
         context.clip(to: body)
-        let a = MausFaceData.anchor
+        let a = EmberFaceData.anchor
         context.translateBy(x: a.x, y: a.y)
         context.scaleBy(x: a.scale, y: a.scale)
-        context.translateBy(x: -MausFaceData.faceCentre.x, y: -MausFaceData.faceCentre.y)
+        context.translateBy(x: -EmberFaceData.faceCentre.x, y: -EmberFaceData.faceCentre.y)
 
         let gaze = displayedGaze()
         let ox = gaze.x * lookAround, oy = gaze.y * lookAround
@@ -553,14 +553,14 @@ final class MausFaceEngine {
         context.stroke(
             Self.mouthPath(frame, spec),
             with: .color(.white),
-            style: StrokeStyle(lineWidth: MausFaceData.mouthStroke, lineCap: .round)
+            style: StrokeStyle(lineWidth: EmberFaceData.mouthStroke, lineCap: .round)
         )
     }
 
     /// The desktop's `bodyTransform`, in face-box units, elapsed in ms.
-    private func bodyTransform(_ m: MausBodyMotion, elapsed: CGFloat) -> CGAffineTransform {
-        let centre = MausFaceData.faceBox / 2
-        let ground = MausFaceData.faceBox
+    private func bodyTransform(_ m: EmberBodyMotion, elapsed: CGFloat) -> CGAffineTransform {
+        let centre = EmberFaceData.faceBox / 2
+        let ground = EmberFaceData.faceBox
         func wave(_ period: CGFloat, _ phase: CGFloat = 0) -> CGFloat { sin(elapsed / period * .pi * 2 + phase) }
         var dx: CGFloat = 0, dy: CGFloat = 0
         var rotation = m.tilt ?? 0
@@ -692,7 +692,7 @@ struct ProfileAvatar: View {
 
     var body: some View {
         Circle()
-            .fill(MausPalette.color("green"))
+            .fill(EmberPalette.color("green"))
             .frame(width: size, height: size)
             .overlay {
                 Text(initial)
@@ -706,7 +706,7 @@ struct ProfileAvatar: View {
     }
 }
 
-extension MausPalette {
+extension EmberPalette {
     /// The gradient as raw stops, for `Canvas`, which cannot take a
     /// `LinearGradient` directly.
     static func gradientStops(_ name: String) -> [Gradient.Stop] {

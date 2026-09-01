@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "murage-composio",
-      "database_id": "435bcde1-c017-416f-b041-7ffc508e9d88",
+      "database_id": "7386c046-7c54-4301-b5e0-584dd9306a8e",
       "migrations_dir": "migrations"
     }
   ],

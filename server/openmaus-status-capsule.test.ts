@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { openMausStatusSystemPrompt, readOpenMausStatus } from "./openmaus-status-capsule.ts";
+import { openMurageStatusSystemPrompt, readMurageStatus } from "./murage-status-capsule.ts";
 import type { JsonObject, JsonValue } from "./schema.ts";
 
 const NOW = new Date("2026-08-22T06:30:00Z");
@@ -141,7 +141,7 @@ function failedCapsule(
 }
 
 function cachePath(capsule: TestCapsule): string {
-  const root = mkdtempSync(join(tmpdir(), "openmaus-status-"));
+  const root = mkdtempSync(join(tmpdir(), "murage-status-"));
   roots.push(root);
   const parent = join(root, "murage");
   mkdirSync(parent, { mode: 0o700 });
@@ -152,7 +152,7 @@ function cachePath(capsule: TestCapsule): string {
   return path;
 }
 
-posixOnly("readOpenMausStatus", () => {
+posixOnly("readMurageStatus", () => {
   it("projects only fresh normalized two-VM capability data", () => {
     const capsule = successCapsule();
     // Cross-language receipt produced by scripts/aos_murage_status.py
@@ -162,7 +162,7 @@ posixOnly("readOpenMausStatus", () => {
     );
     const path = cachePath(capsule);
 
-    const status = readOpenMausStatus({ cachePath: path, now: new Date(NOW.getTime() + 1_000) });
+    const status = readMurageStatus({ cachePath: path, now: new Date(NOW.getTime() + 1_000) });
 
     expect(status).toMatchObject({
       freshness: "fresh",
@@ -184,7 +184,7 @@ posixOnly("readOpenMausStatus", () => {
     expect(Object.keys(status.slots[0]).sort()).toEqual(
       ["container", "network", "persistence", "readiness", "security", "slot"],
     );
-    const prompt = openMausStatusSystemPrompt({ cachePath: path, now: new Date(NOW.getTime() + 1_000) });
+    const prompt = openMurageStatusSystemPrompt({ cachePath: path, now: new Date(NOW.getTime() + 1_000) });
     expect(prompt).toContain("freshness=fresh");
     expect(prompt).toContain("ui.two_up=true");
     expect(prompt).toContain(`source_sha256=${DUAL_VIEW_SHA}`);
@@ -202,7 +202,7 @@ posixOnly("readOpenMausStatus", () => {
   ])("turns %s state into unknown", (_label, source, expected, reason) => {
     const path = cachePath(failedCapsule(reason, source, expected));
 
-    const status = readOpenMausStatus({ cachePath: path, now: new Date(NOW.getTime() + 1_000) });
+    const status = readMurageStatus({ cachePath: path, now: new Date(NOW.getTime() + 1_000) });
 
     expect(status.freshness).toBe("fresh");
     expect(status.reason).toBe("refresh_failed");
@@ -219,7 +219,7 @@ posixOnly("readOpenMausStatus", () => {
       twoUp: false,
     }));
 
-    expect(readOpenMausStatus({ cachePath: path, now: NOW })).toMatchObject({
+    expect(readMurageStatus({ cachePath: path, now: NOW })).toMatchObject({
       freshness: "unknown",
       reason: "invalid",
       runtimeState: "unknown",
@@ -234,7 +234,7 @@ posixOnly("readOpenMausStatus", () => {
     capsule.max_instances = 1;
     const path = cachePath(sign(capsule));
 
-    const status = readOpenMausStatus({ cachePath: path, now: new Date(NOW.getTime() + 1_000) });
+    const status = readMurageStatus({ cachePath: path, now: new Date(NOW.getTime() + 1_000) });
 
     expect(status).toMatchObject({
       freshness: "fresh",
@@ -247,16 +247,16 @@ posixOnly("readOpenMausStatus", () => {
 
   it("turns stale, future-skewed, failed, and receipt-tampered state into unknown", () => {
     const path = cachePath(successCapsule());
-    expect(readOpenMausStatus({ cachePath: path, now: new Date("2026-08-22T06:35:00Z") })).toMatchObject({
+    expect(readMurageStatus({ cachePath: path, now: new Date("2026-08-22T06:35:00Z") })).toMatchObject({
       freshness: "stale", reason: "stale", runtimeState: "unknown", readyCount: 0,
       ui: { twoUp: false },
     });
-    expect(readOpenMausStatus({ cachePath: path, now: new Date("2026-08-22T06:29:59Z") })).toMatchObject({
+    expect(readMurageStatus({ cachePath: path, now: new Date("2026-08-22T06:29:59Z") })).toMatchObject({
       freshness: "unknown", reason: "clock_skew", runtimeState: "unknown", readyCount: 0,
     });
 
     const failurePath = cachePath(failedCapsule());
-    expect(readOpenMausStatus({ cachePath: failurePath, now: new Date(NOW.getTime() + 1_000) })).toMatchObject({
+    expect(readMurageStatus({ cachePath: failurePath, now: new Date(NOW.getTime() + 1_000) })).toMatchObject({
       freshness: "fresh", reason: "refresh_failed", runtimeState: "unknown", readyCount: 0,
       ui: { twoUp: false },
     });
@@ -264,7 +264,7 @@ posixOnly("readOpenMausStatus", () => {
     const tampered = successCapsule();
     tampered.ready_count = 1;
     const tamperedPath = cachePath(tampered);
-    expect(readOpenMausStatus({ cachePath: tamperedPath, now: new Date(NOW.getTime() + 1_000) })).toMatchObject({
+    expect(readMurageStatus({ cachePath: tamperedPath, now: new Date(NOW.getTime() + 1_000) })).toMatchObject({
       freshness: "unknown", reason: "invalid", runtimeState: "unknown", readyCount: 0,
     });
   });
@@ -273,30 +273,30 @@ posixOnly("readOpenMausStatus", () => {
     const extra = successCapsule();
     extra.viewer_url = "http://127.0.0.1:62001/private";
     const extraPath = cachePath(sign(extra));
-    expect(readOpenMausStatus({ cachePath: extraPath, now: NOW }).reason).toBe("invalid");
+    expect(readMurageStatus({ cachePath: extraPath, now: NOW }).reason).toBe("invalid");
 
     const insecurePath = cachePath(successCapsule());
     chmodSync(insecurePath, 0o644);
-    expect(readOpenMausStatus({ cachePath: insecurePath, now: NOW }).reason).toBe("missing_or_insecure");
+    expect(readMurageStatus({ cachePath: insecurePath, now: NOW }).reason).toBe("missing_or_insecure");
 
     const targetPath = cachePath(successCapsule());
     const linkPath = join(dirname(targetPath), "latest-link.json");
     symlinkSync(targetPath, linkPath);
-    expect(readOpenMausStatus({ cachePath: linkPath, now: NOW }).reason).toBe("missing_or_insecure");
+    expect(readMurageStatus({ cachePath: linkPath, now: NOW }).reason).toBe("missing_or_insecure");
   });
 
   it("rejects a non-0700 parent and a symlinked parent", () => {
     const looseParentPath = cachePath(successCapsule());
     chmodSync(dirname(looseParentPath), 0o755);
-    expect(readOpenMausStatus({ cachePath: looseParentPath, now: NOW }).reason).toBe("missing_or_insecure");
+    expect(readMurageStatus({ cachePath: looseParentPath, now: NOW }).reason).toBe("missing_or_insecure");
 
     const targetPath = cachePath(successCapsule());
-    const linkRoot = mkdtempSync(join(tmpdir(), "openmaus-status-parent-link-"));
+    const linkRoot = mkdtempSync(join(tmpdir(), "murage-status-parent-link-"));
     roots.push(linkRoot);
     const linkedParent = join(linkRoot, "murage");
     symlinkSync(dirname(targetPath), linkedParent, "dir");
     expect(
-      readOpenMausStatus({ cachePath: join(linkedParent, "latest.json"), now: NOW }).reason,
+      readMurageStatus({ cachePath: join(linkedParent, "latest.json"), now: NOW }).reason,
     ).toBe("missing_or_insecure");
   });
 });
@@ -305,7 +305,7 @@ it.skipIf(process.getuid !== undefined)(
   "fails closed when POSIX owner and mode checks are unavailable",
   () => {
     const path = cachePath(successCapsule());
-    expect(readOpenMausStatus({ cachePath: path, now: NOW })).toMatchObject({
+    expect(readMurageStatus({ cachePath: path, now: NOW })).toMatchObject({
       freshness: "unknown",
       reason: "missing_or_insecure",
       runtimeState: "unknown",
@@ -319,7 +319,7 @@ it.skipIf(process.getuid !== undefined)(
         defaultWatchOnly: false,
       },
     });
-    expect(openMausStatusSystemPrompt({ cachePath: path, now: NOW })).toContain(
+    expect(openMurageStatusSystemPrompt({ cachePath: path, now: NOW })).toContain(
       "runtime_state=unknown",
     );
   },

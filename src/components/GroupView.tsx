@@ -15,7 +15,7 @@ import {
   type GroupDefaultResponder,
   type Message,
 } from "@/state/store";
-import { MausAvatar } from "./Avatar";
+import { EmberAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { normalizeState } from "@/lib/mascot";
@@ -83,11 +83,11 @@ function RoomToolChip({ message }: { message: Message }) {
   );
 }
 
-/** 16px maus + name, shown once per sender cluster. */
+/** 16px ember + name, shown once per sender cluster. */
 function ClusterLabel({ bot, name, color }: { bot?: Bot; name: string; color: string }) {
   return (
     <div className="mt-1 flex items-center gap-1.5 pl-0.5">
-      <MausAvatar
+      <EmberAvatar
         color={(bot?.color ?? color) as Bot["color"]}
         state={normalizeState(bot?.mascotExpression) ?? "happy"}
         size={16}
@@ -709,7 +709,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
                             selected ? "bg-accent/10" : "hover:bg-raised",
                           )}
                         >
-                          <MausAvatar
+                          <EmberAvatar
                             color={member.color}
                             state={normalizeState(member.mascotExpression) ?? "happy"}
                             size={24}
@@ -1004,8 +1004,8 @@ export function GroupView({ group }: { group: Group }) {
     }
   };
 
-  // Static mauses: one per member, a ring + dot on whoever is working.
-  const memberMauses = members.map((b) => (
+  // Static embers: one per member, a ring + dot on whoever is working.
+  const memberEmbers = members.map((b) => (
     <span
       key={b.id}
       title={`${b.name}${group.busyBotId === b.id ? " — working…" : ""}`}
@@ -1014,7 +1014,7 @@ export function GroupView({ group }: { group: Group }) {
         group.busyBotId === b.id && "ring-2 ring-accent/50 ring-offset-1 ring-offset-app",
       )}
     >
-      <MausAvatar color={b.color} state={normalizeState(b.mascotExpression) ?? "happy"} size={24} animated={false} />
+      <EmberAvatar color={b.color} state={normalizeState(b.mascotExpression) ?? "happy"} size={24} animated={false} />
       {group.busyBotId === b.id && (
         <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full border border-app bg-accent" />
       )}
@@ -1027,7 +1027,7 @@ export function GroupView({ group }: { group: Group }) {
       {membersOpen && !group.dm && (
         <ManageMembersPanel group={group} onClose={closeMembers} triggerRef={membersTriggerRef} />
       )}
-      {/* Header: static member mauses; a ring + dot marks the working bot. */}
+      {/* Header: static member embers; a ring + dot marks the working bot. */}
       <div
         className={cn(
           "flex items-center justify-between px-5 py-3",
@@ -1057,7 +1057,7 @@ export function GroupView({ group }: { group: Group }) {
           {!setupPending && !group.dm && <RoomWorkingFolderChip group={group} onToggle={() => setFolderOpen((open) => !open)} />}
           {!setupPending && !group.dm && <DefaultResponderSelect group={group} members={members} />}
           {group.dm ? (
-            memberMauses
+            memberEmbers
           ) : (
             // The roster lives where you already look to see who is in the
             // room; a dashed + says the row is editable without shouting.
@@ -1069,7 +1069,7 @@ export function GroupView({ group }: { group: Group }) {
               aria-label={`Manage members — ${members.length} ${members.length === 1 ? "bot" : "bots"} in this channel`}
               className="flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-1.5 hover:bg-raised/60"
             >
-              {memberMauses}
+              {memberEmbers}
               <span className="flex size-[18px] items-center justify-center rounded-full border border-dashed border-hairline/70 text-ink-secondary">
                 <Plus size={11} />
               </span>
@@ -1199,7 +1199,7 @@ export function GroupView({ group }: { group: Group }) {
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
               <div className="flex -space-x-2">
                 {members.slice(0, 3).map((b) => (
-                  <MausAvatar
+                  <EmberAvatar
                     key={b.id}
                     color={b.color}
                     state="happy"
@@ -1247,7 +1247,7 @@ export function GroupView({ group }: { group: Group }) {
           {(speaker || presenceVisible) && (
             <TurnPresence
               avatar={
-                <MausAvatar
+                <EmberAvatar
                   color={presenceSpeaker?.color ?? "green"}
                   state={toolInFlight ? "working" : "thinking"}
                   size={36}

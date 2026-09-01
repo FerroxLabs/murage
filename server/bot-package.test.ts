@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { packageAgentAsMember, parseBotPackage, renderBotPackageMarkdown } from "./bot-package.ts";
 
 const validPackage: any = {
-  format: "openmaus.package",
+  format: "murage.package",
   version: 1,
   package: {
     id: "research-desk",

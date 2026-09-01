@@ -11,9 +11,9 @@ struct CompanionWelcomeView: View {
 
                 ZStack {
                     RoundedRectangle(cornerRadius: 32, style: .continuous)
-                        .fill(MausPalette.color("blue").opacity(0.12))
+                        .fill(EmberPalette.color("blue").opacity(0.12))
                         .frame(width: 148, height: 148)
-                    MausAvatar(color: "blue", size: 108, state: .happy, animated: false)
+                    EmberAvatar(color: "blue", size: 108, state: .happy, animated: false)
                         .accessibilityHidden(true)
                 }
 
@@ -54,7 +54,7 @@ struct CompanionWelcomeView: View {
         }
         .background {
             LinearGradient(
-                colors: [MausPalette.color("blue").opacity(0.10), Color.clear],
+                colors: [EmberPalette.color("blue").opacity(0.10), Color.clear],
                 startPoint: .top,
                 endPoint: .center
             )
@@ -90,7 +90,7 @@ private struct WelcomeBenefit: View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: icon)
                 .font(.title3)
-                .foregroundStyle(MausPalette.color("blue"))
+                .foregroundStyle(EmberPalette.color("blue"))
                 .frame(width: 30, height: 30)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
@@ -117,11 +117,11 @@ struct UnpairedHomeView: View {
 
                     ZStack {
                         Circle()
-                            .fill(MausPalette.color("blue").opacity(0.12))
+                            .fill(EmberPalette.color("blue").opacity(0.12))
                             .frame(width: 112, height: 112)
                         Image(systemName: "laptopcomputer.and.iphone")
                             .font(.system(size: 42, weight: .medium))
-                            .foregroundStyle(MausPalette.color("blue"))
+                            .foregroundStyle(EmberPalette.color("blue"))
                     }
                     .accessibilityHidden(true)
 
@@ -183,11 +183,11 @@ struct NotificationOnboardingView: View {
 
                 ZStack {
                     RoundedRectangle(cornerRadius: 30, style: .continuous)
-                        .fill(MausPalette.color("green").opacity(0.12))
+                        .fill(EmberPalette.color("green").opacity(0.12))
                         .frame(width: 132, height: 132)
                     Image(systemName: "bell.badge.fill")
                         .font(.system(size: 48, weight: .medium))
-                        .foregroundStyle(MausPalette.color("green"))
+                        .foregroundStyle(EmberPalette.color("green"))
                 }
                 .accessibilityHidden(true)
 

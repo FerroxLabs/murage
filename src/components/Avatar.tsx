@@ -1,9 +1,9 @@
-// Bot avatar — the Blob Studio "Cursor" mascot (CursorAvatar.tsx), wrapped
-// in the app's historical MausAvatar API so no call site changes: per-bot
+// Bot avatar — the Ember mascot (EmberAvatar.tsx), wrapped
+// in the app's Avatar API so no call site changes: per-bot
 // color becomes a body gradient, the app's one-shot motion beats borrow the
 // face/state for a moment, and the eyes follow the pointer. The previous
-// hand-built Maus body + face engine (maus-engine/face/driver) is gone;
-// CursorAvatar owns morphing, blinking, drift, body motion and effects.
+// hand-built Ember body + face engine (ember-engine/face/driver) is gone;
+// EmberAvatar owns morphing, blinking, drift, body motion and effects.
 import {
   forwardRef,
   memo,
@@ -13,13 +13,13 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { MAUS_COLORS, type MausColor, type MausMotion, type MausState } from "@/lib/mascot";
+import { EMBER_COLORS, type EmberColor, type EmberMotion, type EmberState } from "@/lib/mascot";
 import {
-  CursorAvatar,
+  EmberAvatar,
   DEFAULT_SILHOUETTE,
-  type CursorAvatarHandle,
-  type CursorSilhouette,
-} from "./CursorAvatar";
+  type EmberAvatarHandle,
+  type EmberSilhouette,
+} from "./EmberAvatar";
 import { botAvatarProfile, type BotAvatarCrop } from "../../shared/bot-avatar";
 
 /**
@@ -28,7 +28,7 @@ import { botAvatarProfile, type BotAvatarCrop } from "../../shared/bot-avatar";
  * substitutes, which painted every bot the same. Restore the slot so the
  * per-bot gradient actually lands on the body.
  */
-const GRADIENT_SILHOUETTE: CursorSilhouette = {
+const GRADIENT_SILHOUETTE: EmberSilhouette = {
   ...DEFAULT_SILHOUETTE,
   body: DEFAULT_SILHOUETTE.body.replace(/fill="#000000"/g, 'fill="{{GRADIENT}}"'),
 };
@@ -43,12 +43,12 @@ export const MOUTH_WEIGHT = 11;
 const POINTER_GAZE = { forward: 1, authored: 0.25 };
 
 /**
- * What a one-shot motion does while it plays: CursorAvatar animates the body
+ * What a one-shot motion does while it plays: EmberAvatar animates the body
  * per state, so borrowing the state for a beat moves body and face together.
  */
 interface MotionFaces
   extends Partial<
-    Record<Exclude<MausMotion, "none">, { state?: MausState; blink?: boolean; spin?: number }>
+    Record<Exclude<EmberMotion, "none">, { state?: EmberState; blink?: boolean; spin?: number }>
   > {}
 
 const MOTION_FACE: MotionFaces = {
@@ -88,22 +88,22 @@ function mix(hex: string, toward: string, t: number): string {
  * shadow), with the same light/dark spread as the pack's default green
  * ["#9FE6B5", "#3FAE6E", "#1C7A4C"].
  */
-const gradientFor = (color: MausColor): [string, string, string] => {
-  const fill = MAUS_COLORS[color] ?? MAUS_COLORS.green;
+const gradientFor = (color: EmberColor): [string, string, string] => {
+  const fill = EMBER_COLORS[color] ?? EMBER_COLORS.green;
   return [mix(fill, "#ffffff", 0.55), fill, mix(fill, "#000000", 0.42)];
 };
 
-export type MausAvatarHandle = CursorAvatarHandle;
+export type EmberAvatarHandle = EmberAvatarHandle;
 
-export type MausAvatarProps = {
-  color: MausColor;
+export type EmberAvatarProps = {
+  color: EmberColor;
   /** Named behaviour — drives the expression pool, its cadence and blinking. */
-  state?: MausState;
+  state?: EmberState;
   /** Pin one of the 25 faces and stop the state's own drift. */
   expression?: number;
   size?: number;
   label?: string;
-  motion?: MausMotion;
+  motion?: EmberMotion;
   motionKey?: number;
   /** Head turn in degrees. */
   turn?: number;
@@ -125,7 +125,7 @@ export type MausAvatarProps = {
   animated?: boolean;
 };
 
-function MausAvatarComponent(
+function EmberAvatarComponent(
   {
     color,
     state = "idle",
@@ -144,10 +144,10 @@ function MausAvatarComponent(
     lookAround,
     trackPointer = true,
     animated = true,
-  }: MausAvatarProps,
-  ref: React.Ref<MausAvatarHandle>,
+  }: EmberAvatarProps,
+  ref: React.Ref<EmberAvatarHandle>,
 ) {
-  const inner = useRef<CursorAvatarHandle>(null);
+  const inner = useRef<EmberAvatarHandle>(null);
   useImperativeHandle(ref, () => ({
     blink: () => inner.current?.blink(),
     spin: (durationMs?: number) => inner.current?.spin(durationMs),
@@ -155,7 +155,7 @@ function MausAvatarComponent(
   }));
 
   // A one-shot motion borrows the state for a moment, then hands it back.
-  const [motionState, setMotionState] = useState<MausState | null>(null);
+  const [motionState, setMotionState] = useState<EmberState | null>(null);
   useEffect(() => {
     if (motion === "none" || !animated) return;
     const beat = MOTION_FACE[motion];
@@ -187,7 +187,7 @@ function MausAvatarComponent(
       onPointerMove={trackPointer && animated ? onPointerMove : undefined}
       onPointerLeave={trackPointer && animated ? onPointerLeave : undefined}
     >
-      <CursorAvatar
+      <EmberAvatar
         ref={inner}
         state={motionState ?? state}
         expression={expression}
@@ -208,12 +208,12 @@ function MausAvatarComponent(
   );
 }
 
-export const MausAvatar = memo(forwardRef(MausAvatarComponent));
+export const EmberAvatar = memo(forwardRef(EmberAvatarComponent));
 
-export type BotAvatarProps = Omit<MausAvatarProps, "color"> & {
+export type BotAvatarProps = Omit<EmberAvatarProps, "color"> & {
   bot: {
     name?: string;
-    color: MausColor;
+    color: EmberColor;
     avatarUrl?: string | null;
     avatarCrop?: BotAvatarCrop;
   };
@@ -232,7 +232,7 @@ export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarPr
 
   if (profile.avatarCrop === "mascot" || !profile.avatarUrl || imageFailed) {
     return (
-      <MausAvatar
+      <EmberAvatar
         {...mascotProps}
         color={bot.color}
         size={size}

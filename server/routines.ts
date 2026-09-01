@@ -13,10 +13,10 @@ export type RoutineSchedule =
   | { type: "once"; at: number }
   | { type: "daily"; time: string; weekdays: number[] };
 
-/** `cloud` runs the agent itself inside the bot's Box VM. `maus` keeps
- * using the provider selected on the MAUS and only borrows its configured
+/** `cloud` runs the agent itself inside the bot's Box VM. `ember` keeps
+ * using the provider selected on the EMBER and only borrows its configured
  * computer tools, if any. */
-export type RoutineRunOn = "maus" | "cloud";
+export type RoutineRunOn = "ember" | "cloud";
 
 export interface RoutineContextAttachment {
   id: string;
@@ -302,8 +302,8 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
   if (!name) throw new Error("Give the routine a name");
   if (!prompt) throw new Error("Tell the bot what to do");
   if (!botId) throw new Error("Choose a bot");
-  const runOn = input.runOn ?? "maus";
-  if (runOn !== "maus" && runOn !== "cloud") throw new Error("Choose where this routine runs");
+  const runOn = input.runOn ?? "ember";
+  if (runOn !== "ember" && runOn !== "cloud") throw new Error("Choose where this routine runs");
   const attachments = cleanAttachments(input.attachments);
   if (runOn === "cloud" && attachments.length > 0) {
     throw new Error("Attachments can only run on this computer until cloud file staging is available");
@@ -339,7 +339,7 @@ export class RoutineManager {
       this.routines = Array.isArray(disk.routines)
         ? disk.routines.map((routine) => ({
             ...routine,
-            runOn: routine.runOn ?? "maus",
+            runOn: routine.runOn ?? "ember",
             attachments: loadAttachments(routine.attachments),
             sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
           }))
@@ -347,7 +347,7 @@ export class RoutineManager {
       this.runs = Array.isArray(disk.runs)
         ? disk.runs.map((run) => ({
             ...run,
-            runOn: run.runOn ?? "maus",
+            runOn: run.runOn ?? "ember",
             attachments: loadAttachments(run.attachments),
             sourceThreadId: persistedSourceThreadId.parse(run.sourceThreadId),
           }))
@@ -592,7 +592,7 @@ export class RoutineManager {
       run.finishedAt = this.now();
       run.error = "The assigned bot was deleted";
       this.emitRun(run);
-      if (run.threadId) void this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "maus").catch(() => {});
+      if (run.threadId) void this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "ember").catch(() => {});
       changed = true;
     }
     if (changed) this.save();
@@ -635,7 +635,7 @@ export class RoutineManager {
     receivedAt: number;
   }): RoutineRun {
     if (this.options.botState(input.botId) === "missing") {
-      throw Object.assign(new Error("The assigned MAUS no longer exists"), { status: 410 });
+      throw Object.assign(new Error("The assigned EMBER no longer exists"), { status: 410 });
     }
     const run: RoutineRun = {
       id: randomUUID(),
@@ -689,7 +689,7 @@ export class RoutineManager {
     run.finishedAt = this.now();
     this.save();
     this.emitRun(run);
-    if (run.threadId) await this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "maus").catch(() => {});
+    if (run.threadId) await this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "ember").catch(() => {});
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
   }
@@ -780,7 +780,7 @@ export class RoutineManager {
             run.botId,
             task.threadId,
             composeExecutionPrompt(prompt, run.attachments),
-            run.runOn ?? "maus",
+            run.runOn ?? "ember",
             triggerSource,
             (message) => this.failThread(task.threadId, message),
           );
@@ -868,7 +868,7 @@ export class RoutineManager {
       durationMinutes: routine.durationMinutes,
       attachments: cloneAttachments(routine.attachments),
       botId: routine.botId,
-      runOn: routine.runOn ?? "maus",
+      runOn: routine.runOn ?? "ember",
       scheduledFor,
       status: "queued",
       manual,

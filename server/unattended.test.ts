@@ -146,7 +146,7 @@ posixOnly("unattended turns keep asking", () => {
         name: "Nightly build",
         prompt: "Handle the incoming build event",
         botId: bot.id,
-        runOn: "maus",
+        runOn: "ember",
       });
       expect(hook.status).toBe(201);
 
@@ -192,7 +192,7 @@ posixOnly("unattended turns keep asking", () => {
         name: "Handoff",
         prompt: "Ask the Teammate to handle this",
         botId: delegator.id,
-        runOn: "maus",
+        runOn: "ember",
       });
       expect(hook.status).toBe(201);
 
@@ -250,7 +250,7 @@ posixOnly("unattended turns keep asking", () => {
         name: "Ask a teammate",
         prompt: "Ask the Answerer what to do about this",
         botId: asker.id,
-        runOn: "maus",
+        runOn: "ember",
       });
       expect(hook.status).toBe(201);
       const delivered = await fetch(hook.body.credential.url, {

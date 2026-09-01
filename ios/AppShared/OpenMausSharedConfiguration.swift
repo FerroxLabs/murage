@@ -5,10 +5,10 @@ import Foundation
 /// Keep the group identifier in one source file rather than repeating it in
 /// the app and extension. The matching capabilities still live in the Xcode
 /// project, where iOS verifies them against the provisioning profile.
-enum OpenMausSharedConfiguration {
+enum MurageSharedConfiguration {
     static let appGroupIdentifier = "group.com.murage.shared"
     static let legacyAppBundleIdentifier = "com.murage.app"
-    static let keychainAccessGroupInfoKey = "OpenMausKeychainAccessGroup"
+    static let keychainAccessGroupInfoKey = "MurageKeychainAccessGroup"
 
     /// The shared suite can be unavailable in unsigned previews and local
     /// tests. Callers which need compatibility with an already-installed app

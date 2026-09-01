@@ -17,13 +17,13 @@ struct OpenMausConnectionRegistryResolution: Equatable {
 
 /// Non-secret pairing metadata shared with extensions.
 ///
-/// Tokens never enter defaults; they live in `OpenMausSharedKeychain`. The
+/// Tokens never enter defaults; they live in `MurageSharedKeychain`. The
 /// standard suite is dual-written as a compatibility fallback so an unsigned
 /// preview or a temporary App Group entitlement mistake cannot erase the
 /// non-secret connection list. Pairing tokens intentionally migrate forward
 /// into the shared Keychain group; downgrading across that migration may
 /// require pairing again.
-enum OpenMausSharedConnectionStore {
+enum MurageSharedConnectionStore {
     static let registryKey = "companion.connections.v1"
     static let legacyConnectionKey = "companion.connection"
 
@@ -66,7 +66,7 @@ enum OpenMausSharedConnectionStore {
     /// Load the registry, preferring the app-group copy and migrating older
     /// app-only storage into it on first use.
     static func loadRegistry(
-        sharedDefaults: UserDefaults? = OpenMausSharedConfiguration.sharedDefaults,
+        sharedDefaults: UserDefaults? = MurageSharedConfiguration.sharedDefaults,
         fallbackDefaults: UserDefaults = .standard
     ) -> CompanionConnectionRegistry {
         let resolution = resolve(
@@ -85,7 +85,7 @@ enum OpenMausSharedConnectionStore {
     }
 
     static func loadActiveConnection(
-        sharedDefaults: UserDefaults? = OpenMausSharedConfiguration.sharedDefaults,
+        sharedDefaults: UserDefaults? = MurageSharedConfiguration.sharedDefaults,
         fallbackDefaults: UserDefaults = .standard
     ) -> Connection? {
         loadRegistry(
@@ -96,7 +96,7 @@ enum OpenMausSharedConnectionStore {
 
     static func saveRegistry(
         _ registry: CompanionConnectionRegistry,
-        sharedDefaults: UserDefaults? = OpenMausSharedConfiguration.sharedDefaults,
+        sharedDefaults: UserDefaults? = MurageSharedConfiguration.sharedDefaults,
         fallbackDefaults: UserDefaults = .standard
     ) {
         guard !registry.connections.isEmpty else {

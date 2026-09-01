@@ -12,7 +12,7 @@ import {
 
 const folders: string[] = [];
 const journal = () => {
-  const folder = mkdtempSync(join(tmpdir(), "openmaus-browser-cleanup-"));
+  const folder = mkdtempSync(join(tmpdir(), "murage-browser-cleanup-"));
   folders.push(folder);
   return join(folder, "browser-cleanups.json");
 };

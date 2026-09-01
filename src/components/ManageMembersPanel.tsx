@@ -1,5 +1,5 @@
 // Edit an existing room's roster: the same picker "New Room" uses, opened
-// from the member mauses in the room header and pre-ticked with who is
+// from the member embers in the room header and pre-ticked with who is
 // already in. Membership is the only thing this touches — the transcript
 // keeps every message a departing bot already sent.
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";

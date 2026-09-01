@@ -1,0 +1,7 @@
+[2026-09-01T05:50:11.766Z] start: host=claude-code, reason=session_end, project=/Volumes/Mando/WaylandBots/murage-app/cloudflare/composio-broker
+[2026-09-01T05:50:11.767Z] journal: 1 entries across 1 sessions
+[2026-09-01T05:50:11.784Z] tier-promotion: db open skipped (Cannot find package 'better-sqlite3' imported from /Users/seandonahoe/.ijfw/mcp-server/src/memory/fts5.js)
+[2026-09-01T05:50:11.786Z] wiki-compile: db open skipped (Cannot find package 'better-sqlite3' imported from /Users/seandonahoe/.ijfw/mcp-server/src/memory/fts5.js)
+[2026-09-01T05:50:11.976Z] profile_derive: merged delta (style=1 feedback=0 inferences=0)
+[2026-09-01T05:50:11.978Z] mark-completed: ok
+[2026-09-01T05:50:11.979Z] end: completed=5 failed=0

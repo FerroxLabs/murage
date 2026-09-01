@@ -10,7 +10,7 @@ import {
 } from "./team-library.ts";
 
 const manifest = {
-  format: "openmaus.team",
+  format: "murage.team",
   version: 2,
   team: {
     name: "Engineering",
@@ -27,7 +27,7 @@ const manifest = {
 };
 
 const catalog = {
-  format: "openmaus.catalog",
+  format: "murage.catalog",
   version: 1,
   teams: [
     {
@@ -35,7 +35,7 @@ const catalog = {
       name: "Engineering Team",
       summary: "Plan and ship software.",
       category: "Engineering",
-      manifest: "teams/engineering/team.mausteam.json",
+      manifest: "teams/engineering/team.emberteam.json",
       readme: "teams/engineering/README.md",
       members: 1,
       skills: ["teams/engineering/skills/release/SKILL.md"],
@@ -66,12 +66,12 @@ describe("team library", () => {
     const fetcher = vi.fn(async (url: string | URL | Request) => {
       const target = String(url);
       if (target === TEAM_LIBRARY_CATALOG_URL) return response(catalog);
-      if (target === `${TEAM_LIBRARY_RAW_ROOT}/teams/engineering/team.mausteam.json`) return response(manifest);
+      if (target === `${TEAM_LIBRARY_RAW_ROOT}/teams/engineering/team.emberteam.json`) return response(manifest);
       return response({}, 404);
     }) as unknown as typeof fetch;
 
     const loaded = await fetchLibraryTeam("engineering", fetcher);
-    if (loaded.format !== "openmaus.team") throw new Error("expected a legacy team");
+    if (loaded.format !== "murage.team") throw new Error("expected a legacy team");
     expect(loaded.team.name).toBe("Engineering");
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
@@ -80,16 +80,16 @@ describe("team library", () => {
     expect(githubManifestUrls("https://github.com/acme/team")).toEqual([
       "https://raw.githubusercontent.com/acme/team/main/botmrr.md",
       "https://raw.githubusercontent.com/acme/team/main/team.md",
-      "https://raw.githubusercontent.com/acme/team/main/team.mausteam.json",
+      "https://raw.githubusercontent.com/acme/team/main/team.emberteam.json",
       "https://raw.githubusercontent.com/acme/team/master/botmrr.md",
       "https://raw.githubusercontent.com/acme/team/master/team.md",
-      "https://raw.githubusercontent.com/acme/team/master/team.mausteam.json",
+      "https://raw.githubusercontent.com/acme/team/master/team.emberteam.json",
     ]);
-    expect(githubManifestUrls("https://github.com/acme/team/blob/main/presets/seo.mausteam.json")).toEqual([
-      "https://raw.githubusercontent.com/acme/team/main/presets/seo.mausteam.json",
+    expect(githubManifestUrls("https://github.com/acme/team/blob/main/presets/seo.emberteam.json")).toEqual([
+      "https://raw.githubusercontent.com/acme/team/main/presets/seo.emberteam.json",
     ]);
-    expect(githubManifestUrls("https://raw.githubusercontent.com/acme/team/main/team.mausteam.json")).toEqual([
-      "https://raw.githubusercontent.com/acme/team/main/team.mausteam.json",
+    expect(githubManifestUrls("https://raw.githubusercontent.com/acme/team/main/team.emberteam.json")).toEqual([
+      "https://raw.githubusercontent.com/acme/team/main/team.emberteam.json",
     ]);
     expect(() => githubManifestUrls("http://example.com/team.json")).toThrow("public HTTPS GitHub");
     expect(() => githubManifestUrls("https://github.com/acme/team/blob/main/run.sh")).toThrow("Markdown playbook");
@@ -97,13 +97,13 @@ describe("team library", () => {
 
   it("falls back from main to master for a repository link", async () => {
     const fetcher = vi.fn(async (url: string | URL | Request) =>
-      String(url).endsWith("team.mausteam.json") && String(url).includes("/master/")
+      String(url).endsWith("team.emberteam.json") && String(url).includes("/master/")
         ? response(manifest)
         : response({}, 404),
     ) as unknown as typeof fetch;
 
     const loaded = await fetchGithubTeam("https://github.com/acme/team", fetcher);
-    if (loaded.format !== "openmaus.team") throw new Error("expected a legacy team");
+    if (loaded.format !== "murage.team") throw new Error("expected a legacy team");
     expect(loaded.team.members[0]?.name).toBe("Ada");
     expect(fetcher).toHaveBeenCalledTimes(6);
   });

@@ -88,13 +88,13 @@ enum ShareItemLoader {
             throw ShareItemLoadingError.nothingSupported
         }
         guard providers.count <= maximumItems else { throw ShareItemLoadingError.tooManyItems }
-        OpenMausSharedInbox.removeDirectories(olderThan: 0)
+        MurageSharedInbox.removeDirectories(olderThan: 0)
         guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: OpenMausSharedConfiguration.appGroupIdentifier
+            forSecurityApplicationGroupIdentifier: MurageSharedConfiguration.appGroupIdentifier
         ) else { throw ShareItemLoadingError.appGroupUnavailable }
 
         let inboxRoot = container.appendingPathComponent(
-            OpenMausSharedInbox.directoryName,
+            MurageSharedInbox.directoryName,
             isDirectory: true
         )
         let inbox = inboxRoot

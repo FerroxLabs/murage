@@ -15,7 +15,7 @@ import {
   type ComposerSendSnapshot,
   type FailedComposerSend,
 } from "@/lib/drafts";
-import { MausAvatar } from "./Avatar";
+import { EmberAvatar } from "./Avatar";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import {
@@ -634,7 +634,7 @@ export function Composer({
                 )}
               >
                 {peer.bot ? (
-                  <MausAvatar
+                  <EmberAvatar
                     color={peer.bot.color}
                     state={normalizeState(peer.bot.mascotExpression) ?? "happy"}
                     size={24}

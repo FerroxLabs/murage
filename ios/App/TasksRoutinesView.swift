@@ -213,7 +213,7 @@ private struct RoutineEditorView: View {
         _name = State(initialValue: routine?.name ?? "")
         _prompt = State(initialValue: routine?.prompt ?? "")
         _botId = State(initialValue: routine?.botId ?? "")
-        _runOn = State(initialValue: routine?.runLocation ?? .maus)
+        _runOn = State(initialValue: routine?.runLocation ?? .ember)
         _runAvailability = State(initialValue: nil)
         _availabilityLoaded = State(initialValue: false)
         _kind = State(initialValue: routine?.schedule.type ?? .daily)
@@ -241,7 +241,7 @@ private struct RoutineEditorView: View {
                 Section {
                     Picker("Run location", selection: $runOn) {
                         Label("This computer", systemImage: "laptopcomputer")
-                            .tag(RoutineRunLocation.maus)
+                            .tag(RoutineRunLocation.ember)
                         Label("Cloud VM", systemImage: "cloud")
                             .tag(RoutineRunLocation.cloud)
                             .selectionDisabled(!cloudSelectable)
@@ -257,7 +257,7 @@ private struct RoutineEditorView: View {
                 } header: {
                     Text("Where does it run?")
                 } footer: {
-                    if runOn == .maus {
+                    if runOn == .ember {
                         Text("Uses this agent's selected model and computer setting on the paired computer.")
                     } else if runAvailability?.cloudReady == true {
                         Text("Runs the agent and its tools inside its Box virtual machine. The VM wakes automatically for each run; keep Murage running so its scheduler can launch the job.")
@@ -356,7 +356,7 @@ private struct RoutineEditorView: View {
 private extension RoutineRunLocation {
     var label: String {
         switch self {
-        case .maus: "This computer"
+        case .ember: "This computer"
         case .cloud: "Cloud VM"
         }
     }

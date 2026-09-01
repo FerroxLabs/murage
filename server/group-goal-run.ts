@@ -3,8 +3,8 @@ import type { GroupDefaultResponder } from "./store.ts";
 // Odd by design: coordinator/worker alternation must always leave the final
 // bounded turn to the coordinator for an honest completion decision.
 export const GROUP_GOAL_MAX_TURNS = 13;
-export const GROUP_GOAL_CONTROL_OPEN = "<openmaus-goal>";
-export const GROUP_GOAL_CONTROL_CLOSE = "</openmaus-goal>";
+export const GROUP_GOAL_CONTROL_OPEN = "<murage-goal>";
+export const GROUP_GOAL_CONTROL_CLOSE = "</murage-goal>";
 
 export type GroupGoalDecision =
   | { status: "continue"; next: string; instruction: string; detail?: string }
@@ -152,7 +152,7 @@ export function groupGoalWorkerInstructions(args: {
     `Your assignment: ${args.assignment}`,
     `This is team turn ${args.turn} of ${args.maxTurns}.`,
     "Do the assigned work now and put concrete results, evidence, or a clear blocker in your reply.",
-    `Address your result to ${args.coordinatorName}. Do not invent a new orchestration protocol or emit an openmaus-goal control envelope.`,
+    `Address your result to ${args.coordinatorName}. Do not invent a new orchestration protocol or emit an murage-goal control envelope.`,
   ].join("\n");
 }
 

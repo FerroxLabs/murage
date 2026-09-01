@@ -105,7 +105,7 @@ export function createBotPackageExport(input: {
     }];
   });
 
-  const id = portableKey(input.name, "openmaus-package", new Set());
+  const id = portableKey(input.name, "murage-package", new Set());
   const agents: BotPackageDefinition["agents"] = bots.map((bot) => {
     const appearance: BotPackageDefinition["agents"][number]["appearance"] = { color: bot.color };
     if (bot.mascotExpression) appearance.mascotExpression = bot.mascotExpression;
@@ -140,7 +140,7 @@ export function createBotPackageExport(input: {
   if (routines.length) definition.routines = routines;
   if (playbooks.length) definition.playbooks = playbooks;
   return parseBotPackage({
-    format: "openmaus.package",
+    format: "murage.package",
     version: 1,
     package: definition,
   });

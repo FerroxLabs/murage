@@ -102,7 +102,7 @@ function describeWindowsSandboxAcls(records, executable, repairedFiles) {
 function prepareWindowsElectronSandbox(executable) {
   if (process.platform !== "win32") return "not applicable on this platform";
   const aclRoot = pathWin32.dirname(executable);
-  const diagnosticDir = mkdtempSync(join(tmpdir(), "openmaus-electron-acl-"));
+  const diagnosticDir = mkdtempSync(join(tmpdir(), "murage-electron-acl-"));
   const beforeAclFile = join(diagnosticDir, "before.acl");
   const afterAclFile = join(diagnosticDir, "after.acl");
   try {
@@ -189,7 +189,7 @@ it.runIf(canRunRealElectronFixture)("protects closed-shadow values and revalidat
     ? ["-a", electron, "--no-sandbox", fixture]
     : [fixture];
   const diagnosticDir = process.platform === "win32"
-    ? mkdtempSync(join(tmpdir(), "openmaus-electron-log-"))
+    ? mkdtempSync(join(tmpdir(), "murage-electron-log-"))
     : null;
   const chromiumLogFile = diagnosticDir ? join(diagnosticDir, "chromium.log") : null;
   const childEnv = { ...process.env };
