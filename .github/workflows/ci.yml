@@ -145,27 +145,3 @@ jobs:
           if-no-files-found: warn
           include-hidden-files: true
           retention-days: 7
-
-  ios:
-    name: Swift tests + iOS build
-    runs-on: macos-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Swift package tests
-        run: swift test --package-path ios
-      - name: Generate the Xcode project
-        run: |
-          brew install xcodegen
-          cd ios
-          xcodegen generate
-      - name: Build the simulator app
-        run: |
-          cd ios
-          xcodebuild \
-            -project MurageCompanion.xcodeproj \
-            -scheme MurageCompanion \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO \
-            build

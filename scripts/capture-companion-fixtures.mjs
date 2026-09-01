@@ -1,14 +1,19 @@
 #!/usr/bin/env node
-// Capture the iOS test fixtures from a real harness.
+// Capture the companion wire fixtures from a real harness.
 //
 //   node scripts/capture-companion-fixtures.mjs
 //
-// The fixtures in ios/Tests/CompanionCoreTests/Fixtures are bytes the server
-// actually sent. That is the whole point of them: hand-written test JSON
-// tests our idea of the API, and the entire risk in a two-language client is
-// that our idea drifts from the API without anything failing. Re-running this
-// after a server change makes the Swift tests fail if a payload moved, which
-// is the alarm we want.
+// The fixtures in companion/test/fixtures are bytes the server actually sent.
+// That is the whole point of them: hand-written test JSON tests our idea of
+// the API, and the entire risk in a separately-written client is that our idea
+// drifts from the API without anything failing. Re-running this after a server
+// change makes a test fail if a payload moved, which is the alarm we want.
+//
+// These used to live under ios/Tests/CompanionCoreTests/Fixtures and feed the
+// Swift client's tests. That client is retired; the sidecar is now the only
+// thing standing between the harness and any client, so the fixtures live with
+// it. The last Swift-era capture is archived at
+// docs/ios-companion-archive/CompanionCoreTests/Fixtures/ for comparison.
 //
 // Everything is disposable. A harness is started against a temporary HOME
 // with a fabricated profile, so nothing here reads or writes your real
@@ -25,7 +30,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = join(ROOT, "ios", "Tests", "CompanionCoreTests", "Fixtures");
+const OUT = join(ROOT, "companion", "test", "fixtures");
 
 const base = 19100 + Math.floor(Math.random() * 3000);
 const HARNESS_PORT = base;

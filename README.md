@@ -121,7 +121,7 @@ Your Embers get those tools automatically. Ask one to go through your inbox and 
 
 **Computers.** Give an Ember a sandboxed machine, or your own desktop, or a VPS. It clicks things.
 
-**Your phone.** The iOS companion puts the roster in your pocket. Share a link or a file straight to an Ember from anywhere.
+**Your phone.** On the roadmap. The plan is a browser you point at your own machine over Tailscale — the roster in your pocket, no app store in the middle. The iOS companion that used to fill this slot was retired before it ever shipped.
 
 **Teams.** Point a group of Embers at a goal, cap the rounds so it can't run away, and let them work it out between them.
 
