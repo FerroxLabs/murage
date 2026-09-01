@@ -18,6 +18,23 @@ carrying the Wayland teams/skills library.
 "Once" is the point: one audit pass after execution, then stop. Do not loop on Mediums and Lows —
 log them as follow-ups and move to the next item. This is what stops an audit spiral eating the night.
 
+## BACKGROUND WORK STILL RUNNING AT HANDOFF
+
+| What | Where |
+|---|---|
+| Master-plan agent (11th of the planning swarm) | writes `MURAGE-UNIVERSAL-CLIENT-PLAN.md` to the scratchpad below |
+
+**Scratchpad** (ephemeral — copy anything valuable into the repo):
+`/private/tmp/claude-501/-Volumes-Mando-WaylandBots/4536dffe-6a1e-4570-b329-01008562e207/scratchpad/`
+
+Workflow run ids, for `Workflow({scriptPath, resumeFromRunId})`:
+- planning swarm `wf_80de03f5-c76` — 5 plans + 5 audits done, master plan running
+- upstream port `wf_c1c78727-d07` — complete, merged
+- PWA precedent research `wf_1f0e0bf0-2e9` · CoS research `wf_3a5c06f1-a22` · Android brief `wf_ef508d1e-052`
+
+**When the master plan lands:** `cp` it into `docs/plans/universal-client/` and commit. It is told to
+resolve every audit finding above, so if it contradicts one, trust the audit — the audits ran the code.
+
 ## AUTONOMY BOUNDARIES while he sleeps
 
 **Do freely:** write code on branches, run tests, run workflows, commit to feature branches, write
@@ -38,27 +55,17 @@ approved step 1.
 
 ## START HERE — the overnight queue, in order
 
-### 0. Land the upstream port  ← in flight
+### 0. Land the upstream port  — **DONE, merged to `main`, pushed** (`294f833a`)
 
-Branch `upstream-apply-test` holds five commits on top of `a3154a62`:
+Five commits from upstream plus one fixing the three High findings its audit raised. Audit verdict
+**SOUND_WITH_CHANGES, no Critical, 8/8 mutations caught** — including reverting the vendored updater
+bundle to upstream's behaviour, which was the stated risk. The auditor also re-ran the bundler and got
+a byte-identical artifact, so the committed vendor file is genuinely generated, not hand-edited.
 
-| | |
-|---|---|
-| `f7c0d815` | fix(linux): keep updates from breaking Ubuntu installs — **the release blocker** |
-| `e93a8f62` | build(release): unify downloads + automate changelog |
-| `17f3c905` | channel follow-ups queue in the harness, not the composer |
-| `4b71b204` | browser observations stop overclaiming coverage |
-| `aa360d39` | injected browser bundle and surface agree on one global |
-
-**Suite: 2,982 pass / 1 fail** — the fail is `control-murage`, environment-dependent (a real `qwen`
-on PATH; the test hardcodes `["claude"]`). Pre-existing, green in CI. Both typechecks clean,
-`electron-builder.yml` validates against `app-builder-lib/scheme.json`.
-
-Bug-fix chain audit: **WORKS**. Linux/release chain audit: **was running at handoff** (agent
-`ad29f736f93cdb239`) — its original audit never fired because the workflow could not create a
-worktree, and the workflow still reported "completed". **Read that verdict before merging.**
-
-Then: merge to `main`, push, delete the branch.
+Not yet proven, and it needs a real Linux box: that `sudo apt-get install '<quoted .deb>'` installs on
+clean Ubuntu 24.04 and resolves the `libgtk-3-0t64` virtual-Provides chain, and that a real
+differential AppImage download leaves exactly one file at the launched path. Everything else was
+proven by mutation on this filesystem.
 
 ### 1. Chief of Staff hierarchy  — plan done, audit pending
 
@@ -135,6 +142,86 @@ Recommendation in the plan: systemd on a box you own, not Docker.
 **One real question for Sean, flagged not buried:** whether running a *subscription* CLI unattended
 on a cloud box is within Anthropic's Consumer Terms. Flux/BYOK has no such ambiguity. He should read
 the terms before making the cloud box a subscription workhorse.
+
+---
+
+## PLAN AUDITS — all five landed. **Read this before building anything.**
+
+Verdicts: **4 SOUND_WITH_CHANGES, 1 BROKEN.** The audits ran the code rather than reading it, and
+several critical findings contradict their own plan. The master-plan agent (11th in the swarm) was
+still running at handoff; when it lands, **copy it out of the scratchpad into
+`docs/plans/universal-client/` — `/private/tmp` does not survive.**
+
+Workflow run id for resume: `wf_80de03f5-c76`.
+
+### PWA + responsive — **BROKEN**. Do not build from it as written.
+
+- **The service worker bricks the app offline — measured, not argued.** The plan merges AionUi's
+  `networkOnlyWithTypeGuard`, which opens with a bare `fetch` and has no catch and no `cache.match`
+  fallback (`aionui/public/sw.js:120-137`). Offline, it throws instead of serving the cached shell.
+- **The cache version never changes between builds.** §1.6 stamps `package.json`'s version into
+  `__MURAGE_SW_VERSION__` and claims "a stale bundle cannot outlive a release" — but the version is
+  `0.1.44` and `"build": "tsc -b && tsc -p tsconfig.server.json && vite build"` never touches it.
+- **`PATCH /api/bots/:id` is an execution-policy escalation.** The plan wants it for an unread flag;
+  `companion/src/routes.ts` matches method+path regex only, with no body filtering, so allowlisting it
+  grants every field on the bot record.
+- `tailscale serve --https=443` publishes to **every node on the tailnet**, and the plan budgets a
+  listener with no authentication while deferring the credential to the security track.
+- **Better primitive the plan missed:** Tailscale Serve injects `Tailscale-User-Login` /
+  `Tailscale-User-Name` identity headers on proxied requests. Under a tailnet-only threat model that is
+  stronger and cheaper than the cookie it proposes.
+
+### Chief of Staff — SOUND_WITH_CHANGES. Hop-0 claim independently reproduced.
+
+- **A room-sourced `delegate_bot` is SILENTLY DELETED, not merely undelivered.**
+  `server/delegations.ts:311-316`: `const from = bus.store.botByThread(threadId); if (!from) {
+  pendingDelegations.delete(threadId); savePending(); return; }`. Worse than the plan assumed.
+- **There is an EIGHTH section gate** the plan missed: `server/index.ts:5206`, the routine
+  proposal-time check on `for_bot_id`. The plan's gate 6 is only the other half.
+- Post-approval re-checks at `server/index.ts:5386` re-validate section equality, and the plan's own
+  blast-radius mitigation routes every workspace-chief action straight into them.
+- `canReach` is **not** a strict superset, so "gates 1-7 are behaviourally inert until a workspace
+  chief exists" is false — four of the seven have no `hidden` check today.
+- A peer-approval card in a room thread can never be settled after a crash:
+  `server/peer-approval.ts:186-204` never visits a group thread.
+
+### Security — SOUND_WITH_CHANGES. Two findings invalidate parts of the design.
+
+- **Port 8812 is ALREADY the cloudflared tunnel origin** (`electron/companion-origin-gateway.mjs:12`).
+  The plan puts the browser door there. That is the Wayland bug shape — pick another port.
+- **Fixing `/api/search` does not close the hole, because `/api/events` is an unfiltered firehose.**
+  `server/index.ts:1087-1090` broadcasts every persisted message as an SSE frame, by construction.
+- **"Tailnet-only" can silently become a LAN bind.** `companion/src/listener.ts:62-68` matches
+  `100.64-127.x` over the machine's own interface table — right range, wrong trust assumption.
+- Routines are a hole in the computer-provision denial: `POST /api/routines` is granted while
+  `computer/provision` is denied, and a routine can drive one.
+- `POST /session` hands an unauthenticated tailnet peer a **permanent pairing DoS** — it reuses
+  `devices.redeem`, which decrements `MAX_PAIRING_ATTEMPTS = 5` on every call.
+- No `X-Content-Type-Options: nosniff` on the static branch; measured live.
+
+### Cloud / headless — SOUND_WITH_CHANGES. One finding matters a lot.
+
+- **THREE engines lie about auth, not one.** With `HOME` and `MURAGE_DATA_DIR` pointed at empty scratch
+  dirs, `/api/instances` reported `authenticated: true` for **opencodeGo, qwen and hermes**.
+  `claudeSignedIn` (`server/drivers/claude.ts:55-70`) trusts `claude auth status --json`'s `loggedIn`
+  field, which reports **presence, not validity**. Any health check built on it is worthless.
+- Local VM sizing is a hard constant, not an unknown: `server/container-computer.ts:60-61` pins 4 GiB
+  and 2 CPUs, and `dockerSecurityIsHardened` REQUIRES it — this kills the plan's "better headless" claim.
+- The plan rejects Docker because the `docker` group is root-equivalent, then puts the `murage` user in
+  the docker group. Self-contradictory.
+- The credential migration story is missing and blocks day one.
+
+### iOS retirement — SOUND_WITH_CHANGES.
+
+- **Removing `GET /api/search` from the allowlist lands CI red**: `companion/test/routes.test.ts:71`
+  asserts it. The plan edits only line 36 of that file.
+- `companion/` is **not** iOS-free as the plan claims — `companion/src/control.ts:151-153` encodes an
+  iOS-only policy.
+- The salvage list commits the irreversible mistake the plan's own risk #2 names: it copies out only
+  `Sources/CompanionCore` and skips ~15 files under `ios/App/` and `ios/ShareExtension/` it had itself
+  identified as reference material.
+- Disproven risk (good news): `main` is **not** a protected branch, so removing the iOS CI job cannot
+  strand PRs on a required status check.
 
 ---
 
