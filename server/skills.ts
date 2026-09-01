@@ -68,7 +68,13 @@ export const INDEX_MAX_BYTES = 4_000;
  * id and version that follow name the exact catalog entry the bytes came from. */
 export const LIBRARY_SOURCE_PREFIX = "library:";
 /** Where the shipped skill catalog lives. Overridable so a packaged build can
- *  point at its own resources directory without moving the repo layout. */
+ *  point at its own resources directory without moving the repo layout: the
+ *  desktop main process sets MURAGE_SKILL_LIBRARY to Resources/skills-library
+ *  in the child env it hands utilityProcess.fork, so reading it once at module
+ *  load is safe — the variable is already in the environment this process
+ *  started with. Nothing sets it in-process after boot; if that ever changes
+ *  this has to become a function. In dev the server runs from the repo root
+ *  and the cwd fallback finds the same tree. */
 export const SKILL_LIBRARY_ROOT =
   process.env.MURAGE_SKILL_LIBRARY || join(process.cwd(), "skills-library");
 /** Agent-authored writes sit here until a person confirms the in-app card. */

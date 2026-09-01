@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import {
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -1171,5 +1172,37 @@ describe("installSkillFromLibrary", () => {
       error: expect.stringContaining("already imported"),
     });
     expect(listSkills(bot)).toHaveLength(1);
+  });
+});
+
+// The packaged app ships the catalog at Resources/skills-library and the
+// desktop main process points MURAGE_SKILL_LIBRARY at it before it forks this
+// server. Through 0.1.44 nothing set that variable and nothing packaged the
+// tree, so installSkillFromLibrary resolved a path that did not exist inside
+// the .app and every hire installed zero skills. These pin both halves.
+describe("SKILL_LIBRARY_ROOT", () => {
+  const previous = process.env.MURAGE_SKILL_LIBRARY;
+
+  afterEach(() => {
+    if (previous === undefined) delete process.env.MURAGE_SKILL_LIBRARY;
+    else process.env.MURAGE_SKILL_LIBRARY = previous;
+    vi.resetModules();
+  });
+
+  it("resolves into Resources when the packaged parent sets the override", async () => {
+    const resources = join("/Applications", "Murage.app", "Contents", "Resources");
+    process.env.MURAGE_SKILL_LIBRARY = join(resources, "skills-library");
+    vi.resetModules();
+    const fresh = await import("./skills.ts");
+    expect(fresh.SKILL_LIBRARY_ROOT).toBe(join(resources, "skills-library"));
+  });
+
+  it("falls back to the repo tree in dev, where cwd is the repo root", async () => {
+    delete process.env.MURAGE_SKILL_LIBRARY;
+    vi.resetModules();
+    const fresh = await import("./skills.ts");
+    expect(fresh.SKILL_LIBRARY_ROOT).toBe(join(process.cwd(), "skills-library"));
+    // the fallback has to name a tree that is actually there, not just a path
+    expect(readdirSync(fresh.SKILL_LIBRARY_ROOT).length).toBeGreaterThan(2_000);
   });
 });
