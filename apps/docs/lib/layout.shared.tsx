@@ -12,7 +12,7 @@ export function baseOptions(): BaseLayoutProps {
     links: [
       { text: 'Website', url: 'https://www.murage.com', external: true },
       { text: 'Changelog', url: '/docs/changelog' },
-      { type: 'button', text: 'Download', url: 'https://github.com/milind-soni/murage-releases/releases/latest', external: true },
+      { type: 'button', text: 'Download', url: 'https://github.com/FerroxLabs/murage-releases/releases/latest', external: true },
     ],
     githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
   };

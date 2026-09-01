@@ -4,7 +4,7 @@ export const docsContentRoute = '/llms.mdx/docs';
 export const appName = 'Murage Docs';
 
 export const gitConfig = {
-  user: 'milind-soni',
-  repo: 'Murage',
+  user: 'FerroxLabs',
+  repo: 'murage',
   branch: 'main',
 };

@@ -23,7 +23,7 @@ and logged in. macOS is the primary release platform and Ubuntu 24.04 x64 is the
 the harness server itself is portable Node and the test suite runs on macOS, Linux, and Windows.
 
 ```sh
-git clone https://github.com/milind-soni/Murage && cd Murage
+git clone https://github.com/FerroxLabs/murage && cd Murage
 pnpm install
 
 pnpm dev:server    # harness server → 127.0.0.1:8799
@@ -61,7 +61,7 @@ and produces one release artifact containing:
 
 Before publishing, confirm that `package.json` has the release version and dispatch the workflow against the same
 commit used for the other platforms. Attach all five Ubuntu files to the matching release in the separate
-[`murage-releases`](https://github.com/milind-soni/murage-releases) repository. Then verify the checksum
+[`murage-releases`](https://github.com/FerroxLabs/murage-releases) repository. Then verify the checksum
 file and install the `.deb` plus launch the AppImage in a clean Ubuntu 24.04 x86_64 GNOME environment. Never combine
 packages built from different commits under one version.
 
