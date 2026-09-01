@@ -375,7 +375,17 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
   return (
     <>
-    <aside className="animate-panel-in relative z-20 flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
+    <aside
+      className={cn(
+        "animate-panel-in relative z-20 flex h-full flex-col border-l border-hairline/40 bg-panel",
+        "md:w-[400px] md:shrink-0",
+        // Same collapse as InspectorPanel: a fixed 400px column beside the chat
+        // takes main to 0px wide below ~800px. Below md the profile covers the
+        // chat; its header already carries the "Collapse agent profile" back
+        // button, so there is a way out.
+        "max-md:absolute max-md:inset-0 max-md:z-40 max-md:w-full",
+      )}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3">
         <button

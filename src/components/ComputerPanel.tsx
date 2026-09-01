@@ -26,6 +26,7 @@ import { api, useStore, type Bot } from "@/state/store";
 import type { Routine } from "@/lib/routines";
 import { ApiKeyRow } from "./ApiKeys";
 import { cn } from "@/lib/cn";
+import { useNarrowViewport } from "@/lib/media-query";
 import { usePageVisible } from "@/lib/page-visible";
 import { CloudBackendPicker } from "./CloudBackendPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -153,6 +154,11 @@ export function ComputerPanel({
   // The panel is a fixed column by default; a drag handle on its left edge
   // makes it wide enough to actually read a page in the Browser tab.
   const [panelWidth, setPanelWidth] = useState(readPanelWidth);
+  // Below md the panel *is* the screen, not a column beside it. The width is an
+  // inline style, which beats every Tailwind class, so `max-md:w-full` alone
+  // cannot reach it — a persisted 400px desktop width would stay a 400px column
+  // on a 390px phone and take the chat to 0px wide.
+  const narrow = useNarrowViewport();
   const resizeFrom = useRef<{ x: number; width: number } | null>(null);
   const onResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
     resizeFrom.current = { x: event.clientX, width: panelWidth };
@@ -830,8 +836,12 @@ export function ComputerPanel({
   return (
     <>
     <aside
-      className="animate-panel-in relative flex h-full shrink-0 flex-col border-l border-hairline/40 bg-panel"
-      style={{ width: panelWidth }}
+      className={cn(
+        "animate-panel-in relative flex h-full flex-col border-l border-hairline/40 bg-panel",
+        "md:shrink-0",
+        "max-md:absolute max-md:inset-0 max-md:z-40 max-md:w-full",
+      )}
+      style={narrow ? undefined : { width: panelWidth }}
     >
       <div
         role="separator"
@@ -841,7 +851,9 @@ export function ComputerPanel({
         onPointerMove={onResizeMove}
         onPointerUp={onResizeEnd}
         onPointerCancel={onResizeEnd}
-        className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent/40"
+        // a drag handle on a touch screen fights the scroll gesture, and there
+        // is no column left to resize once the panel is full-width
+        className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent/40 max-md:hidden"
       />
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3">

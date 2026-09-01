@@ -181,7 +181,18 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
   const total = lens === "raw" ? (page?.total.native ?? 0) : (page?.total.runtime ?? 0);
 
   return (
-    <aside className="animate-panel-in flex h-full w-[460px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
+    <aside
+      className={cn(
+        "animate-panel-in flex h-full flex-col border-l border-hairline/40 bg-panel",
+        "md:w-[460px] md:shrink-0",
+        // A 460px fixed column beside the chat leaves main.w=0 and scrolls the
+        // document sideways on anything under ~800px — a narrow desktop window
+        // as much as a phone. Below md it covers the chat instead. Scoped with
+        // max-md: rather than cancelled with md:, per Sidebar.tsx's note about
+        // Tailwind v4 emitting a containing block for fixed descendants.
+        "max-md:absolute max-md:inset-0 max-md:z-40 max-md:w-full",
+      )}
+    >
       <div className="flex items-center justify-between px-4 py-3">
         <span className="flex items-center gap-2 text-[15px] font-semibold text-ink">
           <Bug size={16} className="text-ink-secondary" /> Inspector

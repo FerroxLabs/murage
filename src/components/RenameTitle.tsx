@@ -15,6 +15,7 @@ export function RenameTitle({
   showEditButton = false,
   className,
   inputClassName,
+  editButtonClassName,
 }: {
   value: string;
   onCommit: (next: string) => void;
@@ -25,6 +26,9 @@ export function RenameTitle({
   showEditButton?: boolean;
   className?: string;
   inputClassName?: string;
+  /** For callers that have to drop the pencil when the row runs out of width;
+   * the rest of the profile (rename included) is still one tap away. */
+  editButtonClassName?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -101,7 +105,10 @@ export function RenameTitle({
           onClick={startRename}
           aria-label={`Rename ${value}`}
           title="Rename agent"
-          className="flex size-10 shrink-0 items-center justify-center rounded text-ink-secondary opacity-70 hover:bg-raised hover:text-ink hover:opacity-100"
+          className={cn(
+            "flex size-10 shrink-0 items-center justify-center rounded text-ink-secondary opacity-70 hover:bg-raised hover:text-ink hover:opacity-100",
+            editButtonClassName,
+          )}
         >
           <Pencil size={12} />
         </button>
