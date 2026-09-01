@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
+const here = dirname(fileURLToPath(import.meta.url));
 const {
   backendNodeIdFromRef,
   browserAddressAllowed,
@@ -144,6 +148,23 @@ describe("browser snapshot", () => {
     for (const alias of ["work.2", "../work-2", "work-2!", "guest", ""]) {
       expect(() => browserProfilePartition(alias)).toThrow(/valid browser profile partition id/);
     }
+  });
+
+  // The bundle is generated from third_party/playwright-injected/entry.ts,
+  // which the rebrand script deliberately skips; browser-surface.cjs is not
+  // skipped. That asymmetry once left the writer exporting one global name
+  // and the reader probing another, so every page silently fell back to the
+  // bare accessibility tree. Nothing else catches it: the surface tests stub
+  // `evaluate` by matching the reader's own string, so both halves can drift
+  // and still go green. Compare the shipped bytes instead.
+  it("injects the same browser global that the surface probes for", () => {
+    const bundle = readFileSync(join(here, "resources", "browser-snapshot.js"), "utf8");
+    const surface = readFileSync(join(here, "browser-surface.cjs"), "utf8");
+    const exported = bundle.match(/window\.(__\w+Browser)\s*=/)?.[1];
+    const probed = [...surface.matchAll(/window\.(__\w+Browser)\b/g)].map((match) => match[1]);
+    expect(exported).toBeDefined();
+    expect(probed.length).toBeGreaterThan(0);
+    expect(new Set(probed)).toEqual(new Set([exported]));
   });
 
   it("decodes refs and rejects anything that is not one", () => {
