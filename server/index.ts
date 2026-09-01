@@ -7085,6 +7085,12 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const emoji = String(body.emoji ?? "").slice(0, 8);
       if (!emoji) return json(res, 400, { error: "emoji required" });
+      // A write route that reads back: the patched message is returned in
+      // full, so without this a scoped client names a hidden thread and a
+      // message id and gets its content — and leaves a reaction on it. The
+      // 404 matches every other withheld thread; a 403 here would confirm
+      // the thread exists, which is the thing being withheld.
+      if (!mayReadThread(req, url, m[1])) return json(res, 404, { error: "no such message" });
       const patched = store.toggleReaction(m[1], m[2], emoji, typeof body.by === "string" ? body.by : "user");
       if (!patched) return json(res, 404, { error: "no such message" });
       return json(res, 200, { message: patched });

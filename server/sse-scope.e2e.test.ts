@@ -35,10 +35,15 @@ let home: string;
 let stderr = "";
 let BASE = "";
 
-const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+const api = async (
+  method: string,
+  path: string,
+  body?: unknown,
+  extra?: Record<string, string>,
+): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: { ...(body ? { "content-type": "application/json" } : {}), ...extra },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: res.status === 204 ? null : await res.json() };
@@ -91,6 +96,44 @@ posixOnly("the events stream is scoped per client", () => {
   afterAll(async () => {
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
+  });
+
+  // Reactions are a WRITE route that reads back: the patched message is
+  // returned in full. So a client that can no longer list a hidden thread
+  // could still name one, get its content, and leave a reaction on it.
+  it("refuses a reaction on a hidden thread, and does not confirm it exists", async () => {
+    const created = await api("POST", "/api/bots", { name: "Reactor" });
+    expect(created.status, stderr).toBe(201);
+    const bot = created.body.bot;
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { modelSelection: model })).status).toBe(200);
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "react to me" })).status).toBe(202);
+
+    const desktop = { "x-murage-surface": "desktop" };
+    const phone = { "x-murage-companion": "1" };
+    let messageId = "";
+    for (let attempt = 0; attempt < 100 && !messageId; attempt++) {
+      const page = await api("GET", `/api/threads/${bot.threadId}/messages`, undefined, desktop);
+      messageId = page.body?.messages?.[0]?.id ?? "";
+      if (!messageId) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(messageId, stderr).toBeTruthy();
+
+    // Visible: the phone may react, which is the control for what follows.
+    expect((await api("POST", `/api/threads/${bot.threadId}/messages/${messageId}/reactions`,
+      { emoji: "👍" }, phone)).status).toBe(200);
+
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { hidden: true })).status).toBe(200);
+
+    const refused = await api("POST", `/api/threads/${bot.threadId}/messages/${messageId}/reactions`,
+      { emoji: "🔥" }, phone);
+    expect(refused.status).toBe(404);
+    // Not 403, and no message body echoed back: a 403 would confirm the
+    // thread exists, which is the fact being withheld.
+    expect(JSON.stringify(refused.body)).not.toContain("react to me");
+
+    // The desktop is unaffected.
+    expect((await api("POST", `/api/threads/${bot.threadId}/messages/${messageId}/reactions`,
+      { emoji: "🔥" }, desktop)).status).toBe(200);
   });
 
   it(
