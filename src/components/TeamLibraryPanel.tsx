@@ -25,7 +25,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 const MAX_TEAM_FILE_BYTES = 1_000_000;
-const COMMUNITY_TEAMS_REPOSITORY = "https://github.com/FerroxLabs/murage-teams";
 
 interface TeamCatalogEntry {
   slug: string;
@@ -373,7 +372,7 @@ export function TeamLibraryPanel({
         .map((candidate, index) => ({
           key: `dir-${candidate.slug}`,
           name: candidate.name,
-          title: candidate.category || "Community bot",
+          title: candidate.category || "Ember",
           description: candidate.prompt,
           appearance: { color: DIRECTORY_COLORS[index % DIRECTORY_COLORS.length] },
         }));
@@ -462,17 +461,6 @@ export function TeamLibraryPanel({
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {!pending && (
-              <button
-                onClick={() => void openExternal(catalog?.repositoryUrl ?? COMMUNITY_TEAMS_REPOSITORY)}
-                className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
-                title="Open the community teams repository"
-              >
-                <Github size={16} />
-                <span className="max-sm:hidden">Community repo</span>
-                <ExternalLink size={12} />
-              </button>
-            )}
             <button
               onClick={onClose}
               disabled={importing}
@@ -625,7 +613,7 @@ export function TeamLibraryPanel({
               {tab === "explore" && (
                 <div>
                   <div className="mb-3 text-[12px] font-medium text-ink-secondary">
-                    {search ? "Search results" : "Community teams"}
+                    {search ? "Search results" : "Teams"}
                   </div>
                   {catalogLoading && (
                     <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
