@@ -56,7 +56,7 @@ Test-Path release\win-unpacked\resources\ui\index.html     # built UI
 Get-Content release\win-unpacked\resources\app-update.yml  # feed config
 ```
 
-- Missing `server/index.js` → `utilityProcess.fork` fails → the 🐭 "Couldn't start
+- Missing `server/index.js` → `utilityProcess.fork` fails → the 🔥 "Couldn't start
   the bot server" page.
 - Missing `ui/index.html` → server has nothing to serve → black window.
 - `app-update.yml` must point at `FerroxLabs/murage-releases` and, while the

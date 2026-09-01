@@ -63,7 +63,7 @@ jobs:
         run: |
           res=release/win-unpacked/resources
           fail=0
-          # missing → utilityProcess.fork fails → the 🐭 "Couldn't start the
+          # missing → utilityProcess.fork fails → the 🔥 "Couldn't start the
           # bot server" page
           [ -f "$res/server/index.js" ] || { echo "::error::missing $res/server/index.js"; fail=1; }
           # missing → the server has nothing to serve → black window
