@@ -15,9 +15,9 @@ import {
 } from "react";
 import { EMBER_COLORS, type EmberColor, type EmberMotion, type EmberState } from "@/lib/mascot";
 import {
-  EmberAvatar,
+  EmberAvatar as EmberMascot,
   DEFAULT_SILHOUETTE,
-  type EmberAvatarHandle,
+  type EmberAvatarHandle as EmberMascotHandle,
   type EmberSilhouette,
 } from "./EmberAvatar";
 import { botAvatarProfile, type BotAvatarCrop } from "../../shared/bot-avatar";
@@ -93,7 +93,7 @@ const gradientFor = (color: EmberColor): [string, string, string] => {
   return [mix(fill, "#ffffff", 0.55), fill, mix(fill, "#000000", 0.42)];
 };
 
-export type EmberAvatarHandle = EmberAvatarHandle;
+export type EmberAvatarHandle = EmberMascotHandle;
 
 export type EmberAvatarProps = {
   color: EmberColor;
@@ -147,7 +147,7 @@ function EmberAvatarComponent(
   }: EmberAvatarProps,
   ref: React.Ref<EmberAvatarHandle>,
 ) {
-  const inner = useRef<EmberAvatarHandle>(null);
+  const inner = useRef<EmberMascotHandle>(null);
   useImperativeHandle(ref, () => ({
     blink: () => inner.current?.blink(),
     spin: (durationMs?: number) => inner.current?.spin(durationMs),
@@ -187,12 +187,12 @@ function EmberAvatarComponent(
       onPointerMove={trackPointer && animated ? onPointerMove : undefined}
       onPointerLeave={trackPointer && animated ? onPointerLeave : undefined}
     >
-      <EmberAvatar
+      <EmberMascot
         ref={inner}
         state={motionState ?? state}
         expression={expression}
         size={size}
-        silhouette={GRADIENT_SILHOUETTE}
+        shape={GRADIENT_SILHOUETTE}
         gradient={gradientFor(color)}
         title={label ?? null}
         lookAround={lookAround ?? (forward ? 0 : 1)}
