@@ -62,16 +62,16 @@ const capsuleSchema = z.object({
 
 const jsonObjectSchema = z.record(z.string(), z.custom<JsonValue>());
 
-export const OPENMAUS_STATUS_CACHE_PATH = join(
+export const MURAGE_STATUS_CACHE_PATH = join(
   homedir(),
   ".local/state/aos-session-bridge/murage/latest.json",
 );
 
-type OpenMausSlot = z.output<typeof slotSchema>;
-type OpenMausUi = z.output<typeof uiSchema>;
-type OpenMausCapsule = z.output<typeof capsuleSchema>;
+type MurageSlot = z.output<typeof slotSchema>;
+type MurageUi = z.output<typeof uiSchema>;
+type MurageCapsule = z.output<typeof capsuleSchema>;
 
-export interface OpenMausStatusDigest {
+export interface MurageStatusDigest {
   schema: typeof SCHEMA;
   freshness: "fresh" | "stale" | "unknown";
   reason?: "missing_or_insecure" | "invalid" | "clock_skew" | "stale" | "refresh_failed";
@@ -83,7 +83,7 @@ export interface OpenMausStatusDigest {
   mode: "shared" | "per-bot" | "unknown";
   maxInstances: number | null;
   readyCount: number;
-  slots: OpenMausSlot[];
+  slots: MurageSlot[];
   ui: {
     twoUp: boolean;
     maxVisible: 1 | 2;
@@ -93,7 +93,7 @@ export interface OpenMausStatusDigest {
   };
 }
 
-export interface OpenMausStatusReadOptions {
+export interface MurageStatusReadOptions {
   cachePath?: string;
   now?: Date;
 }
@@ -125,7 +125,7 @@ function timestamp(value: string): number | null {
   return parsed;
 }
 
-function expectedUi(twoUp: boolean): OpenMausUi {
+function expectedUi(twoUp: boolean): MurageUi {
   return {
     two_up: twoUp,
     max_visible: twoUp ? 2 : 1,
@@ -134,7 +134,7 @@ function expectedUi(twoUp: boolean): OpenMausUi {
   };
 }
 
-function sameUi(left: OpenMausUi, right: OpenMausUi): boolean {
+function sameUi(left: MurageUi, right: MurageUi): boolean {
   return (
     left.two_up === right.two_up &&
     left.max_visible === right.max_visible &&
@@ -143,7 +143,7 @@ function sameUi(left: OpenMausUi, right: OpenMausUi): boolean {
   );
 }
 
-function unsignedDocument(capsule: OpenMausCapsule): JsonObject {
+function unsignedDocument(capsule: MurageCapsule): JsonObject {
   const document: JsonObject = {
     schema: capsule.schema,
     observed_at: capsule.observed_at,
@@ -175,7 +175,7 @@ function unsignedDocument(capsule: OpenMausCapsule): JsonObject {
   return document;
 }
 
-function validSlotState(slot: OpenMausSlot): boolean {
+function validSlotState(slot: MurageSlot): boolean {
   return (
     slot.readiness !== "ready" ||
     (slot.container === "running" &&
@@ -185,7 +185,7 @@ function validSlotState(slot: OpenMausSlot): boolean {
   );
 }
 
-function validateCapsule(value: JsonValue): OpenMausCapsule | null {
+function validateCapsule(value: JsonValue): MurageCapsule | null {
   const parsed = capsuleSchema.safeParse(value);
   if (!parsed.success) return null;
   const capsule = parsed.data;
@@ -281,10 +281,10 @@ function privateCache(path: string): Buffer | null {
 }
 
 function unknownDigest(
-  reason: NonNullable<OpenMausStatusDigest["reason"]>,
-  freshness: OpenMausStatusDigest["freshness"] = "unknown",
-  receipt?: Pick<OpenMausStatusDigest, "observedAt" | "receiptSha256">,
-): OpenMausStatusDigest {
+  reason: NonNullable<MurageStatusDigest["reason"]>,
+  freshness: MurageStatusDigest["freshness"] = "unknown",
+  receipt?: Pick<MurageStatusDigest, "observedAt" | "receiptSha256">,
+): MurageStatusDigest {
   return {
     schema: SCHEMA,
     freshness,
@@ -305,12 +305,12 @@ function unknownDigest(
   };
 }
 
-export function readOpenMausStatus(
-  options: OpenMausStatusReadOptions = {},
-): OpenMausStatusDigest {
-  const raw = privateCache(options.cachePath ?? OPENMAUS_STATUS_CACHE_PATH);
+export function readMurageStatus(
+  options: MurageStatusReadOptions = {},
+): MurageStatusDigest {
+  const raw = privateCache(options.cachePath ?? MURAGE_STATUS_CACHE_PATH);
   if (raw === null) return unknownDigest("missing_or_insecure");
-  let capsule: OpenMausCapsule | null;
+  let capsule: MurageCapsule | null;
   try {
     capsule = validateCapsule(parseJson(raw.toString("utf8")));
   } catch {
@@ -324,7 +324,7 @@ export function readOpenMausStatus(
   if (!Number.isFinite(now) || now < observed) return unknownDigest("clock_skew");
   if (now >= freshUntil) return unknownDigest("stale", "stale", receipt);
   if (capsule.refresh_status === "failed") return unknownDigest("refresh_failed", "fresh", receipt);
-  const result: OpenMausStatusDigest = {
+  const result: MurageStatusDigest = {
     schema: SCHEMA,
     freshness: "fresh",
     ...receipt,
@@ -346,8 +346,8 @@ export function readOpenMausStatus(
   return result;
 }
 
-export function openMausStatusSystemPrompt(options: OpenMausStatusReadOptions = {}): string {
-  const status = readOpenMausStatus(options);
+export function openMurageStatusSystemPrompt(options: MurageStatusReadOptions = {}): string {
+  const status = readMurageStatus(options);
   const receipt = [
     status.observedAt ? `observed_at=${status.observedAt}` : null,
     status.receiptSha256 ? `receipt_sha256=${status.receiptSha256}` : null,

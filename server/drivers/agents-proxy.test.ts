@@ -478,7 +478,7 @@ describe("agents-proxy MCP surface", () => {
       name: "Morning brief",
       instructions: "Summarize today's priorities.",
       schedule: { type: "weekly", time: "09:00", weekdays: ["monday", "friday"] },
-      run_on: "maus",
+      run_on: "ember",
       duration_minutes: 45,
     });
     expect(lastRoutineRequestBody).toEqual({
@@ -489,7 +489,7 @@ describe("agents-proxy MCP surface", () => {
         name: "Morning brief",
         instructions: "Summarize today's priorities.",
         schedule: { type: "weekly", time: "09:00", weekdays: ["monday", "friday"] },
-        runOn: "maus",
+        runOn: "ember",
         durationMinutes: 45,
       },
     });

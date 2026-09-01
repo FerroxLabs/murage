@@ -2,10 +2,10 @@ import { z } from "zod";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { schemaIssue, type JsonValue } from "./schema.ts";
-import type { MausColor } from "./store.ts";
+import type { EmberColor } from "./store.ts";
 import type { TeamManifestMember } from "./team-manifest.ts";
 
-export const BOT_PACKAGE_FORMAT = "openmaus.package" as const;
+export const BOT_PACKAGE_FORMAT = "murage.package" as const;
 export const BOT_PACKAGE_VERSION = 1 as const;
 export const BOTMRR_MARKDOWN_VERSION = 1 as const;
 
@@ -20,7 +20,7 @@ const COLORS = [
   "yellow",
   "teal",
   "coral",
-] as const satisfies readonly MausColor[];
+] as const satisfies readonly EmberColor[];
 
 const requiredText = (max: number) =>
   z.string({ error: "must be text" }).trim().min(1, { message: "is required" }).max(max, { message: "is too long" });
@@ -37,7 +37,7 @@ const key = requiredText(64).regex(/^[a-z0-9][a-z0-9_-]*$/, {
 });
 
 const packageSchema = z.object({
-  format: z.literal(BOT_PACKAGE_FORMAT, { error: "This is not an OpenMaus package" }),
+  format: z.literal(BOT_PACKAGE_FORMAT, { error: "This is not an Murage package" }),
   version: z.literal(BOT_PACKAGE_VERSION, { error: "Package version is not supported" }),
   package: z.object({
     id: requiredText(80).regex(/^[a-z0-9][a-z0-9-]*$/, { message: "must be a lowercase slug" }),
@@ -90,7 +90,7 @@ const packageSchema = z.object({
       name: requiredText(80),
       agent: key,
       prompt: requiredText(20_000),
-      runOn: z.enum(["maus", "cloud"]),
+      runOn: z.enum(["ember", "cloud"]),
       schedule: z.discriminatedUnion("type", [
         z.object({ type: z.literal("once"), at: z.number().int() }),
         z.object({

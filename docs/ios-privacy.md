@@ -1,6 +1,6 @@
-# OpenMausMobile privacy
+# MurageMobile privacy
 
-OpenMausMobile is a companion for an Murage service chosen and operated
+MurageMobile is a companion for an Murage service chosen and operated
 by the user. Local Wi-Fi and Tailscale connections work without an Murage
 account. A user may separately sign in on the desktop to enable the optional
 **Use your phone anywhere** HTTPS connection.
@@ -42,7 +42,7 @@ account. A user may separately sign in on the desktop to enable the optional
   silently deleting files referenced by older conversations. Temporary iPhone
   copies are removed after a completed send or cancellation. If iOS terminates
   the extension mid-transfer, the next Share sheet session removes the abandoned
-  copy immediately; an OpenMausMobile foreground launch removes it once it is at
+  copy immediately; an MurageMobile foreground launch removes it once it is at
   least 60 minutes old.
 - The app contains no advertising or analytics SDKs, does not track users
   across other companies' apps or websites, and does not sell personal data.

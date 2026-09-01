@@ -1,6 +1,6 @@
 # App Review notes
 
-OpenMausMobile is a companion for the Murage desktop application. The
+MurageMobile is a companion for the Murage desktop application. The
 primary same-network flow does not require an account. The desktop also offers
 an optional passwordless email sign-in that provisions a private HTTPS address
 for reaching that same computer from another network; the iOS app itself does

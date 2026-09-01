@@ -231,7 +231,7 @@ describe("browser loopback host", () => {
     const { host, calls } = harness();
     await host.start();
     const profile = "work";
-    const body = Buffer.from(JSON.stringify({ profile, url: "https://example.com/search?q=maus🐭" }));
+    const body = Buffer.from(JSON.stringify({ profile, url: "https://example.com/search?q=ember🐭" }));
     const emojiStart = body.indexOf(Buffer.from("🐭"));
     const scoped = await register(host, "bot-a", profile);
 
@@ -260,7 +260,7 @@ describe("browser loopback host", () => {
     });
 
     expect(result.status).toBe(200);
-    expect(calls).toContainEqual(["navigate", "bot-a", "https://example.com/search?q=maus🐭", "work"]);
+    expect(calls).toContainEqual(["navigate", "bot-a", "https://example.com/search?q=ember🐭", "work"]);
     // Structured browser responses omit the convenience text channel and
     // scrub query/fragment tokens before leaving Electron.
     expect(result.body).toEqual({ url: "https://example.com/search", title: "Loaded", elements: [], notes: [] });

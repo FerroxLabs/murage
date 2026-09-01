@@ -5,7 +5,7 @@ import Foundation
 /// A normal send/cancel removes its own directory immediately. If iOS kills
 /// the extension, the containing app also sweeps old directories so selected
 /// documents do not become accidental long-term App Group storage.
-enum OpenMausSharedInbox {
+enum MurageSharedInbox {
     static let directoryName = "ShareInbox"
 
     static func removeDirectories(
@@ -14,7 +14,7 @@ enum OpenMausSharedInbox {
         fileManager: FileManager = .default
     ) {
         guard let container = fileManager.containerURL(
-            forSecurityApplicationGroupIdentifier: OpenMausSharedConfiguration.appGroupIdentifier
+            forSecurityApplicationGroupIdentifier: MurageSharedConfiguration.appGroupIdentifier
         ) else { return }
         let root = container.appendingPathComponent(directoryName, isDirectory: true)
         let keys: Set<URLResourceKey> = [

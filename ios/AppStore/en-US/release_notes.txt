@@ -1,4 +1,4 @@
-Welcome to OpenMausMobile 1.0.
+Welcome to MurageMobile 1.0.
 
 • Pair securely with your Murage computer
 • Default QR pairing now stays on hosted HTTPS; Tailscale and local routes remain explicit choices

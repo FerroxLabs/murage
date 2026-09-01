@@ -7,7 +7,7 @@ The app is native Swift and uses XcodeGen; EAS commands do not apply.
 1. Enrol in the Apple Developer Program.
 2. Register the bundle IDs `com.murage.app`, `com.murage.app.widgets`, and `com.murage.app.share` (or change them in `project.yml` before the first upload).
 3. Register the App Group `group.com.murage.shared`. Enable App Groups and Keychain Sharing for the app and Share extension identifiers, then add the group to both. Keep the app's legacy `$(AppIdentifierPrefix)com.murage.app` Keychain group during upgrades so existing pairings can migrate safely.
-4. Create the matching app in App Store Connect with the name **OpenMaus Mobile**, primary category **Productivity**, and a unique SKU.
+4. Create the matching app in App Store Connect with the name **Murage Mobile**, primary category **Productivity**, and a unique SKU.
 5. Create or select Apple Distribution certificates and App Store provisioning profiles for the containing app and both extensions.
 6. Add the review contact details in App Store Connect; do not commit private contact data or App Store Connect keys.
 

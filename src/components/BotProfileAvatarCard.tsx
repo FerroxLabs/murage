@@ -6,17 +6,17 @@ import { imageAttachmentFromFile } from "@/lib/composer-attachments";
 import { cn } from "@/lib/cn";
 import {
   PICKABLE_STATES,
-  MAUS_COLORS,
-  MAUS_COLOR_NAMES,
-  type MausMotion,
-  type MausState,
+  EMBER_COLORS,
+  EMBER_COLOR_NAMES,
+  type EmberMotion,
+  type EmberState,
 } from "@/lib/mascot";
 import {
   BOT_AVATAR_CROPS,
   botAvatarUrlFromStoredPath,
   type BotAvatarCrop,
 } from "../../shared/bot-avatar";
-import { BotAvatar, MausAvatar } from "./Avatar";
+import { BotAvatar, EmberAvatar } from "./Avatar";
 
 type AvatarPatch = Partial<
   Pick<Bot, "avatarCrop" | "avatarUrl" | "color" | "mascotExpression">
@@ -36,8 +36,8 @@ export function BotProfileAvatarCard({
   onPatch,
 }: {
   bot: Bot;
-  activeState: MausState;
-  mascotMotion: { kind: Exclude<MausMotion, "none">; nonce: number } | null;
+  activeState: EmberState;
+  mascotMotion: { kind: Exclude<EmberMotion, "none">; nonce: number } | null;
   onPatch: (patch: AvatarPatch) => void;
 }) {
   const { state, dispatch, flushBotPatches } = useStore();
@@ -221,7 +221,7 @@ export function BotProfileAvatarCard({
                   title={expression}
                   aria-label={`Use ${expression} expression`}
                 >
-                  <MausAvatar color={bot.color} state={expression} size={42} animated={false} />
+                  <EmberAvatar color={bot.color} state={expression} size={42} animated={false} />
                 </button>
               ))}
             </div>
@@ -230,7 +230,7 @@ export function BotProfileAvatarCard({
               Color
             </div>
             <div className="flex flex-wrap gap-2.5">
-              {MAUS_COLOR_NAMES.map((color) => (
+              {EMBER_COLOR_NAMES.map((color) => (
                 <button
                   key={color}
                   type="button"
@@ -240,7 +240,7 @@ export function BotProfileAvatarCard({
                     "size-10 rounded-full border-2 border-transparent transition-transform hover:scale-110",
                     bot.color === color && "ring-2 ring-accent-border ring-offset-2 ring-offset-card",
                   )}
-                  style={{ backgroundColor: MAUS_COLORS[color] }}
+                  style={{ backgroundColor: EMBER_COLORS[color] }}
                   title={color}
                   aria-label={`Use ${color} mascot color`}
                 />

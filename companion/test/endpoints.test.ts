@@ -8,18 +8,18 @@ import {
 
 describe("hostedCompanionUrl", () => {
   it("normalizes one explicit HTTPS origin", () => {
-    expect(hostedCompanionUrl("  https://Maus.Example/  ")).toBe("https://maus.example");
+    expect(hostedCompanionUrl("  https://Ember.Example/  ")).toBe("https://ember.example");
     expect(hostedCompanionUrl(undefined)).toBeNull();
     expect(hostedCompanionUrl("  ")).toBeNull();
   });
 
   it("refuses insecure or ambiguous hosted routes", () => {
     for (const value of [
-      "http://maus.example",
-      "https://user:secret@maus.example",
-      "https://maus.example/companion",
-      "https://maus.example?device=one",
-      "https://maus.example#pair",
+      "http://ember.example",
+      "https://user:secret@ember.example",
+      "https://ember.example/companion",
+      "https://ember.example?device=one",
+      "https://ember.example#pair",
       "not a URL",
     ]) {
       expect(() => hostedCompanionUrl(value)).toThrow(/MURAGE_COMPANION_HOSTED_URL/);

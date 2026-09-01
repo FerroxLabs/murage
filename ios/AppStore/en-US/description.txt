@@ -1,4 +1,4 @@
-OpenMausMobile is the private iPhone companion for Murage on your computer.
+MurageMobile is the private iPhone companion for Murage on your computer.
 
 Keep your AI team moving when you step away from your desk:
 
@@ -13,7 +13,7 @@ Keep your AI team moving when you step away from your desk:
 
 YOUR COMPUTER STAYS IN CHARGE
 
-OpenMausMobile connects to the companion service on your own computer. Your bot transcripts remain in Murage’s local storage; the optional hosted connection transports them to your computer without creating a developer-hosted transcript copy.
+MurageMobile connects to the companion service on your own computer. Your bot transcripts remain in Murage’s local storage; the optional hosted connection transports them to your computer without creating a developer-hosted transcript copy.
 
 PAIR ONCE, REVOKE ANY TIME
 

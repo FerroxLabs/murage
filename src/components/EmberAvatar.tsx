@@ -1,17 +1,17 @@
 /**
- * CursorAvatar — an animated mascot built on the "cursor" silhouette.
+ * EmberAvatar — an animated mascot built on the "fire-svgrepo-com" silhouette.
  *
  * Self-contained: React is the only dependency. Drop this file in and use it.
  *
- *   import CursorAvatar from './CursorAvatar'
+ *   import EmberAvatar from './EmberAvatar'
  *
- *   <CursorAvatar state="thinking" size={160} />
+ *   <EmberAvatar state="thinking" size={160} />
  *
  * The state drives everything — which expressions cycle, how often, and when it blinks.
- * Set `state` and it animates itself; see CURSOR_STATES for the full list.
+ * Set `state` and it animates itself; see EMBER_AVATAR_STATES for the full list.
  *
  * Props of note:
- *   state        one of CURSOR_STATES
+ *   state        one of EMBER_AVATAR_STATES
  *   expression   pin a single face and stop the cycling
  *   lookAround   how much each expression glances around. 0 = always straight ahead
  *   gaze / turn  aim the eyes, or rotate the head around its implied sphere
@@ -23,7 +23,7 @@ import React, { useEffect, useId, useMemo, useRef } from 'react'
 
 /* ------------------------------------------------------------------- shape */
 
-export interface CursorSilhouette {
+export interface EmberSilhouette {
   /** Human-readable name, used for the accessible label. */
   name: string
   /** Transform mapping the artwork into the 228.541-unit face box. '' for none. */
@@ -36,23 +36,36 @@ export interface CursorSilhouette {
   anchor: { x: number; y: number; scale: number }
 }
 
-export const DEFAULT_SILHOUETTE: CursorSilhouette = {
-  name: "cursor",
-  fit: "translate(-56.5564 -37.6751) scale(0.593899)",
-  body: "\n<path xmlns=\"http://www.w3.org/2000/svg\" d=\"M0 0 C1.12815992 0.94880479 2.25705591 1.89673511 3.38671875 2.84375 C5.57657936 4.68528228 7.75793952 6.53624249 9.93359375 8.39453125 C13.5602214 11.48647103 17.25022962 14.49819427 20.9453125 17.5078125 C25.41301487 21.15281776 29.86103386 24.8215994 34.31054688 28.48876953 C38.00933931 31.5370903 41.70951059 34.58367973 45.4140625 37.625 C52.50037463 43.44570076 59.55669812 49.29508834 66.54003906 55.23901367 C70.43289872 58.54377434 74.40406577 61.73568847 78.40625 64.90625 C82.05401433 67.85083084 85.6145398 70.89451533 89.18359375 73.93359375 C92.41424312 76.67774533 95.67698054 79.36747809 99 82 C103.47931906 85.54855146 107.83340036 89.22936876 112.18359375 92.93359375 C115.41424312 95.67774533 118.67698054 98.36747809 122 101 C125.9014198 104.09073517 129.71091352 107.27378506 133.5 110.5 C137.99002543 114.32092614 142.53350963 118.0537239 147.15234375 121.71875 C156.74255328 129.40144186 166.1812645 137.27326897 175.53833008 145.23754883 C179.4317456 148.54281661 183.40347641 151.73522157 187.40625 154.90625 C191.05401433 157.85083084 194.6145398 160.89451533 198.18359375 163.93359375 C201.41424312 166.67774533 204.67698054 169.36747809 208 172 C236.43637507 194.63776677 236.43637507 194.63776677 238.27050781 209.13867188 C239.19944445 221.27193361 237.57124038 231.13444436 230 241 C223.66050278 247.82715086 215.75482398 254.47140646 206.04764748 255.13307858 C205.3615811 255.13693349 204.67551472 255.1407884 203.96865845 255.14476013 C203.17563324 255.15165863 202.38260803 255.15855713 201.56555176 255.16566467 C200.27360901 255.16958473 200.27360901 255.16958473 198.95556641 255.17358398 C198.04112762 255.180271 197.12668884 255.18695801 196.18453979 255.19384766 C194.19843498 255.20789156 192.21231409 255.21978771 190.22618484 255.22979546 C187.07149762 255.24625057 183.91692738 255.26949556 180.76229858 255.29469299 C171.79227585 255.36530712 162.82220292 255.42526708 153.85205078 255.47680664 C148.36195434 255.5088283 142.87198905 255.55017011 137.38199997 255.59700203 C135.30028042 255.61289593 133.21853066 255.62527474 131.13676834 255.63390923 C104.46972494 255.74602279 80.75351522 259.19455182 60.52978516 278.41845703 C55.75259196 283.35727885 51.81217213 289.04473423 47.77441406 294.5859375 C44.62107661 298.87600364 41.36381878 303.08685058 38.125 307.3125 C32.82026548 314.26649347 27.55386673 321.24815866 22.3125 328.25 C21.07690581 329.89589556 19.84122979 331.5417297 18.60546875 333.1875 C16.22002164 336.36552908 13.84996009 339.55428087 11.48828125 342.75 C3.0450311 354.10095576 -5.25712203 365.22607871 -20 368 C-33.42903027 368.85957067 -44.2929604 367.90032788 -55 358.9140625 C-63.51513963 350.76480778 -67.79688328 340.99527428 -68.37686157 329.29350281 C-68.43541887 328.1487851 -68.49397617 327.00406738 -68.55430794 325.82466125 C-68.61453573 324.57243271 -68.67476353 323.32020416 -68.73681641 322.0300293 C-68.80423726 320.68369989 -68.87198477 319.33738681 -68.94003105 317.99108887 C-69.12569162 314.29881586 -69.30666938 310.60632592 -69.48688698 306.91378379 C-69.68142908 302.94481208 -69.88036562 298.97606035 -70.07873535 295.00727844 C-70.55465828 285.46711948 -71.02377004 275.92663022 -71.49235249 266.3861084 C-71.71278092 261.90166682 -71.93398876 257.41726373 -72.1552124 252.93286133 C-72.22122149 251.59460763 -72.22122149 251.59460763 -72.28856409 250.2293185 C-72.37783973 248.41936974 -72.46711776 246.6094211 -72.55639815 244.79947257 C-72.7821203 240.22326204 -73.00777832 235.64704836 -73.23336792 231.0708313 C-73.2783997 230.15734865 -73.32343148 229.24386601 -73.36982787 228.30270207 C-73.64581049 222.70253299 -73.92113412 217.10233189 -74.19602597 211.50210917 C-75.35713101 187.85146938 -76.54638525 164.20245932 -77.76320994 140.55462319 C-78.3174362 129.77404232 -78.86176258 118.9929594 -79.40472984 108.2118063 C-79.83986282 99.58021501 -80.28322749 90.94912395 -80.73695588 82.31848997 C-81.04621068 76.42094211 -81.34513355 70.52292566 -81.63612723 64.62444884 C-81.8031421 61.24551841 -81.97612174 57.86718776 -82.15861511 54.48903847 C-84.29931862 14.73242483 -84.29931862 14.73242483 -72.03125 -1.625 C-50.89854752 -24.96559677 -21.34867451 -18.24899383 0 0 Z \" fill=\"#000000\" transform=\"translate(210,80)\"/>\n",
-  clip: "<path xmlns=\"http://www.w3.org/2000/svg\" d=\"M0 0 C1.12815992 0.94880479 2.25705591 1.89673511 3.38671875 2.84375 C5.57657936 4.68528228 7.75793952 6.53624249 9.93359375 8.39453125 C13.5602214 11.48647103 17.25022962 14.49819427 20.9453125 17.5078125 C25.41301487 21.15281776 29.86103386 24.8215994 34.31054688 28.48876953 C38.00933931 31.5370903 41.70951059 34.58367973 45.4140625 37.625 C52.50037463 43.44570076 59.55669812 49.29508834 66.54003906 55.23901367 C70.43289872 58.54377434 74.40406577 61.73568847 78.40625 64.90625 C82.05401433 67.85083084 85.6145398 70.89451533 89.18359375 73.93359375 C92.41424312 76.67774533 95.67698054 79.36747809 99 82 C103.47931906 85.54855146 107.83340036 89.22936876 112.18359375 92.93359375 C115.41424312 95.67774533 118.67698054 98.36747809 122 101 C125.9014198 104.09073517 129.71091352 107.27378506 133.5 110.5 C137.99002543 114.32092614 142.53350963 118.0537239 147.15234375 121.71875 C156.74255328 129.40144186 166.1812645 137.27326897 175.53833008 145.23754883 C179.4317456 148.54281661 183.40347641 151.73522157 187.40625 154.90625 C191.05401433 157.85083084 194.6145398 160.89451533 198.18359375 163.93359375 C201.41424312 166.67774533 204.67698054 169.36747809 208 172 C236.43637507 194.63776677 236.43637507 194.63776677 238.27050781 209.13867188 C239.19944445 221.27193361 237.57124038 231.13444436 230 241 C223.66050278 247.82715086 215.75482398 254.47140646 206.04764748 255.13307858 C205.3615811 255.13693349 204.67551472 255.1407884 203.96865845 255.14476013 C203.17563324 255.15165863 202.38260803 255.15855713 201.56555176 255.16566467 C200.27360901 255.16958473 200.27360901 255.16958473 198.95556641 255.17358398 C198.04112762 255.180271 197.12668884 255.18695801 196.18453979 255.19384766 C194.19843498 255.20789156 192.21231409 255.21978771 190.22618484 255.22979546 C187.07149762 255.24625057 183.91692738 255.26949556 180.76229858 255.29469299 C171.79227585 255.36530712 162.82220292 255.42526708 153.85205078 255.47680664 C148.36195434 255.5088283 142.87198905 255.55017011 137.38199997 255.59700203 C135.30028042 255.61289593 133.21853066 255.62527474 131.13676834 255.63390923 C104.46972494 255.74602279 80.75351522 259.19455182 60.52978516 278.41845703 C55.75259196 283.35727885 51.81217213 289.04473423 47.77441406 294.5859375 C44.62107661 298.87600364 41.36381878 303.08685058 38.125 307.3125 C32.82026548 314.26649347 27.55386673 321.24815866 22.3125 328.25 C21.07690581 329.89589556 19.84122979 331.5417297 18.60546875 333.1875 C16.22002164 336.36552908 13.84996009 339.55428087 11.48828125 342.75 C3.0450311 354.10095576 -5.25712203 365.22607871 -20 368 C-33.42903027 368.85957067 -44.2929604 367.90032788 -55 358.9140625 C-63.51513963 350.76480778 -67.79688328 340.99527428 -68.37686157 329.29350281 C-68.43541887 328.1487851 -68.49397617 327.00406738 -68.55430794 325.82466125 C-68.61453573 324.57243271 -68.67476353 323.32020416 -68.73681641 322.0300293 C-68.80423726 320.68369989 -68.87198477 319.33738681 -68.94003105 317.99108887 C-69.12569162 314.29881586 -69.30666938 310.60632592 -69.48688698 306.91378379 C-69.68142908 302.94481208 -69.88036562 298.97606035 -70.07873535 295.00727844 C-70.55465828 285.46711948 -71.02377004 275.92663022 -71.49235249 266.3861084 C-71.71278092 261.90166682 -71.93398876 257.41726373 -72.1552124 252.93286133 C-72.22122149 251.59460763 -72.22122149 251.59460763 -72.28856409 250.2293185 C-72.37783973 248.41936974 -72.46711776 246.6094211 -72.55639815 244.79947257 C-72.7821203 240.22326204 -73.00777832 235.64704836 -73.23336792 231.0708313 C-73.2783997 230.15734865 -73.32343148 229.24386601 -73.36982787 228.30270207 C-73.64581049 222.70253299 -73.92113412 217.10233189 -74.19602597 211.50210917 C-75.35713101 187.85146938 -76.54638525 164.20245932 -77.76320994 140.55462319 C-78.3174362 129.77404232 -78.86176258 118.9929594 -79.40472984 108.2118063 C-79.83986282 99.58021501 -80.28322749 90.94912395 -80.73695588 82.31848997 C-81.04621068 76.42094211 -81.34513355 70.52292566 -81.63612723 64.62444884 C-81.8031421 61.24551841 -81.97612174 57.86718776 -82.15861511 54.48903847 C-84.29931862 14.73242483 -84.29931862 14.73242483 -72.03125 -1.625 C-50.89854752 -24.96559677 -21.34867451 -18.24899383 0 0 Z \" transform=\"translate(210,80)\"/>",
-  anchor: { x: 93, y: 101, scale: 0.74 },
+export const SHAPE: EmberSilhouette = {
+  name: "fire-svgrepo-com",
+  fit: "translate(29.8314 0.0041) scale(0.896884)",
+  body: "\n  <defs xmlns=\"http://www.w3.org/2000/svg\">\n    \n\n    <linearGradient id=\"ufujm1h-linear-gradient-1\" gradientUnits=\"userSpaceOnUse\" x1=\"94.141\" y1=\"255\" x2=\"94.141\" y2=\"0.188\">\n      <stop offset=\"0\" stop-color=\"#ff4c0d\"/>\n      <stop offset=\"1\" stop-color=\"#fc9502\"/>\n    </linearGradient>\n  </defs>\n  <g xmlns=\"http://www.w3.org/2000/svg\" id=\"ufujm1h-fire\">\n    <path d=\"M187.899,164.809 C185.803,214.868 144.574,254.812 94.000,254.812 C42.085,254.812 -0.000,211.312 -0.000,160.812 C-0.000,154.062 -0.121,140.572 10.000,117.812 C16.057,104.191 19.856,95.634 22.000,87.812 C23.178,83.513 25.469,76.683 32.000,87.812 C35.851,94.374 36.000,103.812 36.000,103.812 C36.000,103.812 50.328,92.817 60.000,71.812 C74.179,41.019 62.866,22.612 59.000,9.812 C57.662,5.384 56.822,-2.574 66.000,0.812 C75.352,4.263 100.076,21.570 113.000,39.812 C131.445,65.847 138.000,90.812 138.000,90.812 C138.000,90.812 143.906,83.482 146.000,75.812 C148.365,67.151 148.400,58.573 155.999,67.813 C163.226,76.600 173.959,93.113 180.000,108.812 C190.969,137.321 187.899,164.809 187.899,164.809 Z\" id=\"ufujm1h-path-1\" class=\"cls-3\" fill-rule=\"evenodd\"/>\n    <path d=\"M94.000,254.812 C58.101,254.812 29.000,225.711 29.000,189.812 C29.000,168.151 37.729,155.000 55.896,137.166 C67.528,125.747 78.415,111.722 83.042,102.172 C83.953,100.292 86.026,90.495 94.019,101.966 C98.212,107.982 104.785,118.681 109.000,127.812 C116.266,143.555 118.000,158.812 118.000,158.812 C118.000,158.812 125.121,154.616 130.000,143.812 C131.573,140.330 134.753,127.148 143.643,140.328 C150.166,150.000 159.127,167.390 159.000,189.812 C159.000,225.711 129.898,254.812 94.000,254.812 Z\" id=\"ufujm1h-path-2\" class=\"cls-4\" fill-rule=\"evenodd\"/>\n    <path d=\"M95.000,183.812 C104.250,183.812 104.250,200.941 116.000,223.812 C123.824,239.041 112.121,254.812 95.000,254.812 C77.879,254.812 69.000,240.933 69.000,223.812 C69.000,206.692 85.750,183.812 95.000,183.812 Z\" id=\"ufujm1h-path-3\" class=\"cls-5\" fill-rule=\"evenodd\"/>\n  </g>\n",
+  clip: "<path xmlns=\"http://www.w3.org/2000/svg\" d=\"M187.899,164.809 C185.803,214.868 144.574,254.812 94.000,254.812 C42.085,254.812 -0.000,211.312 -0.000,160.812 C-0.000,154.062 -0.121,140.572 10.000,117.812 C16.057,104.191 19.856,95.634 22.000,87.812 C23.178,83.513 25.469,76.683 32.000,87.812 C35.851,94.374 36.000,103.812 36.000,103.812 C36.000,103.812 50.328,92.817 60.000,71.812 C74.179,41.019 62.866,22.612 59.000,9.812 C57.662,5.384 56.822,-2.574 66.000,0.812 C75.352,4.263 100.076,21.570 113.000,39.812 C131.445,65.847 138.000,90.812 138.000,90.812 C138.000,90.812 143.906,83.482 146.000,75.812 C148.365,67.151 148.400,58.573 155.999,67.813 C163.226,76.600 173.959,93.113 180.000,108.812 C190.969,137.321 187.899,164.809 187.899,164.809 Z\" fill-rule=\"evenodd\"/><path xmlns=\"http://www.w3.org/2000/svg\" d=\"M94.000,254.812 C58.101,254.812 29.000,225.711 29.000,189.812 C29.000,168.151 37.729,155.000 55.896,137.166 C67.528,125.747 78.415,111.722 83.042,102.172 C83.953,100.292 86.026,90.495 94.019,101.966 C98.212,107.982 104.785,118.681 109.000,127.812 C116.266,143.555 118.000,158.812 118.000,158.812 C118.000,158.812 125.121,154.616 130.000,143.812 C131.573,140.330 134.753,127.148 143.643,140.328 C150.166,150.000 159.127,167.390 159.000,189.812 C159.000,225.711 129.898,254.812 94.000,254.812 Z\" fill-rule=\"evenodd\"/><path xmlns=\"http://www.w3.org/2000/svg\" d=\"M95.000,183.812 C104.250,183.812 104.250,200.941 116.000,223.812 C123.824,239.041 112.121,254.812 95.000,254.812 C77.879,254.812 69.000,240.933 69.000,223.812 C69.000,206.692 85.750,183.812 95.000,183.812 Z\" fill-rule=\"evenodd\"/>",
+  anchor: { x: 103.45, y: 136.48, scale: 1 },
 }
 
-export const DEFAULT_GRADIENT: [string, string, string] = ["#9FE6B5","#3FAE6E","#1C7A4C"]
+export const DEFAULT_GRADIENT: [string, string, string] = ["#FFA05C","#FD5609","#C23A00"]
+
+/**
+ * Where the eyes rest when no gaze is passed. Slightly off-centre reads as alive; dead
+ * centre can look like a stare. Each axis is -1…1.
+ */
+export const DEFAULT_GAZE: { x: number; y: number } = { x: 0.22, y: 0 }
 
 /** The face box every coordinate in this file is expressed in. */
 export const FACE_BOX = 228.541
 const VIEW_BOX = `-15 -15 ${FACE_BOX + 30} ${FACE_BOX + 30}`
 const SPHERE_C = 114.2705
-const SPHERE_R = 105
-const GAZE_X = 13.2
-const GAZE_Y = 8.4
+
+/**
+ * Radius of the sphere the face is painted on. Exported because anyone re-implementing the
+ * projection — a renderer that seeks instead of ticking, say — needs it to place an eye.
+ */
+export const SPHERE_R = 105
+/** How far a full-deflection gaze moves the eyes, in face units. */
+export const GAZE_TRAVEL = { x: 13.2, y: 8.4 }
+const GAZE_X = GAZE_TRAVEL.x
+const GAZE_Y = GAZE_TRAVEL.y
 
 /** Face-space centre the expressions are normalised around. */
 export const FACE_CENTRE: [number, number] = [120, 122.5]
@@ -93,10 +106,10 @@ const ENCODED: string[] = [
 const RAW: Ring[][] = ENCODED.map(line =>
   line.split('|').map(
     ring =>
-      ring.split(' ').map((pair): [number, number] => {
+      ring.split(' ').map(pair => {
         const [x, y] = pair.split(',')
         return [Number(x), Number(y)]
-      })
+      }) as Ring
   )
 )
 
@@ -122,7 +135,7 @@ export const GAZE: [number, number][] = RAW.map(ex => {
 
 /** Expressions with their look-direction removed — every one looks straight ahead. */
 export const EXPRESSIONS: Ring[][] = RAW.map((ex, i) =>
-  ex.map(ring => ring.map((p): [number, number] => [p[0] - GAZE[i][0], p[1] - GAZE[i][1]]))
+  ex.map(ring => ring.map(p => [p[0] - GAZE[i][0], p[1] - GAZE[i][1]] as [number, number]))
 )
 
 export const EXPRESSION_COUNT = EXPRESSIONS.length
@@ -182,6 +195,8 @@ export const MOUTH_STROKE = 7.5
  *   squash  0..1, how much a bob squashes the body at the bottom of its arc
  *   enter   one-shot on entering the state, [starting scale, duration ms]
  *   settle  scale it eases to and holds, for exits like powering-down
+ *   scale   constant resting scale — what the comet states use to buy their rings room
+ *   dash    balled up and thrown along a flight path, [travel radius, period ms]
  */
 export interface BodyMotion {
   bob?: [number, number]
@@ -193,9 +208,11 @@ export interface BodyMotion {
   squash?: number
   enter?: [number, number]
   settle?: number
+  scale?: number
+  dash?: [number, number]
 }
 
-export const MOTION = {
+export const MOTION: Record<EmberAvatarState, BodyMotion> = {
   // Lifecycle — quiet, breathing, alive but not busy.
   sleeping: { pulse: [0.028, 4600], tilt: 2 },
   waking: { enter: [0.92, 700], pulse: [0.03, 2200] },
@@ -224,25 +241,30 @@ export const MOTION = {
   celebrate: { bob: [10, 480], sway: [4, 960], squash: 0.35 },
 
   // Agent morphs — the mascot standing in for a process.
-  orbit: { circle: [6, 3200] },
-  radar: { sway: [6, 2400], pulse: [0.012, 2400] },
-  progress: { pulse: [0.022, 1600] },
+  // The comet states sit back a little: at full size the silhouette fills the frame and the
+  // rings have nowhere to pass but across its face.
+  orbit: { circle: [6, 3200], scale: 0.72 },
+  radar: { sway: [6, 2400], pulse: [0.012, 2400], scale: 0.72 },
+  progress: { pulse: [0.022, 1600], scale: 0.74 },
+  'thinking-dots': {},
 
   // Product cycle.
   spawning: { enter: [0.02, 820], pulse: [0.014, 3600] },
   humming: { pulse: [0.016, 2800] },
-  loading: { sway: [2.2, 1500], pulse: [0.012, 1500] },
+  loading: { sway: [2.2, 1500], pulse: [0.012, 1500], scale: 0.72 },
   dictating: { bob: [2, 2000] },
   writing: { bob: [1.6, 1100] },
-  sending: { bob: [3, 900] },
-  receiving: { bob: [3, 900] },
-  uploading: { bob: [3, 1000] },
+  // Balled up to a dot and thrown — outbound one way round the flight path, inbound the
+  // other, which is the whole difference between the two states.
+  sending: { dash: [66, 1500], scale: 0.21 },
+  receiving: { dash: [66, -1500], scale: 0.21 },
+  uploading: { bob: [3, 1000], scale: 0.74 },
   notifying: { bob: [4, 700], sway: [2.5, 700] },
   alerting: { jitter: [2.6, 85] },
   dragging: { tilt: -6, sway: [2, 900] },
   bouncing: { bob: [12, 560], squash: 0.45 },
   'powering-down': { settle: 0.05, tilt: 4 },
-} satisfies Record<CursorState, BodyMotion>
+}
 
 /** How long a `settle` takes to reach its resting scale. */
 const SETTLE_MS = 1400
@@ -269,7 +291,20 @@ const hash01 = (n: number) => {
 }
 
 const CONFETTI_COLORS = ['#F472B6', '#C084FC', '#818CF8', '#38BDF8', '#34D399', '#FACC15', '#FB7185']
-const RIBBON_COLORS = ['#4ADE80', '#34D399', '#22D3EE', '#60A5FA']
+
+/**
+ * Comet palettes — one per ribbon, each running through three neighbouring hues along its
+ * own length. A single flat colour reads as wire; a hue that travels reads as something lit
+ * and moving, which is the whole difference between an orbit and a circle.
+ */
+const COMET_COLORS: [string, string, string][] = [
+  ['#A855F7', '#6366F1', '#38BDF8'],
+  ['#22D3EE', '#34D399', '#A3E635'],
+  ['#FB923C', '#F43F5E', '#D946EF'],
+  ['#818CF8', '#C084FC', '#F472B6'],
+  ['#FACC15', '#FB923C', '#EC4899'],
+  ['#34D399', '#22D3EE', '#60A5FA'],
+]
 
 export interface ConfettiSpec {
   /** How many pieces are in flight per burst. */
@@ -285,12 +320,79 @@ export interface ConfettiSpec {
 }
 
 export interface TrailSpec {
-  /** How many ribbons orbit the body. */
+  /** How many comets orbit the body. */
   count: number
   /** Milliseconds for one full orbit. */
   period: number
   /** Orbit radius, in face units. */
   radius: number
+  /** Half-width at the head, in face units. The tail tapers from this to nothing. */
+  width?: number
+  /** How much of the orbit one comet covers, in radians. Kept under π so a comet
+   *  crosses the horizon at most once and never splits into three pieces. */
+  span?: number
+}
+
+/** A body shrunk to a dot and thrown across the frame, with tails streaming behind it. */
+export interface DashSpec {
+  /** How many tails stream off the dot. */
+  count: number
+  /** Milliseconds for one full flight. */
+  period: number
+  /** How far the dot travels from centre, in face units. */
+  radius: number
+  /** How far back in the flight the longest tail reaches, ms. */
+  length: number
+  /** Half-width where a tail meets the dot. */
+  width?: number
+}
+
+/** The body dissolved into a row of dots — the loading indicator every chat app has. */
+export interface DotsSpec {
+  /** How many dots stand in for the body. */
+  count: number
+  /** Milliseconds for one pass of the highlight along the row. */
+  period: number
+  /** Dot radius, in face units. */
+  radius: number
+  /** Distance between dot centres. */
+  gap: number
+  /**
+   * How long the body takes to come apart into the row, ms.
+   *
+   * The dots are not a separate picture that replaces the mascot — they are the mascot,
+   * broken up. Over this window the body shrinks toward the middle dot while the outer ones
+   * slide out from behind it, so what you read is one thing dividing rather than a swap.
+   * Run the state's clock back down to zero and it plays in reverse: the row gathers and
+   * the body reforms.
+   */
+  split: number
+}
+
+/** Small body-coloured dots flung off as the mascot collapses or springs into being. */
+export interface PopSpec {
+  count: number
+  /** Milliseconds between rounds. */
+  period: number
+  /** How long one dot lives, ms. */
+  life: number
+  /** How far a dot travels from centre. */
+  spread: number
+  /** Largest dot radius; the rest are scaled down from it. */
+  radius: number
+}
+
+/** The unread dot that lands on the mascot's shoulder. */
+export interface BadgeSpec {
+  color: string
+  radius: number
+  /** Badge centre, in face units. */
+  x: number
+  y: number
+  /** Milliseconds between appearances. */
+  period: number
+  /** How long it is held, ms. */
+  hold: number
 }
 
 export interface GlyphSpec {
@@ -305,10 +407,12 @@ export interface GlyphSpec {
 export interface StateEffects {
   confetti?: ConfettiSpec
   trails?: TrailSpec
+  dash?: DashSpec
+  dots?: DotsSpec
+  pops?: PopSpec
+  badge?: BadgeSpec
   glyph?: GlyphSpec
 }
-
-interface EffectsByState extends Partial<Record<CursorState, StateEffects>> {}
 
 /**
  * The exclamation mark the mascot becomes when something needs attention — drawn as a
@@ -324,7 +428,7 @@ const GLYPH_QUERY =
   'd="M88 76 A27 27 0 1 1 114.3 112 L114.3 132"/>' +
   '<circle fill="{{GRADIENT}}" cx="114.3" cy="170" r="13"/>'
 
-export const EFFECTS: EffectsByState = {
+export const EFFECTS: Partial<Record<EmberAvatarState, StateEffects>> = {
   // Celebration — the loud burst.
   // Travel is deliberately bounded: the viewBox only carries 15 units of margin, so a
   // piece thrown much past ~130 from centre would be clipped mid-flight.
@@ -332,19 +436,38 @@ export const EFFECTS: EffectsByState = {
   excited: { confetti: { count: 9, period: 2000, life: 1100, origin: 72, spread: 44 } },
   laughing: { confetti: { count: 7, period: 2400, life: 1000, origin: 70, spread: 38 } },
 
-  // Work in flight — ribbons circling the body.
-  orbit: { trails: { count: 3, period: 2600, radius: 128 } },
-  radar: { trails: { count: 2, period: 2000, radius: 132 } },
-  progress: { trails: { count: 3, period: 1800, radius: 124 } },
-  loading: { trails: { count: 2, period: 2200, radius: 126 } },
-  uploading: { trails: { count: 2, period: 1700, radius: 122 } },
-  sending: { trails: { count: 2, period: 1500, radius: 120 } },
-  receiving: { trails: { count: 2, period: 1500, radius: 120 } },
+  // Work in flight — comets orbiting the body on tilted rings.
+  // `radius` is bounded by the viewBox: a comet swells by up to ORBIT_NEAR at the near
+  // point of its ring, so radius × 1.06 (ring variation) × ORBIT_NEAR + width has to stay
+  // inside the 129 units from centre that the margin allows. The trail states also carry a
+  // MOTION `scale` under 1, which is what buys the rings room to clear the silhouette.
+  orbit: { trails: { count: 6, period: 3000, radius: 105, width: 5, span: 2.5 } },
+  radar: { trails: { count: 4, period: 2400, radius: 106, width: 4.5, span: 2.1 } },
+  progress: { trails: { count: 5, period: 2000, radius: 104, width: 4.8, span: 2.3 } },
+  loading: { trails: { count: 5, period: 2400, radius: 105, width: 5, span: 2.6 } },
+  uploading: { trails: { count: 4, period: 1800, radius: 104, width: 4.8, span: 2.2 } },
+
+  // A packet in flight: the body balled up to a dot with its tails strung out behind.
+  // `period` here has to match MOTION's dash exactly, sign included — the tails are drawn
+  // from the same flight path the body is riding, and a mismatch detaches them.
+  sending: { dash: { count: 3, period: 1500, radius: 66, length: 520, width: 9 } },
+  receiving: { dash: { count: 3, period: -1500, radius: 66, length: 520, width: 9 } },
+
+  // The body dissolved into the three dots every chat app shows while it thinks.
+  'thinking-dots': { dots: { count: 3, period: 1150, radius: 17, gap: 50, split: 460 } },
+
+  // Coming into being and winding down — the body collapses to a point either way, and
+  // sheds a few of itself on the way.
+  spawning: { pops: { count: 5, period: 3200, life: 900, spread: 62, radius: 9 } },
+  'powering-down': { pops: { count: 4, period: 2600, life: 1100, spread: 54, radius: 8 } },
 
   // The mascot standing aside to show a symbol.
   alerting: { glyph: { markup: GLYPH_BANG, period: 2600, hold: 1100 } },
-  notifying: { glyph: { markup: GLYPH_BANG, period: 4200, hold: 900 } },
   confused: { glyph: { markup: GLYPH_QUERY, period: 5200, hold: 1200 } },
+
+  // Notification keeps its face and takes the badge on the shoulder instead — the mascot
+  // is telling you about something, not becoming it.
+  notifying: { badge: { color: '#2E9BF0', radius: 17, x: 186, y: 46, period: 3400, hold: 2000 } },
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -358,7 +481,7 @@ function poolPaths(layer: SVGGElement, count: number): SVGPathElement[] {
     path.setAttribute('fill', 'none')
     layer.appendChild(path)
   }
-  return Array.from(layer.querySelectorAll<SVGPathElement>(':scope > path'))
+  return Array.from(layer.childNodes) as SVGPathElement[]
 }
 
 /** Confetti: short curved strokes thrown outward, arcing down as they fade. */
@@ -406,42 +529,444 @@ function drawConfetti(
   }
 }
 
-/** Ribbons: arcs sweeping around the body on their own periods. */
+/* ------------------------------------------------------------------ comets */
+
+/**
+ * A comet is a filled outline, not a stroke.
+ *
+ * SVG cannot taper a stroke, and taper is most of what separates a comet from a hoop: a
+ * round head at the leading edge thinning to nothing behind it. So each one is sampled
+ * along its path, offset either side by a width that shrinks toward the tail, and closed
+ * with a half-round cap at the head.
+ */
+interface Sample {
+  x: number
+  y: number
+  /** Half-width here. */
+  h: number
+}
+
+/** How much a comet swells at the near point of its ring. Pure perspective cheat. */
+const ORBIT_NEAR = 1.1
+
+/**
+ * Head→tail samples to one filled outline.
+ *
+ * `capHead` / `capTail` are false for the cut ends of a comet that has been split at the
+ * horizon: a cap there would bulge in the middle of the comet and read as a bead.
+ */
+function cometPath(s: Sample[], capHead: boolean, capTail: boolean): string {
+  const n = s.length
+  if (n < 2) return ''
+
+  // Screen-space normal at each sample, from the tangent through its neighbours.
+  const nx: number[] = []
+  const ny: number[] = []
+  for (let i = 0; i < n; i++) {
+    const a = s[Math.max(i - 1, 0)]
+    const b = s[Math.min(i + 1, n - 1)]
+    const tx = b.x - a.x
+    const ty = b.y - a.y
+    const len = Math.hypot(tx, ty) || 1
+    nx.push(-ty / len)
+    ny.push(tx / len)
+  }
+
+  const point = (x: number, y: number) => `${x.toFixed(1)} ${y.toFixed(1)}`
+  const left: string[] = []
+  const right: string[] = []
+  for (let i = 0; i < n; i++) {
+    left.push(point(s[i].x + nx[i] * s[i].h, s[i].y + ny[i] * s[i].h))
+    right.push(point(s[i].x - nx[i] * s[i].h, s[i].y - ny[i] * s[i].h))
+  }
+
+  /**
+   * Caps are sampled rather than drawn with `A`, because the sweep flag an arc needs
+   * depends on which way the comet happens to be pointing, and half of an orbit points the
+   * other way. Sampling a semicircle around the end point is always the right one.
+   *
+   * `out` is the direction the cap bulges: away from the rest of the comet.
+   */
+  const cap = (i: number, out: 1 | -1) => {
+    const STEPS = 6
+    const { x, y, h } = s[i]
+    const tx = ny[i]
+    const ty = -nx[i]
+    const parts: string[] = []
+    for (let k = 1; k < STEPS; k++) {
+      const a = (k / STEPS) * Math.PI
+      const dn = out * Math.cos(a)
+      const dt = out * Math.sin(a)
+      parts.push(point(x + (nx[i] * dn + tx * dt) * h, y + (ny[i] * dn + ty * dt) * h))
+    }
+    return parts
+  }
+
+  // Start at the head's right shoulder, over the nose, down the left flank to the tail,
+  // round the tail, then back up the right flank.
+  const outline = [right[0]]
+  if (capHead) outline.push(...cap(0, -1))
+  outline.push(...left)
+  if (capTail) outline.push(...cap(n - 1, 1))
+  for (let i = n - 1; i > 0; i--) outline.push(right[i])
+  return `M${outline.join('L')}Z`
+}
+
+/** Grows or shrinks a layer's pool of comet outlines, keeping any <defs> at the front. */
+function poolComets(layer: SVGGElement, count: number): SVGPathElement[] {
+  const paths = Array.from(layer.querySelectorAll(':scope > path'))
+  while (paths.length > count) layer.removeChild(paths.pop()!)
+  while (paths.length < count) {
+    const path = document.createElementNS(SVG_NS, 'path')
+    path.setAttribute('stroke', 'none')
+    layer.appendChild(path)
+    paths.push(path)
+  }
+  return paths as SVGPathElement[]
+}
+
+/**
+ * One <linearGradient> per comet, kept alive across frames. Only the endpoints move — the
+ * stops are set once — so a hue runs head-to-tail no matter how the ring is turned, and a
+ * comet split across the horizon still reads as one continuous object.
+ */
+function cometGradients(layer: SVGGElement, uid: string, count: number): SVGLinearGradientElement[] {
+  let defs = layer.querySelector(':scope > defs')
+  if (!defs) {
+    defs = document.createElementNS(SVG_NS, 'defs')
+    layer.prepend(defs)
+  }
+  const found = Array.from(defs.querySelectorAll(':scope > linearGradient'))
+  while (found.length > count) defs.removeChild(found.pop()!)
+  while (found.length < count) {
+    const i = found.length
+    const grad = document.createElementNS(SVG_NS, 'linearGradient')
+    grad.setAttribute('id', `${uid}-comet-${i}`)
+    grad.setAttribute('gradientUnits', 'userSpaceOnUse')
+    const colors = COMET_COLORS[i % COMET_COLORS.length]
+    // The last stop fades: taper alone ends the comet's shape, this ends its presence.
+    const offsets = ['0%', '52%', '100%']
+    const alphas = ['1', '1', '0.35']
+    for (let s = 0; s < 3; s++) {
+      const stop = document.createElementNS(SVG_NS, 'stop')
+      stop.setAttribute('offset', offsets[s])
+      stop.setAttribute('stop-color', colors[s])
+      stop.setAttribute('stop-opacity', alphas[s])
+      grad.appendChild(stop)
+    }
+    defs.appendChild(grad)
+    found.push(grad)
+  }
+  return found as SVGLinearGradientElement[]
+}
+
+/**
+ * Comets orbiting the body on tilted rings.
+ *
+ * Each ring is a circle in its own plane, tipped away from the viewer and rolled in the
+ * screen plane, so the near half passes in front of the mascot and the far half behind it.
+ * That is why this draws into two layers: a comet gets cut at the horizon and its pieces
+ * are handed to whichever side of the body they belong on.
+ */
 function drawTrails(
-  layer: SVGGElement,
+  back: SVGGElement,
+  front: SVGGElement,
   spec: TrailSpec,
   elapsed: number,
   strength: number,
   cx: number,
-  cy: number
+  cy: number,
+  uid: string
 ) {
-  const paths = poolPaths(layer, spec.count)
-  const SAMPLES = 12
-  for (let i = 0; i < spec.count; i++) {
-    const path = paths[i]
+  const count = spec.count
+  const width = spec.width ?? 7
+  const span = Math.min(spec.span ?? 2.4, Math.PI - 0.05)
+  const SAMPLES = 22
+
+  const gradients = cometGradients(back, uid, count)
+  // A comet crosses the horizon at most once, so it is at most two pieces — but both can
+  // land on the same side, so each layer has to be able to hold two per comet.
+  const backPaths = poolComets(back, count * 2)
+  const frontPaths = poolComets(front, count * 2)
+  let backUsed = 0
+  let frontUsed = 0
+
+  for (let i = 0; i < count; i++) {
     const seedA = hash01(i + 3)
     const seedB = hash01(i + 29)
-    const direction = i % 2 === 0 ? 1 : -1
-    const period = spec.period * (0.8 + seedA * 0.5)
-    const radius = spec.radius * strength * (0.78 + seedB * 0.4)
-    const start = direction * (elapsed / period) * TAU + seedA * TAU
-    const span = 0.85 + seedB * 0.7
+    const seedC = hash01(i + 71)
 
-    let d = ''
-    for (let s = 0; s <= SAMPLES; s++) {
-      const k = s / SAMPLES
-      const angle = start + span * k
-      // Breathe the radius along the arc so the ribbon curls instead of tracing a circle.
-      const r = radius * (1 + Math.sin(k * Math.PI) * 0.14)
-      const x = cx + Math.cos(angle) * r
-      const y = cy + Math.sin(angle) * r * 0.78
-      d += (s === 0 ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(1)
+    // Every ring gets its own tip, roll and speed. Shared values would stack the comets
+    // into what looks like one thick ring seen edge-on.
+    //
+    // The tip is what decides whether a ring's far half clears the silhouette and can be
+    // seen passing behind it: a near-flat ring projects almost to its full radius all the
+    // way round, a steep one folds its far half inside the body. Both are wanted — the mix
+    // is what makes the cluster read as a sphere of orbits rather than a stack of arches.
+    const tilt = 0.3 + seedA * 0.66
+    const roll = seedB * TAU
+    const period = spec.period * (0.78 + seedC * 0.55)
+    const direction = i % 2 === 0 ? 1 : -1
+    const radius = spec.radius * strength * (0.94 + seedB * 0.12)
+    const head = direction * (elapsed / period) * TAU + seedA * TAU
+
+    const cosT = Math.cos(tilt)
+    const sinT = Math.sin(tilt)
+    const cosR = Math.cos(roll)
+    const sinR = Math.sin(roll)
+
+    // Split into runs of constant depth sign; each run becomes one path.
+    const runs: { samples: Sample[]; front: boolean }[] = []
+    let run: Sample[] = []
+    let side = 0
+
+    /**
+     * A comet that clips the horizon leaves a stub on the far side — a few samples' worth,
+     * shorter than the comet is wide. Capped like a real end it reads as a bead floating
+     * off the comet, so anything under a few widths long is dropped and the surviving piece
+     * takes the cap.
+     */
+    const keep = (samples: Sample[]) => {
+      if (samples.length < 3) return false
+      let length = 0
+      for (let s = 1; s < samples.length; s++) {
+        length += Math.hypot(samples[s].x - samples[s - 1].x, samples[s].y - samples[s - 1].y)
+      }
+      return length > width * 3.5
     }
-    path.setAttribute('d', d)
-    path.setAttribute('stroke', RIBBON_COLORS[i % RIBBON_COLORS.length])
-    path.setAttribute('stroke-width', (5 + seedA * 3).toFixed(1))
-    path.setAttribute('opacity', '0.85')
+
+    for (let s = 0; s < SAMPLES; s++) {
+      const k = s / (SAMPLES - 1)
+      const angle = head - direction * span * k
+      const ox = Math.cos(angle) * radius
+      const oy = Math.sin(angle) * radius
+      // Tip the ring away from the viewer, then roll it in the screen plane.
+      const ty = oy * cosT
+      const z = oy * sinT
+      const near = 1 + (z / radius) * (ORBIT_NEAR - 1)
+      const x = cx + (ox * cosR - ty * sinR) * near
+      const y = cy + (ox * sinR + ty * cosR) * near
+      // Mostly full width, thinning to a third by the tail. Tapering all the way to a point
+      // reads as a brush stroke; keeping some weight back there keeps it a comet.
+      const h = width * near * (1 - 0.68 * Math.pow(k, 1.5)) * strength
+
+      const nowSide = z >= 0 ? 1 : -1
+      if (nowSide !== side) {
+        if (keep(run)) runs.push({ samples: run, front: side > 0 })
+        // Repeat the crossing sample so the two pieces meet rather than leaving a gap.
+        run = run.length ? [run[run.length - 1]] : []
+        side = nowSide
+      }
+      run.push({ x, y, h })
+    }
+    if (keep(run)) runs.push({ samples: run, front: side > 0 })
+    if (!runs.length) continue
+
+    // The gradient spans the whole comet, not each piece, so a hue still runs head to tail
+    // across a horizon cut.
+    const first = runs[0].samples
+    const lastRun = runs[runs.length - 1].samples
+    const grad = gradients[i]
+    grad.setAttribute('x1', first[0].x.toFixed(1))
+    grad.setAttribute('y1', first[0].y.toFixed(1))
+    grad.setAttribute('x2', lastRun[lastRun.length - 1].x.toFixed(1))
+    grad.setAttribute('y2', lastRun[lastRun.length - 1].y.toFixed(1))
+
+    for (let r = 0; r < runs.length; r++) {
+      const pool = runs[r].front ? frontPaths : backPaths
+      const index = runs[r].front ? frontUsed++ : backUsed++
+      const path = pool[index]
+      if (!path) continue
+      // Only the true ends get capped; the cut where the comet crosses the horizon is a
+      // seam between two pieces of one object.
+      path.setAttribute('d', cometPath(runs[r].samples, r === 0, r === runs.length - 1))
+      path.setAttribute('fill', `url(#${uid}-comet-${i})`)
+      path.setAttribute('opacity', '1')
+    }
   }
+
+  for (let i = backUsed; i < backPaths.length; i++) backPaths[i].setAttribute('opacity', '0')
+  for (let i = frontUsed; i < frontPaths.length; i++) frontPaths[i].setAttribute('opacity', '0')
+}
+
+/**
+ * Where the dashing dot is at this instant, relative to centre.
+ *
+ * A figure-eight rather than a circle: a circle reads as a wheel, and the crossing in the
+ * middle gives the flight a moment where it passes its own tail. Shared with the body
+ * transform, which is the only reason the tails stay welded to the dot.
+ */
+export function dashPoint(radius: number, period: number, elapsed: number) {
+  const a = (elapsed / period) * TAU
+  return { x: Math.cos(a) * radius, y: Math.sin(a * 2) * radius * 0.44 }
+}
+
+/** The tails streaming off a dashing dot — the flight path it has just come through. */
+function drawDash(
+  layer: SVGGElement,
+  spec: DashSpec,
+  elapsed: number,
+  strength: number,
+  cx: number,
+  cy: number,
+  uid: string
+) {
+  const count = spec.count
+  const width = spec.width ?? 8
+  const SAMPLES = 18
+  const gradients = cometGradients(layer, uid, count)
+  const paths = poolComets(layer, count)
+
+  for (let i = 0; i < count; i++) {
+    const seed = hash01(i + 13)
+    // Staggered lengths and a small lateral offset fan the tails instead of stacking them.
+    const length = spec.length * (0.66 + seed * 0.5)
+    const offset = (i - (count - 1) / 2) * width * 0.85
+    const samples: Sample[] = []
+
+    for (let s = 0; s < SAMPLES; s++) {
+      const k = s / (SAMPLES - 1)
+      const at = elapsed - length * k
+      const p = dashPoint(spec.radius * strength, spec.period, at)
+      // Push each tail off the flight line so they read as separate ribbons.
+      const q = dashPoint(spec.radius * strength, spec.period, at + 1)
+      const tx = q.x - p.x
+      const ty = q.y - p.y
+      const len = Math.hypot(tx, ty) || 1
+      samples.push({
+        x: cx + p.x - (ty / len) * offset,
+        y: cy + p.y + (tx / len) * offset,
+        h: width * (1 - Math.pow(k, 1.7)) * strength,
+      })
+    }
+
+    const grad = gradients[i]
+    grad.setAttribute('x1', samples[0].x.toFixed(1))
+    grad.setAttribute('y1', samples[0].y.toFixed(1))
+    grad.setAttribute('x2', samples[SAMPLES - 1].x.toFixed(1))
+    grad.setAttribute('y2', samples[SAMPLES - 1].y.toFixed(1))
+
+    const path = paths[i]
+    path.setAttribute('d', cometPath(samples, true, true))
+    path.setAttribute('fill', `url(#${uid}-comet-${i})`)
+    path.setAttribute('opacity', '1')
+  }
+}
+
+/* -------------------------------------------------------------------- dots */
+
+/** Grows or shrinks a layer's pool of <circle> children to exactly `count`. */
+function poolCircles(layer: SVGGElement, count: number): SVGCircleElement[] {
+  while (layer.childNodes.length > count) layer.removeChild(layer.lastChild!)
+  while (layer.childNodes.length < count) {
+    layer.appendChild(document.createElementNS(SVG_NS, 'circle'))
+  }
+  return Array.from(layer.childNodes) as SVGCircleElement[]
+}
+
+/**
+ * The body dissolved into a row of dots, with a brightness that walks along the row.
+ * The walk is what makes three dots read as thinking rather than as an ellipsis.
+ */
+function drawDots(
+  layer: SVGGElement,
+  spec: DotsSpec,
+  elapsed: number,
+  strength: number,
+  cx: number,
+  cy: number,
+  paint: string,
+  split: number
+) {
+  const circles = poolCircles(layer, spec.count)
+  for (let i = 0; i < spec.count; i++) {
+    const circle = circles[i]
+    const phase = elapsed / spec.period - i * 0.16
+    // Squared cosine peaks sharply, so one dot leads and the others trail it. Scaled by the
+    // split so the row is still while it is forming and only starts talking once it has.
+    const lift = Math.pow(0.5 + 0.5 * Math.cos(TAU * phase), 3) * split
+    // Every dot starts stacked at the centre, under the body, and travels out to its place.
+    const x = cx + (i - (spec.count - 1) / 2) * spec.gap * split
+    const y = cy - lift * 9 * strength
+    circle.setAttribute('cx', x.toFixed(1))
+    circle.setAttribute('cy', y.toFixed(1))
+    circle.setAttribute('r', (spec.radius * (0.82 + lift * 0.3) * split).toFixed(1))
+    circle.setAttribute('fill', paint)
+    circle.setAttribute('opacity', (0.34 + lift * 0.66).toFixed(3))
+  }
+}
+
+/**
+ * How far the body has come apart into the row, 0..1.
+ *
+ * `share` shortens the window: the body finishes its part of the split before the dots
+ * finish theirs. That ordering is the whole effect — the body is gone by the time the outer
+ * dots are still travelling outward, so what you see is a thing that has already divided,
+ * rather than a shape and some dots occupying the same space.
+ */
+function splitAmount(spec: DotsSpec, elapsed: number, share = 1): number {
+  if (spec.split <= 0) return 1
+  return easeInOut(clamp(elapsed / (spec.split * share), 0, 1))
+}
+
+/** The body is done breaking up this far into the dots' own window. */
+const BODY_SPLIT_SHARE = 0.62
+
+/** Small body-coloured dots shed as the mascot arrives or winds down. */
+function drawPops(
+  layer: SVGGElement,
+  spec: PopSpec,
+  elapsed: number,
+  strength: number,
+  cx: number,
+  cy: number,
+  paint: string
+) {
+  const circles = poolCircles(layer, spec.count)
+  for (let i = 0; i < spec.count; i++) {
+    const circle = circles[i]
+    const seedA = hash01(i + 7)
+    const seedB = hash01(i + 53)
+    const t = ((elapsed + seedB * spec.period) % spec.period) / spec.life
+    if (t > 1) {
+      circle.setAttribute('opacity', '0')
+      continue
+    }
+    const angle = seedA * TAU
+    // Decelerating travel: they are thrown, not driven.
+    const distance = spec.spread * (0.4 + seedB * 0.6) * (1 - (1 - t) * (1 - t)) * strength
+    circle.setAttribute('cx', (cx + Math.cos(angle) * distance).toFixed(1))
+    circle.setAttribute('cy', (cy + Math.sin(angle) * distance).toFixed(1))
+    circle.setAttribute('r', (spec.radius * (0.45 + seedA * 0.55) * (1 - t * 0.55)).toFixed(1))
+    circle.setAttribute('fill', paint)
+    circle.setAttribute('opacity', (t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85).toFixed(3))
+  }
+}
+
+/** The unread dot, springing onto the mascot's shoulder and holding there. */
+function drawBadge(
+  layer: SVGGElement,
+  spec: BadgeSpec,
+  elapsed: number,
+  strength: number
+) {
+  const circles = poolCircles(layer, 1)
+  const circle = circles[0]
+  const position = elapsed % spec.period
+  const start = spec.period - spec.hold
+  if (position < start) {
+    circle.setAttribute('opacity', '0')
+    return
+  }
+  const into = position - start
+  const ARRIVE = 340
+  const t = Math.min(into / ARRIVE, 1)
+  const leaving = Math.max(0, Math.min(1, (spec.hold - into) / 180))
+  circle.setAttribute('cx', spec.x.toFixed(1))
+  circle.setAttribute('cy', spec.y.toFixed(1))
+  circle.setAttribute('r', (spec.radius * easeOutBack(t) * strength).toFixed(2))
+  circle.setAttribute('fill', spec.color)
+  circle.setAttribute('opacity', leaving.toFixed(3))
 }
 
 /** How present the glyph is right now, 0..1, with eased edges. */
@@ -456,14 +981,25 @@ function glyphAmount(spec: GlyphSpec, elapsed: number): number {
 }
 
 export interface EffectFrame {
+  /** Comets on the far side of the ring. */
   trails: SVGGElement | null
+  /** Comets on the near side, plus dash tails. */
+  trailsFront: SVGGElement | null
   confetti: SVGGElement | null
   glyph: SVGGElement | null
+  /** Pops and the notification badge, above the body. */
+  overlay: SVGGElement | null
+  /** The dots the body dissolves into. */
+  dots: SVGGElement | null
   bodyContent: SVGGElement | null
-  state: CursorState
+  /** Eyes and mouth alone, so a dashing dot can lose its face but keep its body. */
+  face: SVGGElement | null
+  state: EmberAvatarState
   elapsed: number
   strength: number
   paint: string
+  /** Instance id, for the comet gradients. */
+  uid: string
   showEffects: boolean
   showGlyphs: boolean
 }
@@ -473,13 +1009,68 @@ export function updateEffects(frame: EffectFrame) {
   const spec = EFFECTS[frame.state]
   const centre = FACE_BOX / 2
   const strength = frame.strength
+  const on = frame.showEffects && strength > 0
 
-  if (frame.trails) {
-    if (spec?.trails && frame.showEffects && strength > 0) {
-      drawTrails(frame.trails, spec.trails, frame.elapsed, strength, centre, centre)
-    } else if (frame.trails.childNodes.length) {
-      frame.trails.replaceChildren()
+  if (frame.trails && frame.trailsFront) {
+    if (spec?.trails && on) {
+      drawTrails(
+        frame.trails,
+        frame.trailsFront,
+        spec.trails,
+        frame.elapsed,
+        strength,
+        centre,
+        centre,
+        frame.uid
+      )
+    } else if (spec?.dash && on) {
+      // Tails ride behind: they converge on the dot, and a tail is about as wide as the dot
+      // is across, so drawing them over it would swallow the thing they belong to.
+      if (frame.trailsFront.childNodes.length) frame.trailsFront.replaceChildren()
+      drawDash(frame.trails, spec.dash, frame.elapsed, strength, centre, centre, frame.uid)
+    } else {
+      if (frame.trails.childNodes.length) frame.trails.replaceChildren()
+      if (frame.trailsFront.childNodes.length) frame.trailsFront.replaceChildren()
     }
+  }
+
+  if (frame.dots && frame.bodyContent) {
+    if (spec?.dots && on) {
+      const split = splitAmount(spec.dots, frame.elapsed)
+      drawDots(frame.dots, spec.dots, frame.elapsed, strength, centre, centre, frame.paint, split)
+      // The body shrinks into the middle dot rather than cutting to it, on its own shorter
+      // clock so it has finished before the row has.
+      const shed = splitAmount(spec.dots, frame.elapsed, BODY_SPLIT_SHARE)
+      const target = spec.dots.radius / (FACE_BOX / 2)
+      const scale = 1 - (1 - target) * shed
+      frame.bodyContent.setAttribute(
+        'transform',
+        `translate(${centre} ${centre}) scale(${scale.toFixed(4)}) translate(${-centre} ${-centre})`
+      )
+      // Held solid while it is still big enough to recognise, then dissolved quickly once
+      // it is down near dot size. Fading it early instead leaves a large ghost with the
+      // dots showing through, which reads as two pictures crossfading rather than one thing
+      // dividing.
+      frame.bodyContent.style.opacity = (1 - clamp((shed - 0.62) / 0.3, 0, 1)).toFixed(3)
+    } else if (frame.dots.childNodes.length) {
+      frame.dots.replaceChildren()
+      frame.bodyContent.removeAttribute('transform')
+    }
+  }
+
+  if (frame.overlay) {
+    if (spec?.pops && on) {
+      drawPops(frame.overlay, spec.pops, frame.elapsed, strength, centre, centre, frame.paint)
+    } else if (spec?.badge && on) {
+      drawBadge(frame.overlay, spec.badge, frame.elapsed, strength)
+    } else if (frame.overlay.childNodes.length) {
+      frame.overlay.replaceChildren()
+    }
+  }
+
+  if (frame.face) {
+    // A dot has no room for a face, and the eyes shrunk to specks read as grit.
+    frame.face.style.opacity = spec?.dash && on ? '0' : '1'
   }
 
   if (frame.confetti) {
@@ -513,14 +1104,274 @@ export function updateEffects(frame: EffectFrame) {
         frame.glyph.replaceChildren()
       }
       frame.glyph.style.opacity = '0'
-      frame.bodyContent.style.opacity = '1'
+      // Not `1` unconditionally: the dots may have stood the body down this same frame.
+      if (!(spec?.dots && on)) frame.bodyContent.style.opacity = '1'
     }
   }
 }
 
+/* -------------------------------------------------------------------- life */
+
+/**
+ * Micro-saccades — the thing that separates "still" from "dead".
+ *
+ * The body already breathes and bounces, but between expression changes the eyes were
+ * perfectly motionless, which is uncanny in a way that is hard to name and easy to feel.
+ * Real eyes never hold still: they make small fast jumps a few times a second, with slow
+ * drift in between.
+ *
+ * Three properties this has to have:
+ *
+ * **Eyes only.** The mouth keeps its own position. A whole-face jitter reads as the picture
+ * shaking; an eyes-only one reads as attention moving.
+ *
+ * **Fast in, slow out.** A saccade is ballistic — the jump takes about 40ms and the eye then
+ * sits at the new target. Easing it symmetrically would read as a float rather than a flick.
+ *
+ * **Desynchronised per mascot.** A page showing every state at once has forty of these on
+ * screen. Seeded from the instance rather than from the expression, so they do not all
+ * twitch on the same frame — which would read as the page stuttering, not as forty
+ * characters looking around.
+ *
+ * Bounded on purpose: the fit solver has to widen every eye point's required clearance by
+ * this much, so a generous amplitude is paid for in face size on every silhouette.
+ */
+export const SACCADE_TRAVEL = { x: 2.2, y: 1.4 }
+
+/** Worst-case excursion in any direction, which is what the solver has to leave room for. */
+export const SACCADE_RADIUS = Math.hypot(SACCADE_TRAVEL.x, SACCADE_TRAVEL.y)
+
+/** Mean time between jumps. Jittered per jump so the rhythm never reads as a metronome. */
+const SACCADE_INTERVAL = 1150
+/** How long the jump itself takes. Short — this is the ballistic part. */
+const SACCADE_RISE = 45
+
+const lifeHash = (n: number) => {
+  const x = Math.sin(n * 91.7 + 47.3) * 28461.13
+  return (x - Math.floor(x)) * 2 - 1
+}
+
+/** Stable per-instance number from the component's uid, so two mascots differ. */
+export const lifeSeed = (uid: string) => {
+  let hash = 0
+  for (let i = 0; i < uid.length; i++) hash = (hash * 31 + uid.charCodeAt(i)) % 100000
+  return hash
+}
+
+/**
+ * Where the eyes are looking right now, relative to their resting position.
+ *
+ * Each interval picks a fresh target and jumps to it. Between jumps the eyes drift very
+ * slightly, which is what stops a held gaze from looking frozen while it waits.
+ */
+export function saccadeOffset(
+  elapsedMs: number,
+  seed: number,
+  strength: number
+): [number, number] {
+  if (strength <= 0) return [0, 0]
+
+  // Warp the clock so intervals vary; a fixed period is legible as a tick within seconds.
+  const warped = elapsedMs + Math.sin(elapsedMs / 1900 + seed) * 260
+  const step = Math.floor(warped / SACCADE_INTERVAL)
+  const into = warped - step * SACCADE_INTERVAL
+
+  const from = [lifeHash(step * 2 + seed), lifeHash(step * 2 + 1 + seed)]
+  const to = [lifeHash((step + 1) * 2 + seed), lifeHash((step + 1) * 2 + 1 + seed)]
+
+  // Fast in: the whole move happens in the first SACCADE_RISE ms of the interval.
+  const rise = Math.min(into / SACCADE_RISE, 1)
+  const eased = rise * rise * (3 - 2 * rise)
+  const held = (into - SACCADE_RISE) / SACCADE_INTERVAL
+
+  // Slow out: a little drift after landing, so the held position is not perfectly static.
+  const drift = Math.sin(held * 2.4 + seed) * 0.06
+
+  /*
+    Clamped to the unit box before scaling, and this matters more than it looks: the hash
+    already spans -1…1, so the drift on top of it can land just outside. The fit solver
+    reserves exactly SACCADE_TRAVEL of clearance for this function, so an offset a
+    thousandth of a unit over is not a rounding detail — it is the clipping report being
+    wrong, which is the one thing it is for.
+  */
+  return [
+    unit(from[0] + (to[0] - from[0]) * eased + drift) * SACCADE_TRAVEL.x * strength,
+    unit(from[1] + (to[1] - from[1]) * eased + drift * 0.6) * SACCADE_TRAVEL.y * strength,
+  ]
+}
+
+const unit = (value: number) => (value < -1 ? -1 : value > 1 ? 1 : value)
+
+/* ---------------------------------------------------------------- sequence */
+
+/**
+ * Custom states.
+ *
+ * The built-in states cycle a pool at random within a cadence, which is right for a mood:
+ * `thinking` should not play the same four faces in the same order forever. It is wrong for
+ * a scripted beat — "look up, pause, nod" — where the order is the whole point, and it is
+ * the only thing on offer if your app needs a state the lab never authored.
+ *
+ * A sequence is that other thing: ordered steps, each holding for its own time, with its own
+ * transition feel. Everything here is deliberately framework-free and side-effect-free so
+ * the same code runs the studio preview, the exported component, and the tests.
+ */
+
+export type SequenceTransition = 'spring' | 'smooth' | 'snappy'
+export type SequencePlayback = 'loop' | 'once' | 'pingPong'
+
+export interface SequenceStep {
+  /** Index into EXPRESSIONS. Validated on the way in — see resolveSequence. */
+  expression: number
+  /** How long this step is held once it has arrived. */
+  holdMs: number
+  /** How long the morph into this step should feel like it takes. */
+  transitionMs: number
+  transition: SequenceTransition
+}
+
+export interface SequenceDef {
+  name: string
+  steps: SequenceStep[]
+  playback: SequencePlayback
+  /** Null disables blinking for this sequence entirely. */
+  blink: { minMs: number; maxMs: number } | null
+  /** Name of a built-in state whose body motion to borrow, or null to hold still. */
+  motion: string | null
+}
+
+export interface SequenceCursor {
+  index: number
+  direction: 1 | -1
+  /** True once a `once` sequence has reached its last step and stopped. */
+  done: boolean
+}
+
+export const sequenceCursorStart = (): SequenceCursor => ({
+  index: 0,
+  direction: 1,
+  done: false,
+})
+
+/**
+ * Where the sequence goes next.
+ *
+ * pingPong turns around at the ends rather than repeating them, so a three-step sequence
+ * reads 0,1,2,1,0,1,2… — repeating the endpoint would hold it for double time and read as
+ * a stumble.
+ */
+export function advanceSequence(
+  stepCount: number,
+  cursor: SequenceCursor,
+  playback: SequencePlayback
+): SequenceCursor {
+  const last = stepCount - 1
+  if (last < 0) return { index: 0, direction: 1, done: true }
+  if (last === 0) return { index: 0, direction: 1, done: playback === 'once' }
+
+  if (playback === 'once') {
+    if (cursor.index >= last) return { index: last, direction: 1, done: true }
+    return { index: cursor.index + 1, direction: 1, done: false }
+  }
+
+  if (playback === 'pingPong') {
+    if (cursor.direction === 1 && cursor.index >= last) {
+      return { index: last - 1, direction: -1, done: false }
+    }
+    if (cursor.direction === -1 && cursor.index <= 0) {
+      return { index: 1, direction: 1, done: false }
+    }
+    return { index: cursor.index + cursor.direction, direction: cursor.direction, done: false }
+  }
+
+  return { index: cursor.index >= last ? 0 : cursor.index + 1, direction: 1, done: false }
+}
+
+/**
+ * The spring constant a step should morph with.
+ *
+ * The engine's morph is a spring, not a duration, so `transitionMs` is a feel rather than a
+ * measurement: a shorter time means a stiffer spring. The style then biases it — `smooth`
+ * settles without overshoot, `snappy` arrives hard, `spring` keeps the engine's own bounce.
+ */
+export function sequenceSpring(
+  transition: SequenceTransition,
+  transitionMs: number,
+  base: number
+): number {
+  const byDuration = Math.min(Math.max(500 / Math.max(transitionMs, 60), 0.35), 3)
+  const byStyle = transition === 'smooth' ? 0.72 : transition === 'snappy' ? 1.6 : 1
+  return Math.min(Math.max(base * byDuration * byStyle, 1), 40)
+}
+
+/**
+ * Makes an arbitrary object safe to play.
+ *
+ * Sequences arrive from localStorage, from a project file someone edited by hand, or from an
+ * app passing a prop. A step pointing at expression 99 must not throw mid-frame, and a
+ * sequence with no steps must not spin the timer at zero delay.
+ */
+export function resolveSequence(
+  value: SequenceDef | null | undefined,
+  expressionCount: number
+): SequenceDef | null {
+  if (!value || !Array.isArray(value.steps) || value.steps.length === 0) return null
+  const steps = value.steps
+    .filter(step => step && Number.isFinite(step.expression))
+    .map(step => ({
+      expression:
+        ((Math.round(step.expression) % expressionCount) + expressionCount) % expressionCount,
+      holdMs: clampNumber(step.holdMs, 120, 60000, 1400),
+      transitionMs: clampNumber(step.transitionMs, 0, 5000, 400),
+      transition: (['spring', 'smooth', 'snappy'] as SequenceTransition[]).includes(
+        step.transition
+      )
+        ? step.transition
+        : 'smooth',
+    }))
+  if (!steps.length) return null
+  const blink = value.blink
+    ? {
+        minMs: clampNumber(value.blink.minMs, 200, 60000, 3200),
+        maxMs: clampNumber(value.blink.maxMs, 200, 60000, 6000),
+      }
+    : null
+  if (blink) blink.maxMs = Math.max(blink.maxMs, blink.minMs)
+  return {
+    name: typeof value.name === 'string' && value.name ? value.name : 'sequence',
+    steps,
+    playback: (['loop', 'once', 'pingPong'] as SequencePlayback[]).includes(value.playback)
+      ? value.playback
+      : 'loop',
+    blink,
+    motion: typeof value.motion === 'string' && value.motion ? value.motion : null,
+  }
+}
+
+function clampNumber(value: number, min: number, max: number, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(Math.max(value, min), max)
+    : fallback
+}
+
+/** Total wall time for one pass, for a UI that wants to say how long a sequence runs. */
+export function sequenceDuration(sequence: SequenceDef): number {
+  const pass = sequence.steps.reduce((total, step) => total + step.holdMs + step.transitionMs, 0)
+  return sequence.playback === 'pingPong' && sequence.steps.length > 1 ? pass * 2 : pass
+}
+
+/**
+ * States built in Blob Studio and baked in at export.
+ *
+ * Empty in the studio's own copy — there, sequences arrive live through the `sequence`
+ * prop as you edit them. An exported component carries whatever you chose to ship, and its
+ * recipient plays one by name: `<Avatar sequenceName="greeting" />`.
+ */
+export const SEQUENCES: Record<string, SequenceDef> = {}
+
 /* ------------------------------------------------------------------ states */
 
-export type CursorState =
+export type EmberAvatarState =
   | "sleeping"
   | "waking"
   | "idle"
@@ -547,6 +1398,7 @@ export type CursorState =
   | "orbit"
   | "radar"
   | "progress"
+  | "thinking-dots"
   | "spawning"
   | "humming"
   | "loading"
@@ -565,7 +1417,7 @@ export type CursorState =
  * Which expressions a state cycles through. The first is its resting face, chosen as the
  * pool's most forward-facing member so a mascot at rest looks at you rather than past you.
  */
-export const POOLS = {
+export const POOLS: Record<EmberAvatarState, number[]> = {
   sleeping: [
     22,
     13,
@@ -702,6 +1554,11 @@ export const POOLS = {
     0,
     8
   ],
+  "thinking-dots": [
+    6,
+    0,
+    8
+  ],
   spawning: [
     3,
     0
@@ -762,10 +1619,10 @@ export const POOLS = {
     22,
     13
   ]
-} satisfies Record<CursorState, number[]>
+}
 
 /** How long a state holds an expression before drifting to another, in ms. */
-const EXPR_CADENCE = {
+const EXPR_CADENCE: Record<EmberAvatarState, [number, number]> = {
   sleeping: [
     6000,
     10000
@@ -870,6 +1727,10 @@ const EXPR_CADENCE = {
     4000,
     8000
   ],
+  "thinking-dots": [
+    4000,
+    8000
+  ],
   spawning: [
     1200,
     1200
@@ -922,10 +1783,10 @@ const EXPR_CADENCE = {
     6000,
     9000
   ]
-} satisfies Record<CursorState, [number, number]>
+} as Record<EmberAvatarState, [number, number]>
 
 /** Blink cadence in ms, or null for states that never blink. */
-const BLINK = {
+const BLINK: Record<EmberAvatarState, [number, number] | null> = {
   sleeping: null,
   waking: null,
   idle: [
@@ -1012,6 +1873,7 @@ const BLINK = {
   orbit: null,
   radar: null,
   progress: null,
+  "thinking-dots": null,
   spawning: null,
   humming: [
     4000,
@@ -1034,10 +1896,10 @@ const BLINK = {
     4500
   ],
   "powering-down": null
-} satisfies Record<CursorState, [number, number] | null>
+} as Record<EmberAvatarState, [number, number] | null>
 
 /** Grouping, for pickers and docs. */
-export const STATE_GROUPS = {
+export const STATE_GROUPS: Record<string, EmberAvatarState[]> = {
   "Cycle de vie": [
     "sleeping",
     "waking",
@@ -1068,7 +1930,8 @@ export const STATE_GROUPS = {
   "Morphes agent": [
     "orbit",
     "radar",
-    "progress"
+    "progress",
+    "thinking-dots"
   ],
   "Cycle produit": [
     "spawning",
@@ -1085,21 +1948,18 @@ export const STATE_GROUPS = {
     "bouncing",
     "powering-down"
   ]
-} satisfies Record<string, CursorState[]>
+}
 
-const isCursorState = (state: string): state is CursorState => state in POOLS
-export const CURSOR_STATES = Object.keys(POOLS).filter(isCursorState)
+export const EMBER_AVATAR_STATES = Object.keys(POOLS) as EmberAvatarState[]
 
 /* ------------------------------------------------------------------- maths */
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
-const noTimestamp = (): number | null => null
 
 const toPath = (ring: Ring) =>
   'M' + ring.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join('L') + 'Z'
 
-const clone = (rings: Ring[]): Ring[] =>
-  rings.map(r => r.map((p): [number, number] => [p[0], p[1]]))
+const clone = (rings: Ring[]): Ring[] => rings.map(r => r.map(p => [p[0], p[1]] as [number, number]))
 
 /**
  * The mouth hangs off the eyes: centred under the pair, tilted with them, and pushed clear
@@ -1131,10 +1991,8 @@ export function mouthFrame(rings: Ring[], spec: number[]) {
 export function mouthPath(frame: { x: number; y: number; angle: number }, spec: number[]) {
   const ca = Math.cos(frame.angle)
   const sa = Math.sin(frame.angle)
-  const at = (lx: number, ly: number): [number, number] => [
-    frame.x + lx * ca - ly * sa,
-    frame.y + lx * sa + ly * ca,
-  ]
+  const at = (lx: number, ly: number) =>
+    [frame.x + lx * ca - ly * sa, frame.y + lx * sa + ly * ca] as [number, number]
   const a = at(-spec[0], 0)
   const c = at(0, spec[1])
   const b = at(spec[0], 0)
@@ -1143,6 +2001,24 @@ export function mouthPath(frame: { x: number; y: number; angle: number }, spec: 
     ' Q' + c[0].toFixed(2) + ' ' + c[1].toFixed(2) +
     ' ' + b[0].toFixed(2) + ' ' + b[1].toFixed(2)
   )
+}
+
+/**
+ * Per-eye [width, height] multipliers, indexed to match `rings`.
+ *
+ * Which path is the left eye is decided by where it sits, not by which was authored first —
+ * expression rings are not in a guaranteed order, and a caller writing `left` means the eye
+ * they can see on the left.
+ */
+function resolveEyeScale(
+  scale: number | { left?: [number, number]; right?: [number, number] } | undefined,
+  rings: Ring[]
+): [number, number][] {
+  if (scale === undefined) return [[1, 1], [1, 1]]
+  if (typeof scale === 'number') return [[scale, scale], [scale, scale]]
+  const left: [number, number] = scale.left ?? [1, 1]
+  const right: [number, number] = scale.right ?? [1, 1]
+  return ringCentre(rings[0])[0] <= ringCentre(rings[1])[0] ? [left, right] : [right, left]
 }
 
 /** Face-space transform placing the face inside a silhouette. */
@@ -1216,6 +2092,16 @@ export function bodyTransform(motion: BodyMotion, elapsed: number, strength: num
     const t = Math.min(Math.max(elapsed / SETTLE_MS, 0), 1)
     scale *= 1 + (motion.settle - 1) * easeInOut(t) * strength
   }
+  if (motion.dash) {
+    const [radius, period] = motion.dash
+    const p = dashPoint(radius * strength, period, elapsed)
+    dx += p.x
+    dy += p.y
+  }
+  if (motion.scale !== undefined) {
+    // Eased by strength so `motion={0}` still gives the state's resting silhouette.
+    scale *= 1 + (motion.scale - 1) * strength
+  }
 
   const parts: string[] = []
   if (dx || dy) parts.push(`translate(${dx.toFixed(2)} ${dy.toFixed(2)})`)
@@ -1232,20 +2118,27 @@ export function bodyTransform(motion: BodyMotion, elapsed: number, strength: num
 
 /* --------------------------------------------------------------- component */
 
-export interface CursorAvatarProps {
-  state?: CursorState
+export interface EmberAvatarProps {
+  state?: EmberAvatarState
   /** Pin a specific expression. Stops the state's own cycling. */
   expression?: number
   size?: number | string
   /** Eye offset, each axis -1…1. */
   gaze?: { x?: number; y?: number }
-  /** Head turn in degrees; the eyes wrap around the implied sphere. */
+  /**
+   * Head turn in degrees; the eyes wrap around the implied sphere.
+   */
   turn?: number
   /** How much of each expression's own look-direction to apply. 0 = always forward. */
   lookAround?: number
   flip?: boolean
   spring?: number
-  eyeScale?: number
+  /**
+   * Eye size. A number scales both eyes evenly; the object form sizes each one on its own,
+   * as `[width, height]` multipliers. Left and right are decided by where the eyes sit,
+   * not by which path was authored first.
+   */
+  eyeScale?: number | { left?: [number, number]; right?: [number, number] }
   showMouth?: boolean
   mouthStroke?: number
   /** How strongly the body itself moves. 0 holds it perfectly still, 1 is full motion. */
@@ -1257,8 +2150,21 @@ export interface CursorAvatarProps {
   autoBlink?: boolean
   autoExpression?: boolean
   paused?: boolean
-  /** Silhouette to wear. Defaults to the baked-in mascot silhouette. */
-  silhouette?: CursorSilhouette
+  /**
+   * Play an ordered sequence of expressions instead of the state's random pool. Overrides
+   * the state's own cycling and blink cadence; the state still supplies body motion unless
+   * the sequence names its own.
+   */
+  sequence?: SequenceDef | null
+  /** One of the states baked in at export — see SEQUENCES. Ignored if `sequence` is set. */
+  sequenceName?: string
+  /**
+   * Micro-saccades — small eye movements between expression changes. Scaled by `motion`,
+   * so a caller who has already asked for stillness gets it.
+   */
+  life?: boolean
+  /** Silhouette to wear. Defaults to the baked-in SHAPE. */
+  shape?: EmberSilhouette
   gradient?: [string, string, string]
   eyeColor?: string
   title?: string | null
@@ -1266,21 +2172,21 @@ export interface CursorAvatarProps {
   style?: React.CSSProperties
 }
 
-export interface CursorAvatarHandle {
+export interface EmberAvatarHandle {
   blink: () => void
   spin: (durationMs?: number) => void
   setExpression: (index: number) => void
 }
 
-export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarProps>(
-  function CursorAvatar(
+export const EmberAvatar = React.forwardRef<EmberAvatarHandle, EmberAvatarProps>(
+  function EmberAvatar(
     {
       state = 'idle',
       expression,
       size = 160,
-      gaze,
+      gaze = DEFAULT_GAZE,
       turn = 0,
-      lookAround = 0.5,
+      lookAround = 0.35,
       flip = false,
       spring = 7,
       eyeScale = 1,
@@ -1292,7 +2198,10 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       autoBlink = true,
       autoExpression = true,
       paused = false,
-      silhouette = DEFAULT_SILHOUETTE,
+      sequence = null,
+      sequenceName,
+      life = true,
+      shape = SHAPE,
       gradient = DEFAULT_GRADIENT,
       eyeColor = "#ffffff",
       title,
@@ -1309,16 +2218,37 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
     const bodyGroup = useRef<SVGGElement | null>(null)
     const bodyContent = useRef<SVGGElement | null>(null)
     const trailLayer = useRef<SVGGElement | null>(null)
+    const trailFrontLayer = useRef<SVGGElement | null>(null)
     const confettiLayer = useRef<SVGGElement | null>(null)
     const glyphLayer = useRef<SVGGElement | null>(null)
+    const overlayLayer = useRef<SVGGElement | null>(null)
+    const dotsLayer = useRef<SVGGElement | null>(null)
+    const faceLayer = useRef<SVGGElement | null>(null)
 
     // Respect the OS setting unless the caller states a preference explicitly.
     const prefersReducedMotion = useMemo(
-      () => globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+      () =>
+        typeof window !== 'undefined' &&
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches,
       []
     )
     const motionStrength = motion ?? (prefersReducedMotion ? 0 : 1)
-    const lastState: CursorState = state
+
+    /*
+      Validated once rather than per frame. A step pointing at an expression that does not
+      exist is a thing an app can hand us, and it must not throw inside the frame loop.
+    */
+    const activeSequence = useMemo(
+      () =>
+        resolveSequence(
+          sequence ?? (sequenceName ? SEQUENCES[sequenceName] : null),
+          EXPRESSION_COUNT
+        ),
+      [sequence, sequenceName]
+    )
+    // Per instance, so a page showing forty mascots does not saccade in lockstep.
+    const saccadeSeed = useMemo(() => lifeSeed(uid), [uid])
 
     // Frame-loop state lives in a ref so prop changes never restart a morph.
     const engine = useRef({
@@ -1326,21 +2256,20 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       target: EXPRESSIONS[0],
       currentMouth: MOUTHS[0].slice(),
       targetMouth: MOUTHS[0],
-      currentGaze: [...GAZE[0]],
-      targetGaze: [...GAZE[0]],
+      currentGaze: GAZE[0].slice() as number[],
+      targetGaze: GAZE[0] as number[],
       expression: 0,
       morph: 1,
       velocity: 0,
-      blinkStart: noTimestamp(),
-      spinStart: noTimestamp(),
+      blinkStart: null as number | null,
+      spinStart: null as number | null,
       spinDuration: 900,
+      /** Set by a sequence step so its transition feel outlives the effect that set it. */
+      springOverride: null as number | null,
       last: 0,
       stateStart: 0,
-      lastState,
+      lastState: state as EmberAvatarState,
       lastBodyTransform: '',
-      // what the parked loop last painted; '' means "never" so a mascot that
-      // mounts paused still gets its one resting-face paint
-      pausedPaint: '',
       props: {
         state,
         expression,
@@ -1353,6 +2282,9 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
         motionStrength,
         effects,
         glyphs,
+        life,
+        saccadeSeed,
+        sequenceMotion: activeSequence?.motion ?? null,
       },
     })
     engine.current.props = {
@@ -1367,6 +2299,9 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       motionStrength,
       effects,
       glyphs,
+      life,
+      saccadeSeed,
+      sequenceMotion: activeSequence?.motion ?? null,
     }
 
     const selectExpression = (index: number) => {
@@ -1400,12 +2335,48 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
     )
 
     useEffect(() => {
-      selectExpression(expression ?? POOLS[state][0])
-    }, [state, expression])
+      selectExpression(expression ?? activeSequence?.steps[0].expression ?? POOLS[state][0])
+    }, [state, expression, activeSequence])
 
+    /*
+      Two ways to change face, and only one runs at a time.
+
+      A state picks at random from its pool on a cadence, which is what makes a mood look
+      unscripted. A sequence walks its steps in order, holding each for its own time — the
+      order is the content, so randomising it would destroy the thing being authored.
+
+      Both stop dead when the caller pins an expression, and both stop when paused. The
+      sequence path also honours its own transition feel per step by overriding the spring
+      for the duration of that morph.
+    */
     useEffect(() => {
       if (!autoExpression || expression !== undefined || paused) return
       let timer: ReturnType<typeof setTimeout>
+
+      if (activeSequence) {
+        const steps = activeSequence.steps
+        let cursor = sequenceCursorStart()
+        const play = (first: boolean) => {
+          const step = steps[cursor.index]
+          engine.current.springOverride = sequenceSpring(
+            step.transition,
+            step.transitionMs,
+            spring
+          )
+          if (!first) selectExpression(step.expression)
+          if (cursor.done) return
+          timer = setTimeout(() => {
+            cursor = advanceSequence(steps.length, cursor, activeSequence.playback)
+            play(false)
+          }, step.holdMs + step.transitionMs)
+        }
+        play(true)
+        return () => {
+          clearTimeout(timer)
+          engine.current.springOverride = null
+        }
+      }
+
       const tick = () => {
         const [lo, hi] = EXPR_CADENCE[state]
         timer = setTimeout(() => {
@@ -1421,10 +2392,12 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       }
       tick()
       return () => clearTimeout(timer)
-    }, [state, autoExpression, expression, paused])
+    }, [state, autoExpression, expression, paused, activeSequence, spring])
 
     useEffect(() => {
-      const cadence = BLINK[state]
+      const cadence = activeSequence
+        ? activeSequence.blink && ([activeSequence.blink.minMs, activeSequence.blink.maxMs] as const)
+        : BLINK[state]
       if (!autoBlink || !cadence || paused) return
       let timer: ReturnType<typeof setTimeout>
       const tick = () => {
@@ -1435,11 +2408,10 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       }
       tick()
       return () => clearTimeout(timer)
-    }, [state, autoBlink, paused])
+    }, [state, autoBlink, paused, activeSequence])
 
     useEffect(() => {
       let frame = 0
-      let wake: ReturnType<typeof setTimeout> | undefined
       engine.current.last = performance.now()
 
       const draw = (e: typeof engine.current, now: number, spinTurn: number) => {
@@ -1449,13 +2421,22 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
         const look = p.lookAround ?? 0.35
         const ox = g[0] * look
         const oy = g[1] * look
-        const rings = displayed(e).map(ring =>
-          ring.map((pt): [number, number] => [pt[0] + ox, pt[1] + oy])
+        const rings = displayed(e).map(
+          ring => ring.map(pt => [pt[0] + ox, pt[1] + oy] as [number, number]) as Ring
         )
         const gx = clamp(p.gaze?.x ?? 0, -1, 1) * GAZE_X
         const gy = clamp(p.gaze?.y ?? 0, -1, 1) * GAZE_Y
+        /*
+          Micro-saccades ride on top of the constant aim, and only on the eyes: gx/gy move
+          the whole face because a deliberate look turns the head with it, but a saccade is
+          the eyes alone moving inside a face that stays put.
+        */
+        const [sx, sy] =
+          p.life === false
+            ? [0, 0]
+            : saccadeOffset(now, p.saccadeSeed ?? 0, p.motionStrength ?? 1)
         const radians = (((p.turn ?? 0) + spinTurn) * Math.PI) / 180
-        const base = p.eyeScale ?? 1
+        const eyeSize = resolveEyeScale(p.eyeScale, rings)
         const blink = blinkScale(e, now)
 
         rings.forEach((ring, index) => {
@@ -1466,13 +2447,14 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
           const longitude = baseLongitude + radians
           const depth = Math.cos(longitude)
           const perspective = Math.max(depth, 0.02) / Math.max(Math.cos(baseLongitude), 0.02)
+          const size = eyeSize[index]
           el.setAttribute('d', toPath(ring))
           el.setAttribute(
             'transform',
-            `translate(${(SPHERE_C + SPHERE_R * Math.sin(longitude) + gx).toFixed(2)} ${(
-              c[1] + gy
-            ).toFixed(2)}) scale(${clamp(perspective * base, 0.02, 2.4).toFixed(4)} ${clamp(
-              blink * base,
+            `translate(${(SPHERE_C + SPHERE_R * Math.sin(longitude) + gx + sx).toFixed(2)} ${(
+              c[1] + gy + sy
+            ).toFixed(2)}) scale(${clamp(perspective * size[0], 0.02, 2.4).toFixed(4)} ${clamp(
+              blink * size[1],
               0.02,
               2.4
             ).toFixed(4)}) translate(${(-c[0]).toFixed(2)} ${(-c[1]).toFixed(2)})`
@@ -1505,12 +2487,19 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
         // rather than in an effect — the loop already has the clock.
         const bodyEl = bodyGroup.current
         if (bodyEl) {
-          if (p.state !== e.lastState) {
-            e.lastState = p.state
+          /*
+            A sequence may borrow a state's body motion by name; otherwise the state it is
+            playing under supplies it. The clock restarts on the motion, not on the state,
+            or a one-shot entrance would fail to replay when only the borrowed motion
+            changed.
+          */
+          const motionKey = (p.sequenceMotion ?? p.state) as EmberAvatarState
+          if (motionKey !== e.lastState) {
+            e.lastState = motionKey
             e.stateStart = now
           }
           const transform = bodyTransform(
-            MOTION[p.state] ?? {},
+            MOTION[motionKey] ?? {},
             now - e.stateStart,
             p.motionStrength ?? 1
           )
@@ -1523,45 +2512,32 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
 
         updateEffects({
           trails: trailLayer.current,
+          trailsFront: trailFrontLayer.current,
           confetti: confettiLayer.current,
           glyph: glyphLayer.current,
+          overlay: overlayLayer.current,
+          dots: dotsLayer.current,
           bodyContent: bodyContent.current,
-          state: p.state,
+          face: faceLayer.current,
+          state: p.state as EmberAvatarState,
           elapsed: now - e.stateStart,
           strength: p.motionStrength ?? 1,
           paint: paintRef.current,
+          uid,
           showEffects: p.effects !== false,
           showGlyphs: p.glyphs !== false,
         })
       }
 
       const step = (now: number) => {
+        frame = requestAnimationFrame(step)
         const e = engine.current
         const p = e.props
-        // A paused mascot must not wake at display rate: re-arming BEFORE the
-        // pause check once had N idle sidebar faces ticking at 60fps forever.
-        // While paused, poll for unpause at 4Hz — but the resting face must
-        // still be PAINTED: the SVG layers hold no expression until the first
-        // draw, so a mascot that mounts paused would otherwise stay blank.
-        // One draw per change of what the still face shows, then park.
-        if (p.paused) {
-          e.last = now
-          const still = `${p.state}|${p.expression ?? ''}|${paintRef.current}`
-          if (e.pausedPaint !== still) {
-            e.pausedPaint = still
-            draw(e, now, 0)
-          }
-          wake = setTimeout(() => {
-            frame = requestAnimationFrame(step)
-          }, 250)
-          return
-        }
-        e.pausedPaint = ''
-        frame = requestAnimationFrame(step)
         const dt = Math.min((now - e.last) / 1000, 0.1)
         e.last = now
+        if (p.paused) return
 
-        const f = p.spring ?? 7
+        const f = e.springOverride ?? p.spring ?? 7
         e.velocity += (-2 * f * e.velocity - f * f * (e.morph - 1)) * dt
         e.morph += e.velocity * dt
         if (!Number.isFinite(e.morph)) {
@@ -1580,19 +2556,35 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       }
 
       frame = requestAnimationFrame(step)
-      return () => {
-        cancelAnimationFrame(frame)
-        if (wake !== undefined) clearTimeout(wake)
-      }
-    }, [])
+      return () => cancelAnimationFrame(frame)
+      // `uid` is stable for the component's life, so listing it re-runs nothing — it is
+      // here because the loop genuinely reads it, and a lie in a dependency array is the
+      // kind that bites later.
+    }, [uid])
 
-    const paint = `url(#${uid}-grad)`
+    /*
+      What the extras are made of.
+
+      The loading dots, the pieces shed on spawn and shutdown, and the glyph the mascot
+      turns into are all meant to read as the same stuff as the body. That is the instance
+      gradient whenever the body takes it — but artwork that kept its own colours never
+      does, and those parts would then arrive in a gradient that appears nowhere else on
+      screen: a red logo dissolving into green dots.
+
+      Artwork gradients survive this, because the import inlines their defs alongside the
+      body, so a `url(#…)` fill still resolves.
+    */
+    const paint = useMemo(() => {
+      if (shape.body.includes('{{GRADIENT}}')) return `url(#${uid}-grad)`
+      const own = shape.body.match(/fill="(?!none)([^"]+)"/)
+      return own ? own[1] : `url(#${uid}-grad)`
+    }, [shape.body, uid])
     const paintRef = useRef(paint)
     paintRef.current = paint
 
-    const dimension = size.constructor === Number ? `${size}px` : size
-    const label = title === undefined ? `${silhouette.name} mascot` : title
-    const body = silhouette.body.replace(/\{\{GRADIENT\}\}/g, `url(#${uid}-grad)`)
+    const dimension = typeof size === 'number' ? `${size}px` : size
+    const label = title === undefined ? `${shape.name} mascot` : title
+    const body = shape.body.replace(/\{\{GRADIENT\}\}/g, `url(#${uid}-grad)`)
 
     return (
       <svg
@@ -1612,24 +2604,28 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
             <stop offset="100%" stopColor={gradient[2]} />
           </linearGradient>
           {/* The fit goes on the clipPath itself: a <g> inside one is ignored by browsers,
-              which is also why silhouette.clip is pre-flattened to bare shapes. */}
+              which is also why shape.clip is pre-flattened to bare shapes. */}
           <clipPath
             id={`${uid}-clip`}
-            transform={silhouette.fit || undefined}
-            dangerouslySetInnerHTML={{ __html: silhouette.clip }}
+            transform={shape.fit || undefined}
+            dangerouslySetInnerHTML={{ __html: shape.clip }}
           />
         </defs>
         <g transform={flip ? `translate(${FACE_BOX} 0) scale(-1 1)` : undefined}>
-          {/* Ribbons sit behind the mascot, confetti in front of it. */}
+          {/* The far half of every orbit. Its near half is drawn after the body, which is
+              the only thing making the rings read as rings rather than as a halo. */}
           <g ref={trailLayer} />
+          {/* Under the body on purpose: the dots are what the body comes apart into, and
+              they have to slide out from behind it rather than across it. */}
+          <g ref={dotsLayer} />
           {/* Body and face move together — the face is painted on the body, not floating
               in front of it, so a squash or a tilt has to carry both. The glyph rides the
               same motion but is not faded with them, since it replaces them. */}
           <g ref={bodyGroup}>
           <g ref={bodyContent}>
-          <g transform={silhouette.fit || undefined} dangerouslySetInnerHTML={{ __html: body }} />
-          <g clipPath={`url(#${uid}-clip)`}>
-            <g transform={anchorTransform(silhouette.anchor)}>
+          <g transform={shape.fit || undefined} dangerouslySetInnerHTML={{ __html: body }} />
+          <g ref={faceLayer} clipPath={`url(#${uid}-clip)`}>
+            <g transform={anchorTransform(shape.anchor)}>
               <path ref={eye0} fill={eyeColor} />
               <path ref={eye1} fill={eyeColor} />
               {showMouth && (
@@ -1646,7 +2642,12 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
           </g>
           <g ref={glyphLayer} style={{ opacity: 0 }} />
           </g>
+          {/* The near half of the orbits, and the tails a dashing dot drags through. */}
+          <g ref={trailFrontLayer} />
           <g ref={confettiLayer} />
+          {/* Pops and the badge sit above everything — they are things happening to the
+              mascot, not parts of it. */}
+          <g ref={overlayLayer} />
         </g>
       </svg>
     )
@@ -1658,10 +2659,13 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
 function displayed(e: { current: Ring[]; target: Ring[]; morph: number }): Ring[] {
   const m = clamp(e.morph, 0, 1)
   return e.current.map((ring, eye) =>
-    ring.map((p, i): [number, number] => [
-      p[0] + (e.target[eye][i][0] - p[0]) * m,
-      p[1] + (e.target[eye][i][1] - p[1]) * m,
-    ])
+    ring.map(
+      (p, i) =>
+        [p[0] + (e.target[eye][i][0] - p[0]) * m, p[1] + (e.target[eye][i][1] - p[1]) * m] as [
+          number,
+          number
+        ]
+    )
   )
 }
 
@@ -1686,4 +2690,13 @@ function blinkScale(e: { blinkStart: number | null }, now: number) {
   return Math.max(t < 0.42 ? 1 - t / 0.42 : (t - 0.42) / 0.58, 0.04)
 }
 
-export default CursorAvatar
+/**
+ * The hand-fitted avatars this engine replaced exposed these three separately. Kept so
+ * existing imports keep working; the silhouette, its fit transform and the face anchor all
+ * live in SHAPE now.
+ */
+export const EMBER_SVGREPO_COM_GRADIENT = DEFAULT_GRADIENT
+export const FACE_ANCHOR = anchorTransform(SHAPE.anchor)
+export const EMBER_SVGREPO_COM_FIT = SHAPE.fit
+
+export default EmberAvatar

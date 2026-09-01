@@ -8,8 +8,8 @@ import CompanionCore
 struct BotAvatarView: View {
     let bot: Bot
     let size: CGFloat
-    var state: MausState = .idle
-    /// Opt-in, mirroring MausAvatar: an animated face is a 30fps canvas.
+    var state: EmberState = .idle
+    /// Opt-in, mirroring EmberAvatar: an animated face is a 30fps canvas.
     var animated = false
     var comets = false
 
@@ -29,7 +29,7 @@ struct BotAvatarView: View {
                     .frame(width: size, height: size)
                     .clipShape(mask)
             } else {
-                MausAvatar(color: bot.color, size: size, state: state, animated: animated, comets: comets)
+                EmberAvatar(color: bot.color, size: size, state: state, animated: animated, comets: comets)
             }
         }
         .frame(width: size, height: size)
@@ -62,8 +62,8 @@ struct BotAvatarView: View {
 struct ChatAvatarView: View {
     let chat: Chat
     let size: CGFloat
-    var state: MausState = .idle
-    /// Opt-in, mirroring MausAvatar: an animated face is a 30fps canvas.
+    var state: EmberState = .idle
+    /// Opt-in, mirroring EmberAvatar: an animated face is a 30fps canvas.
     var animated = false
     var comets = false
 
@@ -72,7 +72,7 @@ struct ChatAvatarView: View {
         case let .bot(bot):
             BotAvatarView(bot: bot, size: size, state: state, animated: animated, comets: comets)
         case .room:
-            MausAvatar(color: "blue", size: size, state: state, animated: animated, comets: comets)
+            EmberAvatar(color: "blue", size: size, state: state, animated: animated, comets: comets)
         }
     }
 }

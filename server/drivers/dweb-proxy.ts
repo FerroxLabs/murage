@@ -1,5 +1,5 @@
 // dweb MCP proxy — spawned as an MCP server inside a bot's agent process.
-// Exposes dweb's HTTP API (the local OpenMaus network daemon) as tools an
+// Exposes dweb's HTTP API (the local Murage network daemon) as tools an
 // agent can call to inspect the network and run model requests:
 //
 //   dweb_status          → ping dweb, summarize server + peer state

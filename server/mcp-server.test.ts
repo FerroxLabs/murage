@@ -548,10 +548,10 @@ describe("connection security and discovery", () => {
   it("accepts loopback HTTP and HTTPS origins, but rejects unsafe URL shapes", () => {
     expect(validateBaseUrl("http://127.0.0.1:8799/")).toBe("http://127.0.0.1:8799");
     expect(validateBaseUrl("http://[::1]:8799")).toBe("http://[::1]:8799");
-    expect(validateBaseUrl("https://maus.example.com")).toBe("https://maus.example.com");
-    expect(() => validateBaseUrl("ftp://maus.example.com")).toThrow("http:// or https://");
-    expect(() => validateBaseUrl("https://maus.example.com/api")).toThrow("origin without a path");
-    expect(() => validateBaseUrl("https://user:pass@maus.example.com")).toThrow("must not contain credentials");
+    expect(validateBaseUrl("https://ember.example.com")).toBe("https://ember.example.com");
+    expect(() => validateBaseUrl("ftp://ember.example.com")).toThrow("http:// or https://");
+    expect(() => validateBaseUrl("https://ember.example.com/api")).toThrow("origin without a path");
+    expect(() => validateBaseUrl("https://user:pass@ember.example.com")).toThrow("must not contain credentials");
     expect(() => validateBaseUrl("http://0.0.0.0:8799")).toThrow("Insecure cleartext HTTP");
   });
 
@@ -570,7 +570,7 @@ describe("connection security and discovery", () => {
       expect(new Headers(options.headers).get("Authorization")).toBe("Bearer proxy-token");
       return { ...jsonResponse({}), json: vi.fn(async () => { throw new Error("not json"); }) };
     }) as any;
-    await expect(request("/api/health", {}, "https://maus.example.com")).rejects.toThrow("non-JSON response");
+    await expect(request("/api/health", {}, "https://ember.example.com")).rejects.toThrow("non-JSON response");
   });
 
   it("requires an explicit destination before sending a bearer token", async () => {

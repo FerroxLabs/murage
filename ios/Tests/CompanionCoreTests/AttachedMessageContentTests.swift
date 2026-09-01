@@ -20,7 +20,7 @@ final class AttachedMessageContentTests: XCTestCase {
 
     func testFallsBackToBasenameForOlderFileTags() {
         let parsed = AttachedMessageContent.parse(
-            #"<attached-file path="C:\Users\Maus\brief.docx" />"#
+            #"<attached-file path="C:\Users\Ember\brief.docx" />"#
         )
 
         XCTAssertEqual(parsed.text, "")

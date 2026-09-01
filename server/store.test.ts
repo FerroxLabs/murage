@@ -878,7 +878,7 @@ describe("Store redacts bot-authored secrets on write", () => {
               name: `Use ${key}`,
               instructions: `Send a request with ${key}`,
               schedule: { type: "daily", time: "09:00", weekdays: [1] },
-              runOn: "maus",
+              runOn: "ember",
               durationMinutes: 30,
             },
           },

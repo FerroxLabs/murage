@@ -4,7 +4,7 @@ import { BotAvatar } from "@/components/Avatar";
 import type { Bot } from "@/state/store";
 import { MiniMonth } from "./MiniMonth";
 
-export const BOT_CALENDAR_DRAG_TYPE = "application/x-openmaus-bot";
+export const BOT_CALENDAR_DRAG_TYPE = "application/x-murage-bot";
 
 export interface CalendarSidebarProps {
   bots: Bot[];

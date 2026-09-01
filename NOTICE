@@ -1,16 +1,16 @@
 Murage
 Copyright 2026 Ferrox Labs
 
-This product includes software developed as part of the OpenMausBot project
-(https://github.com/milind-soni/OpenMausBot), Copyright 2026 Milind Soni and
-the OpenMausBot contributors, licensed under the Apache License, Version 2.0.
+This product includes software developed as part of the Murage project
+(https://github.com/milind-soni/Murage), Copyright 2026 Milind Soni and
+the Murage contributors, licensed under the Apache License, Version 2.0.
 
-Murage is a fork of OpenMausBot. Substantial modifications have been made,
+Murage is a fork of Murage. Substantial modifications have been made,
 including but not limited to: renaming of the product, its identifiers,
 configuration paths and network endpoints; replacement of hosted service
 endpoints with Ferrox Labs infrastructure; and integration with Wayland Core.
 
-Murage is not affiliated with, endorsed by, or sponsored by the OpenMausBot
+Murage is not affiliated with, endorsed by, or sponsored by the Murage
 project or its contributors.
 
 This distribution also includes third-party components under third_party/,

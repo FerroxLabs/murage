@@ -20,16 +20,16 @@ let stderr = "";
 
 const completeReplies = [
   [
-    "Scout should verify the draft.\n<openmaus-goal>{\"status\":\"continue\",",
-    "\"next\":\"Scout\",\"instruction\":\"Verify the draft and report evidence\",\"detail\":\"Draft prepared\"}</openmaus-goal>",
+    "Scout should verify the draft.\n<murage-goal>{\"status\":\"continue\",",
+    "\"next\":\"Scout\",\"instruction\":\"Verify the draft and report evidence\",\"detail\":\"Draft prepared\"}</murage-goal>",
   ],
   "The draft is accurate and the cited evidence checks out.",
-  "The verified draft is ready to ship.\n<openmaus-goal>{\"status\":\"completed\",\"detail\":\"Draft produced and independently verified.\"}</openmaus-goal>",
+  "The verified draft is ready to ship.\n<murage-goal>{\"status\":\"completed\",\"detail\":\"Draft produced and independently verified.\"}</murage-goal>",
 ];
 
 const loopReplies = Array.from({ length: 13 }, (_, index) =>
   index % 2 === 0
-    ? `More work is needed.\n<openmaus-goal>{"status":"continue","next":"Looper","instruction":"Try approach ${index / 2 + 1}","detail":"Still working"}</openmaus-goal>`
+    ? `More work is needed.\n<murage-goal>{"status":"continue","next":"Looper","instruction":"Try approach ${index / 2 + 1}","detail":"Still working"}</murage-goal>`
     : `Approach ${Math.ceil(index / 2)} did not finish the task.`,
 );
 
@@ -159,7 +159,7 @@ describe("goal-driven channel runs", () => {
     expect(current.working).toBe(false);
     expect(current.messages.filter((message: { kind: string; role?: string }) => message.kind === "text" && message.role === "bot")
       .map((message: { from?: { name?: string } }) => message.from?.name)).toEqual(["Lead", "Scout", "Lead"]);
-    expect(JSON.stringify(current.messages)).not.toContain("<openmaus-goal>");
+    expect(JSON.stringify(current.messages)).not.toContain("<murage-goal>");
   });
 
   it("pauses a non-converging team at the hard turn limit", async () => {

@@ -9,7 +9,7 @@ import Foundation
 
 struct BotActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
-        /// `MausState.rawValue` — the face to wear.
+        /// `EmberState.rawValue` — the face to wear.
         var face: String
         /// "needsYou" | "working" | "toReview"
         var kind: String
@@ -29,7 +29,7 @@ struct BotActivityAttributes: ActivityAttributes {
     var botId: String
     var threadId: String
     var name: String
-    /// MausPalette colour name.
+    /// EmberPalette colour name.
     var color: String
 }
 

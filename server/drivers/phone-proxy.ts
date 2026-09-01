@@ -213,7 +213,7 @@ async function readNodes(serial: string) {
   const streamedStart = streamed.indexOf("<?xml");
   if (streamedStart >= 0) return parseUiNodes(streamed.slice(streamedStart));
 
-  const remotePath = "/data/local/tmp/openmaus-window.xml";
+  const remotePath = "/data/local/tmp/murage-window.xml";
   await onDevice(serial, ["shell", "uiautomator", "dump", remotePath]);
   const saved = (await onDevice(serial, ["shell", "cat", remotePath])).toString("utf8");
   void onDevice(serial, ["shell", "rm", "-f", remotePath]).catch(() => undefined);

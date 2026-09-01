@@ -178,10 +178,10 @@ private struct ComputerSettingsRow: View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(MausPalette.color("blue").opacity(0.14))
+                    .fill(EmberPalette.color("blue").opacity(0.14))
                     .frame(width: 38, height: 38)
                 Image(systemName: "laptopcomputer")
-                    .foregroundStyle(MausPalette.color("blue"))
+                    .foregroundStyle(EmberPalette.color("blue"))
             }
             .accessibilityHidden(true)
 
@@ -263,7 +263,7 @@ struct ConnectedComputersView: View {
                                 Spacer()
                                 Text("Use")
                                     .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(MausPalette.color("blue"))
+                                    .foregroundStyle(EmberPalette.color("blue"))
                             }
                             .contentShape(Rectangle())
                         }
@@ -273,7 +273,7 @@ struct ConnectedComputersView: View {
                                 pendingRemoval = computer
                             }
                         }
-                        .accessibilityHint("Switches OpenMausMobile to this computer")
+                        .accessibilityHint("Switches MurageMobile to this computer")
                     }
                 }
             }

@@ -11,8 +11,8 @@
 // native ACP (agy issue #31), which would reuse acp/core.ts like grok/gemini.
 //
 // MCP tools: agy has no per-turn MCP flag, so the bot's computer (cloud box /
-// Local VM / VPS) and its OpenMaus teammate tools are mounted by upserting
-// OpenMaus-owned keys into the global `~/.gemini/config/mcp_config.json`
+// Local VM / VPS) and its Murage teammate tools are mounted by upserting
+// Murage-owned keys into the global `~/.gemini/config/mcp_config.json`
 // before each spawn — see ensureAntigravityMcpServers below. Full-auto
 // instances only; the host desktop stays off (no approval channel in print
 // mode, ever).
@@ -136,7 +136,7 @@ export function readAntigravityModelCatalog(env: Record<string, string | undefin
 // against agy 1.1.19, whose embedded docs list exactly two locations — the
 // global `~/.gemini/config/mcp_config.json` and per-plugin files — and whose
 // `agy mcp list` ignores `.gemini/{settings,mcp_config}.json` in the cwd.
-// So OpenMaus tools are mounted by upserting two reserved keys into the global file
+// So Murage tools are mounted by upserting two reserved keys into the global file
 // right before each spawn: every other byte of the user's config is
 // preserved, and a malformed file starts from a fresh object instead of
 // failing the turn (the ensureOpenCodeInjectModel discipline).
@@ -228,7 +228,7 @@ export function antigravityAgentsMcpServer(
   return { command: agents.command, args: [...agents.args], env: { ...agents.env } };
 }
 
-/** Build every OpenMaus-owned agy MCP entry for one turn. */
+/** Build every Murage-owned agy MCP entry for one turn. */
 export function antigravityMcpServers(integrations: SendTurnInput["integrations"]): AntigravityMcpServers {
   const servers: AntigravityMcpServers = {};
   const computer = antigravityComputerMcpServer(integrations);
@@ -332,7 +332,7 @@ function ensureAntigravityOwnedMcpServers(
   };
 }
 
-/** Upsert the current turn's OpenMaus MCP entries and remove absent ones.
+/** Upsert the current turn's Murage MCP entries and remove absent ones.
  * Both reserved keys are owned as one atomic mount, so a previous turn's
  * computer or teammate token can never leak into the next agy process. */
 export function ensureAntigravityMcpServers(
@@ -515,7 +515,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       };
 
       // agy's config is global, so every turn — including one without any
-      // OpenMaus tools — owns the mount for its complete child lifetime. This keeps
+      // Murage tools — owns the mount for its complete child lifetime. This keeps
       // overlapping turns from inheriting, replacing, or removing each
       // other's tools and credentials.
       const releaseMcpLease = await acquireAntigravityMcpLease();

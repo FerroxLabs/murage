@@ -308,7 +308,7 @@ describe("Antigravity snapshot", () => {
   });
 });
 
-describe("Antigravity OpenMaus MCP config", () => {
+describe("Antigravity Murage MCP config", () => {
   const configPath = (home: string) => join(home, ".gemini", "config", "mcp_config.json");
   const readConfig = (home: string) => JSON.parse(readFileSync(configPath(home), "utf8"));
   const boxIntegrations = {
@@ -580,7 +580,7 @@ describe("Antigravity OpenMaus MCP config", () => {
     }
   });
 
-  it("does not mount token-bearing OpenMaus tools in safe mode even when a caller supplies them", async () => {
+  it("does not mount token-bearing Murage tools in safe mode even when a caller supplies them", async () => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
     const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpsafe-"));

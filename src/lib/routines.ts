@@ -2,7 +2,7 @@ export type RoutineSchedule =
   | { type: "once"; at: number }
   | { type: "daily"; time: string; weekdays: number[] };
 
-export type RoutineRunOn = "maus" | "cloud";
+export type RoutineRunOn = "ember" | "cloud";
 
 export interface RoutineContextAttachment {
   id: string;

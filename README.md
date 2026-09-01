@@ -1,4 +1,4 @@
-> ⚠️ **No affiliation with any cryptocurrency.** Murage has no token. Any coin using the Murage, Maus, or SupaMaus name is not created, endorsed, or affiliated with this project or its maintainer. I have received no tokens, payment, or allocation from anyone, and I will not be endorsing any token.
+> ⚠️ **No affiliation with any cryptocurrency.** Murage has no token. Any coin using the Murage, Ember, or Ember name is not created, endorsed, or affiliated with this project or its maintainer. I have received no tokens, payment, or allocation from anyone, and I will not be endorsing any token.
 
 <div align="center">
 
@@ -41,9 +41,7 @@ Talk to them like contacts. Watch them work. Approve what matters.
 
 <br>
 
-<a href="https://buy.polar.sh/polar_cl_EEzWmormSVBD151HkmkyId9j0GPXina0KurfS1fYYcO">
-  <img src="https://img.shields.io/badge/%E2%9D%A4%EF%B8%8F%20%20Support%20Murage-any%20amount%20%C2%B7%20or%20monthly-38d591?style=for-the-badge&labelColor=070707" alt="Support Murage — one-time any amount or monthly, via Polar" height="40">
-</a>
+
 
 <br>
 <br>
@@ -172,7 +170,7 @@ Bring your own ElevenLabs key — paste it once in App Settings, pick a voice, a
 Give a bot its own voice and a channel stops sounding like one person.
 
 **Also in the box:** streaming replies with tool-run activity chips · native macOS dictation from the
-composer mic (on-device Apple speech recognition — desktop app) · SupaMaus cursor mascots with role-aware
+composer mic (on-device Apple speech recognition — desktop app) · Ember cursor mascots with role-aware
 expressions · screenshots of the bot's work folded into the transcript.
 
 ## How it works
@@ -304,7 +302,7 @@ pnpm package:linux # Ubuntu x64 .deb + AppImage → release/
 
 ### Routines and webhook triggers
 
-Routines can run once or on selected weekdays, using either a MAUS's configured model/computer or the
+Routines can run once or on selected weekdays, using either a EMBER's configured model/computer or the
 Cloud VM runner. Webhook triggers are independent from schedules but reuse the same queued task executor
 and calendar receipts.
 
@@ -334,8 +332,8 @@ Users can add their own MCP tool servers with zero code via [`docs/custom-mcp-se
 ## Support the project
 
 Murage is free and open source. If it does real work for you, you can
-[buy the project a coffee or become a monthly supporter](https://buy.polar.sh/polar_cl_EEzWmormSVBD151HkmkyId9j0GPXina0KurfS1fYYcO) —
-one-time any amount, or monthly. Payments are handled by [Polar](https://polar.sh/supamaus),
+[buy the project a coffee or become a monthly supporter]() —
+one-time any amount, or monthly. Payments are handled by [Polar](),
 which takes care of receipts and taxes; nothing about the app ever sits behind a paywall.
 
 ## License

@@ -1138,7 +1138,7 @@ export function PhoneSetupFlowView({
       <p className="mt-1 text-[13px] text-ink-secondary">
         {c.pairingExpired
           ? "Create a fresh code when your phone is ready."
-          : "Open OpenMaus on your iPhone and scan this code."}
+          : "Open Murage on your iPhone and scan this code."}
       </p>
       {!c.pairingExpired && c.pairingLink && (
         <div className="mt-4 rounded-2xl bg-white p-3.5" aria-label="Phone pairing QR code">
@@ -1147,7 +1147,7 @@ export function PhoneSetupFlowView({
       )}
       {!c.pairingExpired && manualCodeMode === "direct" && c.state?.pairing && (
         <div className="mt-4 w-full max-w-[320px] rounded-xl bg-inset px-4 py-3 text-[12.5px] text-ink-secondary">
-          <div>Open OpenMausMobile and enter this manual code.</div>
+          <div>Open MurageMobile and enter this manual code.</div>
           <div className="mt-2 font-mono text-[22px] tracking-[0.25em] text-ink">
             {c.state.pairing.code}
           </div>

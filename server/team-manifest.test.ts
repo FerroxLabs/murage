@@ -29,7 +29,7 @@ describe("team manifests", () => {
     );
 
     expect(manifest).toMatchObject({
-      format: "openmaus.team",
+      format: "murage.team",
       version: 2,
       team: {
         name: "Launch Crew",
@@ -42,7 +42,7 @@ describe("team manifests", () => {
 
   it("parses legacy room files while dropping unrelated settings", () => {
     const manifest = parseTeamManifest({
-      format: "openmaus.team",
+      format: "murage.team",
       version: 1,
       team: {
         name: "  Research Lab  ",
@@ -83,7 +83,7 @@ describe("team manifests", () => {
 
   it("parses room-free version 2 files", () => {
     const manifest = parseTeamManifest({
-      format: "openmaus.team",
+      format: "murage.team",
       version: 2,
       team: {
         name: "Engineering",
@@ -104,10 +104,10 @@ describe("team manifests", () => {
   });
 
   it("rejects unsupported versions and dangling member references", () => {
-    expect(() => parseTeamManifest({ format: "openmaus.team", version: 99 })).toThrow("not supported");
+    expect(() => parseTeamManifest({ format: "murage.team", version: 99 })).toThrow("not supported");
     expect(() =>
       parseTeamManifest({
-        format: "openmaus.team",
+        format: "murage.team",
         version: 1,
         team: {
           name: "Broken",
@@ -141,14 +141,14 @@ describe("team manifests", () => {
     };
     expect(() =>
       parseTeamManifest({
-        format: "openmaus.team",
+        format: "murage.team",
         version: 1,
         team: { name: "Research", members: [member, member], room },
       }),
     ).toThrow("Duplicate member key");
     expect(() =>
       parseTeamManifest({
-        format: "openmaus.team",
+        format: "murage.team",
         version: 1,
         team: {
           name: "Research",
@@ -161,7 +161,7 @@ describe("team manifests", () => {
 
   it("drops privileged fields a hand-edited file smuggles onto a member", () => {
     const manifest = parseTeamManifest({
-      format: "openmaus.team",
+      format: "murage.team",
       version: 2,
       team: {
         name: "Trap",

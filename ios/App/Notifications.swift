@@ -30,7 +30,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
         content.title = notification.title
         content.body = notification.body
         content.sound = .default
-        content.categoryIdentifier = notification.isBlocking ? "OPENMAUS_APPROVAL" : "OPENMAUS_UPDATE"
+        content.categoryIdentifier = notification.isBlocking ? "MURAGE_APPROVAL" : "MURAGE_UPDATE"
         content.threadIdentifier = notification.threadId
         content.userInfo = [
             "threadId": notification.threadId,
@@ -41,7 +41,7 @@ final class NotificationCoordinator: NSObject, UNUserNotificationCenterDelegate 
 
         // A replay after a short disconnect must reconcile a missed alert,
         // but a repeated frame must not draw it twice.
-        let identifier = "openmaus.\(notification.threadId).\(sequence.map(String.init) ?? notification.title)"
+        let identifier = "murage.\(notification.threadId).\(sequence.map(String.init) ?? notification.title)"
         center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
     }
 

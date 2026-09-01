@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowRight, BookOpen, Crown, Loader2, Network, Radio, RefreshCw, Save, X } from "lucide-react";
 
-import { MausAvatar } from "./Avatar";
+import { EmberAvatar } from "./Avatar";
 import { api, formatTime, useStore, type Bot } from "@/state/store";
 import { normalizeState } from "@/lib/mascot";
 import {
@@ -30,7 +30,7 @@ function BotNode({ bot, chief = false }: { bot: Bot; chief?: boolean }) {
       onClick={() => dispatch({ type: "select", id: bot.id })}
       className="group relative flex min-w-0 items-center gap-3 rounded-xl border border-hairline/50 bg-card px-3 py-3 text-left shadow-sm transition hover:border-accent/35 hover:bg-raised/50"
     >
-      <MausAvatar
+      <EmberAvatar
         color={bot.color}
         state={normalizeState(bot.mascotExpression) ?? "idle"}
         size={34}
