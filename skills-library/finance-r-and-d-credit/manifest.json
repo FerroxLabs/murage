@@ -1,0 +1,15 @@
+{
+  "id": "finance-r-and-d-credit",
+  "name": "R&D credit and §174",
+  "version": "1.0.0",
+  "description": "Walk Form 6765 R&D credit preparation and post-TCJA §174 capitalization together — four-part-test screening of activities, qualified research expense capture (wages, supplies, contract research), and the capitalization schedule software companies now have to keep. Use when the user has engineering payroll and wants to know what qualifies and what documentation to hold. Do NOT use for contractor 1099s (use finance-1099-prep), payroll returns (use finance-payroll-prep) or sales tax (use finance-sales-tax). Preparation package only — a CPA or EA must sign and file.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "r-and-d",
+    "tax-credit",
+    "section-174",
+    "finance",
+    "smb"
+  ],
+  "requiredCapabilities": []
+}

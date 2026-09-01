@@ -1,0 +1,15 @@
+{
+  "id": "content-haro-reply",
+  "name": "Journalist source reply",
+  "version": "1.0.0",
+  "description": "Write a HARO, Qwoted or SourceBottle expert-source reply that gets quoted instead of skimmed — a credentialed one-liner that answers why this source for this query, three to five tight bullets with specifics and a contrarian angle, and a closing pull quote written to be lifted verbatim. Use when a journalist query has landed, the user genuinely has the expertise, and there is a short reply window. Do NOT use for a press release or a cold pitch to a journalist with no query (use content-brief for the underlying angle) or for long-form thought leadership (use copywriter).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content",
+    "earned-media",
+    "haro",
+    "pr",
+    "expert-source"
+  ],
+  "requiredCapabilities": []
+}

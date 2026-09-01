@@ -1,0 +1,15 @@
+{
+  "id": "hr-offboard",
+  "name": "Offboarding checklist",
+  "version": "1.0.0",
+  "description": "Build the offboarding checklist for a departure — state-by-state final-pay timing, federal versus state mini-COBRA routing, OWBPA and ADEA separation-agreement scaffolding for employees 40 and over, McLaren Macomb-compliant non-disparagement wording, and the data-preservation step that has to happen before access is revoked. Use when someone is leaving, voluntarily or not, and the logistics need to be sequenced. Do NOT use for drafting the termination letter itself (use hr-termination-letter) or for a group RIF's WARN analysis (use hr-rif). Checklists only — have employment counsel review the separation agreement.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "offboarding",
+    "separation",
+    "hr",
+    "people-ops",
+    "smb"
+  ],
+  "requiredCapabilities": []
+}

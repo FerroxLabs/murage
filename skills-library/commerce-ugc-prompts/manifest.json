@@ -1,0 +1,15 @@
+{
+  "id": "commerce-ugc-prompts",
+  "name": "UGC and review prompts",
+  "version": "1.0.0",
+  "description": "Ask for reviews, photos and video at the moment the customer is most likely to say yes — prompt timing by product category (consumable, durable, cosmetic, apparel), template copy per channel, an incentive structure that stays inside platform anti-incentive rules, and the photo and video CTA. Use when a store has orders but almost no reviews. Do NOT use for responding to reviews already left, for the storefront and merchandising build (use vault-storefront-foundation), or for marketplace listing operations (use vault-marketplace-ops).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ecommerce",
+    "ugc",
+    "review-prompt",
+    "photo-review",
+    "anti-incentive"
+  ],
+  "requiredCapabilities": []
+}

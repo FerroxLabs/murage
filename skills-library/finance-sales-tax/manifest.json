@@ -1,0 +1,15 @@
+{
+  "id": "finance-sales-tax",
+  "name": "Sales tax and nexus",
+  "version": "1.0.0",
+  "description": "Track post-Wayfair economic nexus state by state, handle marketplace-facilitator law, build the multi-state registration and filing checklist, manage exemption certificates, and resolve tax-on-shipping rules, ending in a state-by-state exposure report. Use when the user sells across state lines and does not know where they are now required to register. Do NOT use for payroll or income tax (use finance-payroll-prep) or for R&D credits (use finance-r-and-d-credit). Analysis only — registration and voluntary-disclosure decisions belong with a state and local tax professional.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales-tax",
+    "nexus",
+    "wayfair",
+    "finance",
+    "smb"
+  ],
+  "requiredCapabilities": []
+}

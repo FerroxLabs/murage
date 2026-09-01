@@ -1,0 +1,16 @@
+{
+  "id": "sales-prospect",
+  "name": "Prospect analysis",
+  "version": "1.0.0",
+  "description": "Run a five-dimension workup on a target company from its URL using public sources only — company research, opportunity qualification, decision-maker mapping, competitive positioning and ICP fit — then aggregate a weighted prospect score, a prioritised action plan and a jurisdiction-gated first email (CAN-SPAM, CASL, GDPR and UWG §7 aware; refuses pure cold outreach to DE, AT and CH). Use when a whole account needs to be assessed before anyone reaches out. Do NOT use for a single BANT/MEDDIC pass on a lead already in play (use sales-qualify), for mapping named people only (use sales-contacts), or for deciding who to sell to at all (use sales-icp).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "prospecting",
+    "osint",
+    "bant",
+    "meddic",
+    "smb"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "finance-cashflow",
+  "name": "Cash flow statement",
+  "version": "1.0.0",
+  "description": "Build a cash flow statement across operating, investing and financing activities, routing accrual filers to the indirect method and cash-basis filers to the direct method, with period-end reconciliation to the bank balance. Use when profit and cash disagree and the user needs to see why. Do NOT use for whether the period was profitable (use finance-pl), for the point-in-time position (use finance-balance-sheet), or for projecting months of runway forward (use coin-runway-and-burn).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cashflow",
+    "accounting",
+    "finance",
+    "smb"
+  ],
+  "requiredCapabilities": []
+}
