@@ -130,15 +130,22 @@ win:
   extraResources:
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
       to: cloudflared/cloudflared.exe
-  # No signing config yet (would go under win.signtoolOptions or
-  # win.azureSignOptions — eb 26 nests it, there is no top-level
-  # win.certificateFile). The installer is unsigned, so SmartScreen shows
-  # "unknown publisher" on first run (README says so). verifyUpdateCodeSignature
-  # defaults true, but electron-updater skips the check when app-update.yml
-  # carries no publisherName — so auto-update still works today. Do NOT set
-  # publisherName without actually signing, or every update is rejected as
-  # untrusted; and once signed, keep the cert subject stable (or list both old
-  # and new in publisherName) or you strand already-installed users.
+  # Signed with Azure Trusted Signing (Microsoft now calls the role "Artifact
+  # Signing"). Auth comes from AZURE_TENANT_ID / AZURE_CLIENT_ID /
+  # AZURE_CLIENT_SECRET on the build env, never from this file.
+  #
+  # publisherName must match the certificate subject EXACTLY. Trusted Signing
+  # issues short-lived (3-day) certificates that rotate constantly, but the
+  # subject CN stays stable, which is the part electron-updater checks:
+  #   CN="Ferrox Labs, LLC", O="Ferrox Labs, LLC", L=Austin, S=Texas, C=US
+  # If that subject ever changes, list BOTH the old and new names here or every
+  # already-installed user is stranded on a dead update channel.
+  publisherName: Ferrox Labs, LLC
+  azureSignOptions:
+    publisherName: Ferrox Labs, LLC
+    endpoint: https://eus.codesigning.azure.net
+    codeSigningAccountName: ferrox-labs-signing
+    certificateProfileName: ferroxlabs
 
 nsis:
   oneClick: true
