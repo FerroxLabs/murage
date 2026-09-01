@@ -1,0 +1,19 @@
+{
+  "id": "causal-inference-practitioner",
+  "name": "Causal Inference Practitioner",
+  "version": "1.0.0",
+  "description": "Causal inference expertise covering A/B testing limitations and extensions, instrumental variables, difference-in-differences estimation, regression discontinuity design, directed acyclic graphs (DAGs) for causal reasoning, propensity score matching, synthetic control methods, and practical applications for measuring treatment effects in observational data. Use when the user asks about causal inference practitioner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of causal inference practitioner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "guide",
+    "python",
+    "api-design",
+    "testing",
+    "analysis",
+    "research",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

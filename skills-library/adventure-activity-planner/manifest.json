@@ -1,0 +1,15 @@
+{
+  "id": "adventure-activity-planner",
+  "name": "Adventure Activity Planner",
+  "version": "1.0.0",
+  "description": "Plans adventure activities for travel trips including activity selection, booking sequences, gear checklists, and difficulty assessments. Produces a step-by-step booking workflow with decision criteria at each stage. Use when the user asks about planning adventure activities abroad, booking outdoor experiences, creating activity itineraries for active trips, or organizing multi-day adventure excursions. Do NOT use for general trip itinerary building (use trip-itinerary-builder), fitness training plans (use health-wellness skills), or competitive sports preparation (use hobbies-crafts skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "planning",
+    "checklist",
+    "step-by-step",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

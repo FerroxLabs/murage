@@ -1,0 +1,16 @@
+{
+  "id": "json-transformer",
+  "name": "Json Transformer",
+  "version": "1.0.0",
+  "description": "Reshape, query, validate, and transform JSON data using jq, JavaScript, and Python - with ready-to-use recipes for common data transformation tasks. Use when the user asks about json transformer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of json transformer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "best-practices",
+    "python",
+    "javascript",
+    "testing",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

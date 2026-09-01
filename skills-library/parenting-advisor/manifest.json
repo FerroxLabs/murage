@@ -1,0 +1,14 @@
+{
+  "id": "parenting-advisor",
+  "name": "Parenting Advisor",
+  "version": "1.0.0",
+  "description": "Evidence-based parenting guidance by developmental stage, covering positive discipline, age-appropriate expectations, communication strategies, and common challenges from newborn through teenage years. Use when the user asks about parenting advisor, or needs help with evidence-based parenting guidance by developmental stage, covering positive discipline, age-appropriate expectations, communication strategies, and common challenges from newborn through teenage years. Do NOT use when the request requires professional specialized advice or falls outside the scope of parenting advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "family-events",
+    "guide",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

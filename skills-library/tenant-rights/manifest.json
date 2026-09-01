@@ -1,0 +1,14 @@
+{
+  "id": "tenant-rights",
+  "name": "Tenant Rights",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to tenant rights including lease review, security deposit rules, habitability standards, repair procedures, eviction process, rent increases, lease breaking options, documentation practices, and fair housing basics. Use when the user asks about tenant rights, or needs help with comprehensive guide to tenant rights including lease review, security deposit rules, habitability standards, repair procedures, eviction process, rent increases, lease breaking options, documentation practices, and fair housing basics. Do NOT use when the request requires professional legal advice or falls outside the scope of tenant rights.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "tenant-rights",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "javascript-testing-patterns",
+  "name": "Javascript Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level JavaScript and TypeScript testing: Vitest vs Jest decision tree, ESM mocking strategies, snapshot testing, coverage configuration, and test runner selection for modern projects. Use when the user asks about JavaScript testing, Vitest, Jest, mocking ESM, snapshot testing, coverage, test runner selection, TypeScript testing. Do NOT use when the user asks about Node.js project setup (use `nodejs-project-setup`), general testing concepts (use `unit-testing-patterns`), E2E testing (use `e2e-testing-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "javascript",
+    "testing",
+    "tdd",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

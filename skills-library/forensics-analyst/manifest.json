@@ -1,0 +1,13 @@
+{
+  "id": "forensics-analyst",
+  "name": "Forensics Analyst",
+  "version": "1.0.0",
+  "description": "Digital forensics and incident investigation expertise covering evidence acquisition and preservation, chain of custody procedures, timeline analysis, memory forensics, disk forensics, log analysis, network traffic analysis, malware triage, forensic reporting, and legal admissibility requirements for thorough and defensible incident investigations. Use when the user asks about forensics analyst, forensics analyst best practices, or needs guidance on forensics analyst implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "forensics",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

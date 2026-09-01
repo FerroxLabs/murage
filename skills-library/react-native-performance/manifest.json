@@ -1,0 +1,14 @@
+{
+  "id": "react-native-performance",
+  "name": "React Native Performance",
+  "version": "1.0.0",
+  "description": "Guides expert-level react native performance implementation: javascript and optimization decision frameworks, production-ready patterns, and concrete templates for react native performance workflows. Use when the user asks about react native performance, react native performance configuration, or mobile best practices for react projects. Do NOT use when the user needs a different mobile development capability -- check sibling skills in the mobile development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "javascript",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

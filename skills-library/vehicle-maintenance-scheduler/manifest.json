@@ -1,0 +1,14 @@
+{
+  "id": "vehicle-maintenance-scheduler",
+  "name": "Vehicle Maintenance Scheduler",
+  "version": "1.0.0",
+  "description": "Vehicle maintenance scheduler covering mileage-based maintenance schedules, seasonal preparation for winter and summer, tire rotation and replacement, brake inspection intervals, fluid change schedules, filter replacements, battery care, and a maintenance log template. Use when the user asks about vehicle maintenance scheduler, or needs help with vehicle maintenance scheduler covering mileage-based maintenance schedules, seasonal preparation for winter and summer, tire rotation and replacement, brake inspection intervals, fluid change schedules, filter replacements, battery care, and a maintenance log template. Do NOT use when the request requires professional specialized advice or falls outside the scope of vehicle maintenance scheduler.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automotive",
+    "home-maintenance",
+    "checklist",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

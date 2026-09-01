@@ -1,0 +1,14 @@
+{
+  "id": "homework-helper",
+  "name": "Homework Helper",
+  "version": "1.0.0",
+  "description": "Study environment optimization, learning strategies by age, motivation techniques, executive function support, and defining the parent role in academic support. Use when the user asks about homework helper, or needs help with study environment optimization, learning strategies by age, motivation techniques, executive function support, and defining the parent role in academic support. Do NOT use when the request requires professional specialized advice or falls outside the scope of homework helper.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "family-events",
+    "teaching",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

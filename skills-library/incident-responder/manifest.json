@@ -1,0 +1,14 @@
+{
+  "id": "incident-responder",
+  "name": "Incident Responder",
+  "version": "1.0.0",
+  "description": "Production incident management methodology with structured triage, severity classification, communication templates, root cause analysis, and post-incident review processes for reliable systems. Use when the user asks about incident responder, incident responder best practices, or needs guidance on incident responder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "devops",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

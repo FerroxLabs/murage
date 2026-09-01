@@ -1,0 +1,14 @@
+{
+  "id": "career-pivot-advisor",
+  "name": "Career Pivot Advisor",
+  "version": "1.0.0",
+  "description": "Career transition planning guide covering transferable skills identification, industry research frameworks, networking for career change, bridge roles, education and certification paths, financial runway planning, pivot timelines, and portfolio building for a new field. Use when the user asks about career pivot advisor, or needs help with career transition planning guide covering transferable skills identification, industry research frameworks, networking for career change, bridge roles, education and certification paths, financial runway planning, pivot timelines, and portfolio building for a new field. Do NOT use when the request requires professional specialized advice or falls outside the scope of career pivot advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "planning",
+    "guide",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

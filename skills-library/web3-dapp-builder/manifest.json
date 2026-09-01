@@ -1,0 +1,19 @@
+{
+  "id": "web3-dapp-builder",
+  "name": "Web3 Dapp Builder",
+  "version": "1.0.0",
+  "description": "Decentralized application development expertise covering frontend-blockchain integration, wallet connection (RainbowKit, ConnectKit), transaction handling with viem and ethers.js, smart contract interaction patterns, state management for on-chain data, event indexing, error handling, testing strategies, and production deployment for web3 frontends. Use when the user asks about web3 dapp builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of web3 dapp builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "checklist",
+    "javascript",
+    "typescript",
+    "api-design",
+    "testing",
+    "automation",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

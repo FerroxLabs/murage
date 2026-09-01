@@ -1,0 +1,19 @@
+{
+  "id": "online-safety-for-seniors",
+  "name": "Online Safety For Seniors",
+  "version": "1.0.0",
+  "description": "Practical guidance for recognizing scams, avoiding phishing attacks, protecting personal information, managing passwords, and using privacy settings to stay safe while enjoying the internet. Use when the user asks about online safety for seniors, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of online safety for seniors or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "checklist",
+    "guide",
+    "testing",
+    "automation",
+    "networking",
+    "safety",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

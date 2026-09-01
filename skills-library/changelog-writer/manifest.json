@@ -1,0 +1,14 @@
+{
+  "id": "changelog-writer",
+  "name": "Changelog Writer",
+  "version": "1.0.0",
+  "description": "Expert changelog and release notes covering Keep a Changelog format, semantic versioning, conventional commits, automated changelog generation, migration guides, deprecation notices, breaking change communication, and audience-appropriate language. Use when the user asks about changelog writer, changelog writer best practices, or needs guidance on changelog writer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "version-control",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

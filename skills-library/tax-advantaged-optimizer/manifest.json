@@ -1,0 +1,14 @@
+{
+  "id": "tax-advantaged-optimizer",
+  "name": "Tax Advantaged Optimizer",
+  "version": "1.0.0",
+  "description": "Explains the decision framework for choosing and prioritizing tax-advantaged accounts including employer-sponsored plans, individual retirement accounts, and health savings accounts. Helps the user evaluate which accounts to fund based on their situation without prescribing specific actions. Use when the user asks about prioritizing retirement account contributions, maximizing tax-advantaged savings, or deciding between different account types. Do NOT use for understanding account structures (use investment-account-types), choosing investments within accounts (use portfolio-allocation-framework), or filing taxes (use tax-filing-prep).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tax-planning",
+    "investing",
+    "personal-finance",
+    "retirement-planning"
+  ],
+  "requiredCapabilities": []
+}

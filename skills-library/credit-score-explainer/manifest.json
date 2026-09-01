@@ -1,0 +1,13 @@
+{
+  "id": "credit-score-explainer",
+  "name": "Credit Score Explainer",
+  "version": "1.0.0",
+  "description": "Explains the five components of a credit score (payment history, utilization, length of history, credit mix, new inquiries), interprets the user's score range, and identifies which component is the highest-impact lever for improvement. Produces a score breakdown analysis with a prioritized action list. Use when the user asks about credit scores, what affects their score, how credit scoring works, or wants to understand their credit score range. Do NOT use for a multi-month credit improvement plan (use credit-score-improvement), debt payoff strategies, or loan shopping.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "debt-management",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

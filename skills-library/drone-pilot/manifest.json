@@ -1,0 +1,14 @@
+{
+  "id": "drone-pilot",
+  "name": "Drone Pilot",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to drone flying including FAA regulations, drone selection by use case, flight fundamentals, aerial photography/videography, FPV racing, and maintenance. Use when the user asks about drone pilot or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "photography",
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

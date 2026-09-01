@@ -1,0 +1,15 @@
+{
+  "id": "board-game-selection-guide",
+  "name": "Board Game Selection Guide",
+  "version": "1.0.0",
+  "description": "Helps users select board games matched to their group's preferences by evaluating player count, complexity weight, playtime, primary mechanic type, and group dynamics. Produces a structured recommendation rubric that teaches users to identify what makes a game right for their group rather than prescribing specific titles. Use when the user wants board game recommendations, asks about game selection for a specific group size or skill level, wants to understand game complexity ratings, or is building a board game collection. Do NOT use for tabletop RPG campaign design (use tabletop-rpg-campaign-builder), video game strategy (use video-game-strategy-guide-writer), or streaming setup (use game-streaming-setup-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "board-games",
+    "research",
+    "guide",
+    "checklist",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

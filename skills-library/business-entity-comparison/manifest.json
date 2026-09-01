@@ -1,0 +1,15 @@
+{
+  "id": "business-entity-comparison",
+  "name": "Business Entity Comparison",
+  "version": "1.0.0",
+  "description": "Compares business entity types (sole proprietorship, LLC, S-Corp, C-Corp, partnership) across liability protection, taxation, formation requirements, and ongoing compliance. Produces a structured comparison table based on the user's business situation to inform their conversation with an attorney or accountant. Use when the user is starting a business and wants to understand entity options, wants to compare LLC vs corporation, or needs to prepare for a consultation with a business attorney about entity selection. Do NOT use for entity formation filing, tax preparation, legal advice on which entity to choose, or multi-state or international entity structuring.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "entrepreneurship",
+    "guide",
+    "checklist",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

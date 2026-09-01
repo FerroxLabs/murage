@@ -1,0 +1,19 @@
+{
+  "id": "parent-teacher-communicator",
+  "name": "Parent Teacher Communicator",
+  "version": "1.0.0",
+  "description": "Facilitate productive parent-teacher conferences, write effective progress reports, and build collaboration frameworks between families and schools. Use when the user asks about parent teacher communicator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of parent teacher communicator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "education-industry",
+    "relationships",
+    "checklist",
+    "template",
+    "guide",
+    "planning",
+    "video-production",
+    "email",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

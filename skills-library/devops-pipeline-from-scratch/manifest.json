@@ -1,0 +1,16 @@
+{
+  "id": "devops-pipeline-from-scratch",
+  "name": "Devops Pipeline From Scratch",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for building a complete DevOps pipeline from an empty repository through CI/CD, infrastructure as code, monitoring, alerting, and incident response. Covers the full lifecycle from first commit to production-grade operations. Use when the user wants to devops pipeline from scratch or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "ci-cd",
+    "automation",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "python-project-setup",
+  "name": "Python Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level Python project initialization with modern tooling: pyproject.toml configuration, uv for dependency management, src layout decisions, mypy strict mode, and ruff for linting/formatting. Use when the user asks about starting a new Python project, structuring a Python package, configuring pyproject.toml, choosing between src layout and flat layout, setting up Python dependency management, or configuring Python linting and type checking from scratch. Do NOT use when the user asks about Python language features or syntax (use `python-idioms`), Python testing setup (use `python-testing-patterns`), Python async programming (use `python-async-patterns`), or Python data modeling with Pydantic (use `python-data-modeling`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "python",
+    "best-practices",
+    "template",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

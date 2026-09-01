@@ -1,0 +1,14 @@
+{
+  "id": "sports-specific-conditioning",
+  "name": "Sports Specific Conditioning",
+  "version": "1.0.0",
+  "description": "Designs conditioning programs tailored to the physical demands of common recreational sports including tennis, basketball, soccer, and swimming. Analyzes energy system requirements, movement patterns, and sport-specific fitness qualities to produce a structured off-court or off-field conditioning plan. Use when the user asks about getting in shape for a specific sport, sport-specific conditioning, improving athletic performance for recreational sports, or pre-season training for a sport. Do NOT use for professional or elite-level athletic programming, injury rehabilitation, general strength training (use beginner-strength-training), or running-specific plans (use running-training-plan).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "workout-planning",
+    "planning",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

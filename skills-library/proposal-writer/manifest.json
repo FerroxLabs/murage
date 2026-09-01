@@ -1,0 +1,13 @@
+{
+  "id": "proposal-writer",
+  "name": "Proposal Writer",
+  "version": "1.0.0",
+  "description": "Technical proposal writing expert covering proposal structure (problem, solution, approach, timeline, budget), executive summary, technical approach section, risk mitigation, competitive differentiation, pricing strategies, and review process. Use when the user asks about proposal writer, proposal writer best practices, or needs guidance on proposal writer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "report"
+  ],
+  "requiredCapabilities": []
+}

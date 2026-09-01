@@ -1,0 +1,13 @@
+{
+  "id": "mend-ticket-triage",
+  "name": "Ticket triage",
+  "version": "1.0.0",
+  "description": "You're staring at an inbox or single message and someone asks \"how should we handle this,\" \"what's the priority,\" or \"draft a reply.\" Load when the question is classifying, prioritizing, and routing a ticket — not the onboarding path (`onboarding-flow.md`), not the 30-day-quiet customer (`churn-prev",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mend",
+    "ticket",
+    "triage"
+  ],
+  "requiredCapabilities": []
+}

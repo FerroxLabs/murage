@@ -1,0 +1,14 @@
+{
+  "id": "data-scrubber",
+  "name": "Data Scrubber",
+  "version": "1.0.0",
+  "description": "Data cleaning automation expertise covering missing value strategies, outlier detection methods, duplicate detection and deduplication, data type correction, text normalization, date parsing across formats, encoding fixes, validation rules, pipeline design patterns, and data quality reporting. Use when the user asks about data scrubber, data scrubber best practices, or needs guidance on data scrubber implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "data-science",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

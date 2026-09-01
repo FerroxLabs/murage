@@ -1,0 +1,16 @@
+{
+  "id": "six-sigma-practitioner",
+  "name": "Six Sigma Practitioner",
+  "version": "1.0.0",
+  "description": "Applied Six Sigma guide covering the DMAIC methodology, statistical process control, root cause analysis tools, process capability assessment, and practical implementation for reducing defects and improving process performance. Use when the user asks about six sigma practitioner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of six sigma practitioner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "testing",
+    "analysis",
+    "performing-arts",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

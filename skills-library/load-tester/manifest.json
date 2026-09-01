@@ -1,0 +1,14 @@
+{
+  "id": "load-tester",
+  "name": "Load Tester",
+  "version": "1.0.0",
+  "description": "Load and stress testing expertise covering k6, Locust, and JMeter patterns, test scenario design (smoke, load, stress, spike, soak), virtual user modeling, think time configuration, ramp patterns, performance thresholds, result analysis, bottleneck identification, and cloud load testing strategies. Use when the user asks about load tester, load tester best practices, or needs guidance on load tester implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "best-practices",
+    "optimization",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

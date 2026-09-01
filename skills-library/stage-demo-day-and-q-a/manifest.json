@@ -1,0 +1,16 @@
+{
+  "id": "stage-demo-day-and-q-a",
+  "name": "demo-day-and-q-a",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Stage specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "stage",
+    "demo",
+    "day",
+    "and",
+    "q",
+    "a"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "workflow-automation-design",
+  "name": "Workflow Automation Design",
+  "version": "1.0.0",
+  "description": "Designs personal workflow automation plans by identifying repetitive tasks, mapping trigger-action-output structures, and prioritizing by time savings. Use when the user wants to automate personal repetitive work, streamline daily routines, or eliminate manual steps from recurring processes. Do NOT use for enterprise workflow automation, Zapier/Make integration configuration, or business process reengineering (use business operations skills instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "planning",
+    "optimization",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

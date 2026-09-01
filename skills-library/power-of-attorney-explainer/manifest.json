@@ -1,0 +1,15 @@
+{
+  "id": "power-of-attorney-explainer",
+  "name": "Power Of Attorney Explainer",
+  "version": "1.0.0",
+  "description": "Explains the types of power of attorney (financial, healthcare, durable, springing), when each type applies, and what questions to ask an attorney about establishing one. Produces a comparison table and a preparation question list for attorney consultation. Use when the user asks about power of attorney, POA, who makes decisions if they are incapacitated, or how to authorize someone to act on their behalf. Do NOT use for drafting a POA document, recommending a specific POA type for the user's situation, or healthcare directive details (use healthcare-directive-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "guide",
+    "checklist",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

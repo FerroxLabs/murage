@@ -1,0 +1,19 @@
+{
+  "id": "vintage-clothing-restorer",
+  "name": "Vintage Clothing Restorer",
+  "version": "1.0.0",
+  "description": "Vintage clothing restoration expertise covering fabric-safe cleaning methods, repair techniques for common damage, era dating and authentication, stain removal for delicate textiles, proper storage to prevent deterioration, selling and valuation guidance, and caring for garments from the 1920s through the 1990s. Use when the user asks about vintage clothing restorer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of vintage clothing restorer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "woodworking",
+    "stress-management",
+    "beginner-friendly",
+    "testing",
+    "research",
+    "safety",
+    "cooking",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

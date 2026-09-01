@@ -1,0 +1,19 @@
+{
+  "id": "leadership-competency-review",
+  "name": "Leadership Competency Review",
+  "version": "1.0.0",
+  "description": "Comprehensive leadership assessment scoring vision-setting, influence, execution capability, and team development to identify strengths and growth areas for current and aspiring leaders Use when the user asks about leadership competency review, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of leadership competency review or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "budgeting",
+    "template",
+    "analysis",
+    "research",
+    "planning",
+    "investing",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

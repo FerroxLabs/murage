@@ -1,0 +1,14 @@
+{
+  "id": "homework-help-strategies",
+  "name": "Homework Help Strategies",
+  "version": "1.0.0",
+  "description": "Provides structured approaches for helping children with homework without doing the work for them. Includes session structure templates, questioning techniques to guide understanding, subject-specific strategies, and guidelines for when to escalate concerns to teachers. Use when the user asks about helping children with homework, structuring homework time, or supporting academic work at home. Do NOT use for creating lesson plans, tutoring in specific subjects, or assessing learning disabilities.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "teaching",
+    "template",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

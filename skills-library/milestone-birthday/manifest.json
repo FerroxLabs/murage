@@ -1,0 +1,14 @@
+{
+  "id": "milestone-birthday",
+  "name": "Milestone Birthday",
+  "version": "1.0.0",
+  "description": "Guide for celebrating milestone birthdays (30, 40, 50, 60 and beyond) including life reflection exercises, party planning, bucket list creation, photo and video tributes, meaningful gift ideas, legacy projects, and future visioning. Use when the user asks about milestone birthday or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "event-planning",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

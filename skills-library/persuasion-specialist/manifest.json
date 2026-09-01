@@ -1,0 +1,13 @@
+{
+  "id": "persuasion-specialist",
+  "name": "Persuasion Specialist",
+  "version": "1.0.0",
+  "description": "Ethical persuasion mastery covering Cialdini's six principles (reciprocity, commitment/consistency, social proof, authority, liking, scarcity), presentation and written persuasion techniques, sales psychology, call-to-action design, audience motivation analysis, and clear boundaries between persuasion and manipulation. Use when the user asks about persuasion specialist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "business-writing",
+    "writing",
+    "strategy"
+  ],
+  "requiredCapabilities": []
+}

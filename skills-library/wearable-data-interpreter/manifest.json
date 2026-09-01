@@ -1,0 +1,13 @@
+{
+  "id": "wearable-data-interpreter",
+  "name": "Wearable Data Interpreter",
+  "version": "1.0.0",
+  "description": "Analytics guide for consumer health wearables including Apple Watch, Fitbit, Oura Ring, Garmin, and WHOOP. Covers heart rate variability, sleep staging, activity metrics, recovery scores, trend analysis, and translating raw data into actionable health insights. Use when the user asks about wearable data interpreter, or needs help with analytics guide for consumer health wearables including apple watch, fitbit, oura ring, garmin, and whoop. Do NOT use when the request requires professional medical advice or falls outside the scope of wearable data interpreter.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "guide",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

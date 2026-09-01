@@ -1,0 +1,19 @@
+{
+  "id": "korean-learner",
+  "name": "Korean Learner",
+  "version": "1.0.0",
+  "description": "Comprehensive Korean learning guide covering Hangul mastery, particle system, verb conjugation, honorific speech levels, TOPIK exam preparation from level 1 to 4, K-media immersion strategies, and cultural context for natural Korean communication. Use when the user asks about korean learner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of korean learner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "language-learning",
+    "journaling",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "performing-arts",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

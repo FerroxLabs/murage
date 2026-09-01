@@ -1,0 +1,14 @@
+{
+  "id": "refactoring-patterns",
+  "name": "Refactoring Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level refactoring patterns implementation: refactoring and clean-code decision frameworks, production-ready patterns, and concrete templates for refactoring patterns workflows. Use when the user asks about refactoring patterns, refactoring patterns configuration, or refactoring best practices for refactoring projects. Do NOT use when the user needs a different developer tools capability -- check sibling skills in the developer tools subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "refactoring",
+    "clean-code",
+    "design-patterns",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

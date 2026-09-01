@@ -1,0 +1,19 @@
+{
+  "id": "internal-tooling-architect",
+  "name": "Internal Tooling Architect",
+  "version": "1.0.0",
+  "description": "Design and build internal developer tools including CLIs, dashboards, self-service platforms, and adoption strategies for engineering organizations Use when the user asks about internal tooling architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of internal tooling architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "budgeting",
+    "template",
+    "guide",
+    "typescript",
+    "api-design",
+    "automation",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

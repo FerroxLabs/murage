@@ -1,0 +1,14 @@
+{
+  "id": "annual-home-maintenance",
+  "name": "Annual Home Maintenance",
+  "version": "1.0.0",
+  "description": "Creates a month-by-month home maintenance calendar customized to the user's home type, age, region, and systems. Covers HVAC, plumbing, roofing, exterior, interior, and seasonal tasks with time estimates and cost ranges. Use when the user asks about home maintenance schedules, annual upkeep checklists, or preventive home care planning. Do NOT use for emergency repairs (use home-repair-first-response), specific system deep-dives (use hvac-maintenance or plumbing-basics), or commercial/industrial building maintenance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "checklist",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "tax-assistant",
+  "name": "Tax Assistant",
+  "version": "1.0.0",
+  "description": "Tax preparation support covering common deductions, tax bracket explanations, W-2 vs 1099 differences, estimated tax payments, tax-advantaged accounts (HSA, FSA, 529), filing status optimization, record-keeping requirements, and deadline calendars. Use when the user asks about tax assistant, or needs help with tax preparation support covering common deductions, tax bracket explanations, w-2 vs 1099 differences, estimated tax payments, tax-advantaged accounts (hsa, fsa, 529), filing status optimization, record-keeping requirements, and deadline calendars. Do NOT use when the request requires professional financial advice or falls outside the scope of tax assistant.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "tax-planning",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

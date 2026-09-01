@@ -1,0 +1,14 @@
+{
+  "id": "event-driven-architecture",
+  "name": "Event Driven Architecture",
+  "version": "1.0.0",
+  "description": "Guides expert-level event-driven architecture implementation: backend and microservices decision frameworks, production-ready patterns, and concrete templates for event driven architecture workflows. Use when the user asks about event-driven architecture, event driven architecture configuration, or architecture best practices for event-driven projects. Do NOT use when the user needs a different architecture design capability -- check sibling skills in the architecture design subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "backend",
+    "microservices",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "hiking-trip-planner",
+  "name": "Hiking Trip Planner",
+  "version": "1.0.0",
+  "description": "Plans day hikes and overnight backpacking trips with trail selection criteria, distance and elevation analysis, gear checklists, and safety preparation sequences. Gathers the user's fitness level, location, group size, and trip duration to produce a complete hiking plan with gear list and safety protocol. Use when the user asks about planning a hike, choosing a trail, building a hiking gear list, or preparing for a backpacking trip. Do NOT use for competitive trail running (use beginner-running-plan), mountaineering or technical climbing, wilderness survival training, or outdoor gear purchasing decisions (use outdoor-gear-selection-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "hiking",
+    "planning",
+    "checklist",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

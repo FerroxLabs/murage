@@ -1,0 +1,14 @@
+{
+  "id": "interior-designer",
+  "name": "Interior Designer",
+  "version": "1.0.0",
+  "description": "Interior design advisor covering room layout principles, color theory, furniture arrangement, lighting design, style identification, budget decorating, small space optimization, and room-by-room design guidance. Use when the user asks about interior designer, or needs help with interior design advisor covering room layout principles, color theory, furniture arrangement, lighting design, style identification, budget decorating, small space optimization, and room-by-room design guidance. Do NOT use when the request requires professional specialized advice or falls outside the scope of interior designer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "design",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

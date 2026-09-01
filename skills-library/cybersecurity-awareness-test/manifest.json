@@ -1,0 +1,16 @@
+{
+  "id": "cybersecurity-awareness-test",
+  "name": "Cybersecurity Awareness Test",
+  "version": "1.0.0",
+  "description": "Practical cybersecurity awareness assessment covering phishing recognition, password hygiene, social engineering awareness, device security, incident reporting, and producing a personalized security improvement plan. Use when the user asks about cybersecurity awareness test, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cybersecurity awareness test or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "testing",
+    "automation",
+    "email",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

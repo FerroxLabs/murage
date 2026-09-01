@@ -1,0 +1,15 @@
+{
+  "id": "customer-persona",
+  "name": "Customer Persona",
+  "version": "1.0.0",
+  "description": "Produces a detailed buyer persona using Jobs-to-be-Done framework with demographics, pain points, goals, buying triggers, decision criteria, and vocabulary. Use when the user asks to create a customer persona, define target buyer, build an ideal customer profile, or understand their audience for marketing or product decisions. Do NOT use for market segmentation strategy (use go-to-market-strategy), customer journey across touchpoints (use customer-journey-map), or competitive positioning (use competitive-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "marketing",
+    "planning",
+    "research",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

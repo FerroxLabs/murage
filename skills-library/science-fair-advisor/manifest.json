@@ -1,0 +1,15 @@
+{
+  "id": "science-fair-advisor",
+  "name": "Science Fair Advisor",
+  "version": "1.0.0",
+  "description": "Complete guidance for science fair projects including project selection by age, interest, and available resources, scientific method walkthrough, hypothesis formation, experiment design, data collection and analysis, display board creation, presentation coaching, and understanding judging criteria. Use when the user asks about science fair advisor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "parenting",
+    "guide",
+    "research",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

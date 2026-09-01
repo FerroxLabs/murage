@@ -1,0 +1,19 @@
+{
+  "id": "public-speaking-evaluator",
+  "name": "Public Speaking Evaluator",
+  "version": "1.0.0",
+  "description": "Evaluate public speaking ability across content quality, delivery technique, audience engagement, and speaker confidence with actionable improvement strategies Use when the user asks about public speaking evaluator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of public speaking evaluator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "template",
+    "analysis",
+    "planning",
+    "presentation",
+    "video-production",
+    "cleaning",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

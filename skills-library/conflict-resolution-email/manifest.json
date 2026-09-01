@@ -1,0 +1,13 @@
+{
+  "id": "conflict-resolution-email",
+  "name": "Conflict Resolution Email",
+  "version": "1.0.0",
+  "description": "Writes professional emails that address workplace conflicts, disagreements, and difficult conversations with empathy, clarity, and constructive framing to reach resolution. Use when the user needs to address a disagreement, miscommunication, or interpersonal issue via email. Do NOT use for formal complaints (use `business-letter`), performance issues (use `pip-writing`), or rejection communications (use `rejection-letter`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "email",
+    "writing",
+    "relationships"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "moving-season-coordinator",
+  "name": "Moving Season Coordinator",
+  "version": "1.0.0",
+  "description": "Coordinates residential moves with optimal timing strategies, contractor hiring guidance, logistics planning, and settling-in checklists for a smooth transition. Use when the user asks about moving season coordinator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of moving season coordinator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "event-planning",
+    "budgeting",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "testing",
+    "research",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

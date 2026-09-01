@@ -1,0 +1,14 @@
+{
+  "id": "cloud-migration",
+  "name": "Cloud Migration",
+  "version": "1.0.0",
+  "description": "Structured workflow for migrating applications and infrastructure from on-premises or between cloud providers. Covers assessment, planning, migration execution, optimization, and governance to ensure a smooth transition with minimal business disruption and maximum cloud value. Use when the user wants to cloud migration or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cloud",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "vendor-evaluation",
+  "name": "Vendor Evaluation",
+  "version": "1.0.0",
+  "description": "Produces a vendor evaluation scorecard with weighted criteria, scoring guide, vendor comparison, and recommendation using weighted scoring methodology. Use when the user asks to evaluate vendors, compare suppliers, build a vendor selection scorecard, create an RFP evaluation matrix, or make a structured vendor selection decision. Do NOT use for competitive market analysis (use competitive-analysis), partnership agreement structuring (use partnership-agreement-outline), or procurement contract review (requires legal review).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "planning",
+    "decision-making",
+    "template",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "mobile-game-designer",
+  "name": "Mobile Game Designer",
+  "version": "1.0.0",
+  "description": "Free-to-play mobile game design covering F2P design patterns, retention mechanics, short session design, monetization models (IAP, ads, battle pass), mobile UX, onboarding flows, A/B testing, analytics-driven design, and live operations strategy. Use when the user asks about mobile game designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "game-design",
+    "design",
+    "mobile",
+    "game-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "ai-image-generation-master",
+  "name": "Ai Image Generation Master",
+  "version": "1.0.0",
+  "description": "Expert-level guide to AI image generation across Midjourney, DALL-E, and Stable Diffusion covering prompt engineering for visual output, style control, composition techniques, upscaling workflows, and production pipelines for consistent, high-quality results. Use when the user asks about ai image generation master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ai image generation master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "budgeting",
+    "checklist",
+    "template",
+    "beginner-friendly",
+    "api-design",
+    "cloud",
+    "testing",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

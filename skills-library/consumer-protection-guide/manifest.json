@@ -1,0 +1,15 @@
+{
+  "id": "consumer-protection-guide",
+  "name": "Consumer Protection Guide",
+  "version": "1.0.0",
+  "description": "Explains consumer rights in purchases, returns, warranties, chargebacks, and deceptive practices. Covers the difference between manufacturer and retailer warranties, chargeback procedures, lemon laws, and how to escalate consumer complaints effectively. Use when the user wants to understand their rights as a consumer, is dealing with a defective product, needs to understand warranty coverage, wants to dispute a charge, or needs to file a consumer complaint. Do NOT use for business-to-business disputes, product liability lawsuits, class action participation, or specific legal advice on a pending consumer matter.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "guide",
+    "research",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

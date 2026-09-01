@@ -1,0 +1,14 @@
+{
+  "id": "rate-limiting-patterns",
+  "name": "Rate Limiting Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level rate limiting patterns implementation: security and optimization decision frameworks, production-ready patterns, and concrete templates for rate limiting patterns workflows. Use when the user asks about rate limiting patterns, rate limiting patterns configuration, or security best practices for rate projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "optimization",
+    "backend",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

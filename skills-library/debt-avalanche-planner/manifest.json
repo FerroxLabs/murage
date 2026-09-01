@@ -1,0 +1,14 @@
+{
+  "id": "debt-avalanche-planner",
+  "name": "Debt Avalanche Planner",
+  "version": "1.0.0",
+  "description": "Applies the debt avalanche method (highest interest rate first) to create an interest-optimized debt payoff plan. Calculates the total interest saved compared to minimum payments and the snowball method, with a sequenced payment schedule showing exact monthly amounts and payoff dates for each debt. Use when the user wants to minimize total interest paid on multiple debts, prefers a mathematically optimal payoff strategy, or asks about the debt avalanche approach. Do NOT use for motivation-focused payoff (use debt-snowball-planner), debt consolidation evaluation (use debt-consolidation-analysis), or single-debt payoff calculation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "debt-management",
+    "personal-finance",
+    "budgeting",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

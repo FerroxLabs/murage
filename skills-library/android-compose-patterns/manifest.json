@@ -1,0 +1,14 @@
+{
+  "id": "android-compose-patterns",
+  "name": "Android Compose Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level android compose patterns implementation: kotlin and frameworks decision frameworks, production-ready patterns, and concrete templates for android compose patterns workflows. Use when the user asks about android compose patterns, android compose patterns configuration, or mobile best practices for android projects. Do NOT use when the user needs a different mobile development capability -- check sibling skills in the mobile development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "kotlin",
+    "design-patterns",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

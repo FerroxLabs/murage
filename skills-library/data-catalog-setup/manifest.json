@@ -1,0 +1,14 @@
+{
+  "id": "data-catalog-setup",
+  "name": "Data Catalog Setup",
+  "version": "1.0.0",
+  "description": "Produces a data catalog structure with table documentation templates, column-level lineage format, and governance tagging taxonomy. Outputs a complete catalog specification for organizing and discovering data assets across an organization. Use when the user asks to set up a data catalog, document their data assets, create a data dictionary, or establish data governance metadata standards. Do NOT use for data schema design (use data-schema-design), data quality rule definitions (use data-quality-rules), or ETL pipeline documentation (use etl-pipeline-design).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "template",
+    "checklist",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

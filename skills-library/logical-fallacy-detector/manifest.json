@@ -1,0 +1,19 @@
+{
+  "id": "logical-fallacy-detector",
+  "name": "Logical Fallacy Detector",
+  "version": "1.0.0",
+  "description": "Expert tool for identifying informal and formal logical fallacies in arguments, analyzing debate rhetoric, evaluating evidence quality, constructing valid arguments, and teaching critical thinking skills through structured argument analysis and practice exercises. Use when the user asks about logical fallacy detector, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of logical fallacy detector or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "budgeting",
+    "analysis",
+    "safety",
+    "game-design",
+    "sustainability",
+    "time-management",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

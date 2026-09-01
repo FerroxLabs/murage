@@ -1,0 +1,15 @@
+{
+  "id": "bcg-matrix",
+  "name": "Bcg Matrix",
+  "version": "1.0.0",
+  "description": "Produces a completed BCG (Boston Consulting Group) growth-share matrix with product or business unit placement and investment recommendations. Use when the user asks to evaluate product portfolio, allocate resources across business units, classify products by growth and market share, or decide which products to invest in, maintain, or divest. Do NOT use for growth strategy direction (use ansoff-matrix), competitive positioning analysis (use competitive-analysis), or single-product market analysis (use swot-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "analysis",
+    "planning",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "elevator-pitch",
+  "name": "Elevator Pitch",
+  "version": "1.0.0",
+  "description": "Guide to crafting elevator pitches in 30-second, 60-second, and 2-minute formats covering pitch structure with hook, value proposition, and ask, industry-specific adaptations, networking vs investor pitches, practice techniques, common mistakes, and personal brand integration. Use when the user asks about elevator pitch, or needs help with guide to crafting elevator pitches in 30-second, 60-second, and 2-minute formats covering pitch structure with hook, value proposition, and ask, industry-specific adaptations, networking vs investor pitches, practice techniques, common mistakes, and personal brand integration. Do NOT use when the request requires professional specialized advice or falls outside the scope of elevator pitch.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "guide",
+    "step-by-step",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

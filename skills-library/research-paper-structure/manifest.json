@@ -1,0 +1,13 @@
+{
+  "id": "research-paper-structure",
+  "name": "Research Paper Structure",
+  "version": "1.0.0",
+  "description": "Structures research papers in IMRaD format (Introduction, Methods, Results, and Discussion) or social sciences format with section-by-section guidance, producing a complete paper framework. Use when the user asks to structure a research paper, write an academic paper, organize a study for publication, or create an IMRaD paper. Do NOT use for literature reviews (use literature-review), abstracts only (use abstract-writing), or editing an existing paper (use academic-paper-review).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "writing",
+    "research"
+  ],
+  "requiredCapabilities": []
+}

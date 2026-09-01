@@ -1,0 +1,14 @@
+{
+  "id": "daily-planning",
+  "name": "Daily Planning",
+  "version": "1.0.0",
+  "description": "Generates a structured daily plan from the user's task list and calendar. Applies Most Important Tasks (MITs), time estimates, and energy-level matching to produce a sequenced day plan with rationale for task ordering. Use when the user asks for help planning their day, creating a daily schedule, or figuring out what to work on today. Do NOT use for weekly time blocking (use time-blocking), full GTD system setup (use gtd-workflow), or team sprint planning (use business project-management skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "planning",
+    "checklist",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

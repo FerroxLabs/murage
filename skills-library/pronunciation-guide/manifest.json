@@ -1,0 +1,15 @@
+{
+  "id": "pronunciation-guide",
+  "name": "Pronunciation Guide",
+  "version": "1.0.0",
+  "description": "Creates pronunciation guidance with phonetic descriptions, practice patterns, and common error corrections for language learners. Produces a targeted pronunciation practice plan for specific sounds or patterns in the target language. Use when a learner asks to improve pronunciation, practice specific sounds, reduce accent, or learn phonetic patterns in a target language. Do NOT use for conversation practice (use `conversation-practice`), for grammar instruction (use `grammar-practice`), or for reading skills (use `speed-reading`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "language-learning",
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "jetpack-compose-dev",
+  "name": "Jetpack Compose Dev",
+  "version": "1.0.0",
+  "description": "Expert Android Jetpack Compose development covering declarative UI, state hoisting, Material 3 theming, type-safe navigation, lazy layouts, custom animations, ViewModel integration, side effects, accessibility, and production architecture patterns for modern Android apps. Use when the user asks about jetpack compose dev, jetpack compose dev best practices, or needs guidance on jetpack compose dev implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "kotlin",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

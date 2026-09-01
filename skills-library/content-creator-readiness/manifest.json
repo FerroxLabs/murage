@@ -1,0 +1,19 @@
+{
+  "id": "content-creator-readiness",
+  "name": "Content Creator Readiness",
+  "version": "1.0.0",
+  "description": "Multi-platform content creator evaluation assessing platform strategy, content quality, audience development, and monetization readiness. Produces a readiness scorecard with specific recommendations for launching or leveling up a content creation practice. Use when the user asks about content creator readiness, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of content creator readiness or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "design",
+    "template",
+    "testing",
+    "research",
+    "planning",
+    "marketing",
+    "video-production",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

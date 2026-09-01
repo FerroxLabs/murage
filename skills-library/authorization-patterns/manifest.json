@@ -1,0 +1,14 @@
+{
+  "id": "authorization-patterns",
+  "name": "Authorization Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level authorization patterns implementation: security and design-patterns decision frameworks, production-ready patterns, and concrete templates for authorization patterns workflows. Use when the user asks about authorization patterns, authorization patterns configuration, or security best practices for authorization projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "backend",
+    "design-patterns",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

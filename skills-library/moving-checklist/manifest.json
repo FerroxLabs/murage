@@ -1,0 +1,14 @@
+{
+  "id": "moving-checklist",
+  "name": "Moving Checklist",
+  "version": "1.0.0",
+  "description": "Produces a comprehensive 8-week moving timeline and checklist covering decluttering, hiring movers, utilities transfer, address changes, packing strategy, moving day protocol, and first week tasks in the new home. Generates phase-based task lists with specific deadlines and responsible party assignments for household relocations. Use when the user asks about planning a move, creating a moving checklist, or organizing a household relocation. Do NOT use for moving with children specifically (use moving-with-children), international relocation (visa and customs requirements are outside scope), or commercial office moves.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "checklist",
+    "planning",
+    "strategy",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

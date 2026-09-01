@@ -1,0 +1,14 @@
+{
+  "id": "t-shirt-designer",
+  "name": "T Shirt Designer",
+  "version": "1.0.0",
+  "description": "Complete t-shirt design guidance covering design for print methods (DTG, screen print, sublimation), mockup creation, print-on-demand platforms (Printful, Redbubble, Merch by Amazon), niche research and market strategy, marketplace optimization, file preparation, and building a sustainable apparel design business. Use when the user asks about t shirt designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "guide",
+    "entrepreneurship",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

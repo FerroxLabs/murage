@@ -1,0 +1,14 @@
+{
+  "id": "email-template-system",
+  "name": "Email Template System",
+  "version": "1.0.0",
+  "description": "Builds a personal email template set for the user's most common email types with variable placeholders and a quick-lookup guide. Use when the user sends similar emails repeatedly, wants to speed up email writing, or needs standardized responses for common situations. Do NOT use for writing a single specific email (use writing skills instead), cold outreach sequences (use `cold-email-outreach`), or enterprise email campaign templates (use business marketing skills instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "template",
+    "email",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

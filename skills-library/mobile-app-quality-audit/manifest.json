@@ -1,0 +1,18 @@
+{
+  "id": "mobile-app-quality-audit",
+  "name": "Mobile App Quality Audit",
+  "version": "1.0.0",
+  "description": "Comprehensive mobile application quality assessment covering performance, UX, accessibility, security, and app store compliance to produce an actionable audit scorecard. Use when the user asks about mobile app quality audit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of mobile app quality audit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "best-practices",
+    "template",
+    "api-design",
+    "testing",
+    "automation",
+    "cleaning",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

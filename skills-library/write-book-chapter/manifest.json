@@ -1,0 +1,16 @@
+{
+  "id": "write-book-chapter",
+  "name": "Write Book Chapter",
+  "version": "1.0.0",
+  "description": "Guides the user through writing a complete book chapter from initial brief and outline through long-form drafting, structural editing, style compliance, proofreading, and final copy editing. Use when the user needs to write a book chapter as part of a larger manuscript, wants a structured multi-pass writing and editing pipeline, or needs to produce publication-quality long-form content. Do NOT use for short-form content like blog posts (use publish-blog-post), for standalone long-form articles (use long-form-article), or for editing an already-complete chapter (use structural-editing or copy-editing directly).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "editing",
+    "creative-writing",
+    "step-by-step",
+    "planning",
+    "content-creation"
+  ],
+  "requiredCapabilities": []
+}

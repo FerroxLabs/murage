@@ -1,0 +1,14 @@
+{
+  "id": "ev-advisor",
+  "name": "Ev Advisor",
+  "version": "1.0.0",
+  "description": "Electric vehicle guide covering EV vs hybrid vs gas comparison, range analysis, charging infrastructure including home charging setup and public networks, cost savings calculation, tax credits and incentives, battery care, cold weather performance, EV maintenance differences, and popular models comparison. Use when the user asks about ev advisor, or needs help with electric vehicle guide covering ev vs hybrid vs gas comparison, range analysis, charging infrastructure including home charging setup and public networks, cost savings calculation, tax credits and incentives, battery care, cold weather performance, ev maintenance differences, and popular models comparison. Do NOT use when the request requires professional specialized advice or falls outside the scope of ev advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automotive",
+    "home-maintenance",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

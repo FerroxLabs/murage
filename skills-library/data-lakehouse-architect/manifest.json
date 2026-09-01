@@ -1,0 +1,14 @@
+{
+  "id": "data-lakehouse-architect",
+  "name": "Data Lakehouse Architect",
+  "version": "1.0.0",
+  "description": "Architecture expertise for data lakehouse platforms covering Delta Lake, Apache Iceberg, Apache Hudi, medallion architecture design, table format selection, storage optimization, schema evolution, time travel, compaction strategies, and query engine integration for building unified analytical and operational data platforms. Use when the user asks about data lakehouse architect, data lakehouse architect best practices, or needs guidance on data lakehouse architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "architecture",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

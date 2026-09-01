@@ -1,0 +1,14 @@
+{
+  "id": "learning-path-designer",
+  "name": "Learning Path Designer",
+  "version": "1.0.0",
+  "description": "Self-directed curriculum design including resource curation, milestone planning, accountability systems, progress tracking, and learning methodology for independent learners. Use when the user asks about learning path designer, or needs help with self-directed curriculum design including resource curation, milestone planning, accountability systems, progress tracking, and learning methodology for independent learners. Do NOT use when the request requires professional specialized advice or falls outside the scope of learning path designer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

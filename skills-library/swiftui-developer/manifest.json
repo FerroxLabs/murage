@@ -1,0 +1,15 @@
+{
+  "id": "swiftui-developer",
+  "name": "Swiftui Developer",
+  "version": "1.0.0",
+  "description": "Expert SwiftUI development covering declarative UI composition, state management with Observable, NavigationStack routing, custom animations, async/await data loading, accessibility, platform-adaptive layouts, and production architecture patterns for iOS, iPadOS, macOS, watchOS, and visionOS. Use when the user asks about swiftui developer, swiftui developer best practices, or needs guidance on swiftui developer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "swift",
+    "design",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

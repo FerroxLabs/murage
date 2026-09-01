@@ -1,0 +1,18 @@
+{
+  "id": "technical-book-author",
+  "name": "Technical Book Author",
+  "version": "1.0.0",
+  "description": "Complete guide to writing and publishing technical books, covering publisher proposal development, code sample design, technical review processes, manuscript tooling including AsciiDoc and LaTeX, strategies for keeping content current, and royalty structure analysis. Use when the user asks about technical book author, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of technical book author or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "python",
+    "javascript",
+    "api-design"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "audio-editing-guide",
+  "name": "Audio Editing Guide",
+  "version": "1.0.0",
+  "description": "Produces an audio editing sequence with noise reduction protocol, silence compression settings, EQ for voice clarity, and compression/limiting for loudness normalization targeting specific LUFS standards for podcast, video, and music contexts. Use when the user asks about audio post-production settings, podcast mastering, voice EQ, or loudness targets. Do NOT use for podcast episode planning or content structure (use podcast-episode-planning), interview question preparation (use podcast-interview-guide), or voiceover script writing (use voiceover-script).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "podcast",
+    "checklist",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

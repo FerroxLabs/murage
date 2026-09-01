@@ -1,0 +1,14 @@
+{
+  "id": "rust-ffi-patterns",
+  "name": "Rust Ffi Patterns",
+  "version": "1.0.0",
+  "description": "Guides advanced Rust FFI design: C interop with extern, unsafe patterns, bindgen for header generation, cross-language memory management, and safe wrapper design. Use when the user asks about Rust FFI, extern C, unsafe, bindgen, cbindgen, cross-language memory, safe wrappers. Do NOT use when the user asks about Rust ownership (use `rust-ownership-patterns`), Rust performance (use `rust-performance`), Rust project setup (use `rust-project-setup`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "rust",
+    "best-practices",
+    "advanced",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

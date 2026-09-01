@@ -1,0 +1,16 @@
+{
+  "id": "business-budget",
+  "name": "Business Budget",
+  "version": "1.0.0",
+  "description": "Creates an annual business budget using zero-based budgeting methodology with department breakdown, fixed and variable cost separation, contingency allocation, and quarterly review cadence. Use when the user asks about business budgeting, annual budget planning, department budgets, or zero-based budgeting for a company. Do NOT use for personal household budgets (use budget-planning), financial modeling with P&L projections (use financial-model-structure), or pricing decisions (use pricing-strategy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "strategy",
+    "analysis",
+    "spreadsheets",
+    "checklist",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

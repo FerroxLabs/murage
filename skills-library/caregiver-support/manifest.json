@@ -1,0 +1,18 @@
+{
+  "id": "caregiver-support",
+  "name": "Caregiver Support",
+  "version": "1.0.0",
+  "description": "Self-care guide for caregivers covering burnout prevention, respite resources, support groups, legal and financial navigation, communication with healthcare teams, emotional processing, and strategies for asking for help. Use when the user asks about caregiver support, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of caregiver support or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "nutrition",
+    "stress-management",
+    "self-care",
+    "guide",
+    "quick-reference",
+    "planning",
+    "networking"
+  ],
+  "requiredCapabilities": []
+}

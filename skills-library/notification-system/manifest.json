@@ -1,0 +1,14 @@
+{
+  "id": "notification-system",
+  "name": "Notification System",
+  "version": "1.0.0",
+  "description": "Notification system design expertise covering multi-channel delivery (email, SMS, push, Slack, webhook), template engines, notification preferences and user settings, delivery tracking, retry logic, batching and digest strategies, rate limiting, priority levels, and notification center UI design. Use when the user asks about notification system, notification system best practices, or needs guidance on notification system implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

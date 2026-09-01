@@ -1,0 +1,14 @@
+{
+  "id": "typescript-runtime-safety",
+  "name": "Typescript Runtime Safety",
+  "version": "1.0.0",
+  "description": "Guides runtime type validation in TypeScript with Zod: schema design, branded types, type guards, runtime validation at application boundaries, and parse-not-validate patterns. Use when the user asks about Zod schemas, runtime validation, branded types, type guards, parse-not-validate, API boundary validation. Do NOT use when the user asks about TypeScript type system features (use `typescript-type-patterns`), project setup (use `typescript-project-setup`), testing (use `javascript-testing-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "typescript",
+    "best-practices",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

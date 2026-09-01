@@ -1,0 +1,13 @@
+{
+  "id": "childrens-story",
+  "name": "Childrens Story",
+  "version": "1.0.0",
+  "description": "Writes children's stories for specific age groups (picture book, early reader, middle grade) with age-appropriate language, clear narrative structure, and themes that respect young readers' intelligence. Use when the user asks to write a children's story, kids' book, bedtime story, picture book text, or story for young readers. Do NOT use for young adult fiction (use short-story-writing with YA parameters), educational content for children (use lesson-plan-design), or adult fiction with childlike themes (use short-story-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "beginner-friendly"
+  ],
+  "requiredCapabilities": []
+}

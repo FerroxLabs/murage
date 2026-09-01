@@ -1,0 +1,13 @@
+{
+  "id": "seo-optimizer",
+  "name": "Seo Optimizer",
+  "version": "1.0.0",
+  "description": "SEO content optimization expert covering keyword research, on-page SEO, meta description optimization, heading hierarchy, internal linking, technical SEO audit, structured data/schema markup, content freshness, and search intent matching. Use when the user asks about seo optimizer, seo optimizer best practices, or needs guidance on seo optimizer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "seo"
+  ],
+  "requiredCapabilities": []
+}

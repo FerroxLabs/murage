@@ -1,0 +1,14 @@
+{
+  "id": "composting-system",
+  "name": "Composting System",
+  "version": "1.0.0",
+  "description": "Designs a home composting system covering bin, pile, and tumbler options with brown-to-green ratios (25-30:1 carbon to nitrogen), turning schedules, and troubleshooting for common problems like odor and slow decomposition. Produces a composting plan with material lists and maintenance schedule. Use when the user asks about starting composting, choosing a compost method, what can be composted, compost ratios, or troubleshooting a compost pile. Do NOT use for commercial-scale composting, vermicomposting (worm bin) specifics, or municipal composting programs.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "gardening",
+    "composting",
+    "sustainability",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

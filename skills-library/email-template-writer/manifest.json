@@ -1,0 +1,15 @@
+{
+  "id": "email-template-writer",
+  "name": "Email Template Writer",
+  "version": "1.0.0",
+  "description": "Professional email templates for common scenarios - follow-ups, introductions, cold outreach, declining requests, asking for help, and navigating difficult conversations. Use when the user asks about email template writer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of email template writer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "writing",
+    "template",
+    "research",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

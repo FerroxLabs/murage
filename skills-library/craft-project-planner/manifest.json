@@ -1,0 +1,14 @@
+{
+  "id": "craft-project-planner",
+  "name": "Craft Project Planner",
+  "version": "1.0.0",
+  "description": "Craft and DIY project planning guide covering project selection by skill level, materials sourcing, knitting and crochet basics, woodworking, paper crafts, sewing, upcycling ideas, cost estimation, skill progression, and seasonal project inspiration. Use when the user asks about craft project planner, or needs help with craft and diy project planning guide covering project selection by skill level, materials sourcing, knitting and crochet basics, woodworking, paper crafts, sewing, upcycling ideas, cost estimation, skill progression, and seasonal project inspiration. Do NOT use when the request requires professional specialized advice or falls outside the scope of craft project planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "guide",
+    "step-by-step",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

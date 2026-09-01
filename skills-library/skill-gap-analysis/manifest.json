@@ -1,0 +1,15 @@
+{
+  "id": "skill-gap-analysis",
+  "name": "Skill Gap Analysis",
+  "version": "1.0.0",
+  "description": "Compares current skills against target role requirements, identifies specific gaps, and recommends concrete learning paths per gap. Produces a gap analysis matrix with prioritized action items and time estimates. Use when the user wants to identify what skills they need for a target role, assess readiness for a promotion, or build a professional development plan based on gaps. Do NOT use for full career change roadmaps (use career-pivot-roadmap), resume writing (use resume-bullet-writer), or academic learning plans (use study-plan-generator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "analysis",
+    "goal-setting",
+    "planning",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "trip-planner",
+  "name": "Trip Planner",
+  "version": "1.0.0",
+  "description": "Complete trip itinerary creation guide covering destination research, day-by-day planning, transportation logistics, accommodation selection, booking timing optimization, budget allocation, must-see vs hidden gems balance, and itinerary templates for weekend, week, and two-week trips. Use when the user asks about trip planner, or needs help with complete trip itinerary creation guide covering destination research, day-by-day planning, transportation logistics, accommodation selection, booking timing optimization, budget allocation, must-see vs hidden gems balance, and itinerary templates for weekend, week, and two-week trips. Do NOT use when the request requires professional specialized advice or falls outside the scope of trip planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "planning",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

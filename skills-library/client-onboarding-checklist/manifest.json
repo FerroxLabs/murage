@@ -1,0 +1,15 @@
+{
+  "id": "client-onboarding-checklist",
+  "name": "Client Onboarding Checklist",
+  "version": "1.0.0",
+  "description": "Produces a complete client onboarding workflow including discovery call agenda, contract checklist, kickoff document, communication expectations, and first deliverable timeline. Creates a reusable onboarding process document. Use when the user needs to onboard a new freelance or consulting client, create a structured onboarding process, or set up a new client engagement with clear expectations and milestones. Do NOT use for employee onboarding (use HR skills), project kickoff for internal teams (use project management skills), or writing client proposals (use freelance-proposal-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "freelancing",
+    "career",
+    "checklist",
+    "planning",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

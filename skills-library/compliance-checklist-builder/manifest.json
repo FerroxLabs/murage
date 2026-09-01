@@ -1,0 +1,15 @@
+{
+  "id": "compliance-checklist-builder",
+  "name": "Compliance Checklist Builder",
+  "version": "1.0.0",
+  "description": "Builds a business compliance self-audit checklist organized by category (registration, tax, employment, industry-specific, data privacy, insurance) based on the user's business type, size, and location. Produces a prioritized checklist with deadlines, responsible parties, and resources for verification. Use when the user is starting a business and wants to know what compliance requirements apply, wants to audit their current compliance status, or needs to prepare for a compliance review. Do NOT use for tax preparation, regulatory filing, legal compliance certification, or industry-specific regulatory guidance requiring specialized expertise.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "checklist",
+    "guide",
+    "planning",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

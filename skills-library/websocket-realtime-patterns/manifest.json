@@ -1,0 +1,14 @@
+{
+  "id": "websocket-realtime-patterns",
+  "name": "Websocket Realtime Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level websocket and real-time patterns implementation: web-development and frameworks decision frameworks, production-ready patterns, and concrete templates for websocket realtime patterns workflows. Use when the user asks about websocket and real-time patterns, websocket realtime patterns configuration, or backend best practices for websocket projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "web-development",
+    "frameworks",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

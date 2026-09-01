@@ -1,0 +1,15 @@
+{
+  "id": "camping-planner",
+  "name": "Camping Planner",
+  "version": "1.0.0",
+  "description": "Guide to camping including gear selection, campsite selection, meal planning, Leave No Trace principles, weather preparation, wildlife safety, trip planning by difficulty, and camping with children. Use when the user asks about camping planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "hiking",
+    "planning",
+    "guide",
+    "checklist",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

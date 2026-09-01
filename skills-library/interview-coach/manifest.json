@@ -1,0 +1,14 @@
+{
+  "id": "interview-coach",
+  "name": "Interview Coach",
+  "version": "1.0.0",
+  "description": "Complete interview preparation guide covering the STAR method for behavioral questions, common question bank with example answers, company research checklist, questions to ask interviewers, salary discussion timing, virtual interview setup, panel interview strategies, and thank-you follow-up templates. Use when the user asks about interview coach, or needs help with complete interview preparation guide covering the star method for behavioral questions, common question bank with example answers, company research checklist, questions to ask interviewers, salary discussion timing, virtual interview setup, panel interview strategies, and thank-you follow-up templates. Do NOT use when the request requires professional specialized advice or falls outside the scope of interview coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "interview-prep",
+    "guide",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

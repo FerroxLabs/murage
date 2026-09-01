@@ -1,0 +1,19 @@
+{
+  "id": "cocktail-bartender",
+  "name": "Cocktail Bartender",
+  "version": "1.0.0",
+  "description": "Master the art of cocktail making with 20 essential classic recipes, core techniques including shaking, stirring, muddling, and expressing, essential equipment, spirit categories, ice science, garnish craft, home bar setup by budget, batching for parties, non-alcoholic alternatives, and seasonal drink creation. Use when the user asks about cocktail bartender, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cocktail bartender or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "budgeting",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "cleaning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

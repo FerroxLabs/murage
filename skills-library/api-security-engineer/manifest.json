@@ -1,0 +1,13 @@
+{
+  "id": "api-security-engineer",
+  "name": "Api Security Engineer",
+  "version": "1.0.0",
+  "description": "API security expertise covering OWASP API Security Top 10, API authentication and authorization patterns, API key management, rate limiting and throttling, JWT security best practices, OAuth 2.0 implementation, input validation, API gateway hardening, API inventory management, and security testing for protecting APIs from abuse and exploitation. Use when the user asks about api security engineer, api security engineer best practices, or needs guidance on api security engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "api-security",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

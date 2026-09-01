@@ -1,0 +1,14 @@
+{
+  "id": "api-gateway-patterns",
+  "name": "Api Gateway Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level api gateway patterns implementation: api-design and backend decision frameworks, production-ready patterns, and concrete templates for api gateway patterns workflows. Use when the user asks about api gateway patterns, api gateway patterns configuration, or architecture best practices for api projects. Do NOT use when the user needs a different architecture design capability -- check sibling skills in the architecture design subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "api-design",
+    "backend",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

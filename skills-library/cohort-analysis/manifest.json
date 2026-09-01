@@ -1,0 +1,14 @@
+{
+  "id": "cohort-analysis",
+  "name": "Cohort Analysis",
+  "version": "1.0.0",
+  "description": "Applies cohort analysis to a described dataset by defining the cohort grouping variable, time horizon, measured behavior, and producing the cohort table structure with retention calculation formulas. Outputs a populated cohort matrix, not a description of cohort analysis theory. Use when the user asks to analyze retention, track user behavior over time by signup date, compare customer groups by acquisition period, or measure how engagement changes as users age. Do NOT use for funnel conversion analysis (use funnel-analysis), customer segmentation by attributes (use segmentation-design), or A/B test design comparing two groups (use ab-test-design).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "statistics",
+    "analysis",
+    "data-science",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

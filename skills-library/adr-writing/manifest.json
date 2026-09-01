@@ -1,0 +1,13 @@
+{
+  "id": "adr-writing",
+  "name": "Adr Writing",
+  "version": "1.0.0",
+  "description": "Creates Architecture Decision Records in standard ADR format with title, status, context, decision, and consequences sections. Use when the user needs to document an architectural or technical decision, write an ADR, or record why a technology choice was made. Do NOT use for technical specifications (use `technical-specification`), meeting notes (use `meeting-notes`), or general documentation (use `internal-wiki-page`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

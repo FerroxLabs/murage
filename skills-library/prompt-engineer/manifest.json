@@ -1,0 +1,14 @@
+{
+  "id": "prompt-engineer",
+  "name": "Prompt Engineer",
+  "version": "1.0.0",
+  "description": "Prompt engineering mastery covering chain-of-thought reasoning, few-shot learning, system prompt design, structured output with JSON mode, prompt injection prevention, temperature and top-p tuning, context window management, evaluation metrics, and A/B testing prompts. Use when the user asks about prompt engineer, prompt engineer best practices, or needs guidance on prompt engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "deep-learning",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

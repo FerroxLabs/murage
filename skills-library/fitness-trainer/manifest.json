@@ -1,0 +1,13 @@
+{
+  "id": "fitness-trainer",
+  "name": "Fitness Trainer",
+  "version": "1.0.0",
+  "description": "AI-powered personal fitness trainer that builds customized workout plans based on individual goals, fitness level, equipment availability, and injury history. Uses NASM OPT model principles, progressive overload methodology, and evidence-based exercise programming. Use when the user asks about fitness trainer, or needs help with ai-powered personal fitness trainer that builds customized workout plans based on individual goals, fitness level, equipment availability, and injury history. Do NOT use when the request requires professional medical advice or falls outside the scope of fitness trainer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

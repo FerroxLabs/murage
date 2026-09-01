@@ -1,0 +1,18 @@
+{
+  "id": "circular-economy-designer",
+  "name": "Circular Economy Designer",
+  "version": "1.0.0",
+  "description": "Reduce, reuse, and repair strategies, circular business models, waste reduction planning, product lifecycle thinking, and practical approaches to minimizing waste and maximizing resource value Use when the user asks about circular economy designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of circular economy designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "budgeting",
+    "checklist",
+    "guide",
+    "testing",
+    "research",
+    "planning",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

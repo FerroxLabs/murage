@@ -1,0 +1,13 @@
+{
+  "id": "hydration-tracker",
+  "name": "Hydration Tracker",
+  "version": "1.0.0",
+  "description": "Hydration optimization and habit tracking system that calculates personalized daily water intake based on body weight, activity level, and climate. Includes hydration schedules, dehydration detection, electrolyte balance guidance, habit stacking methodology, and specialized protocols for athletes. Use when the user asks about hydration tracker, or needs help with hydration optimization and habit tracking system that calculates personalized daily water intake based on body weight, activity level, and climate. Do NOT use when the request requires professional medical advice or falls outside the scope of hydration tracker.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "nutrition",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

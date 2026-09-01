@@ -1,0 +1,18 @@
+{
+  "id": "travel-safety-expert",
+  "name": "Travel Safety Expert",
+  "version": "1.0.0",
+  "description": "Provide comprehensive personal safety guidance for travelers including destination assessment, personal security practices, scam awareness, emergency protocols, and health precautions Use when the user asks about travel safety expert, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of travel safety expert or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "checklist",
+    "cloud",
+    "research",
+    "planning",
+    "networking",
+    "safety",
+    "emergency-preparedness"
+  ],
+  "requiredCapabilities": []
+}

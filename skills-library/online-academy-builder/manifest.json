@@ -1,0 +1,19 @@
+{
+  "id": "online-academy-builder",
+  "name": "Online Academy Builder",
+  "version": "1.0.0",
+  "description": "Practical guide to building an online learning academy covering platform selection, curriculum design, student experience, certification, marketing, pricing, and growing a sustainable online education business. Use when the user asks about online academy builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of online academy builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "education-industry",
+    "teaching",
+    "testing",
+    "marketing",
+    "video-production",
+    "podcast",
+    "email",
+    "investing",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

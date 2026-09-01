@@ -1,0 +1,19 @@
+{
+  "id": "blockchain-security-auditor",
+  "name": "Blockchain Security Auditor",
+  "version": "1.0.0",
+  "description": "Smart contract security auditing methodology covering vulnerability classification (reentrancy, flash loan attacks, oracle manipulation, access control), automated and manual review techniques, audit report writing, tool proficiency (Slither, Mythril, Echidna), and remediation guidance for EVM-compatible chains. Use when the user asks about blockchain security auditor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of blockchain security auditor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "checklist",
+    "template",
+    "testing",
+    "analysis",
+    "emergency-preparedness",
+    "performing-arts",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "crypto-engineer",
+  "name": "Crypto Engineer",
+  "version": "1.0.0",
+  "description": "Cryptography implementation expertise covering symmetric vs asymmetric encryption, password hashing (bcrypt, argon2), digital signatures, key management, TLS configuration, secure random generation, common cryptographic pitfalls, and practical usage of libsodium and OpenSSL for building secure systems. Use when the user asks about crypto engineer, crypto engineer best practices, or needs guidance on crypto engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "guide",
+    "best-practices"
+  ],
+  "requiredCapabilities": []
+}

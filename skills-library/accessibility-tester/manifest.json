@@ -1,0 +1,14 @@
+{
+  "id": "accessibility-tester",
+  "name": "Accessibility Tester",
+  "version": "1.0.0",
+  "description": "Accessibility testing expert covering automated a11y scanning with axe-core and Lighthouse, screen reader testing workflows, WCAG 2.1/2.2 compliance verification, keyboard navigation testing, color contrast analysis, ARIA pattern validation, and accessibility CI/CD integration. Use when the user asks about accessibility tester, accessibility tester best practices, or needs guidance on accessibility tester implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "best-practices",
+    "accessibility",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

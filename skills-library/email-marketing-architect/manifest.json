@@ -1,0 +1,14 @@
+{
+  "id": "email-marketing-architect",
+  "name": "Email Marketing Architect",
+  "version": "1.0.0",
+  "description": "Advanced email marketing systems design covering list architecture, behavioral segmentation, multi-sequence automation, deliverability engineering, A/B testing methodology, revenue attribution, lifecycle campaigns, and platform-specific implementation for Klaviyo, ConvertKit, and ActiveCampaign. Use when the user asks about email marketing architect or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "email-marketing",
+    "marketing",
+    "strategy",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

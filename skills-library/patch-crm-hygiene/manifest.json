@@ -1,0 +1,13 @@
+{
+  "id": "patch-crm-hygiene",
+  "name": "CRM hygiene",
+  "version": "1.0.0",
+  "description": "The user says \"the pipeline number is wrong,\" \"the forecast keeps missing,\" \"our CRM is a graveyard,\" or \"I can't trust the data.\" Load for pipeline audit, contact-data cleanup, stale-deal sweep, or a defensible forecast. Pairs with operating-rhythm — the CRM feeds the weekly tactical's pipeline-cov",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "patch",
+    "crm",
+    "hygiene"
+  ],
+  "requiredCapabilities": []
+}

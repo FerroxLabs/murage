@@ -1,0 +1,14 @@
+{
+  "id": "csharp-performance",
+  "name": "Csharp Performance",
+  "version": "1.0.0",
+  "description": "Guides advanced .NET performance optimization: Span<T> and Memory<T> usage, BenchmarkDotNet, allocation profiling with dotMemory, source generators, and high-performance patterns. Use when the user asks about C# performance, Span, Memory, BenchmarkDotNet, allocation profiling, source generators, high-performance .NET. Do NOT use when the user asks about C# async (use `csharp-async-patterns`), C# modern idioms (use `csharp-modern-idioms`), general performance testing (use `performance-testing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "csharp",
+    "optimization",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

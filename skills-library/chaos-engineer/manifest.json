@@ -1,0 +1,14 @@
+{
+  "id": "chaos-engineer",
+  "name": "Chaos Engineer",
+  "version": "1.0.0",
+  "description": "Chaos engineering expert covering steady state hypothesis definition, fault injection techniques, game day planning and execution, blast radius management, resilience testing patterns, failure mode analysis, and progressive chaos maturity from development through production environments. Use when the user asks about chaos engineer, chaos engineer best practices, or needs guidance on chaos engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "best-practices",
+    "devops",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "street-photographer",
+  "name": "Street Photographer",
+  "version": "1.0.0",
+  "description": "Expert street photography guidance covering candid techniques, legal considerations, composition in chaotic environments, editing for narrative, storytelling through series, and ethical approaches to photographing strangers. Use when the user asks about street photographer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of street photographer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "guide",
+    "quick-reference",
+    "testing",
+    "research",
+    "emergency-preparedness",
+    "performing-arts",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

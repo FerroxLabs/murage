@@ -1,0 +1,14 @@
+{
+  "id": "n8n-workflow-builder",
+  "name": "N8n Workflow Builder",
+  "version": "1.0.0",
+  "description": "Expert n8n workflow automation covering self-hosted deployment, node configuration, trigger types, webhook handling, data transformation with expressions, error handling patterns, credential management, sub-workflow composition, database operations, API integration, and production monitoring for reliable automation pipelines. Use when the user asks about n8n workflow builder, n8n workflow builder best practices, or needs guidance on n8n workflow builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

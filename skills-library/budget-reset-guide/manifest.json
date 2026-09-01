@@ -1,0 +1,18 @@
+{
+  "id": "budget-reset-guide",
+  "name": "Budget Reset Guide",
+  "version": "1.0.0",
+  "description": "Quick-start financial reset guide covering financial snapshot creation, expense auditing, category budgeting, automation setup, and a 30-day action plan to regain control of your money. Use when the user asks about budget reset guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of budget reset guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "personal-finance",
+    "budgeting",
+    "template",
+    "guide",
+    "automation",
+    "planning",
+    "freelancing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "wireframe-specification",
+  "name": "Wireframe Specification",
+  "version": "1.0.0",
+  "description": "Produces tool-agnostic wireframe specifications with component lists, layout grids, content hierarchy annotations, and interaction notes for any screen or page. Use when the user asks to wireframe a page, plan a screen layout, define page structure, or create a low-fidelity design spec. Do NOT use for high-fidelity visual design (use design-system-foundations), user flow diagrams (use user-flow-mapping), or interactive prototype definitions (use prototype-spec).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "planning",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

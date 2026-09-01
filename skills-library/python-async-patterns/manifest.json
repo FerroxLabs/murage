@@ -1,0 +1,14 @@
+{
+  "id": "python-async-patterns",
+  "name": "Python Async Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level Python async and concurrent programming: asyncio event loop, async/await patterns, threading vs multiprocessing decision tree, GIL implications, async context managers, and concurrent task management. Covers when to use each concurrency primitive. Use when the user asks about Python async programming, asyncio, threading vs multiprocessing, GIL behavior, async context managers, or concurrent Python execution. Do NOT use when the user asks about Python project setup (use `python-project-setup`), testing async code (use `python-testing-patterns`), or general performance optimization (use `python-performance`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "python",
+    "backend",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

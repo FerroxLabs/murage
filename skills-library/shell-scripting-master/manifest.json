@@ -1,0 +1,14 @@
+{
+  "id": "shell-scripting-master",
+  "name": "Shell Scripting Master",
+  "version": "1.0.0",
+  "description": "Advanced shell scripting expert covering shell and Zsh patterns, robust error handling (set -euo pipefail), argument parsing (getopts, manual), portability across shells and OS, testing shell scripts (bats, shellcheck), process management, text processing pipelines, and script security practices. Use when the user asks about shell scripting master, shell scripting master best practices, or needs guidance on shell scripting master implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "passive-voice-fix",
+  "name": "Passive Voice Fix",
+  "version": "1.0.0",
+  "description": "Identifies and converts passive voice constructions to active voice where appropriate, preserving passive voice when it serves clarity, diplomacy, or emphasis. Shows each conversion with rationale. Use when the user asks to fix passive voice, make writing more direct, convert passive to active, or strengthen weak verb constructions. Do NOT use for general editing (use copy-editing), conciseness work (use conciseness-editing), or tone adjustment (use tone-adjustment).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "troubleshooting"
+  ],
+  "requiredCapabilities": []
+}

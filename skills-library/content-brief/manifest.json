@@ -1,0 +1,13 @@
+{
+  "id": "content-brief",
+  "name": "Content Brief",
+  "version": "1.0.0",
+  "description": "Creates writer-ready content briefs with audience definition, content angle, detailed outline, keyword targets, source suggestions, and tone guidance. Use when the user needs to brief a writer, plan a content piece before drafting, or create an assignment document for content creation. Do NOT use for editorial calendars (use `editorial-calendar`), content audits (use `content-audit`), or writing the actual content piece (use `blog-post-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

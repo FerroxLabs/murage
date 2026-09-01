@@ -1,0 +1,14 @@
+{
+  "id": "launch-api-product",
+  "name": "Launch Api Product",
+  "version": "1.0.0",
+  "description": "Complete workflow for designing, building, documenting, and monetizing an API product. Covers API-first design, implementation, developer portal creation, SDK generation, pricing strategy, and building a developer ecosystem around your API. Use when the user wants to launch api product or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "documentation",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

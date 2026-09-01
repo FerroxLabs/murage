@@ -1,0 +1,15 @@
+{
+  "id": "sleep-hygiene-protocol",
+  "name": "Sleep Hygiene Protocol",
+  "version": "1.0.0",
+  "description": "Builds a personalized sleep hygiene protocol with specific bedtime routines, environment optimization, stimulus control rules, and a sleep-wake schedule. Gathers the user's current sleep patterns, challenges, and constraints, then produces a structured protocol with an implementation timeline. Use when the user asks about improving sleep quality, building a bedtime routine, sleep hygiene practices, fixing a sleep schedule, or reducing time to fall asleep. Do NOT use for diagnosing sleep disorders, treating insomnia, sleep apnea assessment, or medication-related sleep questions.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sleep",
+    "mental-wellness",
+    "self-care",
+    "stress-management",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

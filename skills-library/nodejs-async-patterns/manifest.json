@@ -1,0 +1,14 @@
+{
+  "id": "nodejs-async-patterns",
+  "name": "Nodejs Async Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level Node.js asynchronous programming: Promise composition, async/await patterns, event loop model, stream processing, worker threads, and AbortController for cancellation. Use when the user asks about Node.js async/await, Promise patterns, event loop, streams, worker threads, AbortController, async iterators. Do NOT use when the user asks about JavaScript idioms (use `javascript-idioms`), Node.js error handling (use `nodejs-error-handling`), Node.js performance (use `nodejs-performance`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "javascript",
+    "backend",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

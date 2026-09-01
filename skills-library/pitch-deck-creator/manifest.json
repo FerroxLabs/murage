@@ -1,0 +1,14 @@
+{
+  "id": "pitch-deck-creator",
+  "name": "Pitch Deck Creator",
+  "version": "1.0.0",
+  "description": "Investor pitch deck design and content creation using Sequoia format, Guy Kawasaki 10/20/30 rule, slide-by-slide storytelling, and investor Q&A preparation. Use when the user asks about pitch deck creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "presentation",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

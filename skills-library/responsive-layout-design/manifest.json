@@ -1,0 +1,14 @@
+{
+  "id": "responsive-layout-design",
+  "name": "Responsive Layout Design",
+  "version": "1.0.0",
+  "description": "Produces a responsive layout specification with breakpoints, column grids per breakpoint, component behavior rules, and content priority ordering for multi-device interfaces. Use when the user asks to design a responsive layout, define breakpoints, plan how content adapts across screen sizes, or create a multi-device layout specification. Do NOT use for wireframing a single device (use wireframe-specification), defining animations (use prototype-spec), or writing responsive CSS code (use a software-development skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "responsive-design",
+    "design",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

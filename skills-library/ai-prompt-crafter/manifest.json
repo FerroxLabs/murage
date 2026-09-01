@@ -1,0 +1,19 @@
+{
+  "id": "ai-prompt-crafter",
+  "name": "Ai Prompt Crafter",
+  "version": "1.0.0",
+  "description": "Advanced prompting techniques for any AI model covering system prompts, chain-of-thought reasoning, few-shot examples, structured output formats, context management, multi-turn conversation strategies, and a reusable prompt template library. Use when the user asks about ai prompt crafter, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ai prompt crafter or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "template",
+    "step-by-step",
+    "beginner-friendly",
+    "advanced",
+    "api-design",
+    "automation",
+    "analysis",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

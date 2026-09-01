@@ -1,0 +1,18 @@
+{
+  "id": "loving-kindness-practitioner",
+  "name": "Loving Kindness Practitioner",
+  "version": "1.0.0",
+  "description": "Guide metta meditation and compassion practices including traditional scripts, progressive sequences, adaptations for difficulty, and integration into daily life. Use when the user asks about loving kindness practitioner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of loving kindness practitioner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "breathing",
+    "journaling",
+    "stress-management",
+    "guide",
+    "beginner-friendly",
+    "advanced"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "cybersecurity-personal",
+  "name": "Cybersecurity Personal",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to personal digital security covering password management strategies, two-factor authentication setup, VPN selection and usage, phishing recognition techniques, social engineering awareness, device security hardening, privacy settings for social media and browsers, data breach response procedures, and secure communication tools. Use when the user asks about cybersecurity personal, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cybersecurity personal or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "checklist",
+    "guide",
+    "cloud",
+    "testing",
+    "automation",
+    "research",
+    "networking"
+  ],
+  "requiredCapabilities": []
+}

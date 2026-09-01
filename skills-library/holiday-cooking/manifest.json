@@ -1,0 +1,17 @@
+{
+  "id": "holiday-cooking",
+  "name": "Holiday Cooking",
+  "version": "1.0.0",
+  "description": "Plan and execute holiday meals including Thanksgiving with turkey methods and sides, Christmas dinner, Easter brunch, July 4th BBQ, holiday baking, dietary accommodations, detailed timeline templates, prep-ahead strategies, hosting large groups, and potluck coordination. Use when the user asks about holiday cooking, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of holiday cooking or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "budgeting",
+    "stress-management",
+    "performing-arts",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

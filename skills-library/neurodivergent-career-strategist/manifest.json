@@ -1,0 +1,18 @@
+{
+  "id": "neurodivergent-career-strategist",
+  "name": "Neurodivergent Career Strategist",
+  "version": "1.0.0",
+  "description": "Strengths-based career guidance for neurodivergent individuals covering career selection aligned with cognitive strengths, workplace accommodations, disclosure decisions, job search strategies, and interview preparation. Use when the user asks about neurodivergent career strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of neurodivergent career strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "budgeting",
+    "analysis",
+    "research",
+    "safety",
+    "emergency-preparedness",
+    "neurodiversity"
+  ],
+  "requiredCapabilities": []
+}

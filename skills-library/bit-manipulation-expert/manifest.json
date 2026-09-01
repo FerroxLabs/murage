@@ -1,0 +1,17 @@
+{
+  "id": "bit-manipulation-expert",
+  "name": "Bit Manipulation Expert",
+  "version": "1.0.0",
+  "description": "Competitive programming bit manipulation mastery covering fundamental bit tricks, bitmask dynamic programming, XOR properties and applications, subset enumeration over bitmasks, bitwise optimization techniques, and practical contest applications for problems involving sets, states, and combinatorial optimization. Use when the user asks about bit manipulation expert, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of bit manipulation expert or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "competitive-programming",
+    "checklist",
+    "beginner-friendly",
+    "python",
+    "game-design",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "creative-agency-runner",
+  "name": "Creative Agency Runner",
+  "version": "1.0.0",
+  "description": "Creative agency management guidance covering new business pitching, client relationship management, team leadership, project profitability, agency positioning, resource planning, pricing models, creative process design, talent retention, and scaling operations. Includes pitch templates, utilization tracking, profitability calculators, and client onboarding frameworks. Use when the user asks about creative agency runner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of creative agency runner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-industry",
+    "strategy",
+    "budgeting",
+    "checklist",
+    "template",
+    "analysis",
+    "research",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

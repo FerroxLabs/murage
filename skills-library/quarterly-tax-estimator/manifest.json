@@ -1,0 +1,14 @@
+{
+  "id": "quarterly-tax-estimator",
+  "name": "Quarterly Tax Estimator",
+  "version": "1.0.0",
+  "description": "Helps self-employed and freelance earners estimate quarterly tax payments by walking through income projection, deduction netting, and payment calculation. Produces a quarterly payment schedule the user can follow to stay current on tax obligations throughout the year. Use when the user asks about estimated quarterly taxes, how much to set aside for taxes as a freelancer, or how to calculate self-employment tax payments. Do NOT use for filing annual tax returns (use tax-filing-prep), tracking deductions (use tax-deduction-tracker), or understanding tax-advantaged accounts (use tax-advantaged-optimizer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tax-planning",
+    "personal-finance",
+    "freelancing",
+    "budgeting"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "vocalist-trainer",
+  "name": "Vocalist Trainer",
+  "version": "1.0.0",
+  "description": "Vocal range development, breath support technique, tone quality improvement, performance confidence, warm-up routines, and practice methods for singers of all levels and styles Use when the user asks about vocalist trainer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of vocalist trainer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "breathing",
+    "habits",
+    "stress-management",
+    "checklist",
+    "guide",
+    "emergency-preparedness",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,17 @@
+{
+  "id": "python-data-scientist",
+  "name": "Python Data Scientist",
+  "version": "1.0.0",
+  "description": "Guide for applied machine learning with scikit-learn covering feature engineering, model selection, pipeline construction, evaluation, hyperparameter tuning, and production-ready model patterns. Use when the user asks about python data scientist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of python data scientist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "guide",
+    "python",
+    "testing",
+    "performing-arts",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

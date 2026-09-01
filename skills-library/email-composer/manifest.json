@@ -1,0 +1,13 @@
+{
+  "id": "email-composer",
+  "name": "Email Composer",
+  "version": "1.0.0",
+  "description": "Professional email composition expert covering email templates (request, follow-up, escalation, announcement), subject line optimization, tone calibration, call-to-action design, email threading, bulk communication, and brevity techniques. Use when the user asks about email composer, email composer best practices, or needs guidance on email composer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

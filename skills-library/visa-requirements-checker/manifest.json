@@ -1,0 +1,15 @@
+{
+  "id": "visa-requirements-checker",
+  "name": "Visa Requirements Checker",
+  "version": "1.0.0",
+  "description": "Creates a visa research checklist by destination and passport country with timeline deadlines, document requirements, and application process steps. Gathers travel destination, passport nationality, trip purpose, and duration to produce a structured visa preparation checklist with action items and deadlines counted back from the departure date. Use when the user asks about visa requirements, how to apply for a travel visa, what documents are needed for entry, or whether they need a visa for a specific country. Do NOT use for immigration or residency visas, work permit applications, student visa processes, or citizenship applications.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "research",
+    "checklist",
+    "planning",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

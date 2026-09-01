@@ -1,0 +1,14 @@
+{
+  "id": "speed-reading-trainer",
+  "name": "Speed Reading Trainer",
+  "version": "1.0.0",
+  "description": "Evidence-based speed reading techniques, comprehension strategies, progressive practice drills, note-taking integration, and retention methods for efficient reading. Use when the user asks about speed reading trainer, or needs help with evidence-based speed reading techniques, comprehension strategies, progressive practice drills, note-taking integration, and retention methods for efficient reading. Do NOT use when the request requires professional specialized advice or falls outside the scope of speed reading trainer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "guide",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

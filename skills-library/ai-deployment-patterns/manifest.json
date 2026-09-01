@@ -1,0 +1,14 @@
+{
+  "id": "ai-deployment-patterns",
+  "name": "Ai Deployment Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level ai deployment patterns implementation: ai-ml and devops decision frameworks, production-ready patterns, and concrete templates for ai deployment patterns workflows. Use when the user asks about ai deployment patterns, ai deployment patterns configuration, or ai-ml best practices for ai projects. Do NOT use when the user needs a different ai ml engineering capability -- check sibling skills in the ai ml engineering subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "devops",
+    "cloud",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

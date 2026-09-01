@@ -1,0 +1,19 @@
+{
+  "id": "developer-portal-builder",
+  "name": "Developer Portal Builder",
+  "version": "1.0.0",
+  "description": "Design and implement internal developer portals with service catalogs, service discovery, templates, and self-service workflows using Backstage patterns Use when the user asks about developer portal builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of developer portal builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "template",
+    "guide",
+    "api-design",
+    "automation",
+    "analysis",
+    "time-management",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

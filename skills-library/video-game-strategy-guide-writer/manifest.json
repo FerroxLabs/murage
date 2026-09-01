@@ -1,0 +1,15 @@
+{
+  "id": "video-game-strategy-guide-writer",
+  "name": "Video Game Strategy Guide Writer",
+  "version": "1.0.0",
+  "description": "Provides an intermediate framework for writing structured video game strategy guides: mechanic explanation patterns, progression charts, decision tree formats for branching content, boss encounter breakdowns, and resource optimization tables. Produces a reusable guide structure template adaptable to any game genre. Use when the user wants to write a strategy guide for a video game, needs a framework for explaining game mechanics, wants to create progression charts or decision trees, or needs to structure guide content for readability. Do NOT use for board game selection (use board-game-selection-guide), tabletop RPG campaigns (use tabletop-rpg-campaign-builder), or game streaming setup (use game-streaming-setup-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "template",
+    "writing",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

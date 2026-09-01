@@ -1,0 +1,14 @@
+{
+  "id": "decluttering-method",
+  "name": "Decluttering Method",
+  "version": "1.0.0",
+  "description": "Guides users through systematic decluttering using category-based or room-based methods. Provides decision frameworks for what to keep, donate, or discard, with specific criteria for common item types. Includes time estimates per category and strategies for maintaining a decluttered space. Use when the user asks about decluttering, reducing possessions, organizing before a move, or creating more space in their home. Do NOT use for regular cleaning routines (use weekly-cleaning-schedule), professional organizing services for hoarding situations, or room layout and furniture arrangement (use room-organization-system).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decluttering",
+    "cleaning",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

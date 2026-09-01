@@ -1,0 +1,14 @@
+{
+  "id": "readme-writing",
+  "name": "Readme Writing",
+  "version": "1.0.0",
+  "description": "Creates GitHub-ready README.md files with project overview, installation instructions, usage examples, configuration details, and contributing guidelines. Use when the user needs a README for a repository, wants to improve an existing README, or asks for project documentation. Do NOT use for API documentation (use `api-documentation`), user guides (use `user-guide`), or changelogs (use `changelog-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "guide",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

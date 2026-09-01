@@ -1,0 +1,15 @@
+{
+  "id": "feynman-technique",
+  "name": "Feynman Technique",
+  "version": "1.0.0",
+  "description": "Applies the Feynman technique to help learners explain complex concepts in simple language, identify knowledge gaps, and refine understanding through iterative simplification. Produces a simple-language explanation with analogy, then an expert revision. Use when a learner asks to explain a concept simply, use the Feynman technique, test their understanding by teaching, or simplify complex material. Do NOT use for general concept explanation (the learner should do the explaining, not the AI), for flashcard creation (use `flashcard-generation`), or for note taking (use `cornell-notes`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "active-recall",
+    "step-by-step",
+    "teaching",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

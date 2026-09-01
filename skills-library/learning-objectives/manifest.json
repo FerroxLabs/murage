@@ -1,0 +1,15 @@
+{
+  "id": "learning-objectives",
+  "name": "Learning Objectives",
+  "version": "1.0.0",
+  "description": "Creates SMART learning objectives with milestones for self-directed learners planning their own study. Uses Bloom's taxonomy to help learners define what they want to learn in measurable terms -- distinct from educator-facing objective writing. Use when a learner asks to set learning goals, define what they want to learn, create personal learning objectives, or plan self-study milestones. Do NOT use for educator-facing objectives (use `educator-objectives`), for full study plans (use `study-plan`), or for professional skill gap analysis (use `skill-gap-analysis`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "beginner-friendly",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

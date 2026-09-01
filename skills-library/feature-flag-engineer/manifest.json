@@ -1,0 +1,14 @@
+{
+  "id": "feature-flag-engineer",
+  "name": "Feature Flag Engineer",
+  "version": "1.0.0",
+  "description": "Feature flag system design and progressive rollout strategies with targeting rules, lifecycle management, flag hygiene, kill switches, and experimentation patterns for safe continuous delivery. Use when the user asks about feature flag engineer, feature flag engineer best practices, or needs guidance on feature flag engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "devops",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

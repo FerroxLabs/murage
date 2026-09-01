@@ -1,0 +1,14 @@
+{
+  "id": "clean-architecture-patterns",
+  "name": "Clean Architecture Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level clean architecture patterns implementation: clean-code and design-patterns decision frameworks, production-ready patterns, and concrete templates for clean architecture patterns workflows. Use when the user asks about clean architecture patterns, clean architecture patterns configuration, or architecture best practices for clean projects. Do NOT use when the user needs a different architecture design capability -- check sibling skills in the architecture design subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "clean-code",
+    "design-patterns",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

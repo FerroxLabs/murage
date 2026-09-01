@@ -1,0 +1,18 @@
+{
+  "id": "portfolio-rebalancing-coach",
+  "name": "Portfolio Rebalancing Coach",
+  "version": "1.0.0",
+  "description": "Portfolio rebalancing education covering target allocation setting, drift threshold strategies, calendar vs threshold triggers, tax-efficient rebalancing methods, rebalancing across multiple account types, and behavioral coaching to maintain discipline through market volatility. Use when the user asks about portfolio rebalancing coach, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of portfolio rebalancing coach or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "template",
+    "guide",
+    "automation",
+    "planning",
+    "performing-arts",
+    "competitive-programming"
+  ],
+  "requiredCapabilities": []
+}

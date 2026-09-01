@@ -1,0 +1,13 @@
+{
+  "id": "probe-validation-rubric",
+  "name": "Validation rubric — when has it validated, when has it failed, and when to kill",
+  "version": "1.0.0",
+  "description": "A test finished. The team is staring at numbers and reaching for a story. Load whenever someone asks \"did it work,\" \"is that enough,\" \"what does this number mean,\" or — most importantly — \"should we keep going.\"",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "probe",
+    "validation",
+    "rubric"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "aquarium-keeper",
+  "name": "Aquarium Keeper",
+  "version": "1.0.0",
+  "description": "Guide to freshwater aquarium keeping including tank setup, nitrogen cycle, stocking, water parameters, planted tanks, aquascaping styles, maintenance, disease prevention, and fish compatibility. Use when the user asks about aquarium keeper or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

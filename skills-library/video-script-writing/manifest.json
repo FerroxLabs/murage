@@ -1,0 +1,14 @@
+{
+  "id": "video-script-writing",
+  "name": "Video Script Writing",
+  "version": "1.0.0",
+  "description": "Writes a complete video script with hook, narrative structure, B-roll cues, call-to-action placement, and speaker direction annotations. Use when the user asks to write a video script, plan video content, create a YouTube script, or draft narration for a video. Do NOT use for storyboarding with shot lists (use video-storyboard), voiceover-only scripts (use voiceover-script), or short-form video under 60 seconds (use short-form-video-planning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "template",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

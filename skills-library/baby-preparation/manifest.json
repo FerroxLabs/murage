@@ -1,0 +1,15 @@
+{
+  "id": "baby-preparation",
+  "name": "Baby Preparation",
+  "version": "1.0.0",
+  "description": "Comprehensive pregnancy-to-nursery guide covering trimester planning, birth plan creation, nursery setup, registry building, parental leave planning, hospital bag checklist, childcare research, and financial preparation for new and expecting parents. Use when the user asks about baby preparation or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "parenting",
+    "planning",
+    "checklist",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

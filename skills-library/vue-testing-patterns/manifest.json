@@ -1,0 +1,15 @@
+{
+  "id": "vue-testing-patterns",
+  "name": "Vue Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level vue testing patterns implementation: javascript and testing decision frameworks, production-ready patterns, and concrete templates for vue testing patterns workflows. Use when the user asks about vue testing patterns, vue testing patterns configuration, or javascript best practices for vue projects. Do NOT use when the user needs a different web development capability -- check sibling skills in the web development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "javascript",
+    "testing",
+    "frameworks",
+    "tdd",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

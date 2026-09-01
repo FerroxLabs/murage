@@ -1,0 +1,19 @@
+{
+  "id": "competitive-position-analyzer",
+  "name": "Competitive Position Analyzer",
+  "version": "1.0.0",
+  "description": "Competitive positioning assessment evaluating market position, competitive advantages, SWOT factors, and strategic moat strength to produce an actionable competitive analysis scorecard. Use when the user asks about competitive position analyzer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of competitive position analyzer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "template",
+    "analysis",
+    "research",
+    "planning",
+    "branding",
+    "investing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

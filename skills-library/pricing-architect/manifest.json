@@ -1,0 +1,19 @@
+{
+  "id": "pricing-architect",
+  "name": "Pricing Architect",
+  "version": "1.0.0",
+  "description": "Synthesizes Value-based pricing, Cost-plus pricing, Competitive pricing, Freemium models, and Willingness-to-pay research into The Price Architecture Framework - a systematic approach to setting prices that capture value and grow revenue. Use when the user asks about pricing architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of pricing architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "template",
+    "advanced",
+    "api-design",
+    "testing",
+    "analysis",
+    "research",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

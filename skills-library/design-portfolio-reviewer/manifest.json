@@ -1,0 +1,19 @@
+{
+  "id": "design-portfolio-reviewer",
+  "name": "Design Portfolio Reviewer",
+  "version": "1.0.0",
+  "description": "Professional design portfolio evaluation assessing design process, craft quality, range of work, presentation, and industry alignment. Produces a scored review with recommendations for strengthening design practice and career positioning. Use when the user asks about design portfolio reviewer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of design portfolio reviewer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "design",
+    "template",
+    "research",
+    "branding",
+    "presentation",
+    "freelancing",
+    "resume-writing",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

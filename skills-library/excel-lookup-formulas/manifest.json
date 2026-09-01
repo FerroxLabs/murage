@@ -1,0 +1,14 @@
+{
+  "id": "excel-lookup-formulas",
+  "name": "Excel Lookup Formulas",
+  "version": "1.0.0",
+  "description": "Produces working Excel/Sheets lookup formulas for specific use cases. Generates exact VLOOKUP, HLOOKUP, INDEX/MATCH, and XLOOKUP formula strings with error handling wrappers, exact vs. approximate match settings, and performance guidance. Use when the user needs to look up values across spreadsheet tables, match data between sheets, or build cross-reference formulas. Do NOT use for pivot table construction (use pivot-table-builder), data cleaning formulas (use spreadsheet-data-cleaning), or conditional formatting rules (use conditional-formatting-rules).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spreadsheets",
+    "data-science",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

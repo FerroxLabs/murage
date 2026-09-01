@@ -1,0 +1,15 @@
+{
+  "id": "marketing-strategy",
+  "name": "Marketing Strategy",
+  "version": "1.0.0",
+  "description": "Produces a completed marketing strategy document using STP (Segmentation, Targeting, Positioning) framework with goals, audience definition, channel mix, budget allocation, and KPIs. Use when the user asks to create a marketing strategy, plan marketing for a product or company, define marketing goals and channels, or structure a marketing plan. Do NOT use for go-to-market launch planning (use go-to-market-strategy), single campaign planning (use campaign-planning), or brand positioning statement only (use brand-positioning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "strategy",
+    "planning",
+    "analysis",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

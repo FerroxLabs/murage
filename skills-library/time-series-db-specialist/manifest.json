@@ -1,0 +1,14 @@
+{
+  "id": "time-series-db-specialist",
+  "name": "Time Series Db Specialist",
+  "version": "1.0.0",
+  "description": "Time-series database specialist covering InfluxDB and TimescaleDB deep dives, data retention policies, downsampling strategies, continuous aggregates, compression techniques, IoT data modeling, high-cardinality management, query optimization, and Grafana integration. Use when the user asks about time series db specialist, time series db specialist best practices, or needs guidance on time series db specialist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

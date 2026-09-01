@@ -1,0 +1,15 @@
+{
+  "id": "ansoff-matrix",
+  "name": "Ansoff Matrix",
+  "version": "1.0.0",
+  "description": "Produces a completed Ansoff growth-share matrix analysis with growth strategy selection, risk assessment, and implementation recommendations. Use when the user asks to evaluate growth strategies, decide between market penetration, market development, product development, or diversification, or plan growth direction for a business. Do NOT use for product portfolio evaluation (use bcg-matrix), competitive landscape analysis (use competitive-analysis), or full go-to-market planning (use go-to-market-strategy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "planning",
+    "entrepreneurship",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

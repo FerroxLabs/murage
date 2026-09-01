@@ -1,0 +1,15 @@
+{
+  "id": "cs-handoff-document",
+  "name": "Cs Handoff Document",
+  "version": "1.0.0",
+  "description": "Produces a sales-to-customer-success handoff document with customer context, commitments made during the sale, success criteria, and onboarding plan using CS onboarding methodology. Use when the user asks to create a customer handoff document, build a sales-to-CS transition template, write a customer onboarding brief, document commitments made during a sale, or prepare a new customer for implementation. Do NOT use for follow-up emails after a sale (use follow-up-sequences), customer support scripts (not a sales skill), or internal team onboarding (use onboarding-plan).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "template",
+    "planning",
+    "checklist",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

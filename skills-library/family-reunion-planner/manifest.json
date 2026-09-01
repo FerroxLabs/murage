@@ -1,0 +1,19 @@
+{
+  "id": "family-reunion-planner",
+  "name": "Family Reunion Planner",
+  "version": "1.0.0",
+  "description": "Comprehensive planning guide for family reunions covering logistics, activities for all ages, budgeting, communication strategies, and creating meaningful gatherings that strengthen family bonds Use when the user asks about family reunion planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of family reunion planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "budgeting",
+    "breathing",
+    "checklist",
+    "beginner-friendly",
+    "research",
+    "planning",
+    "safety",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

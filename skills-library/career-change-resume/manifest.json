@@ -1,0 +1,14 @@
+{
+  "id": "career-change-resume",
+  "name": "Career Change Resume",
+  "version": "1.0.0",
+  "description": "Rewrites a resume for a career pivot by identifying transferable skills, reframing the professional summary for the target field, and recontextualizing past experience to demonstrate relevance to the new career direction. Produces a restructured resume with repositioned bullets, a new summary, and a transferable skills bridge. Use when the user is changing careers, switching industries, pivoting to a new field, or wants to reframe their experience for a different type of role. Do NOT use for standard resume bullet improvement (use resume-bullet-writer), ATS keyword optimization (use ats-resume-optimizer), or writing a resume summary without career change context (use resume-summary-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "resume-writing",
+    "career",
+    "writing",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

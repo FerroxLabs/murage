@@ -1,0 +1,14 @@
+{
+  "id": "gitops-practitioner",
+  "name": "Gitops Practitioner",
+  "version": "1.0.0",
+  "description": "GitOps expertise covering ArgoCD, Flux, declarative infrastructure management, drift detection and reconciliation, environment promotion strategies, secrets in GitOps, multi-cluster management, and progressive delivery with GitOps workflows. Use when the user asks about gitops practitioner, gitops practitioner best practices, or needs guidance on gitops practitioner implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "ci-cd",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

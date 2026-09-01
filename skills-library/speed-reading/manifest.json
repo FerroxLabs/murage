@@ -1,0 +1,15 @@
+{
+  "id": "speed-reading",
+  "name": "Speed Reading",
+  "version": "1.0.0",
+  "description": "Teaches speed reading techniques with comprehension verification for learners who want to read faster without sacrificing understanding. Produces technique-specific exercises with before/after measurement -- not a generic list of speed reading tips. Use when a learner asks to read faster, improve reading speed, learn speed reading techniques, or increase their reading efficiency. Do NOT use for study planning (use `study-plan`), for book summarization (use `book-summary`), or for note taking from reading (use `cornell-notes`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "beginner-friendly",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

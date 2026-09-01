@@ -1,0 +1,13 @@
+{
+  "id": "copy-lens-storytelling",
+  "name": "lens-storytelling",
+  "version": "1.0.0",
+  "description": "**Lens mode.** Source authority: Steven Bartlett's \"diary\"-format storytelling — emotional honesty, scene-led narration, the turning-point structure.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "copy",
+    "lens",
+    "storytelling"
+  ],
+  "requiredCapabilities": []
+}

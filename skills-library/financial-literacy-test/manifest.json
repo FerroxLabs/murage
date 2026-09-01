@@ -1,0 +1,18 @@
+{
+  "id": "financial-literacy-test",
+  "name": "Financial Literacy Test",
+  "version": "1.0.0",
+  "description": "Assess personal financial knowledge across budgeting, investing, tax planning, and insurance with educational scoring and targeted learning recommendations Use when the user asks about financial literacy test, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of financial literacy test or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "template",
+    "testing",
+    "analysis",
+    "planning",
+    "investing",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "replay-practice",
+  "name": "Replay Practice",
+  "version": "1.0.0",
+  "description": "Practice trading in TradingView replay mode — step through historical bars, take trades, track P&L. Use when the user wants to practice or backtest manually.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "replay",
+    "practice",
+    "trading",
+    "tradingview",
+    "charts",
+    "markets"
+  ],
+  "requiredCapabilities": []
+}

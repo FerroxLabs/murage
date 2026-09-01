@@ -1,0 +1,14 @@
+{
+  "id": "design-patterns-catalog",
+  "name": "Design Patterns Catalog",
+  "version": "1.0.0",
+  "description": "Guides expert-level design patterns catalog implementation: design-patterns and clean-code decision frameworks, production-ready patterns, and concrete templates for design patterns catalog workflows. Use when the user asks about design patterns catalog, design patterns catalog configuration, or design-patterns best practices for design projects. Do NOT use when the user needs a different architecture design capability -- check sibling skills in the architecture design subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design-patterns",
+    "clean-code",
+    "architecture",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

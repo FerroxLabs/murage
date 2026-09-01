@@ -1,0 +1,16 @@
+{
+  "id": "terminal-productivity-boost",
+  "name": "Terminal Productivity Boost",
+  "version": "1.0.0",
+  "description": "Quick-win terminal productivity guide covering aliases, shell functions, fuzzy finding, tmux basics, prompt customization, and time-saving shell configurations that pay off immediately. Use when the user asks about terminal productivity boost, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of terminal productivity boost or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "best-practices",
+    "python",
+    "api-design",
+    "resume-writing",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

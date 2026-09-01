@@ -1,0 +1,14 @@
+{
+  "id": "infographic-creator",
+  "name": "Infographic Creator",
+  "version": "1.0.0",
+  "description": "Complete infographic design guidance covering data storytelling, visual hierarchy, chart and graph selection, layout principles, icon design and usage, color for data visualization, tools (Canva, Figma, Illustrator), distribution strategies, and the process of transforming complex information into clear, compelling visual narratives. Use when the user asks about infographic creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "data-visualization",
+    "guide",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "exposure-triangle",
+  "name": "Exposure Triangle",
+  "version": "1.0.0",
+  "description": "Recommends aperture, shutter speed, and ISO settings for a specific shooting scenario with depth-of-field, motion blur, and noise trade-off explanations. Produces camera-agnostic exposure settings applicable to any camera with manual or semi-automatic controls. Use when the user asks about camera settings, exposure, aperture, shutter speed, ISO, or how to achieve a specific look with their camera. Do NOT use for composition and framing (use composition-guide), lighting equipment setup (use lighting-setup), or post-processing (use photo-editing-workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "photography",
+    "guide",
+    "beginner-friendly",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

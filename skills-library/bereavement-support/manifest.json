@@ -1,0 +1,14 @@
+{
+  "id": "bereavement-support",
+  "name": "Bereavement Support",
+  "version": "1.0.0",
+  "description": "Produces structured logistics frameworks for the immediate aftermath of a death and ongoing practical support for the bereaved, covering notification lists, arrangement decisions, document collection, estate tasks, and long-term administrative transitions. Focuses on the practical steps and organizational tasks, not grief therapy or emotional processing. Use when the user asks about what to do after someone dies, managing the logistics after a death, or organizing practical support for a bereaved person. Do NOT use for grief counseling, emotional processing of loss, or estate legal advice (consult an attorney for probate).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "elder-care",
+    "mental-wellness",
+    "strategy",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

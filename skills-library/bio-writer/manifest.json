@@ -1,0 +1,15 @@
+{
+  "id": "bio-writer",
+  "name": "Bio Writer",
+  "version": "1.0.0",
+  "description": "Write professional bios for any context - LinkedIn, conference speaking, author bylines, company pages, and social media - with templates for every length and tone. Use when the user asks about bio writer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of bio writer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "writing",
+    "budgeting",
+    "checklist",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

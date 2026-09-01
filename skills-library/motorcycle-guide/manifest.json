@@ -1,0 +1,14 @@
+{
+  "id": "motorcycle-guide",
+  "name": "Motorcycle Guide",
+  "version": "1.0.0",
+  "description": "Motorcycle ownership guide covering licensing requirements, rider training courses, bike selection by experience level, protective gear essentials, riding techniques, basic maintenance, safety strategies, motorcycle types comparison, insurance considerations, and community resources for new and returning riders. Use when the user asks about motorcycle guide, or needs help with motorcycle ownership guide covering licensing requirements, rider training courses, bike selection by experience level, protective gear essentials, riding techniques, basic maintenance, safety strategies, motorcycle types comparison, insurance considerations, and community resources for new and returning riders. Do NOT use when the request requires professional specialized advice or falls outside the scope of motorcycle guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automotive",
+    "home-maintenance",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

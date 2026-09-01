@@ -1,0 +1,14 @@
+{
+  "id": "math-solver",
+  "name": "Math Solver",
+  "version": "1.0.0",
+  "description": "Math problem solving and explanation skill providing step-by-step solutions, concept explanations from algebra through calculus and statistics, word problem strategies, visualization techniques, common mistake identification, and practice problem generation organized by topic and difficulty. Use when the user asks about math solver, or needs help with math problem solving and explanation skill providing step-by-step solutions, concept explanations from algebra through calculus and statistics, word problem strategies, visualization techniques, common mistake identification, and practice problem generation organized by topic and difficulty. Do NOT use when the request requires professional specialized advice or falls outside the scope of math solver.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "academic-writing",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

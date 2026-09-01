@@ -1,0 +1,19 @@
+{
+  "id": "friendship-cultivator",
+  "name": "Friendship Cultivator",
+  "version": "1.0.0",
+  "description": "Practical guide for making friends as an adult, maintaining meaningful friendships, setting healthy friendship boundaries, and building social groups that enrich your life Use when the user asks about friendship cultivator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of friendship cultivator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "stress-management",
+    "beginner-friendly",
+    "research",
+    "networking",
+    "game-design",
+    "energy-efficiency",
+    "investing",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

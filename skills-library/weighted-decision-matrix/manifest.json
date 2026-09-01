@@ -1,0 +1,14 @@
+{
+  "id": "weighted-decision-matrix",
+  "name": "Weighted Decision Matrix",
+  "version": "1.0.0",
+  "description": "Builds and populates a weighted decision matrix for a specific choice. Identifies criteria from user priorities, assigns weights, scores each option, and computes weighted totals with a clear recommendation. Use when the user asks about making a decision between multiple options, building a decision matrix, comparing options with weighted criteria, or applying a structured scoring framework to a choice. Do NOT use for business strategic decisions or resource allocation (use business strategy skills), simple two-option comparisons (use pro-con-analysis), or task prioritization (use task-prioritization).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decision-making",
+    "analysis",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

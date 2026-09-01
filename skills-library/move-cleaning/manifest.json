@@ -1,0 +1,14 @@
+{
+  "id": "move-cleaning",
+  "name": "Move Cleaning",
+  "version": "1.0.0",
+  "description": "Provides room-by-room cleaning checklists for move-in and move-out scenarios with specific tasks, time estimates, and security deposit recovery strategies. Covers the difference between move-out cleaning standards and regular cleaning, landlord inspection expectations, and DIY vs. professional cleaning cost comparisons. Use when the user is moving out of a rental and wants to maximize their security deposit return, moving into a new home and wants to clean before unpacking, or needs to prepare a home for new tenants. Do NOT use for regular cleaning routines (use weekly-cleaning-schedule), deep cleaning outside of a move context (use deep-cleaning-checklist), or post-construction cleaning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cleaning",
+    "checklist",
+    "analysis",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

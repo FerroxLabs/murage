@@ -1,0 +1,14 @@
+{
+  "id": "rate-limiter-designer",
+  "name": "Rate Limiter Designer",
+  "version": "1.0.0",
+  "description": "Rate limiting expertise covering token bucket, sliding window, fixed window, and leaky bucket algorithms, distributed rate limiting, API quota management, graceful degradation, client-friendly responses, and production implementation patterns. Use when the user asks about rate limiter designer, rate limiter designer best practices, or needs guidance on rate limiter designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "security",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

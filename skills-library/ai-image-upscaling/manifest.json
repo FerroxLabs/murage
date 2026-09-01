@@ -1,0 +1,14 @@
+{
+  "id": "ai-image-upscaling",
+  "name": "Ai Image Upscaling",
+  "version": "1.0.0",
+  "description": "Produces AI image upscaling and detail enhancement specifications for Midjourney upscale variants, DALL-E edit mode, and Stable Diffusion img2img with model-specific parameters. Use when the user asks to upscale an AI-generated image, enhance detail, increase resolution, or improve quality of an existing AI image. Do NOT use for initial image generation (use model-specific prompting skills), style transfer (use ai-image-style-transfer), or prompt debugging (use ai-image-prompt-debugging).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-image-generation",
+    "design",
+    "checklist",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

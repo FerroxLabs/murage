@@ -1,0 +1,14 @@
+{
+  "id": "file-processor",
+  "name": "File Processor",
+  "version": "1.0.0",
+  "description": "File processing pipeline expertise covering upload handling (multipart, streaming, resumable), virus scanning, image processing, PDF generation, storage backends, presigned URLs, and file type validation. Use when the user asks about file processor, file processor best practices, or needs guidance on file processor implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

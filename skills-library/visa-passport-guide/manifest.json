@@ -1,0 +1,14 @@
+{
+  "id": "visa-passport-guide",
+  "name": "Visa Passport Guide",
+  "version": "1.0.0",
+  "description": "Travel documentation guide covering passport application and renewal timelines, visa requirement lookup by nationality, visa application tips, travel insurance selection, vaccination requirements, entry restriction awareness, document copies strategy, and embassy and consulate information. Use when the user asks about visa passport guide, or needs help with travel documentation guide covering passport application and renewal timelines, visa requirement lookup by nationality, visa application tips, travel insurance selection, vaccination requirements, entry restriction awareness, document copies strategy, and embassy and consulate information. Do NOT use when the request requires professional specialized advice or falls outside the scope of visa passport guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "checklist",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

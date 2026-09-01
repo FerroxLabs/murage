@@ -1,0 +1,14 @@
+{
+  "id": "php-modern-idioms",
+  "name": "Php Modern Idioms",
+  "version": "1.0.0",
+  "description": "Guides expert-level php modern idioms implementation: php and best-practices decision frameworks, production-ready patterns, and concrete templates for php modern idioms workflows. Use when the user asks about php modern idioms, php modern idioms configuration, or php best practices for php projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "php",
+    "best-practices",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

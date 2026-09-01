@@ -1,0 +1,19 @@
+{
+  "id": "obsidian-power-user",
+  "name": "Obsidian Power User",
+  "version": "1.0.0",
+  "description": "Advanced Obsidian knowledge management covering Zettelkasten methodology, linking strategy, graph navigation, essential community plugins, templates, daily notes workflow, publishing options, and personal knowledge management principles. Use when the user asks about obsidian power user, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of obsidian power user or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "template",
+    "advanced",
+    "automation",
+    "research",
+    "networking",
+    "energy-efficiency",
+    "time-management",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

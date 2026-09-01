@@ -1,0 +1,15 @@
+{
+  "id": "habit-tracking-system",
+  "name": "Habit Tracking System",
+  "version": "1.0.0",
+  "description": "Creates personalized habit tracking systems using paper trackers, digital templates, and streak-based formats. Gathers the user's habits to track and preferences, then produces ready-to-use tracking templates with scoring rules, review prompts, and minimum viable habit definitions for streak preservation. Use when the user asks about habit trackers, tracking daily habits, building a habit dashboard, maintaining streaks, or measuring habit consistency. Do NOT use for building new habits from scratch (use habit-stacking-framework), creating challenges (use 30-day-habit-challenge), or clinical behavior tracking.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "checklist",
+    "habits",
+    "self-care",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

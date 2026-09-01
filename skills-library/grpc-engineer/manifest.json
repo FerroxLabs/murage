@@ -1,0 +1,14 @@
+{
+  "id": "grpc-engineer",
+  "name": "Grpc Engineer",
+  "version": "1.0.0",
+  "description": "Expert guide for designing and building gRPC services including protobuf schema design, streaming patterns, interceptors, error handling, load balancing, and performance optimization across polyglot environments. Use when the user asks about grpc engineer, grpc engineer best practices, or needs guidance on grpc engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

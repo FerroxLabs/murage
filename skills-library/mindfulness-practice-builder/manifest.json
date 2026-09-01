@@ -1,0 +1,15 @@
+{
+  "id": "mindfulness-practice-builder",
+  "name": "Mindfulness Practice Builder",
+  "version": "1.0.0",
+  "description": "Designs a personalized daily mindfulness practice using specific techniques (body scan meditation, mindful observation, breath awareness, mindful walking). Gathers the user's experience level, available time, and goals, then produces a structured practice plan with guided sequences and a progressive weekly schedule. Use when the user asks about starting a mindfulness practice, building a meditation habit, practicing present-moment awareness, or creating a mindfulness routine. Do NOT use for clinical meditation therapy, trauma-sensitive meditation, or treating any mental health condition.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "self-care",
+    "meditation",
+    "breathing",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

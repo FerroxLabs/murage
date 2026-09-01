@@ -1,0 +1,14 @@
+{
+  "id": "scalability-architect",
+  "name": "Scalability Architect",
+  "version": "1.0.0",
+  "description": "Scalability patterns expert covering horizontal vs vertical scaling, database sharding, read replicas, caching layers, CDN architecture, connection pooling, async processing, load shedding, capacity planning, and auto-scaling strategies. Use when the user asks about scalability architect, scalability architect best practices, or needs guidance on scalability architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

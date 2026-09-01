@@ -1,0 +1,14 @@
+{
+  "id": "fleet-manager",
+  "name": "Fleet Manager",
+  "version": "1.0.0",
+  "description": "Vehicle fleet tracking, maintenance scheduling, cost optimization, compliance management, and operational efficiency for multi-vehicle operations. Use when the user asks about fleet manager, or needs help with vehicle fleet tracking, maintenance scheduling, cost optimization, compliance management, and operational efficiency for multi-vehicle operations. Do NOT use when the request requires professional specialized advice or falls outside the scope of fleet manager.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automotive",
+    "home-maintenance",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

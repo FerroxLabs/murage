@@ -1,0 +1,14 @@
+{
+  "id": "level-design-master",
+  "name": "Level Design Master",
+  "version": "1.0.0",
+  "description": "Comprehensive level design expertise covering flow theory application, pacing and intensity curves, environmental storytelling, spatial composition, player guidance without hand-holding, playtesting methodology, iterative blockout workflow, and the craft of building spaces that teach, challenge, and delight players. Use when the user asks about level design master or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "game-design",
+    "design",
+    "guide",
+    "game-development"
+  ],
+  "requiredCapabilities": []
+}

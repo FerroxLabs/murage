@@ -1,0 +1,14 @@
+{
+  "id": "dynamodb-architect",
+  "name": "Dynamodb Architect",
+  "version": "1.0.0",
+  "description": "Amazon DynamoDB expert covering single-table design, partition key strategies, GSI and LSI patterns, capacity modes (on-demand vs provisioned), DynamoDB Streams, transactions, TTL, DAX caching, and access pattern-driven data modeling for NoSQL at scale. Use when the user asks about dynamodb architect, dynamodb architect best practices, or needs guidance on dynamodb architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "cloud",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

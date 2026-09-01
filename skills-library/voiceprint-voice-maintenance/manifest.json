@@ -1,0 +1,13 @@
+{
+  "id": "voiceprint-voice-maintenance",
+  "name": "voice-maintenance",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Voiceprint specialist. Runs the Refresh path and the running-log loop. Decay kills voice files — this discipline keeps yours useful past month six.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "voiceprint",
+    "voice",
+    "maintenance"
+  ],
+  "requiredCapabilities": []
+}

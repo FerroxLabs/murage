@@ -1,0 +1,15 @@
+{
+  "id": "sport-skill-progression-planner",
+  "name": "Sport Skill Progression Planner",
+  "version": "1.0.0",
+  "description": "Builds a sport-agnostic skill progression plan using assessment, skill decomposition, drill progression, milestone marking, and reassessment cycles. Gathers the user's chosen sport, current level, and goals to produce a structured skill ladder with drills, practice schedules, and measurable milestones. Use when the user asks about improving at a specific sport, building a practice plan for athletic skills, creating a skill development roadmap, or structuring deliberate practice for any sport. Do NOT use for team coaching or managing other athletes, professional/competitive training periodization, injury rehabilitation programs, or general fitness without a sport-specific skill focus (use health-wellness skills instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "workout-planning",
+    "step-by-step",
+    "guide",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

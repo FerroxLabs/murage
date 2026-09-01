@@ -1,0 +1,18 @@
+{
+  "id": "self-defense-basics",
+  "name": "Self Defense Basics",
+  "version": "1.0.0",
+  "description": "Foundational personal safety guide covering situational awareness principles, verbal de-escalation techniques, basic physical self-defense concepts, personal safety habits for daily life, home safety strategies, travel safety tips, self-defense training options and how to choose a program, and legal considerations around self-defense. Use when the user asks about self defense basics, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of self defense basics or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "habits",
+    "stress-management",
+    "guide",
+    "research",
+    "safety",
+    "emergency-preparedness",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "typescript-project-setup",
+  "name": "Typescript Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level TypeScript project configuration: tsconfig.json with strict mode, path aliases, declaration file generation, composite projects for monorepos, and ESM configuration. Covers the decisions that determine type safety and developer experience. Use when the user asks about setting up a TypeScript project, configuring tsconfig.json, setting up path aliases, composite projects, or TypeScript build configuration. Do NOT use when the user asks about TypeScript type patterns (use `typescript-type-patterns`), runtime validation (use `typescript-runtime-safety`), or Node.js setup (use `nodejs-project-setup`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "typescript",
+    "best-practices",
+    "template",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

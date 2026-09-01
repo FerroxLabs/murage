@@ -1,0 +1,18 @@
+{
+  "id": "adhd-productivity-architect",
+  "name": "Adhd Productivity Architect",
+  "version": "1.0.0",
+  "description": "Strategies for time blindness, hyperfocus management, external scaffolding systems, and building sustainable productivity routines designed for the ADHD brain. Use when the user asks about adhd productivity architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of adhd productivity architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "budgeting",
+    "journaling",
+    "quick-reference",
+    "planning",
+    "emergency-preparedness",
+    "neurodiversity"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "vector-db-engineer",
+  "name": "Vector Db Engineer",
+  "version": "1.0.0",
+  "description": "Vector database engineering covering Pinecone, Weaviate, Qdrant, pgvector, Milvus, and Chroma selection and configuration, indexing strategies (HNSW, IVF, PQ), similarity search optimization, hybrid search, filtering, multi-tenancy, scaling patterns, and production operations. Use when the user asks about vector db engineer, vector db engineer best practices, or needs guidance on vector db engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "data-science",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

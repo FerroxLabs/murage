@@ -1,0 +1,14 @@
+{
+  "id": "go-idioms",
+  "name": "Go Idioms",
+  "version": "1.0.0",
+  "description": "Teaches expert-level Go idiomatic patterns: error returns, interface design, embedding, functional options pattern, table-driven design, and effective use of the standard library. Use when the user asks about Go idioms, interface design, embedding, functional options, error returns, Go best practices, standard library. Do NOT use when the user asks about Go project setup (use `go-project-setup`), Go concurrency (use `go-concurrency-patterns`), Go error handling (use `go-error-handling`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "go",
+    "best-practices",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

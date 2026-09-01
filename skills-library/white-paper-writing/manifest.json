@@ -1,0 +1,13 @@
+{
+  "id": "white-paper-writing",
+  "name": "White Paper Writing",
+  "version": "1.0.0",
+  "description": "Writes authoritative white papers with executive summary, problem analysis, methodology, evidence-based arguments, and actionable conclusions for B2B and thought leadership contexts. Use when the user wants to write a white paper, industry report, or authoritative long-form document that establishes expertise. Do NOT use for case studies (use `case-study-writing`), blog posts (use `long-form-article`), or business reports (use `business-report`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "writing",
+    "technical-writing"
+  ],
+  "requiredCapabilities": []
+}

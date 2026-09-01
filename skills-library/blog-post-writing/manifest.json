@@ -1,0 +1,13 @@
+{
+  "id": "blog-post-writing",
+  "name": "Blog Post Writing",
+  "version": "1.0.0",
+  "description": "Writes complete blog posts with title, introduction hook, H2-structured body sections, and a closing call-to-action. Use when the user asks to write a blog post, draft a blog article, create website content, or compose an online article. Do NOT use for SEO-optimized posts (use `seo-blog-post`), listicles (use `listicle-writing`), how-to tutorials (use `how-to-guide`), or opinion/editorial pieces (use `opinion-piece`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "blog-post",
+    "writing",
+    "content-marketing"
+  ],
+  "requiredCapabilities": []
+}

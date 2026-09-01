@@ -1,0 +1,19 @@
+{
+  "id": "time-series-analyst",
+  "name": "Time Series Analyst",
+  "version": "1.0.0",
+  "description": "Time series analysis expertise covering decomposition methods, ARIMA and SARIMA modeling, Prophet for business forecasting, seasonality detection, trend analysis, anomaly detection, forecasting evaluation metrics, and practical applications for demand planning, capacity planning, and financial analysis. Use when the user asks about time series analyst, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of time series analyst or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "budgeting",
+    "guide",
+    "step-by-step",
+    "python",
+    "testing",
+    "analysis",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

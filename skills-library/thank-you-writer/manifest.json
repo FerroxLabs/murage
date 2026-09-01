@@ -1,0 +1,14 @@
+{
+  "id": "thank-you-writer",
+  "name": "Thank You Writer",
+  "version": "1.0.0",
+  "description": "Thank you and social note writing assistant with templates for gift acknowledgment, interview follow-up, hospitality thanks, sympathy cards, congratulations messages, apology letters, invitation wording, RSVP responses, and holiday card messages. Use when the user asks about thank you writer, or needs help with thank you and social note writing assistant with templates for gift acknowledgment, interview follow-up, hospitality thanks, sympathy cards, congratulations messages, apology letters, invitation wording, rsvp responses, and holiday card messages. Do NOT use when the request requires professional specialized advice or falls outside the scope of thank you writer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "template",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

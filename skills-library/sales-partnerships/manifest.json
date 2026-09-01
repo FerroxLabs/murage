@@ -1,0 +1,12 @@
+{
+  "id": "sales-partnerships",
+  "name": "Partnerships",
+  "version": "1.0.0",
+  "description": "In sales mode and the conversation is about a *partner*, not a customer. Load on \"should we partner with X,\" \"they want a referral deal,\" \"we're being asked to do co-marketing,\" \"is this integration worth building,\" or \"how do I structure a BD call.\" If it's a sales call dressed as partnership, drop",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "partnerships"
+  ],
+  "requiredCapabilities": []
+}

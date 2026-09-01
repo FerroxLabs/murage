@@ -1,0 +1,13 @@
+{
+  "id": "newsletter-writing",
+  "name": "Newsletter Writing",
+  "version": "1.0.0",
+  "description": "Writes email newsletters with subject line options, section structure, calls-to- action, and subscriber-friendly formatting. Use when the user wants to write an email newsletter, create subscriber content, draft a recurring email update, or compose a newsletter edition. Do NOT use for subject line generation only (use `newsletter-subject-lines`), cold outreach emails (use `cold-email-outreach`), or one-off professional emails (use `professional-email`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "newsletter",
+    "writing",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

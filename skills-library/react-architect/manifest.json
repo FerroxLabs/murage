@@ -1,0 +1,13 @@
+{
+  "id": "react-architect",
+  "name": "React Architect",
+  "version": "1.0.0",
+  "description": "Expert-level React application architecture covering component patterns, hooks design, state management selection, performance optimization, server components, and scalable folder structures. Use when the user asks about react architect, react architect best practices, or needs guidance on react architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "javascript"
+  ],
+  "requiredCapabilities": []
+}

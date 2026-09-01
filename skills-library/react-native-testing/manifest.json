@@ -1,0 +1,14 @@
+{
+  "id": "react-native-testing",
+  "name": "React Native Testing",
+  "version": "1.0.0",
+  "description": "Guides expert-level react native testing implementation: javascript and testing decision frameworks, production-ready patterns, and concrete templates for react native testing workflows. Use when the user asks about react native testing, react native testing configuration, or mobile best practices for react projects. Do NOT use when the user needs a different mobile development capability -- check sibling skills in the mobile development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "javascript",
+    "testing",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

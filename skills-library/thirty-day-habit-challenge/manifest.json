@@ -1,0 +1,15 @@
+{
+  "id": "thirty-day-habit-challenge",
+  "name": "Thirty Day Habit Challenge",
+  "version": "1.0.0",
+  "description": "Creates a complete 30-day habit challenge with daily commitment schedules, progressive difficulty, milestone markers, and tracking sheets. Gathers the user's target habit and starting level, then produces a day-by-day challenge plan with specific daily actions, rest days, and completion criteria. Use when the user asks about 30-day challenges, month-long habit experiments, daily commitment plans, or structured habit-building programs. Do NOT use for clinical behavior modification, addiction recovery programs, or extreme fitness challenges requiring medical clearance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "habits",
+    "self-care",
+    "fitness",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

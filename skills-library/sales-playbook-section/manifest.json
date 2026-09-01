@@ -1,0 +1,15 @@
+{
+  "id": "sales-playbook-section",
+  "name": "Sales Playbook Section",
+  "version": "1.0.0",
+  "description": "Produces one section of a sales playbook with talk tracks, common scenarios, competitive differentiation, and handling guidance using playbook format methodology. Use when the user asks to create a sales playbook section, write a talk track for a specific sales scenario, build competitive battle cards, document a sales play, or structure guidance for a specific selling situation. Do NOT use for full objection handling banks (use objection-handling), discovery call scripts (use discovery-call-script), or sales training curriculum (use teaching skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "strategy",
+    "template",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

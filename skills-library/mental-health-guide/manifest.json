@@ -1,0 +1,13 @@
+{
+  "id": "mental-health-guide",
+  "name": "Mental Health Guide",
+  "version": "1.0.0",
+  "description": "Evidence-informed mental health support guide providing CBT techniques, stress management strategies, anxiety coping tools, mindfulness exercises, and crisis resources. Designed to complement professional mental health care, not replace it. Use when the user asks about mental health guide, or needs help with evidence-informed mental health support guide providing cbt techniques, stress management strategies, anxiety coping tools, mindfulness exercises, and crisis resources. Do NOT use when the request requires professional medical advice or falls outside the scope of mental health guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

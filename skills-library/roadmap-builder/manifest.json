@@ -1,0 +1,14 @@
+{
+  "id": "roadmap-builder",
+  "name": "Roadmap Builder",
+  "version": "1.0.0",
+  "description": "Product roadmap construction expert covering Now-Next-Later format, outcome-based roadmaps, prioritization frameworks (RICE, ICE, MoSCoW), stakeholder alignment, roadmap visualization, living roadmap maintenance, and roadmap presentation strategies. Use when the user asks about roadmap builder, roadmap builder best practices, or needs guidance on roadmap builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

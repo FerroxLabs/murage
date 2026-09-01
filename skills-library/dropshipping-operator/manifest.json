@@ -1,0 +1,19 @@
+{
+  "id": "dropshipping-operator",
+  "name": "Dropshipping Operator",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to running a dropshipping business including supplier vetting, margin optimization, customer service systems, and platform selection for sustainable profitability. Use when the user asks about dropshipping operator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of dropshipping operator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "entrepreneurship",
+    "budgeting",
+    "checklist",
+    "testing",
+    "research",
+    "marketing",
+    "sales",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

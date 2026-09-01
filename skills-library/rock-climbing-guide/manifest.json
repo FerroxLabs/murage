@@ -1,0 +1,19 @@
+{
+  "id": "rock-climbing-guide",
+  "name": "Rock Climbing Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive rock climbing guide covering grading systems, movement techniques, gear selection, safety systems, bouldering and lead climbing fundamentals, training plans, and progression from beginner to intermediate outdoor climber. Use when the user asks about rock climbing guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of rock climbing guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "hiking",
+    "breathing",
+    "beginner-friendly",
+    "advanced",
+    "automation",
+    "safety",
+    "game-design",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

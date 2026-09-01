@@ -1,0 +1,14 @@
+{
+  "id": "paint-a-room",
+  "name": "Paint A Room",
+  "version": "1.0.0",
+  "description": "Guides the user through painting a room from surface preparation through final cleanup, with time estimates per step, material calculations, and technique instructions for cutting in, rolling, and finish coats. Use when the user asks about painting a room, choosing paint finishes, how much paint to buy, wall painting technique, or how long it takes to paint a room. Do NOT use for exterior painting, painting furniture or cabinets, decorative techniques like murals or faux finishes, or choosing wall colors for design purposes (use interior-design-principles instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "step-by-step",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

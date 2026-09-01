@@ -1,0 +1,14 @@
+{
+  "id": "data-modeler",
+  "name": "Data Modeler",
+  "version": "1.0.0",
+  "description": "Expert data modeling covering star schema, snowflake schema, Data Vault 2.0, dimensional modeling, slowly changing dimensions, bridge tables, fact table types, conformed dimensions, ERD creation, and modeling tool usage for building enterprise-grade analytical and operational data models. Use when the user asks about data modeler, data modeler best practices, or needs guidance on data modeler implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "architecture",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "dns-specialist",
+  "name": "Dns Specialist",
+  "version": "1.0.0",
+  "description": "DNS configuration. Record types (A, AAAA, CNAME, MX, TXT, SRV, CAA), TTL strategies, DNS propagation, DNSSEC, split-horizon DNS, GeoDNS, failover DNS, common DNS providers, troubleshooting (dig, nslookup). Use when the user asks about dns specialist, dns specialist best practices, or needs guidance on dns specialist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "guide",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "linkedin-summary-writer",
+  "name": "Linkedin Summary Writer",
+  "version": "1.0.0",
+  "description": "Writes a complete LinkedIn About section in first person, optimized for the user's target role and keyword searchability. Produces a ready-to-paste summary that tells a professional story, highlights key achievements, and includes a call to action. Use when the user wants to write or improve their LinkedIn summary, About section, or professional bio for LinkedIn. Do NOT use for resume summaries (use resume-summary-writer), LinkedIn headlines (use linkedin-headline-optimizer), or LinkedIn messages to recruiters (use recruiter-outreach).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "linkedin",
+    "career",
+    "template",
+    "writing",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

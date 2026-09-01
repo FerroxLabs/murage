@@ -1,0 +1,13 @@
+{
+  "id": "application-secrets-security",
+  "name": "Application Secrets Security",
+  "version": "1.0.0",
+  "description": "Secrets management expertise covering HashiCorp Vault and AWS Secrets Manager patterns, secret rotation strategies, environment variable management, config file handling, git secret scanning, CI/CD secret injection, zero-trust secret access, and audit logging for keeping sensitive credentials secure throughout the software lifecycle. Use when the user asks about application secrets security, application secrets security best practices, or needs guidance on application secrets security implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "guide",
+    "best-practices"
+  ],
+  "requiredCapabilities": []
+}

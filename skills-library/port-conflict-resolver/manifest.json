@@ -1,0 +1,15 @@
+{
+  "id": "port-conflict-resolver",
+  "name": "Port Conflict Resolver",
+  "version": "1.0.0",
+  "description": "Quickly find and resolve port conflicts - identify processes, kill stuck ports, configure alternatives, and prevent future conflicts across all operating systems. Use when the user asks about port conflict resolver, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of port conflict resolver or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "devops",
+    "python",
+    "javascript",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

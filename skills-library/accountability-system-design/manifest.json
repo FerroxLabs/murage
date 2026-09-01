@@ -1,0 +1,15 @@
+{
+  "id": "accountability-system-design",
+  "name": "Accountability System Design",
+  "version": "1.0.0",
+  "description": "Designs personalized accountability systems for habit and goal maintenance, including accountability partner structures, check-in formats, commitment contracts, and progress reporting templates. Gathers the user's goals and social context, then produces a complete accountability framework with partner selection criteria, meeting agendas, and escalation protocols. Use when the user asks about accountability partners, staying accountable to goals, creating check-in systems, commitment devices, or building social support for habit change. Do NOT use for clinical supervision structures, addiction recovery sponsorship, or group therapy facilitation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "habits",
+    "self-care",
+    "planning",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

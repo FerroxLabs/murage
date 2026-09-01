@@ -1,0 +1,16 @@
+{
+  "id": "setup-ci-cd-pipeline",
+  "name": "Setup Ci Cd Pipeline",
+  "version": "1.0.0",
+  "description": "Orchestrates the creation of a complete CI/CD pipeline from scratch by chaining five DevOps skills into a structured automation pipeline. Covers pipeline architecture design, workflow configuration, containerization, deployment strategy, and production monitoring. Use when the user needs to set up automated build, test, and deployment from zero or replace a manual deployment process. Do NOT use for tweaking an existing pipeline or adding a single CI job to an established workflow.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "ci-cd",
+    "automation",
+    "cloud",
+    "step-by-step",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "technical-specification",
+  "name": "Technical Specification",
+  "version": "1.0.0",
+  "description": "Creates technical specification documents with problem statement, requirements, design proposal, trade-off analysis, and decision rationale. Use when the user needs to write a tech spec, design document, or RFC for a proposed system or feature. Do NOT use for ADRs (use `adr-writing`), user guides (use `user-guide`), or API documentation (use `api-documentation`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "guide",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "compensation-benchmarking",
+  "name": "Compensation Benchmarking",
+  "version": "1.0.0",
+  "description": "Builds a total compensation analysis structure with market data interpretation, compensation band setting, and pay equity review using total compensation framework methodology. Use when the user asks about compensation benchmarking, salary bands, pay equity, market rate analysis, or total compensation structuring. Do NOT use for personal salary negotiation (use salary-negotiation), job offer writing (use offer-letter), or financial modeling (use financial-model-structure).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "strategy",
+    "planning",
+    "research",
+    "spreadsheets",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "professional-email",
+  "name": "Professional Email",
+  "version": "1.0.0",
+  "description": "Writes single professional emails with clear subject lines, the ask stated in the first three sentences, and a structured body for workplace communication. Use when the user needs to write a work email, business correspondence, or professional message to a colleague, manager, client, or vendor. Do NOT use for cold outreach sequences (use `cold-email-outreach`), newsletters (use `newsletter-writing`), or rejection letters (use `rejection-letter`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "email",
+    "writing",
+    "business-writing"
+  ],
+  "requiredCapabilities": []
+}

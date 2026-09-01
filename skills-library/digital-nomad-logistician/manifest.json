@@ -1,0 +1,19 @@
+{
+  "id": "digital-nomad-logistician",
+  "name": "Digital Nomad Logistician",
+  "version": "1.0.0",
+  "description": "Digital nomad logistics covering visa types and requirements, coworking space selection, international health insurance, banking and finances abroad, tax implications of remote work across borders, connectivity planning, and pre-departure checklists. Use when the user asks about digital nomad logistician, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of digital nomad logistician or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "cloud",
+    "testing",
+    "automation",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

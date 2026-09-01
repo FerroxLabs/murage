@@ -1,0 +1,14 @@
+{
+  "id": "voice-acting-coach",
+  "name": "Voice Acting Coach",
+  "version": "1.0.0",
+  "description": "Voice acting coaching assistant covering character voice development, vocal technique, recording setup and acoustics, audition preparation, demo reel creation, industry navigation for animation, video games, audiobooks, and commercial work, plus self-direction and performance skills for voice actors at every level. Use when the user asks about voice acting coach, or needs help with voice acting coaching assistant covering character voice development, vocal technique, recording setup and acoustics, audition preparation, demo reel creation, industry navigation for animation, video games, audiobooks, and commercial work, plus self-direction and performance skills for voice actors at every level. Do NOT use when the request requires professional specialized advice or falls outside the scope of voice acting coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "guide",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

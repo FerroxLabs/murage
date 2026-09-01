@@ -1,0 +1,14 @@
+{
+  "id": "batch-processing-protocol",
+  "name": "Batch Processing Protocol",
+  "version": "1.0.0",
+  "description": "Designs batch processing protocols for personal tasks by defining batch triggers, sequence steps, required inputs, and output checklists. Use when the user wants to process similar items in batches instead of one at a time, create a repeatable protocol for periodic bulk work, or design a system for handling accumulated items efficiently. Do NOT use for enterprise batch processing systems, software data pipelines, or business operations process design (use business operations or software development skills instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "planning",
+    "checklist",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

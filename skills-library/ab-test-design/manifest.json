@@ -1,0 +1,16 @@
+{
+  "id": "ab-test-design",
+  "name": "Ab Test Design",
+  "version": "1.0.0",
+  "description": "Designs A/B tests with hypothesis, control and variant definitions, primary metric, sample size calculation, test duration, and analysis plan using experimentation methodology. Use when the user asks about A/B testing, experiment design, split testing, hypothesis testing, or controlled experiments. Do NOT use for statistical analysis of completed tests (use a statistics skill), survey design (use employee-survey or user-research-plan), or feature prioritization (use prioritization-framework).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "research",
+    "strategy",
+    "planning",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

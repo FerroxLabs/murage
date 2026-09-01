@@ -1,0 +1,16 @@
+{
+  "id": "networking-message-writer",
+  "name": "Networking Message Writer",
+  "version": "1.0.0",
+  "description": "Writes professional networking messages for three scenarios: informational interview requests, reconnecting with dormant contacts, and introduction requests. Produces complete, ready-to-send message text optimized for response rate on LinkedIn or email. Use when the user wants to request an informational interview, reconnect with a former colleague, ask for an introduction, or write a professional networking message. Do NOT use for cold emails to hiring managers (use cold-outreach-email), recruiter messages (use recruiter-outreach), or post-interview follow-ups (use thank-you-email-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "writing",
+    "template",
+    "linkedin",
+    "networking",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

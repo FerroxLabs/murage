@@ -1,0 +1,17 @@
+{
+  "id": "dynamic-programming-solver",
+  "name": "Dynamic Programming Solver",
+  "version": "1.0.0",
+  "description": "Guides dynamic programming mastery including memoization, tabulation, state design, space optimization, and common DP patterns with complexity analysis Use when the user asks about dynamic programming solver, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of dynamic programming solver or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "competitive-programming",
+    "guide",
+    "step-by-step",
+    "beginner-friendly",
+    "parenting",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

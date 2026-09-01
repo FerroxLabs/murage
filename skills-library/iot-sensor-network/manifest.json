@@ -1,0 +1,19 @@
+{
+  "id": "iot-sensor-network",
+  "name": "Iot Sensor Network",
+  "version": "1.0.0",
+  "description": "Guides design and deployment of mesh sensor networks including data collection, power management, communication protocols, and fleet management Use when the user asks about iot sensor network, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of iot sensor network or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "budgeting",
+    "guide",
+    "python",
+    "automation",
+    "networking",
+    "sleep",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

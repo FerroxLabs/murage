@@ -1,0 +1,19 @@
+{
+  "id": "special-education-navigator",
+  "name": "Special Education Navigator",
+  "version": "1.0.0",
+  "description": "Navigate IEP processes, accommodations, advocacy strategies, parental rights, and special education resources to support students with disabilities. Use when the user asks about special education navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of special education navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "education-industry",
+    "teaching",
+    "checklist",
+    "guide",
+    "analysis",
+    "planning",
+    "presentation",
+    "email",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

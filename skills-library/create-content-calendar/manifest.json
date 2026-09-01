@@ -1,0 +1,15 @@
+{
+  "id": "create-content-calendar",
+  "name": "Create Content Calendar",
+  "version": "1.0.0",
+  "description": "Guides the user through building a strategic content calendar from content audit through audience analysis, editorial planning, and repurposing strategy. Use when the user needs to plan content across weeks or months, wants to organize their publishing schedule, or needs a systematic approach to content planning that aligns with audience needs. Do NOT use for writing individual posts (use publish-blog-post), for one-time content creation (use content-brief), or for social media strategy only (use seo-content-strategy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "planning",
+    "strategy",
+    "step-by-step",
+    "content-creation"
+  ],
+  "requiredCapabilities": []
+}

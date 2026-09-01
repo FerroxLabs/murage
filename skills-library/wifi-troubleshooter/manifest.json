@@ -1,0 +1,19 @@
+{
+  "id": "wifi-troubleshooter",
+  "name": "Wifi Troubleshooter",
+  "version": "1.0.0",
+  "description": "Diagnose and fix WiFi problems - slow speeds, dead zones, interference, connection drops, and security issues with step-by-step solutions. Use when the user asks about wifi troubleshooter, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of wifi troubleshooter or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "home-maintenance",
+    "budgeting",
+    "checklist",
+    "testing",
+    "branding",
+    "performing-arts",
+    "video-production",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

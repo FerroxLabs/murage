@@ -1,0 +1,13 @@
+{
+  "id": "womens-mens-health",
+  "name": "Womens Mens Health",
+  "version": "1.0.0",
+  "description": "Informational guide covering gender-specific preventive screening schedules, common health concerns by life decade, hormonal health basics, reproductive health awareness, bone health, and cardiovascular health differences. Designed to promote health literacy and preventive care awareness. Use when the user asks about womens mens health, or needs help with informational guide covering gender-specific preventive screening schedules, common health concerns by life decade, hormonal health basics, reproductive health awareness, bone health, and cardiovascular health differences. Do NOT use when the request requires professional medical advice or falls outside the scope of womens mens health.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "guide",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

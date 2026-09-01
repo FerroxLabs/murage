@@ -1,0 +1,19 @@
+{
+  "id": "political-philosophy-guide",
+  "name": "Political Philosophy Guide",
+  "version": "1.0.0",
+  "description": "Structured exploration of political philosophy covering liberty, justice, governance models, the social contract tradition, distributive justice theories, rights and obligations, political spectrum analysis, and exercises for developing informed political reasoning and understanding diverse ideological perspectives. Use when the user asks about political philosophy guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of political philosophy guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "journaling",
+    "guide",
+    "analysis",
+    "planning",
+    "restoration",
+    "contracts",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

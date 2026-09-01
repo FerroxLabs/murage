@@ -1,0 +1,13 @@
+{
+  "id": "swimming-coach",
+  "name": "Swimming Coach",
+  "version": "1.0.0",
+  "description": "Swimming technique and training guide covering all four competitive strokes, breathing mechanics, drill progressions, pool vs open water training, workout structure, interval sets, endurance building, water safety, and program design for beginners through advanced swimmers. Use when the user asks about swimming coach, or needs help with swimming technique and training guide covering all four competitive strokes, breathing mechanics, drill progressions, pool vs open water training, workout structure, interval sets, endurance building, water safety, and program design for beginners through advanced swimmers. Do NOT use when the request requires professional medical advice or falls outside the scope of swimming coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

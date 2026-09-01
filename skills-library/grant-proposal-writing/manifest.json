@@ -1,0 +1,13 @@
+{
+  "id": "grant-proposal-writing",
+  "name": "Grant Proposal Writing",
+  "version": "1.0.0",
+  "description": "Writes grant proposals with specific aims, significance, innovation, approach, and budget justification sections following standard funding agency formats (NIH, NSF, private foundations). Use when the user asks to write a grant proposal, funding application, research funding request, or specific aims page. Do NOT use for business proposals (use business skills), scholarship applications (different format), or research paper writing (use research-paper-structure).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "writing",
+    "proposal"
+  ],
+  "requiredCapabilities": []
+}

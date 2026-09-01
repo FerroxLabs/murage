@@ -1,0 +1,19 @@
+{
+  "id": "goal-setting-master",
+  "name": "Goal Setting Master",
+  "version": "1.0.0",
+  "description": "Synthesizes SMART goals, OKRs, BHAG, WIG (4DX), and North Star metrics into The Goal Architecture Method - a layered system for setting and achieving goals at every time horizon. Use when the user asks about goal setting master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of goal setting master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "template",
+    "guide",
+    "testing",
+    "research",
+    "planning",
+    "safety",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

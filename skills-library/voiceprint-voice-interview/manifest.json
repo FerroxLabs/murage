@@ -1,0 +1,13 @@
+{
+  "id": "voiceprint-voice-interview",
+  "name": "voice-interview",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Voiceprint specialist. Runs in the Full path; skipped in the Lite and Refresh paths.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "voiceprint",
+    "voice",
+    "interview"
+  ],
+  "requiredCapabilities": []
+}

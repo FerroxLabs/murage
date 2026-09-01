@@ -1,0 +1,14 @@
+{
+  "id": "skill-gap-analysis-education",
+  "name": "Skill Gap Analysis",
+  "version": "1.0.0",
+  "description": "Creates competency-based skill gap analyses with current level, target level, gap identification, resources, and timeline for professionals planning their development. Produces a skills matrix with actionable development plan. Use when a professional asks to identify skill gaps, assess their competencies, plan professional development, or determine what skills to build next. Do NOT use for student learning objectives (use `learning-objectives`), for career change planning (use career-development skills), or for certification-specific preparation (use `certification-prep`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

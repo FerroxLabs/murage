@@ -1,0 +1,16 @@
+{
+  "id": "npm-dependency-doctor",
+  "name": "Npm Dependency Doctor",
+  "version": "1.0.0",
+  "description": "Fix npm dependency conflicts, audit vulnerabilities, resolve lockfile issues, and plan upgrades - with exact commands for every common npm problem. Use when the user asks about npm dependency doctor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of npm dependency doctor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "best-practices",
+    "testing",
+    "analysis",
+    "cleaning",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

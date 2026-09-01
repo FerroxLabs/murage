@@ -1,0 +1,14 @@
+{
+  "id": "premortem-analysis",
+  "name": "Premortem Analysis",
+  "version": "1.0.0",
+  "description": "Conducts a premortem by imagining a decision has failed one year from now, identifying the specific reasons for failure, and producing a mitigation plan for the top failure modes. Creates a complete premortem report with actionable prevention steps. Use when the user asks about anticipating what could go wrong with a decision, running a premortem, stress-testing a plan, or identifying failure modes before committing. Do NOT use for project risk registers (use risk-assessment), comparing options with scoring (use weighted-decision-matrix), or business strategic risk analysis (use business strategy skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decision-making",
+    "analysis",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "workout-recovery-protocols",
+  "name": "Workout Recovery Protocols",
+  "version": "1.0.0",
+  "description": "Provides structured recovery frameworks covering sleep optimization for training, nutrition timing around workouts, active recovery programming, and deload scheduling. Produces a complete recovery protocol tailored to the user's training volume and recovery capacity. Use when the user asks about recovery between workouts, post-workout nutrition timing, deload weeks, active recovery, or how to manage training fatigue. Do NOT use for injury rehabilitation (consult a physical therapist), sleep disorders (consult a healthcare provider), or designing the training program itself (use strength training or running skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "workout-planning",
+    "strategy",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

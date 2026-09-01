@@ -1,0 +1,16 @@
+{
+  "id": "customer-discovery-interview",
+  "name": "Customer Discovery Interview",
+  "version": "1.0.0",
+  "description": "Creates a customer discovery interview guide with opening script, problem-exploration questions, solution-reaction prompts, closing protocol, and post-interview analysis template using customer development methodology. Use when the user asks about customer discovery, customer interviews, talking to customers, problem interviews, solution interviews, or customer development research. Do NOT use for idea validation experiments (use idea-validation), user research for an existing product (use user-research-plan), or survey design (use employee-survey).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "research",
+    "strategy",
+    "planning",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

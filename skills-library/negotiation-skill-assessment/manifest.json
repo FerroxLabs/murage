@@ -1,0 +1,19 @@
+{
+  "id": "negotiation-skill-assessment",
+  "name": "Negotiation Skill Assessment",
+  "version": "1.0.0",
+  "description": "Assess negotiation capabilities across preparation discipline, technique application, emotional management, and outcome achievement to build a targeted improvement plan Use when the user asks about negotiation skill assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of negotiation skill assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "analysis",
+    "research",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

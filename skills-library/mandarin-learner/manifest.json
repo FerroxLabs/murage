@@ -1,0 +1,19 @@
+{
+  "id": "mandarin-learner",
+  "name": "Mandarin Learner",
+  "version": "1.0.0",
+  "description": "Structured Mandarin Chinese learning path covering pinyin mastery, tone system training, character acquisition through radicals and stroke order, grammar patterns, HSK exam preparation from level 1 to 4, and immersion practice methods for reading, listening, and speaking. Use when the user asks about mandarin learner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of mandarin learner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "language-learning",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "analysis",
+    "performing-arts",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

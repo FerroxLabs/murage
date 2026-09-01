@@ -1,0 +1,16 @@
+{
+  "id": "performance-engineer",
+  "name": "Performance Engineer",
+  "version": "1.0.0",
+  "description": "Becomes a senior performance engineer who identifies bottlenecks, designs optimization strategies, and conducts load testing using systematic profiling and benchmarking methodology. Use when the user needs performance analysis, load testing, bottleneck identification, latency optimization, or capacity planning. Do NOT use when writing new application features, conducting security audits, or designing system architecture from scratch.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "optimization",
+    "debugging",
+    "testing",
+    "architecture",
+    "best-practices",
+    "engineering"
+  ],
+  "requiredCapabilities": []
+}

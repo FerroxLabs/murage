@@ -1,0 +1,19 @@
+{
+  "id": "investment-philosophy-builder",
+  "name": "Investment Philosophy Builder",
+  "version": "1.0.0",
+  "description": "Synthesizes Bogle index investing, value investing, factor investing, and Modern Portfolio Theory into The Evidence-Based Portfolio - a framework for building a long-term investment philosophy grounded in evidence rather than speculation. Use when the user asks about investment philosophy builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of investment philosophy builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "automation",
+    "analysis",
+    "research",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

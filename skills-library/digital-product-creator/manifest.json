@@ -1,0 +1,14 @@
+{
+  "id": "digital-product-creator",
+  "name": "Digital Product Creator",
+  "version": "1.0.0",
+  "description": "Complete guide to creating and selling digital products including ebooks, templates, printables, Notion templates, Figma kits, and code snippets with platform setup, pricing strategies, launch tactics, and passive income calculations. Use when the user asks about digital product creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "marketing",
+    "content-marketing",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

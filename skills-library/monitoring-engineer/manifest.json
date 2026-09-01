@@ -1,0 +1,14 @@
+{
+  "id": "monitoring-engineer",
+  "name": "Monitoring Engineer",
+  "version": "1.0.0",
+  "description": "Observability and monitoring. Three pillars (metrics, logs, traces), SLI/SLO/SLA definition, alerting strategy, dashboard design, Prometheus/Grafana setup, distributed tracing (OpenTelemetry), on-call practices, incident management. Use when the user asks about monitoring engineer, monitoring engineer best practices, or needs guidance on monitoring engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "guide",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

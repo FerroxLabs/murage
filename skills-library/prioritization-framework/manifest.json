@@ -1,0 +1,16 @@
+{
+  "id": "prioritization-framework",
+  "name": "Prioritization Framework",
+  "version": "1.0.0",
+  "description": "Applies RICE or MoSCoW prioritization frameworks to score and rank a feature list with documented assumptions and stakeholder-ready output. Use when the user asks about feature prioritization, RICE scoring, MoSCoW prioritization, backlog ranking, or deciding what to build next. Do NOT use for product roadmap creation (use product-roadmap), user story writing (use user-story-writing), or strategic planning (use strategic-roadmap).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "planning",
+    "strategy",
+    "decision-making",
+    "agile",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

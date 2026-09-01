@@ -1,0 +1,18 @@
+{
+  "id": "infographic-designer",
+  "name": "Infographic Designer",
+  "version": "1.0.0",
+  "description": "Creating data-driven visual communications including editorial infographics, process diagrams, statistical illustrations, and explanatory graphics using design principles and professional tools. Use when the user asks about infographic designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of infographic designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "technical-writing",
+    "budgeting",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "testing"
+  ],
+  "requiredCapabilities": []
+}

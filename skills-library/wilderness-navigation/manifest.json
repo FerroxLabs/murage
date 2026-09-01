@@ -1,0 +1,19 @@
+{
+  "id": "wilderness-navigation",
+  "name": "Wilderness Navigation",
+  "version": "1.0.0",
+  "description": "Complete wilderness navigation guide covering topographic map reading, compass use, GPS and digital tools, natural navigation methods, route planning, terrain association, and emergency navigation procedures for confident backcountry travel. Use when the user asks about wilderness navigation, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of wilderness navigation or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "hiking",
+    "checklist",
+    "beginner-friendly",
+    "planning",
+    "emergency-preparedness",
+    "travel",
+    "automotive",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

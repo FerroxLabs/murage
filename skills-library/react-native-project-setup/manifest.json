@@ -1,0 +1,14 @@
+{
+  "id": "react-native-project-setup",
+  "name": "React Native Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level react native project setup implementation: javascript and frameworks decision frameworks, production-ready patterns, and concrete templates for react native project setup workflows. Use when the user asks about react native project setup, react native project setup configuration, or mobile best practices for react projects. Do NOT use when the user needs a different mobile development capability -- check sibling skills in the mobile development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "javascript",
+    "frameworks",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

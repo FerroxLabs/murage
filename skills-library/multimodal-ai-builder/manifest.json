@@ -1,0 +1,14 @@
+{
+  "id": "multimodal-ai-builder",
+  "name": "Multimodal Ai Builder",
+  "version": "1.0.0",
+  "description": "Multimodal AI pipeline design covering vision-language models, text-audio integration, image generation, model selection across modalities, preprocessing pipelines, fusion architectures, and production deployment of multi-modal inference systems. Use when the user asks about multimodal ai builder, multimodal ai builder best practices, or needs guidance on multimodal ai builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "guide",
+    "best-practices",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

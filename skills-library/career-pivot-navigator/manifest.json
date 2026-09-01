@@ -1,0 +1,14 @@
+{
+  "id": "career-pivot-navigator",
+  "name": "Career Pivot Navigator",
+  "version": "1.0.0",
+  "description": "Skills transfer analysis, gap identification, transition planning, networking in a new field, personal branding for career changers, and managing the psychological journey. Use when the user asks about career pivot navigator, or needs help with skills transfer analysis, gap identification, transition planning, networking in a new field, personal branding for career changers, and managing the psychological journey. Do NOT use when the request requires professional specialized advice or falls outside the scope of career pivot navigator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "planning",
+    "guide",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

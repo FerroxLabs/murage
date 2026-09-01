@@ -1,0 +1,19 @@
+{
+  "id": "college-prep-parent",
+  "name": "College Prep Parent",
+  "version": "1.0.0",
+  "description": "Guide parents through the complete college preparation journey from 9th through 12th grade, including financial planning with 529s and FAFSA, campus visits, application support, scholarship strategy, managing expectations, handling rejection, and the emotional process of letting go. Use when the user asks about college prep parent, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of college prep parent or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "parenting",
+    "budgeting",
+    "beginner-friendly",
+    "testing",
+    "automation",
+    "research",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

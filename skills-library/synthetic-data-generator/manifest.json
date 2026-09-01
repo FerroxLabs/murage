@@ -1,0 +1,14 @@
+{
+  "id": "synthetic-data-generator",
+  "name": "Synthetic Data Generator",
+  "version": "1.0.0",
+  "description": "Synthetic data generation covering LLM-based data creation, statistical data synthesis, privacy-preserving techniques (differential privacy, k-anonymity), tabular data generation, text augmentation, image augmentation, validation frameworks, and quality assurance for generated datasets. Use when the user asks about synthetic data generator, synthetic data generator best practices, or needs guidance on synthetic data generator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "data-science",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

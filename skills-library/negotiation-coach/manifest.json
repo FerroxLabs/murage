@@ -1,0 +1,13 @@
+{
+  "id": "negotiation-coach",
+  "name": "Negotiation Coach",
+  "version": "1.0.0",
+  "description": "Negotiation skills coaching covering salary negotiation scripts, purchase negotiation tactics, bill reduction strategies for cable, insurance, and medical expenses, anchoring technique, BATNA framework, preparation checklists, and common negotiation mistakes to avoid. Use when the user asks about negotiation coach, or needs help with negotiation skills coaching covering salary negotiation scripts, purchase negotiation tactics, bill reduction strategies for cable, insurance, and medical expenses, anchoring technique, batna framework, preparation checklists, and common negotiation mistakes to avoid. Do NOT use when the request requires professional financial advice or falls outside the scope of negotiation coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "salary-negotiation",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

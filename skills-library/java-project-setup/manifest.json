@@ -1,0 +1,14 @@
+{
+  "id": "java-project-setup",
+  "name": "Java Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level Java project initialization: Maven vs Gradle decision tree, multi-module structure, Java version management, toolchain configuration, and build optimization. Use when the user asks about Java project setup, Maven, Gradle, build.gradle.kts, multi-module, Java version management, toolchain. Do NOT use when the user asks about Java modern idioms (use `java-modern-idioms`), Java testing (use `java-testing-patterns`), Java Spring (use `java-spring-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "java",
+    "best-practices",
+    "template",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

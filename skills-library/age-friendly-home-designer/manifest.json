@@ -1,0 +1,18 @@
+{
+  "id": "age-friendly-home-designer",
+  "name": "Age Friendly Home Designer",
+  "version": "1.0.0",
+  "description": "Design accessibility modifications and universal design solutions for aging in place including safety improvements, adaptive features, and home assessment guidance Use when the user asks about age friendly home designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of age friendly home designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "budgeting",
+    "checklist",
+    "automation",
+    "planning",
+    "emergency-preparedness",
+    "accessibility",
+    "tax-planning"
+  ],
+  "requiredCapabilities": []
+}

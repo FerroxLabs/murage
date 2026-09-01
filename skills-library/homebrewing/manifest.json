@@ -1,0 +1,14 @@
+{
+  "id": "homebrewing",
+  "name": "Homebrewing",
+  "version": "1.0.0",
+  "description": "Guide to homebrewing beer including equipment setup, extract and all-grain methods, recipe design, sanitation, fermentation management, packaging, style guidelines, troubleshooting, and water chemistry. Use when the user asks about homebrewing or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "step-by-step",
+    "cooking",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

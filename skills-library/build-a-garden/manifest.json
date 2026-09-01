@@ -1,0 +1,16 @@
+{
+  "id": "build-a-garden",
+  "name": "Build A Garden",
+  "version": "1.0.0",
+  "description": "Complete home gardening workflow from planning and site assessment through soil preparation, planting, ongoing maintenance, and harvesting for a productive and enjoyable garden in any space. Use when the user wants to build a garden or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "gardening",
+    "hiking",
+    "home-maintenance",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

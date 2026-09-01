@@ -1,0 +1,14 @@
+{
+  "id": "youtube-video-strategy",
+  "name": "Youtube Video Strategy",
+  "version": "1.0.0",
+  "description": "Produces a YouTube video strategy document with title formulas, thumbnail concept specification, description template with timestamps, and tag list for a specific video topic. Use when the user asks to optimize a YouTube video for discovery, plan a YouTube upload, create a thumbnail concept, or write a video description. Do NOT use for writing the actual video script (use video-script-writing), creating a shot list (use video-storyboard), or planning short-form vertical video (use short-form-video-planning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "planning",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "relocate-to-new-city",
+  "name": "Relocate To New City",
+  "version": "1.0.0",
+  "description": "Guides the user through relocating to a new city from neighborhood research through settling in, chaining destination comparison, budgeting, job search, moving logistics, and home evaluation skills across multiple categories. Use when the user is moving to a new city, relocating for work, or planning a geographic move to an unfamiliar area. Do NOT use for international immigration processes, military relocations with assigned housing, or temporary travel stays.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "checklist",
+    "step-by-step",
+    "guide",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

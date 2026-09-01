@@ -1,0 +1,14 @@
+{
+  "id": "gap-year-planner",
+  "name": "Gap Year Planner",
+  "version": "1.0.0",
+  "description": "Structured gap year design guide covering goal setting, program research for volunteer, work, and travel options, budgeting, safety planning, skills development, re-entry planning, and strategies for making the gap year meaningful and productive. Use when the user asks about gap year planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "planning",
+    "travel",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

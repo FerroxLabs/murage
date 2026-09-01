@@ -1,0 +1,14 @@
+{
+  "id": "rust-project-setup",
+  "name": "Rust Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level Rust project initialization: Cargo workspace configuration, feature flags, build.rs patterns, release profile optimization, and toolchain management. Use when the user asks about Rust project setup, Cargo workspace, Cargo.toml, feature flags, build.rs, release profiles, rustfmt, clippy. Do NOT use when the user asks about Rust ownership patterns (use `rust-ownership-patterns`), Rust testing (use `rust-testing-patterns`), Rust async (use `rust-async-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "rust",
+    "best-practices",
+    "template",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

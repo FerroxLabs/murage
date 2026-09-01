@@ -1,0 +1,14 @@
+{
+  "id": "knife-skills",
+  "name": "Knife Skills",
+  "version": "1.0.0",
+  "description": "Teaches fundamental kitchen knife techniques including grip, cutting methods (chop, dice, julienne, mince, chiffonade), sharpening basics, and safety rules. Provides step-by-step instructions for each cut with dimensions, speed guidance, and practice sequences. Use when the user asks about knife techniques, how to cut vegetables properly, knife safety, or improving their cutting speed and consistency. Do NOT use for professional culinary training, knife purchasing recommendations, or food preparation beyond cutting technique.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "step-by-step",
+    "teaching",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

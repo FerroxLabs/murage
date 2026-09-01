@@ -1,0 +1,15 @@
+{
+  "id": "breathing-exercises",
+  "name": "Breathing Exercises",
+  "version": "1.0.0",
+  "description": "Teaches specific named breathing techniques (box breathing 4-4-4-4, diaphragmatic breathing, 4-7-8 breathing, physiological sigh) with step-by-step sequences, timing, and use-case matching. Gathers the user's goal (calm down, energize, sleep, focus) and produces a complete breathing protocol with technique instructions and a practice schedule. Use when the user asks about breathing exercises, breathwork techniques, deep breathing for relaxation, calming breathing patterns, or breath control methods. Do NOT use for clinical respiratory therapy, hyperventilation treatment, or breathing exercises for diagnosed respiratory conditions.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "self-care",
+    "breathing",
+    "stress-management",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

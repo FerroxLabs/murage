@@ -1,0 +1,13 @@
+{
+  "id": "sports-nutrition",
+  "name": "Sports Nutrition",
+  "version": "1.0.0",
+  "description": "Athletic nutrition guide covering macronutrient ratios for different sports, nutrient timing around training, hydration strategies, supplement evaluation, recovery nutrition, body composition management, meal planning for athletes, competition day fueling, and sport-specific nutrition protocols. Use when the user asks about sports nutrition, or needs help with athletic nutrition guide covering macronutrient ratios for different sports, nutrient timing around training, hydration strategies, supplement evaluation, recovery nutrition, body composition management, meal planning for athletes, competition day fueling, and sport-specific nutrition protocols. Do NOT use when the request requires professional medical advice or falls outside the scope of sports nutrition.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "nutrition"
+  ],
+  "requiredCapabilities": []
+}

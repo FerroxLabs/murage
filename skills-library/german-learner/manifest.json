@@ -1,0 +1,19 @@
+{
+  "id": "german-learner",
+  "name": "German Learner",
+  "version": "1.0.0",
+  "description": "Structured German learning path covering the case system, word order rules, compound word formation, verb conjugation including separable verbs and modal verbs, pronunciation patterns, and Goethe-Zertifikat exam preparation from A1 to B2. Use when the user asks about german learner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of german learner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "language-learning",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "analysis",
+    "performing-arts",
+    "cooking",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

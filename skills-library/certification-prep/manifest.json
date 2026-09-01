@@ -1,0 +1,14 @@
+{
+  "id": "certification-prep",
+  "name": "Certification Prep",
+  "version": "1.0.0",
+  "description": "Creates professional certification exam preparation plans with domain coverage, time allocation, practice resources, and study strategies calibrated to the specific certification's exam format and weighting. Use when a professional asks to prepare for a certification exam (PMP, AWS, CPA, CISSP, etc.), create a cert study plan, or strategize for a professional exam. Do NOT use for academic exam preparation (use `exam-prep-plan`), for general skill building (use `learning-path`), or for language proficiency exams (use `language-level-assessment`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

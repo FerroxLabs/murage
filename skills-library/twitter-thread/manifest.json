@@ -1,0 +1,13 @@
+{
+  "id": "twitter-thread",
+  "name": "Twitter Thread",
+  "version": "1.0.0",
+  "description": "Writes numbered Twitter/X threads with a hook tweet, body tweets, and a closing CTA, all within character-count constraints. Use when the user wants to create a Twitter thread, X thread, or tweetstorm on a topic. Do NOT use for LinkedIn posts (use `linkedin-post`), blog posts (use `blog-post-writing`), or Instagram captions (use `instagram-caption`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "social-media",
+    "writing",
+    "content-marketing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "context-switching-reduction",
+  "name": "Context Switching Reduction",
+  "version": "1.0.0",
+  "description": "Designs a personal work context system that minimizes cognitive switching costs. Groups tasks by context, assigns time blocks, sets transition rules, and produces a context-optimized schedule. Use when the user asks about reducing context switching, batching similar work, minimizing distractions, or improving focus by grouping related tasks. Do NOT use for general time blocking (use time-blocking), email-specific management (use inbox-zero), or team workflow optimization (use business operations skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "optimization",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

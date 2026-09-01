@@ -1,0 +1,13 @@
+{
+  "id": "storytelling-master",
+  "name": "Storytelling Master",
+  "version": "1.0.0",
+  "description": "Narrative techniques for every professional context including business storytelling (Pixar framework, story spine), personal and brand narrative, data storytelling, presentation storytelling, emotional arc design, audience connection strategies, and building a personal story bank. Use when the user asks about storytelling master or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "presentation"
+  ],
+  "requiredCapabilities": []
+}

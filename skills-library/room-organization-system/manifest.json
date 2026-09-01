@@ -1,0 +1,14 @@
+{
+  "id": "room-organization-system",
+  "name": "Room Organization System",
+  "version": "1.0.0",
+  "description": "Designs a zone-based organization system for any room in the home. Creates designated storage zones by function, recommends storage solutions by item type, and establishes maintenance routines to keep the space organized. Use when the user wants to organize a specific room, needs storage solutions, wants to make a space more functional, or asks about organizing closets, garages, or pantries. Do NOT use for decluttering (use decluttering-method first), regular cleaning routines (use weekly-cleaning-schedule), or paper/document organization specifically (use paper-document-organization).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decluttering",
+    "home-maintenance",
+    "cleaning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "leadership-framework-builder",
+  "name": "Leadership Framework Builder",
+  "version": "1.0.0",
+  "description": "Synthesizes Servant Leadership, Situational Leadership, Radical Candor, and Transformational Leadership into The Adaptive Leadership Model - a flexible framework for leading people effectively across different contexts, team maturity levels, and organizational needs. Use when the user asks about leadership framework builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of leadership framework builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "template",
+    "beginner-friendly",
+    "analysis",
+    "performing-arts",
+    "investing",
+    "contracts",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

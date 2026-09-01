@@ -1,0 +1,14 @@
+{
+  "id": "mortgage-comparison",
+  "name": "Mortgage Comparison",
+  "version": "1.0.0",
+  "description": "Compares mortgage options by computing total cost of borrowing, monthly payment, break-even point for paying points, and fixed vs. adjustable rate risk factors. All calculations use terms the user provides from their actual loan offers. Produces a side-by-side comparison with total cost analysis. Use when the user asks about comparing mortgage offers, fixed vs. ARM loans, whether to pay points, or wants to see the total cost of different mortgage options. Do NOT use for the overall home buying process (use home-buying-checklist), general major purchase decisions (use major-purchase-decision), or investment account types (use investment-account-types).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-buying",
+    "personal-finance",
+    "analysis",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

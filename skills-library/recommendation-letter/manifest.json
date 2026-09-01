@@ -1,0 +1,13 @@
+{
+  "id": "recommendation-letter",
+  "name": "Recommendation Letter",
+  "version": "1.0.0",
+  "description": "Writes specific, evidence-based recommendation letters for academic, professional, and personal contexts with competency mapping, concrete examples, and credible endorsement structure. Use when the user asks to write a recommendation letter, reference letter, letter of support, or endorsement for a colleague, student, or acquaintance. Do NOT use for cover letters (use career skills), personal references for housing (different format), or self-recommendation (that is a personal statement).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "personal-communication",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

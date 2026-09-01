@@ -1,0 +1,15 @@
+{
+  "id": "project-status-reporter",
+  "name": "Project Status Reporter",
+  "version": "1.0.0",
+  "description": "Write clear project status reports using RAG templates, executive summaries, risk tracking, and stakeholder-appropriate communication for any audience. Use when the user asks about project status reporter, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of project status reporter or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "strategy",
+    "budgeting",
+    "testing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "accessibility-champion-program",
+  "name": "Accessibility Champion Program",
+  "version": "1.0.0",
+  "description": "Organizational accessibility culture building expertise covering champion network design, accessibility training curricula, audit cadence and methodology, KPI definition and tracking, executive buy-in strategies, embedding accessibility in development workflows, and sustaining long-term accessibility commitment across teams. Use when the user asks about accessibility champion program, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of accessibility champion program or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "budgeting",
+    "checklist",
+    "template",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "networking",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

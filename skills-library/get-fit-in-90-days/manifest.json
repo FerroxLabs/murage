@@ -1,0 +1,17 @@
+{
+  "id": "get-fit-in-90-days",
+  "name": "Get Fit In 90 Days",
+  "version": "1.0.0",
+  "description": "Structured 90-day fitness transformation workflow that takes you from initial assessment through progressive training phases, integrated nutrition planning, performance tracking, and long-term sustainability habits for lasting results. Use when the user wants to get fit in 90 days or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "workout-planning",
+    "nutrition",
+    "health-wellness",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

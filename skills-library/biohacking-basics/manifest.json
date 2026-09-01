@@ -1,0 +1,13 @@
+{
+  "id": "biohacking-basics",
+  "name": "Biohacking Basics",
+  "version": "1.0.0",
+  "description": "Evidence-based guide to self-optimization covering sleep tracking and optimization, cold exposure protocols, light therapy, breath work, continuous glucose monitoring insights, supplement evaluation, heat therapy, and circadian rhythm alignment. Focuses on interventions backed by peer-reviewed research with clear risk-benefit analysis. Use when the user asks about biohacking basics, or needs help with evidence-based guide to self-optimization covering sleep tracking and optimization, cold exposure protocols, light therapy, breath work, continuous glucose monitoring insights, supplement evaluation, heat therapy, and circadian rhythm alignment. Do NOT use when the request requires professional medical advice or falls outside the scope of biohacking basics.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "guide",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

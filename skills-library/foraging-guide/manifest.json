@@ -1,0 +1,14 @@
+{
+  "id": "foraging-guide",
+  "name": "Foraging Guide",
+  "version": "1.0.0",
+  "description": "Safe wild plant identification and foraging guide covering universal safety rules, seasonal availability, regional plant identification frameworks, mushroom foraging fundamentals, legal considerations, sustainable harvesting practices, beginner-friendly species, and poisonous look-alike awareness. Emphasizes caution-first approach with expert verification requirements. Use when the user asks about foraging guide, or needs help with safe wild plant identification and foraging guide covering universal safety rules, seasonal availability, regional plant identification frameworks, mushroom foraging fundamentals, legal considerations, sustainable harvesting practices, beginner-friendly species, and poisonous look-alike awareness. Do NOT use when the request requires professional specialized advice or falls outside the scope of foraging guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

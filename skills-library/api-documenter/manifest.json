@@ -1,0 +1,14 @@
+{
+  "id": "api-documenter",
+  "name": "Api Documenter",
+  "version": "1.0.0",
+  "description": "Expert API documentation covering OpenAPI/Swagger specification, endpoint documentation, request/response examples, authentication docs, error code reference, SDK documentation, interactive API explorers, versioning docs, and changelog. Use when the user asks about api documenter, api documenter best practices, or needs guidance on api documenter implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "api-design",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

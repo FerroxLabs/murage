@@ -1,0 +1,14 @@
+{
+  "id": "capacity-planner",
+  "name": "Capacity Planner",
+  "version": "1.0.0",
+  "description": "Capacity planning expertise covering load testing methodologies, autoscaling policies, resource forecasting, performance budgets, cost-capacity curves, bottleneck identification, queue theory basics, and building capacity models for production systems. Use when the user asks about capacity planner, capacity planner best practices, or needs guidance on capacity planner implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "planning",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

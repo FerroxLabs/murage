@@ -1,0 +1,13 @@
+{
+  "id": "readability-improvement",
+  "name": "Readability Improvement",
+  "version": "1.0.0",
+  "description": "Improves text readability by reducing complexity, shortening sentences, simplifying vocabulary, and restructuring for scan-ability. Targets a specific reading level or audience. Use when the user asks to make text more readable, reduce the reading level, simplify language, or make content accessible to a broader audience. Do NOT use for clarity of specific passages (use clarity-editing), conciseness without readability goals (use conciseness-editing), or academic writing conventions (use research-paper-structure).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "research"
+  ],
+  "requiredCapabilities": []
+}

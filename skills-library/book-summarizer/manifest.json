@@ -1,0 +1,14 @@
+{
+  "id": "book-summarizer",
+  "name": "Book Summarizer",
+  "version": "1.0.0",
+  "description": "Book summary and key takeaways guide covering summary structure, speed reading techniques, connecting ideas across books, reading list curation, book club discussion guides, and the Zettelkasten note-taking method for extracting lasting value from reading. Use when the user asks about book summarizer, or needs help with book summary and key takeaways guide covering summary structure, speed reading techniques, connecting ideas across books, reading list curation, book club discussion guides, and the zettelkasten note-taking method for extracting lasting value from reading. Do NOT use when the request requires professional specialized advice or falls outside the scope of book summarizer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "habits",
+    "note-taking",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

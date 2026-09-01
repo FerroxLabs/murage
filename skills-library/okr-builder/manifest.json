@@ -1,0 +1,14 @@
+{
+  "id": "okr-builder",
+  "name": "Okr Builder",
+  "version": "1.0.0",
+  "description": "Builds personal OKR sets with one objective and 2-4 measurable key results, a 0.0-1.0 scoring rubric, tracking cadence, and grading template. Use when the user wants to define personal objectives with quantifiable results, create a scoring system for their goals, or structure ambitions using the OKR framework. Do NOT use for organizational or team OKRs (use business strategy skills), simple single-metric goals (use `smart-goal-builder`), or full quarterly plans with multiple goals (use `quarterly-planning`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "planning",
+    "template",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

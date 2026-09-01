@@ -1,0 +1,19 @@
+{
+  "id": "feature-flag-platform",
+  "name": "Feature Flag Platform",
+  "version": "1.0.0",
+  "description": "Implement feature flag systems with progressive delivery patterns, experiment tracking, and flag lifecycle management for safe, controlled releases Use when the user asks about feature flag platform, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of feature flag platform or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "checklist",
+    "template",
+    "guide",
+    "advanced",
+    "typescript",
+    "sql",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

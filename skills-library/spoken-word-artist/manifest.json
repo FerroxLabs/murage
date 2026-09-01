@@ -1,0 +1,19 @@
+{
+  "id": "spoken-word-artist",
+  "name": "Spoken Word Artist",
+  "version": "1.0.0",
+  "description": "Expert spoken word poetry guidance covering writing techniques, performance delivery, open mic navigation, recording and publishing, slam competition strategy, and building an audience for your voice. Use when the user asks about spoken word artist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of spoken word artist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "breathing",
+    "guide",
+    "beginner-friendly",
+    "testing",
+    "emergency-preparedness",
+    "energy-efficiency",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

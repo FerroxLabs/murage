@@ -1,0 +1,19 @@
+{
+  "id": "invoice-creator",
+  "name": "Invoice Creator",
+  "version": "1.0.0",
+  "description": "Professional invoice templates with payment terms, tracking systems, follow-up workflows, and best practices for freelancers and small businesses. Use when the user asks about invoice creator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of invoice creator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "strategy",
+    "template",
+    "automation",
+    "presentation",
+    "freelancing",
+    "email",
+    "cleaning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

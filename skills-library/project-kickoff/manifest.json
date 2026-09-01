@@ -1,0 +1,14 @@
+{
+  "id": "project-kickoff",
+  "name": "Project Kickoff",
+  "version": "1.0.0",
+  "description": "Produces a complete project kickoff document with scope statement, success criteria, milestone list with dates, stakeholder map, risk list, and communication plan. Built from the user's project description for personal or small-team projects. Use when the user asks about starting a new project, creating a project plan, writing a project charter, or setting up a project for success. Do NOT use for enterprise project management with multiple teams (use business project-management skills), product roadmap creation (use business strategy skills), or ongoing project status tracking (use project-status-report).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "planning",
+    "template",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

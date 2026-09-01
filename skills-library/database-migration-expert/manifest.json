@@ -1,0 +1,14 @@
+{
+  "id": "database-migration-expert",
+  "name": "Database Migration Expert",
+  "version": "1.0.0",
+  "description": "Database schema migration expert covering zero-downtime migration strategies, schema evolution patterns, data backfill techniques, migration tooling (Flyway, Liquibase, custom), rollback planning, blue-green database deployments, large table migrations, and migration testing strategies. Use when the user asks about database migration expert, database migration expert best practices, or needs guidance on database migration expert implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

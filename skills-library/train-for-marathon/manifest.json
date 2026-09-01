@@ -1,0 +1,15 @@
+{
+  "id": "train-for-marathon",
+  "name": "Train For Marathon",
+  "version": "1.0.0",
+  "description": "Complete marathon training workflow covering base building, progressive training, peak preparation, taper strategy, race execution, and recovery for finishing your first or fastest 26.2 miles. Use when the user wants to train for marathon or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "running",
+    "fitness",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

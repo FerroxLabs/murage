@@ -1,0 +1,15 @@
+{
+  "id": "ace-system-design-interviews",
+  "name": "Ace System Design Interviews",
+  "version": "1.0.0",
+  "description": "Comprehensive preparation workflow for system design interviews at top technology companies. Covers mastering fundamentals like scalability and distributed systems, learning common design patterns, structured practice with real problems, mock interviews with feedback, and peak performance strategies for interview day. Use when the user wants to ace system design interviews or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "interview-prep",
+    "career",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

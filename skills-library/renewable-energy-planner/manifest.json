@@ -1,0 +1,18 @@
+{
+  "id": "renewable-energy-planner",
+  "name": "Renewable Energy Planner",
+  "version": "1.0.0",
+  "description": "Solar, wind, and community energy planning with ROI analysis, incentive navigation, system sizing, and implementation guidance for residential and small commercial projects Use when the user asks about renewable energy planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of renewable energy planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "analysis",
+    "research",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

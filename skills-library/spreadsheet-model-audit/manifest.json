@@ -1,0 +1,14 @@
+{
+  "id": "spreadsheet-model-audit",
+  "name": "Spreadsheet Model Audit",
+  "version": "1.0.0",
+  "description": "Audits a spreadsheet model for quality and reliability. Checks formula consistency, hardcoded values in formulas, circular references, missing error handling, and documentation gaps. Produces an audit report with specific remediation steps. Use when the user needs to verify the integrity of a spreadsheet model before relying on its outputs for decisions. Do NOT use for data cleaning (use spreadsheet-data-cleaning), setting up validation rules (use data-validation-setup), or building new financial models (use financial-model-template).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spreadsheets",
+    "analysis",
+    "checklist",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "resilience-engineer",
+  "name": "Resilience Engineer",
+  "version": "1.0.0",
+  "description": "Resilience and fault tolerance expert covering circuit breaker pattern, bulkhead pattern, retry with backoff, timeout patterns, fallback strategies, chaos engineering, game days, failure injection, graceful degradation, and disaster recovery. Use when the user asks about resilience engineer, resilience engineer best practices, or needs guidance on resilience engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "best-practices",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

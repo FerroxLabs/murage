@@ -1,0 +1,13 @@
+{
+  "id": "pwa-builder",
+  "name": "Pwa Builder",
+  "version": "1.0.0",
+  "description": "Progressive Web App expertise covering service worker lifecycle, caching strategies, manifest configuration, offline patterns, push notifications, install prompts, and background sync. Use when the user asks about pwa builder, pwa builder best practices, or needs guidance on pwa builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

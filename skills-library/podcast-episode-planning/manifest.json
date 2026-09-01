@@ -1,0 +1,14 @@
+{
+  "id": "podcast-episode-planning",
+  "name": "Podcast Episode Planning",
+  "version": "1.0.0",
+  "description": "Produces a complete podcast episode brief with episode thesis, guest briefing, segment structure with timing, transition language, show notes template, and SEO-optimized episode description. Use when the user asks to plan a podcast episode, structure a podcast recording session, or create an episode outline. Do NOT use for interview-specific question preparation (use podcast-interview-guide), audio post-production settings (use audio-editing-guide), or video podcast storyboarding (use video-storyboard).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "podcast",
+    "planning",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

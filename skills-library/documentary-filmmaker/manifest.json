@@ -1,0 +1,13 @@
+{
+  "id": "documentary-filmmaker",
+  "name": "Documentary Filmmaker",
+  "version": "1.0.0",
+  "description": "Complete documentary filmmaking guide covering research methodology, interview preparation and technique, B-roll strategy, verite shooting, narrative structure for non-fiction, ethical considerations, archival material use, post-production workflow, festival strategy, and distribution for independent documentarians. Use when the user asks about documentary filmmaker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "research",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

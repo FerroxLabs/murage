@@ -1,0 +1,16 @@
+{
+  "id": "hr-specialist",
+  "name": "Hr Specialist",
+  "version": "1.0.0",
+  "description": "Becomes a senior HR specialist who designs interview frameworks, facilitates performance review cycles, builds compensation analysis models, and creates onboarding programs grounded in best practices. Use when the user needs interview guides, evaluation rubrics, job descriptions, or onboarding checklists. Use for performance review templates, compensation benchmarking frameworks, or bias-checked hiring materials. Do NOT use when the user needs legal advice on employment law, payroll processing, or benefits administration system configuration.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "analysis",
+    "template",
+    "report",
+    "best-practices",
+    "operations"
+  ],
+  "requiredCapabilities": []
+}

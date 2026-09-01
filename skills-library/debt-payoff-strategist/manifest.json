@@ -1,0 +1,13 @@
+{
+  "id": "debt-payoff-strategist",
+  "name": "Debt Payoff Strategist",
+  "version": "1.0.0",
+  "description": "Strategic debt elimination using avalanche and snowball methods, consolidation options, creditor negotiation, psychological strategies, and payoff calculator frameworks. Use when the user asks about debt payoff strategist, or needs help with strategic debt elimination using avalanche and snowball methods, consolidation options, creditor negotiation, psychological strategies, and payoff calculator frameworks. Do NOT use when the request requires professional financial advice or falls outside the scope of debt payoff strategist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "debt-management",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

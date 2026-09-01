@@ -1,0 +1,14 @@
+{
+  "id": "technical-blog-writer",
+  "name": "Technical Blog Writer",
+  "version": "1.0.0",
+  "description": "Engineering blog post creation covering article structure and narrative arc, technical explanation techniques, code example design, diagram creation, SEO optimization for developer content, editorial process, audience calibration, measuring post impact, and building a consistent publishing cadence. Use when the user asks about technical blog writer, technical blog writer best practices, or needs guidance on technical blog writer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "blog-post",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

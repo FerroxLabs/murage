@@ -1,0 +1,15 @@
+{
+  "id": "hidden-gems-researcher",
+  "name": "Hidden Gems Researcher",
+  "version": "1.0.0",
+  "description": "Discovers off-the-beaten-path experiences at travel destinations using a structured research and verification method. Produces a curated list of hidden gems with access instructions, timing recommendations, and crowd avoidance strategies. Use when the user asks about finding unique non-touristy experiences, discovering local secrets at a destination, avoiding tourist traps, or finding authentic local spots. Do NOT use for mainstream attraction planning (use cultural-experience-guide), general itinerary building (use trip-itinerary-builder), or restaurant-specific research (use food-tourism-planner).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "research",
+    "guide",
+    "planning",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

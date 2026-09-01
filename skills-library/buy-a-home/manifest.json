@@ -1,0 +1,16 @@
+{
+  "id": "buy-a-home",
+  "name": "Buy A Home",
+  "version": "1.0.0",
+  "description": "Guides the user through the complete home-buying process from financial preparation through closing and move-in, chaining budgeting, credit, mortgage, inspection, and legal skills across multiple categories. Use when the user wants to buy a house, purchase a home, or navigate the home-buying process end to end. Do NOT use for refinancing an existing mortgage, investment property analysis, or commercial real estate purchases.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-buying",
+    "personal-finance",
+    "planning",
+    "checklist",
+    "step-by-step",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

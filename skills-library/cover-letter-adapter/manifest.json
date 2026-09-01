@@ -1,0 +1,19 @@
+{
+  "id": "cover-letter-adapter",
+  "name": "Cover Letter Adapter",
+  "version": "1.0.0",
+  "description": "Quickly customize cover letters for specific job postings - key phrase matching, company research integration, and ready-to-adapt templates by industry and role type. Use when the user asks about cover letter adapter, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cover letter adapter or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "career",
+    "checklist",
+    "template",
+    "guide",
+    "analysis",
+    "research",
+    "freelancing",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

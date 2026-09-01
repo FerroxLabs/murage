@@ -1,0 +1,14 @@
+{
+  "id": "sentry-formation-and-structure",
+  "name": "Formation and structure",
+  "version": "1.0.0",
+  "description": "This skill explains common entity and ownership patterns. It is education, not legal advice. Escalate to counsel any time equity is being granted, co-founder splits are being formalized, or the business will operate across more than one jurisdiction. Cap-table math routes to the numbers specialist; ",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sentry",
+    "formation",
+    "and",
+    "structure"
+  ],
+  "requiredCapabilities": []
+}

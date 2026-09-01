@@ -1,0 +1,13 @@
+{
+  "id": "slate-role-design",
+  "name": "Role design",
+  "version": "1.0.0",
+  "description": "The user is about to hire, has just hired and the seat isn't producing, or is asking \"do I need a head of X.\" Foundation skill; nothing else in Slate's craft works without it.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "slate",
+    "role",
+    "design"
+  ],
+  "requiredCapabilities": []
+}

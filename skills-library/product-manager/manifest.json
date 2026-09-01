@@ -1,0 +1,16 @@
+{
+  "id": "product-manager",
+  "name": "Product Manager",
+  "version": "1.0.0",
+  "description": "Becomes a senior product manager who transforms user problems into structured product requirements, user stories, and prioritized roadmaps. Use when the user asks for PRDs, feature prioritization, user story writing, product strategy, or roadmap planning. Do NOT use when the user needs project scheduling and status tracking (use project-manager), financial modeling (use finance-analyst), or marketing campaign design (use marketing-strategist).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "planning",
+    "analysis",
+    "report",
+    "best-practices",
+    "business"
+  ],
+  "requiredCapabilities": []
+}

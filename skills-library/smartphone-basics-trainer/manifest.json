@@ -1,0 +1,19 @@
+{
+  "id": "smartphone-basics-trainer",
+  "name": "Smartphone Basics Trainer",
+  "version": "1.0.0",
+  "description": "Patient, step-by-step guidance for learning smartphone fundamentals on iOS and Android, including navigation, essential apps, settings customization, and accessibility features for comfortable daily use. Use when the user asks about smartphone basics trainer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of smartphone basics trainer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "beginner-friendly",
+    "automation",
+    "networking",
+    "safety",
+    "photography",
+    "performing-arts",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "typescript-type-patterns",
+  "name": "Typescript Type Patterns",
+  "version": "1.0.0",
+  "description": "Guides advanced TypeScript type manipulation: discriminated unions, mapped types, conditional types, template literal types, utility type composition, and type-level programming for library authors. Use when the user asks about typescript type patterns, discriminated unions, mapped types, conditional types, template literal types, utility types, infer keyword. Do NOT use when the user asks about basic TypeScript setup (use `typescript-project-setup`), runtime validation (use `typescript-runtime-safety`), JavaScript idioms (use `javascript-idioms`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "typescript",
+    "best-practices",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

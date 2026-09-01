@@ -1,0 +1,15 @@
+{
+  "id": "estate-tax-basics",
+  "name": "Estate Tax Basics",
+  "version": "1.0.0",
+  "description": "Provides an educational overview of the federal estate tax system, including the exemption threshold, portability concept, the difference between estate tax and inheritance tax, and when to consult a tax attorney. Produces a concept summary and question list for professional consultation. Use when the user asks about estate taxes, whether an estate will owe taxes, the estate tax exemption, or how estate and inheritance taxes work. Do NOT use for providing tax planning advice, recommending specific tax reduction strategies, calculating estate tax liability, or filing tax returns.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "guide",
+    "research",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

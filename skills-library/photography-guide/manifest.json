@@ -1,0 +1,14 @@
+{
+  "id": "photography-guide",
+  "name": "Photography Guide",
+  "version": "1.0.0",
+  "description": "Photography composition and technique advisor covering the exposure triangle, composition rules, lighting techniques, phone photography, editing basics, and genre-specific guides to help photographers capture compelling images at any skill level. Use when the user asks about photography guide, or needs help with photography composition and technique advisor covering the exposure triangle, composition rules, lighting techniques, phone photography, editing basics, and genre-specific guides to help photographers capture compelling images at any skill level. Do NOT use when the request requires professional specialized advice or falls outside the scope of photography guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "photography",
+    "guide",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

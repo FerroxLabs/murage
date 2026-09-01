@@ -1,0 +1,16 @@
+{
+  "id": "culture-document",
+  "name": "Culture Document",
+  "version": "1.0.0",
+  "description": "Creates a company culture document with organizational values, behavioral definitions, do and don't examples for each value, and practical application guidelines. Use when the user asks about culture documents, company values, organizational culture, values definition, or behavioral standards. Do NOT use for employee handbooks, code of conduct, brand voice guides (use voice-tone-guide), or mission and vision statements (use mission-vision-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "template",
+    "strategy",
+    "planning",
+    "guide",
+    "branding",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

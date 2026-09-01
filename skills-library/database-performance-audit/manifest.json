@@ -1,0 +1,16 @@
+{
+  "id": "database-performance-audit",
+  "name": "Database Performance Audit",
+  "version": "1.0.0",
+  "description": "Database performance assessment evaluating query efficiency, indexing strategy, connection management, configuration, and scaling readiness to produce an actionable performance scorecard. Use when the user asks about database performance audit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of database performance audit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "api-design",
+    "template",
+    "automation",
+    "analysis",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "microservices-patterns",
+  "name": "Microservices Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level microservices implementation patterns implementation: microservices and design-patterns decision frameworks, production-ready patterns, and concrete templates for microservices patterns workflows. Use when the user asks about microservices implementation patterns, microservices patterns configuration, or microservices best practices for microservices projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "microservices",
+    "design-patterns",
+    "frameworks",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

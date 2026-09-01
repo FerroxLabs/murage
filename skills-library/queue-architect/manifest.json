@@ -1,0 +1,14 @@
+{
+  "id": "queue-architect",
+  "name": "Queue Architect",
+  "version": "1.0.0",
+  "description": "Message queue design expertise covering queue vs topic vs stream, delivery guarantees, dead letter queues, backpressure handling, RabbitMQ/Kafka/SQS patterns, event schema evolution, and ordering guarantees. Use when the user asks about queue architect, queue architect best practices, or needs guidance on queue architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "architecture",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "science-podcast-producer",
+  "name": "Science Podcast Producer",
+  "version": "1.0.0",
+  "description": "Producing science-focused podcasts from concept to publication, including expert interview techniques, episode scripting, fact-checking protocols, audio production workflow, and audience growth. Use when the user asks about science podcast producer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of science podcast producer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "technical-writing",
+    "budgeting",
+    "journaling",
+    "checklist",
+    "template",
+    "guide",
+    "testing"
+  ],
+  "requiredCapabilities": []
+}

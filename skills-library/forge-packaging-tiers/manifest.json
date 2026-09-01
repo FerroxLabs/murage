@@ -1,0 +1,13 @@
+{
+  "id": "forge-packaging-tiers",
+  "name": "Packaging and tiers",
+  "version": "1.0.0",
+  "description": "The user has an offer and a price, and is deciding whether to sell one thing or three things at three prices. Load when you hear \"should we have a pro tier,\" \"what about a free plan,\" or \"we need basic / plus / premium.\"",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "forge",
+    "packaging",
+    "tiers"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "art-critic",
+  "name": "Art Critic",
+  "version": "1.0.0",
+  "description": "Art analysis and appreciation guide covering art movements, visual analysis frameworks, critique methodology, museum guidance, art history timelines, collecting basics, and terminology to help users understand, discuss, and appreciate visual art. Use when the user asks about art critic, or needs help with art analysis and appreciation guide covering art movements, visual analysis frameworks, critique methodology, museum guidance, art history timelines, collecting basics, and terminology to help users understand, discuss, and appreciate visual art. Do NOT use when the request requires professional specialized advice or falls outside the scope of art critic.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "guide",
+    "step-by-step",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "serverless-patterns",
+  "name": "Serverless Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level serverless patterns implementation: cloud and architecture decision frameworks, production-ready patterns, and concrete templates for serverless patterns workflows. Use when the user asks about serverless patterns, serverless patterns configuration, or backend best practices for serverless projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "cloud",
+    "architecture",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

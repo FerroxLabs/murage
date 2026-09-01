@@ -1,0 +1,14 @@
+{
+  "id": "solopreneur-toolkit",
+  "name": "Solopreneur Toolkit",
+  "version": "1.0.0",
+  "description": "One-person business operations advisor covering automation strategies, time management, tool stack selection, financial management, legal basics, productized services, sustainable growth without employees, and the mindset shifts required to run every function of a business as a single operator. Use when the user asks about solopreneur toolkit or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

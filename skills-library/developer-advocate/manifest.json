@@ -1,0 +1,13 @@
+{
+  "id": "developer-advocate",
+  "name": "Developer Advocate",
+  "version": "1.0.0",
+  "description": "Developer relations strategy expert covering DevRel program design, technical content creation, community building, conference speaking strategy, developer experience (DX) improvement, metrics and measurement, developer journey mapping, and advocacy program scaling. Use when the user asks about developer advocate, developer advocate best practices, or needs guidance on developer advocate implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "payment-system-architect",
+  "name": "Payment System Architect",
+  "version": "1.0.0",
+  "description": "Payment processing architecture expert covering payment gateway integration (Stripe, Braintree), PCI DSS compliance, subscription billing, recurring payments, fraud detection, refund handling, multi-currency support, payment state machines, and financial reconciliation. Use when the user asks about payment system architect, payment system architect best practices, or needs guidance on payment system architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "backend",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

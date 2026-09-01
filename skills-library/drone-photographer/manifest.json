@@ -1,0 +1,19 @@
+{
+  "id": "drone-photographer",
+  "name": "Drone Photographer",
+  "version": "1.0.0",
+  "description": "Expert drone photography guidance covering regulations, flight planning, aerial composition techniques, and camera settings for stunning aerial imagery Use when the user asks about drone photographer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of drone photographer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "checklist",
+    "guide",
+    "advanced",
+    "quick-reference",
+    "cloud",
+    "testing",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

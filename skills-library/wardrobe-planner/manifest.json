@@ -1,0 +1,14 @@
+{
+  "id": "wardrobe-planner",
+  "name": "Wardrobe Planner",
+  "version": "1.0.0",
+  "description": "Capsule wardrobe builder covering capsule wardrobe methodology, core pieces identification, color palette selection, mix-and-match optimization, seasonal capsule rotation, shopping list generation, wardrobe audit process, cost-per-wear analysis, and minimalist dressing strategies. Use when the user asks about wardrobe planner, or needs help with capsule wardrobe builder covering capsule wardrobe methodology, core pieces identification, color palette selection, mix-and-match optimization, seasonal capsule rotation, shopping list generation, wardrobe audit process, cost-per-wear analysis, and minimalist dressing strategies. Do NOT use when the request requires professional specialized advice or falls outside the scope of wardrobe planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fashion",
+    "design",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

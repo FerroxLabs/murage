@@ -1,0 +1,13 @@
+{
+  "id": "proofreading",
+  "name": "Proofreading",
+  "version": "1.0.0",
+  "description": "Proofreads text for spelling, grammar, punctuation, and typographical errors, producing marked-up output with corrections and explanations. Final-pass error detection before publication. Use when the user asks to proofread a document, check for typos, fix grammar errors, or do a final error check on written text. Do NOT use for structural editing (use structural-editing), content revision (use copy-editing), tone changes (use tone-adjustment), or improving readability (use readability-improvement).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

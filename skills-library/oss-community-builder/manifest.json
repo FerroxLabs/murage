@@ -1,0 +1,19 @@
+{
+  "id": "oss-community-builder",
+  "name": "Oss Community Builder",
+  "version": "1.0.0",
+  "description": "Design and grow thriving open source communities with governance models, codes of conduct, onboarding programs, and communication strategies Use when the user asks about oss community builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of oss community builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "emergency-preparedness",
+    "performing-arts",
+    "accessibility",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,17 @@
+{
+  "id": "financial-independence-plan",
+  "name": "Financial Independence Plan",
+  "version": "1.0.0",
+  "description": "Guided workflow for creating a comprehensive financial independence plan from current financial assessment through budgeting, investment strategy, tax optimization, and timeline projection. Covers the FIRE methodology adapted for individual circumstances and risk tolerances. Use when the user wants to financial independence plan or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "investing",
+    "budgeting",
+    "retirement-planning",
+    "savings",
+    "step-by-step",
+    "planning",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

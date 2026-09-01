@@ -1,0 +1,14 @@
+{
+  "id": "arduino-maker",
+  "name": "Arduino Maker",
+  "version": "1.0.0",
+  "description": "Guide to Arduino microcontroller projects from first blink to advanced builds, covering board selection, circuit design, programming fundamentals, and progressive project ideas. Use when the user asks about arduino maker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "iot",
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

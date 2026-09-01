@@ -1,0 +1,14 @@
+{
+  "id": "logo-design-brief",
+  "name": "Logo Design Brief",
+  "version": "1.0.0",
+  "description": "Produces a logo design brief with symbol direction options, style adjectives, color constraints, usage contexts, size requirements, and variant specifications. Use when the user asks to create a logo brief, define logo requirements, explore logo direction options, or prepare specifications for a logo designer. Do NOT use for full brand identity (use brand-identity-brief), color palette creation (use color-palette-design), or icon set design (use icon-design-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "branding",
+    "design",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

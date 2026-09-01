@@ -1,0 +1,15 @@
+{
+  "id": "collection-valuation-guide",
+  "name": "Collection Valuation Guide",
+  "version": "1.0.0",
+  "description": "Provides valuation methods, market reference sources, and pricing frameworks for collectible items. Covers market comparison analysis, auction result interpretation, price guide usage, dealer appraisal processes, and valuation documentation for personal, insurance, and sale purposes. Use when the user asks about determining the value of a collection, understanding collectible market prices, comparing valuation methods, or preparing a collection for sale or insurance documentation. Do NOT use for authenticating collectibles (use collectible-authentication-guide), cataloguing inventory (use collection-inventory-builder), financial investment advice on collectibles, or professional appraisals for legal proceedings.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "analysis",
+    "guide",
+    "checklist",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

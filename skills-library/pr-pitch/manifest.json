@@ -1,0 +1,15 @@
+{
+  "id": "pr-pitch",
+  "name": "Pr Pitch",
+  "version": "1.0.0",
+  "description": "Produces a media pitch email with news hook, story angle, expert availability, and supporting data using PR pitch structure. Use when the user asks to write a PR pitch, pitch a story to journalists, create a media pitch, draft a press pitch email, or prepare outreach to media outlets about a newsworthy announcement. Do NOT use for influencer collaboration briefs (use influencer-brief), sales outreach emails (use cold-outreach-sequence), or social media content (use social-media-strategy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "writing",
+    "email",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

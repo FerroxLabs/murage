@@ -1,0 +1,16 @@
+{
+  "id": "create-design-system",
+  "name": "Create Design System",
+  "version": "1.0.0",
+  "description": "Comprehensive workflow for building a design system from initial audit through design tokens, component library creation, documentation, and organizational adoption. Covers the full lifecycle from visual inconsistency to a shared design language that scales across teams and products. Use when the user wants to create design system or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "documentation",
+    "frontend",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "board-governance",
+  "name": "Board Governance",
+  "version": "1.0.0",
+  "description": "Guide to nonprofit board governance including roles and responsibilities, meeting facilitation, fiduciary duties, committee structure, board recruitment, evaluation, and succession planning. Use when the user asks about board governance or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "planning",
+    "guide",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

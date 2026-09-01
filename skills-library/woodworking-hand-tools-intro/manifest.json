@@ -1,0 +1,15 @@
+{
+  "id": "woodworking-hand-tools-intro",
+  "name": "Woodworking Hand Tools Intro",
+  "version": "1.0.0",
+  "description": "Teaches beginners the core hand tools for woodworking (hand saw, chisel set, block plane, combination square, marking gauge), sharpening fundamentals, safety practices, and a first-project sequence that builds foundational skills. Includes a tool checklist organized by priority, wood selection guidance, and measurable skill milestones. Use when the user wants to start woodworking with hand tools, asks about essential woodworking tools, tool sharpening, or a first woodworking project. Do NOT use for power tool woodworking, furniture design, professional cabinetmaking, or 3D printing (use 3d-printing-beginner-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beginner-friendly",
+    "step-by-step",
+    "guide",
+    "woodworking",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

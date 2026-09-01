@@ -1,0 +1,14 @@
+{
+  "id": "azure-architect",
+  "name": "Azure Architect",
+  "version": "1.0.0",
+  "description": "Azure architecture. Azure Well-Architected Framework, VNet design, Azure AD/Entra ID, App Service vs Functions vs AKS, Cosmos DB, Azure Storage, Front Door, Event Grid, cost management, landing zones. Use when the user asks about azure architect, azure architect best practices, or needs guidance on azure architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "guide",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

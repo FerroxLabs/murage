@@ -1,0 +1,18 @@
+{
+  "id": "social-engineering-defender",
+  "name": "Social Engineering Defender",
+  "version": "1.0.0",
+  "description": "Recognize and defend against social engineering attacks including phishing emails, vishing phone calls, pretexting scenarios, and manipulation tactics through verification protocols, awareness training, and incident response procedures Use when the user asks about social engineering defender, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of social engineering defender or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "budgeting",
+    "checklist",
+    "quick-reference",
+    "analysis",
+    "networking",
+    "performing-arts",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

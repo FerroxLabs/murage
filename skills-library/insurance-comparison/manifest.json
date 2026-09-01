@@ -1,0 +1,14 @@
+{
+  "id": "insurance-comparison",
+  "name": "Insurance Comparison",
+  "version": "1.0.0",
+  "description": "Provides an analysis framework for comparing insurance policies across any insurance type. Evaluates premiums, deductibles, coverage limits, exclusions, and provider quality factors. Produces a structured side-by-side comparison using terms the user provides from their actual policy quotes. Use when the user asks about comparing insurance policies, understanding coverage options, or evaluating the tradeoff between premiums and deductibles. Do NOT use for insurance needs assessment (use insurance-needs-assessment), general major purchase decisions (use major-purchase-decision), or home buying insurance requirements (use home-buying-checklist).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "insurance",
+    "personal-finance",
+    "analysis",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

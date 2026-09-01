@@ -1,0 +1,14 @@
+{
+  "id": "data-storytelling",
+  "name": "Data Storytelling",
+  "version": "1.0.0",
+  "description": "Structures a data narrative that turns analytical findings into a compelling story. Identifies the core insight, builds the evidence chain, selects supporting visualizations, and writes the narrative arc from setup through finding to implication and recommendation. Use when the user needs to present data findings to an audience in a persuasive, structured format. Do NOT use for raw data exploration (use eda-framework), choosing a chart type (use chart-type-selector), or formatting a data report (use report-formatting).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-visualization",
+    "analysis",
+    "report",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

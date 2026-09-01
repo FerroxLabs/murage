@@ -1,0 +1,14 @@
+{
+  "id": "school-readiness-prep",
+  "name": "School Readiness Prep",
+  "version": "1.0.0",
+  "description": "Provides pre-kindergarten readiness checklists covering academic foundations, social-emotional skills, self-care abilities, and first-day preparation logistics. Produces structured skill-building activity plans and a first-day preparation checklist. Use when the user asks about preparing a child for kindergarten, pre-school readiness skills, first day of school preparation, or what a child should know before starting school. Do NOT use for diagnosing learning delays, clinical school readiness assessments, or creating formal educational curriculum.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "checklist",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

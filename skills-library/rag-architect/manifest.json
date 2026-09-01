@@ -1,0 +1,14 @@
+{
+  "id": "rag-architect",
+  "name": "Rag Architect",
+  "version": "1.0.0",
+  "description": "RAG system design covering document chunking strategies, embedding model selection, vector database selection (Pinecone, Weaviate, Chroma, pgvector), retrieval strategies (hybrid search, re-ranking), context window packing, and assessment of faithfulness and relevance. Use when the user asks about rag architect, rag architect best practices, or needs guidance on rag architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "deep-learning",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

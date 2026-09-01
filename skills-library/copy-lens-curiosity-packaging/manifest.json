@@ -1,0 +1,14 @@
+{
+  "id": "copy-lens-curiosity-packaging",
+  "name": "lens-curiosity-packaging",
+  "version": "1.0.0",
+  "description": "**Lens mode.** Source authority: MrBeast-era retention frameworks — pattern interrupt, tension, payoff.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "copy",
+    "lens",
+    "curiosity",
+    "packaging"
+  ],
+  "requiredCapabilities": []
+}

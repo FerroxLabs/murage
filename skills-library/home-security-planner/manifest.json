@@ -1,0 +1,18 @@
+{
+  "id": "home-security-planner",
+  "name": "Home Security Planner",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to home security planning covering physical security assessment methodology, door and window reinforcement techniques, strategic lighting placement, camera and alarm system selection, smart lock options, safe room concepts, neighborhood watch participation, vacation security measures, and package theft prevention strategies. Use when the user asks about home security planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of home security planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "budgeting",
+    "safety",
+    "emergency-preparedness",
+    "energy-efficiency",
+    "travel",
+    "video-production",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "short-film-director",
+  "name": "Short Film Director",
+  "version": "1.0.0",
+  "description": "Complete guidance for directing short films from concept through festival exhibition. Covers script development, casting, location scouting, actor direction, blocking, visual storytelling, continuity management, post-production, and festival strategy specific to the short film format. Use when the user asks about short film director or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "creative-writing",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

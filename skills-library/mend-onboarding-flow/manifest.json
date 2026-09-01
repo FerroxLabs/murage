@@ -1,0 +1,13 @@
+{
+  "id": "mend-onboarding-flow",
+  "name": "Onboarding flow",
+  "version": "1.0.0",
+  "description": "You're designing what happens between signup and \"this is working.\" Load when someone asks \"how do we onboard,\" \"what's the activation path,\" \"why are signups dropping off,\" or \"what do we send on day 1, 7, 30.\" Not for ticket replies (`ticket-triage.md`), not for the customer who went quiet (`churn",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mend",
+    "onboarding",
+    "flow"
+  ],
+  "requiredCapabilities": []
+}

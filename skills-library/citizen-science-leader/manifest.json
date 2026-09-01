@@ -1,0 +1,18 @@
+{
+  "id": "citizen-science-leader",
+  "name": "Citizen Science Leader",
+  "version": "1.0.0",
+  "description": "Designing and managing citizen science projects with rigorous data collection protocols, effective volunteer recruitment and engagement, quality assurance methods, and pathways to meaningful scientific contribution. Use when the user asks about citizen science leader, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of citizen science leader or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "technical-writing",
+    "budgeting",
+    "template",
+    "beginner-friendly",
+    "advanced",
+    "cloud",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

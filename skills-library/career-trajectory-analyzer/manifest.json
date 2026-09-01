@@ -1,0 +1,19 @@
+{
+  "id": "career-trajectory-analyzer",
+  "name": "Career Trajectory Analyzer",
+  "version": "1.0.0",
+  "description": "Comprehensive career path evaluation that inventories current skills, assesses market alignment, identifies growth gaps, and produces a scored career trajectory report with actionable advancement recommendations. Use when the user asks about career trajectory analyzer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of career trajectory analyzer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "career",
+    "budgeting",
+    "template",
+    "analysis",
+    "research",
+    "planning",
+    "resume-writing",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

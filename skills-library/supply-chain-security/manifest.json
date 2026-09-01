@@ -1,0 +1,13 @@
+{
+  "id": "supply-chain-security",
+  "name": "Supply Chain Security",
+  "version": "1.0.0",
+  "description": "Software supply chain security expertise covering SBOM generation and analysis, dependency vulnerability scanning, Sigstore signing and verification, SLSA framework compliance, artifact provenance, build integrity, package manager security, container image signing, and CI/CD pipeline hardening for establishing trust in the software delivery process. Use when the user asks about supply chain security, supply chain security best practices, or needs guidance on supply chain security implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "supply-chain",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

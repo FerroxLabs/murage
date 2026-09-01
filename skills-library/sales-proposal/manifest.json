@@ -1,0 +1,15 @@
+{
+  "id": "sales-proposal",
+  "name": "Sales Proposal",
+  "version": "1.0.0",
+  "description": "Produces a client-facing sales proposal with executive summary, solution overview, ROI calculation, investment details, and next steps using proposal structure methodology. Use when the user asks to create a sales proposal, write a client proposal, build a deal proposal, draft a solution proposal for a prospect, or prepare a formal offer document. Do NOT use for investor pitch decks (use startup-pitch-narrative), internal business cases (use business-plan), or RFP responses (requires specialized procurement format).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "proposal",
+    "planning",
+    "template",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

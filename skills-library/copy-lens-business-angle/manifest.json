@@ -1,0 +1,14 @@
+{
+  "id": "copy-lens-business-angle",
+  "name": "lens-business-angle",
+  "version": "1.0.0",
+  "description": "**Lens mode.** Source authority: Codie Sanchez's \"boring business\" framing — money, ownership, and operational reality as the primary story.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "copy",
+    "lens",
+    "business",
+    "angle"
+  ],
+  "requiredCapabilities": []
+}

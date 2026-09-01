@@ -1,0 +1,18 @@
+{
+  "id": "index-fund-strategist",
+  "name": "Index Fund Strategist",
+  "version": "1.0.0",
+  "description": "Passive index fund investing strategy covering three-fund portfolio construction, asset allocation by age and risk tolerance, rebalancing schedules, tax-efficient fund placement across account types, fund selection criteria, and common mistakes to avoid. Use when the user asks about index fund strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of index fund strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "checklist",
+    "guide",
+    "automation",
+    "research",
+    "performing-arts",
+    "tax-planning"
+  ],
+  "requiredCapabilities": []
+}

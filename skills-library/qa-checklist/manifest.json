@@ -1,0 +1,15 @@
+{
+  "id": "qa-checklist",
+  "name": "Qa Checklist",
+  "version": "1.0.0",
+  "description": "Produces a quality assurance checklist for a defined workflow or process with inspection points, pass/fail criteria, and corrective action procedures using QA methodology. Use when the user asks to create a QA checklist, build quality control checks for a process, design an inspection checklist, write acceptance criteria for deliverables, or establish quality gates for a workflow. Do NOT use for software testing plans (use software development skills), failure mode analysis (use failure-mode-analysis), or risk assessment (use risk-assessment).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "checklist",
+    "template",
+    "planning",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

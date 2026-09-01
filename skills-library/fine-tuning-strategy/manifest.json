@@ -1,0 +1,14 @@
+{
+  "id": "fine-tuning-strategy",
+  "name": "Fine Tuning Strategy",
+  "version": "1.0.0",
+  "description": "Guides expert-level fine-tuning strategy implementation: ai-ml and optimization decision frameworks, production-ready patterns, and concrete templates for fine tuning strategy workflows. Use when the user asks about fine-tuning strategy, fine tuning strategy configuration, or ai-ml best practices for fine-tuning projects. Do NOT use when the user needs a different ai ml engineering capability -- check sibling skills in the ai ml engineering subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "optimization",
+    "architecture",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

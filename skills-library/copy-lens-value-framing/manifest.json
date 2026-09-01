@@ -1,0 +1,14 @@
+{
+  "id": "copy-lens-value-framing",
+  "name": "lens-value-framing",
+  "version": "1.0.0",
+  "description": "**Lens mode.** Source authority: Alex Hormozi's value-equation discipline — perceived value as a function of dream outcome, perceived likelihood, time delay, and effort.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "copy",
+    "lens",
+    "value",
+    "framing"
+  ],
+  "requiredCapabilities": []
+}

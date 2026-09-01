@@ -1,0 +1,19 @@
+{
+  "id": "video-calling-setup",
+  "name": "Video Calling Setup",
+  "version": "1.0.0",
+  "description": "Step-by-step guidance for setting up and using video calling apps like Zoom, FaceTime, and Google Meet, with troubleshooting tips, accessibility adjustments, and video call etiquette. Use when the user asks about video calling setup, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of video calling setup or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "stress-management",
+    "guide",
+    "quick-reference",
+    "testing",
+    "automation",
+    "safety",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

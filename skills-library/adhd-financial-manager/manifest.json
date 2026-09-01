@@ -1,0 +1,18 @@
+{
+  "id": "adhd-financial-manager",
+  "name": "Adhd Financial Manager",
+  "version": "1.0.0",
+  "description": "Financial strategies for ADHD brains including impulse spending prevention, bill automation, accountability systems, budgeting approaches, and building sustainable money management habits. Use when the user asks about adhd financial manager, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of adhd financial manager or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "budgeting",
+    "breathing",
+    "habits",
+    "stress-management",
+    "checklist",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

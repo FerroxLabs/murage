@@ -1,0 +1,14 @@
+{
+  "id": "tutorial-writing",
+  "name": "Tutorial Writing",
+  "version": "1.0.0",
+  "description": "Creates learning-oriented tutorials with clear objectives, prerequisite knowledge, step-by-step instructions, explanations of why each step matters, and exercises for reinforcement. Use when the user needs to teach someone how to learn a skill or technology through guided practice. Do NOT use for task documentation (use `user-guide`), how-to articles (use `how-to-guide`), or API references (use `api-documentation`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "step-by-step",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

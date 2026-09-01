@@ -1,0 +1,15 @@
+{
+  "id": "concierge",
+  "name": "Concierge",
+  "version": "1.0.0",
+  "description": "Wayland's own how-to guide: explains what Wayland can do and gives the exact steps to operate it. Covers what can Wayland do, connecting an AI provider or model, creating an assistant, building and launching a workflow, setting up a team, scheduling a task, connecting an MCP server or outside tool, and switching models or using Flux Auto. Use when the user asks what Wayland can do, what features exist, how do I connect a provider or model, how do I add Claude or OpenAI or Gemini, how do I create or edit an assistant, how do I build or run a workflow, how do I set up a team of assistants, how do I schedule a task or set up a recurring job, how do I connect an MCP server or outside tool, or how do I switch models or turn on Flux Auto automatic model routing. Do NOT use when the user wants help with a non-Wayland task (writing, coding, research, document creation) — those have their own skills; this skill is only about operating Wayland itself.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "wayland",
+    "onboarding",
+    "automation",
+    "guide",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

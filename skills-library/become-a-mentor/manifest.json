@@ -1,0 +1,15 @@
+{
+  "id": "become-a-mentor",
+  "name": "Become A Mentor",
+  "version": "1.0.0",
+  "description": "Structured workflow for experienced professionals who want to become effective mentors. Covers reflecting on your own journey and expertise, choosing the right mentoring platform, finding and matching with mentees, developing guiding frameworks and techniques, and measuring the impact of your mentoring practice. Use when the user wants to become a mentor or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "strategy",
+    "career",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

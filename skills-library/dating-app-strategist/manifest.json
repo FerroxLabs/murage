@@ -1,0 +1,19 @@
+{
+  "id": "dating-app-strategist",
+  "name": "Dating App Strategist",
+  "version": "1.0.0",
+  "description": "Practical dating app guidance covering profile optimization, photo strategy, authentic messaging, safety protocols, first date planning, and maintaining healthy boundaries in online dating. Use when the user asks about dating app strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of dating app strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "testing",
+    "planning",
+    "safety",
+    "energy-efficiency",
+    "travel",
+    "pet-care",
+    "video-production",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

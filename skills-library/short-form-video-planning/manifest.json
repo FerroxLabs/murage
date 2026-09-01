@@ -1,0 +1,14 @@
+{
+  "id": "short-form-video-planning",
+  "name": "Short Form Video Planning",
+  "version": "1.0.0",
+  "description": "Produces a short-form video plan for TikTok, Instagram Reels, or YouTube Shorts with hook formula, single-concept structure, caption strategy, audio selection criteria, and loop optimization. Use when the user asks to plan a short video under 60 seconds, create a Reel or TikTok concept, or structure a vertical video for social media. Do NOT use for long-form video scripts over 60 seconds (use video-script-writing), YouTube channel strategy (use youtube-video-strategy), or video shot lists (use video-storyboard).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "planning",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

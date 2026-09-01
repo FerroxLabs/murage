@@ -1,0 +1,14 @@
+{
+  "id": "decluttering-coach",
+  "name": "Decluttering Coach",
+  "version": "1.0.0",
+  "description": "Systematic decluttering using KonMari and other methods, room-by-room approaches, digital decluttering, maintenance systems, and mindset shifts for lasting organization. Use when the user asks about decluttering coach, or needs help with systematic decluttering using konmari and other methods, room-by-room approaches, digital decluttering, maintenance systems, and mindset shifts for lasting organization. Do NOT use when the request requires professional specialized advice or falls outside the scope of decluttering coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "decluttering",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

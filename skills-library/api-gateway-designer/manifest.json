@@ -1,0 +1,14 @@
+{
+  "id": "api-gateway-designer",
+  "name": "Api Gateway Designer",
+  "version": "1.0.0",
+  "description": "API gateway architecture expert covering gateway patterns, request routing, authentication/authorization, rate limiting, request transformation, response aggregation, circuit breaking, API composition, and gateway selection (Kong, Envoy, AWS API Gateway). Use when the user asks about api gateway designer, api gateway designer best practices, or needs guidance on api gateway designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

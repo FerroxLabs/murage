@@ -1,0 +1,15 @@
+{
+  "id": "arduino-engineer",
+  "name": "Arduino Engineer",
+  "version": "1.0.0",
+  "description": "Guides sensor integration, actuator control, serial communication, library usage, and project patterns for Arduino-based embedded systems Use when the user asks about arduino engineer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of arduino engineer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "guide",
+    "beginner-friendly",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "anxiety-coping-techniques",
+  "name": "Anxiety Coping Techniques",
+  "version": "1.0.0",
+  "description": "Teaches specific named coping techniques for managing everyday anxiety (5-4-3-2-1 grounding, box breathing, cognitive reframing prompts, progressive muscle relaxation, the STOP technique). Gathers the user's anxiety triggers and context, then produces a personalized coping toolkit with step-by-step technique instructions and a situation-response map. Use when the user asks about coping with anxiety, managing nervousness, grounding techniques, calming anxious thoughts, or building an anxiety management toolkit. Do NOT use for diagnosing anxiety disorders, treating panic disorder, clinical anxiety assessment, or replacing professional mental health support.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "self-care",
+    "stress-management",
+    "breathing",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

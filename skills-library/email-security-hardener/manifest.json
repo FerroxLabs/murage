@@ -1,0 +1,17 @@
+{
+  "id": "email-security-hardener",
+  "name": "Email Security Hardener",
+  "version": "1.0.0",
+  "description": "Email security expertise covering SPF, DKIM, and DMARC configuration for domain protection, phishing detection techniques, email encryption with PGP and S/MIME, secure email provider evaluation, email header analysis, business email compromise prevention, and building organizational email security policies. Use when the user asks about email security hardener, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of email security hardener or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "checklist",
+    "analysis",
+    "safety",
+    "best-practices",
+    "email",
+    "fashion"
+  ],
+  "requiredCapabilities": []
+}

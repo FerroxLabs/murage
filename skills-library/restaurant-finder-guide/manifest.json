@@ -1,0 +1,15 @@
+{
+  "id": "restaurant-finder-guide",
+  "name": "Restaurant Finder Guide",
+  "version": "1.0.0",
+  "description": "Creates a structured vetting criteria checklist and shortlisting process for finding restaurants while traveling. Gathers destination, cuisine preferences, dietary restrictions, budget, and dining occasion to produce a repeatable restaurant evaluation framework with a scored shortlist template and reservation logistics guide. Use when the user asks how to find restaurants while traveling, how to evaluate restaurants in a new city, how to avoid tourist traps, or how to choose where to eat on vacation. Do NOT use for meal planning at home (use home-household skills), recipe discovery, or food tourism itinerary building (use trip-planning skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "research",
+    "guide",
+    "step-by-step",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

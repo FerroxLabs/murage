@@ -1,0 +1,18 @@
+{
+  "id": "real-estate-syndication",
+  "name": "Real Estate Syndication",
+  "version": "1.0.0",
+  "description": "Passive real estate investing education covering syndications, crowdfunding platforms, REITs, due diligence frameworks, deal structure analysis, sponsor evaluation, and risk assessment. Helps users understand how to invest in real estate without being a landlord. Use when the user asks about real estate syndication, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of real estate syndication or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "budgeting",
+    "checklist",
+    "guide",
+    "analysis",
+    "performing-arts",
+    "tax-planning"
+  ],
+  "requiredCapabilities": []
+}

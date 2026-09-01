@@ -1,0 +1,14 @@
+{
+  "id": "food-storage-safety",
+  "name": "Food Storage Safety",
+  "version": "1.0.0",
+  "description": "Provides specific food storage guidelines including fridge and freezer temperature zones, storage duration by food type, safe thawing methods, FIFO rotation, and leftovers handling. Includes a comprehensive storage time reference table and danger zone rules. Use when the user asks how long food lasts in the fridge or freezer, safe food storage temperatures, how to thaw frozen food safely, or whether a specific food item is still safe to eat. Do NOT use for meal prep planning (use meal-prep-workflow), cooking techniques (use cooking-techniques), or medical food allergy advice.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "checklist",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

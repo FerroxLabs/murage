@@ -1,0 +1,14 @@
+{
+  "id": "hypothesis-testing",
+  "name": "Hypothesis Testing",
+  "version": "1.0.0",
+  "description": "Walks through hypothesis testing for a specific business question. Defines null and alternative hypotheses, selects the specific test (t-test, chi-square, ANOVA, Mann-Whitney), specifies the decision rule, and interprets the result in plain language. Use when the user wants to determine if a difference, trend, or relationship in their data is statistically meaningful or likely due to chance. Do NOT use for exploratory data profiling (use eda-framework), correlation without causation testing (use correlation-analysis), or building predictive models (use regression-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "statistics",
+    "analysis",
+    "data-science",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "guided-meditation-leader",
+  "name": "Guided Meditation Leader",
+  "version": "1.0.0",
+  "description": "Create and deliver guided meditation sessions including script writing, voice pacing guidance, theme selection, session structure, and adaptations for different audiences and settings. Use when the user asks about guided meditation leader, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of guided meditation leader or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "breathing",
+    "stress-management",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "testing"
+  ],
+  "requiredCapabilities": []
+}

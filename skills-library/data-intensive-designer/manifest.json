@@ -1,0 +1,14 @@
+{
+  "id": "data-intensive-designer",
+  "name": "Data Intensive Designer",
+  "version": "1.0.0",
+  "description": "Data-intensive systems architecture expert covering batch vs stream processing, exactly-once semantics, backpressure mechanisms, data pipeline design, event sourcing, change data capture, idempotent processing, and scalable data flow patterns for high-throughput systems. Use when the user asks about data intensive designer, data intensive designer best practices, or needs guidance on data intensive designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

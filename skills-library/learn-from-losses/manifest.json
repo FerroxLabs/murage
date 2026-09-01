@@ -1,0 +1,17 @@
+{
+  "id": "learn-from-losses",
+  "name": "Learn From Losses",
+  "version": "1.0.0",
+  "description": "Post-trade review — pull losing trades from the strategy tester, screenshot each entry in context, and cluster common failure patterns. Use when the user asks \"why am I losing?\", \"review my losses\", or \"what's wrong with my strategy?\".",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "learn",
+    "from",
+    "losses",
+    "trading",
+    "tradingview",
+    "charts",
+    "markets"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "mentorship-outreach",
+  "name": "Mentorship Outreach",
+  "version": "1.0.0",
+  "description": "Writes a personalized mentorship request message that is specific, time-respectful, and contains a clear ask. Produces a ready-to-send outreach message. Use when the user wants to reach out to a potential mentor, ask someone for career guidance, or write a message requesting an informational conversation or ongoing mentorship relationship. Do NOT use for cold outreach for job opportunities (use cold-outreach-email), networking event follow-ups (use networking-message-writer), or recruiter messages (use recruiter-outreach).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "writing",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

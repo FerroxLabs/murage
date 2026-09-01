@@ -1,0 +1,19 @@
+{
+  "id": "focus-environment-designer",
+  "name": "Focus Environment Designer",
+  "version": "1.0.0",
+  "description": "Focus environment design expertise covering physical workspace optimization, digital environment configuration, notification management systems, flow state triggers, distraction elimination strategies, ambient environment tuning (sound, light, temperature), and building personalized systems for sustained deep work. Use when the user asks about focus environment designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of focus environment designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "budgeting",
+    "beginner-friendly",
+    "analysis",
+    "research",
+    "planning",
+    "neurodiversity",
+    "performing-arts",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

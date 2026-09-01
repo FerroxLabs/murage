@@ -1,0 +1,15 @@
+{
+  "id": "promotion-case-builder",
+  "name": "Promotion Case Builder",
+  "version": "1.0.0",
+  "description": "Builds a written promotion case document with accomplishments and metrics, expanded scope evidence, peer and stakeholder impact, market rate context, and a clear ask. Produces a shareable document the user can present to their manager or leadership. Use when the user wants to make a case for promotion, prepare a promotion packet, or document their achievements to support a level-up request. Do NOT use for performance review self-assessments (use performance-review-prep), salary negotiation scripts (use salary-negotiation-script), or resume writing (use resume-bullet-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "planning",
+    "template",
+    "writing",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

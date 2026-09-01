@@ -1,0 +1,14 @@
+{
+  "id": "year-end-tax-checklist",
+  "name": "Year End Tax Checklist",
+  "version": "1.0.0",
+  "description": "Produces a personalized year-end tax action checklist covering income timing, deduction bundling, contribution deadlines, loss harvesting concepts, and charitable giving strategies. All jurisdiction-specific deadlines and rules use placeholder markers for the user to verify. Use when the user asks about year-end tax planning, what to do before the tax year ends, or how to optimize their tax position before December deadlines. Do NOT use for filing tax returns (use tax-filing-prep), tracking deductions throughout the year (use tax-deduction-tracker), or calculating quarterly payments (use quarterly-tax-estimator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tax-planning",
+    "personal-finance",
+    "planning",
+    "checklist"
+  ],
+  "requiredCapabilities": []
+}

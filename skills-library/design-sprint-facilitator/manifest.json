@@ -1,0 +1,19 @@
+{
+  "id": "design-sprint-facilitator",
+  "name": "Design Sprint Facilitator",
+  "version": "1.0.0",
+  "description": "Complete guide to facilitating design sprints based on the Google Ventures methodology covering day-by-day activities, preparation, facilitation techniques, remote adaptation, and common pitfalls for solving big problems in five days. Use when the user asks about design sprint facilitator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of design sprint facilitator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "guide",
+    "step-by-step",
+    "beginner-friendly",
+    "testing",
+    "research",
+    "energy-efficiency",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

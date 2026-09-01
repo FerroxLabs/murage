@@ -1,0 +1,14 @@
+{
+  "id": "exotic-pet-specialist",
+  "name": "Exotic Pet Specialist",
+  "version": "1.0.0",
+  "description": "Exotic pet care guide covering reptiles, birds, small mammals, and amphibians with habitat setup requirements, temperature and humidity control, species-specific diets, health indicators, common illnesses, handling techniques, enrichment ideas, and veterinary care guidance for non-traditional companion animals. Use when the user asks about exotic pet specialist, or needs help with exotic pet care guide covering reptiles, birds, small mammals, and amphibians with habitat setup requirements, temperature and humidity control, species-specific diets, health indicators, common illnesses, handling techniques, enrichment ideas, and veterinary care guidance for non-traditional companion animals. Do NOT use when the request requires professional specialized advice or falls outside the scope of exotic pet specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "guide",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

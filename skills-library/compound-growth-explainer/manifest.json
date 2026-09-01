@@ -1,0 +1,14 @@
+{
+  "id": "compound-growth-explainer",
+  "name": "Compound Growth Explainer",
+  "version": "1.0.0",
+  "description": "Demonstrates compound interest and growth concepts with worked calculations using the user's actual numbers. Shows growth trajectories at different contribution rates, growth rates, and time horizons so the user can see how compounding works with their specific situation. Use when the user asks about compound interest, wants to understand how money grows over time, or wants to see the math behind investment growth projections. Do NOT use for retirement-specific calculations (use retirement-savings-calculator), fee impact analysis (use investment-fee-analyzer), or choosing investments (use portfolio-allocation-framework).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "investing",
+    "personal-finance",
+    "analysis",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "clarity-editing",
+  "name": "Clarity Editing",
+  "version": "1.0.0",
+  "description": "Edits text for clarity by identifying and fixing ambiguous sentences, unclear references, jargon, convoluted syntax, and logical gaps. Produces tracked-change markup with clarity-focused revisions. Use when the user asks to make text clearer, easier to understand, less confusing, or more accessible to a specific audience. Do NOT use for conciseness (use conciseness-editing), structural changes (use structural-editing), or tone shifts (use tone-adjustment).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

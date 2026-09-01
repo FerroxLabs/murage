@@ -1,0 +1,15 @@
+{
+  "id": "healthcare-directive-guide",
+  "name": "Healthcare Directive Guide",
+  "version": "1.0.0",
+  "description": "Explains living wills and advance healthcare directives, the medical decisions they cover, and how they interact with healthcare power of attorney. Produces a concept overview, a personal values worksheet, and a question list for attorney consultation. Use when the user asks about living wills, advance directives, end-of-life medical preferences, or healthcare decision documents. Do NOT use for drafting a legal healthcare directive, providing medical advice, or general power of attorney topics (use power-of-attorney-explainer instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "guide",
+    "checklist",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

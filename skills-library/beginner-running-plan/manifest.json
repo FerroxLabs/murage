@@ -1,0 +1,15 @@
+{
+  "id": "beginner-running-plan",
+  "name": "Beginner Running Plan",
+  "version": "1.0.0",
+  "description": "Builds an 8-week run/walk progression plan for complete beginners aiming to run a continuous 5K (3.1 miles). Gathers the user's current activity level, schedule, and any physical limitations to produce a structured week-by-week training plan with effort targets, weekly mileage caps, rest day guidelines, and injury-prevention notes. Use when the user asks about starting to run, couch-to-5K plans, beginner running programs, or how to build running endurance from zero. Do NOT use for intermediate or advanced running training, marathon preparation, speed work or interval training for experienced runners, or trail running technique (use hiking-trip-planner for trail planning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beginner-friendly",
+    "workout-planning",
+    "running",
+    "checklist",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

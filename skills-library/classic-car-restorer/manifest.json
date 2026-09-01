@@ -1,0 +1,19 @@
+{
+  "id": "classic-car-restorer",
+  "name": "Classic Car Restorer",
+  "version": "1.0.0",
+  "description": "Guide to classic car restoration covering rust repair, engine basics, paint preparation, parts sourcing, project planning, and safety procedures for bringing vintage vehicles back to road-worthy or show condition. Use when the user asks about classic car restorer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of classic car restorer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "woodworking",
+    "budgeting",
+    "step-by-step",
+    "beginner-friendly",
+    "testing",
+    "planning",
+    "restoration",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

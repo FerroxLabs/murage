@@ -1,0 +1,14 @@
+{
+  "id": "small-claims-guide",
+  "name": "Small Claims Guide",
+  "version": "1.0.0",
+  "description": "Complete guide to filing and winning in small claims court including the filing process, documentation preparation, evidence organization, court etiquette, case presentation, demand letter templates, jurisdiction limits, and judgment collection. Use when the user asks about small claims guide, or needs help with complete guide to filing and winning in small claims court including the filing process, documentation preparation, evidence organization, court etiquette, case presentation, demand letter templates, jurisdiction limits, and judgment collection. Do NOT use when the request requires professional legal advice or falls outside the scope of small claims guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "step-by-step",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

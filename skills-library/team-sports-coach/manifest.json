@@ -1,0 +1,13 @@
+{
+  "id": "team-sports-coach",
+  "name": "Team Sports Coach",
+  "version": "1.0.0",
+  "description": "Team sports coaching guide covering coaching philosophy, practice planning, game strategy, player development, communication skills, age-appropriate training, team building, in-game management, parent relations, and season planning for volunteer and youth coaches across major team sports. Use when the user asks about team sports coach, or needs help with team sports coaching guide covering coaching philosophy, practice planning, game strategy, player development, communication skills, age-appropriate training, team building, in-game management, parent relations, and season planning for volunteer and youth coaches across major team sports. Do NOT use when the request requires professional medical advice or falls outside the scope of team sports coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

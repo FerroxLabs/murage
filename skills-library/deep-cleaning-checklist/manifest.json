@@ -1,0 +1,14 @@
+{
+  "id": "deep-cleaning-checklist",
+  "name": "Deep Cleaning Checklist",
+  "version": "1.0.0",
+  "description": "Generates a comprehensive room-by-room deep cleaning checklist for thorough cleaning that goes beyond weekly maintenance. Covers walls, baseboards, inside appliances, behind furniture, light fixtures, and neglected surfaces with time estimates and recommended frequency. Use when the user asks about spring cleaning, deep cleaning their home, or wants a thorough cleaning checklist beyond their regular routine. Do NOT use for regular weekly cleaning (use weekly-cleaning-schedule), move-in/move-out cleaning (use move-cleaning), or professional cleaning service scoping.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cleaning",
+    "checklist",
+    "home-maintenance",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

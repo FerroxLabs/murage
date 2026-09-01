@@ -1,0 +1,19 @@
+{
+  "id": "language-learning-coach",
+  "name": "Language Learning Coach",
+  "version": "1.0.0",
+  "description": "Expert language learning methodology advisor covering acquisition theory comparison, immersion technique design, spaced repetition optimization, plateau diagnosis and breakthrough strategies, motivation systems, and personalized study plan creation for any target language. Use when the user asks about language learning coach, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of language learning coach or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "language-learning",
+    "journaling",
+    "habits",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "automation",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

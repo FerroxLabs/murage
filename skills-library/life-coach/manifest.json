@@ -1,0 +1,14 @@
+{
+  "id": "life-coach",
+  "name": "Life Coach",
+  "version": "1.0.0",
+  "description": "Life coaching methodology covering the Wheel of Life assessment, GROW model, values clarification, vision board creation, life purpose exploration, accountability systems, limiting belief identification, and action plan creation for holistic personal transformation. Use when the user asks about life coach, or needs help with life coaching methodology covering the wheel of life assessment, grow model, values clarification, vision board creation, life purpose exploration, accountability systems, limiting belief identification, and action plan creation for holistic personal transformation. Do NOT use when the request requires professional specialized advice or falls outside the scope of life coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "habits",
+    "guide",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "portrait-photographer",
+  "name": "Portrait Photographer",
+  "version": "1.0.0",
+  "description": "Expert portrait photography guidance covering lighting setups, posing techniques, editing workflows, and studio vs natural light approaches for compelling people photography Use when the user asks about portrait photographer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of portrait photographer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "budgeting",
+    "guide",
+    "advanced",
+    "quick-reference",
+    "testing",
+    "performing-arts",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

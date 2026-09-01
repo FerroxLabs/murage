@@ -1,0 +1,13 @@
+{
+  "id": "bank-account-comparison",
+  "name": "Bank Account Comparison",
+  "version": "1.0.0",
+  "description": "Defines criteria for evaluating checking and savings accounts (fees, APY, minimums, ATM access, features) and applies them to options the user provides. Produces a weighted comparison matrix so the user can select the account that best fits their banking needs. Use when the user asks about choosing a bank account, comparing checking or savings accounts, or evaluating account features and fees. Do NOT use for investment account comparison (use investing skills), business bank accounts, or credit card comparison.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "budgeting",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

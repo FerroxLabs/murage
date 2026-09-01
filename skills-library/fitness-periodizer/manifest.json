@@ -1,0 +1,19 @@
+{
+  "id": "fitness-periodizer",
+  "name": "Fitness Periodizer",
+  "version": "1.0.0",
+  "description": "Synthesizes Progressive Overload, Periodization, NASM OPT model, Starting Strength principles, and Conjugate Method concepts into The Adaptive Training System - a framework for designing structured, progressive fitness programs for any goal and experience level. Use when the user asks about fitness periodizer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of fitness periodizer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "nutrition",
+    "habits",
+    "stress-management",
+    "template",
+    "beginner-friendly",
+    "advanced",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

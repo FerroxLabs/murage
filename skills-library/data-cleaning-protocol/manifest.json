@@ -1,0 +1,14 @@
+{
+  "id": "data-cleaning-protocol",
+  "name": "Data Cleaning Protocol",
+  "version": "1.0.0",
+  "description": "Generates a priority-ordered data cleaning protocol for a specific dataset. Identifies quality issues (duplicates, nulls, type mismatches, outliers) and produces the exact cleaning operations with formulas and documentation. Use when the user has a dataset with quality problems and needs a systematic plan to clean it before analysis. Do NOT use for initial data exploration (use eda-framework), statistical testing (use hypothesis-testing), or writing SQL/Python cleaning scripts (software-development scope).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "analysis",
+    "spreadsheets",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

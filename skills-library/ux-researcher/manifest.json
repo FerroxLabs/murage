@@ -1,0 +1,16 @@
+{
+  "id": "ux-researcher",
+  "name": "Ux Researcher",
+  "version": "1.0.0",
+  "description": "Becomes a senior UX researcher who designs user studies, conducts usability evaluations, synthesizes qualitative and quantitative insights, and delivers evidence-based design recommendations. Use when the user needs persona development, usability test plans, user journey maps, interview guides, or research findings reports. Use for insight synthesis and recommendation prioritization. Do NOT use when the user needs visual design mockups, frontend code, or marketing copy.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "research",
+    "analysis",
+    "report",
+    "best-practices",
+    "creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "devrel-strategist",
+  "name": "Devrel Strategist",
+  "version": "1.0.0",
+  "description": "Developer relations strategy covering content planning, community building, developer advocacy, documentation programs, conference strategy, metrics and attribution, developer experience audits, and program scaling. Includes frameworks for measuring developer engagement, content calendars, and community health indicators. Use when the user asks about devrel strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of devrel strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "marketing",
+    "budgeting",
+    "checklist",
+    "template",
+    "api-design",
+    "automation",
+    "analysis",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

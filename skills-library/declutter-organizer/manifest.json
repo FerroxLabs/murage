@@ -1,0 +1,19 @@
+{
+  "id": "declutter-organizer",
+  "name": "Declutter Organizer",
+  "version": "1.0.0",
+  "description": "Synthesizes category-based decluttering, Swedish Death Cleaning, minimalism philosophy, and functional organization into The Space Reset System - a practical framework for decluttering and organizing any space or life area. Use when the user asks about declutter organizer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of declutter organizer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "guide",
+    "neurodiversity",
+    "photography",
+    "performing-arts",
+    "waste-reduction",
+    "cooking",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

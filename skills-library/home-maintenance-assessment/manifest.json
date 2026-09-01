@@ -1,0 +1,19 @@
+{
+  "id": "home-maintenance-assessment",
+  "name": "Home Maintenance Assessment",
+  "version": "1.0.0",
+  "description": "Systematic home inspection evaluation covering structural systems, mechanical systems, exterior and interior condition, and safety readiness. Produces a prioritized maintenance scorecard with budget estimates and scheduling recommendations. Use when the user asks about home maintenance assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of home maintenance assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "home-maintenance",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

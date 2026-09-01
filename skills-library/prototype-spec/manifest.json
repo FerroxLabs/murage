@@ -1,0 +1,14 @@
+{
+  "id": "prototype-spec",
+  "name": "Prototype Spec",
+  "version": "1.0.0",
+  "description": "Produces an interactive prototype specification defining screen transitions, animation types, durations, easing curves, and interaction triggers in a tool-agnostic table format. Use when the user asks to define prototype interactions, specify screen transitions, document animations between states, or plan interaction flows for handoff to developers. Do NOT use for wireframing static layouts (use wireframe-specification), mapping user flows without animation detail (use user-flow-mapping), or building coded prototypes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "planning",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

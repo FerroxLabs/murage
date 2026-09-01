@@ -1,0 +1,13 @@
+{
+  "id": "tailwind-designer",
+  "name": "Tailwind Designer",
+  "version": "1.0.0",
+  "description": "Tailwind CSS design system expertise covering custom theme configuration, component extraction, responsive design patterns, dark mode, animation utilities, plugin development, integration with component libraries, and JIT optimization. Use when the user asks about tailwind designer, tailwind designer best practices, or needs guidance on tailwind designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "html-css"
+  ],
+  "requiredCapabilities": []
+}

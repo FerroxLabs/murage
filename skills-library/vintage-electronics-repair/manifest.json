@@ -1,0 +1,19 @@
+{
+  "id": "vintage-electronics-repair",
+  "name": "Vintage Electronics Repair",
+  "version": "1.0.0",
+  "description": "Guide to repairing and restoring vintage electronics covering safety procedures, diagnostic troubleshooting, capacitor replacement, component testing, and preservation of classic audio, radio, and computing equipment. Use when the user asks about vintage electronics repair, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of vintage electronics repair or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "woodworking",
+    "budgeting",
+    "stress-management",
+    "testing",
+    "research",
+    "safety",
+    "restoration",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "etsy-shop-launcher",
+  "name": "Etsy Shop Launcher",
+  "version": "1.0.0",
+  "description": "Complete guide to launching and scaling an Etsy shop, covering listings optimization, SEO, product photography, shipping strategy, and pricing for profitability. Use when the user asks about etsy shop launcher, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of etsy shop launcher or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "entrepreneurship",
+    "budgeting",
+    "guide",
+    "testing",
+    "analysis",
+    "research",
+    "competitive-programming",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

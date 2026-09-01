@@ -1,0 +1,15 @@
+{
+  "id": "airfare-search-strategy",
+  "name": "Airfare Search Strategy",
+  "version": "1.0.0",
+  "description": "Creates a booking-window and alert strategy for finding low-fare airfare. Produces a search timeline, fare monitoring plan, and booking decision framework based on route type, travel dates, and flexibility. Use when the user asks about finding cheap flights, when to book airfare, how to set fare alerts, or how to optimize flight search timing. Do NOT use for trip itinerary building (use trip-itinerary-builder), travel day logistics (use travel-day-optimizer), or travel rewards and points strategy (use travel-rewards-optimizer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "research",
+    "planning",
+    "checklist",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

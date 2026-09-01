@@ -1,0 +1,16 @@
+{
+  "id": "employee-survey",
+  "name": "Employee Survey",
+  "version": "1.0.0",
+  "description": "Designs employee engagement surveys with question categories, Likert scale structure, anonymity protocols, and analysis guidance using survey design methodology. Use when the user asks about employee surveys, engagement surveys, pulse surveys, employee satisfaction measurement, or workplace culture assessment. Do NOT use for customer surveys (use a research skill), interview evaluation (use interview-guide), or performance reviews (use performance-review).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "template",
+    "planning",
+    "research",
+    "analysis",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

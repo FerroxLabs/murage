@@ -1,0 +1,12 @@
+{
+  "id": "beacon-podcast",
+  "name": "podcast",
+  "version": "1.0.0",
+  "description": "**When to use.** When the brief includes hosting a podcast, guesting on podcasts, or sponsoring podcasts as a See or Think channel.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beacon",
+    "podcast"
+  ],
+  "requiredCapabilities": []
+}

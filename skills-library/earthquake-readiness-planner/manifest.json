@@ -1,0 +1,18 @@
+{
+  "id": "earthquake-readiness-planner",
+  "name": "Earthquake Readiness Planner",
+  "version": "1.0.0",
+  "description": "Earthquake preparedness expertise covering structural assessment basics, Drop-Cover-Hold-On response, emergency supply planning, family communication plans, aftershock preparedness, utility shutoff procedures, building resilience assessment, and post-earthquake safety evaluation for residential and workplace settings. Use when the user asks about earthquake readiness planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of earthquake readiness planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "guide",
+    "safety",
+    "emergency-preparedness",
+    "energy-efficiency",
+    "waste-reduction",
+    "cooking",
+    "automotive"
+  ],
+  "requiredCapabilities": []
+}

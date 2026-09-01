@@ -1,0 +1,14 @@
+{
+  "id": "unit-testing-patterns",
+  "name": "Unit Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level unit testing patterns implementation: tdd and best-practices decision frameworks, production-ready patterns, and concrete templates for unit testing patterns workflows. Use when the user asks about unit testing patterns, unit testing patterns configuration, or testing best practices for unit projects. Do NOT use when the user needs a different testing quality capability -- check sibling skills in the testing quality subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "tdd",
+    "best-practices",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "ab-testing-specialist",
+  "name": "Ab Testing Specialist",
+  "version": "1.0.0",
+  "description": "End-to-end guide for designing, running, and analyzing A/B tests including experiment design, statistical significance, sample size calculation, common pitfalls, and advanced testing patterns. Use when the user asks about ab testing specialist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ab testing specialist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "checklist",
+    "template",
+    "quick-reference",
+    "python",
+    "testing",
+    "analysis",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

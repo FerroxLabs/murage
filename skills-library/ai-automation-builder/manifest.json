@@ -1,0 +1,19 @@
+{
+  "id": "ai-automation-builder",
+  "name": "Ai Automation Builder",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to building AI-powered automation workflows using n8n, Zapier, Make, and custom agent frameworks covering integration patterns, cost optimization, error handling, and production-ready AI workflow design. Use when the user asks about ai automation builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ai automation builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "budgeting",
+    "checklist",
+    "template",
+    "step-by-step",
+    "python",
+    "api-design",
+    "cloud",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

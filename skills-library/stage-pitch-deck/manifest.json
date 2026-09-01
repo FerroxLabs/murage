@@ -1,0 +1,13 @@
+{
+  "id": "stage-pitch-deck",
+  "name": "pitch-deck",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Stage specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "stage",
+    "pitch",
+    "deck"
+  ],
+  "requiredCapabilities": []
+}

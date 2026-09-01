@@ -1,0 +1,15 @@
+{
+  "id": "landing-page-copy",
+  "name": "Landing Page Copy",
+  "version": "1.0.0",
+  "description": "Produces conversion-optimized landing page copy with hero section, problem statement, solution, social proof, and CTA sections using conversion copywriting methodology. Use when the user asks to write landing page copy, create a product page, write a sales page, draft conversion copy, or write landing page text for a website. Also useful when asked to write website copy or create a page that converts visitors. Do NOT use for ad copy (use paid-ad-copy), product descriptions for e-commerce listings (use product-description), or full website content strategy (use seo-content-strategy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "marketing-copy",
+    "writing",
+    "template",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

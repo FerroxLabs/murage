@@ -1,0 +1,14 @@
+{
+  "id": "data-profiling",
+  "name": "Data Profiling",
+  "version": "1.0.0",
+  "description": "Produces a comprehensive data profile for a table or dataset including schema documentation, data type validation, uniqueness analysis, referential integrity checks, and a data quality score with remediation priorities. Use when the user needs to document a dataset's structure and quality for onboarding, governance, or pre-analysis preparation. Do NOT use for exploratory statistical analysis (use eda-framework), data cleaning operations (use data-cleaning-protocol), or building data catalogs across multiple tables (use data-catalog-setup).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "analysis",
+    "spreadsheets",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

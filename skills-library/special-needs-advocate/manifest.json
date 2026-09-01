@@ -1,0 +1,19 @@
+{
+  "id": "special-needs-advocate",
+  "name": "Special Needs Advocate",
+  "version": "1.0.0",
+  "description": "Navigate IEP/504 plans, understand therapy options, communicate effectively with schools, document everything, know your rights under IDEA, plan transitions, find support resources, and sustain yourself as a caregiver. Empowering guidance with a sensitive, strengths-based approach. Use when the user asks about special needs advocate, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of special needs advocate or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "parenting",
+    "habits",
+    "stress-management",
+    "self-care",
+    "checklist",
+    "template",
+    "step-by-step",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

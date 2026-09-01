@@ -1,0 +1,14 @@
+{
+  "id": "vegetable-garden-planning",
+  "name": "Vegetable Garden Planning",
+  "version": "1.0.0",
+  "description": "Creates a vegetable garden plan with bed sizing, crop selection based on USDA hardiness zone, companion planting guidelines, and a zone-aware planting calendar. Produces a complete garden layout with planting schedule and expected harvest windows. Use when the user asks about starting a vegetable garden, planning garden beds, choosing vegetables to grow, companion planting, or creating a planting schedule based on their location. Do NOT use for ornamental garden design, indoor gardening (use indoor-plant-care), commercial farming, or flower garden planning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "gardening",
+    "planning",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

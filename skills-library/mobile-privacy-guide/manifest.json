@@ -1,0 +1,17 @@
+{
+  "id": "mobile-privacy-guide",
+  "name": "Mobile Privacy Guide",
+  "version": "1.0.0",
+  "description": "Mobile privacy expertise covering app permission management, tracking prevention on iOS and Android, secure messaging app selection, device encryption, privacy-focused browser and DNS configuration, location tracking minimization, app audit methodology, and building a privacy-conscious mobile setup without sacrificing usability. Use when the user asks about mobile privacy guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of mobile privacy guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "guide",
+    "cloud",
+    "networking",
+    "best-practices",
+    "video-production",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

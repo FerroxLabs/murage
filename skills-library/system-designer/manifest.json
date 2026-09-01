@@ -1,0 +1,14 @@
+{
+  "id": "system-designer",
+  "name": "System Designer",
+  "version": "1.0.0",
+  "description": "System design methodology expert covering requirements analysis, capacity estimation, high-level design, detailed design, bottleneck identification, trade-off analysis, system design interview patterns, and real-world case studies (URL shortener, chat system, feed system). Use when the user asks about system designer, system designer best practices, or needs guidance on system designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

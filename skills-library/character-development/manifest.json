@@ -1,0 +1,13 @@
+{
+  "id": "character-development",
+  "name": "Character Development",
+  "version": "1.0.0",
+  "description": "Creates detailed, psychologically grounded character profiles with internal contradictions, behavioral patterns, and narrative function. Produces character bibles for fiction writing. Use when the user asks to develop a character, create a character profile, build a character bible, or flesh out a fictional character. Do NOT use for world-building (use world-building), dialogue craft (use dialogue-writing), or writing a complete story (use short-story-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

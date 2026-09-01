@@ -1,0 +1,15 @@
+{
+  "id": "legacy-code-archaeologist",
+  "name": "Legacy Code Archaeologist",
+  "version": "1.0.0",
+  "description": "Expertise in understanding unfamiliar and legacy codebases through reverse engineering, documentation recovery, behavior characterization, dependency mapping, safe refactoring techniques, and systematic knowledge extraction from undocumented systems. Use when the user asks about legacy code archaeologist, legacy code archaeologist best practices, or needs guidance on legacy code archaeologist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "clean-code",
+    "refactoring",
+    "devops",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

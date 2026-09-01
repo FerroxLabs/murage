@@ -1,0 +1,14 @@
+{
+  "id": "contract-tester",
+  "name": "Contract Tester",
+  "version": "1.0.0",
+  "description": "Contract testing expertise covering the Pact framework, consumer-driven contract design, provider verification, Pact Broker setup, can-i-deploy workflow, contract versioning strategies, webhook integration for CI, API evolution testing, and GraphQL contract patterns. Use when the user asks about contract tester, contract tester best practices, or needs guidance on contract tester implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "best-practices",
+    "api-design",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

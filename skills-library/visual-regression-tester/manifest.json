@@ -1,0 +1,14 @@
+{
+  "id": "visual-regression-tester",
+  "name": "Visual Regression Tester",
+  "version": "1.0.0",
+  "description": "Visual regression testing expert covering Chromatic and Percy workflows, screenshot comparison strategies, component-level visual testing with Storybook, responsive breakpoint testing, visual diff thresholds, baseline management, CI integration, and false positive reduction. Use when the user asks about visual regression tester, visual regression tester best practices, or needs guidance on visual regression tester implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "best-practices",
+    "automation",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

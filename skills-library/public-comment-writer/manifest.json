@@ -1,0 +1,15 @@
+{
+  "id": "public-comment-writer",
+  "name": "Public Comment Writer",
+  "version": "1.0.0",
+  "description": "Teaches users to write structured public comments for local government proceedings, regulatory proposals, and public hearings. Covers the IPAR structure (Identify, Position, Argue, Request), formatting for different submission types, and strategies for making comments more persuasive and likely to be considered. Use when the user wants to submit a public comment to a government body, needs to write testimony for a public hearing, or wants to respond to a proposed regulation or policy change. Do NOT use for writing political campaign materials, drafting legislation, legal briefs, or lobbying communications that require disclosure.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "civic-engagement",
+    "writing",
+    "guide",
+    "template",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

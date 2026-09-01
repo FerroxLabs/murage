@@ -1,0 +1,13 @@
+{
+  "id": "stakeholder-update",
+  "name": "Stakeholder Update",
+  "version": "1.0.0",
+  "description": "Writes executive-level stakeholder updates that translate project progress into business impact, surface decisions needed, and manage expectations for senior leadership audiences. Use when the user needs to update executives, board members, or cross-functional leadership on project or initiative status. Do NOT use for team-level status updates (use `status-update`), full business reports (use `business-report`), or board narratives (use `board-update-narrative`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "business-writing",
+    "report"
+  ],
+  "requiredCapabilities": []
+}

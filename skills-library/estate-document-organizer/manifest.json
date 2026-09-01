@@ -1,0 +1,15 @@
+{
+  "id": "estate-document-organizer",
+  "name": "Estate Document Organizer",
+  "version": "1.0.0",
+  "description": "Creates a master document inventory template for estate-critical records including legal documents, financial accounts, insurance policies, property records, and digital access information. Produces a categorized filing system with location tracking for each document. Use when the user asks about organizing estate documents, creating a document inventory, where to store important papers, or how to ensure family members can find critical records. Do NOT use for drafting legal documents, providing financial advice, or digital asset management specifically (use digital-estate-planner for comprehensive digital inventory).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "checklist",
+    "template",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "metalworking-intro",
+  "name": "Metalworking Intro",
+  "version": "1.0.0",
+  "description": "Comprehensive introductory guide to metalworking covering welding types including MIG, TIG, and stick, essential safety equipment, basic fabrication techniques, cutting and grinding tools, metal types and properties, project ideas, and shop setup requirements. Use when the user asks about metalworking intro or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "step-by-step",
+    "beginner-friendly",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

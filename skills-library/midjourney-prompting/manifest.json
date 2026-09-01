@@ -1,0 +1,14 @@
+{
+  "id": "midjourney-prompting",
+  "name": "Midjourney Prompting",
+  "version": "1.0.0",
+  "description": "Crafts Midjourney v6/v7 prompts with structured subject, environment, style, medium, lighting, and parameter syntax including --ar, --style, --q, --v, --chaos, --cref, and --sref. Use when the user asks to create a Midjourney prompt, generate AI art with Midjourney, write image prompts for Midjourney, or optimize Midjourney parameters. Do NOT use for DALL-E prompting (use dalle-prompting), Stable Diffusion prompting (use stable-diffusion-prompting), or translating prompts between models (use prompt-translation).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-image-generation",
+    "design",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

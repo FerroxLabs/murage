@@ -1,0 +1,15 @@
+{
+  "id": "email-campaign",
+  "name": "Email Campaign",
+  "version": "1.0.0",
+  "description": "Produces a completed email marketing sequence of 3-5 emails with subject lines, body copy, CTAs, and send timing using drip sequence design principles. Use when the user asks to create an email campaign, design a drip sequence, write a welcome series, build a nurture sequence, or plan automated email flows. Do NOT use for single professional email writing (use professional-email in writing), full campaign planning across channels (use campaign-planning), or cold outreach sales emails (use cold-outreach-sequence).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "email",
+    "planning",
+    "template",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

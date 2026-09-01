@@ -1,0 +1,13 @@
+{
+  "id": "beacon-twitter-x",
+  "name": "twitter-x",
+  "version": "1.0.0",
+  "description": "**When to use.** When the channel mix includes X (formerly Twitter) for personal brand, B2B reach, or real-time category presence.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beacon",
+    "twitter",
+    "x"
+  ],
+  "requiredCapabilities": []
+}

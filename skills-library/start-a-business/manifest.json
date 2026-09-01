@@ -1,0 +1,16 @@
+{
+  "id": "start-a-business",
+  "name": "Start A Business",
+  "version": "1.0.0",
+  "description": "Guided business launch workflow from business planning and market research through pricing strategy, brand identity, social media presence, and financial management for new entrepreneurs starting a service-based or product-based business. Use when the user wants to start a business or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "planning",
+    "marketing",
+    "personal-finance",
+    "step-by-step",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

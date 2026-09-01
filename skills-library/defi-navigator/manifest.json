@@ -1,0 +1,19 @@
+{
+  "id": "defi-navigator",
+  "name": "Defi Navigator",
+  "version": "1.0.0",
+  "description": "Decentralized finance expertise covering protocol mechanics (AMMs, lending, yield aggregators), liquidity pool analysis, yield strategy evaluation, risk assessment frameworks, impermanent loss calculation, and portfolio construction across DeFi protocols with emphasis on risk-adjusted returns. Use when the user asks about defi navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of defi navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "checklist",
+    "quick-reference",
+    "analysis",
+    "research",
+    "safety",
+    "emergency-preparedness",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

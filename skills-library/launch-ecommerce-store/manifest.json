@@ -1,0 +1,16 @@
+{
+  "id": "launch-ecommerce-store",
+  "name": "Launch Ecommerce Store",
+  "version": "1.0.0",
+  "description": "Guided workflow for launching an e-commerce store from product selection and sourcing through platform setup, product listing optimization, marketing launch, and ongoing operations management. Covers both physical and digital product stores. Use when the user wants to launch ecommerce store or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "sales",
+    "marketing",
+    "step-by-step",
+    "planning",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

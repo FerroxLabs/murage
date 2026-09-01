@@ -1,0 +1,14 @@
+{
+  "id": "linkedin-headline-optimizer",
+  "name": "Linkedin Headline Optimizer",
+  "version": "1.0.0",
+  "description": "Produces 5 LinkedIn headline variants with keyword analysis for discoverability, selecting the optimal combination of role title, specialization, and value proposition within LinkedIn's 220-character limit. Analyzes each variant for recruiter searchability and click appeal. Use when the user wants to optimize their LinkedIn headline, improve their profile visibility, or create a headline that attracts recruiters. Do NOT use for LinkedIn About sections (use linkedin-summary-writer), LinkedIn messages (use recruiter-outreach or networking-message-writer), or resume summaries (use resume-summary-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "linkedin",
+    "career",
+    "analysis",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "data-collection-plan",
+  "name": "Data Collection Plan",
+  "version": "1.0.0",
+  "description": "Creates data collection plans with instrument selection, participant criteria, ethical considerations, and timeline for learners designing research studies. Produces a complete data collection protocol. Use when a learner asks to plan data collection, design a survey or interview protocol, determine sample size, or address research ethics requirements. Do NOT use for choosing a methodology (use `research-methodology`), for analyzing collected data (not an education skill), or for writing the methods section (use writing category skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "academic-writing",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

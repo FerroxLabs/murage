@@ -1,0 +1,14 @@
+{
+  "id": "retirement-savings-calculator",
+  "name": "Retirement Savings Calculator",
+  "version": "1.0.0",
+  "description": "Calculates monthly savings needed to reach a retirement target using compound growth math. The user provides their target amount, time horizon, current savings, and assumed growth rate. The skill computes the required monthly contribution and shows growth trajectories at different rates. Use when the user asks how much to save for retirement, wants to calculate retirement savings needs, or wants to project investment growth over time. Do NOT use for choosing specific investments (use portfolio-allocation-framework), understanding account types (use investment-account-types), or tax planning (use tax-advantaged-optimizer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "retirement-planning",
+    "personal-finance",
+    "investing",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

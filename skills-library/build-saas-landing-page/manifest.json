@@ -1,0 +1,15 @@
+{
+  "id": "build-saas-landing-page",
+  "name": "Build Saas Landing Page",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for creating a high-converting SaaS landing page from copywriting through design, development, SEO optimization, and analytics setup. Covers persuasion frameworks, responsive design, performance optimization, and conversion tracking to turn visitors into customers. Use when the user wants to build saas landing page or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "seo",
+    "frontend",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "distributed-systems",
+  "name": "Distributed Systems",
+  "version": "1.0.0",
+  "description": "Distributed systems patterns expert covering CAP theorem, consensus algorithms (Raft, Paxos), distributed transactions (2PC, saga), consistent hashing, gossip protocols, vector clocks, leader election, distributed locking, and eventual consistency. Use when the user asks about distributed systems, distributed systems best practices, or needs guidance on distributed systems implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "microservices",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

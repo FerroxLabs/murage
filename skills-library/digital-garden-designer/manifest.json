@@ -1,0 +1,19 @@
+{
+  "id": "digital-garden-designer",
+  "name": "Digital Garden Designer",
+  "version": "1.0.0",
+  "description": "Design, build, and curate digital gardens as public or semi-public connected knowledge bases, with guidance on publishing tools, content curation, linking strategies, and audience growth. Use when the user asks about digital garden designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of digital garden designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "journaling",
+    "template",
+    "guide",
+    "javascript",
+    "typescript",
+    "analysis",
+    "performing-arts",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

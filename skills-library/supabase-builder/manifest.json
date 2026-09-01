@@ -1,0 +1,14 @@
+{
+  "id": "supabase-builder",
+  "name": "Supabase Builder",
+  "version": "1.0.0",
+  "description": "Supabase platform expert covering PostgreSQL database design, Row Level Security policies, real-time subscriptions, auth configuration, storage buckets, edge functions, PostgREST API patterns, database migrations, and full-stack application architecture on the Supabase platform. Use when the user asks about supabase builder, supabase builder best practices, or needs guidance on supabase builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "backend",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

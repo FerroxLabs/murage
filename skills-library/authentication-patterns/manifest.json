@@ -1,0 +1,14 @@
+{
+  "id": "authentication-patterns",
+  "name": "Authentication Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level authentication patterns implementation: security and web-development decision frameworks, production-ready patterns, and concrete templates for authentication patterns workflows. Use when the user asks about authentication patterns, authentication patterns configuration, or security best practices for authentication projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "backend",
+    "web-development",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "cast-iron-master",
+  "name": "Cast Iron Master",
+  "version": "1.0.0",
+  "description": "Complete guide to cast iron cookware mastery covering seasoning science, daily maintenance, heat management techniques, cooking methods for different foods, troubleshooting common problems, and building a versatile cast iron collection. Use when the user asks about cast iron master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cast iron master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "budgeting",
+    "guide",
+    "testing",
+    "energy-efficiency",
+    "cleaning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

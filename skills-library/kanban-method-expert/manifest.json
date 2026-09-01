@@ -1,0 +1,19 @@
+{
+  "id": "kanban-method-expert",
+  "name": "Kanban Method Expert",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to the Kanban Method covering WIP limits, flow metrics, service classes, pull systems, board design, continuous improvement practices, and scaling Kanban for teams and organizations. Use when the user asks about kanban method expert, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of kanban method expert or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "stress-management",
+    "beginner-friendly",
+    "advanced",
+    "planning",
+    "tax-planning",
+    "marketing",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

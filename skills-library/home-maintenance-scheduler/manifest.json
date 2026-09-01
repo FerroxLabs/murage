@@ -1,0 +1,14 @@
+{
+  "id": "home-maintenance-scheduler",
+  "name": "Home Maintenance Scheduler",
+  "version": "1.0.0",
+  "description": "Comprehensive home maintenance scheduling with monthly, seasonal, and annual checklists covering HVAC, plumbing, electrical, roofing, appliances, pest prevention, and maintenance budget planning. Use when the user asks about home maintenance scheduler, or needs help with comprehensive home maintenance scheduling with monthly, seasonal, and annual checklists covering hvac, plumbing, electrical, roofing, appliances, pest prevention, and maintenance budget planning. Do NOT use when the request requires professional specialized advice or falls outside the scope of home maintenance scheduler.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "checklist",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "react-native-builder",
+  "name": "React Native Builder",
+  "version": "1.0.0",
+  "description": "Expert React Native development covering navigation, state management, native modules, performance optimization, platform-specific code, Expo vs bare workflow, animations, testing, debugging, and OTA updates. Use when the user asks about react native builder, react native builder best practices, or needs guidance on react native builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "javascript",
+    "design",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

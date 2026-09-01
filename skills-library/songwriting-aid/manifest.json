@@ -1,0 +1,14 @@
+{
+  "id": "songwriting-aid",
+  "name": "Songwriting Aid",
+  "version": "1.0.0",
+  "description": "Songwriting assistant covering song structure, melody basics, lyric writing techniques, rhyme schemes, hook creation, genre-specific conventions, co-writing strategies, and demo creation to help songwriters craft memorable songs. Use when the user asks about songwriting aid, or needs help with songwriting assistant covering song structure, melody basics, lyric writing techniques, rhyme schemes, hook creation, genre-specific conventions, co-writing strategies, and demo creation to help songwriters craft memorable songs. Do NOT use when the request requires professional specialized advice or falls outside the scope of songwriting aid.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "guide",
+    "step-by-step",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

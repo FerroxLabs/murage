@@ -1,0 +1,14 @@
+{
+  "id": "launch-food-truck",
+  "name": "Launch Food Truck",
+  "version": "1.0.0",
+  "description": "Complete food truck business launch workflow from operations planning and business structure through menu development, pricing strategy, social media marketing, and financial management for aspiring mobile food entrepreneurs. Use when the user wants to launch food truck or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "step-by-step",
+    "planning",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

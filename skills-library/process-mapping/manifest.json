@@ -1,0 +1,15 @@
+{
+  "id": "process-mapping",
+  "name": "Process Mapping",
+  "version": "1.0.0",
+  "description": "Produces a SIPOC process map with suppliers, inputs, process steps, outputs, and customers for a defined business process. Use when the user asks to map a business process, create a SIPOC diagram, document a workflow from start to finish, visualize a process flow, or identify process inputs and outputs for improvement. Do NOT use for writing step-by-step SOPs (use sop-creation), risk analysis of a process (use risk-assessment or failure-mode-analysis), or customer journey mapping (use customer-journey-map).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "analysis",
+    "template",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

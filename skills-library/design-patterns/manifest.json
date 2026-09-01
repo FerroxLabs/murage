@@ -1,0 +1,14 @@
+{
+  "id": "design-patterns",
+  "name": "Design Patterns",
+  "version": "1.0.0",
+  "description": "Software design patterns including GoF patterns with modern implementations, when to use each pattern, anti-patterns to avoid, and language-specific idioms across creational, structural, and behavioral categories. Use when the user asks about design patterns, design patterns best practices, or needs guidance on design patterns implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "design-patterns",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "interview-prep-plan",
+  "name": "Interview Prep Plan",
+  "version": "1.0.0",
+  "description": "Builds a day-by-day preparation plan for an upcoming interview, covering company research, answer preparation, logistics, and mental readiness. Produces a dated checklist the user can follow from 1 to 14 days before the interview. Use when the user has an interview scheduled and wants a structured preparation plan, needs to organize their prep time, or asks how to prepare for an upcoming interview. Do NOT use for writing specific interview answers (use behavioral-interview-prep or technical-interview-prep), predicting questions (use interview-question-anticipator), or company research (use company-research-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "interview-prep",
+    "career",
+    "planning",
+    "checklist",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

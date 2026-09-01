@@ -1,0 +1,18 @@
+{
+  "id": "health-insurance-navigator",
+  "name": "Health Insurance Navigator",
+  "version": "1.0.0",
+  "description": "Demystifies health insurance with guidance on plan comparison, claims processing, appeals procedures, and coverage optimization strategies to maximize benefits and minimize costs. Use when the user asks about health insurance navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of health insurance navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "budgeting",
+    "checklist",
+    "step-by-step",
+    "research",
+    "networking",
+    "emergency-preparedness",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

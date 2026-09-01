@@ -1,0 +1,15 @@
+{
+  "id": "systems-thinker",
+  "name": "Systems Thinker",
+  "version": "1.0.0",
+  "description": "Understanding complex systems through feedback loops (reinforcing and balancing), stocks and flows, Donella Meadows' 12 leverage points, causal loop diagrams, systems archetypes (tragedy of the commons, fixes that fail, shifting the burden), modeling tools, and application to organizational and real-world systems. Use when the user asks about systems thinker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "decision-making",
+    "analysis",
+    "frameworks",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

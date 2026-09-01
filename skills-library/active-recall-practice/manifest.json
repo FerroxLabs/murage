@@ -1,0 +1,15 @@
+{
+  "id": "active-recall-practice",
+  "name": "Active Recall Practice",
+  "version": "1.0.0",
+  "description": "Creates active recall self-test question sets from study material for learners. Generates specific, varied questions that force retrieval rather than passive re-reading, with verification answers -- producing the actual practice materials, not advice about active recall. Use when a learner asks to create practice questions, self-test materials, or retrieval practice exercises from their study content. Do NOT use for spaced repetition scheduling (use `spaced-repetition`), for flashcard creation (use `flashcard-generation`), or for exam-format practice (use `exam-practice`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "active-recall",
+    "study-skills",
+    "spaced-repetition",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

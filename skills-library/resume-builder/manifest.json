@@ -1,0 +1,14 @@
+{
+  "id": "resume-builder",
+  "name": "Resume Builder",
+  "version": "1.0.0",
+  "description": "Comprehensive resume creation guide covering format selection, ATS optimization, action verb library, achievement quantification, industry-specific templates, skills section design, education formatting, employment gap strategies, and page length decisions. Use when the user asks about resume builder, or needs help with comprehensive resume creation guide covering format selection, ats optimization, action verb library, achievement quantification, industry-specific templates, skills section design, education formatting, employment gap strategies, and page length decisions. Do NOT use when the request requires professional specialized advice or falls outside the scope of resume builder.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "interview-prep",
+    "resume-writing",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

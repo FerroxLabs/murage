@@ -1,0 +1,13 @@
+{
+  "id": "business-memo",
+  "name": "Business Memo",
+  "version": "1.0.0",
+  "description": "Writes internal business memos with clear purpose statements, structured arguments, and specific action requests for organizational communication. Use when the user needs to communicate a decision, policy change, recommendation, or announcement to internal audiences. Do NOT use for external business letters (use `business-letter`), meeting notes (use `meeting-notes`), or status updates (use `status-update`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "business-writing",
+    "decision-making"
+  ],
+  "requiredCapabilities": []
+}

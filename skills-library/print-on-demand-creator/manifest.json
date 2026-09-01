@@ -1,0 +1,19 @@
+{
+  "id": "print-on-demand-creator",
+  "name": "Print On Demand Creator",
+  "version": "1.0.0",
+  "description": "Guide to building a print-on-demand business covering design creation, platform selection, product mockups, marketing strategies, and scaling without inventory. Use when the user asks about print on demand creator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of print on demand creator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "entrepreneurship",
+    "budgeting",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

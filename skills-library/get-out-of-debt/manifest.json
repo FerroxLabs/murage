@@ -1,0 +1,16 @@
+{
+  "id": "get-out-of-debt",
+  "name": "Get Out Of Debt",
+  "version": "1.0.0",
+  "description": "Guided workflow for eliminating debt systematically from comprehensive debt audit and strategy selection through creditor negotiation, execution discipline, and prevention planning. Covers credit cards, student loans, medical debt, personal loans, and other consumer debt. Use when the user wants to get out of debt or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "debt-management",
+    "budgeting",
+    "personal-finance",
+    "step-by-step",
+    "planning",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

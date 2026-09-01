@@ -1,0 +1,14 @@
+{
+  "id": "swift-swiftui-patterns",
+  "name": "Swift Swiftui Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level swift swiftui patterns implementation: swift and mobile decision frameworks, production-ready patterns, and concrete templates for swift swiftui patterns workflows. Use when the user asks about swift swiftui patterns, swift swiftui patterns configuration, or swift best practices for swift projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "swift",
+    "mobile",
+    "frameworks",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "clinical-documentation",
+  "name": "Clinical Documentation",
+  "version": "1.0.0",
+  "description": "Write effective clinical notes, understand coding basics, ensure compliance, and improve documentation efficiency for healthcare professionals. Use when the user asks about clinical documentation, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of clinical documentation or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "healthcare",
+    "writing",
+    "checklist",
+    "template",
+    "testing",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "conflict-resolution",
+  "name": "Conflict Resolution",
+  "version": "1.0.0",
+  "description": "Provides an interest-based negotiation framework adapted for personal relationships with de-escalation sequences, structured dialogue steps, and resolution templates. Produces step-by-step conflict resolution plans with specific scripts for each phase. Use when the user asks about resolving a conflict with a partner, family member, or friend, needs de-escalation strategies, or wants a structured approach to disagreements. Do NOT use for workplace conflict mediation, legal disputes, assessing whether a relationship is healthy, or replacing couples counseling.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "decision-making",
+    "template",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

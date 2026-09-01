@@ -1,0 +1,19 @@
+{
+  "id": "family-travel-expert",
+  "name": "Family Travel Expert",
+  "version": "1.0.0",
+  "description": "Plan stress-free family trips with guidance on kid-friendly destinations by age, packing for families, car trip survival, flying with children from infants to teens, accommodation selection, activity planning, travel documents for minors, managing expectations, and budget-friendly family travel strategies. Use when the user asks about family travel expert, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of family travel expert or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "parenting",
+    "budgeting",
+    "journaling",
+    "checklist",
+    "template",
+    "guide",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

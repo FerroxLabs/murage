@@ -1,0 +1,14 @@
+{
+  "id": "sprint-facilitator-business-strategy",
+  "name": "Sprint Facilitator",
+  "version": "1.0.0",
+  "description": "Sprint ceremony facilitation expert covering sprint planning, daily standups, sprint reviews, retrospectives, velocity tracking, capacity planning, ceremony optimization, remote facilitation, and agile anti-pattern correction. Use when the user asks about sprint facilitator, sprint facilitator best practices, or needs guidance on sprint facilitator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "agile",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

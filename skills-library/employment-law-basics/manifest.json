@@ -1,0 +1,15 @@
+{
+  "id": "employment-law-basics",
+  "name": "Employment Law Basics",
+  "version": "1.0.0",
+  "description": "Provides an overview of fundamental employment law concepts including at-will employment, employee vs. contractor classification, wage and hour basics under the FLSA, workplace discrimination protections, and wrongful termination. Helps employees understand their rights and prepare informed questions for an employment attorney. Use when the user has questions about their employment rights, wants to understand at-will employment, needs to know about wage and hour laws, or is concerned about workplace discrimination or wrongful termination. Do NOT use for reviewing a specific employment contract (use employment-contract-reader), filing EEOC complaints, employer-side HR guidance, or legal advice on specific workplace disputes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "guide",
+    "research",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

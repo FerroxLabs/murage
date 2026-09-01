@@ -1,0 +1,14 @@
+{
+  "id": "browser-automator",
+  "name": "Browser Automator",
+  "version": "1.0.0",
+  "description": "Browser automation expertise covering Playwright and Puppeteer patterns, element selection strategies, wait mechanisms, network interception, file download and upload handling, multi-tab management, authentication flows, headless vs headed modes, screenshot and PDF generation, and CI integration. Use when the user asks about browser automator, browser automator best practices, or needs guidance on browser automator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "web-development",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

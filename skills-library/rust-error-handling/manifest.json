@@ -1,0 +1,14 @@
+{
+  "id": "rust-error-handling",
+  "name": "Rust Error Handling",
+  "version": "1.0.0",
+  "description": "Guides expert-level Rust error handling: thiserror vs anyhow decision tree, error propagation with ? operator, custom error types, Result combinators, and error conversion patterns. Use when the user asks about Rust error handling, thiserror, anyhow, Result type, ? operator, custom errors, error propagation. Do NOT use when the user asks about Rust ownership (use `rust-ownership-patterns`), Rust project setup (use `rust-project-setup`), Rust testing (use `rust-testing-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "rust",
+    "best-practices",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

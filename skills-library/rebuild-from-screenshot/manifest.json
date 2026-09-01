@@ -1,0 +1,17 @@
+{
+  "id": "rebuild-from-screenshot",
+  "name": "Rebuild From Screenshot",
+  "version": "1.0.0",
+  "description": "Reproduce a chart from a screenshot — read the user's pasted image, diff against the live chart, then set symbol/indicators/drawings to match. Use when the user pastes a chart image and says \"recreate this\" or \"set up my chart like this\".",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "rebuild",
+    "from",
+    "screenshot",
+    "trading",
+    "tradingview",
+    "charts",
+    "markets"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "orchestration-engineer",
+  "name": "Orchestration Engineer",
+  "version": "1.0.0",
+  "description": "Data pipeline orchestration covering Apache Airflow DAG design patterns, Dagster software-defined assets, Prefect flow composition, retry and backfill strategies, dependency management, dynamic task generation, monitoring and alerting, SLA tracking, cross-system orchestration, and production operation patterns. Use when the user asks about orchestration engineer, orchestration engineer best practices, or needs guidance on orchestration engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "automation",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

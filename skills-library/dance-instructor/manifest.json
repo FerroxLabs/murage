@@ -1,0 +1,19 @@
+{
+  "id": "dance-instructor",
+  "name": "Dance Instructor",
+  "version": "1.0.0",
+  "description": "Expert dance instruction guidance covering major styles, choreography basics, teaching methods, and performance preparation for dancers and teachers at all levels Use when the user asks about dance instructor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of dance instructor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "breathing",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "quick-reference",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "sales-process-assessment",
+  "name": "Sales Process Assessment",
+  "version": "1.0.0",
+  "description": "Sales process maturity assessment evaluating pipeline management, conversion metrics, sales methodology, team enablement, and process efficiency to produce an actionable sales scorecard. Use when the user asks about sales process assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of sales process assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "template",
+    "automation",
+    "analysis",
+    "marketing",
+    "email",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

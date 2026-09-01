@@ -1,0 +1,13 @@
+{
+  "id": "creative-nonfiction",
+  "name": "Creative Nonfiction",
+  "version": "1.0.0",
+  "description": "Writes creative nonfiction including personal essays, memoir excerpts, literary journalism, and narrative nonfiction using literary techniques applied to true events and experiences. Use when the user asks to write a personal essay, memoir piece, narrative nonfiction, literary essay, or true story told with literary craft. Do NOT use for academic essays (use academic-argument), blog posts (use blog-post-writing), journalism without literary intent (not a creative skill), or fiction (use short-story-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "design"
+  ],
+  "requiredCapabilities": []
+}

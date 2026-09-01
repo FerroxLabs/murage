@@ -1,0 +1,18 @@
+{
+  "id": "estate-planning-architect",
+  "name": "Estate Planning Architect",
+  "version": "1.0.0",
+  "description": "Estate planning education covering trusts, wills, beneficiary designations, powers of attorney, healthcare directives, tax strategies for wealth transfer, document checklists, and common planning mistakes. Helps users understand the key components of a comprehensive estate plan. Use when the user asks about estate planning architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of estate planning architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "nutrition",
+    "checklist",
+    "template",
+    "guide",
+    "planning",
+    "safety"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "poetry-writing",
+  "name": "Poetry Writing",
+  "version": "1.0.0",
+  "description": "Writes poetry across forms (sonnet, free verse, haiku, villanelle, ghazal, ode, elegy) with constraint-first design requiring form, theme, tone, and formal constraints before drafting. Use when the user asks to write a poem, compose verse, create poetry, or work in a specific poetic form. Do NOT use for song lyrics (different structure), prose poetry that is really flash fiction (use flash-fiction), or literary analysis of existing poems.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

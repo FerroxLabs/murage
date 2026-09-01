@@ -1,0 +1,14 @@
+{
+  "id": "beekeeping-guide",
+  "name": "Beekeeping Guide",
+  "version": "1.0.0",
+  "description": "Guide to beekeeping including hive types, seasonal management, inspection routines, honey harvest, disease and pest management, bee biology, equipment, regulations, and startup costs. Use when the user asks about beekeeping guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "step-by-step",
+    "sustainability",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

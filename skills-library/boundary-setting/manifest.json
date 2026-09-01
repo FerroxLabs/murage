@@ -1,0 +1,14 @@
+{
+  "id": "boundary-setting",
+  "name": "Boundary Setting",
+  "version": "1.0.0",
+  "description": "Provides frameworks for identifying, articulating, and maintaining personal boundaries in relationships. Produces structured boundary plans with specific language scripts for communicating limits, maintaining them under pressure, and handling boundary violations. Use when the user asks about setting boundaries with family, partners, or friends, saying no, or maintaining personal limits in relationships. Do NOT use for assessing whether a relationship is abusive, diagnosing codependency, or replacing therapy for boundary difficulties.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "planning",
+    "strategy",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

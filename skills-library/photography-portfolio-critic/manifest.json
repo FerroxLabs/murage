@@ -1,0 +1,17 @@
+{
+  "id": "photography-portfolio-critic",
+  "name": "Photography Portfolio Critic",
+  "version": "1.0.0",
+  "description": "Photography portfolio evaluation assessing technical skill, artistic vision, consistency of style, and market positioning. Produces a scored critique with specific improvement priorities for photographers at any level. Use when the user asks about photography portfolio critic, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of photography portfolio critic or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "design",
+    "template",
+    "research",
+    "presentation",
+    "cleaning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

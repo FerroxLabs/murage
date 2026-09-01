@@ -1,0 +1,13 @@
+{
+  "id": "patient-communication",
+  "name": "Patient Communication",
+  "version": "1.0.0",
+  "description": "Apply empathy techniques, health literacy principles, and communication frameworks for delivering difficult news and building therapeutic relationships with patients. Use when the user asks about patient communication, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of patient communication or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "healthcare",
+    "writing",
+    "testing"
+  ],
+  "requiredCapabilities": []
+}

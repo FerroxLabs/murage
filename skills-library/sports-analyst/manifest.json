@@ -1,0 +1,13 @@
+{
+  "id": "sports-analyst",
+  "name": "Sports Analyst",
+  "version": "1.0.0",
+  "description": "Sports statistics and analysis tool covering fantasy sports strategy, player evaluation metrics by sport, team analysis frameworks, betting basics (educational), draft strategy, season prediction models, and historical comparisons. Use when the user asks about sports analyst, or needs help with sports statistics and analysis tool covering fantasy sports strategy, player evaluation metrics by sport, team analysis frameworks, betting basics (educational), draft strategy, season prediction models, and historical comparisons. Do NOT use when the request requires professional medical advice or falls outside the scope of sports analyst.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

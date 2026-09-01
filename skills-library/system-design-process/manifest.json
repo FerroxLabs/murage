@@ -1,0 +1,14 @@
+{
+  "id": "system-design-process",
+  "name": "System Design Process",
+  "version": "1.0.0",
+  "description": "Guides expert-level system design process implementation: best-practices and design-patterns decision frameworks, production-ready patterns, and concrete templates for system design process workflows. Use when the user asks about system design process, system design process configuration, or architecture best practices for system projects. Do NOT use when the user needs a different architecture design capability -- check sibling skills in the architecture design subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "best-practices",
+    "design-patterns",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

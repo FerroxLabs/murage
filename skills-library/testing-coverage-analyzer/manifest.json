@@ -1,0 +1,18 @@
+{
+  "id": "testing-coverage-analyzer",
+  "name": "Testing Coverage Analyzer",
+  "version": "1.0.0",
+  "description": "Testing strategy assessment evaluating coverage gaps, test quality, test architecture, automation maturity, and ROI to produce an actionable testing scorecard. Use when the user asks about testing coverage analyzer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of testing coverage analyzer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "testing",
+    "template",
+    "api-design",
+    "automation",
+    "analysis",
+    "planning",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

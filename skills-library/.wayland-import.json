@@ -1,0 +1,64 @@
+{
+  "generatedBy": "scripts/import-wayland-skills.mjs",
+  "generatedAt": "2026-09-01T10:56:42.343Z",
+  "source": "/Volumes/Mando/wayland/app/.skill-pack/skills-library",
+  "indexed": 2106,
+  "written": 2106,
+  "collisions": [
+    {
+      "slug": "sprint-facilitator",
+      "id": "sprint-facilitator-business-strategy",
+      "path": "skills/business-strategy/sprint-facilitator/SKILL.md",
+      "keptBy": "agents/orchestration/sprint-facilitator/SKILL.md"
+    },
+    {
+      "slug": "ab-test-design",
+      "id": "ab-test-design-data-analysis",
+      "path": "skills/data-analysis/ab-test-design/SKILL.md",
+      "keptBy": "skills/business-strategy/ab-test-design/SKILL.md"
+    },
+    {
+      "slug": "incident-commander",
+      "id": "incident-commander-devops-cloud",
+      "path": "skills/devops-cloud/incident-commander/SKILL.md",
+      "keptBy": "agents/orchestration/incident-commander/SKILL.md"
+    },
+    {
+      "slug": "skill-gap-analysis",
+      "id": "skill-gap-analysis-education",
+      "path": "skills/education/skill-gap-analysis/SKILL.md",
+      "keptBy": "skills/career-development/skill-gap-analysis/SKILL.md"
+    },
+    {
+      "slug": "risk-assessment",
+      "id": "risk-assessment-productivity",
+      "path": "skills/productivity/risk-assessment/SKILL.md",
+      "keptBy": "skills/business-strategy/risk-assessment/SKILL.md"
+    },
+    {
+      "slug": "security-auditor",
+      "id": "security-auditor-security",
+      "path": "skills/security/security-auditor/SKILL.md",
+      "keptBy": "agents/engineering/security-auditor/SKILL.md"
+    },
+    {
+      "slug": "code-reviewer",
+      "id": "code-reviewer-software-engineering",
+      "path": "skills/software-engineering/code-reviewer/SKILL.md",
+      "keptBy": "agents/engineering/code-reviewer/SKILL.md"
+    },
+    {
+      "slug": "academic-argument",
+      "id": "academic-argument-writing",
+      "path": "skills/writing/academic-argument/SKILL.md",
+      "keptBy": "skills/education/academic-argument/SKILL.md"
+    },
+    {
+      "slug": "incident-response",
+      "id": "incident-response-software-project",
+      "path": "workflows/incident-response/SKILL.md",
+      "keptBy": "skills/devops-cloud/incident-response/SKILL.md"
+    }
+  ],
+  "skipped": []
+}

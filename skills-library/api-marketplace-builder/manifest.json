@@ -1,0 +1,19 @@
+{
+  "id": "api-marketplace-builder",
+  "name": "Api Marketplace Builder",
+  "version": "1.0.0",
+  "description": "Design and build internal API catalogs with versioning strategies, discovery mechanisms, documentation standards, and governance for developer self-service platforms Use when the user asks about api marketplace builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of api marketplace builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "checklist",
+    "template",
+    "guide",
+    "api-design",
+    "testing",
+    "performing-arts",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

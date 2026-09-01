@@ -1,0 +1,14 @@
+{
+  "id": "data-validator",
+  "name": "Data Validator",
+  "version": "1.0.0",
+  "description": "Data validation and quality expertise covering Great Expectations patterns, schema validation, statistical validation, referential integrity checks, data profiling, anomaly detection, data contracts, quality scoring, and automated testing strategies for ensuring data reliability throughout the pipeline. Use when the user asks about data validator, data validator best practices, or needs guidance on data validator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "testing",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

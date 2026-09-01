@@ -1,0 +1,14 @@
+{
+  "id": "pantry-manager",
+  "name": "Pantry Manager",
+  "version": "1.0.0",
+  "description": "Pantry organization and inventory management system covering essential pantry staples by cuisine, shelf life reference for all food categories, FIFO rotation methodology, storage best practices, emergency meal planning from pantry items, and expiration date interpretation (best by vs use by vs sell by). Use when the user asks about pantry manager, or needs help with pantry organization and inventory management system covering essential pantry staples by cuisine, shelf life reference for all food categories, fifo rotation methodology, storage best practices, emergency meal planning from pantry items, and expiration date interpretation (best by vs use by vs sell by). Do NOT use when the request requires professional specialized advice or falls outside the scope of pantry manager.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "checklist",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

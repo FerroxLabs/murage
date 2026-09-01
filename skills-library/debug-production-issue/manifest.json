@@ -1,0 +1,15 @@
+{
+  "id": "debug-production-issue",
+  "name": "Debug Production Issue",
+  "version": "1.0.0",
+  "description": "Orchestrates systematic production debugging from alert through root cause identification and resolution, chaining four engineering skills into a structured diagnostic pipeline. Covers incident triage, log analysis, performance investigation, and monitoring verification. Use when the user is investigating a production issue that requires structured diagnosis beyond simple log reading. Do NOT use for development environment bugs, planned performance optimization, or incidents that require the full incident-response workflow with postmortem.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "troubleshooting",
+    "optimization",
+    "step-by-step",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

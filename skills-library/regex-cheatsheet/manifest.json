@@ -1,0 +1,17 @@
+{
+  "id": "regex-cheatsheet",
+  "name": "Regex Cheatsheet",
+  "version": "1.0.0",
+  "description": "Practical regex patterns for common tasks - validation, extraction, replacement - with language-specific syntax differences and ready-to-use recipes. Use when the user asks about regex cheatsheet, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of regex cheatsheet or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "best-practices",
+    "python",
+    "javascript",
+    "testing",
+    "email",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

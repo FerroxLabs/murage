@@ -1,0 +1,14 @@
+{
+  "id": "community-led-growth",
+  "name": "Community Led Growth",
+  "version": "1.0.0",
+  "description": "Community-led growth strategy advisor covering community platform selection, engagement frameworks, ambassador programs, community flywheel mechanics, moderation, content strategy, metrics, monetization, and building self-sustaining communities on Discord, forums, Slack, and social platforms that drive acquisition, retention, and advocacy for products and brands. Use when the user asks about community led growth or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "strategy",
+    "seo",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

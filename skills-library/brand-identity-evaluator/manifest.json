@@ -1,0 +1,19 @@
+{
+  "id": "brand-identity-evaluator",
+  "name": "Brand Identity Evaluator",
+  "version": "1.0.0",
+  "description": "Structured brand identity assessment covering visual consistency, messaging alignment, market positioning, competitor comparison, audience perception, and producing an actionable brand improvement plan. Use when the user asks about brand identity evaluator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of brand identity evaluator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "design",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "analysis",
+    "research",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

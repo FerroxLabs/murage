@@ -1,0 +1,18 @@
+{
+  "id": "appreciative-inquiry-facilitator",
+  "name": "Appreciative Inquiry Facilitator",
+  "version": "1.0.0",
+  "description": "Practical guide to facilitating Appreciative Inquiry covering the 4-D cycle of Discover, Dream, Design, and Destiny, positive core identification, provocative propositions, summit design, and applying strengths-based change in organizations and communities. Use when the user asks about appreciative inquiry facilitator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of appreciative inquiry facilitator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "journaling",
+    "planning",
+    "performing-arts",
+    "energy-efficiency",
+    "interview-prep",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

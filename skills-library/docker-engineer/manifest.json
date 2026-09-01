@@ -1,0 +1,14 @@
+{
+  "id": "docker-engineer",
+  "name": "Docker Engineer",
+  "version": "1.0.0",
+  "description": "Docker containerization expert. Multi-stage builds, layer caching, security (non-root, distroless), docker-compose patterns, health checks, networking, volume management, registry management, image scanning, Dockerfile optimization. Use when the user asks about docker engineer, docker engineer best practices, or needs guidance on docker engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "guide",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

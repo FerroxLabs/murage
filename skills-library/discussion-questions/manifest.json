@@ -1,0 +1,15 @@
+{
+  "id": "discussion-questions",
+  "name": "Discussion Questions",
+  "version": "1.0.0",
+  "description": "Creates Socratic seminar question sets across Bloom's taxonomy levels with facilitation notes for educators. Produces a complete discussion guide with opening, core, and closing questions plus facilitation strategies -- not a list of generic discussion prompts. Use when an educator asks to create discussion questions, design a Socratic seminar, prepare seminar questions, or build a discussion-based lesson. Do NOT use for assessment questions (use `assessment-design`), for student self-study questions (use `active-recall-practice`), or for full lesson plan creation (use `lesson-plan-design`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "lesson-plan",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

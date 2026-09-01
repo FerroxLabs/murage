@@ -1,0 +1,18 @@
+{
+  "id": "dyslexia-toolkit",
+  "name": "Dyslexia Toolkit",
+  "version": "1.0.0",
+  "description": "Assistive technology recommendations, reading strategies, study aids, font and formatting tips, and practical approaches for navigating a text-heavy world with dyslexia. Use when the user asks about dyslexia toolkit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of dyslexia toolkit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "stress-management",
+    "quick-reference",
+    "testing",
+    "accessibility",
+    "time-management",
+    "parenting"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "couple-finance-planner",
+  "name": "Couple Finance Planner",
+  "version": "1.0.0",
+  "description": "Framework for navigating joint finances as a couple including account structures, shared financial goals, productive money conversations, and building financial partnership with mutual respect Use when the user asks about couple finance planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of couple finance planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "budgeting",
+    "stress-management",
+    "automation",
+    "planning",
+    "emergency-preparedness",
+    "time-management",
+    "investing",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

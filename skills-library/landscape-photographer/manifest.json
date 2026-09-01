@@ -1,0 +1,19 @@
+{
+  "id": "landscape-photographer",
+  "name": "Landscape Photographer",
+  "version": "1.0.0",
+  "description": "Expert landscape photography guidance covering composition rules, golden hour techniques, long exposure methods, and post-processing workflows for stunning natural scenery Use when the user asks about landscape photographer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of landscape photographer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "quick-reference",
+    "cloud",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

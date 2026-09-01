@@ -1,0 +1,15 @@
+{
+  "id": "grammar-practice",
+  "name": "Grammar Practice",
+  "version": "1.0.0",
+  "description": "Creates explicit grammar instruction with explanation, exercises, and self-correction for one grammar point at a time for language learners. Produces a complete grammar lesson with practice activities. Use when a learner asks to practice a grammar rule, understand a grammar concept, or do grammar exercises in a target language. Do NOT use for vocabulary building (use `vocabulary-building`), for conversation practice (use `conversation-practice`), or for general language assessment (use `language-level-assessment`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "language-learning",
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

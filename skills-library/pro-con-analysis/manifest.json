@@ -1,0 +1,14 @@
+{
+  "id": "pro-con-analysis",
+  "name": "Pro Con Analysis",
+  "version": "1.0.0",
+  "description": "Produces a structured pros and cons analysis that goes beyond a simple list by weighting each factor by magnitude and reversibility, identifying hidden costs, and producing a recommendation with confidence level. Use when the user asks about weighing pros and cons, evaluating a decision between two options, or doing a thorough comparison of trade-offs for a personal choice. Do NOT use for multi-option comparison with scoring (use weighted-decision-matrix), business strategic analysis (use business strategy skills), or imagining failure scenarios (use premortem-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decision-making",
+    "analysis",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "membership-manager",
+  "name": "Membership Manager",
+  "version": "1.0.0",
+  "description": "Guide to membership program management including tier design, benefits, onboarding, engagement strategies, renewal campaigns, communications, events, dues structure, and CRM selection. Use when the user asks about membership manager or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "strategy-report",
+  "name": "Strategy Report",
+  "version": "1.0.0",
+  "description": "Generate a comprehensive strategy performance report — metrics, trade analysis, equity curve, and recommendations. Use after backtesting a Pine Script strategy.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "report",
+    "trading",
+    "tradingview",
+    "charts",
+    "markets"
+  ],
+  "requiredCapabilities": []
+}

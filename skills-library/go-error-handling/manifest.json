@@ -1,0 +1,14 @@
+{
+  "id": "go-error-handling",
+  "name": "Go Error Handling",
+  "version": "1.0.0",
+  "description": "Guides expert-level Go error handling: error wrapping with %w, sentinel errors vs custom error types, errors.Is and errors.As patterns, error groups, and structured error propagation. Use when the user asks about Go error handling, error wrapping, sentinel errors, errors.Is, errors.As, custom error types, error propagation. Do NOT use when the user asks about Go idioms (use `go-idioms`), Go concurrency (use `go-concurrency-patterns`), Go performance (use `go-performance`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "go",
+    "best-practices",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

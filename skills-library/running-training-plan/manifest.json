@@ -1,0 +1,14 @@
+{
+  "id": "running-training-plan",
+  "name": "Running Training Plan",
+  "version": "1.0.0",
+  "description": "Builds structured running training plans from beginner (couch-to-5K) through half-marathon distances with weekly mileage progressions, pace zones, cross-training days, and taper protocols. Gathers the user's current fitness level, target race distance, timeline, and available training days to produce a phased training schedule. Use when the user asks about starting running, training for a 5K, 10K, or half-marathon, building weekly mileage, or structuring a running program. Do NOT use for marathon or ultra training (requires specialized periodization), sprint training for track events, or injury rehabilitation running programs.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "running",
+    "fitness",
+    "workout-planning",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "developer-experience-engineer",
+  "name": "Developer Experience Engineer",
+  "version": "1.0.0",
+  "description": "Improve developer experience through DX research, friction reduction, developer surveys, tooling optimization, and workflow analysis Use when the user asks about developer experience engineer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of developer experience engineer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "checklist",
+    "template",
+    "guide",
+    "api-design",
+    "testing",
+    "automation",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

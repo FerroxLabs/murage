@@ -1,0 +1,14 @@
+{
+  "id": "meal-prep-workflow",
+  "name": "Meal Prep Workflow",
+  "version": "1.0.0",
+  "description": "Creates a batch meal prep plan with a Sunday (or chosen day) prep sequence covering what to batch-cook, the optimal order of operations, storage containers and durations, and a reheating guide. Produces a structured workflow that turns 3-4 hours of cooking into 5 days of ready meals. Use when the user asks about meal prepping, batch cooking, Sunday meal prep, or saving time on weeknight dinners. Do NOT use for single recipes (use one-pot-meals), pantry stocking (use pantry-staples-system), or food safety storage rules (use food-storage-safety).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "meal-planning",
+    "cooking",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

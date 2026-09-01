@@ -1,0 +1,14 @@
+{
+  "id": "portfolio-allocation-framework",
+  "name": "Portfolio Allocation Framework",
+  "version": "1.0.0",
+  "description": "Explains asset allocation concepts including equities, bonds, cash, and real assets. Describes common allocation philosophies and helps the user apply a decision framework to their own risk profile and time horizon. Produces a structured analysis the user can use when building their portfolio. Use when the user asks about asset allocation, how to diversify investments, or how to build a portfolio based on their risk tolerance. Do NOT use for choosing specific investment products or funds, assessing risk tolerance (use risk-tolerance-assessment), or understanding account types (use investment-account-types). Never prescribes specific allocation percentages.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "investing",
+    "personal-finance",
+    "analysis",
+    "retirement-planning"
+  ],
+  "requiredCapabilities": []
+}

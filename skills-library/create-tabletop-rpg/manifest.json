@@ -1,0 +1,16 @@
+{
+  "id": "create-tabletop-rpg",
+  "name": "Create Tabletop Rpg",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for designing, playtesting, illustrating, laying out, and publishing a tabletop role-playing game. Covers core system design, character creation mechanics, setting development, playtesting methodology, art direction, layout and graphic design, and publishing on DriveThruRPG, itch.io, and through Kickstarter campaigns. Use when the user wants to create tabletop rpg or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tabletop-rpg",
+    "game-design",
+    "content-marketing",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

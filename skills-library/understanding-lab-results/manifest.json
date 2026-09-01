@@ -1,0 +1,14 @@
+{
+  "id": "understanding-lab-results",
+  "name": "Understanding Lab Results",
+  "version": "1.0.0",
+  "description": "Teaches how to read and understand the structure and format of common laboratory test reports including complete blood count, metabolic panels, and lipid panels. Explains what each test generally measures, how to read the report format, and what questions to ask your provider about results. Does NOT interpret individual results. Use when the user asks about understanding lab reports, what a CBC or metabolic panel measures, how to read lab result formats, or what questions to ask about their results. Do NOT use for interpreting specific lab values, diagnosing conditions from results, or making treatment recommendations based on lab numbers.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "teaching",
+    "guide",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

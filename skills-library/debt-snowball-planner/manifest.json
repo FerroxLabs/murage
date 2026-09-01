@@ -1,0 +1,14 @@
+{
+  "id": "debt-snowball-planner",
+  "name": "Debt Snowball Planner",
+  "version": "1.0.0",
+  "description": "Applies the debt snowball method (smallest balance first) to create a sequenced debt payoff plan. Calculates specific monthly payment amounts for each debt, payoff dates, total interest paid, and the snowball effect as each debt is eliminated and its payment rolls to the next. Produces a complete month-by-month payoff schedule. Use when the user wants to pay off multiple debts using the snowball method, wants to see the psychological wins of eliminating debts quickly, or asks about the debt snowball approach. Do NOT use for interest-optimized payoff (use debt-avalanche-planner), debt consolidation evaluation (use debt-consolidation-analysis), or business debt management.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "debt-management",
+    "personal-finance",
+    "budgeting",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "green-home",
+  "name": "Green Home",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to creating a healthier, more sustainable home covering energy audit walkthroughs, non-toxic cleaning product recipes and alternatives, water conservation strategies for fixtures and landscaping, indoor air quality improvement, sustainable materials for renovation projects, and understanding green building certifications. Use when the user asks about green home, or needs help with comprehensive guide to creating a healthier, more sustainable home covering energy audit walkthroughs, non-toxic cleaning product recipes and alternatives, water conservation strategies for fixtures and landscaping, indoor air quality improvement, sustainable materials for renovation projects, and understanding green building certifications. Do NOT use when the request requires professional specialized advice or falls outside the scope of green home.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "energy-efficiency",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "property-based-testing",
+  "name": "Property Based Testing",
+  "version": "1.0.0",
+  "description": "Guides expert-level property-based testing implementation: tdd and automation decision frameworks, production-ready patterns, and concrete templates for property based testing workflows. Use when the user asks about property-based testing, property based testing configuration, or testing best practices for property-based projects. Do NOT use when the user needs a different testing quality capability -- check sibling skills in the testing quality subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "tdd",
+    "automation",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

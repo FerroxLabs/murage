@@ -1,0 +1,14 @@
+{
+  "id": "redis-specialist",
+  "name": "Redis Specialist",
+  "version": "1.0.0",
+  "description": "Comprehensive Redis expertise covering all data structures (strings, hashes, lists, sets, sorted sets, streams), pub/sub messaging, Lua scripting, Redis Cluster architecture, Sentinel high availability, persistence strategies (RDB/AOF), memory optimization techniques, and common application patterns including caching, sessions, rate limiting, leaderboards, and distributed locking. Use when the user asks about redis specialist, redis specialist best practices, or needs guidance on redis specialist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "optimization",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

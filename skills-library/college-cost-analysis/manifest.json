@@ -1,0 +1,15 @@
+{
+  "id": "college-cost-analysis",
+  "name": "College Cost Analysis",
+  "version": "1.0.0",
+  "description": "Analyzes the true cost of higher education including tuition, fees, room, board, books, and opportunity cost. Compares financing options (loans, grants, scholarships, work-study, savings) and builds a funding strategy that shows the total cost of each path including post-graduation loan payments. Use when the user asks about college costs, how to pay for education, student loan analysis, or wants to compare financing options for higher education. Do NOT use for general budgeting (use budget-planning), student loan payoff strategy after graduation (use debt management skills), or career planning after college.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "budgeting",
+    "planning",
+    "analysis",
+    "savings"
+  ],
+  "requiredCapabilities": []
+}

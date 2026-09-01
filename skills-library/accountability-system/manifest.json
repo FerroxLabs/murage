@@ -1,0 +1,14 @@
+{
+  "id": "accountability-system",
+  "name": "Accountability System",
+  "version": "1.0.0",
+  "description": "Builds a personal accountability system by identifying accountability mechanisms, defining check-in protocols, setting success criteria, and creating a consequence structure. Use when the user wants to hold themselves accountable to goals, create a system for follow-through on commitments, or design check-in routines that prevent goals from being skipped. Do NOT use for team accountability or management (use business skills), behavior change coaching (use health-wellness skills), or single-goal planning (use `smart-goal-builder` instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "planning",
+    "template",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

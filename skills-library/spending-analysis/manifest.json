@@ -1,0 +1,15 @@
+{
+  "id": "spending-analysis",
+  "name": "Spending Analysis",
+  "version": "1.0.0",
+  "description": "Analyzes the user's spending history against their stated values and financial goals. Identifies misalignments between what the user says they value and where they actually spend money, then recommends specific reallocation amounts to bring spending in line with priorities. Use when the user wants to understand their spending patterns, find misalignments, or optimize how their money is distributed across categories. Do NOT use for setting up expense tracking (use expense-tracking-setup), creating a budget (use budget-planning), or auditing subscriptions only (use subscription-audit).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "budgeting",
+    "personal-finance",
+    "expenses",
+    "analysis",
+    "savings"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "science-writer",
+  "name": "Science Writer",
+  "version": "1.0.0",
+  "description": "Translating complex research findings for general audiences through clear narrative techniques, structured explanations, appropriate analogies, and publication strategies across media outlets. Use when the user asks about science writer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of science writer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "technical-writing",
+    "checklist",
+    "template",
+    "guide",
+    "research",
+    "game-design",
+    "science-communication"
+  ],
+  "requiredCapabilities": []
+}

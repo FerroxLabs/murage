@@ -1,0 +1,14 @@
+{
+  "id": "aws-architect",
+  "name": "Aws Architect",
+  "version": "1.0.0",
+  "description": "AWS architecture. Well-Architected Framework pillars, VPC design, IAM best practices, Lambda/ECS/EKS selection, RDS/DynamoDB selection, S3 patterns, CloudFront CDN, EventBridge, cost optimization, multi-account strategy. Use when the user asks about aws architect, aws architect best practices, or needs guidance on aws architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "guide",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

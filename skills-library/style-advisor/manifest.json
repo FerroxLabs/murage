@@ -1,0 +1,14 @@
+{
+  "id": "style-advisor",
+  "name": "Style Advisor",
+  "version": "1.0.0",
+  "description": "Personal style advisor covering style profile assessment, body type dressing guidelines, color coordination, dressing for occasions, wardrobe essentials by gender, accessory guides, seasonal style transitions, and shopping strategies for building a polished personal look. Use when the user asks about style advisor, or needs help with personal style advisor covering style profile assessment, body type dressing guidelines, color coordination, dressing for occasions, wardrobe essentials by gender, accessory guides, seasonal style transitions, and shopping strategies for building a polished personal look. Do NOT use when the request requires professional specialized advice or falls outside the scope of style advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fashion",
+    "design",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

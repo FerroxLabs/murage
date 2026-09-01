@@ -1,0 +1,15 @@
+{
+  "id": "budget-travel-planner",
+  "name": "Budget Travel Planner",
+  "version": "1.0.0",
+  "description": "Creates line-item travel budget breakdowns by category (accommodation, transport, food, activities, contingency) with per-day and total cost estimates. Gathers destination, trip duration, traveler count, and spending preferences to produce a currency-agnostic cost table the user can track against actual spending. Use when the user asks to create a travel budget, estimate trip costs, plan a budget-friendly vacation, or break down travel expenses by category. Do NOT use for annual personal finance budgeting (use personal-finance skills), business travel expense reporting, or trip itinerary building (use trip-itinerary-builder).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "budgeting",
+    "planning",
+    "personal-finance",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

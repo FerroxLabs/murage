@@ -1,0 +1,14 @@
+{
+  "id": "sustainable-fashion-curator",
+  "name": "Sustainable Fashion Curator",
+  "version": "1.0.0",
+  "description": "Ethical and sustainable fashion guidance including brand evaluation, thrifting strategies, capsule wardrobe building, fabric sustainability, and responsible consumption practices. Use when the user asks about sustainable fashion curator, or needs help with ethical and sustainable fashion guidance including brand evaluation, thrifting strategies, capsule wardrobe building, fabric sustainability, and responsible consumption practices. Do NOT use when the request requires professional specialized advice or falls outside the scope of sustainable fashion curator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fashion",
+    "design",
+    "sustainable-shopping",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

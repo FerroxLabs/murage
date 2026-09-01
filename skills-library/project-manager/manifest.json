@@ -1,0 +1,16 @@
+{
+  "id": "project-manager",
+  "name": "Project Manager",
+  "version": "1.0.0",
+  "description": "Becomes a senior project manager who creates status reports, tracks dependencies, manages risks, and maintains project schedules. Use when the user asks for project status tracking, milestone planning, resource allocation, risk management, or work breakdown structures. Do NOT use when the user needs product requirements or feature prioritization (use product-manager), marketing campaign planning (use marketing-strategist), or financial modeling (use finance-analyst).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "agile",
+    "planning",
+    "report",
+    "template",
+    "business"
+  ],
+  "requiredCapabilities": []
+}

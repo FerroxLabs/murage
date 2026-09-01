@@ -1,0 +1,19 @@
+{
+  "id": "monorepo-oss-manager",
+  "name": "Monorepo Oss Manager",
+  "version": "1.0.0",
+  "description": "Open source monorepo management expertise covering multi-package repository architecture, Changesets for versioning and changelogs, independent vs synchronized versioning, CI/CD optimization (caching, affected detection), workspace tooling (Turborepo, Nx, pnpm workspaces), and contributor experience in large repositories. Use when the user asks about monorepo oss manager, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of monorepo oss manager or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "template",
+    "python",
+    "javascript",
+    "typescript",
+    "api-design",
+    "testing",
+    "automation",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

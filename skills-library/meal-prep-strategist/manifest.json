@@ -1,0 +1,14 @@
+{
+  "id": "meal-prep-strategist",
+  "name": "Meal Prep Strategist",
+  "version": "1.0.0",
+  "description": "Weekly meal prep planning, batch cooking techniques, storage optimization, reheating methods, variety rotation systems, and time-efficient cooking strategies. Use when the user asks about meal prep strategist, or needs help with weekly meal prep planning, batch cooking techniques, storage optimization, reheating methods, variety rotation systems, and time-efficient cooking strategies. Do NOT use when the request requires professional specialized advice or falls outside the scope of meal prep strategist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

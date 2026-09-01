@@ -1,0 +1,17 @@
+{
+  "id": "work-life-balance-audit",
+  "name": "Work Life Balance Audit",
+  "version": "1.0.0",
+  "description": "Structured evaluation of time allocation, role satisfaction, burnout indicators, and boundary effectiveness across work and personal domains. Produces a balance scorecard with specific recommendations for sustainable adjustment. Use when the user asks about work life balance audit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of work life balance audit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "time-management",
+    "template",
+    "guide",
+    "email",
+    "sleep",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

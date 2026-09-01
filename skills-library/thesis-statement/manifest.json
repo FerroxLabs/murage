@@ -1,0 +1,13 @@
+{
+  "id": "thesis-statement",
+  "name": "Thesis Statement",
+  "version": "1.0.0",
+  "description": "Crafts focused, arguable, specific thesis statements for academic papers, essays, and dissertations. Distinguishes between descriptive and argumentative thesis types and tests for strength. Use when the user asks to write a thesis statement, develop a central argument, or create the core claim for an academic paper or essay. Do NOT use for full paper structure (use research-paper-structure), abstract writing (use abstract-writing), or non-academic arguments (use different writing skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "writing",
+    "research"
+  ],
+  "requiredCapabilities": []
+}

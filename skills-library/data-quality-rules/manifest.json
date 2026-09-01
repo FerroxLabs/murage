@@ -1,0 +1,14 @@
+{
+  "id": "data-quality-rules",
+  "name": "Data Quality Rules",
+  "version": "1.0.0",
+  "description": "Produces a data quality rule set defining completeness, validity, consistency, accuracy, and uniqueness rules for each field in a dataset. Includes threshold values and alert conditions for automated monitoring. Use when the user asks to define data quality checks, set up data validation rules, create a data quality framework, or establish thresholds for data integrity monitoring. Do NOT use for spreadsheet-level input validation (use data-validation-setup), ETL pipeline design (use etl-pipeline-design), or data cleaning operations (use data-cleaning-protocol).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "analysis",
+    "checklist",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

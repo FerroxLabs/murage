@@ -1,0 +1,16 @@
+{
+  "id": "publish-blog-post",
+  "name": "Publish Blog Post",
+  "version": "1.0.0",
+  "description": "Guides the user through the complete blog post creation pipeline from research and briefing through writing, SEO optimization, proofreading, and scheduling for publication. Use when the user wants to publish a blog post end-to-end, needs a structured content pipeline, or wants to go from topic idea to published article with quality gates at each stage. Do NOT use for writing a blog post without a publishing workflow (use blog-post-writing), for SEO-only optimization (use seo-blog-post), or for building an ongoing content calendar (use create-content-calendar).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "blog-post",
+    "writing",
+    "seo",
+    "editing",
+    "step-by-step",
+    "content-creation"
+  ],
+  "requiredCapabilities": []
+}

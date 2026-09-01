@@ -1,0 +1,14 @@
+{
+  "id": "interview-question-anticipator",
+  "name": "Interview Question Anticipator",
+  "version": "1.0.0",
+  "description": "Analyzes a job description and company profile to generate the 10-15 most likely interview questions the user will face, categorized by type (behavioral, technical, situational, role-specific) with guidance on what each question is really testing. Produces a prioritized question list with preparation notes. Use when the user wants to predict interview questions, prepare for a specific interview, or understand what interviewers are looking for. Do NOT use for writing STAR answers (use behavioral-interview-prep), technical problem-solving frameworks (use technical-interview-prep), or company research (use company-research-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "interview-prep",
+    "career",
+    "analysis",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

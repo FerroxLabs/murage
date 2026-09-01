@@ -1,0 +1,14 @@
+{
+  "id": "car-detailing",
+  "name": "Car Detailing",
+  "version": "1.0.0",
+  "description": "Interior/exterior detailing techniques, paint correction, ceramic coating, product selection, and professional-grade results for vehicle care. Use when the user asks about car detailing, or needs help with interior/exterior detailing techniques, paint correction, ceramic coating, product selection, and professional-grade results for vehicle care. Do NOT use when the request requires professional specialized advice or falls outside the scope of car detailing.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automotive",
+    "home-maintenance",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

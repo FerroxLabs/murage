@@ -1,0 +1,19 @@
+{
+  "id": "long-distance-relationship",
+  "name": "Long Distance Relationship",
+  "version": "1.0.0",
+  "description": "Guide for maintaining and strengthening long-distance romantic relationships through communication strategies, visit planning, trust building, and creating a shared timeline toward closing the distance Use when the user asks about long distance relationship, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of long distance relationship or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "budgeting",
+    "nutrition",
+    "journaling",
+    "stress-management",
+    "testing",
+    "automation",
+    "research",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "line-editor",
+  "name": "Line Editor",
+  "version": "1.0.0",
+  "description": "Prose-level editing methodology covering sentence rhythm, word choice, show-don't-tell diagnosis and fixes, dialogue tag optimization, filtering word elimination, passive voice correction, prose tightening, and style sheet creation. Use when the user asks about line editor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "creative-writing",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

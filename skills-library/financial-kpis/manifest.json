@@ -1,0 +1,16 @@
+{
+  "id": "financial-kpis",
+  "name": "Financial Kpis",
+  "version": "1.0.0",
+  "description": "Defines financial KPI frameworks with metric name, formula, target, data source, review cadence, and accountability assignment for business performance tracking. Use when the user asks about financial KPIs, business metrics, key performance indicators, financial dashboards, or metric definition documents. Do NOT use for product metrics (use metrics-framework), P&L analysis (use pl-analysis), or personal finance tracking (use budget-planning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "planning",
+    "strategy",
+    "report",
+    "spreadsheets",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "tabletop-rpg-designer",
+  "name": "Tabletop Rpg Designer",
+  "version": "1.0.0",
+  "description": "Complete tabletop RPG design guide covering core resolution mechanics, character creation systems, combat design, skill systems, setting integration, character advancement, GM tools, one-page RPG format, playtest feedback collection, and publishing on DriveThruRPG and itch.io. Use when the user asks about tabletop rpg designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "game-design",
+    "tabletop-rpg",
+    "guide",
+    "game-development"
+  ],
+  "requiredCapabilities": []
+}

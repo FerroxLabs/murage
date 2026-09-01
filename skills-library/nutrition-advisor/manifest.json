@@ -1,0 +1,13 @@
+{
+  "id": "nutrition-advisor",
+  "name": "Nutrition Advisor",
+  "version": "1.0.0",
+  "description": "Evidence-based nutrition planning assistant that calculates macronutrient needs, builds meal plans aligned with USDA MyPlate guidelines, and provides guidance on nutrition for specific goals including muscle gain, fat loss, and endurance performance. Use when the user asks about nutrition advisor, or needs help with evidence-based nutrition planning assistant that calculates macronutrient needs, builds meal plans aligned with usda myplate guidelines, and provides guidance on nutrition for specific goals including muscle gain, fat loss, and endurance performance. Do NOT use when the request requires professional medical advice or falls outside the scope of nutrition advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "nutrition",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

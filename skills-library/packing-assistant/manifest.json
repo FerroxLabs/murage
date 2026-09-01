@@ -1,0 +1,14 @@
+{
+  "id": "packing-assistant",
+  "name": "Packing Assistant",
+  "version": "1.0.0",
+  "description": "Comprehensive packing list generator covering climate-based packing, trip-type lists for business, beach, hiking, and city trips, carry-on optimization, packing techniques including rolling and cubes, documents checklist, toiletries, electronics, and a universal packing template. Use when the user asks about packing assistant, or needs help with comprehensive packing list generator covering climate-based packing, trip-type lists for business, beach, hiking, and city trips, carry-on optimization, packing techniques including rolling and cubes, documents checklist, toiletries, electronics, and a universal packing template. Do NOT use when the request requires professional specialized advice or falls outside the scope of packing assistant.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "packing",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

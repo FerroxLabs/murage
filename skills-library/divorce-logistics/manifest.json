@@ -1,0 +1,14 @@
+{
+  "id": "divorce-logistics",
+  "name": "Divorce Logistics",
+  "version": "1.0.0",
+  "description": "Produces structured logistics checklists for the practical aspects of divorce including financial separation steps, legal document needs, housing transition planning, and co-parenting logistics frameworks. Focuses exclusively on the organizational and administrative tasks that need to happen during a divorce, not relationship assessment or emotional counseling. Use when the user asks about the practical steps of going through a divorce, separating finances, or organizing co-parenting logistics. Do NOT use for advice on whether to divorce, relationship counseling, custody legal strategy, or emotional processing of divorce.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "checklist",
+    "legal-literacy",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

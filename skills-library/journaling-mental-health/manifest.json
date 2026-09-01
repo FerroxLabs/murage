@@ -1,0 +1,15 @@
+{
+  "id": "journaling-mental-health",
+  "name": "Journaling Mental Health",
+  "version": "1.0.0",
+  "description": "Creates personalized mental health journaling practices using specific formats (mood tracking journal, gratitude log, cognitive reframing journal, stream-of-consciousness dump, prompt-based reflection). Gathers the user's goals and preferences, then produces journal templates, prompt sets, and a weekly journaling schedule. Use when the user asks about journaling for mental health, mood tracking journals, therapeutic writing, reflection prompts, or starting a journaling practice for emotional wellbeing. Do NOT use for clinical therapy journaling assignments, trauma processing writing, or journaling as a replacement for professional mental health support.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "self-care",
+    "journaling",
+    "emotional-health",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

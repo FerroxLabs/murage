@@ -1,0 +1,16 @@
+{
+  "id": "fundraising-narrative",
+  "name": "Fundraising Narrative",
+  "version": "1.0.0",
+  "description": "Structures a fundraising narrative for startup investors covering traction, market size, business model, use of funds, and milestone targets using standard VC pitch structure. Use when the user asks about fundraising pitch, investor narrative, raising capital, pitch deck story, or investment memo. Do NOT use for sales pitch decks (use sales-pitch-deck), personal loan applications, grant proposals (use grant-proposal-writing), or financial model creation (use financial-model-structure).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "planning",
+    "presentation",
+    "sales",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

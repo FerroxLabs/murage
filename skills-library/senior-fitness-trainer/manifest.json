@@ -1,0 +1,18 @@
+{
+  "id": "senior-fitness-trainer",
+  "name": "Senior Fitness Trainer",
+  "version": "1.0.0",
+  "description": "Design age-appropriate exercise programs focusing on balance, flexibility, strength, fall prevention, cardiovascular health, and sustainable motivation for older adults Use when the user asks about senior fitness trainer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of senior fitness trainer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "nutrition",
+    "breathing",
+    "habits",
+    "stress-management",
+    "checklist",
+    "beginner-friendly",
+    "advanced"
+  ],
+  "requiredCapabilities": []
+}

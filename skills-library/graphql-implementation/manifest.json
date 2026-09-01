@@ -1,0 +1,14 @@
+{
+  "id": "graphql-implementation",
+  "name": "Graphql Implementation",
+  "version": "1.0.0",
+  "description": "Guides expert-level graphql implementation implementation: api-design and frameworks decision frameworks, production-ready patterns, and concrete templates for graphql implementation workflows. Use when the user asks about graphql implementation, graphql implementation configuration, or api-design best practices for graphql projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "api-design",
+    "frameworks",
+    "optimization",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

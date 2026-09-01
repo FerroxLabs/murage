@@ -1,0 +1,14 @@
+{
+  "id": "test-strategy-design",
+  "name": "Test Strategy Design",
+  "version": "1.0.0",
+  "description": "Guides expert-level test strategy design implementation: architecture and best-practices decision frameworks, production-ready patterns, and concrete templates for test strategy design workflows. Use when the user asks about test strategy design, test strategy design configuration, or testing best practices for test projects. Do NOT use when the user needs a different testing quality capability -- check sibling skills in the testing quality subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "architecture",
+    "best-practices",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

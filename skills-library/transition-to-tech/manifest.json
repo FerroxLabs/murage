@@ -1,0 +1,15 @@
+{
+  "id": "transition-to-tech",
+  "name": "Transition To Tech",
+  "version": "1.0.0",
+  "description": "Complete career transition workflow for professionals from non-technical backgrounds who want to enter the technology industry. Covers honest self-assessment and role discovery, building technical skills through structured learning, creating a portfolio that demonstrates competence, applying strategically, and landing your first tech role. Use when the user wants to transition to tech or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "study-skills",
+    "interview-prep",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

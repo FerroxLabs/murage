@@ -1,0 +1,19 @@
+{
+  "id": "marriage-maintenance-planner",
+  "name": "Marriage Maintenance Planner",
+  "version": "1.0.0",
+  "description": "Proactive marriage maintenance guidance covering regular check-in rituals, intentional date planning, identifying and interrupting conflict patterns, growing together through life stages, and keeping the partnership vital. Use when the user asks about marriage maintenance planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of marriage maintenance planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "stress-management",
+    "research",
+    "planning",
+    "game-design",
+    "performing-arts",
+    "time-management",
+    "investing",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

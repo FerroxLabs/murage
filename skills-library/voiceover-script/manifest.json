@@ -1,0 +1,14 @@
+{
+  "id": "voiceover-script",
+  "name": "Voiceover Script",
+  "version": "1.0.0",
+  "description": "Writes a formatted voiceover script with conversational sentence length, emphasis marks, pause marks, pronunciation guides, and word count mapped to time estimates. Use when the user asks to write narration for a video, explainer, commercial, e-learning module, or any audio-only or audio-over-visual content. Do NOT use for on-camera video scripts with speaker direction (use video-script-writing), podcast episode content (use podcast-episode-planning), or presentation speaker notes (use speaker-notes-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "template",
+    "writing",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

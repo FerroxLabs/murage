@@ -1,0 +1,19 @@
+{
+  "id": "pkm-architect",
+  "name": "Pkm Architect",
+  "version": "1.0.0",
+  "description": "Design personal knowledge management systems using Zettelkasten, progressive summarization, and networked thought, with strategies for capture, connection, retrieval, and long-term knowledge growth. Use when the user asks about pkm architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of pkm architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "beginner-friendly",
+    "cloud",
+    "research",
+    "networking",
+    "best-practices",
+    "gardening",
+    "video-production",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

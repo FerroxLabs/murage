@@ -1,0 +1,14 @@
+{
+  "id": "midjourney-consistency",
+  "name": "Midjourney Consistency",
+  "version": "1.0.0",
+  "description": "Produces Midjourney consistency strategies using character reference (--cref), style reference (--sref), seed locking, and multi-image coherence techniques for reproducible visual series. Use when the user asks to maintain character consistency, create a series of matching images, use --cref or --sref in Midjourney, or reproduce a specific visual style across multiple generations. Do NOT use for single-image Midjourney prompting (use midjourney-prompting), other model consistency (model-specific), or prompt translation (use prompt-translation).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-image-generation",
+    "design",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

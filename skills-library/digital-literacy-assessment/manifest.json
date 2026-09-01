@@ -1,0 +1,19 @@
+{
+  "id": "digital-literacy-assessment",
+  "name": "Digital Literacy Assessment",
+  "version": "1.0.0",
+  "description": "Evaluate proficiency with digital tools, online security practices, digital communication effectiveness, and productivity technology to identify skill gaps and learning priorities Use when the user asks about digital literacy assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of digital literacy assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "template",
+    "guide",
+    "cloud",
+    "automation",
+    "analysis",
+    "research",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

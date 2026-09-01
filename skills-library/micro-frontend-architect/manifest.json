@@ -1,0 +1,13 @@
+{
+  "id": "micro-frontend-architect",
+  "name": "Micro Frontend Architect",
+  "version": "1.0.0",
+  "description": "Expert guidance for designing and implementing micro-frontend architectures using module federation, single-spa, routing strategies, shared state, and team coordination patterns. Use when the user asks about micro frontend architect, micro frontend architect best practices, or needs guidance on micro frontend architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "architecture"
+  ],
+  "requiredCapabilities": []
+}

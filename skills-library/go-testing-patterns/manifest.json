@@ -1,0 +1,14 @@
+{
+  "id": "go-testing-patterns",
+  "name": "Go Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level Go testing: table-driven tests, testify assertions, httptest for HTTP handlers, integration test patterns, benchmarks, and fuzz testing. Use when the user asks about Go testing, table-driven tests, testify, httptest, benchmarks, fuzz testing, Go test organization. Do NOT use when the user asks about Go project setup (use `go-project-setup`), Go idioms (use `go-idioms`), general testing concepts (use `unit-testing-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "go",
+    "testing",
+    "tdd",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

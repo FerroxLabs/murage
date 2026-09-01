@@ -1,0 +1,19 @@
+{
+  "id": "creative-collaboration-facilitator",
+  "name": "Creative Collaboration Facilitator",
+  "version": "1.0.0",
+  "description": "Guides creative professionals through co-creation frameworks, equitable credit allocation, collaboration contracts, conflict resolution, and shared ownership models for multi-artist and cross-disciplinary projects. Use when the user asks about creative collaboration facilitator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of creative collaboration facilitator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-industry",
+    "creative-writing",
+    "checklist",
+    "template",
+    "guide",
+    "cloud",
+    "marketing",
+    "performing-arts",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

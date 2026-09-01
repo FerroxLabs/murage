@@ -1,0 +1,14 @@
+{
+  "id": "occasion-dresser",
+  "name": "Occasion Dresser",
+  "version": "1.0.0",
+  "description": "Event-specific dressing guidance including dress code interpretation, outfit planning for formal and casual occasions, accessorizing strategies, and confidence-building style advice. Use when the user asks about occasion dresser, or needs help with event-specific dressing guidance including dress code interpretation, outfit planning for formal and casual occasions, accessorizing strategies, and confidence-building style advice. Do NOT use when the request requires professional specialized advice or falls outside the scope of occasion dresser.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fashion",
+    "design",
+    "guide",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

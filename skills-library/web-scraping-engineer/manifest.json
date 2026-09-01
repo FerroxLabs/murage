@@ -1,0 +1,14 @@
+{
+  "id": "web-scraping-engineer",
+  "name": "Web Scraping Engineer",
+  "version": "1.0.0",
+  "description": "Web scraping engineering expert covering Puppeteer and Playwright browser automation, headless scraping patterns, data extraction techniques, rate limiting and throttling, robots.txt compliance, anti-bot detection awareness, legal considerations, structured data extraction, and scraping architecture at scale. Use when the user asks about web scraping engineer, web scraping engineer best practices, or needs guidance on web scraping engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "web-development",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

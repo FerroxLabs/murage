@@ -1,0 +1,15 @@
+{
+  "id": "employment-contract-reader",
+  "name": "Employment Contract Reader",
+  "version": "1.0.0",
+  "description": "Guides users through key terms in employment contracts and offer letters, explaining compensation structures, benefits, restrictive covenants, termination provisions, and intellectual property assignments. Identifies negotiation leverage points and generates questions for attorney review. Use when the user has received a job offer letter or employment contract, wants to understand employment agreement terms, or needs to prepare for a negotiation conversation with an employer. Do NOT use for freelance or independent contractor agreements, executive compensation packages requiring specialized counsel, or legal advice on whether to accept an offer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "checklist",
+    "guide",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

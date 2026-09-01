@@ -1,0 +1,19 @@
+{
+  "id": "maintainer-toolkit",
+  "name": "Maintainer Toolkit",
+  "version": "1.0.0",
+  "description": "Manage open source projects effectively with issue triage, release management, community health practices, and burnout prevention strategies Use when the user asks about maintainer toolkit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of maintainer toolkit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "checklist",
+    "template",
+    "guide",
+    "api-design",
+    "automation",
+    "performing-arts",
+    "energy-efficiency",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

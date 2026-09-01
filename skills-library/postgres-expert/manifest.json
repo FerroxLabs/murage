@@ -1,0 +1,14 @@
+{
+  "id": "postgres-expert",
+  "name": "Postgres Expert",
+  "version": "1.0.0",
+  "description": "Advanced PostgreSQL mastery covering indexing strategies (GIN, GiST, BRIN, B-tree), table partitioning, pg_stat analysis, VACUUM tuning, connection pooling with PgBouncer, JSONB operations, full-text search, row-level security, replication topologies, and essential extensions like PostGIS and pg_cron. Use when the user asks about postgres expert, postgres expert best practices, or needs guidance on postgres expert implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "backend",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

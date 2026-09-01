@@ -1,0 +1,18 @@
+{
+  "id": "neurodiversity-parenting",
+  "name": "Neurodiversity Parenting",
+  "version": "1.0.0",
+  "description": "Guidance for parents of neurodivergent children including diagnosis navigation, IEP and 504 plan advocacy, strengths-based parenting approaches, and building supportive home environments. Use when the user asks about neurodiversity parenting, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of neurodiversity parenting or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "self-care",
+    "quick-reference",
+    "networking",
+    "neurodiversity",
+    "performing-arts",
+    "time-management"
+  ],
+  "requiredCapabilities": []
+}

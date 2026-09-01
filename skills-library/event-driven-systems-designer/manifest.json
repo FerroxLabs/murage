@@ -1,0 +1,14 @@
+{
+  "id": "event-driven-systems-designer",
+  "name": "Event Driven Systems Designer",
+  "version": "1.0.0",
+  "description": "Event-driven architecture expert covering event sourcing, CQRS, event storming, event schema design, event versioning, idempotency, ordering guarantees, event replay, dead letter handling, and choreography vs orchestration. Use when the user asks about event driven systems designer, event driven systems designer best practices, or needs guidance on event driven systems designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "backend",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

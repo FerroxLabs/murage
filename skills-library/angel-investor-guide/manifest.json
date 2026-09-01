@@ -1,0 +1,13 @@
+{
+  "id": "angel-investor-guide",
+  "name": "Angel Investor Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to angel investing covering deal flow sourcing, startup evaluation frameworks, term sheet analysis, valuation methods, portfolio construction strategy, due diligence processes, syndication and co-investing, legal structures, tax implications including QSBS benefits, and managing investments post-funding. Designed for accredited investors considering early-stage startup investments. Use when the user asks about angel investor guide, or needs help with comprehensive guide to angel investing covering deal flow sourcing, startup evaluation frameworks, term sheet analysis, valuation methods, portfolio construction strategy, due diligence processes, syndication and co-investing, legal structures, tax implications including qsbs benefits, and managing investments post-funding. Do NOT use when the request requires professional financial advice or falls outside the scope of angel investor guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

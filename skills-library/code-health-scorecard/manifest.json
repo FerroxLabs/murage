@@ -1,0 +1,19 @@
+{
+  "id": "code-health-scorecard",
+  "name": "Code Health Scorecard",
+  "version": "1.0.0",
+  "description": "Comprehensive codebase quality assessment that evaluates technical debt, code complexity, maintainability, and engineering practices to produce an actionable health scorecard. Use when the user asks about code health scorecard, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of code health scorecard or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "best-practices",
+    "template",
+    "guide",
+    "api-design",
+    "testing",
+    "cleaning",
+    "investing",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

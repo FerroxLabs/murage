@@ -1,0 +1,13 @@
+{
+  "id": "case-study-writing",
+  "name": "Case Study Writing",
+  "version": "1.0.0",
+  "description": "Writes customer case studies in challenge/solution/results format with quantified outcomes, pull quotes, and a narrative arc that demonstrates business value. Use when the user wants to write a case study, customer success story, or client testimonial document. Do NOT use for white papers (use `white-paper-writing`), blog posts (use `blog-post-writing`), or business proposals (use `business-proposal`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

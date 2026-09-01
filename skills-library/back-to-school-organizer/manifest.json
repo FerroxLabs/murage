@@ -1,0 +1,19 @@
+{
+  "id": "back-to-school-organizer",
+  "name": "Back To School Organizer",
+  "version": "1.0.0",
+  "description": "Helps families prepare for the school year with supply planning, routine building, extracurricular management, and transition strategies for smooth academic starts. Use when the user asks about back to school organizer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of back to school organizer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "event-planning",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "cloud",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

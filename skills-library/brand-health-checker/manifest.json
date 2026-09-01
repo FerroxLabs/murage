@@ -1,0 +1,19 @@
+{
+  "id": "brand-health-checker",
+  "name": "Brand Health Checker",
+  "version": "1.0.0",
+  "description": "Brand health assessment evaluating brand perception, consistency, positioning, visual identity, and competitive standing to produce an actionable brand health scorecard. Use when the user asks about brand health checker, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of brand health checker or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "budgeting",
+    "checklist",
+    "template",
+    "analysis",
+    "research",
+    "marketing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

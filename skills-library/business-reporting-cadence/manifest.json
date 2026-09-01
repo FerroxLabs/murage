@@ -1,0 +1,14 @@
+{
+  "id": "business-reporting-cadence",
+  "name": "Business Reporting Cadence",
+  "version": "1.0.0",
+  "description": "Designs a business reporting cadence with weekly, monthly, and quarterly report structures including audience, content, format, and distribution list for each. Produces report templates with section headings and chart placeholders. Use when the user asks to set up a reporting schedule, design recurring business reports, standardize report formats across teams, or define who gets what report and when. Do NOT use for dashboard design (use bi-dashboard-spec), individual KPI definition (use kpi-definition), or data storytelling for a one-time presentation (use data-storytelling).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "report",
+    "template",
+    "planning",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

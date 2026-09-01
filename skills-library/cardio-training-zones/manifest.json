@@ -1,0 +1,14 @@
+{
+  "id": "cardio-training-zones",
+  "name": "Cardio Training Zones",
+  "version": "1.0.0",
+  "description": "Explains heart rate training zones (Zone 1 through Zone 5) with calculation methods, training adaptations per zone, and how to structure a cardio program using zone-based training. Produces a personalized zone chart and weekly cardio plan organized by zone targets. Use when the user asks about heart rate zones, Zone 2 training, cardio training intensity, how to calculate training zones, or how to structure cardio sessions by intensity. Do NOT use for running-specific training plans (use running-training-plan), HIIT workout design (use hiit-workout-design), or heart rate monitoring for medical purposes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "running",
+    "workout-planning",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

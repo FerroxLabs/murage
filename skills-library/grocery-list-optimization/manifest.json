@@ -1,0 +1,14 @@
+{
+  "id": "grocery-list-optimization",
+  "name": "Grocery List Optimization",
+  "version": "1.0.0",
+  "description": "Builds organized grocery lists optimized by store section, budget strategies, waste reduction techniques, and pantry staple management. Produces a categorized shopping list with quantity estimates, budget-saving notes, and a pantry checklist system. Use when the user asks about organizing a grocery list, reducing grocery spending, minimizing food waste through smarter shopping, or building a pantry staples inventory. Do NOT use for meal planning (use meal-planning-framework), macro calculations (use macro-calculation), or specific recipe ingredients.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "meal-planning",
+    "checklist",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

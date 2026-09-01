@@ -1,0 +1,14 @@
+{
+  "id": "go-api-patterns",
+  "name": "Go Api Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level Go HTTP API development: handler patterns, middleware chains, graceful shutdown, OpenAPI generation, request validation, and standard library HTTP server patterns. Use when the user asks about Go API, HTTP handlers, middleware, graceful shutdown, OpenAPI, Go web server, request validation. Do NOT use when the user asks about Go idioms (use `go-idioms`), Go error handling (use `go-error-handling`), REST API design concepts (use `rest-api-design`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "go",
+    "backend",
+    "api-design",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

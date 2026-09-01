@@ -1,0 +1,14 @@
+{
+  "id": "recipe-modification-diet",
+  "name": "Recipe Modification Diet",
+  "version": "1.0.0",
+  "description": "Adapts standard recipes for common dietary restrictions including gluten-free, dairy-free, vegan, low-sodium, and egg-free modifications. Provides ingredient substitution ratios, texture and flavor impact notes, and technique adjustments for each modification type. Use when the user asks about modifying a recipe for dietary restrictions, substituting ingredients for allergies, making a recipe gluten-free or dairy-free, or adapting a dish for someone with dietary limitations. Do NOT use for clinical dietary management, allergy severity assessment, or creating new recipes from scratch.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "cooking",
+    "guide",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "climate-literacy-educator",
+  "name": "Climate Literacy Educator",
+  "version": "1.0.0",
+  "description": "Climate science fundamentals, data interpretation, communication strategies, and tools for explaining climate concepts clearly to diverse audiences Use when the user asks about climate literacy educator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of climate literacy educator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "budgeting",
+    "stress-management",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "cloud"
+  ],
+  "requiredCapabilities": []
+}

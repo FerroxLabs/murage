@@ -1,0 +1,14 @@
+{
+  "id": "weight-management-frameworks",
+  "name": "Weight Management Frameworks",
+  "version": "1.0.0",
+  "description": "Teaches the frameworks behind weight management including caloric surplus and deficit math, sustainable rate-of-change guidelines, tracking approaches, and plateau troubleshooting without prescribing specific diets or caloric targets for individuals. Use when the user asks about weight loss or weight gain principles, understanding caloric deficits, sustainable rate of body weight change, or tracking strategies for weight management. Do NOT use for eating disorder management, clinical weight management, specific diet prescriptions, supplement recommendations, or body dysmorphia concerns.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "guide",
+    "strategy",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

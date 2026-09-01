@@ -1,0 +1,15 @@
+{
+  "id": "conduct-code-review-round",
+  "name": "Conduct Code Review Round",
+  "version": "1.0.0",
+  "description": "Orchestrates a thorough code review process by chaining four engineering skills into a structured review pipeline. Covers code quality assessment, security review, performance analysis, and documentation of review findings with actionable feedback. Use when conducting a formal code review of a pull request or a batch review of recent changes. Do NOT use for automated-only code scanning, pair programming sessions, or architecture reviews that do not examine specific code changes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "security",
+    "optimization",
+    "step-by-step",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

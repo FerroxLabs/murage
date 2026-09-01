@@ -1,0 +1,14 @@
+{
+  "id": "monorepo-manager",
+  "name": "Monorepo Manager",
+  "version": "1.0.0",
+  "description": "Monorepo management covering tool comparison (Nx, Turborepo, Lerna, Bazel), workspace configuration, dependency management, build caching, affected detection, task pipelines, CI optimization, and migration from polyrepo. Use when the user asks about monorepo manager, monorepo manager best practices, or needs guidance on monorepo manager implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "architecture",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

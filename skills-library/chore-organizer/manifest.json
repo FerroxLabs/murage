@@ -1,0 +1,14 @@
+{
+  "id": "chore-organizer",
+  "name": "Chore Organizer",
+  "version": "1.0.0",
+  "description": "Family chore management system with age-appropriate task assignments, chore chart creation, reward systems, rotation schedules, and frameworks for teaching responsibility and shared household contribution. Use when the user asks about chore organizer, or needs help with family chore management system with age-appropriate task assignments, chore chart creation, reward systems, rotation schedules, and frameworks for teaching responsibility and shared household contribution. Do NOT use when the request requires professional specialized advice or falls outside the scope of chore organizer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "family-events",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

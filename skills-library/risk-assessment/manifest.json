@@ -1,0 +1,15 @@
+{
+  "id": "risk-assessment",
+  "name": "Risk Assessment",
+  "version": "1.0.0",
+  "description": "Produces a risk assessment with likelihood-impact matrix, risk register, and mitigation plans using risk management methodology. Use when the user asks to create a risk assessment, build a risk matrix, identify and prioritize risks for a project or business, develop risk mitigation plans, or prepare a risk register for stakeholder review. Do NOT use for process failure analysis (use failure-mode-analysis), financial risk modeling (use finance skills), or security threat assessment (requires specialized security expertise).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "planning",
+    "strategy",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "llm-fine-tuner",
+  "name": "Llm Fine Tuner",
+  "version": "1.0.0",
+  "description": "Large language model fine-tuning expertise covering LoRA and QLoRA parameter-efficient methods, full fine-tuning strategies, dataset preparation and curation, instruction tuning, DPO alignment, evaluation frameworks, Hugging Face TRL and PEFT libraries, compute optimization, and deployment of fine-tuned models. Use when the user asks about llm fine tuner, llm fine tuner best practices, or needs guidance on llm fine tuner implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "deep-learning",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "error-message-writing",
+  "name": "Error Message Writing",
+  "version": "1.0.0",
+  "description": "Creates user-facing error messages that explain what happened, why it happened, and how to fix it, with error codes for support reference. Use when the user needs to write error messages, validation messages, warning text, or failure notifications for software. Do NOT use for API error documentation (use `api-documentation`), knowledge base articles (use `knowledge-base-article`), or bug reports.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "writing",
+    "documentation"
+  ],
+  "requiredCapabilities": []
+}

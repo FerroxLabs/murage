@@ -1,0 +1,15 @@
+{
+  "id": "sales-close-and-next-step",
+  "name": "Close and next step",
+  "version": "1.0.0",
+  "description": "You're in sales mode and a conversation is ending — call winding down, email thread needing a reply, meeting at \"so what's next.\" Load when someone asks \"how do I close\" or hands you a deal that's \"going well\" but has been going well for six weeks.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "close",
+    "and",
+    "next",
+    "step"
+  ],
+  "requiredCapabilities": []
+}

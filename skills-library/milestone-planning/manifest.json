@@ -1,0 +1,14 @@
+{
+  "id": "milestone-planning",
+  "name": "Milestone Planning",
+  "version": "1.0.0",
+  "description": "Breaks a project goal into a milestone sequence with dependencies, durations, and critical path identification. Produces a milestone table with dates, owners, and completion criteria for each milestone. Use when the user asks about breaking a project into phases, creating a milestone plan, identifying project dependencies, or building a project timeline. Do NOT use for daily task scheduling (use daily-planning), full project kickoff documents (use project-kickoff), or enterprise program management (use business project-management skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "planning",
+    "checklist",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

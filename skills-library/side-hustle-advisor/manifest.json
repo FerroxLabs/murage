@@ -1,0 +1,13 @@
+{
+  "id": "side-hustle-advisor",
+  "name": "Side Hustle Advisor",
+  "version": "1.0.0",
+  "description": "Side income planning covering skills assessment, market opportunity analysis, time investment vs income matrix, popular side hustles by skill type, legal and tax considerations for 1099 income, scaling strategies, and passive income ideas. Use when the user asks about side hustle advisor, or needs help with side income planning covering skills assessment, market opportunity analysis, time investment vs income matrix, popular side hustles by skill type, legal and tax considerations for 1099 income, scaling strategies, and passive income ideas. Do NOT use when the request requires professional financial advice or falls outside the scope of side hustle advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "entrepreneurship",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

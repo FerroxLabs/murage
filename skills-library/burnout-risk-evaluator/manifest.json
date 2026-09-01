@@ -1,0 +1,16 @@
+{
+  "id": "burnout-risk-evaluator",
+  "name": "Burnout Risk Evaluator",
+  "version": "1.0.0",
+  "description": "Evidence-based burnout risk assessment incorporating Maslach Burnout Inventory dimensions, environmental risk factors, early warning sign identification, and personalized intervention strategies for prevention and recovery. Use when the user asks about burnout risk evaluator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of burnout risk evaluator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "health-wellness",
+    "research",
+    "email",
+    "sleep",
+    "investing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "voiceprint-voice-compile",
+  "name": "voice-compile",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Voiceprint specialist. Compile produces the deliverable — the markdown file the user pastes into every model from now on.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "voiceprint",
+    "voice",
+    "compile"
+  ],
+  "requiredCapabilities": []
+}

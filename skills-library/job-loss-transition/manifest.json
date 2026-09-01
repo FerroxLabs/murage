@@ -1,0 +1,14 @@
+{
+  "id": "job-loss-transition",
+  "name": "Job Loss Transition",
+  "version": "1.0.0",
+  "description": "Produces structured transition plans for immediate financial stabilization after job loss, covering 30-day action plans, benefits continuation checklists (COBRA timeline, unemployment filing), expense reduction frameworks, and job search reactivation sequences. Focuses on the immediate practical steps to stabilize finances and relaunch a career search within the first 30-90 days. Use when the user asks about what to do after losing a job, managing finances during unemployment, or organizing a job loss recovery plan. Do NOT use for long-term career coaching (use career-development skills), detailed job search strategy (use job search skills), or mental health treatment for job loss depression.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-finance",
+    "career",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

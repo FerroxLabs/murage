@@ -1,0 +1,14 @@
+{
+  "id": "docs-site-builder",
+  "name": "Docs Site Builder",
+  "version": "1.0.0",
+  "description": "Expert guidance for building documentation sites with Docusaurus, MkDocs, and VitePress, covering setup, customization, content organization, search, versioning, and deployment. Use when the user asks about docs site builder, docs site builder best practices, or needs guidance on docs site builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "guide",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

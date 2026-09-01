@@ -1,0 +1,13 @@
+{
+  "id": "rejection-letter",
+  "name": "Rejection Letter",
+  "version": "1.0.0",
+  "description": "Writes professional rejection letters for job candidates, proposals, vendor bids, and partnership requests that maintain goodwill while delivering a clear decision. Use when the user needs to decline an application, proposal, or request formally. Do NOT use for general business letters (use `business-letter`), conflict resolution emails (use `conflict-resolution-email`), or performance improvement plans (use `pip-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "email",
+    "business-writing"
+  ],
+  "requiredCapabilities": []
+}

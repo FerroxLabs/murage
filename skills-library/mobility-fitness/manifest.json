@@ -1,0 +1,18 @@
+{
+  "id": "mobility-fitness",
+  "name": "Mobility Fitness",
+  "version": "1.0.0",
+  "description": "Exercise guide for older adults covering fall prevention, balance training, flexibility programs, low-impact cardio, strength maintenance, chair exercises, walking programs, and aquatic exercise for maintaining independence and quality of life. Use when the user asks about mobility fitness, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of mobility fitness or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "breathing",
+    "stress-management",
+    "guide",
+    "beginner-friendly",
+    "quick-reference",
+    "research",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

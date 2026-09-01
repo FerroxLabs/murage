@@ -1,0 +1,14 @@
+{
+  "id": "business-plan",
+  "name": "Business Plan",
+  "version": "1.0.0",
+  "description": "Produces a completed one-page business plan using Lean Canvas or traditional format covering problem, solution, market, revenue model, and key metrics. Use when the user asks to create a business plan, write a business plan summary, outline a business model, or structure a startup idea on paper. Do NOT use for pitch deck narrative (use sales-pitch-deck), financial modeling detail (use financial-model-structure in a future plan), or competitive landscape analysis (use competitive-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "planning",
+    "entrepreneurship",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

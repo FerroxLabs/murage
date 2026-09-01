@@ -1,0 +1,19 @@
+{
+  "id": "video-production-quality-audit",
+  "name": "Video Production Quality Audit",
+  "version": "1.0.0",
+  "description": "Comprehensive video production evaluation assessing technical quality, storytelling effectiveness, editing proficiency, and production value. Produces a scored audit with specific recommendations for improving video content across any platform or purpose. Use when the user asks about video production quality audit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of video production quality audit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "design",
+    "budgeting",
+    "template",
+    "guide",
+    "planning",
+    "performing-arts",
+    "video-production",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

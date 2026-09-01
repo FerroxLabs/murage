@@ -1,0 +1,19 @@
+{
+  "id": "morning-routine-builder",
+  "name": "Morning Routine Builder",
+  "version": "1.0.0",
+  "description": "Practical morning routine design covering essential components, optimal sequencing, habit stacking techniques, weekend variations, troubleshooting common failures, and building a routine that actually sticks. Use when the user asks about morning routine builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of morning routine builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "time-management",
+    "automation",
+    "research",
+    "planning",
+    "podcast",
+    "email",
+    "sleep",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

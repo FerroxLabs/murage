@@ -1,0 +1,13 @@
+{
+  "id": "stress-manager",
+  "name": "Stress Manager",
+  "version": "1.0.0",
+  "description": "Comprehensive stress management system providing assessment tools, evidence-based coping strategies (problem-focused and emotion-focused), workplace stress solutions, burnout detection and recovery protocols, relaxation technique catalog, and time management frameworks for stress reduction. Use when the user asks about stress manager, or needs help with comprehensive stress management system providing assessment tools, evidence-based coping strategies (problem-focused and emotion-focused), workplace stress solutions, burnout detection and recovery protocols, relaxation technique catalog, and time management frameworks for stress reduction. Do NOT use when the request requires professional medical advice or falls outside the scope of stress manager.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

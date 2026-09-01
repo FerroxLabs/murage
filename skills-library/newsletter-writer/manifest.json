@@ -1,0 +1,13 @@
+{
+  "id": "newsletter-writer",
+  "name": "Newsletter Writer",
+  "version": "1.0.0",
+  "description": "Technical newsletter creation expert covering newsletter structure, curated link formats, original commentary, subscriber growth, email deliverability, A/B testing subject lines, content sourcing, publication cadence, and monetization. Use when the user asks about newsletter writer, newsletter writer best practices, or needs guidance on newsletter writer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "newsletter"
+  ],
+  "requiredCapabilities": []
+}

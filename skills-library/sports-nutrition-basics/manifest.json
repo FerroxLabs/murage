@@ -1,0 +1,14 @@
+{
+  "id": "sports-nutrition-basics",
+  "name": "Sports Nutrition Basics",
+  "version": "1.0.0",
+  "description": "Teaches pre-workout, intra-workout, and post-workout nutrition timing frameworks with carbohydrate and protein targets for active individuals. Covers fueling strategies for endurance, strength, and general fitness training without prescribing specific foods for specific people. Use when the user asks about workout nutrition timing, what to eat before or after exercise, sports nutrition fundamentals, or fueling for athletic performance. Do NOT use for clinical sports nutrition, eating disorder management, supplement recommendations, or competition-specific nutrition periodization.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "fitness",
+    "strategy",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

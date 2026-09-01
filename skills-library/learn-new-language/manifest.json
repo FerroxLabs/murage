@@ -1,0 +1,15 @@
+{
+  "id": "learn-new-language",
+  "name": "Learn New Language",
+  "version": "1.0.0",
+  "description": "Structured language acquisition workflow from initial assessment and method selection through immersion, deliberate practice, and formal certification for achieving real-world fluency in a new language. Use when the user wants to learn new language or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "language-learning",
+    "study-skills",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

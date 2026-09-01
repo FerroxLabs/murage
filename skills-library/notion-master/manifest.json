@@ -1,0 +1,19 @@
+{
+  "id": "notion-master",
+  "name": "Notion Master",
+  "version": "1.0.0",
+  "description": "Advanced Notion workspace design covering database architecture, relations and rollups, templates, dashboard creation, team workspaces, formulas, API integrations, and using Notion as a CRM, project manager, and knowledge wiki. Use when the user asks about notion master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of notion master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "journaling",
+    "template",
+    "advanced",
+    "api-design",
+    "testing",
+    "automation",
+    "research",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

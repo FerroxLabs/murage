@@ -1,0 +1,14 @@
+{
+  "id": "difficult-conversations-navigator",
+  "name": "Difficult Conversations Navigator",
+  "version": "1.0.0",
+  "description": "Preparation frameworks for hard conversations, emotional regulation techniques, active listening, repair after conflict, and follow-up strategies for productive dialogue. Use when the user asks about difficult conversations navigator, or needs help with preparation frameworks for hard conversations, emotional regulation techniques, active listening, repair after conflict, and follow-up strategies for productive dialogue. Do NOT use when the request requires professional specialized advice or falls outside the scope of difficult conversations navigator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "step-by-step",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

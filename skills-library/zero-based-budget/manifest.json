@@ -1,0 +1,14 @@
+{
+  "id": "zero-based-budget",
+  "name": "Zero Based Budget",
+  "version": "1.0.0",
+  "description": "Builds a zero-based budget where every dollar of income is assigned to a specific spending, saving, or debt category so that income minus all allocations equals exactly zero. Produces a fully populated allocation table with assignment rationale for each category. Use when the user asks about zero-based budgeting, wants to assign every dollar a job, or wants maximum control over their monthly spending. Do NOT use for quick percentage-based budgets (use fifty-thirty-twenty-budget), investment allocation, or business budgeting.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "budgeting",
+    "personal-finance",
+    "savings",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

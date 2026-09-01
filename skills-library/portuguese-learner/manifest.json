@@ -1,0 +1,19 @@
+{
+  "id": "portuguese-learner",
+  "name": "Portuguese Learner",
+  "version": "1.0.0",
+  "description": "Portuguese language learning expertise covering Brazilian vs European Portuguese differences, pronunciation and phonology, essential grammar patterns, cultural context and etiquette, study strategies, CELPE-Bras exam preparation, practical conversation patterns, and curated resources for self-directed Portuguese acquisition at all levels. Use when the user asks about portuguese learner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of portuguese learner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "language-learning",
+    "stress-management",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "performing-arts",
+    "cooking",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

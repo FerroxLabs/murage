@@ -1,0 +1,16 @@
+{
+  "id": "thank-you-email-writer",
+  "name": "Thank You Email Writer",
+  "version": "1.0.0",
+  "description": "Writes a post-interview thank-you email that reinforces the user's candidacy, references a specific conversation moment from the interview, and includes a natural follow-up question. Produces a complete email with subject line ready to send within 24 hours of the interview. Use when the user just finished an interview and wants to send a thank-you email, needs help writing a follow-up after an interview, or wants to reinforce their candidacy. Do NOT use for cold outreach emails (use cold-outreach-email), recruiter messages (use recruiter-outreach), or networking messages (use networking-message-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "interview-prep",
+    "career",
+    "email",
+    "writing",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

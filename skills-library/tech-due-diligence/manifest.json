@@ -1,0 +1,19 @@
+{
+  "id": "tech-due-diligence",
+  "name": "Tech Due Diligence",
+  "version": "1.0.0",
+  "description": "Technical due diligence for acquisitions and investments covering code quality audits, architecture reviews, team capability assessments, infrastructure evaluation, security posture analysis, scalability assessment, technical debt quantification, and risk scoring. Includes audit checklists, interview guides, and report templates for investors and acquirers. Use when the user asks about tech due diligence, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of tech due diligence or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "strategy",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "api-design",
+    "cloud",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

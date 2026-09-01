@@ -1,0 +1,14 @@
+{
+  "id": "dbt-engineer",
+  "name": "Dbt Engineer",
+  "version": "1.0.0",
+  "description": "Deep expertise in dbt (data build tool) covering model design, testing strategies, documentation, materialization selection, custom macros, incremental patterns, package management, CI/CD integration, and performance optimization for building reliable, maintainable transformation layers in modern data stacks. Use when the user asks about dbt engineer, dbt engineer best practices, or needs guidance on dbt engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "guide",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

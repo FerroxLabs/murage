@@ -1,0 +1,15 @@
+{
+  "id": "nda-clause-explainer",
+  "name": "Nda Clause Explainer",
+  "version": "1.0.0",
+  "description": "Provides a clause-by-clause breakdown of non-disclosure agreements (NDAs), explaining what each provision means, common variations, red flags, and questions to ask before signing. Covers mutual vs. unilateral NDAs, definition of confidential information, exclusions, term, remedies, and non-solicitation riders. Use when the user has an NDA to review, wants to understand NDA terminology, or needs to prepare questions for an attorney about a confidentiality agreement. Do NOT use for drafting NDAs, advising whether to sign, or reviewing other contract types (use contract-basics-explainer for general contracts).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "guide",
+    "checklist",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "shell-scripter",
+  "name": "Shell Scripter",
+  "version": "1.0.0",
+  "description": "Shell scripting mastery. shell scripting patterns, error handling (set -euo pipefail), argument parsing, signal handling, process management, text processing (awk, sed, jq), portable scripts, script testing, common utility scripts. Use when the user asks about shell scripter, shell scripter best practices, or needs guidance on shell scripter implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "shell-scripting",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

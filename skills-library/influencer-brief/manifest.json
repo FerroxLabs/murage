@@ -1,0 +1,15 @@
+{
+  "id": "influencer-brief",
+  "name": "Influencer Brief",
+  "version": "1.0.0",
+  "description": "Produces a completed creator/influencer brief with brand context, campaign goal, content guidance, deliverables, and dos/don'ts for influencer marketing partnerships. Use when the user asks to create an influencer brief, plan a creator collaboration, write guidelines for sponsored content, or structure an influencer marketing partnership. Do NOT use for PR media pitches (use pr-pitch), social media strategy (use social-media-strategy), or paid ad copy written in-house (use paid-ad-copy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "social-media",
+    "planning",
+    "template",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

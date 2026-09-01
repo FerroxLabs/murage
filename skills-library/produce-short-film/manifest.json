@@ -1,0 +1,15 @@
+{
+  "id": "produce-short-film",
+  "name": "Produce Short Film",
+  "version": "1.0.0",
+  "description": "End-to-end short film production workflow from script development through budgeting, crew assembly, principal photography, post-production, and festival distribution. Covers screenwriting, production planning, directing, editing, sound design, color grading, and the film festival submission strategy needed to get your short film seen. Use when the user wants to produce short film or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "editing",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

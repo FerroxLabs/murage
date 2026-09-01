@@ -1,0 +1,14 @@
+{
+  "id": "text-mining-protocol",
+  "name": "Text Mining Protocol",
+  "version": "1.0.0",
+  "description": "Produces a text mining protocol: defines the corpus, selects the analysis type (frequency, collocation, topic modeling, named entity extraction), specifies preprocessing steps, and produces the output interpretation framework. Use when the user asks to analyze a text corpus computationally, extract patterns from documents, identify topics in a collection of texts, or build a text mining pipeline for unstructured data. Do NOT use for sentiment classification (use sentiment-analysis-guide), qualitative coding of interviews (use qualitative-coding), survey question design (use survey-design), or competitive intelligence gathering (use competitive-intelligence).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "analysis",
+    "data-science",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

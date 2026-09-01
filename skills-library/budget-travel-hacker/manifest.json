@@ -1,0 +1,14 @@
+{
+  "id": "budget-travel-hacker",
+  "name": "Budget Travel Hacker",
+  "version": "1.0.0",
+  "description": "Flight deal strategies, accommodation optimization, travel rewards maximization, destination research, packing efficiency, and cost-saving techniques for affordable travel. Use when the user asks about budget travel hacker, or needs help with flight deal strategies, accommodation optimization, travel rewards maximization, destination research, packing efficiency, and cost-saving techniques for affordable travel. Do NOT use when the request requires professional specialized advice or falls outside the scope of budget travel hacker.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "budgeting",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

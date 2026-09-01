@@ -1,0 +1,15 @@
+{
+  "id": "tabletop-rpg-campaign-builder",
+  "name": "Tabletop Rpg Campaign Builder",
+  "version": "1.0.0",
+  "description": "Provides an intermediate framework for building tabletop RPG campaigns: session zero checklist (safety tools, tone, themes, character creation guidelines), world premise template, encounter pacing structure (3-act session format), NPC creation framework, and session planning templates. System-agnostic but includes examples for popular rule systems. Use when the user wants to run a tabletop RPG campaign, design a game world, prepare session zero, structure encounters, or create NPCs. Do NOT use for board game selection (use board-game-selection-guide), video game strategy guides (use video-game-strategy-guide-writer), or creative fiction writing (use writing category skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tabletop-rpg",
+    "planning",
+    "template",
+    "creative-writing",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

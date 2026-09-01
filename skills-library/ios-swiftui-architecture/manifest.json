@@ -1,0 +1,14 @@
+{
+  "id": "ios-swiftui-architecture",
+  "name": "Ios Swiftui Architecture",
+  "version": "1.0.0",
+  "description": "Guides expert-level ios swiftui architecture implementation: swift and architecture decision frameworks, production-ready patterns, and concrete templates for ios swiftui architecture workflows. Use when the user asks about ios swiftui architecture, ios swiftui architecture configuration, or mobile best practices for ios projects. Do NOT use when the user needs a different mobile development capability -- check sibling skills in the mobile development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "swift",
+    "architecture",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

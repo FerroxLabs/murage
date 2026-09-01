@@ -1,0 +1,14 @@
+{
+  "id": "etl-architect",
+  "name": "Etl Architect",
+  "version": "1.0.0",
+  "description": "Expert ETL pipeline design covering extract patterns (CDC, full load, incremental), transform strategies (SCD types, data cleansing), load patterns (upsert, merge), error handling, data quality checks, scheduling, and orchestration tools for building reliable data integration systems. Use when the user asks about etl architect, etl architect best practices, or needs guidance on etl architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "automation",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

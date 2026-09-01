@@ -1,0 +1,14 @@
+{
+  "id": "expense-tracking-setup",
+  "name": "Expense Tracking Setup",
+  "version": "1.0.0",
+  "description": "Designs a personal expense tracking system with categories, tracking method, review cadence, and weekly reconciliation routine. Produces a complete tracking template the user can implement immediately with their own spending data. Use when the user asks about tracking expenses, categorizing spending, setting up a spending log, or creating an expense tracking system. Do NOT use for creating a full budget (use budget-planning), business expense reporting, or investment tracking.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "budgeting",
+    "personal-finance",
+    "expenses",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

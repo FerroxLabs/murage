@@ -1,0 +1,16 @@
+{
+  "id": "manager-readiness-assessment",
+  "name": "Manager Readiness Assessment",
+  "version": "1.0.0",
+  "description": "Evaluate readiness for management roles by assessing leadership competencies, communication ability, delegation skills, emotional intelligence, and team development capacity Use when the user asks about manager readiness assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of manager readiness assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "template",
+    "guide",
+    "analysis",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

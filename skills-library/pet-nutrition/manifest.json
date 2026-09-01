@@ -1,0 +1,14 @@
+{
+  "id": "pet-nutrition",
+  "name": "Pet Nutrition",
+  "version": "1.0.0",
+  "description": "Pet nutrition guide covering how to read pet food labels and AAFCO standards, feeding schedules by age and size, raw diet considerations, prescription diets, treats and portions, toxic foods lists for dogs and cats, weight management, hydration needs, and breed-specific nutritional requirements. Use when the user asks about pet nutrition, or needs help with pet nutrition guide covering how to read pet food labels and aafco standards, feeding schedules by age and size, raw diet considerations, prescription diets, treats and portions, toxic foods lists for dogs and cats, weight management, hydration needs, and breed-specific nutritional requirements. Do NOT use when the request requires professional specialized advice or falls outside the scope of pet nutrition.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "guide",
+    "health-wellness",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

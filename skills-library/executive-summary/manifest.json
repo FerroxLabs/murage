@@ -1,0 +1,13 @@
+{
+  "id": "executive-summary",
+  "name": "Executive Summary",
+  "version": "1.0.0",
+  "description": "Distills longer documents into one-page executive summaries with key findings, recommendations, and decision-ready formatting for senior leadership. Use when the user needs to summarize a report, proposal, or analysis for executive review. Do NOT use for full business reports (use `business-report`), stakeholder updates (use `stakeholder-update`), or meeting notes (use `meeting-notes`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "report",
+    "writing",
+    "business-writing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "regression-guide",
+  "name": "Regression Guide",
+  "version": "1.0.0",
+  "description": "Applies regression analysis to a business question. Sets up the regression model, interprets coefficients and p-values in plain language, checks assumption violations, and translates model output into a business recommendation. Use when the user wants to predict one variable from others or understand which factors drive an outcome. Do NOT use for simple correlation between two variables (use correlation-analysis), A/B test result interpretation (use hypothesis-testing), or chart creation (use chart-type-selector).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "statistics",
+    "analysis",
+    "data-science",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

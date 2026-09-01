@@ -1,0 +1,19 @@
+{
+  "id": "scuba-diving-intro",
+  "name": "Scuba Diving Intro",
+  "version": "1.0.0",
+  "description": "Guide to scuba diving including certification paths, equipment overview, dive physics, dive planning, safety procedures, underwater navigation, marine life identification, and dive logging. Use when the user asks about scuba diving intro, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of scuba diving intro or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "hiking",
+    "budgeting",
+    "breathing",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "automation",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

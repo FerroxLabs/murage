@@ -1,0 +1,14 @@
+{
+  "id": "pet-health-checker",
+  "name": "Pet Health Checker",
+  "version": "1.0.0",
+  "description": "Pet health awareness guide covering normal vital signs, common illness symptoms for dogs and cats, vaccination schedules, dental care, parasite prevention, senior pet care, emergency signs requiring immediate vet visits, and wellness checkup schedules. Use when the user asks about pet health checker, or needs help with pet health awareness guide covering normal vital signs, common illness symptoms for dogs and cats, vaccination schedules, dental care, parasite prevention, senior pet care, emergency signs requiring immediate vet visits, and wellness checkup schedules. Do NOT use when the request requires professional specialized advice or falls outside the scope of pet health checker.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "guide",
+    "health-wellness",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

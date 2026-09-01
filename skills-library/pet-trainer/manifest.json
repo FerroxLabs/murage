@@ -1,0 +1,14 @@
+{
+  "id": "pet-trainer",
+  "name": "Pet Trainer",
+  "version": "1.0.0",
+  "description": "Comprehensive pet training guide covering puppy and kitten training timelines, basic commands, house training methods, crate training, leash training, clicker training methodology, training session structure, common mistakes, advanced tricks, and addressing problem behaviors. Use when the user asks about pet trainer, or needs help with comprehensive pet training guide covering puppy and kitten training timelines, basic commands, house training methods, crate training, leash training, clicker training methodology, training session structure, common mistakes, advanced tricks, and addressing problem behaviors. Do NOT use when the request requires professional specialized advice or falls outside the scope of pet trainer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "guide",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

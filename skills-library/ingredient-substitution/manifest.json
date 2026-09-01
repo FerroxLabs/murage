@@ -1,0 +1,14 @@
+{
+  "id": "ingredient-substitution",
+  "name": "Ingredient Substitution",
+  "version": "1.0.0",
+  "description": "Provides precise ingredient substitutions organized by ingredient type with exact ratios, flavor impact notes, and texture changes. Covers dairy, eggs, fats, flours, sweeteners, leavening agents, and common pantry items. Use when the user is missing an ingredient and needs a substitute, has dietary restrictions requiring alternatives, or wants to understand how substitutions affect the final result. Do NOT use for recipe scaling (use recipe-scaling), creating new recipes, or medical dietary advice.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "nutrition",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

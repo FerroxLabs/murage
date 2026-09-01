@@ -1,0 +1,15 @@
+{
+  "id": "contract-basics-explainer",
+  "name": "Contract Basics Explainer",
+  "version": "1.0.0",
+  "description": "Breaks down standard contract sections into plain language, explaining what each clause means, why it matters, and what questions to ask before signing. Covers offer, acceptance, consideration, representations, warranties, indemnification, limitation of liability, termination, and boilerplate clauses. Use when the user has a contract to review, wants to understand contract terminology, needs to know what to look for before signing, or wants a plain-language explanation of common contract clauses. Do NOT use for drafting contracts, providing legal advice on whether to sign, negotiating contract terms on behalf of the user, or reviewing jurisdiction-specific regulatory compliance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "guide",
+    "checklist",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

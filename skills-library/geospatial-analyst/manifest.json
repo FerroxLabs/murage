@@ -1,0 +1,19 @@
+{
+  "id": "geospatial-analyst",
+  "name": "Geospatial Analyst",
+  "version": "1.0.0",
+  "description": "Geospatial analysis expertise covering GIS fundamentals, spatial data types and coordinate systems, spatial queries and joins, mapping libraries (Folium, Kepler.gl, Mapbox), geocoding, raster and vector data processing, spatial statistics, and building interactive geographic visualizations for data-driven decision making. Use when the user asks about geospatial analyst, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of geospatial analyst or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "python",
+    "sql",
+    "api-design",
+    "cloud",
+    "automation",
+    "analysis",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

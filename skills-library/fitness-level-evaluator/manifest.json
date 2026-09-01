@@ -1,0 +1,16 @@
+{
+  "id": "fitness-level-evaluator",
+  "name": "Fitness Level Evaluator",
+  "version": "1.0.0",
+  "description": "Baseline fitness assessment covering cardiovascular endurance, muscular strength, flexibility, mobility, and body composition indicators. Produces a fitness scorecard with level ratings and personalized training priority recommendations. Use when the user asks about fitness level evaluator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of fitness level evaluator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "health-wellness",
+    "template",
+    "guide",
+    "testing",
+    "sleep"
+  ],
+  "requiredCapabilities": []
+}

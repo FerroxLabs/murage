@@ -1,0 +1,18 @@
+{
+  "id": "sous-vide-master",
+  "name": "Sous Vide Master",
+  "version": "1.0.0",
+  "description": "Master sous vide cooking with equipment guidance, time and temperature charts, technique fundamentals, finishing methods, and recipes for perfectly cooked proteins, vegetables, and desserts Use when the user asks about sous vide master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of sous vide master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "guide",
+    "safety",
+    "energy-efficiency",
+    "fashion",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

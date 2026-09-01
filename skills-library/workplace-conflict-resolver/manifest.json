@@ -1,0 +1,14 @@
+{
+  "id": "workplace-conflict-resolver",
+  "name": "Workplace Conflict Resolver",
+  "version": "1.0.0",
+  "description": "Mediation approaches, documentation practices, escalation paths, HR navigation, self-advocacy techniques, and strategies for resolving professional disagreements. Use when the user asks about workplace conflict resolver, or needs help with mediation approaches, documentation practices, escalation paths, hr navigation, self-advocacy techniques, and strategies for resolving professional disagreements. Do NOT use when the request requires professional specialized advice or falls outside the scope of workplace conflict resolver.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "relationships",
+    "guide",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

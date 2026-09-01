@@ -1,0 +1,14 @@
+{
+  "id": "annual-review",
+  "name": "Annual Review",
+  "version": "1.0.0",
+  "description": "Runs a structured annual review including achievement audit, theme identification, lesson extraction, and 12-month forward projection. Use when the user wants to reflect on the past year, identify patterns in their accomplishments and failures, extract lessons learned, or plan the year ahead. Do NOT use for business annual reviews or performance evaluations (use business HR skills), quarterly planning (use `quarterly-planning`), or single-goal assessment (use `smart-goal-builder` instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "planning",
+    "template",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

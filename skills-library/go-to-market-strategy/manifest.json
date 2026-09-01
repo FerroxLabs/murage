@@ -1,0 +1,15 @@
+{
+  "id": "go-to-market-strategy",
+  "name": "Go To Market Strategy",
+  "version": "1.0.0",
+  "description": "Produces a completed go-to-market strategy document using STP (Segmentation, Targeting, Positioning) and AIDA frameworks covering target segment, channels, messaging, pricing, and launch sequence. Use when the user asks to create a GTM strategy, plan a product launch, define market entry approach, or structure a launch plan for a new product or feature. Do NOT use for ongoing marketing strategy (use marketing-strategy), brand positioning only (use brand-positioning), or competitive landscape analysis (use competitive-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "marketing",
+    "planning",
+    "entrepreneurship",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

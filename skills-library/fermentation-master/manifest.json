@@ -1,0 +1,14 @@
+{
+  "id": "fermentation-master",
+  "name": "Fermentation Master",
+  "version": "1.0.0",
+  "description": "Comprehensive home fermentation guide covering kombucha, kimchi, sauerkraut, kefir, sourdough, yogurt, tepache, and other fermented foods. Includes starter culture management, equipment recommendations, safety and sanitation protocols, troubleshooting common failures, flavor development, and scaling recipes. Use when the user asks about fermentation master, or needs help with comprehensive home fermentation guide covering kombucha, kimchi, sauerkraut, kefir, sourdough, yogurt, tepache, and other fermented foods. Do NOT use when the request requires professional specialized advice or falls outside the scope of fermentation master.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

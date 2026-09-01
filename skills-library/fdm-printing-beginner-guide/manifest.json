@@ -1,0 +1,15 @@
+{
+  "id": "fdm-printing-beginner-guide",
+  "name": "Fdm Printing Beginner Guide",
+  "version": "1.0.0",
+  "description": "Teaches beginners FDM 3D printing fundamentals: slicer software settings (layer height, infill percentage, support structures), bed adhesion methods, common print failure diagnosis (stringing, warping, layer shifting, under-extrusion), and a first-print sequence that builds understanding progressively. Use when the user wants to start 3D printing, asks about slicer settings, print quality troubleshooting, filament selection, or bed adhesion. Do NOT use for resin (SLA/DLP) printing, 3D modeling and CAD design, or professional manufacturing processes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beginner-friendly",
+    "step-by-step",
+    "guide",
+    "checklist",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

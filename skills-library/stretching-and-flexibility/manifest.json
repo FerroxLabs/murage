@@ -1,0 +1,14 @@
+{
+  "id": "stretching-and-flexibility",
+  "name": "Stretching And Flexibility",
+  "version": "1.0.0",
+  "description": "Builds structured stretching routines using static, dynamic, and PNF stretching methods with specific hold times, frequency guidelines, and progression protocols for improving flexibility. Produces a targeted stretching program organized by muscle group and stretching type. Use when the user asks about improving flexibility, creating a stretching routine, pre-workout or post-workout stretching, or specific stretching techniques like PNF or dynamic stretching. Do NOT use for yoga sequence design (use yoga-routine-builder), injury rehabilitation stretching, or foam rolling and self-myofascial release protocols.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "yoga",
+    "fitness",
+    "guide",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

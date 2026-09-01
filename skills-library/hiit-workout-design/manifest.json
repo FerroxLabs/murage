@@ -1,0 +1,14 @@
+{
+  "id": "hiit-workout-design",
+  "name": "Hiit Workout Design",
+  "version": "1.0.0",
+  "description": "Designs high-intensity interval training workouts with structured work-rest ratios, exercise selection by fitness level and equipment, session duration planning, and progressive difficulty scaling. Produces a complete HIIT session template with warm-up, intervals, and cooldown. Use when the user asks about HIIT workouts, interval training, circuit training design, or time-efficient high-intensity sessions. Do NOT use for steady-state cardio programming (use cardio-training-zones), strength training programs (use beginner-strength-training or intermediate-strength-training), or yoga and flexibility work (use yoga-routine-builder).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "workout-planning",
+    "template",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

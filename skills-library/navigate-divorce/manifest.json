@@ -1,0 +1,16 @@
+{
+  "id": "navigate-divorce",
+  "name": "Navigate Divorce",
+  "version": "1.0.0",
+  "description": "Structured divorce navigation workflow covering legal preparation, financial separation, emotional well-being, co-parenting framework, and life rebuilding for moving through divorce with clarity, fairness, and resilience. Use when the user wants to navigate divorce or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "parenting",
+    "emotional-health",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

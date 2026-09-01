@@ -1,0 +1,16 @@
+{
+  "id": "career-pivot",
+  "name": "Career Pivot",
+  "version": "1.0.0",
+  "description": "Comprehensive career transition workflow from strategic planning and self-assessment through resume optimization, LinkedIn profile overhaul, interview preparation, and salary negotiation for professionals changing careers or industries. Use when the user wants to career pivot or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "interview-prep",
+    "resume-writing",
+    "salary-negotiation",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

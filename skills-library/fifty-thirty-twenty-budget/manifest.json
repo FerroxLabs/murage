@@ -1,0 +1,14 @@
+{
+  "id": "fifty-thirty-twenty-budget",
+  "name": "Fifty Thirty Twenty Budget",
+  "version": "1.0.0",
+  "description": "Applies the 50/30/20 budgeting rule to the user's income, categorizing every expense as a need (50%), want (30%), or savings/debt repayment (20%). Produces a populated allocation table showing current spending against these targets with specific rebalancing recommendations. Use when the user asks about the 50/30/20 rule, wants a simple percentage-based budget, or needs help categorizing spending into needs, wants, and savings. Do NOT use for zero-based budgeting (use zero-based-budget), variable income budgets (use variable-income-budget), or investment allocation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "budgeting",
+    "personal-finance",
+    "expenses",
+    "savings"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "company-research-guide",
+  "name": "Company Research Guide",
+  "version": "1.0.0",
+  "description": "Produces a structured company research brief covering business model, financial health signals, culture indicators, recent developments, competitive position, and role fit analysis. Prepares the user to ask informed questions and demonstrate company knowledge in interviews. Use when the user is researching a company before an interview, evaluating a potential employer, or wants to understand a company's business model and culture. Do NOT use for predicting interview questions (use interview-question-anticipator), writing answers to interview questions (use behavioral-interview-prep), or analyzing a specific job description (use job-description-analyzer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "interview-prep",
+    "career",
+    "research",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

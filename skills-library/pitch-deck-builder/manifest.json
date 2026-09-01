@@ -1,0 +1,14 @@
+{
+  "id": "pitch-deck-builder",
+  "name": "Pitch Deck Builder",
+  "version": "1.0.0",
+  "description": "End-to-end investor pitch construction covering narrative architecture, financial slide design, storytelling techniques, slide-by-slide templates, delivery coaching, deck versioning for different audiences, and the most common mistakes that kill fundraising rounds. Use when the user asks about pitch deck builder or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "presentation",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

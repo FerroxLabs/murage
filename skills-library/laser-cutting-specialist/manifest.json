@@ -1,0 +1,13 @@
+{
+  "id": "laser-cutting-specialist",
+  "name": "Laser Cutting Specialist",
+  "version": "1.0.0",
+  "description": "Comprehensive laser cutting and engraving guide covering CO2 and diode laser technologies, material compatibility and safety, design software workflows, power and speed settings by material, ventilation and safety systems, project design techniques, kerf compensation, and production workflow optimization. Use when the user asks about laser cutting specialist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

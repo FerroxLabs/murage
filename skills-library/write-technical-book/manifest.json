@@ -1,0 +1,15 @@
+{
+  "id": "write-technical-book",
+  "name": "Write Technical Book",
+  "version": "1.0.0",
+  "description": "Complete workflow for writing and publishing a technical book, from crafting a compelling proposal through building a detailed outline, writing and revising the manuscript, conducting technical review, and navigating the publishing process for both traditional and self-publishing paths. Use when the user wants to write technical book or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "career",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "task-capture-system",
+  "name": "Task Capture System",
+  "version": "1.0.0",
+  "description": "Builds a complete task capture system with inbox location, capture criteria, two-minute rule, and processing cadence. Produces a deployable system specification the user can immediately adopt. Use when the user asks about capturing tasks, organizing incoming work, setting up a task inbox, or building a system to track everything they need to do. Do NOT use for prioritizing existing tasks (use task-prioritization), scheduling tasks into time blocks (use time-blocking), or enterprise project intake processes (use business project-management skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "planning",
+    "automation",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

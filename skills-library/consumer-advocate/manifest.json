@@ -1,0 +1,14 @@
+{
+  "id": "consumer-advocate",
+  "name": "Consumer Advocate",
+  "version": "1.0.0",
+  "description": "Guide to consumer rights including returns and refunds, warranty claims, dispute resolution through chargebacks and small claims, lemon law basics, online purchase protections, scam identification, and complaint letter templates. Use when the user asks about consumer advocate, or needs help with guide to consumer rights including returns and refunds, warranty claims, dispute resolution through chargebacks and small claims, lemon law basics, online purchase protections, scam identification, and complaint letter templates. Do NOT use when the request requires professional legal advice or falls outside the scope of consumer advocate.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "guide",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

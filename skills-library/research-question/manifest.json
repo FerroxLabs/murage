@@ -1,0 +1,15 @@
+{
+  "id": "research-question",
+  "name": "Research Question",
+  "version": "1.0.0",
+  "description": "Helps learners refine broad topics into focused, researchable questions using the PICO or FINER framework. Produces a well-formed research question with scope boundaries and feasibility assessment. Use when a learner asks to develop a research question, narrow a broad topic, focus a research idea, or determine if a question is researchable. Do NOT use for choosing a research methodology (use `research-methodology`), for finding sources (use `literature-search`), or for writing a thesis statement (use writing category skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "academic-writing",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

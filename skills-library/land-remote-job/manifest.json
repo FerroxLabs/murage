@@ -1,0 +1,14 @@
+{
+  "id": "land-remote-job",
+  "name": "Land Remote Job",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for professionals seeking remote work opportunities. Covers optimizing your online professional profile for remote roles, strategic job search across remote-first platforms, crafting applications that stand out, acing remote-specific interviews, and negotiating offers that account for remote work dynamics. Use when the user wants to land remote job or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "interview-prep",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

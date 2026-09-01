@@ -1,0 +1,14 @@
+{
+  "id": "background-job-designer",
+  "name": "Background Job Designer",
+  "version": "1.0.0",
+  "description": "Expert guide for designing reliable background job systems including worker architectures, queue selection, retry strategies, dead letter queues, idempotency patterns, job scheduling, and monitoring for production workloads. Use when the user asks about background job designer, background job designer best practices, or needs guidance on background job designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

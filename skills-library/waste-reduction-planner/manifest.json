@@ -1,0 +1,14 @@
+{
+  "id": "waste-reduction-planner",
+  "name": "Waste Reduction Planner",
+  "version": "1.0.0",
+  "description": "Conducts a household waste audit and produces a zero-waste action plan organized by waste stream (trash, recycling, compost, hazardous). Gathers the user's current waste habits, housing situation, and local services to produce a prioritized reduction plan with estimated waste diversion percentages and cost savings. Use when the user asks about reducing household waste, starting a zero-waste journey, improving recycling habits, or conducting a waste audit. Do NOT use for commercial or industrial waste management, hazardous waste disposal procedures, composting setup details (use composting-starter-guide), or municipal waste policy analysis.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "waste-reduction",
+    "sustainability",
+    "checklist",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

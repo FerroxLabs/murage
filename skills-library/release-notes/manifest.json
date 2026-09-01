@@ -1,0 +1,13 @@
+{
+  "id": "release-notes",
+  "name": "Release Notes",
+  "version": "1.0.0",
+  "description": "Creates version release notes categorized by change type (features, fixes, breaking changes) with migration guidance and user impact descriptions. Use when the user needs to write release notes for a software version, product update, or feature launch. Do NOT use for changelogs (use `changelog-writing`), technical specifications (use `technical-specification`), or status updates (use `status-update`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

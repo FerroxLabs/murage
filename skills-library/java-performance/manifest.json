@@ -1,0 +1,14 @@
+{
+  "id": "java-performance",
+  "name": "Java Performance",
+  "version": "1.0.0",
+  "description": "Guides advanced Java performance optimization: JMH benchmarking, GC tuning, heap profiling with JFR, startup time optimization, and native image compilation with GraalVM. Use when the user asks about Java performance, JMH, GC tuning, JFR, heap profiling, startup optimization, GraalVM native image. Do NOT use when the user asks about Java concurrency (use `java-concurrency-patterns`), Java modern idioms (use `java-modern-idioms`), general performance testing (use `performance-testing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "java",
+    "optimization",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

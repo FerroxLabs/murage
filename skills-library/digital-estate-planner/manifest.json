@@ -1,0 +1,15 @@
+{
+  "id": "digital-estate-planner",
+  "name": "Digital Estate Planner",
+  "version": "1.0.0",
+  "description": "Creates a systematic digital asset inventory covering online accounts, subscriptions, cryptocurrency, digital purchases, social media, cloud storage, and access credential management approaches. Produces a categorized digital asset catalogue and a legacy contact plan for attorney review. Use when the user asks about digital estate planning, managing online accounts after death, digital asset inventory, or what happens to digital accounts when someone dies. Do NOT use for drafting legal documents, recommending specific password managers, providing cryptocurrency investment advice, or general estate planning (use will-preparation-checklist or estate-attorney-prep-guide instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "checklist",
+    "template",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

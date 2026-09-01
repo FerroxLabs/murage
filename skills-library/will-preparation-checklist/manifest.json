@@ -1,0 +1,15 @@
+{
+  "id": "will-preparation-checklist",
+  "name": "Will Preparation Checklist",
+  "version": "1.0.0",
+  "description": "Builds a comprehensive pre-attorney meeting checklist for will preparation by gathering information about assets, beneficiaries, executor preferences, and personal wishes. Produces a structured document the user can bring to an estate planning attorney. Use when the user asks about preparing to write a will, getting ready for an estate attorney meeting, what information they need for a will, or organizing their estate wishes. Do NOT use for drafting an actual will, providing legal advice on asset distribution, tax optimization strategies, or trust creation (use trust-basics-explainer instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "checklist",
+    "guide",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

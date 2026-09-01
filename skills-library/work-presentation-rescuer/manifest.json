@@ -1,0 +1,19 @@
+{
+  "id": "work-presentation-rescuer",
+  "name": "Work Presentation Rescuer",
+  "version": "1.0.0",
+  "description": "Emergency guide for improving work presentations quickly, covering visual hierarchy fixes, slide design principles, speaker notes, delivery techniques, and handling Q&A with confidence. Use when the user asks about work presentation rescuer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of work presentation rescuer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "design",
+    "budgeting",
+    "checklist",
+    "analysis",
+    "marketing",
+    "branding",
+    "presentation",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

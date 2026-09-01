@@ -1,0 +1,14 @@
+{
+  "id": "terraform-engineer",
+  "name": "Terraform Engineer",
+  "version": "1.0.0",
+  "description": "Infrastructure as Code with Terraform. Module design, state management (remote backends), workspace strategy, resource lifecycle, data sources, provisioners, Terraform Cloud, drift detection, import existing infrastructure, testing IaC. Use when the user asks about terraform engineer, terraform engineer best practices, or needs guidance on terraform engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "automation",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

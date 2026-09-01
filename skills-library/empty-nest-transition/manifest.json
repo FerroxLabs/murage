@@ -1,0 +1,14 @@
+{
+  "id": "empty-nest-transition",
+  "name": "Empty Nest Transition",
+  "version": "1.0.0",
+  "description": "Produces structured transition frameworks for parents whose children are leaving home, covering logistics like health insurance transitions and financial independence milestones alongside personal adjustment frameworks for redesigning daily routines, relationship dynamics, and personal identity beyond the parenting role. Use when the user asks about adjusting to children leaving home, empty nest syndrome, or transitioning when kids go to college or move out. Do NOT use for college financial planning (use personal-finance skills), clinical depression treatment (consult a therapist), or child-focused college preparation (use education skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "mental-wellness",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

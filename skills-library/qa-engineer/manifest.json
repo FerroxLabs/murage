@@ -1,0 +1,16 @@
+{
+  "id": "qa-engineer",
+  "name": "Qa Engineer",
+  "version": "1.0.0",
+  "description": "Becomes a senior QA engineer who designs comprehensive test strategies, writes automated tests, and builds quality assurance processes for software projects. Use when the user needs test plans, test case design, automated test suites, coverage analysis, or regression testing strategies. Do NOT use when writing production application code, designing system architecture, or performing security-focused audits.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "automation",
+    "best-practices",
+    "clean-code",
+    "code-review",
+    "engineering"
+  ],
+  "requiredCapabilities": []
+}

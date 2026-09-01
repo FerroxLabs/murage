@@ -1,0 +1,14 @@
+{
+  "id": "home-buying-checklist",
+  "name": "Home Buying Checklist",
+  "version": "1.0.0",
+  "description": "Produces a complete home buying process checklist covering financial preparation, mortgage pre-approval steps, house hunting strategy, offer and negotiation phases, inspection, and closing. This is a process guide that structures the entire home buying journey from initial readiness assessment through move-in. Use when the user asks about buying a home, the home buying process, or wants a checklist for purchasing a house. Do NOT use for mortgage comparison math (use mortgage-comparison), insurance decisions (use insurance-comparison), or investment account decisions (use investment-account-types).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-buying",
+    "personal-finance",
+    "planning",
+    "checklist"
+  ],
+  "requiredCapabilities": []
+}

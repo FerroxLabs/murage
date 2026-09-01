@@ -1,0 +1,14 @@
+{
+  "id": "ssl-engineer",
+  "name": "Ssl Engineer",
+  "version": "1.0.0",
+  "description": "SSL/TLS management. Certificate lifecycle, Let's Encrypt automation, certificate chains, cipher suite configuration, HSTS, certificate pinning, mutual TLS, wildcard vs SAN certs, OCSP stapling, renewal automation. Use when the user asks about ssl engineer, ssl engineer best practices, or needs guidance on ssl engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "guide",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

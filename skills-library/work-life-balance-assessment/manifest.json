@@ -1,0 +1,15 @@
+{
+  "id": "work-life-balance-assessment",
+  "name": "Work Life Balance Assessment",
+  "version": "1.0.0",
+  "description": "Conducts a structured work-life balance assessment and produces a personalized rebalancing plan with specific time allocation changes, boundary-setting scripts, and a weekly schedule redesign. Gathers the user's current time allocation, energy patterns, and values, then identifies imbalances and creates actionable adjustments. Use when the user asks about work-life balance, feeling overworked, burnout prevention, setting boundaries at work, or creating more personal time. Do NOT use for clinical burnout diagnosis, workplace harassment situations, or treating occupational stress disorders.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "time-management",
+    "self-care",
+    "stress-management",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

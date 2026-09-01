@@ -1,0 +1,14 @@
+{
+  "id": "llm-integration-patterns",
+  "name": "Llm Integration Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level llm integration patterns implementation: ai-ml and backend decision frameworks, production-ready patterns, and concrete templates for llm integration patterns workflows. Use when the user asks about llm integration patterns, llm integration patterns configuration, or ai-ml best practices for llm projects. Do NOT use when the user needs a different ai ml engineering capability -- check sibling skills in the ai ml engineering subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "backend",
+    "architecture",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

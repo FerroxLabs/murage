@@ -1,0 +1,19 @@
+{
+  "id": "independent-film-producer",
+  "name": "Independent Film Producer",
+  "version": "1.0.0",
+  "description": "Practical guide to independent film production covering financing, development, production management, festival strategy, distribution, and marketing for producing independent films from concept through audience delivery. Use when the user asks about independent film producer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of independent film producer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-industry",
+    "design",
+    "budgeting",
+    "checklist",
+    "research",
+    "marketing",
+    "performing-arts",
+    "email",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

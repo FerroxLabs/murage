@@ -1,0 +1,14 @@
+{
+  "id": "estate-planning",
+  "name": "Estate Planning",
+  "version": "1.0.0",
+  "description": "Guide to estate planning fundamentals including wills, powers of attorney, healthcare directives, beneficiary designations, basic trust concepts, digital asset planning, life-stage checklists, and guidance on when to hire an attorney. Use when the user asks about estate planning, or needs help with guide to estate planning fundamentals including wills, powers of attorney, healthcare directives, beneficiary designations, basic trust concepts, digital asset planning, life-stage checklists, and guidance on when to hire an attorney. Do NOT use when the request requires professional legal advice or falls outside the scope of estate planning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "estate-planning",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

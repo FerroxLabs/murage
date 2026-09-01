@@ -1,0 +1,18 @@
+{
+  "id": "tax-loss-harvester",
+  "name": "Tax Loss Harvester",
+  "version": "1.0.0",
+  "description": "Tax-loss harvesting education covering wash sale rules, substantially identical security definitions, direct indexing concepts, harvesting strategies and triggers, tracking methods, and integration with overall portfolio and tax planning. Use when the user asks about tax loss harvester, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of tax loss harvester or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "checklist",
+    "guide",
+    "step-by-step",
+    "advanced",
+    "automation",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

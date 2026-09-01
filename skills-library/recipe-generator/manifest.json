@@ -1,0 +1,14 @@
+{
+  "id": "recipe-generator",
+  "name": "Recipe Generator",
+  "version": "1.0.0",
+  "description": "Intelligent recipe creation system that builds recipes from available ingredients using flavor pairing science, cuisine profiles, and cooking method selection. Includes substitution guides for dietary restrictions and allergens, recipe scaling formulas, and plating suggestions. Use when the user asks about recipe generator, or needs help with intelligent recipe creation system that builds recipes from available ingredients using flavor pairing science, cuisine profiles, and cooking method selection. Do NOT use when the request requires professional specialized advice or falls outside the scope of recipe generator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "template",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

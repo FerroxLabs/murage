@@ -1,0 +1,15 @@
+{
+  "id": "local-customs-briefing",
+  "name": "Local Customs Briefing",
+  "version": "1.0.0",
+  "description": "Creates a customs, etiquette, tipping, and taboo reference card for a travel destination. Gathers the destination country or region and produces a structured quick-reference guide covering greetings, dining etiquette, dress codes, tipping norms, common taboos, and useful local phrases. Use when the user asks about local customs at a destination, tipping culture in another country, cultural etiquette for travel, or what not to do in a specific country. Do NOT use for visa or entry requirements (use visa-requirements-checker), trip itinerary building (use trip-itinerary-builder), or general cultural anthropology research.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "research",
+    "guide",
+    "checklist",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

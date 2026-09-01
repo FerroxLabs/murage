@@ -1,0 +1,14 @@
+{
+  "id": "caregiver-coordination",
+  "name": "Caregiver Coordination",
+  "version": "1.0.0",
+  "description": "Produces care team coordination systems including task assignment templates, communication logs, care team meeting agendas, shared calendar structures, and emergency contact trees for managing elder care across multiple caregivers. Generates role-based responsibility matrices and handoff protocols to prevent gaps in care coverage. Use when the user asks about coordinating care among family members, organizing caregiver responsibilities, or setting up a care team system. Do NOT use for medical care planning (consult the physician care team), evaluating care facilities (use care-facility-evaluation), or managing caregiver stress (use caregiver-burnout-prevention).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "elder-care",
+    "planning",
+    "template",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

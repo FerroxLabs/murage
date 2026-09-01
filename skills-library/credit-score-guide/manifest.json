@@ -1,0 +1,13 @@
+{
+  "id": "credit-score-guide",
+  "name": "Credit Score Guide",
+  "version": "1.0.0",
+  "description": "Credit score improvement guidance covering FICO score components, credit utilization optimization, dispute processes, credit monitoring, authorized user strategy, credit building for beginners, score damage avoidance, and score simulation scenarios. Use when the user asks about credit score guide, or needs help with credit score improvement guidance covering fico score components, credit utilization optimization, dispute processes, credit monitoring, authorized user strategy, credit building for beginners, score damage avoidance, and score simulation scenarios. Do NOT use when the request requires professional financial advice or falls outside the scope of credit score guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "guide",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

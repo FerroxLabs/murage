@@ -1,0 +1,13 @@
+{
+  "id": "pip-writing",
+  "name": "Pip Writing",
+  "version": "1.0.0",
+  "description": "Writes performance improvement plans with specific behavioral expectations, measurable goals, support resources, evaluation timeline, and consequences for HR-compliant performance management. Use when the user needs to document a performance improvement plan for an underperforming employee. Do NOT use for general feedback (use `professional-email`), rejection letters (use `rejection-letter`), or conflict resolution (use `conflict-resolution-email`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "business-writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

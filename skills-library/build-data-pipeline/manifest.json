@@ -1,0 +1,13 @@
+{
+  "id": "build-data-pipeline",
+  "name": "Build Data Pipeline",
+  "version": "1.0.0",
+  "description": "Complete workflow for building a production-grade data pipeline from source identification through ingestion, transformation, warehousing, and dashboarding. Covers batch and streaming patterns, data quality, orchestration, and the modern data stack approach to analytics infrastructure. Use when the user wants to build data pipeline or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

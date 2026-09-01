@@ -1,0 +1,14 @@
+{
+  "id": "print-design-spec",
+  "name": "Print Design Spec",
+  "version": "1.0.0",
+  "description": "Produces print-ready design specifications with dimensions, bleed, CMYK color values, resolution requirements, file format, and fold/cut mark placement. Use when the user asks to prepare a design for print, create a print specification, define print-ready file requirements, or check print production settings. Do NOT use for digital screen design (use wireframe-specification), color palette creation (use color-palette-design), or typography selection (use typography-system).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "template",
+    "checklist",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "telehealth-navigator",
+  "name": "Telehealth Navigator",
+  "version": "1.0.0",
+  "description": "Step-by-step guidance for setting up telehealth appointments, navigating patient portals, tracking medications digitally, and troubleshooting common technical issues for remote healthcare visits. Use when the user asks about telehealth navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of telehealth navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "checklist",
+    "guide",
+    "quick-reference",
+    "testing",
+    "safety",
+    "cleaning",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

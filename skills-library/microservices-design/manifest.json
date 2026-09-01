@@ -1,0 +1,14 @@
+{
+  "id": "microservices-design",
+  "name": "Microservices Design",
+  "version": "1.0.0",
+  "description": "Guides expert-level microservices design implementation: architecture and microservices decision frameworks, production-ready patterns, and concrete templates for microservices design workflows. Use when the user asks about microservices design, microservices design configuration, or architecture best practices for microservices projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "backend",
+    "microservices",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "citation-management",
+  "name": "Citation Management",
+  "version": "1.0.0",
+  "description": "Creates citation organization systems and format guides for learners managing academic sources. Produces a citation management plan with format examples for the learner's chosen style (APA, MLA, Chicago) -- not a citation generator. Use when a learner asks to organize their citations, set up a citation system, understand citation formats, or manage references for a research paper. Do NOT use for evaluating sources (use `source-evaluation`), for finding sources (use `literature-search`), or for writing annotated bibliographies (use `annotated-bibliography`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "research",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

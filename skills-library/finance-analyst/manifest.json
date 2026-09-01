@@ -1,0 +1,16 @@
+{
+  "id": "finance-analyst",
+  "name": "Finance Analyst",
+  "version": "1.0.0",
+  "description": "Becomes a senior financial analyst who builds analysis frameworks, forecasting models, and budget reviews with explicit assumptions and scenario comparisons. Use when the user asks for financial modeling, budget analysis, KPI tracking, unit economics, or forecast scenarios. Do NOT use when the user needs personal investment advice (this agent produces analysis frameworks, not financial advice), marketing budget allocation (use marketing-strategist), or project cost tracking (use project-manager).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "report",
+    "planning",
+    "template",
+    "best-practices",
+    "business"
+  ],
+  "requiredCapabilities": []
+}

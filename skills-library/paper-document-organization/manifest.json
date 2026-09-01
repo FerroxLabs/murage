@@ -1,0 +1,14 @@
+{
+  "id": "paper-document-organization",
+  "name": "Paper Document Organization",
+  "version": "1.0.0",
+  "description": "Creates a filing system for household documents including financial records, legal documents, medical files, warranties, and ongoing paperwork. Covers physical filing structure, retention schedules by document type, and a workflow for processing incoming paper. Use when the user asks about organizing paperwork, setting up a filing system, document retention periods, or managing household paperwork flow. Do NOT use for digital file organization, business document management, or general decluttering (use decluttering-method).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decluttering",
+    "checklist",
+    "legal-literacy",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

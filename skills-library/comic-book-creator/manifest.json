@@ -1,0 +1,14 @@
+{
+  "id": "comic-book-creator",
+  "name": "Comic Book Creator",
+  "version": "1.0.0",
+  "description": "Complete comic book creation guidance covering panel layout, sequential storytelling, character design, lettering, page composition, script formatting, inking techniques, coloring approaches, and distribution options for both print and digital publication. Use when the user asks about comic book creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "creative-writing",
+    "guide",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

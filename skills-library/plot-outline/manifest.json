@@ -1,0 +1,13 @@
+{
+  "id": "plot-outline",
+  "name": "Plot Outline",
+  "version": "1.0.0",
+  "description": "Creates structured plot outlines for novels, novellas, screenplays, and serialized fiction using established story architecture frameworks. Maps narrative arcs, turning points, and character trajectories. Use when the user asks to outline a story, plan a novel, structure a plot, or map a narrative arc. Do NOT use for writing scenes (use scene-writing), writing complete short stories (use short-story-writing), or developing characters without plot context (use character-development).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

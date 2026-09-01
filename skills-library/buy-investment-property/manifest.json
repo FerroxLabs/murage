@@ -1,0 +1,15 @@
+{
+  "id": "buy-investment-property",
+  "name": "Buy Investment Property",
+  "version": "1.0.0",
+  "description": "Guided workflow for purchasing a rental investment property from defining investment criteria and securing financing through property search, deal analysis, closing, and property management setup. Covers single-family, multi-family, and small commercial rental properties. Use when the user wants to buy investment property or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-buying",
+    "investing",
+    "step-by-step",
+    "planning",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

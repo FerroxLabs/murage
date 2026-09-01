@@ -1,0 +1,18 @@
+{
+  "id": "brain-fitness",
+  "name": "Brain Fitness",
+  "version": "1.0.0",
+  "description": "Cognitive wellness guide covering cognitive exercises, memory techniques including method of loci and spaced repetition, lifelong learning strategies, brain-healthy nutrition, social engagement for cognition, technology adoption, and puzzle and game recommendations. Use when the user asks about brain fitness, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of brain fitness or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "nutrition",
+    "stress-management",
+    "checklist",
+    "guide",
+    "quick-reference",
+    "research",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

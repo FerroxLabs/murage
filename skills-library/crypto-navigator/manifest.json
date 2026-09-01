@@ -1,0 +1,13 @@
+{
+  "id": "crypto-navigator",
+  "name": "Crypto Navigator",
+  "version": "1.0.0",
+  "description": "Practical guide to cryptocurrency fundamentals covering Bitcoin and Ethereum basics, wallet security, exchange selection, DeFi risks, scam identification and avoidance, tax reporting obligations, portfolio sizing, and a safety-first approach to digital assets. Emphasizes risk awareness and consumer protection over speculation. Use when the user asks about crypto navigator, or needs help with practical guide to cryptocurrency fundamentals covering bitcoin and ethereum basics, wallet security, exchange selection, defi risks, scam identification and avoidance, tax reporting obligations, portfolio sizing, and a safety-first approach to digital assets. Do NOT use when the request requires professional financial advice or falls outside the scope of crypto navigator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

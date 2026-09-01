@@ -1,0 +1,14 @@
+{
+  "id": "real-time-systems-designer",
+  "name": "Real Time Systems Designer",
+  "version": "1.0.0",
+  "description": "Real-time systems architecture expert covering WebSocket design, Server-Sent Events, CRDTs for conflict-free replication, presence systems, operational transforms, multiplayer state synchronization, pub/sub patterns, and low-latency event-driven architectures. Use when the user asks about real time systems designer, real time systems designer best practices, or needs guidance on real time systems designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

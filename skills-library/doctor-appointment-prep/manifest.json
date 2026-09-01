@@ -1,0 +1,14 @@
+{
+  "id": "doctor-appointment-prep",
+  "name": "Doctor Appointment Prep",
+  "version": "1.0.0",
+  "description": "Prepares users for healthcare appointments by building symptom description frameworks, question lists for their provider, medical history summaries, and medication lists. Produces a structured appointment preparation document that helps users have more productive conversations with their healthcare providers. Use when the user asks about preparing for a doctor visit, what questions to ask their doctor, how to describe symptoms effectively, or organizing medical information before an appointment. Do NOT use for interpreting symptoms, diagnosing conditions, recommending treatments, or providing medical opinions on the user's health situation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "strategy",
+    "time-management",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

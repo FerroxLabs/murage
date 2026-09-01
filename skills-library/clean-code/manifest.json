@@ -1,0 +1,14 @@
+{
+  "id": "clean-code",
+  "name": "Clean Code",
+  "version": "1.0.0",
+  "description": "Clean code principles covering naming conventions, function design, SOLID principles, DRY vs WET tradeoffs, code organization, complexity metrics, and code review through a clean code lens. Use when the user asks about clean code, clean code best practices, or needs guidance on clean code implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "clean-code",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "job-description-analyzer",
+  "name": "Job Description Analyzer",
+  "version": "1.0.0",
+  "description": "Deconstructs a job description into must-have vs. nice-to-have requirements, hidden culture signals, red flags, and the skills the user should emphasize in their application. Produces a structured analysis that helps the user decide whether to apply and how to tailor their materials. Use when the user wants to analyze a job posting, understand what a job description really means, identify red flags in a listing, or determine which skills to highlight. Do NOT use for ATS keyword optimization (use ats-resume-optimizer), resume writing (use resume-bullet-writer), or company research (use company-research-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "analysis",
+    "guide",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

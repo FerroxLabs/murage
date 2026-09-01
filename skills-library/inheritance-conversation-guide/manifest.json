@@ -1,0 +1,15 @@
+{
+  "id": "inheritance-conversation-guide",
+  "name": "Inheritance Conversation Guide",
+  "version": "1.0.0",
+  "description": "Provides communication frameworks for opening family conversations about estate planning, inheritance, and end-of-life wishes. Covers conversation starters, common objections, emotional preparation, and structured discussion formats for sensitive family topics. Use when the user asks about how to bring up estate planning with parents or family, how to talk about inheritance, or how to start the conversation about wills and end-of-life planning. Do NOT use for providing legal advice, recommending specific estate plans, mediating active family disputes, or providing therapy for grief or family conflict.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "guide",
+    "relationships",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "neurodivergent-communicator",
+  "name": "Neurodivergent Communicator",
+  "version": "1.0.0",
+  "description": "Social scripts, masking awareness, self-advocacy strategies, disclosure guidance, and communication bridges between neurodivergent and neurotypical styles. Use when the user asks about neurodivergent communicator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of neurodivergent communicator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "stress-management",
+    "quick-reference",
+    "automation",
+    "safety",
+    "neurodiversity",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

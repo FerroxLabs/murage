@@ -1,0 +1,14 @@
+{
+  "id": "slide-design-principles",
+  "name": "Slide Design Principles",
+  "version": "1.0.0",
+  "description": "Applies slide design principles to a described deck including one idea per slide, visual-verbal balance, text reduction targets, white space rules, and font size minimums for presentation contexts. Use when the user asks to improve slide design, reduce text on slides, apply design principles to a presentation, or make slides more visually clear. Do NOT use for slide deck content structure (use slide-deck-structure), chart selection for data slides (use data-in-slides), or brand identity design (use brand-identity-brief).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "presentation",
+    "design",
+    "checklist",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

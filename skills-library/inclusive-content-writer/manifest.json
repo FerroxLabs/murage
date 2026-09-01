@@ -1,0 +1,17 @@
+{
+  "id": "inclusive-content-writer",
+  "name": "Inclusive Content Writer",
+  "version": "1.0.0",
+  "description": "Inclusive content writing expertise covering plain language principles, effective alt text for images, video captions and audio descriptions, reading level optimization, cultural sensitivity review, bias-free language, accessible document structure, and creating content that works for diverse audiences including people with disabilities. Use when the user asks about inclusive content writer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of inclusive content writer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "checklist",
+    "automation",
+    "performing-arts",
+    "marketing",
+    "email",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "layer2-specialist",
+  "name": "Layer2 Specialist",
+  "version": "1.0.0",
+  "description": "Ethereum Layer 2 scaling expertise covering optimistic rollups, ZK rollups, validiums, rollup architecture, bridge mechanics, L2 selection criteria, cost analysis, security assumptions, data availability, interoperability, and migration strategies for building and deploying on Layer 2 networks. Use when the user asks about layer2 specialist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of layer2 specialist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "checklist",
+    "typescript",
+    "testing",
+    "automation",
+    "analysis",
+    "networking",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

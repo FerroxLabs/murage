@@ -1,0 +1,19 @@
+{
+  "id": "nft-strategist",
+  "name": "Nft Strategist",
+  "version": "1.0.0",
+  "description": "Non-fungible token expertise covering creation workflows, metadata standards (ERC-721, ERC-1155), marketplace selection, smart contract design patterns, utility and roadmap design, IPFS and on-chain storage, royalty enforcement, community building, and launch strategy for digital collectibles and utility NFTs. Use when the user asks about nft strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of nft strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "budgeting",
+    "checklist",
+    "javascript",
+    "analysis",
+    "game-design",
+    "performing-arts",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

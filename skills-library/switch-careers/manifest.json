@@ -1,0 +1,14 @@
+{
+  "id": "switch-careers",
+  "name": "Switch Careers",
+  "version": "1.0.0",
+  "description": "Guides the user through a complete career transition from current field to a new one, spanning 3-12 months with 6 steps covering roadmap creation, skill gap analysis, industry research, portfolio building, networking, and job search. Explicitly branches at Step 1 on currently-employed vs. unemployed status, which affects timeline, risk tolerance, and resource allocation at every subsequent step. Use when the user wants to change careers to a different field or industry. Do NOT use for job searching within the same field (use land-new-job workflow), negotiating at current employer (use negotiate-raise workflow), or starting a freelance practice (use start-freelancing workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "planning",
+    "step-by-step",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

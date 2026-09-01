@@ -1,0 +1,15 @@
+{
+  "id": "stress-level-diagnostic",
+  "name": "Stress Level Diagnostic",
+  "version": "1.0.0",
+  "description": "Multi-dimensional stress assessment evaluating physical symptoms, emotional indicators, behavioral patterns, and coping mechanisms. Produces a stress severity scorecard with personalized coping strategy recommendations and escalation guidance. Use when the user asks about stress level diagnostic, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of stress level diagnostic or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "health-wellness",
+    "template",
+    "guide",
+    "sleep"
+  ],
+  "requiredCapabilities": []
+}

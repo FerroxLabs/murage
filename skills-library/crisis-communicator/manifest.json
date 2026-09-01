@@ -1,0 +1,13 @@
+{
+  "id": "crisis-communicator",
+  "name": "Crisis Communicator",
+  "version": "1.0.0",
+  "description": "PR crisis management covering response timelines (golden hour), holding statements, press release templates, social media response protocols, stakeholder communication strategies, apology frameworks, trust rebuilding, media training essentials, and crisis prevention planning. Use when the user asks about crisis communicator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "business-writing",
+    "writing",
+    "strategy"
+  ],
+  "requiredCapabilities": []
+}

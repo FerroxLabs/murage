@@ -1,0 +1,14 @@
+{
+  "id": "solo-travel-guide",
+  "name": "Solo Travel Guide",
+  "version": "1.0.0",
+  "description": "Safety planning for solo travelers, social strategies on the road, accommodation selection, itinerary design, and building confidence for independent travel. Use when the user asks about solo travel guide, or needs help with safety planning for solo travelers, social strategies on the road, accommodation selection, itinerary design, and building confidence for independent travel. Do NOT use when the request requires professional specialized advice or falls outside the scope of solo travel guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "guide",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

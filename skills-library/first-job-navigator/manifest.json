@@ -1,0 +1,14 @@
+{
+  "id": "first-job-navigator",
+  "name": "First Job Navigator",
+  "version": "1.0.0",
+  "description": "Guide for navigating the first 90 days of a new career including workplace culture navigation, professional communication, managing up, building reputation, establishing work-life boundaries, 401k and benefits enrollment, and creating a professional development plan. Use when the user asks about first job navigator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "career",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "move-in-checklist",
+  "name": "Move In Checklist",
+  "version": "1.0.0",
+  "description": "Complete moving checklist with timelines - utility setup, address changes, essential purchases, packing strategy, and first-week tasks organized by priority. Use when the user asks about move in checklist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of move in checklist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "home-maintenance",
+    "budgeting",
+    "checklist",
+    "template",
+    "testing",
+    "research",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

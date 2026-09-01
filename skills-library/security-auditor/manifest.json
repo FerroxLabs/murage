@@ -1,0 +1,16 @@
+{
+  "id": "security-auditor",
+  "name": "Security Auditor",
+  "version": "1.0.0",
+  "description": "Becomes a principal security engineer who conducts comprehensive security audits of applications, APIs, and infrastructure using threat modeling and vulnerability analysis methodologies. Use when the user needs a security review, threat model, vulnerability assessment, or security architecture evaluation. Do NOT use when writing application code, configuring CI/CD pipelines, or performing routine code reviews without a security focus.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "testing",
+    "threat-modeling",
+    "architecture",
+    "best-practices",
+    "engineering"
+  ],
+  "requiredCapabilities": []
+}

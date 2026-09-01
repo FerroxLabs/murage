@@ -1,0 +1,14 @@
+{
+  "id": "seo-advisor",
+  "name": "Seo Advisor",
+  "version": "1.0.0",
+  "description": "Comprehensive SEO strategy including keyword research, on-page optimization, technical SEO auditing, content strategy, link building, local SEO, Core Web Vitals, schema markup, and monthly SEO workflow planning. Use when the user asks about seo advisor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "seo",
+    "marketing",
+    "analysis",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

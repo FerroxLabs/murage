@@ -1,0 +1,15 @@
+{
+  "id": "performance-review-prep",
+  "name": "Performance Review Prep",
+  "version": "1.0.0",
+  "description": "Produces a self-assessment narrative with structured achievement evidence including impact metrics, scope descriptions, and strength and growth framing. Includes goals for the next review period. Produces a complete self-review document. Use when the user needs to write a performance review self-assessment, prepare for an annual or quarterly review, or document their achievements for a review cycle. Do NOT use for promotion cases (use promotion-case-builder), salary negotiation (use salary-negotiation-script), or resume bullet writing (use resume-bullet-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "planning",
+    "template",
+    "writing",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

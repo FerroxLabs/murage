@@ -1,0 +1,19 @@
+{
+  "id": "accessible-document-creator",
+  "name": "Accessible Document Creator",
+  "version": "1.0.0",
+  "description": "Create accessible PDF, Word, PowerPoint, and email documents with proper structure, reading order, alternative text, and compliance with PDF/UA, WCAG, and Section 508 standards. Use when the user asks about accessible document creator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of accessible document creator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "checklist",
+    "advanced",
+    "quick-reference",
+    "testing",
+    "automation",
+    "analysis",
+    "running",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

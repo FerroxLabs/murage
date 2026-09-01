@@ -1,0 +1,15 @@
+{
+  "id": "differentiated-instruction",
+  "name": "Differentiated Instruction",
+  "version": "1.0.0",
+  "description": "Creates differentiated lesson adaptations for diverse learners using Universal Design for Learning (UDL) and differentiated instruction (DI) frameworks. Produces three learner-profile adaptations (advanced, on-grade, support-needed) of a single lesson for educators. Use when an educator asks to differentiate a lesson, adapt instruction for diverse learners, create tiered activities, or apply UDL principles to an existing lesson plan. Do NOT use for creating the original lesson plan (use `lesson-plan-design`), for individual student feedback (use `student-feedback`), or for student self-paced learning (use `study-plan`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "lesson-plan",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

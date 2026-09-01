@@ -1,0 +1,14 @@
+{
+  "id": "case-interview-prep",
+  "name": "Case Interview Prep",
+  "version": "1.0.0",
+  "description": "Teaches the standard case interview structure used by consulting and finance firms: clarification, framework selection, analysis, and recommendation. Walks the user through a practice case and produces a structured response template for each case type. Use when the user is preparing for a case interview, applying to consulting firms, or needs to practice structured problem-solving in an interview context. Do NOT use for behavioral interview preparation (use behavioral-interview-prep), technical coding interviews (use technical-interview-prep), or general interview question prediction (use interview-question-anticipator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "interview-prep",
+    "career",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

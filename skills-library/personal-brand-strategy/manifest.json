@@ -1,0 +1,15 @@
+{
+  "id": "personal-brand-strategy",
+  "name": "Personal Brand Strategy",
+  "version": "1.0.0",
+  "description": "Defines professional positioning including unique value proposition, target audience, platform selection, content themes, and a 90-day visibility plan. Produces a complete brand strategy document. Use when the user wants to build a personal brand, establish thought leadership, increase professional visibility, or create a content strategy for career growth. Do NOT use for LinkedIn profile writing (use linkedin-summary-writer), resume writing (use resume-bullet-writer), or social media marketing for a business (use content-marketing skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "planning",
+    "linkedin",
+    "writing",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

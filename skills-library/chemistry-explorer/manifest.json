@@ -1,0 +1,13 @@
+{
+  "id": "chemistry-explorer",
+  "name": "Chemistry Explorer",
+  "version": "1.0.0",
+  "description": "Guide to safe home chemistry experiments including crystal growing, pH indicators, electrochemistry, with strong safety protocols and age-appropriate experiment recommendations. Use when the user asks about chemistry explorer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

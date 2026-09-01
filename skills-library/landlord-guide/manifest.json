@@ -1,0 +1,14 @@
+{
+  "id": "landlord-guide",
+  "name": "Landlord Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive operational guide for landlords covering tenant screening processes, lease creation, rent collection systems, maintenance management, legal compliance including Fair Housing and eviction procedures, accounting and record-keeping, property inspection schedules, and tenant conflict resolution strategies. Use when the user asks about landlord guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "planning",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

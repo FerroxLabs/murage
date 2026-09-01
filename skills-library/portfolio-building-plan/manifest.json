@@ -1,0 +1,15 @@
+{
+  "id": "portfolio-building-plan",
+  "name": "Portfolio Building Plan",
+  "version": "1.0.0",
+  "description": "Builds a plan for creating a freelance or professional portfolio including content selection criteria, portfolio structure, case study format, and a 30-60-90 day publishing schedule. Produces a complete portfolio development plan document. Use when the user wants to build a professional portfolio, create a freelance portfolio website, select work samples, or plan a portfolio launch for career advancement or client acquisition. Do NOT use for personal brand strategy (use personal-brand-strategy), resume writing (use resume-bullet-writer), or website development (use web development skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "freelancing",
+    "career",
+    "planning",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

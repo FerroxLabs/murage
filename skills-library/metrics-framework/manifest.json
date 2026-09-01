@@ -1,0 +1,16 @@
+{
+  "id": "metrics-framework",
+  "name": "Metrics Framework",
+  "version": "1.0.0",
+  "description": "Builds a product metrics hierarchy with north star metric, L1/L2 supporting metrics, guardrail metrics, and instrumentation guidance using product analytics methodology. Use when the user asks about product metrics, north star metrics, metrics frameworks, product analytics, KPI hierarchies, or measurement strategies. Do NOT use for financial KPIs (use financial-kpis), A/B test metrics (use ab-test-design), or marketing analytics (use marketing-analytics-report).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "planning",
+    "strategy",
+    "decision-making",
+    "project-management",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

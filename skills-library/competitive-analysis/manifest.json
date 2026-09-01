@@ -1,0 +1,15 @@
+{
+  "id": "competitive-analysis",
+  "name": "Competitive Analysis",
+  "version": "1.0.0",
+  "description": "Produces a completed competitor comparison matrix with positioning analysis, capability gaps, and strategic recommendations using Porter's Five Forces framework. Use when the user asks to analyze competitors, compare market alternatives, evaluate competitive landscape, or assess competitive positioning. Do NOT use for internal strengths/weaknesses analysis (use swot-analysis), macro-environment scanning (use pestle-analysis), or product portfolio evaluation (use bcg-matrix).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "analysis",
+    "planning",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "developer-tutorial-creator",
+  "name": "Developer Tutorial Creator",
+  "version": "1.0.0",
+  "description": "Expert tutorial creation covering step-by-step structure design, code-along format with checkpoints, progressive complexity sequencing, prerequisite validation, learning path architecture, code sample best practices, troubleshooting sections, visual aids, hands-on exercises, and measuring tutorial effectiveness. Use when the user asks about developer tutorial creator, developer tutorial creator best practices, or needs guidance on developer tutorial creator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "teaching",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

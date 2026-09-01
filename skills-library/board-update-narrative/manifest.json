@@ -1,0 +1,13 @@
+{
+  "id": "board-update-narrative",
+  "name": "Board Update Narrative",
+  "version": "1.0.0",
+  "description": "Writes board-level narrative updates that complement financial reports with strategic context, competitive positioning, key risks, and forward-looking guidance for board of directors audiences. Use when the user needs to write a board update, board meeting narrative, or director-level briefing. Do NOT use for stakeholder updates to management (use `stakeholder-update`), investor emails (use `investor-update-email`), or full business reports (use `business-report`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "business-writing",
+    "report"
+  ],
+  "requiredCapabilities": []
+}

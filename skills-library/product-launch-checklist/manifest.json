@@ -1,0 +1,16 @@
+{
+  "id": "product-launch-checklist",
+  "name": "Product Launch Checklist",
+  "version": "1.0.0",
+  "description": "Creates a pre-launch checklist covering engineering readiness, marketing preparation, customer support, legal review, and communications for product or feature launches. Use when the user asks about product launch checklists, go-live preparation, launch readiness, pre-launch planning, or feature release preparation. Do NOT use for go-to-market strategy (use go-to-market-strategy), product roadmaps (use product-roadmap), or PR pitches (use pr-pitch).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "checklist",
+    "planning",
+    "project-management",
+    "template",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

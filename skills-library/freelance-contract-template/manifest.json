@@ -1,0 +1,15 @@
+{
+  "id": "freelance-contract-template",
+  "name": "Freelance Contract Template",
+  "version": "1.0.0",
+  "description": "Produces plain-language contract clauses covering scope, payment terms, revision limits, intellectual property ownership, confidentiality, and termination for freelance engagements. Includes a note to review with legal counsel before use. Use when the user needs a freelance contract template, wants to draft contract terms for a client engagement, or needs to define the legal framework for a freelance project. Do NOT use for employment contracts (use business HR skills), legal document review (use legal-civic skills), or business partnership agreements (use business legal skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "freelancing",
+    "career",
+    "template",
+    "legal-literacy",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

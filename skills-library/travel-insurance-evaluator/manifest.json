@@ -1,0 +1,15 @@
+{
+  "id": "travel-insurance-evaluator",
+  "name": "Travel Insurance Evaluator",
+  "version": "1.0.0",
+  "description": "Creates a travel insurance coverage comparison checklist and explains key policy clauses in plain language. Gathers trip details, traveler health profile, and risk factors to produce a side-by-side coverage comparison framework and a policy clause decoder that highlights what to look for and what exclusions to watch out for. Use when the user asks about travel insurance, how to choose a travel insurance policy, what travel insurance covers, or how to compare travel insurance options. Do NOT use for health insurance selection (use health-wellness or personal-finance skills), auto insurance, home insurance, or life insurance comparison.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "checklist",
+    "insurance",
+    "research",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

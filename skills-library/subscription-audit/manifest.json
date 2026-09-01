@@ -1,0 +1,14 @@
+{
+  "id": "subscription-audit",
+  "name": "Subscription Audit",
+  "version": "1.0.0",
+  "description": "Inventories all recurring subscriptions, memberships, and automatic charges. Identifies unused, duplicated, or low-value subscriptions and builds a cancellation priority list with estimated annual savings. Produces a complete subscription inventory with keep/cancel/downgrade recommendations. Use when the user wants to review their subscriptions, reduce recurring charges, or find hidden monthly costs. Do NOT use for full budget creation (use budget-planning), one-time expense analysis (use spending-analysis), or business SaaS audit.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "budgeting",
+    "personal-finance",
+    "expenses",
+    "savings"
+  ],
+  "requiredCapabilities": []
+}

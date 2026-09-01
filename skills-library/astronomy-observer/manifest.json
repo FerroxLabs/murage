@@ -1,0 +1,13 @@
+{
+  "id": "astronomy-observer",
+  "name": "Astronomy Observer",
+  "version": "1.0.0",
+  "description": "Guide to observational astronomy including telescope selection, finding celestial objects, astrophotography basics, dark sky observing, and connecting with the astronomy community. Use when the user asks about astronomy observer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

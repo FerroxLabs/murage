@@ -1,0 +1,14 @@
+{
+  "id": "caching-strategist",
+  "name": "Caching Strategist",
+  "version": "1.0.0",
+  "description": "Caching architecture expertise covering cache-aside, write-through, write-behind, read-through patterns, TTL strategies, cache invalidation, CDN caching, application caching, database query caching, distributed caching, and cache warming. Use when the user asks about caching strategist, caching strategist best practices, or needs guidance on caching strategist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

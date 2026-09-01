@@ -1,0 +1,15 @@
+{
+  "id": "youtube-creator",
+  "name": "Youtube Creator",
+  "version": "1.0.0",
+  "description": "End-to-end YouTube channel strategy from niche selection through scripting, production, SEO optimization, analytics interpretation, and monetization milestone planning for sustainable channel growth. Use when the user asks about youtube creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "youtube",
+    "social-media",
+    "marketing",
+    "content-marketing",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

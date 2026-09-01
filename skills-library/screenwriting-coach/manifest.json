@@ -1,0 +1,14 @@
+{
+  "id": "screenwriting-coach",
+  "name": "Screenwriting Coach",
+  "version": "1.0.0",
+  "description": "Screenwriting guide covering screenplay format, three-act structure, detailed beat sheets, character introduction, dialogue subtext, scene transitions, TV pilot structure, feature film pacing, logline writing, and industry standard formatting. Use when the user asks about screenwriting coach, or needs help with screenwriting guide covering screenplay format, three-act structure, detailed beat sheets, character introduction, dialogue subtext, scene transitions, tv pilot structure, feature film pacing, logline writing, and industry standard formatting. Do NOT use when the request requires professional specialized advice or falls outside the scope of screenwriting coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "editing",
+    "guide",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

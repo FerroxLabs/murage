@@ -1,0 +1,18 @@
+{
+  "id": "device-hardening-guide",
+  "name": "Device Hardening Guide",
+  "version": "1.0.0",
+  "description": "Systematically secure personal devices through OS hardening, router and network security, IoT device isolation, firmware management, and attack surface reduction for home and small office environments Use when the user asks about device hardening guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of device hardening guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "checklist",
+    "guide",
+    "advanced",
+    "cloud",
+    "automation",
+    "networking",
+    "iot"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "feature-engineer",
+  "name": "Feature Engineer",
+  "version": "1.0.0",
+  "description": "Feature engineering covering numerical features (scaling, binning, log transforms), categorical encoding (one-hot, target, ordinal), text features (TF-IDF, embeddings), temporal features, feature selection, feature stores, and automated feature engineering. Use when the user asks about feature engineer, feature engineer best practices, or needs guidance on feature engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "data-science",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

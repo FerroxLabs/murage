@@ -1,0 +1,13 @@
+{
+  "id": "workout-planner",
+  "name": "Workout Planner",
+  "version": "1.0.0",
+  "description": "Comprehensive workout plan generator with assessment, program design by goal, split programming, progressive overload tracking, deload scheduling, warm-up/cool-down protocols, and an exercise database organized by muscle group. Use when the user asks about workout planner, or needs help with comprehensive workout plan generator with assessment, program design by goal, split programming, progressive overload tracking, deload scheduling, warm-up/cool-down protocols, and an exercise database organized by muscle group. Do NOT use when the request requires professional medical advice or falls outside the scope of workout planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "workout-planning"
+  ],
+  "requiredCapabilities": []
+}

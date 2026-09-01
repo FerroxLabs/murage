@@ -1,0 +1,14 @@
+{
+  "id": "screen-time-negotiator",
+  "name": "Screen Time Negotiator",
+  "version": "1.0.0",
+  "description": "Age-appropriate screen time limits, digital wellness frameworks, content curation, family media plans, and engaging alternative activities for balanced technology use. Use when the user asks about screen time negotiator, or needs help with age-appropriate screen time limits, digital wellness frameworks, content curation, family media plans, and engaging alternative activities for balanced technology use. Do NOT use when the request requires professional specialized advice or falls outside the scope of screen time negotiator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "family-events",
+    "digital-wellness",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

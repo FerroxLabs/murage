@@ -1,0 +1,14 @@
+{
+  "id": "contract-reviewer",
+  "name": "Contract Reviewer",
+  "version": "1.0.0",
+  "description": "Comprehensive contract review checklist covering key clauses, red flags, negotiation points, and common contract types including employment, freelance, lease, and service agreements with amendment process guidance. Use when the user asks about contract reviewer, or needs help with comprehensive contract review checklist covering key clauses, red flags, negotiation points, and common contract types including employment, freelance, lease, and service agreements with amendment process guidance. Do NOT use when the request requires professional legal advice or falls outside the scope of contract reviewer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "guide",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "online-course-creator",
+  "name": "Online Course Creator",
+  "version": "1.0.0",
+  "description": "End-to-end online course development from curriculum design and platform selection through pricing strategy, student engagement, launch formulas, and ongoing student support for sustainable education businesses. Use when the user asks about online course creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "content-marketing",
+    "entrepreneurship",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

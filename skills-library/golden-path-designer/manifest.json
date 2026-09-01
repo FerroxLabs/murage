@@ -1,0 +1,19 @@
+{
+  "id": "golden-path-designer",
+  "name": "Golden Path Designer",
+  "version": "1.0.0",
+  "description": "Design opinionated templates and best practice enforcement through golden paths, guardrails, and standardized development workflows Use when the user asks about golden path designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of golden path designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "budgeting",
+    "template",
+    "guide",
+    "typescript",
+    "api-design",
+    "testing",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "fire-planner",
+  "name": "Fire Planner",
+  "version": "1.0.0",
+  "description": "Financial Independence and Retire Early planning guide covering FIRE number calculation, savings rate optimization, the 4% rule and safe withdrawal rates, sequence of returns risk, Roth conversion ladders, healthcare bridge strategies, FIRE variations (lean, fat, barista, coast), asset allocation in early retirement, and lifestyle design for post-retirement fulfillment. Use when the user asks about fire planner, or needs help with financial independence and retire early planning guide covering fire number calculation, savings rate optimization, the 4% rule and safe withdrawal rates, sequence of returns risk, roth conversion ladders, healthcare bridge strategies, fire variations (lean, fat, barista, coast), asset allocation in early retirement, and lifestyle design for post-retirement fulfillment. Do NOT use when the request requires professional financial advice or falls outside the scope of fire planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

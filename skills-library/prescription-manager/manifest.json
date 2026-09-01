@@ -1,0 +1,18 @@
+{
+  "id": "prescription-manager",
+  "name": "Prescription Manager",
+  "version": "1.0.0",
+  "description": "Guides medication management including interaction awareness, generic alternatives, cost reduction strategies, and adherence systems for safe and affordable prescription use. Use when the user asks about prescription manager, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of prescription manager or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "habits",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "testing",
+    "automation",
+    "research"
+  ],
+  "requiredCapabilities": []
+}

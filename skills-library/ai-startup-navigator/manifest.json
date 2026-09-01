@@ -1,0 +1,15 @@
+{
+  "id": "ai-startup-navigator",
+  "name": "Ai Startup Navigator",
+  "version": "1.0.0",
+  "description": "Strategic guide for AI startups covering product-market fit, data moats, compute cost management, responsible AI practices, fundraising, team building, and navigating the unique challenges of building AI-first companies. Use when the user asks about ai startup navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ai startup navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "strategy",
+    "checklist",
+    "api-design",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

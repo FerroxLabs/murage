@@ -1,0 +1,14 @@
+{
+  "id": "elder-care-legal-triggers",
+  "name": "Elder Care Legal Triggers",
+  "version": "1.0.0",
+  "description": "Identifies when key legal and financial planning steps become relevant for aging family members, including power of attorney, healthcare proxy, advance directives, and estate planning triggers. Provides a timeline of when to act and what each document does at a high level, then directs to legal professionals and legal-civic category skills for document specifics. Use when the user asks about when to set up power of attorney, healthcare proxy, or advance directives for an aging parent. Do NOT use for drafting legal documents, providing legal advice, or interpreting specific laws -- consult a qualified attorney for those needs.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "elder-care",
+    "legal-literacy",
+    "estate-planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

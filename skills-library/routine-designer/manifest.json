@@ -1,0 +1,14 @@
+{
+  "id": "routine-designer",
+  "name": "Routine Designer",
+  "version": "1.0.0",
+  "description": "Daily routine optimization guide covering morning and evening routine design, energy management through ultradian rhythms, time blocking, deep work scheduling, Cal Newport's strategies, Warren Buffett's priority method, and routine templates tailored to different lifestyles. Use when the user asks about routine designer, or needs help with daily routine optimization guide covering morning and evening routine design, energy management through ultradian rhythms, time blocking, deep work scheduling, cal newport's strategies, warren buffett's priority method, and routine templates tailored to different lifestyles. Do NOT use when the request requires professional specialized advice or falls outside the scope of routine designer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "habits",
+    "time-management",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

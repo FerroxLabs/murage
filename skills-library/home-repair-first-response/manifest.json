@@ -1,0 +1,14 @@
+{
+  "id": "home-repair-first-response",
+  "name": "Home Repair First Response",
+  "version": "1.0.0",
+  "description": "Provides immediate triage guidance for common home emergencies including burst pipes, power outages, gas leaks, roof leaks, flooding, no heat in winter, and appliance failures. Focuses on what to do in the first 15 minutes to minimize damage before a professional arrives. Use when the user has an active home emergency, a sudden failure of a major system, or needs to know what to shut off and who to call. Do NOT use for routine maintenance (use annual-home-maintenance or specific system skills), non-emergency troubleshooting, or commercial building emergencies.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "troubleshooting",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

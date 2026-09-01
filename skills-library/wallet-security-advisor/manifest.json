@@ -1,0 +1,19 @@
+{
+  "id": "wallet-security-advisor",
+  "name": "Wallet Security Advisor",
+  "version": "1.0.0",
+  "description": "Cryptocurrency wallet security expertise covering cold storage setup, hardware wallet configuration, multisig wallet deployment, seed phrase management, recovery planning, phishing and social engineering prevention, transaction verification, approval hygiene, and operational security practices for protecting digital assets. Use when the user asks about wallet security advisor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of wallet security advisor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "checklist",
+    "cloud",
+    "testing",
+    "planning",
+    "networking",
+    "safety",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

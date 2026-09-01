@@ -1,0 +1,13 @@
+{
+  "id": "security-incident-responder",
+  "name": "Security Incident Responder",
+  "version": "1.0.0",
+  "description": "Security incident response expertise covering NIST incident response lifecycle, containment strategies, evidence preservation, forensic analysis basics, communication templates, post-incident review, incident classification and severity levels, and playbook creation for handling security incidents efficiently and effectively. Use when the user asks about security incident responder, security incident responder best practices, or needs guidance on security incident responder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "forensics",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

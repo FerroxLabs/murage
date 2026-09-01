@@ -1,0 +1,19 @@
+{
+  "id": "competitive-debugging-master",
+  "name": "Competitive Debugging Master",
+  "version": "1.0.0",
+  "description": "Competitive programming debugging mastery covering stress testing with random test generators, systematic edge case identification, time and memory optimization techniques, common bug patterns in contest code, binary search on test cases, and strategies for debugging under contest time pressure. Use when the user asks about competitive debugging master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of competitive debugging master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "competitive-programming",
+    "stress-management",
+    "checklist",
+    "template",
+    "beginner-friendly",
+    "python",
+    "testing",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

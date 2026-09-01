@@ -1,0 +1,14 @@
+{
+  "id": "smart-goal-builder",
+  "name": "Smart Goal Builder",
+  "version": "1.0.0",
+  "description": "Transforms vague aspirations into SMART goals with Specific criteria, Measurable metrics, Attainability assessment, Relevance check, and Time-bound deadlines with interim milestones. Use when the user has a goal idea but it lacks clarity, wants to turn a wish into an actionable plan, or needs to define measurable success criteria for a personal objective. Do NOT use for organizational goal setting (use business strategy skills), habit formation or behavior change coaching (use health-wellness skills), or OKR creation (use `okr-builder` instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "planning",
+    "template",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

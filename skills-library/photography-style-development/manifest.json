@@ -1,0 +1,14 @@
+{
+  "id": "photography-style-development",
+  "name": "Photography Style Development",
+  "version": "1.0.0",
+  "description": "Identifies a user's visual preferences from described examples, extracts the defining characteristics including color treatment, contrast, subject selection, and composition, and produces a personal photography style guide with specific settings targets. Applicable to any camera and processor. Use when the user asks to develop a photography style, create visual consistency, define their aesthetic, or build a cohesive portfolio look. Do NOT use for single-photo composition (use composition-guide), camera settings for a specific shot (use exposure-triangle), or photo editing steps (use photo-editing-workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "photography",
+    "design",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "podcast-production-assessment",
+  "name": "Podcast Production Assessment",
+  "version": "1.0.0",
+  "description": "Comprehensive podcast evaluation assessing audio quality, content strategy, consistency and workflow, and growth potential. Produces a scored assessment with specific recommendations for improving podcast production and audience development. Use when the user asks about podcast production assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of podcast production assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "design",
+    "template",
+    "testing",
+    "marketing",
+    "performing-arts",
+    "podcast",
+    "cleaning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

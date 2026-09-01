@@ -1,0 +1,14 @@
+{
+  "id": "marketplace-builder",
+  "name": "Marketplace Builder",
+  "version": "1.0.0",
+  "description": "Two-sided marketplace strategy advisor covering the chicken-and-egg problem, supply and demand acquisition, trust and safety systems, liquidity dynamics, pricing models, network effects, marketplace metrics, platform governance, and scaling strategies for building successful platforms that connect buyers and sellers. Use when the user asks about marketplace builder or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

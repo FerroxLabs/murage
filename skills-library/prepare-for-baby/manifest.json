@@ -1,0 +1,15 @@
+{
+  "id": "prepare-for-baby",
+  "name": "Prepare For Baby",
+  "version": "1.0.0",
+  "description": "Guides the user through preparing for a new baby from financial planning through early developmental milestones, chaining budgeting, baby prep, home safety, career, and developmental skills across multiple categories. Use when the user is expecting a baby, preparing for a newborn, or wants a structured plan for the transition to parenthood. Do NOT use for adoption-specific processes, fertility treatment planning, or managing pregnancy health (those are medical topics).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "planning",
+    "checklist",
+    "step-by-step",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

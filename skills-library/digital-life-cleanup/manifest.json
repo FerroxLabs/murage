@@ -1,0 +1,16 @@
+{
+  "id": "digital-life-cleanup",
+  "name": "Digital Life Cleanup",
+  "version": "1.0.0",
+  "description": "Comprehensive digital decluttering workflow covering account auditing, privacy hardening, data backup, file organization, and automation setup for a secure, organized, and low-maintenance digital life. Use when the user wants to digital life cleanup or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "decluttering",
+    "automation",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

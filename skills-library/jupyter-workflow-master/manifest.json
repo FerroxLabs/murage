@@ -1,0 +1,19 @@
+{
+  "id": "jupyter-workflow-master",
+  "name": "Jupyter Workflow Master",
+  "version": "1.0.0",
+  "description": "Guide for productive Jupyter notebook workflows including kernel management, reproducibility patterns, nbconvert pipelines, parameterized execution, and collaborative notebook practices. Use when the user asks about jupyter workflow master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of jupyter workflow master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "checklist",
+    "template",
+    "python",
+    "api-design",
+    "testing",
+    "automation",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

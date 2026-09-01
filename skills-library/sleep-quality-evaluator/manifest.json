@@ -1,0 +1,16 @@
+{
+  "id": "sleep-quality-evaluator",
+  "name": "Sleep Quality Evaluator",
+  "version": "1.0.0",
+  "description": "Comprehensive sleep assessment covering sleep hygiene practices, sleep-wake patterns, environmental factors, and daytime impact indicators. Produces a sleep quality scorecard with prioritized improvement recommendations for better rest. Use when the user asks about sleep quality evaluator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of sleep quality evaluator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "health-wellness",
+    "checklist",
+    "template",
+    "guide",
+    "sleep"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "cloud-cost-optimizer",
+  "name": "Cloud Cost Optimizer",
+  "version": "1.0.0",
+  "description": "Expert guide for FinOps practices and cloud cost optimization including right-sizing, reserved instances, spot instances, savings plans, budget alerting, cost allocation, and building a cost-aware engineering culture. Use when the user asks about cloud cost optimizer, cloud cost optimizer best practices, or needs guidance on cloud cost optimizer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "optimization",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

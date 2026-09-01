@@ -1,0 +1,13 @@
+{
+  "id": "copy-lens-clarity",
+  "name": "lens-clarity",
+  "version": "1.0.0",
+  "description": "**Lens mode.** Source authority: Ali Abdaal's teaching-simplicity discipline and the Feynman explanation method — if you cannot explain it simply, you do not understand it yet.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "copy",
+    "lens",
+    "clarity"
+  ],
+  "requiredCapabilities": []
+}

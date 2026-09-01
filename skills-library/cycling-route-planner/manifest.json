@@ -1,0 +1,15 @@
+{
+  "id": "cycling-route-planner",
+  "name": "Cycling Route Planner",
+  "version": "1.0.0",
+  "description": "Plans cycling routes for recreational riders with distance calculation, elevation profile interpretation, road vs. trail surface selection, gear checklists, and ride-day preparation sequences. Gathers the user's experience level, bike type, and goals to produce a structured ride plan. Use when the user asks about planning a bike ride, choosing a cycling route, interpreting elevation profiles, or preparing for a recreational cycling outing. Do NOT use for competitive race training or racing strategy, professional bike fitting, mountain biking technical skills progression, or cycling commute planning for daily transportation (use green-transportation-planner).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "checklist",
+    "step-by-step",
+    "guide",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

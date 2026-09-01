@@ -1,0 +1,14 @@
+{
+  "id": "debugger",
+  "name": "Debugger",
+  "version": "1.0.0",
+  "description": "Systematic debugging methodology using scientific method, binary search isolation, log analysis, stack trace interpretation, and root cause analysis across languages and ecosystems. Use when the user asks about debugger, debugger best practices, or needs guidance on debugger implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "debugging",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

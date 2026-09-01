@@ -1,0 +1,13 @@
+{
+  "id": "lens-marketing-attribution",
+  "name": "marketing-attribution",
+  "version": "1.0.0",
+  "description": "As of: 2026-05-17",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "lens",
+    "marketing",
+    "attribution"
+  ],
+  "requiredCapabilities": []
+}

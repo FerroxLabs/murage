@@ -1,0 +1,14 @@
+{
+  "id": "swift-project-setup",
+  "name": "Swift Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level swift project setup implementation: swift and best-practices decision frameworks, production-ready patterns, and concrete templates for swift project setup workflows. Use when the user asks about swift project setup, swift project setup configuration, or swift best practices for swift projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "swift",
+    "best-practices",
+    "template",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

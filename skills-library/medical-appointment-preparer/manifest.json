@@ -1,0 +1,17 @@
+{
+  "id": "medical-appointment-preparer",
+  "name": "Medical Appointment Preparer",
+  "version": "1.0.0",
+  "description": "Helps you prepare for medical appointments with question frameworks, records organization, symptom documentation, and self-advocacy strategies to get the most from every visit. Use when the user asks about medical appointment preparer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of medical appointment preparer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "checklist",
+    "template",
+    "testing",
+    "emergency-preparedness",
+    "cooking",
+    "insurance"
+  ],
+  "requiredCapabilities": []
+}

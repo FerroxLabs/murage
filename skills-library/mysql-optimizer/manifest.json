@@ -1,0 +1,14 @@
+{
+  "id": "mysql-optimizer",
+  "name": "Mysql Optimizer",
+  "version": "1.0.0",
+  "description": "MySQL optimization expertise covering query optimization with EXPLAIN analysis, indexing strategies, InnoDB tuning, slow query log analysis, connection pooling, replication architectures (master-slave, group replication), partitioning, character set handling, and backup strategies using mysqldump and Percona XtraBackup. Use when the user asks about mysql optimizer, mysql optimizer best practices, or needs guidance on mysql optimizer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "backend",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

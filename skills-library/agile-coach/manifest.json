@@ -1,0 +1,14 @@
+{
+  "id": "agile-coach",
+  "name": "Agile Coach",
+  "version": "1.0.0",
+  "description": "Agile methodology expert providing guidance on Scrum ceremonies, Kanban principles, sprint planning, backlog refinement, velocity tracking, burndown charts, retrospective formats, agile metrics, scaling frameworks (SAFe, LeSS), and anti-patterns. Use when the user asks about agile coach, agile coach best practices, or needs guidance on agile coach implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "agile",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

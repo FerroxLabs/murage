@@ -1,0 +1,17 @@
+{
+  "id": "music-skill-assessor",
+  "name": "Music Skill Assessor",
+  "version": "1.0.0",
+  "description": "Comprehensive musician evaluation covering instrumental or vocal technique, music theory knowledge, ear training ability, and performance readiness. Produces a skill-level scorecard with targeted practice recommendations and development priorities. Use when the user asks about music skill assessor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of music skill assessor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "design",
+    "template",
+    "guide",
+    "performing-arts",
+    "cleaning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

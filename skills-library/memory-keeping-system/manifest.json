@@ -1,0 +1,14 @@
+{
+  "id": "memory-keeping-system",
+  "name": "Memory Keeping System",
+  "version": "1.0.0",
+  "description": "Creates organized systems for preserving family memories including photo management, journaling traditions, keepsake curation, and digital archiving strategies. Produces structured memory-keeping plans with storage systems, curation workflows, and preservation schedules. Use when the user asks about organizing family photos, preserving memories, creating memory books, or setting up a keepsake management system. Do NOT use for professional photography techniques (use design-creative skills) or social media content creation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "planning",
+    "design",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

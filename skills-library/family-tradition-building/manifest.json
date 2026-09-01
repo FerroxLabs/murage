@@ -1,0 +1,14 @@
+{
+  "id": "family-tradition-building",
+  "name": "Family Tradition Building",
+  "version": "1.0.0",
+  "description": "Provides frameworks for creating and sustaining meaningful family traditions across seasons, holidays, and milestones. Produces tradition design plans with implementation steps, adaptation guidelines for growing families, and documentation systems for preserving traditions. Use when the user asks about creating family traditions, establishing rituals, or building meaningful recurring family activities. Do NOT use for event planning logistics (use family event skills), cultural or religious ceremony design, or school tradition creation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "parenting",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

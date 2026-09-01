@@ -1,0 +1,14 @@
+{
+  "id": "podcast-interview-guide",
+  "name": "Podcast Interview Guide",
+  "version": "1.0.0",
+  "description": "Produces a podcast interview guide with rapport-building openers, primary topic questions with follow-up probes, lightning round questions, and a closing sequence. Includes active listening cues and redirect language. Use when the user asks to prepare interview questions for a podcast guest, plan a podcast interview, or create a question flow for a conversation. Do NOT use for full episode planning with segments and timing (use podcast-episode-planning), audio production settings (use audio-editing-guide), or non-podcast interview preparation (use interview-prep).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "podcast",
+    "template",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

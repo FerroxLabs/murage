@@ -1,0 +1,16 @@
+{
+  "id": "build-professional-network",
+  "name": "Build Professional Network",
+  "version": "1.0.0",
+  "description": "Strategic workflow for building and leveraging a powerful professional network. Covers auditing your current network, developing a networking strategy aligned with career goals, making authentic connections, nurturing relationships over time, and leveraging your network for opportunities without being transactional. Use when the user wants to build professional network or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "networking",
+    "career",
+    "relationships",
+    "linkedin",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

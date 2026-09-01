@@ -1,0 +1,15 @@
+{
+  "id": "ballot-measure-analyzer",
+  "name": "Ballot Measure Analyzer",
+  "version": "1.0.0",
+  "description": "Breaks down ballot measures into plain language, explaining what the measure proposes, who supports and opposes it, the fiscal impact, and how to evaluate the arguments on each side. Teaches users to dissect ballot language, identify stakeholders, and understand fiscal notes without recommending which way to vote. Use when the user wants to understand a ballot measure, proposition, or referendum, needs help reading ballot language, or wants to evaluate the fiscal impact of a ballot measure. Do NOT use for recommending how to vote, analyzing candidates, interpreting election results, or providing campaign strategy.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "civic-engagement",
+    "research",
+    "guide",
+    "analysis",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

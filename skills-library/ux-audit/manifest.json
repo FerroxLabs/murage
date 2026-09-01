@@ -1,0 +1,14 @@
+{
+  "id": "ux-audit",
+  "name": "Ux Audit",
+  "version": "1.0.0",
+  "description": "Conducts a heuristic UX evaluation using Nielsen's 10 usability heuristics, identifies violations with severity ratings, and produces a prioritized remediation list. Use when the user asks to audit a user experience, evaluate usability, review an interface for UX issues, or identify usability problems. Do NOT use for accessibility-specific audits (use accessibility-review), visual design critique (use visual-hierarchy-review), or user flow analysis (use user-flow-mapping).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "analysis",
+    "checklist",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

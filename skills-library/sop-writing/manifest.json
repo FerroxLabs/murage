@@ -1,0 +1,13 @@
+{
+  "id": "sop-writing",
+  "name": "Sop Writing",
+  "version": "1.0.0",
+  "description": "Creates standard operating procedures with step-by-step instructions, decision points, safety notes, and verification checks for repeatable processes. Use when the user needs to document a process, create a procedure manual, or write operational instructions. Do NOT use for how-to guides aimed at external audiences (use `how-to-guide`), project proposals (use `project-proposal`), or technical documentation (use a technical writing skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "technical-writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

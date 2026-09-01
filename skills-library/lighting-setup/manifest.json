@@ -1,0 +1,14 @@
+{
+  "id": "lighting-setup",
+  "name": "Lighting Setup",
+  "version": "1.0.0",
+  "description": "Produces a lighting setup specification with key light position, modifier, fill light ratio and position, background light, and color temperature for portrait, product, and scene photography. All positions use clock-position notation relative to the subject. Use when the user asks about lighting for photography, studio lighting setup, portrait lighting, or product photography lighting. Do NOT use for camera exposure settings (use exposure-triangle), photo composition (use composition-guide), or post-processing color grading (use photo-editing-workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "photography",
+    "design",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

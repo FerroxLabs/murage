@@ -1,0 +1,19 @@
+{
+  "id": "ai-readiness-evaluation",
+  "name": "Ai Readiness Evaluation",
+  "version": "1.0.0",
+  "description": "Organizational AI readiness assessment evaluating data quality, team capabilities, infrastructure, governance, and use case prioritization to produce an actionable readiness scorecard. Use when the user asks about ai readiness evaluation, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ai readiness evaluation or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "ai-ml",
+    "budgeting",
+    "template",
+    "cloud",
+    "automation",
+    "analysis",
+    "research",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

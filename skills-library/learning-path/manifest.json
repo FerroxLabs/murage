@@ -1,0 +1,14 @@
+{
+  "id": "learning-path",
+  "name": "Learning Path",
+  "version": "1.0.0",
+  "description": "Creates sequenced learning paths with resources, milestones, and practice projects for professionals building specific skills. Produces an ordered curriculum the professional can follow independently. Use when a professional asks to learn a new skill, create a learning roadmap, find a structured path to competency, or plan self-directed professional learning. Do NOT use for academic study plans (use `study-plan`), for skill gap identification (use `skill-gap-analysis`), or for certification exam prep (use `certification-prep`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

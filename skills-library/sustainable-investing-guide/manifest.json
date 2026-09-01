@@ -1,0 +1,18 @@
+{
+  "id": "sustainable-investing-guide",
+  "name": "Sustainable Investing Guide",
+  "version": "1.0.0",
+  "description": "Sustainable investing expertise covering ESG criteria evaluation, greenwashing detection, impact measurement frameworks, sustainable fund selection, screening strategies (negative, positive, thematic), ESG rating provider comparison, regulatory landscape (EU SFDR, SEC), and building a values-aligned investment portfolio. Use when the user asks about sustainable investing guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of sustainable investing guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "checklist",
+    "guide",
+    "analysis",
+    "research",
+    "performing-arts",
+    "energy-efficiency",
+    "waste-reduction"
+  ],
+  "requiredCapabilities": []
+}

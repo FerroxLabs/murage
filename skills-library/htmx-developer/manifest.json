@@ -1,0 +1,13 @@
+{
+  "id": "htmx-developer",
+  "name": "Htmx Developer",
+  "version": "1.0.0",
+  "description": "HTMX development expertise covering hypermedia-driven application patterns, progressive enhancement, server-side rendering integration, HTMX attributes and extensions, partial page updates, form handling, real-time features, and migration from SPA frameworks. Use when the user asks about htmx developer, htmx developer best practices, or needs guidance on htmx developer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "javascript"
+  ],
+  "requiredCapabilities": []
+}

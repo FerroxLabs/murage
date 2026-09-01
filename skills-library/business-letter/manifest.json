@@ -1,0 +1,13 @@
+{
+  "id": "business-letter",
+  "name": "Business Letter",
+  "version": "1.0.0",
+  "description": "Writes formal business letters with proper formatting, professional tone, and clear purpose for external correspondence including partnership requests, complaints, announcements, and official communications. Use when the user needs a formal letter to an external party. Do NOT use for internal memos (use `business-memo`), emails (use `professional-email`), or proposals (use `business-proposal`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "business-writing",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

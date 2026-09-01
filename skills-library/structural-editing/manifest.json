@@ -1,0 +1,13 @@
+{
+  "id": "structural-editing",
+  "name": "Structural Editing",
+  "version": "1.0.0",
+  "description": "Performs structural (developmental) editing on documents, producing an editorial memo with assessment and a restructured outline showing proposed reorganization, reordering, and section changes. Use when the user asks for structural editing, developmental editing, document reorganization, or help with the overall structure and flow of a piece. Do NOT use for line-level editing (use copy-editing), proofreading (use proofreading), or tone changes (use tone-adjustment).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

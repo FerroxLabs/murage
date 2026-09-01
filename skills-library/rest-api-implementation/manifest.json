@@ -1,0 +1,14 @@
+{
+  "id": "rest-api-implementation",
+  "name": "Rest Api Implementation",
+  "version": "1.0.0",
+  "description": "Guides expert-level rest api implementation implementation: api-design and frameworks decision frameworks, production-ready patterns, and concrete templates for rest api implementation workflows. Use when the user asks about rest api implementation, rest api implementation configuration, or api-design best practices for rest projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "api-design",
+    "frameworks",
+    "web-development",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

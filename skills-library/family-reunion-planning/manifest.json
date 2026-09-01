@@ -1,0 +1,14 @@
+{
+  "id": "family-reunion-planning",
+  "name": "Family Reunion Planning",
+  "version": "1.0.0",
+  "description": "Creates complete family reunion plans with venue selection criteria, logistics coordination, activity programming, budget frameworks, and communication templates. Produces structured event plans with timelines, task assignments, and attendee management systems. Use when the user asks about planning a family reunion, large family gathering, or multi-generational family event. Do NOT use for planning weddings, corporate events, or small dinner parties.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "event-planning",
+    "template",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

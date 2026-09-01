@@ -1,0 +1,14 @@
+{
+  "id": "mobile-analytics",
+  "name": "Mobile Analytics",
+  "version": "1.0.0",
+  "description": "Expert mobile analytics covering attribution tracking, funnel analysis, crash reporting integration, A/B testing frameworks, retention and cohort analysis, event taxonomy design, privacy-compliant data collection, real-time dashboards, and actionable metric strategies for iOS and Android applications. Use when the user asks about mobile analytics, mobile analytics best practices, or needs guidance on mobile analytics implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "analysis",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

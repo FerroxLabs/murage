@@ -1,0 +1,14 @@
+{
+  "id": "nextjs-performance",
+  "name": "Nextjs Performance",
+  "version": "1.0.0",
+  "description": "Guides expert-level next.js performance implementation: typescript and frameworks decision frameworks, production-ready patterns, and concrete templates for nextjs performance workflows. Use when the user asks about next.js performance, nextjs performance configuration, or typescript best practices for next.js projects. Do NOT use when the user needs a different web development capability -- check sibling skills in the web development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "typescript",
+    "frameworks",
+    "optimization",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

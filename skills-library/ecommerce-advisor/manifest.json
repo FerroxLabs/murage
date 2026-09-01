@@ -1,0 +1,15 @@
+{
+  "id": "ecommerce-advisor",
+  "name": "Ecommerce Advisor",
+  "version": "1.0.0",
+  "description": "E-commerce strategy covering platform selection, product listing optimization, conversion rate optimization, cart abandonment strategies, payment processing, shipping, inventory management, customer retention, and analytics KPIs. Use when the user asks about ecommerce advisor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "seo",
+    "marketing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

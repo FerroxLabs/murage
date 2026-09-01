@@ -1,0 +1,14 @@
+{
+  "id": "one-pot-meals",
+  "name": "One Pot Meals",
+  "version": "1.0.0",
+  "description": "Creates complete one-pot or one-pan meals using a formula-based approach: protein plus aromatics plus liquid plus starch plus vegetables. Provides structured recipes with timing sequences, ingredient ratios, and variations for different cuisines. Use when the user asks about simple weeknight dinners, one-pot meals, sheet pan dinners, or wants to minimize cleanup while cooking a complete meal. Do NOT use for batch meal prep (use meal-prep-workflow), baking (use baking-fundamentals), or learning cooking techniques in isolation (use cooking-techniques).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "cleaning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

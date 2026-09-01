@@ -1,0 +1,15 @@
+{
+  "id": "rubric-creation",
+  "name": "Rubric Creation",
+  "version": "1.0.0",
+  "description": "Creates complete analytic rubrics with criteria, performance levels, and descriptors for any assignment type. Produces a filled-in rubric document that educators can use directly for grading and student feedback -- not a tutorial on rubric design. Use when an educator asks to create a rubric, scoring guide, or grading criteria for an assignment, project, presentation, or performance task. Do NOT use for creating the assessment itself (use `assessment-design`), for student self-assessment tools (use `learning-objectives`), or for feedback writing (use `student-feedback`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "lesson-plan",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

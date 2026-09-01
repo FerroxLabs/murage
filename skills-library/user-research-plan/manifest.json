@@ -1,0 +1,16 @@
+{
+  "id": "user-research-plan",
+  "name": "User Research Plan",
+  "version": "1.0.0",
+  "description": "Creates user research plans with research questions, methodology selection, participant criteria, discussion guide outlines, and analysis frameworks using UX research methodology. Use when the user asks about user research, UX research, usability testing, user interviews, customer research, or research planning. Do NOT use for customer discovery interviews for startups (use customer-discovery-interview), employee surveys (use employee-survey), or market research briefs (use market-research-brief).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "planning",
+    "analysis",
+    "strategy",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

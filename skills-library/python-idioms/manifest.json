@@ -1,0 +1,14 @@
+{
+  "id": "python-idioms",
+  "name": "Python Idioms",
+  "version": "1.0.0",
+  "description": "Teaches expert-level Python idiomatic patterns: comprehensions, generators, dataclasses, protocols, structural pattern matching, and context managers. Focuses on writing Pythonic code that leverages the language strengths rather than translating patterns from other languages. Use when the user asks about Pythonic patterns, list comprehensions, generators, dataclasses vs named tuples, protocols, pattern matching, context managers, or idiomatic Python code style. Do NOT use when the user asks about project setup (use `python-project-setup`), testing (use `python-testing-patterns`), async programming (use `python-async-patterns`), or type system features (use `python-type-system`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "python",
+    "best-practices",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

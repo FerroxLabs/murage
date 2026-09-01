@@ -1,0 +1,14 @@
+{
+  "id": "webhook-design",
+  "name": "Webhook Design",
+  "version": "1.0.0",
+  "description": "Guides expert-level webhook design implementation: api-design and automation decision frameworks, production-ready patterns, and concrete templates for webhook design workflows. Use when the user asks about webhook design, webhook design configuration, or api-design best practices for webhook projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "api-design",
+    "backend",
+    "automation",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

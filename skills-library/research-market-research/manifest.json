@@ -1,0 +1,13 @@
+{
+  "id": "research-market-research",
+  "name": "Market research",
+  "version": "1.0.0",
+  "description": "The user wants to size or shape a market — not a specific buyer, but the terrain. Load on \"what's the TAM,\" \"is this market big enough,\" \"is the industry growing,\" \"what's the regulatory landscape,\" or \"should we enter this category.\" Macro work — different scale from buyer-interview craft.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "market",
+    "research"
+  ],
+  "requiredCapabilities": []
+}

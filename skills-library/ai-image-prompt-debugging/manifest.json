@@ -1,0 +1,14 @@
+{
+  "id": "ai-image-prompt-debugging",
+  "name": "Ai Image Prompt Debugging",
+  "version": "1.0.0",
+  "description": "Diagnoses and fixes AI image generation prompt issues including mismatched style descriptors, conflicting terms, underspecified composition, and overcrowded token budgets with revised prompt output. Use when the user asks why their AI image prompt is not producing expected results, wants to fix a failing prompt, or needs to diagnose visual artifacts in generated images. Do NOT use for creating new prompts from scratch (use model-specific prompting skills), style transfer (use ai-image-style-transfer), or upscaling (use ai-image-upscaling).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-image-generation",
+    "analysis",
+    "design",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

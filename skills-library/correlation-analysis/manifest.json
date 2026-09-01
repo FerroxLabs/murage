@@ -1,0 +1,14 @@
+{
+  "id": "correlation-analysis",
+  "name": "Correlation Analysis",
+  "version": "1.0.0",
+  "description": "Produces a correlation analysis between specified variables. Computes and interprets correlation coefficients, explains the strength and direction of relationships, distinguishes correlation from causation, and identifies potential confounding variables. Use when the user wants to understand whether two or more variables move together and how strongly they are related. Do NOT use for predicting one variable from another (use regression-guide), testing whether a difference is significant (use hypothesis-testing), or building dashboards (use dashboard-design).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "statistics",
+    "analysis",
+    "data-science",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

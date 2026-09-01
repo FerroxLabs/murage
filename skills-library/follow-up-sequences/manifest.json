@@ -1,0 +1,15 @@
+{
+  "id": "follow-up-sequences",
+  "name": "Follow Up Sequences",
+  "version": "1.0.0",
+  "description": "Produces post-meeting, post-demo, and post-proposal follow-up email sequences that advance deals through the sales pipeline using sales cadence methodology. Use when the user asks to create follow-up emails after a sales meeting, write post-demo follow-up sequences, build post-proposal nurture emails, or design email sequences that keep deals moving forward. Do NOT use for cold outreach to new prospects (use cold-outreach-sequence), customer onboarding emails (use cs-handoff-document), or marketing email campaigns to subscribers (use email-campaign).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "email",
+    "template",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

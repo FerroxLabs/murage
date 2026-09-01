@@ -1,0 +1,14 @@
+{
+  "id": "secrets-manager",
+  "name": "Secrets Manager",
+  "version": "1.0.0",
+  "description": "Secrets management expertise covering HashiCorp Vault, AWS Secrets Manager, rotation strategies, zero-trust secrets architecture, envelope encryption, secret injection patterns, least-privilege access, and secrets lifecycle management. Use when the user asks about secrets manager, secrets manager best practices, or needs guidance on secrets manager implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "security",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

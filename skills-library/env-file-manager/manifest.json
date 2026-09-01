@@ -1,0 +1,19 @@
+{
+  "id": "env-file-manager",
+  "name": "Env File Manager",
+  "version": "1.0.0",
+  "description": "Best practices for managing env-config files - setup, secrets management, environment separation, dotenv configuration, and security patterns for development teams. Use when the user asks about env file manager, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of env file manager or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "devops",
+    "checklist",
+    "template",
+    "python",
+    "javascript",
+    "api-design",
+    "cloud",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

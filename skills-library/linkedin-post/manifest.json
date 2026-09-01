@@ -1,0 +1,13 @@
+{
+  "id": "linkedin-post",
+  "name": "Linkedin Post",
+  "version": "1.0.0",
+  "description": "Writes short-form LinkedIn feed posts with a hook line, insight delivery, and engagement-optimized formatting. Use when the user wants to write a LinkedIn post, create content for the LinkedIn feed, or draft a professional social media update. Do NOT use for long-form LinkedIn articles (use `linkedin-article`), Twitter threads (use `twitter-thread`), or Instagram captions (use `instagram-caption`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "social-media",
+    "writing",
+    "linkedin"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "win-loss-analysis",
+  "name": "Win Loss Analysis",
+  "version": "1.0.0",
+  "description": "Produces a structured win/loss analysis with deal factors, pattern identification, and improvement actions using deal analysis methodology. Use when the user asks to create a win/loss review, analyze why deals were won or lost, build a deal analysis template, review sales outcomes, or identify patterns in closed deals to improve win rates. Do NOT use for pipeline review or forecasting (use pipeline-review), competitive analysis at the market level (use competitive-analysis), or customer churn analysis (use operations metrics).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "analysis",
+    "strategy",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

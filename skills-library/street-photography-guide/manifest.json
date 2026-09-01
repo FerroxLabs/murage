@@ -1,0 +1,14 @@
+{
+  "id": "street-photography-guide",
+  "name": "Street Photography Guide",
+  "version": "1.0.0",
+  "description": "Produces a street photography guide with focal length selection rationale, hyperfocal distance, zone focusing technique, aperture and shutter speed starting points, ethical considerations for subject consent, and post-processing aesthetic direction. Camera-agnostic instructions. Use when the user asks about street photography technique, candid photography, urban photography, or documentary-style shooting in public. Do NOT use for portrait posing (use portrait-technique), studio lighting (use lighting-setup), or landscape composition (use composition-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "photography",
+    "guide",
+    "checklist",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

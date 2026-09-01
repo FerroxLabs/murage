@@ -1,0 +1,18 @@
+{
+  "id": "fertility-journey-guide",
+  "name": "Fertility Journey Guide",
+  "version": "1.0.0",
+  "description": "Overview of fertility options, treatment timelines, emotional support strategies, cost planning frameworks, and decision-making guidance for individuals and couples navigating the fertility journey Use when the user asks about fertility journey guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of fertility journey guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "nutrition",
+    "journaling",
+    "stress-management",
+    "checklist",
+    "template",
+    "guide",
+    "beginner-friendly"
+  ],
+  "requiredCapabilities": []
+}

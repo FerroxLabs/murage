@@ -1,0 +1,17 @@
+{
+  "id": "wellness-program-designer",
+  "name": "Wellness Program Designer",
+  "version": "1.0.0",
+  "description": "Practical guide to designing corporate wellness programs covering needs assessment, engagement strategies, program components, measurement and metrics, incentive design, and demonstrating ROI for organizational health and wellbeing initiatives. Use when the user asks about wellness program designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of wellness program designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "healthcare",
+    "health-wellness",
+    "budgeting",
+    "analysis",
+    "planning",
+    "branding",
+    "investing"
+  ],
+  "requiredCapabilities": []
+}

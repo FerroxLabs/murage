@@ -1,0 +1,19 @@
+{
+  "id": "book-binding-restorer",
+  "name": "Book Binding Restorer",
+  "version": "1.0.0",
+  "description": "Book binding restoration expertise covering damage assessment, spine and hinge repair techniques, page cleaning and deacidification, leather and cloth cover restoration, rebinding methods, conservation principles, proper book storage and display, and tools and materials for book preservation at home. Use when the user asks about book binding restorer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of book binding restorer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "woodworking",
+    "checklist",
+    "testing",
+    "restoration",
+    "performing-arts",
+    "cleaning",
+    "sewing",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "rag-pipeline-design",
+  "name": "Rag Pipeline Design",
+  "version": "1.0.0",
+  "description": "Guides expert-level rag pipeline design implementation: ai-ml and database decision frameworks, production-ready patterns, and concrete templates for rag pipeline design workflows. Use when the user asks about rag pipeline design, rag pipeline design configuration, or ai-ml best practices for rag projects. Do NOT use when the user needs a different ai ml engineering capability -- check sibling skills in the ai ml engineering subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "database",
+    "backend",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "caregiver-burnout-prevention",
+  "name": "Caregiver Burnout Prevention",
+  "version": "1.0.0",
+  "description": "Produces caregiver burnout assessment frameworks, self-care plans, boundary maintenance strategies, respite care options, and warning sign checklists for family caregivers managing elder care or chronic illness support. Generates personalized burnout prevention plans with concrete scheduling and resource identification. Use when the user asks about caregiver stress, burnout prevention, self-care for caregivers, or managing the emotional toll of caregiving. Do NOT use for mental health diagnosis or therapy (consult a licensed therapist), medical caregiver duties (consult physicians), or care facility evaluation (use care-facility-evaluation).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "elder-care",
+    "mental-wellness",
+    "checklist",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

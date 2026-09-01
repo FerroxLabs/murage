@@ -1,0 +1,19 @@
+{
+  "id": "architecture-review-checklist",
+  "name": "Architecture Review Checklist",
+  "version": "1.0.0",
+  "description": "Systematic software architecture assessment evaluating scalability, maintainability, security, cost efficiency, and documentation quality to produce a structured architecture scorecard. Use when the user asks about architecture review checklist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of architecture review checklist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "best-practices",
+    "checklist",
+    "template",
+    "api-design",
+    "cloud",
+    "testing",
+    "analysis",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

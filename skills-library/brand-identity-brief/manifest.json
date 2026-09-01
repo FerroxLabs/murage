@@ -1,0 +1,14 @@
+{
+  "id": "brand-identity-brief",
+  "name": "Brand Identity Brief",
+  "version": "1.0.0",
+  "description": "Produces a brand identity brief with positioning statement, personality adjectives, visual tone, color rationale, typography direction, imagery style guide, and usage constraints. Use when the user asks to create a brand identity, define brand guidelines, establish visual brand direction, or build a brand brief for a new project. Do NOT use for color palette creation (use color-palette-design), typography system details (use typography-system), or logo design direction (use logo-design-brief).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "branding",
+    "design",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

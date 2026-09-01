@@ -1,0 +1,18 @@
+{
+  "id": "privacy-audit-guide",
+  "name": "Privacy Audit Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive personal privacy audit covering browser hardening, phone privacy settings, social media exposure reduction, data broker removal, and ongoing privacy maintenance routines. Use when the user asks about privacy audit guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of privacy audit guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "template",
+    "guide",
+    "advanced",
+    "testing",
+    "networking",
+    "video-production",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

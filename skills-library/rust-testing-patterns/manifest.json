@@ -1,0 +1,14 @@
+{
+  "id": "rust-testing-patterns",
+  "name": "Rust Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level Rust testing: unit test organization, integration tests, property testing with proptest, benchmark testing with criterion, and mock patterns. Use when the user asks about Rust testing, unit tests, integration tests, proptest, criterion, mocking in Rust, test organization. Do NOT use when the user asks about Rust project setup (use `rust-project-setup`), Rust error handling (use `rust-error-handling`), general testing concepts (use `unit-testing-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "rust",
+    "testing",
+    "tdd",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

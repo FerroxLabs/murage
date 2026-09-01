@@ -1,0 +1,13 @@
+{
+  "id": "peer-review-response",
+  "name": "Peer Review Response",
+  "version": "1.0.0",
+  "description": "Drafts structured responses to peer review comments for academic journal submissions, addressing each reviewer point with specific revisions, rebuttals, or explanations. Use when the user asks to respond to peer review feedback, write a revision letter, address reviewer comments, or prepare a resubmission response. Do NOT use for writing the peer review itself (use academic-paper-review), revising the paper content (use the appropriate writing skill), or general editing (use copy-editing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "writing",
+    "editing"
+  ],
+  "requiredCapabilities": []
+}

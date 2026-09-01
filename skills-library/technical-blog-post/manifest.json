@@ -1,0 +1,14 @@
+{
+  "id": "technical-blog-post",
+  "name": "Technical Blog Post",
+  "version": "1.0.0",
+  "description": "Creates technical deep-dive blog posts with code examples, architectural explanations, diagram descriptions, benchmarks, and lessons learned for developer audiences. Use when the user wants to write a technical blog post, engineering blog entry, or code walkthrough article. Do NOT use for general blog posts (use `blog-post-writing`), tutorials (use `tutorial-writing`), or API documentation (use `api-documentation`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "blog-post",
+    "planning",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

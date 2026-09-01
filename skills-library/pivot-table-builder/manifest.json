@@ -1,0 +1,14 @@
+{
+  "id": "pivot-table-builder",
+  "name": "Pivot Table Builder",
+  "version": "1.0.0",
+  "description": "Builds a pivot table specification from a described dataset. Determines field placement (rows, columns, values, filters), aggregation function selection, grouping rules, and formatting instructions. Output is the exact setup configuration. Use when the user needs to summarize data by categories, create cross-tabulations, or build summary tables from detailed records. Do NOT use for lookup formulas (use excel-lookup-formulas), data cleaning (use spreadsheet-data-cleaning), or chart creation (use chart-type-selector).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spreadsheets",
+    "data-visualization",
+    "analysis",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

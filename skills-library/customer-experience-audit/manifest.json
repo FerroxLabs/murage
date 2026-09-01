@@ -1,0 +1,15 @@
+{
+  "id": "customer-experience-audit",
+  "name": "Customer Experience Audit",
+  "version": "1.0.0",
+  "description": "Customer experience assessment evaluating journey touchpoints, satisfaction metrics, support quality, feedback loops, and experience design to produce an actionable CX scorecard. Use when the user asks about customer experience audit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of customer experience audit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "template",
+    "email",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "nutrition-label-literacy",
+  "name": "Nutrition Label Literacy",
+  "version": "1.0.0",
+  "description": "Teaches how to read and interpret food nutrition labels including serving size math, ingredient list interpretation, daily value percentages, and key nutrient identification. Produces a label reading guide that helps users make informed food comparisons without prescribing dietary choices. Use when the user asks about reading nutrition labels, understanding serving sizes, comparing food products, interpreting ingredient lists, or understanding daily value percentages on food packaging. Do NOT use for clinical dietary management, allergy identification (consult an allergist), macro calculation (use macro-calculation), or product recommendations.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "guide",
+    "analysis",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

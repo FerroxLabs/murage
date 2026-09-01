@@ -1,0 +1,15 @@
+{
+  "id": "ip-protection-overview",
+  "name": "Ip Protection Overview",
+  "version": "1.0.0",
+  "description": "Compares the four main types of intellectual property protection: copyright, trademark, patent, and trade secret. Explains what each protects, how protection is obtained, duration, registration processes, and when each type applies. Produces a structured comparison to help users identify which protections may apply to their work. Use when the user wants to understand intellectual property basics, needs to identify which IP protection applies to their creation, or wants to prepare for a consultation with an IP attorney. Do NOT use for filing patent or trademark applications, IP infringement analysis, licensing agreement drafting, or specific legal advice on IP disputes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "guide",
+    "research",
+    "checklist",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "accessibility-review",
+  "name": "Accessibility Review",
+  "version": "1.0.0",
+  "description": "Conducts a WCAG 2.1 AA accessibility review covering color contrast, keyboard navigation, screen reader markup, touch targets, and ARIA labels with a structured remediation checklist. Use when the user asks to review accessibility, check WCAG compliance, audit for screen reader compatibility, or evaluate keyboard navigation. Do NOT use for general UX audits (use ux-audit), visual hierarchy critique (use visual-hierarchy-review), or responsive layout testing (use responsive-layout-design).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "design",
+    "checklist",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

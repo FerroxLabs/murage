@@ -1,0 +1,18 @@
+{
+  "id": "water-conservation-planner",
+  "name": "Water Conservation Planner",
+  "version": "1.0.0",
+  "description": "Rainwater harvesting, water efficiency strategies, drought-resistant landscaping, greywater systems, and comprehensive water conservation planning for homes and communities Use when the user asks about water conservation planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of water conservation planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "planning",
+    "safety"
+  ],
+  "requiredCapabilities": []
+}

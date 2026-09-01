@@ -1,0 +1,14 @@
+{
+  "id": "baking-fundamentals",
+  "name": "Baking Fundamentals",
+  "version": "1.0.0",
+  "description": "Teaches the science and technique of baking including measurement precision (weight vs. volume), mixing methods (creaming, folding, cutting in), leavening chemistry, oven temperature management, and troubleshooting common failures. Use when the user asks about baking techniques, why their baked goods fail, mixing methods, leavening, or wants to understand baking science. Do NOT use for recipe scaling (use recipe-scaling), ingredient substitutions (use ingredient-substitution), or cooking techniques like roasting or braising (use cooking-techniques).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "step-by-step",
+    "teaching",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

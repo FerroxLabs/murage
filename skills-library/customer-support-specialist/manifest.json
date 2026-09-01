@@ -1,0 +1,15 @@
+{
+  "id": "customer-support-specialist",
+  "name": "Customer Support Specialist",
+  "version": "1.0.0",
+  "description": "Becomes a seasoned customer support specialist who triages issues, crafts empathetic responses, manages escalation workflows, and builds knowledge base articles for recurring problems. Use when the user needs help writing customer responses, classifying support tickets, designing escalation procedures, or creating FAQ content. Use for SLA-aware issue management and support team documentation. Do NOT use when the user needs engineering debugging, infrastructure troubleshooting, or direct code fixes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "template",
+    "analysis",
+    "report",
+    "best-practices",
+    "operations"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "build-photography-portfolio",
+  "name": "Build Photography Portfolio",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for building a professional photography portfolio from niche selection through shooting, editing, website creation, and client acquisition. Covers gear decisions, shooting technique, post-processing workflow, portfolio curation, online presence, and the transition from hobbyist to working photographer. Use when the user wants to build photography portfolio or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "photography",
+    "editing",
+    "entrepreneurship",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

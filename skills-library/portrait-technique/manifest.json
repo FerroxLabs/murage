@@ -1,0 +1,14 @@
+{
+  "id": "portrait-technique",
+  "name": "Portrait Technique",
+  "version": "1.0.0",
+  "description": "Produces a portrait session guide with lens selection rationale, distance, aperture for background separation, focus point placement, expression direction, and posing prompts for natural-looking poses. Applicable to any camera system with manual or semi-automatic controls. Use when the user asks to photograph portraits, headshots, or people, or wants guidance on posing, lens choice, or focus technique for portraits. Do NOT use for lighting setup (use lighting-setup), general composition (use composition-guide), or photo editing (use photo-editing-workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "photography",
+    "guide",
+    "checklist",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

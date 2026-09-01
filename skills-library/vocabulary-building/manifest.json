@@ -1,0 +1,15 @@
+{
+  "id": "vocabulary-building",
+  "name": "Vocabulary Building",
+  "version": "1.0.0",
+  "description": "Creates vocabulary acquisition plans with word selection, study methods, and spaced repetition review schedules for language learners. Produces a structured vocabulary building program with practice exercises -- not a word list. Use when a learner asks to build vocabulary in a language, create a vocabulary study plan, learn new words systematically, or improve word retention. Do NOT use for grammar instruction (use `grammar-practice`), for conversation practice (use `conversation-practice`), or for general flashcard creation (use `flashcard-generation`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "language-learning",
+    "spaced-repetition",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

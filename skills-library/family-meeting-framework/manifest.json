@@ -1,0 +1,14 @@
+{
+  "id": "family-meeting-framework",
+  "name": "Family Meeting Framework",
+  "version": "1.0.0",
+  "description": "Provides a structured framework for regular family meetings with agenda templates, age-appropriate participation strategies, decision-making processes, and follow-through tracking. Produces complete meeting formats with time allocations, facilitation scripts, and action item systems. Use when the user asks about holding family meetings, creating a family decision-making process, or establishing regular family communication routines. Do NOT use for family therapy sessions, crisis intervention, or workplace meeting facilitation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "relationships",
+    "template",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

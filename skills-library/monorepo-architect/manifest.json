@@ -1,0 +1,14 @@
+{
+  "id": "monorepo-architect",
+  "name": "Monorepo Architect",
+  "version": "1.0.0",
+  "description": "Advanced monorepo architecture covering Nx, Turborepo, and Lerna tooling, workspace management patterns, build caching strategies, dependency graph optimization, task pipeline design, and migration planning for large-scale codebases. Use when the user asks about monorepo architect, monorepo architect best practices, or needs guidance on monorepo architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "architecture",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

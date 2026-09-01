@@ -1,0 +1,13 @@
+{
+  "id": "linkedin-article",
+  "name": "Linkedin Article",
+  "version": "1.0.0",
+  "description": "Writes LinkedIn-formatted thought leadership articles with professional credibility markers, structured arguments, and platform-specific formatting. Use when the user wants to publish a long-form article on LinkedIn, write thought leadership content for a professional audience, or create LinkedIn Pulse content. Do NOT use for short LinkedIn posts (use `linkedin-post`), general blog posts (use `blog-post-writing`), or Twitter threads (use `twitter-thread`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "social-media",
+    "writing",
+    "content-marketing"
+  ],
+  "requiredCapabilities": []
+}

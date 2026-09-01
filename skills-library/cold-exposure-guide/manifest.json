@@ -1,0 +1,13 @@
+{
+  "id": "cold-exposure-guide",
+  "name": "Cold Exposure Guide",
+  "version": "1.0.0",
+  "description": "Evidence-based cold therapy protocols including cold showers, ice baths, and winter swimming with safety guidelines, progressive adaptation, and contraindications. Use when the user asks about cold exposure guide, or needs help with evidence-based cold therapy protocols including cold showers, ice baths, and winter swimming with safety guidelines, progressive adaptation, and contraindications. Do NOT use when the request requires professional medical advice or falls outside the scope of cold exposure guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "guide",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "city-walking-tour-builder",
+  "name": "City Walking Tour Builder",
+  "version": "1.0.0",
+  "description": "Creates self-guided walking tours with timed segments, turn-by-turn navigation notes, and point-of-interest descriptions. Produces a complete walking route with estimated times between stops, rest points, and alternate shortcuts. Use when the user asks about creating a walking tour of a city, building a self-guided neighborhood walk, planning a themed walking route, or organizing a sightseeing walk with specific time constraints. Do NOT use for cultural site deep dives (use cultural-experience-guide), food tours (use food-tourism-planner), or hiking trail planning (use hobbies-crafts skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "planning",
+    "step-by-step",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

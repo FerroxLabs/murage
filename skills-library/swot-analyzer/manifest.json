@@ -1,0 +1,15 @@
+{
+  "id": "swot-analyzer",
+  "name": "Swot Analyzer",
+  "version": "1.0.0",
+  "description": "Deep strategic analysis using SWOT framework, PESTLE analysis, Porter's Five Forces, competitive positioning matrix, and TOWS matrix for converting analysis into actionable strategy. Use when the user asks about swot analyzer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "analysis",
+    "frameworks",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

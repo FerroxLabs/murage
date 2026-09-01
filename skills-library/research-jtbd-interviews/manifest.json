@@ -1,0 +1,13 @@
+{
+  "id": "research-jtbd-interviews",
+  "name": "JTBD switch interviews",
+  "version": "1.0.0",
+  "description": "The user wants to understand why people buy, or you're looking at a persona that smells made-up. Load this whenever someone asks for \"the audience,\" \"the avatar,\" or \"the customer.\"",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "jtbd",
+    "interviews"
+  ],
+  "requiredCapabilities": []
+}

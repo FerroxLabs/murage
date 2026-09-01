@@ -1,0 +1,14 @@
+{
+  "id": "emergency-fund-planner",
+  "name": "Emergency Fund Planner",
+  "version": "1.0.0",
+  "description": "Calculates the target emergency fund size based on the user's monthly essential expenses, builds a savings timeline, and determines the monthly contribution needed to reach the target. Produces a funded emergency fund plan with milestones and a contribution schedule. Use when the user asks about emergency funds, emergency savings, building a financial safety net, or how much to save for emergencies. Do NOT use for general savings goals (use savings-goals-tracker), investment planning, or business cash reserves.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "budgeting",
+    "personal-finance",
+    "savings",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

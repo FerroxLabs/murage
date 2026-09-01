@@ -1,0 +1,14 @@
+{
+  "id": "seasonal-home-checklist",
+  "name": "Seasonal Home Checklist",
+  "version": "1.0.0",
+  "description": "Generates a focused seasonal transition checklist for a specific season change (winter-to-spring, spring-to-summer, summer-to-fall, fall-to-winter) tailored to the user's home type and climate region. Covers system changeovers, exterior prep, interior adjustments, and safety checks. Use when the user asks about preparing their home for a new season, seasonal home prep, or winterizing/ summerizing their house. Do NOT use for year-round maintenance planning (use annual-home-maintenance) or emergency weather preparation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "checklist",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "get-professional-certification",
+  "name": "Get Professional Certification",
+  "version": "1.0.0",
+  "description": "Structured workflow for selecting, preparing for, and passing a professional certification exam. Covers choosing the right certification for your career goals, building a study plan with spaced repetition, intensive exam preparation, test-day execution, and maintaining the certification with continuing education. Use when the user wants to get professional certification or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "career",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

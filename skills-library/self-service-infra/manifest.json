@@ -1,0 +1,19 @@
+{
+  "id": "self-service-infra",
+  "name": "Self Service Infra",
+  "version": "1.0.0",
+  "description": "Build self-service infrastructure platforms with Terraform modules, provisioning automation, approval workflows, and developer-friendly abstractions Use when the user asks about self service infra, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of self service infra or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "budgeting",
+    "template",
+    "guide",
+    "python",
+    "api-design",
+    "automation",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

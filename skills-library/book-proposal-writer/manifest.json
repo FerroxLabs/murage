@@ -1,0 +1,13 @@
+{
+  "id": "book-proposal-writer",
+  "name": "Book Proposal Writer",
+  "version": "1.0.0",
+  "description": "Complete non-fiction book proposal construction, covering the overview, market analysis, competitive title evaluation, author biography and platform, detailed chapter outline, sample chapter writing, and marketing plan development. Use when the user asks about book proposal writer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "proposal"
+  ],
+  "requiredCapabilities": []
+}

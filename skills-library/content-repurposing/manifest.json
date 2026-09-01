@@ -1,0 +1,13 @@
+{
+  "id": "content-repurposing",
+  "name": "Content Repurposing",
+  "version": "1.0.0",
+  "description": "Creates a content repurposing map showing how to adapt one piece of source content across 5 or more formats and platforms. Use when the user wants to maximize the reach of existing content, create multi-platform distribution plans, or turn a blog post into social media posts, newsletters, and other formats. Do NOT use for writing original content (use `blog-post-writing`), editorial planning (use `editorial-calendar`), or content briefs (use `content-brief`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

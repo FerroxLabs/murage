@@ -1,0 +1,14 @@
+{
+  "id": "ruby-performance",
+  "name": "Ruby Performance",
+  "version": "1.0.0",
+  "description": "Guides expert-level ruby performance implementation: ruby and optimization decision frameworks, production-ready patterns, and concrete templates for ruby performance workflows. Use when the user asks about ruby performance, ruby performance configuration, or ruby best practices for ruby projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ruby",
+    "optimization",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

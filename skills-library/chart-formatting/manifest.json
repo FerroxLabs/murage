@@ -1,0 +1,14 @@
+{
+  "id": "chart-formatting",
+  "name": "Chart Formatting",
+  "version": "1.0.0",
+  "description": "Produces a complete chart formatting specification including axis labels, tick mark spacing, gridline density, legend placement, annotation placement, data label formatting, and title hierarchy. Eliminates chart junk while preserving the data signal. Use when the user has a chart that needs professional formatting or wants a formatting template for consistent chart styling. Do NOT use for selecting the chart type (use chart-type-selector), choosing a color palette (use color-in-data), or designing a full dashboard (use dashboard-design).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-visualization",
+    "design",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

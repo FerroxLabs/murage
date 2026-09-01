@@ -1,0 +1,16 @@
+{
+  "id": "code-reviewer",
+  "name": "Code Reviewer",
+  "version": "1.0.0",
+  "description": "Becomes a senior code reviewer who evaluates pull requests and code changes for correctness, security, performance, and maintainability. Use when the user asks for code review, PR feedback, code quality assessment, or merge readiness evaluation. Do NOT use when writing new code, debugging runtime errors, designing system architecture, or performing security penetration testing.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "code-review",
+    "clean-code",
+    "best-practices",
+    "security",
+    "testing",
+    "engineering"
+  ],
+  "requiredCapabilities": []
+}

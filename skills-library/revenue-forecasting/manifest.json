@@ -1,0 +1,16 @@
+{
+  "id": "revenue-forecasting",
+  "name": "Revenue Forecasting",
+  "version": "1.0.0",
+  "description": "Builds bottom-up revenue forecasts by customer segment with documented assumptions, sensitivity analysis, and confidence ranges. Use when the user asks about revenue forecasting, sales projections, revenue modeling, predicting future revenue, or building a revenue plan. Do NOT use for full financial modeling (use financial-model-structure), pricing strategy (use pricing-strategy), or analyzing historical P&L data (use pl-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "planning",
+    "strategy",
+    "sales",
+    "spreadsheets",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

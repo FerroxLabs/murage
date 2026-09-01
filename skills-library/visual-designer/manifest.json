@@ -1,0 +1,15 @@
+{
+  "id": "visual-designer",
+  "name": "Visual Designer",
+  "version": "1.0.0",
+  "description": "Becomes a senior visual designer who creates design systems, defines design tokens, builds component specifications, establishes visual hierarchy principles, and ensures accessibility compliance. Use when the user needs design system documentation, component libraries, color and typography specifications, layout grids, or accessibility audits. Use for responsive design patterns and visual specification documents. Do NOT use when the user needs UX research, frontend code implementation, or brand strategy.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "accessibility",
+    "template",
+    "best-practices",
+    "creative"
+  ],
+  "requiredCapabilities": []
+}

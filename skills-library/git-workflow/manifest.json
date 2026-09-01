@@ -1,0 +1,14 @@
+{
+  "id": "git-workflow",
+  "name": "Git Workflow",
+  "version": "1.0.0",
+  "description": "Git workflow expert covering branching strategies, commit conventions, interactive rebase, merge vs rebase, conflict resolution, git bisect, hooks, monorepo strategies, and CI integration. Use when the user asks about git workflow, git workflow best practices, or needs guidance on git workflow implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "version-control",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

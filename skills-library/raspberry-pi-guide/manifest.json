@@ -1,0 +1,14 @@
+{
+  "id": "raspberry-pi-guide",
+  "name": "Raspberry Pi Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to Raspberry Pi projects including model selection, OS setup, server builds, GPIO programming, home automation, and advanced applications. Use when the user asks about raspberry pi guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "iot",
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

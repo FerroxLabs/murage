@@ -1,0 +1,14 @@
+{
+  "id": "smart-home-guide",
+  "name": "Smart Home Guide",
+  "version": "1.0.0",
+  "description": "Smart home setup advisor covering ecosystem selection (Alexa, Google, Apple HomeKit), device categories, automation routines, network setup, privacy considerations, budget-friendly approaches, and troubleshooting. Use when the user asks about smart home guide, or needs help with smart home setup advisor covering ecosystem selection (alexa, google, apple homekit), device categories, automation routines, network setup, privacy considerations, budget-friendly approaches, and troubleshooting. Do NOT use when the request requires professional specialized advice or falls outside the scope of smart home guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "automation",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

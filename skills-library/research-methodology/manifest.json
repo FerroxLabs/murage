@@ -1,0 +1,15 @@
+{
+  "id": "research-methodology",
+  "name": "Research Methodology",
+  "version": "1.0.0",
+  "description": "Compares research methodologies and helps learners select the most appropriate method for their research question. Produces a methodology comparison with rationale for selection -- not a textbook chapter on research methods. Use when a learner asks to choose a research method, compare qualitative vs quantitative approaches, select a research design, or justify their methodology choice. Do NOT use for developing a research question (use `research-question`), for data collection instrument design (use `data-collection-plan`), or for statistical analysis (not an education skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "academic-writing",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

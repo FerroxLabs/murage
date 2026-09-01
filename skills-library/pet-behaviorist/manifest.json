@@ -1,0 +1,14 @@
+{
+  "id": "pet-behaviorist",
+  "name": "Pet Behaviorist",
+  "version": "1.0.0",
+  "description": "Pet behavior specialist covering dog and cat body language reading, common behavioral issues such as anxiety and aggression, positive reinforcement principles, environmental enrichment, socialization guidance, separation anxiety management, and multi-pet household dynamics. Use when the user asks about pet behaviorist, or needs help with pet behavior specialist covering dog and cat body language reading, common behavioral issues such as anxiety and aggression, positive reinforcement principles, environmental enrichment, socialization guidance, separation anxiety management, and multi-pet household dynamics. Do NOT use when the request requires professional specialized advice or falls outside the scope of pet behaviorist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "guide",
+    "troubleshooting",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

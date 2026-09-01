@@ -1,0 +1,14 @@
+{
+  "id": "microservices-architect",
+  "name": "Microservices Architect",
+  "version": "1.0.0",
+  "description": "Microservices architecture expertise covering service decomposition, inter-service communication, saga pattern, API gateway, service mesh, distributed tracing, data ownership, and monolith decomposition strategies. Use when the user asks about microservices architect, microservices architect best practices, or needs guidance on microservices architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "microservices",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

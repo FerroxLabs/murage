@@ -1,0 +1,17 @@
+{
+  "id": "launch-youtube-channel",
+  "name": "Launch Youtube Channel",
+  "version": "1.0.0",
+  "description": "Complete YouTube channel launch workflow from niche selection and channel strategy through video production, editing, monetization setup, community building, and personal brand development for sustainable channel growth. Use when the user wants to launch youtube channel or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "youtube",
+    "video-production",
+    "content-marketing",
+    "social-media",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

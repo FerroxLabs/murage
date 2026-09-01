@@ -1,0 +1,13 @@
+{
+  "id": "personal-speech",
+  "name": "Personal Speech",
+  "version": "1.0.0",
+  "description": "Writes personal speeches for occasions including weddings, eulogies, toasts, graduations, retirements, and celebrations with opening hooks, personal anecdotes, and emotional resonance. Use when the user asks to write a speech for a personal occasion, toast, eulogy, wedding speech, graduation address, or tribute. Do NOT use for professional presentations (use business skills), political speeches (different conventions), or persuasive arguments (use academic-argument).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "personal-communication"
+  ],
+  "requiredCapabilities": []
+}

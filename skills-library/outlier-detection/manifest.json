@@ -1,0 +1,14 @@
+{
+  "id": "outlier-detection",
+  "name": "Outlier Detection",
+  "version": "1.0.0",
+  "description": "Identifies outliers in a dataset using IQR and z-score methods, interprets what each outlier represents, and produces a recommended action (remove, investigate, cap, or flag) for each outlier with rationale. Use when the user has data with suspected extreme values and needs a systematic approach to identify and handle them. Do NOT use for data cleaning beyond outlier handling (use data-cleaning-protocol), distribution analysis (use eda-framework), or hypothesis testing (use hypothesis-testing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "statistics",
+    "analysis",
+    "data-science",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

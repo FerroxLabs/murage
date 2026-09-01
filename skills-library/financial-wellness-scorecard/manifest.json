@@ -1,0 +1,17 @@
+{
+  "id": "financial-wellness-scorecard",
+  "name": "Financial Wellness Scorecard",
+  "version": "1.0.0",
+  "description": "Holistic financial health evaluation covering income stability, savings adequacy, debt management, insurance coverage, and retirement preparedness. Produces a scored wellness report with prioritized action steps for financial improvement. Use when the user asks about financial wellness scorecard, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of financial wellness scorecard or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "personal-finance",
+    "budgeting",
+    "template",
+    "guide",
+    "planning",
+    "freelancing"
+  ],
+  "requiredCapabilities": []
+}

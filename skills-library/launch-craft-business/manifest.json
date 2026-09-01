@@ -1,0 +1,16 @@
+{
+  "id": "launch-craft-business",
+  "name": "Launch Craft Business",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for turning a crafting hobby into a business, from product development and pricing through branding, platform setup, and marketing. Covers handmade product refinement, cost-based pricing, brand identity, marketplace setup on Etsy and beyond, product photography, and marketing strategies specific to handmade and artisan businesses. Use when the user wants to launch craft business or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sewing",
+    "entrepreneurship",
+    "branding",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "e2e-testing-patterns",
+  "name": "E2e Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level e2e testing patterns implementation: automation and web-development decision frameworks, production-ready patterns, and concrete templates for e2e testing patterns workflows. Use when the user asks about e2e testing patterns, e2e testing patterns configuration, or testing best practices for e2e projects. Do NOT use when the user needs a different testing quality capability -- check sibling skills in the testing quality subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "automation",
+    "web-development",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

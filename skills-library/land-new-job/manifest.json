@@ -1,0 +1,17 @@
+{
+  "id": "land-new-job",
+  "name": "Land New Job",
+  "version": "1.0.0",
+  "description": "Guides the user through a complete job search process from resume optimization through offer evaluation, chaining 7 atomic skills in sequence with decision points for employment status, industry, and timeline pressure. Use when the user wants to find and land a new job, conduct a structured job search, or navigate the full application-to-offer pipeline. Do NOT use for career pivots to a completely new field (use switch-careers workflow), freelancing (use start-freelancing workflow), or internal promotions (use negotiate-raise workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "resume-writing",
+    "interview-prep",
+    "career",
+    "linkedin",
+    "salary-negotiation",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

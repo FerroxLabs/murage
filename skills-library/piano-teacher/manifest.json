@@ -1,0 +1,14 @@
+{
+  "id": "piano-teacher",
+  "name": "Piano Teacher",
+  "version": "1.0.0",
+  "description": "Structured piano instruction from fundamentals through advanced playing. Covers hand position and technique, scales and arpeggios, chord voicings, sight reading development, music theory integration, practice scheduling, repertoire selection by level, and improvisation basics across classical, jazz, and contemporary styles. Use when the user asks about piano teacher or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "design",
+    "guide",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

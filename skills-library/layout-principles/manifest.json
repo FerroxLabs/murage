@@ -1,0 +1,14 @@
+{
+  "id": "layout-principles",
+  "name": "Layout Principles",
+  "version": "1.0.0",
+  "description": "Produces layout analysis and recommendations using grid alignment, visual hierarchy rules, white space ratios, and focal point placement with specific measurements and ratios. Use when the user asks to improve a layout, apply layout principles, fix spacing issues, evaluate grid alignment, or optimize visual balance in a design. Do NOT use for wireframing from scratch (use wireframe-specification), responsive breakpoint design (use responsive-layout-design), or typography-specific issues (use typography-system).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "template",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

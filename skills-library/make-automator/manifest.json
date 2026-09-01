@@ -1,0 +1,14 @@
+{
+  "id": "make-automator",
+  "name": "Make Automator",
+  "version": "1.0.0",
+  "description": "Expert Make (formerly Integromat) automation covering scenario design, module configuration, routers for conditional branching, iterators and aggregators for array processing, error handling with break and resume, data store operations, webhook setup, custom API connections, scheduling strategies, and performance optimization for high-volume automation. Use when the user asks about make automator, make automator best practices, or needs guidance on make automator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

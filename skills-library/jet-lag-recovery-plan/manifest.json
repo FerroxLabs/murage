@@ -1,0 +1,15 @@
+{
+  "id": "jet-lag-recovery-plan",
+  "name": "Jet Lag Recovery Plan",
+  "version": "1.0.0",
+  "description": "Creates a jet lag recovery protocol covering pre-travel light schedule adjustment, in-flight strategies, and arrival adaptation plan. Produces a day-by-day recovery timeline with sleep, light exposure, meal timing, and activity scheduling customized to the route and time zone difference. Use when the user asks about managing jet lag, adjusting to a new time zone, preparing for long-haul travel, or recovering from east-west or west-east flights. Do NOT use for travel day logistics (use travel-day-optimizer), general sleep improvement (use health-wellness sleep skills), or flight booking (use airfare-search-strategy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "planning",
+    "checklist",
+    "health-wellness",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

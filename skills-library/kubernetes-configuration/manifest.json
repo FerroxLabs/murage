@@ -1,0 +1,14 @@
+{
+  "id": "kubernetes-configuration",
+  "name": "Kubernetes Configuration",
+  "version": "1.0.0",
+  "description": "Guides expert-level kubernetes configuration implementation: cloud and best-practices decision frameworks, production-ready patterns, and concrete templates for kubernetes configuration workflows. Use when the user asks about kubernetes configuration, kubernetes configuration configuration, or devops best practices for kubernetes projects. Do NOT use when the user needs a different devops cloud capability -- check sibling skills in the devops cloud subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "best-practices",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

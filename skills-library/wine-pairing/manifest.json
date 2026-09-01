@@ -1,0 +1,14 @@
+{
+  "id": "wine-pairing",
+  "name": "Wine Pairing",
+  "version": "1.0.0",
+  "description": "Comprehensive beverage pairing guide covering wine varietals and food matching rules, beer style profiles, cocktail basics, non-alcoholic alternatives, cheese pairing principles, dessert pairing, and entertaining beverage planning. Designed for both casual meals and hosted events. Use when the user asks about wine pairing, or needs help with comprehensive beverage pairing guide covering wine varietals and food matching rules, beer style profiles, cocktail basics, non-alcoholic alternatives, cheese pairing principles, dessert pairing, and entertaining beverage planning. Do NOT use when the request requires professional specialized advice or falls outside the scope of wine pairing.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

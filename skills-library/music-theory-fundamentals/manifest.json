@@ -1,0 +1,15 @@
+{
+  "id": "music-theory-fundamentals",
+  "name": "Music Theory Fundamentals",
+  "version": "1.0.0",
+  "description": "Teaches beginner music theory: major and minor scales, intervals (half steps and whole steps), how chords are constructed from scales, and the Nashville number system for understanding chord progressions. Includes visual fretboard and keyboard references for each concept. Use when the user wants to understand scales, intervals, chord construction, or why certain chords sound right together. Do NOT use for guitar chord shapes and strumming (use guitar-beginner-foundations), songwriting and lyric structure (use songwriting-framework), or advanced harmony and voice leading.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beginner-friendly",
+    "guide",
+    "step-by-step",
+    "teaching",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

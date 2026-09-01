@@ -1,0 +1,14 @@
+{
+  "id": "survey-design",
+  "name": "Survey Design",
+  "version": "1.0.0",
+  "description": "Produces a complete survey with question set in recommended order, question type selection (Likert, multiple choice, open text, matrix) with rationale, response scale definitions, and an analysis plan for each question. Does not assume statistical background. Use when the user asks to create a survey, design a questionnaire, build a feedback form, or plan a research survey with analysis methodology. Do NOT use for interview guide creation (use qualitative-coding for interview analysis), A/B test design (use ab-test-design), or market sizing research (use competitive-intelligence).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "analysis",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

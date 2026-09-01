@@ -1,0 +1,15 @@
+{
+  "id": "airport-navigation-guide",
+  "name": "Airport Navigation Guide",
+  "version": "1.0.0",
+  "description": "Creates a terminal-to-gate workflow with check-in timelines, security preparation steps, connection procedures, and gate-area logistics. Gathers flight details, airport, traveler experience level, and special needs to produce a timed step-by-step airport navigation plan from arrival at the airport to boarding the plane. Use when the user asks about airport navigation, check-in procedures, how early to arrive at the airport, connecting flight logistics, or getting through security efficiently. Do NOT use for flight booking strategies (use travel logistics skills), travel itinerary building (use trip-itinerary-builder), or airport lounge access evaluation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "checklist",
+    "step-by-step",
+    "guide",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

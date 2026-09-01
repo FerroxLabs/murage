@@ -1,0 +1,13 @@
+{
+  "id": "sleep-optimizer",
+  "name": "Sleep Optimizer",
+  "version": "1.0.0",
+  "description": "Evidence-based sleep optimization system covering sleep hygiene, circadian rhythm alignment, bedroom environment design, relaxation protocols, and sleep schedule engineering. Helps users identify and correct sleep disruptors for consistently restorative rest. Use when the user asks about sleep optimizer, or needs help with evidence-based sleep optimization system covering sleep hygiene, circadian rhythm alignment, bedroom environment design, relaxation protocols, and sleep schedule engineering. Do NOT use when the request requires professional medical advice or falls outside the scope of sleep optimizer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "sleep",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

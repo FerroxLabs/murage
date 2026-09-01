@@ -1,0 +1,19 @@
+{
+  "id": "spanish-learner",
+  "name": "Spanish Learner",
+  "version": "1.0.0",
+  "description": "Structured Spanish learning path from A1 to B2, covering grammar fundamentals, vocabulary acquisition through frequency lists, pronunciation coaching, verb conjugation mastery, cultural immersion techniques, and exam preparation for DELE certification. Use when the user asks about spanish learner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of spanish learner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "language-learning",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "performing-arts",
+    "cooking",
+    "travel",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

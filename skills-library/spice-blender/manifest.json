@@ -1,0 +1,14 @@
+{
+  "id": "spice-blender",
+  "name": "Spice Blender",
+  "version": "1.0.0",
+  "description": "Spice profiles by world cuisine, toasting and grinding techniques, custom blend recipes, storage best practices, and systematic flavor pairing for confident seasoning. Use when the user asks about spice blender, or needs help with spice profiles by world cuisine, toasting and grinding techniques, custom blend recipes, storage best practices, and systematic flavor pairing for confident seasoning. Do NOT use when the request requires professional specialized advice or falls outside the scope of spice blender.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

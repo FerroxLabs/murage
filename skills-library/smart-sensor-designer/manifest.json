@@ -1,0 +1,19 @@
+{
+  "id": "smart-sensor-designer",
+  "name": "Smart Sensor Designer",
+  "version": "1.0.0",
+  "description": "Smart sensor design expertise covering sensor selection and specification, calibration procedures, signal conditioning circuits (amplification, filtering, ADC interfacing), multi-sensor data fusion algorithms, power management strategies for battery-operated sensors, and environmental hardening for field deployment. Use when the user asks about smart sensor designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of smart sensor designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "python",
+    "energy-efficiency",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

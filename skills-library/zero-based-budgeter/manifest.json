@@ -1,0 +1,19 @@
+{
+  "id": "zero-based-budgeter",
+  "name": "Zero Based Budgeter",
+  "version": "1.0.0",
+  "description": "Synthesizes Ramsey envelope method, YNAB philosophy, 50/30/20 rule, Pay Yourself First, and Kakeibo into The Intentional Money System - a flexible budgeting framework that adapts to any income level or financial situation. Use when the user asks about zero based budgeter, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of zero based budgeter or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "budgeting",
+    "template",
+    "beginner-friendly",
+    "automation",
+    "analysis",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

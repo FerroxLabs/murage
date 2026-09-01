@@ -1,0 +1,17 @@
+{
+  "id": "cors-troubleshooter",
+  "name": "Cors Troubleshooter",
+  "version": "1.0.0",
+  "description": "Diagnose and fix Cross-Origin Resource Sharing errors - headers, preflight requests, proxy configuration, and debugging techniques for every framework. Use when the user asks about cors troubleshooter, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cors troubleshooter or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "web-development",
+    "checklist",
+    "python",
+    "javascript",
+    "api-design",
+    "testing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "spark-long-form-narrative",
+  "name": "Long-form narrative",
+  "version": "1.0.0",
+  "description": "The user has a module map or chapter list and the question is now *how does this read.* Load whenever you hear \"what's the throughline,\" \"how should chapters flow,\" \"this feels disconnected,\" or \"I have the pieces but it's not a book yet.\"",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spark",
+    "long",
+    "form",
+    "narrative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "cooking-techniques",
+  "name": "Cooking Techniques",
+  "version": "1.0.0",
+  "description": "Teaches fundamental cooking techniques with specific temperature ranges, timing guidelines, and visual/auditory cues for doneness. Covers saute, roast, braise, poach, steam, grill, and pan-sear with step-by-step instructions and the science behind each method. Use when the user asks about cooking methods, temperature guidelines, when to use each technique, or how to improve their cooking fundamentals. Do NOT use for specific recipes (use one-pot-meals or meal-prep-workflow), baking (use baking-fundamentals), or knife technique (use knife-skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "step-by-step",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

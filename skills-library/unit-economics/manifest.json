@@ -1,0 +1,16 @@
+{
+  "id": "unit-economics",
+  "name": "Unit Economics",
+  "version": "1.0.0",
+  "description": "Calculates unit economics for a business including customer acquisition cost (CAC), lifetime value (LTV), LTV/CAC ratio, payback period, and gross margin per unit. Use when the user asks about unit economics, CAC, LTV, customer lifetime value, payback period, or cost per acquisition. Do NOT use for full financial modeling (use financial-model-structure), personal finance calculations, or investment analysis.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "strategy",
+    "planning",
+    "entrepreneurship",
+    "spreadsheets",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

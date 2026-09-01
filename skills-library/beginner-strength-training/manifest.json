@@ -1,0 +1,14 @@
+{
+  "id": "beginner-strength-training",
+  "name": "Beginner Strength Training",
+  "version": "1.0.0",
+  "description": "Builds a 3-day-per-week beginner strength training program with compound movements, progressive overload rules, set and rep schemes, rest intervals, and a deload protocol. Gathers the user's available equipment, schedule, and goals, then produces a structured training program table. Use when the user asks about starting a weight training program, beginner lifting, first gym routine, or how to build strength as a beginner. Do NOT use for intermediate or advanced programming (use intermediate-strength-training or training-program-periodization), injury rehabilitation, or sport-specific conditioning (use sports-specific-conditioning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "workout-planning",
+    "beginner-friendly",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

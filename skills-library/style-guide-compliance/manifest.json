@@ -1,0 +1,13 @@
+{
+  "id": "style-guide-compliance",
+  "name": "Style Guide Compliance",
+  "version": "1.0.0",
+  "description": "Checks and corrects text for compliance with a specific style guide (AP, Chicago, APA, MLA, or house style), producing a compliance report with every deviation identified and corrected. Use when the user asks to apply a style guide, check style compliance, format text to AP/Chicago/APA/MLA standards, or standardize document formatting. Do NOT use for general editing (use copy-editing), proofreading without a style guide focus (use proofreading), or citation-specific formatting (use citation-reference).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

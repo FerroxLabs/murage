@@ -1,0 +1,18 @@
+{
+  "id": "science-youtube-creator",
+  "name": "Science Youtube Creator",
+  "version": "1.0.0",
+  "description": "Expert guidance for creating educational science YouTube content covering scripting for clarity, data visualization, maintaining accuracy while being engaging, production techniques, and channel growth strategies. Use when the user asks about science youtube creator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of science youtube creator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "technical-writing",
+    "budgeting",
+    "guide",
+    "step-by-step",
+    "advanced",
+    "python",
+    "research"
+  ],
+  "requiredCapabilities": []
+}

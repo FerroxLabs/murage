@@ -1,0 +1,19 @@
+{
+  "id": "pcb-designer",
+  "name": "Pcb Designer",
+  "version": "1.0.0",
+  "description": "Guides PCB design workflow including KiCad schematic capture, board layout, design rules, fabrication preparation, and component selection Use when the user asks about pcb designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of pcb designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "budgeting",
+    "stress-management",
+    "checklist",
+    "template",
+    "guide",
+    "python",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

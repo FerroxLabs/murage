@@ -1,0 +1,15 @@
+{
+  "id": "immersion-plan",
+  "name": "Immersion Plan",
+  "version": "1.0.0",
+  "description": "Creates language immersion plans with media, input, and output activities organized by proficiency level for language learners. Produces a structured immersion program the learner can follow without traveling. Use when a learner asks to immerse themselves in a language, create a home immersion plan, find ways to practice daily, or increase language exposure. Do NOT use for vocabulary study (use `vocabulary-building`), for grammar instruction (use `grammar-practice`), or for language level assessment (use `language-level-assessment`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "language-learning",
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

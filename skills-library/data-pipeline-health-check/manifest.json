@@ -1,0 +1,18 @@
+{
+  "id": "data-pipeline-health-check",
+  "name": "Data Pipeline Health Check",
+  "version": "1.0.0",
+  "description": "Data pipeline reliability assessment evaluating data freshness, quality metrics, monitoring coverage, and operational maturity to produce a pipeline health scorecard. Use when the user asks about data pipeline health check, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of data pipeline health check or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "data-science",
+    "template",
+    "testing",
+    "analysis",
+    "planning",
+    "email",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

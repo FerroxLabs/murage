@@ -1,0 +1,14 @@
+{
+  "id": "flutter-architect",
+  "name": "Flutter Architect",
+  "version": "1.0.0",
+  "description": "Expert Flutter architecture covering widget tree design, state management (Riverpod, BLoC, Provider), navigation (GoRouter), platform channels, performance profiling, custom painters, animations, testing patterns, and flavor configurations. Use when the user asks about flutter architect, flutter architect best practices, or needs guidance on flutter architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "dart",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

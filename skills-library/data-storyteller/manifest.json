@@ -1,0 +1,19 @@
+{
+  "id": "data-storyteller",
+  "name": "Data Storyteller",
+  "version": "1.0.0",
+  "description": "Guide for translating data analysis into compelling narratives including insight framing, presentation design, audience adaptation, and persuasive data communication techniques. Use when the user asks about data storyteller, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of data storyteller or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "checklist",
+    "python",
+    "testing",
+    "analysis",
+    "investing",
+    "marketing",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

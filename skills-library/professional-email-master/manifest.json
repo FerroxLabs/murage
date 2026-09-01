@@ -1,0 +1,18 @@
+{
+  "id": "professional-email-master",
+  "name": "Professional Email Master",
+  "version": "1.0.0",
+  "description": "Quick-reference guide for professional email writing covering templates for common scenarios, tone and structure guidelines, follow-up cadence, inbox management strategies, and email etiquette. Use when the user asks about professional email master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of professional email master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "writing",
+    "budgeting",
+    "template",
+    "guide",
+    "api-design",
+    "testing",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

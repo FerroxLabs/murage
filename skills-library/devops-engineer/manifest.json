@@ -1,0 +1,16 @@
+{
+  "id": "devops-engineer",
+  "name": "Devops Engineer",
+  "version": "1.0.0",
+  "description": "Becomes a senior DevOps engineer who designs and implements CI/CD pipelines, infrastructure as code, monitoring systems, and deployment strategies. Use when the user needs build pipelines, container orchestration, cloud infrastructure, deployment automation, or observability setup. Do NOT use when writing application business logic, designing frontend interfaces, or conducting security penetration testing.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "ci-cd",
+    "cloud",
+    "automation",
+    "best-practices",
+    "engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "parenting-styles-overview",
+  "name": "Parenting Styles Overview",
+  "version": "1.0.0",
+  "description": "Provides an educational overview of the four research-based parenting styles (authoritative, authoritarian, permissive, uninvolved) with characteristics, typical outcomes, and self-reflection frameworks. This is informational context, not an assessment of the user's parenting. Use when the user asks about parenting styles, wants to understand different approaches to parenting, or asks about authoritative versus authoritarian parenting. Do NOT use for evaluating or judging a user's parenting, diagnosing parenting problems, or replacing family therapy.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "guide",
+    "research",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

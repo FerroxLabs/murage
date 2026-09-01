@@ -1,0 +1,14 @@
+{
+  "id": "nodejs-error-handling",
+  "name": "Nodejs Error Handling",
+  "version": "1.0.0",
+  "description": "Guides expert-level Node.js error handling: Express error middleware, unhandled rejection handling, domain errors, structured logging integration, error classification, and graceful degradation. Use when the user asks about Node.js error handling, Express error middleware, unhandled rejections, structured logging, error propagation, graceful shutdown. Do NOT use when the user asks about JavaScript idioms (use `javascript-idioms`), Node.js async patterns (use `nodejs-async-patterns`), general error handling concepts (use language-specific skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "javascript",
+    "backend",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

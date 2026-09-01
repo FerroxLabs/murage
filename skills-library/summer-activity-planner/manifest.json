@@ -1,0 +1,19 @@
+{
+  "id": "summer-activity-planner",
+  "name": "Summer Activity Planner",
+  "version": "1.0.0",
+  "description": "Plans enriching summer experiences including camps, travel, projects, outdoor activities, and budget management for families and individuals seeking an intentional summer. Use when the user asks about summer activity planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of summer activity planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "event-planning",
+    "budgeting",
+    "journaling",
+    "checklist",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

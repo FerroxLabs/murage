@@ -1,0 +1,19 @@
+{
+  "id": "new-year-goal-architect",
+  "name": "New Year Goal Architect",
+  "version": "1.0.0",
+  "description": "Provides a structured framework for year-end reflection, intentional goal setting, and building accountability systems that transform resolutions into lasting changes. Use when the user asks about new year goal architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of new year goal architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "event-planning",
+    "nutrition",
+    "journaling",
+    "habits",
+    "beginner-friendly",
+    "testing",
+    "automation",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

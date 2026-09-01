@@ -1,0 +1,14 @@
+{
+  "id": "ruby-project-setup",
+  "name": "Ruby Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level ruby project setup implementation: ruby and best-practices decision frameworks, production-ready patterns, and concrete templates for ruby project setup workflows. Use when the user asks about ruby project setup, ruby project setup configuration, or ruby best practices for ruby projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ruby",
+    "best-practices",
+    "template",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

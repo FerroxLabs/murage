@@ -1,0 +1,13 @@
+{
+  "id": "vlog-creator",
+  "name": "Vlog Creator",
+  "version": "1.0.0",
+  "description": "Complete vlogging guidance from concept to growth. Covers daily and weekly content structures, talking head setups, B-roll shooting techniques, travel vlog methods, editing style development, thumbnail and title optimization, audience building strategies, and sustainable content creation practices. Use when the user asks about vlog creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "social-media",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

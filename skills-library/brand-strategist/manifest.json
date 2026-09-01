@@ -1,0 +1,14 @@
+{
+  "id": "brand-strategist",
+  "name": "Brand Strategist",
+  "version": "1.0.0",
+  "description": "Brand strategy development including brand identity framework, voice and tone development, positioning statements, visual identity guidelines, brand storytelling, brand architecture, brand auditing, rebranding processes, and cross-channel consistency. Use when the user asks about brand strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "branding",
+    "marketing",
+    "strategy",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

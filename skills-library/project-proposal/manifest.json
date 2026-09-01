@@ -1,0 +1,13 @@
+{
+  "id": "project-proposal",
+  "name": "Project Proposal",
+  "version": "1.0.0",
+  "description": "Writes internal project proposals with problem statement, proposed solution, resource requirements, ROI estimate, and implementation timeline for securing organizational buy-in. Use when the user needs to propose a project internally, get budget approval, or pitch an initiative to leadership. Do NOT use for client-facing business proposals (use `business-proposal`), academic grant proposals (use `grant-proposal-writing`), or RFP responses (use `rfp-response`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "proposal",
+    "writing",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

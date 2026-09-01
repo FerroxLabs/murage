@@ -1,0 +1,18 @@
+{
+  "id": "sleep-meditation-guide",
+  "name": "Sleep Meditation Guide",
+  "version": "1.0.0",
+  "description": "Guided sleep practices including yoga nidra, progressive relaxation scripts, body scan techniques, bedtime wind-down routines, and strategies for quieting a racing mind at night. Use when the user asks about sleep meditation guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of sleep meditation guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "breathing",
+    "stress-management",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,17 @@
+{
+  "id": "financial-health-checkup",
+  "name": "Financial Health Checkup",
+  "version": "1.0.0",
+  "description": "Provides a structured self-assessment framework for evaluating business financial health across cash flow, profitability, runway, burn rate, and unit economics with scoring rubrics, diagnostic questionnaires, and report templates. Use when the user asks about financial health checkup, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of financial health checkup or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "template",
+    "guide",
+    "analysis",
+    "marketing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "executive-summary-slide",
+  "name": "Executive Summary Slide",
+  "version": "1.0.0",
+  "description": "Produces an executive summary slide design with a three-panel layout covering situation, insight, and recommendation, including data points for each panel and a one-sentence version of each. Use when the user asks to create an executive summary slide, a situation-insight-recommendation overview, or a one-slide briefing for leadership. Do NOT use for full slide deck structure (use slide-deck-structure), pitch deck design (use pitch-deck-structure), or data chart selection (use data-in-slides).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "presentation",
+    "template",
+    "analysis",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

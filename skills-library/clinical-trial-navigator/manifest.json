@@ -1,0 +1,17 @@
+{
+  "id": "clinical-trial-navigator",
+  "name": "Clinical Trial Navigator",
+  "version": "1.0.0",
+  "description": "Practical guide to clinical trial operations covering protocol design, participant recruitment, data management, regulatory requirements, site management, and navigating the clinical research process from planning through analysis. Use when the user asks about clinical trial navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of clinical trial navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "healthcare",
+    "health-wellness",
+    "budgeting",
+    "analysis",
+    "research",
+    "video-production",
+    "cleaning"
+  ],
+  "requiredCapabilities": []
+}

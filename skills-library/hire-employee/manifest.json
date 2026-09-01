@@ -1,0 +1,15 @@
+{
+  "id": "hire-employee",
+  "name": "Hire Employee",
+  "version": "1.0.0",
+  "description": "Guides the user through a complete hiring process from job description creation through candidate sourcing, interviewing, evaluation, offer extension, and onboarding. Use when the user needs to hire for a specific role and wants a structured process covering every stage from defining the position to the new hire's first week. Do NOT use for freelance or contractor hiring (use start-freelancing workflow), for career-side interview preparation (use interview prep skills), or for organizational headcount planning (use business planning skills directly).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "template",
+    "guide",
+    "planning",
+    "step-by-step",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

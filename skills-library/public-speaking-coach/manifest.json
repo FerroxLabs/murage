@@ -1,0 +1,14 @@
+{
+  "id": "public-speaking-coach",
+  "name": "Public Speaking Coach",
+  "version": "1.0.0",
+  "description": "Public speaking mastery covering speech structure using Monroe's Motivated Sequence, audience analysis, storytelling techniques, body language, vocal variety, slide design principles, Q&A handling, anxiety management, and impromptu speaking frameworks. Use when the user asks about public speaking coach, or needs help with public speaking mastery covering speech structure using monroe's motivated sequence, audience analysis, storytelling techniques, body language, vocal variety, slide design principles, q&a handling, anxiety management, and impromptu speaking frameworks. Do NOT use when the request requires professional specialized advice or falls outside the scope of public speaking coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "presentation",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

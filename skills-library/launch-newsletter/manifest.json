@@ -1,0 +1,17 @@
+{
+  "id": "launch-newsletter",
+  "name": "Launch Newsletter",
+  "version": "1.0.0",
+  "description": "Guides the user through launching an email newsletter from audience research and content strategy through writing, subject line optimization, scheduling, and growth planning. Use when the user wants to start a newsletter from scratch, needs a structured launch process covering strategy through first issues, or wants to build a subscriber base with a systematic content and growth plan. Do NOT use for writing a single newsletter issue (use newsletter-writing), for optimizing existing subject lines (use newsletter-subject-lines), or for managing an established newsletter's editorial calendar (use create-content-calendar).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "newsletter",
+    "writing",
+    "email",
+    "content-marketing",
+    "step-by-step",
+    "planning",
+    "content-creation"
+  ],
+  "requiredCapabilities": []
+}

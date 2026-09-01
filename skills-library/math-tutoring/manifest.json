@@ -1,0 +1,15 @@
+{
+  "id": "math-tutoring",
+  "name": "Math Tutoring",
+  "version": "1.0.0",
+  "description": "Provides Socratic math tutoring that guides students to understanding through leading questions rather than delivering answers. Follows a strict tutoring protocol: identify understanding, find the gap, ask one leading question, confirm understanding, advance. Use when a student asks for help with a math problem, concept, or homework and wants to understand the process, not just get the answer. Do NOT use for math practice question generation (use `exam-practice`), for lesson plan creation (use `lesson-plan-design`), or for non-math tutoring (use subject-specific tutoring skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tutoring",
+    "teaching",
+    "step-by-step",
+    "study-skills",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "knowledge-base-writer",
+  "name": "Knowledge Base Writer",
+  "version": "1.0.0",
+  "description": "Expert knowledge base articles covering article taxonomy, search optimization, troubleshooting article format, how-to article format, conceptual article format, FAQ design, article templates, feedback integration, and content lifecycle. Use when the user asks about knowledge base writer, knowledge base writer best practices, or needs guidance on knowledge base writer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "guide",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

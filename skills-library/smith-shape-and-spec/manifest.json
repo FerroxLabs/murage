@@ -1,0 +1,14 @@
+{
+  "id": "smith-shape-and-spec",
+  "name": "Shape and spec",
+  "version": "1.0.0",
+  "description": "Use this skill when the team is about to start a build and the appetite is unspoken. If a teammate or the user hands you a feature request without naming how long they're willing to bet on it, run this procedure before any spec. Also use it when an in-flight build is sliding past its budget and some",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "smith",
+    "shape",
+    "and",
+    "spec"
+  ],
+  "requiredCapabilities": []
+}

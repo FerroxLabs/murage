@@ -1,0 +1,14 @@
+{
+  "id": "difficult-conversations-kids",
+  "name": "Difficult Conversations Kids",
+  "version": "1.0.0",
+  "description": "Provides age-appropriate language frameworks and conversation guides for discussing difficult topics with children, including divorce, death, major life changes, illness, and family disruptions. Produces structured conversation plans with opening scripts, follow-up responses, and ongoing support strategies. Use when the user needs help talking to a child about a difficult topic such as divorce, death, moving, serious illness, or other major life changes. Do NOT use for grief therapy, clinical assessment of a child's emotional state, or replacing a child psychologist's guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "relationships",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "screen-reader-optimizer",
+  "name": "Screen Reader Optimizer",
+  "version": "1.0.0",
+  "description": "Optimize web content for screen reader compatibility using semantic HTML, ARIA patterns, and live region management, with testing workflows for NVDA, VoiceOver, and JAWS. Use when the user asks about screen reader optimizer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of screen reader optimizer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "checklist",
+    "guide",
+    "javascript",
+    "testing",
+    "email",
+    "presentation",
+    "fashion",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

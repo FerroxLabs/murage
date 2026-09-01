@@ -1,0 +1,18 @@
+{
+  "id": "calendar-optimizer",
+  "name": "Calendar Optimizer",
+  "version": "1.0.0",
+  "description": "Strategic calendar management covering time blocking, meeting reduction strategies, energy-based scheduling, buffer time design, focus blocks, calendar audits, tool integration, and time tracking for maximum productivity and work-life balance. Use when the user asks about calendar optimizer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of calendar optimizer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "template",
+    "analysis",
+    "energy-efficiency",
+    "best-practices",
+    "video-production",
+    "email",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

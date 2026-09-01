@@ -1,0 +1,14 @@
+{
+  "id": "java-concurrency-patterns",
+  "name": "Java Concurrency Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level Java concurrency: virtual threads decision tree, CompletableFuture composition, ExecutorService selection, reactive patterns with Reactor, and structured concurrency. Use when the user asks about Java concurrency, virtual threads, CompletableFuture, ExecutorService, Project Loom, Reactor, structured concurrency. Do NOT use when the user asks about Java modern idioms (use `java-modern-idioms`), Java performance (use `java-performance`), Java Spring (use `java-spring-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "java",
+    "backend",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "discovery-call-script",
+  "name": "Discovery Call Script",
+  "version": "1.0.0",
+  "description": "Produces a structured discovery call script with opening, SPIN-based questions, qualification checks, and closing next steps. Use when the user asks to create a discovery call script, prepare questions for a sales discovery meeting, build a first-call framework, write qualifying questions for prospects, or structure a consultative sales conversation. Do NOT use for cold outreach emails (use cold-outreach-sequence), objection handling scripts (use objection-handling), or customer research interviews (use customer-discovery-interview).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "planning",
+    "template",
+    "strategy",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "white-paper-author",
+  "name": "White Paper Author",
+  "version": "1.0.0",
+  "description": "B2B white paper creation covering thought leadership positioning, research-backed structure, executive summary writing, data visualization strategy, lead generation integration, and distribution planning. Use when the user asks about white paper author, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of white paper author or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "budgeting",
+    "guide",
+    "beginner-friendly",
+    "analysis",
+    "research",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

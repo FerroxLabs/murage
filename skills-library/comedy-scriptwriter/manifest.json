@@ -1,0 +1,18 @@
+{
+  "id": "comedy-scriptwriter",
+  "name": "Comedy Scriptwriter",
+  "version": "1.0.0",
+  "description": "Complete comedy writing guide covering sitcom structure with cold opens and multi-story episodes, sketch writing, late night format, web series development, comedy room dynamics, and spec script creation. Use when the user asks about comedy scriptwriter, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of comedy scriptwriter or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "budgeting",
+    "beginner-friendly",
+    "game-design",
+    "performing-arts",
+    "cooking",
+    "running"
+  ],
+  "requiredCapabilities": []
+}

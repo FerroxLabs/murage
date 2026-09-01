@@ -1,0 +1,13 @@
+{
+  "id": "research-audience-discovery",
+  "name": "Audience discovery & JTBD segmentation",
+  "version": "1.0.0",
+  "description": "You have raw material (interview transcripts, sales-call notes, support tickets, churn surveys) and need to turn it into segments the team can write to, price to, and channel to. Or a teammate handed you a demographic and asked for a persona.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "audience",
+    "discovery"
+  ],
+  "requiredCapabilities": []
+}

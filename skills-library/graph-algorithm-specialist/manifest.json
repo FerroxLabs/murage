@@ -1,0 +1,19 @@
+{
+  "id": "graph-algorithm-specialist",
+  "name": "Graph Algorithm Specialist",
+  "version": "1.0.0",
+  "description": "Guides graph algorithm mastery including BFS, DFS, shortest paths, minimum spanning trees, topological sort, and cycle detection with implementation patterns Use when the user asks about graph algorithm specialist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of graph algorithm specialist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "competitive-programming",
+    "guide",
+    "beginner-friendly",
+    "testing",
+    "analysis",
+    "networking",
+    "parenting",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

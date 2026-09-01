@@ -1,0 +1,14 @@
+{
+  "id": "visual-hierarchy-review",
+  "name": "Visual Hierarchy Review",
+  "version": "1.0.0",
+  "description": "Evaluates visual hierarchy in a design by identifying the current focal point, assessing alignment with intended messaging, and recommending specific adjustments to size, weight, color, and position. Use when the user asks to review or critique visual hierarchy, fix competing elements, improve readability order, or evaluate where the eye lands in a design. Do NOT use for general UX audits (use ux-audit), accessibility-specific reviews (use accessibility-review), or full layout analysis (use layout-principles).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "analysis",
+    "checklist",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "cognitive-bias-detector",
+  "name": "Cognitive Bias Detector",
+  "version": "1.0.0",
+  "description": "Comprehensive cognitive bias catalog covering anchoring, confirmation bias, survivorship bias, sunk cost fallacy, Dunning-Kruger effect, availability heuristic, bandwagon effect, framing, loss aversion, status quo bias, halo effect, and more. Includes detection techniques, debiasing strategies, and decision hygiene practices. Use when the user asks about cognitive bias detector or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decision-making",
+    "analysis",
+    "frameworks",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

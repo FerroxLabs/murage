@@ -1,0 +1,16 @@
+{
+  "id": "bootstrapping-strategy",
+  "name": "Bootstrapping Strategy",
+  "version": "1.0.0",
+  "description": "Creates a revenue-first growth plan with self-funding milestones, resource constraints, profitability targets, and bootstrapping-specific tactics for building a business without external investment. Use when the user asks about bootstrapping, self-funding a business, growing without investors, revenue-first growth, or building a profitable business from day one. Do NOT use for fundraising from investors (use fundraising-narrative), venture-backed growth (use scaling-checklist), or financial modeling (use financial-model-structure).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "planning",
+    "strategy",
+    "analysis",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

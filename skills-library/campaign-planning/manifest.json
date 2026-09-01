@@ -1,0 +1,15 @@
+{
+  "id": "campaign-planning",
+  "name": "Campaign Planning",
+  "version": "1.0.0",
+  "description": "Produces a completed marketing campaign brief with objective, audience, message hierarchy, channels, timeline, creative requirements, and success metrics. Use when the user asks to plan a marketing campaign, create a campaign brief, structure a promotional push, or design a multi-channel campaign with specific goals and timelines. Do NOT use for ongoing marketing strategy (use marketing-strategy), email sequence design (use email-campaign), or single ad copy creation (use paid-ad-copy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "planning",
+    "strategy",
+    "template",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

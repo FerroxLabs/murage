@@ -1,0 +1,13 @@
+{
+  "id": "retirement-planner",
+  "name": "Retirement Planner",
+  "version": "1.0.0",
+  "description": "Comprehensive retirement planning using the 25x rule, 4% safe withdrawal rate, Social Security optimization, 401k employer match maximization, Roth vs Traditional IRA analysis, catch-up contributions, retirement age scenarios, and withdrawal strategies. Use when the user asks about retirement planner, or needs help with comprehensive retirement planning using the 25x rule, 4% safe withdrawal rate, social security optimization, 401k employer match maximization, roth vs traditional ira analysis, catch-up contributions, retirement age scenarios, and withdrawal strategies. Do NOT use when the request requires professional financial advice or falls outside the scope of retirement planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "retirement-planning",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "stock-analysis-guide",
+  "name": "Stock Analysis Guide",
+  "version": "1.0.0",
+  "description": "Fundamental stock analysis framework covering financial statement analysis, DCF valuation modeling, key financial ratios, stock screening criteria, competitive moat assessment, and earnings quality evaluation. Helps users build a structured research process for evaluating individual equities. Use when the user asks about stock analysis guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of stock analysis guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "checklist",
+    "template",
+    "guide",
+    "analysis",
+    "research",
+    "networking"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "adopt-a-pet",
+  "name": "Adopt A Pet",
+  "version": "1.0.0",
+  "description": "Complete pet adoption workflow from research and lifestyle assessment through home preparation, finding and adopting the right pet, and successful integration into your household for a happy pet and confident owner. Use when the user wants to adopt a pet or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "habits",
+    "family-events",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "carbon-footprint",
+  "name": "Carbon Footprint",
+  "version": "1.0.0",
+  "description": "Guide to understanding and reducing personal carbon footprint including calculation methodology, reduction strategies organized by impact area (transportation, diet, energy, consumption), tracking tools, evaluating carbon offset quality, personal advocacy strategies, and community-level climate action. Use when the user asks about carbon footprint, or needs help with guide to understanding and reducing personal carbon footprint including calculation methodology, reduction strategies organized by impact area (transportation, diet, energy, consumption), tracking tools, evaluating carbon offset quality, personal advocacy strategies, and community-level climate action. Do NOT use when the request requires professional specialized advice or falls outside the scope of carbon footprint.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "energy-efficiency",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

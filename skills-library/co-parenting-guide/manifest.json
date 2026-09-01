@@ -1,0 +1,19 @@
+{
+  "id": "co-parenting-guide",
+  "name": "Co Parenting Guide",
+  "version": "1.0.0",
+  "description": "Support separated or divorced parents in building effective co-parenting relationships through communication strategies including the BIFF method, scheduling tools, maintaining consistency between homes, handling disagreements, parallel parenting for high-conflict situations, holiday management, introducing new partners, and keeping children out of the middle. Sensitive and neutral tone throughout. Use when the user asks about co parenting guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of co parenting guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "parenting",
+    "budgeting",
+    "journaling",
+    "stress-management",
+    "template",
+    "guide",
+    "automation",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

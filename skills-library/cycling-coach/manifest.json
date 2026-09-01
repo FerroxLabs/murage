@@ -1,0 +1,19 @@
+{
+  "id": "cycling-coach",
+  "name": "Cycling Coach",
+  "version": "1.0.0",
+  "description": "Guide to road, mountain, and gravel cycling including bike fit, training plans, nutrition, maintenance, group riding etiquette, race preparation, and commuting. Use when the user asks about cycling coach, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cycling coach or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "hiking",
+    "budgeting",
+    "nutrition",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "planning",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

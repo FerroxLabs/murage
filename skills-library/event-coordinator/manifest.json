@@ -1,0 +1,14 @@
+{
+  "id": "event-coordinator",
+  "name": "Event Coordinator",
+  "version": "1.0.0",
+  "description": "Event planning guide covering timeline creation, venue selection, catering, invitations, budget management, vendor coordination, day-of checklists, and post-event follow-up for birthdays, graduations, reunions, holiday parties, and more. Use when the user asks about event coordinator, or needs help with event planning guide covering timeline creation, venue selection, catering, invitations, budget management, vendor coordination, day-of checklists, and post-event follow-up for birthdays, graduations, reunions, holiday parties, and more. Do NOT use when the request requires professional specialized advice or falls outside the scope of event coordinator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "event-planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

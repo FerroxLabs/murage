@@ -1,0 +1,14 @@
+{
+  "id": "incident-response",
+  "name": "Incident Response",
+  "version": "1.0.0",
+  "description": "Guides expert-level incident response implementation: debugging and automation decision frameworks, production-ready patterns, and concrete templates for incident response workflows. Use when the user asks about incident response, incident response configuration, or devops best practices for incident projects. Do NOT use when the user needs a different devops cloud capability -- check sibling skills in the devops cloud subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "debugging",
+    "automation",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

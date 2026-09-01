@@ -1,0 +1,19 @@
+{
+  "id": "applied-philosophy",
+  "name": "Applied Philosophy",
+  "version": "1.0.0",
+  "description": "Practical guide to applying Stoic, Existentialist, and Pragmatist philosophy to daily life, featuring structured exercises, journaling practices, decision-making frameworks, mindset techniques, and reading pathways for integrating philosophical wisdom into personal growth and everyday challenges. Use when the user asks about applied philosophy, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of applied philosophy or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "journaling",
+    "habits",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

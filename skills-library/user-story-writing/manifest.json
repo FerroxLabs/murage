@@ -1,0 +1,16 @@
+{
+  "id": "user-story-writing",
+  "name": "User Story Writing",
+  "version": "1.0.0",
+  "description": "Writes agile user stories in standard format with acceptance criteria, definition of done, story point estimation guidance, and sprint-ready breakdown. Use when the user asks about user stories, writing user stories, acceptance criteria, agile story format, or backlog grooming. Do NOT use for full PRDs (use prd-writing), technical specifications (use technical-specification), or feature specifications (use feature-spec).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "agile",
+    "planning",
+    "template",
+    "project-management",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

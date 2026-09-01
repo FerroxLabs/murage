@@ -1,0 +1,17 @@
+{
+  "id": "frontend-performance-audit",
+  "name": "Frontend Performance Audit",
+  "version": "1.0.0",
+  "description": "Comprehensive frontend performance assessment covering Core Web Vitals, bundle analysis, rendering efficiency, and accessibility to produce an actionable audit report. Use when the user asks about frontend performance audit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of frontend performance audit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "web-development",
+    "budgeting",
+    "template",
+    "javascript",
+    "api-design",
+    "cleaning"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "database-architect",
+  "name": "Database Architect",
+  "version": "1.0.0",
+  "description": "Database schema design expertise covering normalization, denormalization strategies, indexing, query optimization, partitioning, connection pooling, migration management, multi-tenancy patterns, and read replicas. Use when the user asks about database architect, database architect best practices, or needs guidance on database architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "database",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

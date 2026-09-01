@@ -1,0 +1,19 @@
+{
+  "id": "email-productivity",
+  "name": "Email Productivity",
+  "version": "1.0.0",
+  "description": "Email management mastery covering Inbox Zero methodology, filter and label systems, template libraries, batch processing workflows, unsubscribe strategies, email scheduling, follow-up tracking, and tool recommendations for reclaiming time from email. Use when the user asks about email productivity, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of email productivity or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "budgeting",
+    "template",
+    "testing",
+    "automation",
+    "best-practices",
+    "time-management",
+    "cleaning",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

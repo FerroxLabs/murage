@@ -1,0 +1,13 @@
+{
+  "id": "copy-awareness-stages",
+  "name": "awareness-stages",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Copy specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "copy",
+    "awareness",
+    "stages"
+  ],
+  "requiredCapabilities": []
+}

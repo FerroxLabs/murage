@@ -1,0 +1,13 @@
+{
+  "id": "literature-review",
+  "name": "Literature Review",
+  "version": "1.0.0",
+  "description": "Writes thematic literature reviews that synthesize sources into argument-driven narratives rather than sequential summaries. Identifies patterns, gaps, and contradictions across existing research. Use when the user asks to write a literature review, survey existing research, synthesize sources, or map the scholarly landscape on a topic. Do NOT use for single-paper summaries, annotated bibliographies, or research paper structure (use research-paper-structure for full papers).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "writing",
+    "research"
+  ],
+  "requiredCapabilities": []
+}

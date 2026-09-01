@@ -1,0 +1,13 @@
+{
+  "id": "copy-lens-differentiation",
+  "name": "lens-differentiation",
+  "version": "1.0.0",
+  "description": "**Lens mode.** Source authority: Seth Godin's *Purple Cow* / *Linchpin* lineage — remarkable beats safe; the obvious version of any idea is the one nobody forwards.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "copy",
+    "lens",
+    "differentiation"
+  ],
+  "requiredCapabilities": []
+}

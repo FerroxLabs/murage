@@ -1,0 +1,15 @@
+{
+  "id": "probate-process-explainer",
+  "name": "Probate Process Explainer",
+  "version": "1.0.0",
+  "description": "Explains the probate process at a literacy level, covering what probate is, when it applies, the typical sequence and timeline, what assets go through probate vs. those that bypass it, and common terminology. Produces a process overview and question list for attorney consultation. Use when the user asks about probate, what happens to assets after death, how long probate takes, whether an estate needs to go through probate, or probate terminology. Do NOT use for navigating a specific probate case, providing legal advice about probate disputes, or executor-specific duties (use executor-responsibilities-guide instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "guide",
+    "step-by-step",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

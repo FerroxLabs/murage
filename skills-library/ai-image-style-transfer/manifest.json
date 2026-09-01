@@ -1,0 +1,14 @@
+{
+  "id": "ai-image-style-transfer",
+  "name": "Ai Image Style Transfer",
+  "version": "1.0.0",
+  "description": "Identifies a visual style's defining characteristics and translates them into AI image generation trigger words for Midjourney, DALL-E, and Stable Diffusion with model-specific syntax. Use when the user asks to replicate a visual style in AI art, transfer a style between images, describe an art style for AI generation, or match a reference image's aesthetic. Do NOT use for basic prompting in a single model (use the model-specific prompting skill), maintaining character consistency (use midjourney-consistency), or translating complete prompts between models (use prompt-translation).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-image-generation",
+    "design",
+    "analysis",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

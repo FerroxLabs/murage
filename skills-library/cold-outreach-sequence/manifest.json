@@ -1,0 +1,15 @@
+{
+  "id": "cold-outreach-sequence",
+  "name": "Cold Outreach Sequence",
+  "version": "1.0.0",
+  "description": "Produces a multi-touch cold outreach sequence combining email and social touches with personalization variables and follow-up cadence using sales cadence design methodology. Use when the user asks to create cold outreach emails, build a prospecting sequence, design a sales cadence, write cold emails, or plan multi-channel outreach to new prospects. Do NOT use for warm follow-up emails after a meeting (use follow-up-sequences), email marketing to subscribers (use email-campaign), or PR media pitches (use pr-pitch).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "email",
+    "planning",
+    "template",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

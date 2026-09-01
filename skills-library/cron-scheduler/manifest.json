@@ -1,0 +1,14 @@
+{
+  "id": "cron-scheduler",
+  "name": "Cron Scheduler",
+  "version": "1.0.0",
+  "description": "Cron job scheduling expertise covering crontab syntax, systemd timers, overlap prevention with flock, logging best practices, error notification, timezone handling, distributed scheduling, monitoring cron health, migration from cron to orchestrators, and common scheduling patterns. Use when the user asks about cron scheduler, cron scheduler best practices, or needs guidance on cron scheduler implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

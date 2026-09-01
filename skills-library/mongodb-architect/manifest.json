@@ -1,0 +1,14 @@
+{
+  "id": "mongodb-architect",
+  "name": "Mongodb Architect",
+  "version": "1.0.0",
+  "description": "MongoDB architecture and design mastery covering document schema design, advanced indexing strategies, aggregation pipeline patterns, sharding architecture, replica sets, multi-document transactions, change streams, Atlas cloud features, performance profiling, schema validation, and embedding vs referencing trade-offs. Use when the user asks about mongodb architect, mongodb architect best practices, or needs guidance on mongodb architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "backend",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

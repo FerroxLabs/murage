@@ -1,0 +1,15 @@
+{
+  "id": "strategic-thinker",
+  "name": "Strategic Thinker",
+  "version": "1.0.0",
+  "description": "Strategic thinking frameworks including scenario planning, game theory basics (Nash equilibrium, prisoner's dilemma), long-term thinking, second and third-order effects analysis, strategic frameworks (Blue Ocean Strategy, Wardley Maps), decision journals, pre-mortem analysis, and competitive strategy. Use when the user asks about strategic thinker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "decision-making",
+    "analysis",
+    "frameworks",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

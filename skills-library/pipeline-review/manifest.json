@@ -1,0 +1,15 @@
+{
+  "id": "pipeline-review",
+  "name": "Pipeline Review",
+  "version": "1.0.0",
+  "description": "Produces a weekly pipeline review format with stage definitions, deal health assessments, forecast calculations, and risk flags using CRM hygiene methodology. Use when the user asks to create a pipeline review template, structure a weekly sales forecast meeting, build a deal inspection framework, design a pipeline health dashboard, or prepare for a sales pipeline review with leadership. Do NOT use for win/loss analysis of closed deals (use win-loss-analysis), individual deal strategy (use sales-playbook-section), or marketing funnel analysis (use marketing-analytics-report).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "analysis",
+    "planning",
+    "template",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

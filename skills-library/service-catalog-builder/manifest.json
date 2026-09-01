@@ -1,0 +1,19 @@
+{
+  "id": "service-catalog-builder",
+  "name": "Service Catalog Builder",
+  "version": "1.0.0",
+  "description": "Internal service catalog design expertise covering service registry architecture, ownership metadata, SLO/SLI definition, dependency mapping and visualization, API documentation aggregation, automated catalog population from infrastructure, and self-service developer portal implementation using Backstage or custom solutions. Use when the user asks about service catalog builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of service catalog builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "budgeting",
+    "template",
+    "typescript",
+    "api-design",
+    "automation",
+    "analysis",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

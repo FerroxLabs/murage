@@ -1,0 +1,14 @@
+{
+  "id": "content-audit",
+  "name": "Content Audit",
+  "version": "1.0.0",
+  "description": "Creates structured content audits with performance categorization, gap analysis, and prioritized action recommendations for existing content libraries. Use when the user wants to evaluate their existing content, audit blog posts or website pages, identify underperforming content, or plan content updates. Do NOT use for planning new content (use `editorial-calendar`), writing content briefs (use `content-brief`), or analyzing audience personas (use `audience-analysis`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "analysis",
+    "planning",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

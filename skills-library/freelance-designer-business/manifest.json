@@ -1,0 +1,19 @@
+{
+  "id": "freelance-designer-business",
+  "name": "Freelance Designer Business",
+  "version": "1.0.0",
+  "description": "Business guidance for freelance designers covering rate setting, project scoping, client contracts, proposal writing, portfolio curation, client acquisition, time management, scope creep prevention, invoicing workflows, and business entity setup. Includes pricing calculators, contract clause templates, and client communication frameworks. Use when the user asks about freelance designer business, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of freelance designer business or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-industry",
+    "career",
+    "budgeting",
+    "checklist",
+    "template",
+    "analysis",
+    "marketing",
+    "branding",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

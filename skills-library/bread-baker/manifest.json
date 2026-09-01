@@ -1,0 +1,14 @@
+{
+  "id": "bread-baker",
+  "name": "Bread Baker",
+  "version": "1.0.0",
+  "description": "Complete guide to artisan bread baking including sourdough starter cultivation, dough hydration science, shaping techniques, oven setup, troubleshooting, and foundational recipes. Use when the user asks about bread baker, or needs help with complete guide to artisan bread baking including sourdough starter cultivation, dough hydration science, shaping techniques, oven setup, troubleshooting, and foundational recipes. Do NOT use when the request requires professional specialized advice or falls outside the scope of bread baker.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "ios-developer",
+  "name": "Ios Developer",
+  "version": "1.0.0",
+  "description": "Expert iOS/Swift development covering SwiftUI patterns, UIKit integration, Combine/async-await, Core Data, networking, push notifications, App Store guidelines, signing/provisioning, and performance instruments. Use when the user asks about ios developer, ios developer best practices, or needs guidance on ios developer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "swift",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

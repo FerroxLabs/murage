@@ -1,0 +1,16 @@
+{
+  "id": "plan-gap-year",
+  "name": "Plan Gap Year",
+  "version": "1.0.0",
+  "description": "Guides the user through planning a gap year or extended career break, chaining career strategy, budgeting, savings, learning design, itinerary building, and safety preparation skills across four categories. Use when the user wants to take a gap year, plan an extended travel break, or structure a career sabbatical with intentional learning and travel goals. Do NOT use for short vacations (under 1 month), retirement planning, or employer-sponsored sabbaticals with fixed structure.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "planning",
+    "career",
+    "step-by-step",
+    "guide",
+    "cross-domain"
+  ],
+  "requiredCapabilities": []
+}

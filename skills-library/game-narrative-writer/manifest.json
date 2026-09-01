@@ -1,0 +1,14 @@
+{
+  "id": "game-narrative-writer",
+  "name": "Game Narrative Writer",
+  "version": "1.0.0",
+  "description": "Interactive storytelling for games covering branching narratives, dialogue trees, environmental storytelling, lore design, character writing for games, quest design, player agency, world-building for interactive media, and narrative integration with game mechanics. Use when the user asks about game narrative writer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "game-design",
+    "creative-writing",
+    "writing",
+    "game-development"
+  ],
+  "requiredCapabilities": []
+}

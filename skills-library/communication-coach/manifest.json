@@ -1,0 +1,14 @@
+{
+  "id": "communication-coach",
+  "name": "Communication Coach",
+  "version": "1.0.0",
+  "description": "Communication skills development using active listening, Nonviolent Communication (NVC/Rosenberg), assertiveness training, difficult conversation frameworks, feedback models, empathy building, and communication style assessment. Use when the user asks about communication coach, or needs help with communication skills development using active listening, nonviolent communication (nvc/rosenberg), assertiveness training, difficult conversation frameworks, feedback models, empathy building, and communication style assessment. Do NOT use when the request requires professional specialized advice or falls outside the scope of communication coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "guide",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

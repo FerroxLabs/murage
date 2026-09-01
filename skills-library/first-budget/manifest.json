@@ -1,0 +1,14 @@
+{
+  "id": "first-budget",
+  "name": "First Budget",
+  "version": "1.0.0",
+  "description": "Creates a first-time budget for students, new graduates, or anyone who has never budgeted before. Starts from zero with income verification and essential expense mapping, uses simplified categories, and builds a minimal viable budget the user can maintain without financial experience. Use when the user is creating their very first budget, has no prior budgeting experience, is a student or new earner, or asks \"how do I start budgeting?\" Do NOT use for experienced budgeters wanting a method upgrade (use budget-planning, zero-based-budget, or fifty-thirty-twenty-budget), debt management, or investment planning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "budgeting",
+    "personal-finance",
+    "savings",
+    "beginner-friendly"
+  ],
+  "requiredCapabilities": []
+}

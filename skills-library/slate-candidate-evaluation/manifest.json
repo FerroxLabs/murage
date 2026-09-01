@@ -1,0 +1,13 @@
+{
+  "id": "slate-candidate-evaluation",
+  "name": "Candidate evaluation",
+  "version": "1.0.0",
+  "description": "User has a signed-off outcome doc from `role-design.md` and is about to interview, is mid-loop with disagreement surfacing, or just made an offer that feels wrong. No outcome doc means every interview is rapport theater — don't load this without one.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "slate",
+    "candidate",
+    "evaluation"
+  ],
+  "requiredCapabilities": []
+}

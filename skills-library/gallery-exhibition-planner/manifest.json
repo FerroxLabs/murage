@@ -1,0 +1,19 @@
+{
+  "id": "gallery-exhibition-planner",
+  "name": "Gallery Exhibition Planner",
+  "version": "1.0.0",
+  "description": "Gallery exhibition planning guidance covering curation strategy, installation design, exhibition proposals, opening event production, press outreach, artist statements, pricing artwork, gallery agreements, shipping and handling, and post-exhibition follow-up. Includes timeline templates, budget worksheets, press release formats, and installation checklists. Use when the user asks about gallery exhibition planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of gallery exhibition planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-industry",
+    "creative-writing",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "research",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

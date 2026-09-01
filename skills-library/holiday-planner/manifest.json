@@ -1,0 +1,19 @@
+{
+  "id": "holiday-planner",
+  "name": "Holiday Planner",
+  "version": "1.0.0",
+  "description": "Comprehensive holiday planning assistant covering budgeting, gift strategies, hosting events, travel booking, and building meaningful traditions for stress-free celebrations. Use when the user asks about holiday planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of holiday planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "event-planning",
+    "budgeting",
+    "stress-management",
+    "self-care",
+    "checklist",
+    "template",
+    "guide",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

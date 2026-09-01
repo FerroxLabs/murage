@@ -1,0 +1,14 @@
+{
+  "id": "mobile-security-engineer",
+  "name": "Mobile Security Engineer",
+  "version": "1.0.0",
+  "description": "Mobile application security covering certificate pinning implementation, secure local storage patterns, jailbreak and root detection, code obfuscation and tamper detection, API security for mobile clients, biometric authentication, secure key management, network security, reverse engineering defense, and compliance with OWASP MASVS. Use when the user asks about mobile security engineer, mobile security engineer best practices, or needs guidance on mobile security engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "security",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "pine-develop",
+  "name": "Pine Develop",
+  "version": "1.0.0",
+  "description": "Full Pine Script development loop — write code, compile, fix errors, iterate. Use when building a new indicator or strategy in TradingView.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pine",
+    "develop",
+    "trading",
+    "tradingview",
+    "charts",
+    "markets"
+  ],
+  "requiredCapabilities": []
+}

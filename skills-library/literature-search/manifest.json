@@ -1,0 +1,15 @@
+{
+  "id": "literature-search",
+  "name": "Literature Search",
+  "version": "1.0.0",
+  "description": "Creates systematic literature search strategies with database selection, keyword combinations, Boolean operators, and inclusion/exclusion criteria for learners conducting academic research. Produces a complete search protocol -- not advice on why literature reviews matter. Use when a learner asks to search for academic sources, find research papers, create a literature search strategy, or build a systematic review protocol. Do NOT use for evaluating source credibility (use `source-evaluation`), for writing the literature review itself (use writing category skills), or for citation formatting (use `citation-management`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "academic-writing",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

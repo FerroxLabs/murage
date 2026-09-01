@@ -1,0 +1,14 @@
+{
+  "id": "verdict-the-one-edit",
+  "name": "the-one-edit",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Verdict specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "verdict",
+    "the",
+    "one",
+    "edit"
+  ],
+  "requiredCapabilities": []
+}

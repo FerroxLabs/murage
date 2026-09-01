@@ -1,0 +1,16 @@
+{
+  "id": "perform-tech-debt-sprint",
+  "name": "Perform Tech Debt Sprint",
+  "version": "1.0.0",
+  "description": "Orchestrates a focused technical debt reduction sprint by chaining five engineering skills into a systematic cleanup pipeline. Covers debt assessment, code smell detection, incremental refactoring, test improvement, and safe release of improvements. Use when the team has allocated dedicated time to reduce technical debt and needs a structured approach to maximize impact. Do NOT use for ongoing maintenance, single refactoring tasks, or debt work mixed with feature development.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "refactoring",
+    "testing",
+    "architecture",
+    "planning",
+    "step-by-step",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

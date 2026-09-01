@@ -1,0 +1,17 @@
+{
+  "id": "technical-co-founder",
+  "name": "Technical Co Founder",
+  "version": "1.0.0",
+  "description": "Guidance for finding and partnering with a technical co-founder, covering equity negotiations, role definition, vesting structures, co-founder agreements, red flags, where to find technical partners, evaluating technical ability, and structuring the working relationship. Also covers being a technical co-founder evaluating business partners. Use when the user asks about technical co founder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of technical co founder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "strategy",
+    "checklist",
+    "testing",
+    "analysis",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

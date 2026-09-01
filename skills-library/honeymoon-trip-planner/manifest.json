@@ -1,0 +1,15 @@
+{
+  "id": "honeymoon-trip-planner",
+  "name": "Honeymoon Trip Planner",
+  "version": "1.0.0",
+  "description": "Creates romance-optimized travel itineraries for honeymoons and anniversary trips. Produces a day-by-day itinerary balancing relaxation, experiences, and surprise elements with booking sequences and budget breakdowns. Use when the user asks about planning a honeymoon, creating a romantic trip itinerary, organizing anniversary travel, or designing a couples getaway. Do NOT use for general trip planning (use trip-itinerary-builder), wedding planning (use family-relationships event skills), or group travel (use group-travel-coordinator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "planning",
+    "event-planning",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

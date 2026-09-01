@@ -1,0 +1,16 @@
+{
+  "id": "onboard-new-developer",
+  "name": "Onboard New Developer",
+  "version": "1.0.0",
+  "description": "Orchestrates structured developer onboarding by chaining five engineering skills into a progressive learning pipeline. Covers documentation review, version control setup, code review participation, test-driven first contribution, and commit conventions. Use when onboarding a new developer to a team or project with structured knowledge transfer. Do NOT use for self-directed learning, conference workshops, or onboarding non-developers to technical projects.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "career",
+    "step-by-step",
+    "planning",
+    "guide",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}
