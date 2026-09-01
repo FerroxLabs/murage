@@ -20,11 +20,12 @@ Every notification carries both the bot ID and the exact task thread ID. A
 click must select that bot **and switch to that task**, including a routine's
 detached task; opening whichever task happens to be active is a failure.
 
-Desktop notifications are suppressed while the window already has focus. The
-iOS app can present live or replayed notifications while it is running and uses
-the same bot/task target when the notification is tapped. Waking a terminated
-iOS app still requires a future APNs relay; local network or VPN connectivity
-alone cannot provide closed-app delivery.
+Desktop notifications are suppressed while the window already has focus. There
+is currently no phone client. The iOS companion, which presented live and
+replayed notifications against the same bot/task target, was retired before
+release; the browser client that replaces it is not built yet. Whatever ships
+there inherits the same contract — the notification carries the bot and the
+exact task thread, and acting on it must land on that task.
 
 ## Automated coverage
 
@@ -35,8 +36,14 @@ alone cannot provide closed-app delivery.
 | Store navigation selects the bot and switches the task | `src/state/store.test.ts` |
 | Routine failure receipt and callback occur once | `server/routines.test.ts` |
 | Real failed routine emits one `routine-failed` notification and no duplicate `done` | `server/notification-wiring.test.ts` |
-| iOS target parsing and detached-task decision | `ios/Tests/CompanionCoreTests/DecodingTests.swift` |
 | Paired-device route policy remains default-deny | `companion/test/routes.test.ts` |
+
+**Known gap: no client-side coverage of notification target parsing.** The row
+that used to sit above pointed at `ios/Tests/CompanionCoreTests/DecodingTests.swift`,
+which covered target parsing and the detached-task decision on the phone. It
+was deleted with the iOS companion. The server-side rows still prove the
+notification carries the right bot and task; nothing currently proves a remote
+client acts on it correctly. The browser-client track re-fills this.
 
 ## Manual release pass
 
@@ -51,11 +58,15 @@ other:
    receipt shows the detached task and the failure generates exactly one alert.
 4. Repeat the above with notifications disabled for that bot; the chat and run
    receipt should update without a system alert.
-5. On iOS, tap a live/replayed notification for a non-active routine task.
-   Confirm the app switches the server-side active task before navigating.
+5. _(No remote client today — the iOS companion was retired. Restore this step
+   when the browser client lands: tap a live/replayed notification for a
+   non-active routine task and confirm the client switches the server-side
+   active task before navigating.)_
 6. Exercise Auto mode, a Routine, and a Webhook independently. Verify each has
    a visible initiating user/configured trigger and that no unconfigured
    heartbeat starts work.
 
-Live provider, OS-permission, backgrounding, and APNs behavior cannot be proven
-by unit tests alone and remains part of the signed desktop/iPhone release pass.
+Live provider, OS-permission, and backgrounding behavior cannot be proven by
+unit tests alone and remains part of the signed desktop release pass. Push
+delivery to a closed remote client is not in scope for any current release —
+there is no remote client.

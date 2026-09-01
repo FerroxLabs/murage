@@ -69,11 +69,17 @@ export function tailscaleAddress(addresses: string[] = lanAddresses()): string |
 
 /** The machine's MagicDNS name, e.g. `macbook.tail1234.ts.net`.
  *
- * Worth having as well as the address, because a phone reaching a tailnet
- * over plain HTTP is on the wrong side of App Transport Security: iOS
- * exempts local networking, and 100.64/10 is CGNAT shared space rather than
- * one of the private ranges that exemption covers. A `ts.net` hostname can
- * be exempted by name, which an address cannot.
+ * Worth having as well as the address because it is stable: Tailscale can
+ * re-issue a node's 100.64/10 address, and a client holding only the address
+ * then has a candidate that resolves to nothing. The name outlives that. It is
+ * also the half a human can read off a screen and type into a phone.
+ *
+ * It is *not* the only dialable candidate. It used to be, for one client only:
+ * iOS refused plain HTTP to 100.64/10 under App Transport Security — CGNAT
+ * space is outside the local-networking exemption, and ATS matches exceptions
+ * by name, so only a `ts.net` name could be allowed. That client is retired
+ * and no browser has the equivalent rule, so `hostCandidates()` now offers the
+ * bare address too. See `docs/ios-companion-archive/ats-decision-record.md`.
  *
  * Read once when the listener comes up and cached — asking Tailscale is a
  * subprocess, and nothing here is worth spawning one per request. */

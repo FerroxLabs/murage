@@ -145,12 +145,25 @@ const currentHostedUrl = (options: ControlOptions): string | null =>
  * phone the whole ordered list at pairing time is what lets it walk to the
  * next candidate instead of failing forever on the first.
  *
- * The order is the reachability story: the MagicDNS name works from anywhere
- * the tailnet does, the LAN addresses work on this network, and the sidecar's
- * synthetic mDNS name comes last because it only resolves while the sidecar
- * itself is running. The bare tailnet address is deliberately absent — iOS
- * refuses plain HTTP to 100.64/10, so it would be a candidate that can never
- * succeed. */
+ * The order is the reachability story: the MagicDNS name and the tailnet
+ * address both work from anywhere the tailnet does, the LAN addresses work on
+ * this network, and the sidecar's synthetic mDNS name comes last because it
+ * only resolves while the sidecar itself is running.
+ *
+ * The name leads the address it resolves to, because it is the one that
+ * survives Tailscale re-issuing the address. The address follows immediately
+ * rather than being dropped, because it is the candidate that still works when
+ * MagicDNS is off, or when the Tailscale CLI is not where we looked and the
+ * name could not be read at all.
+ *
+ * This list used to exclude the bare tailnet address outright. The reason was
+ * App Transport Security: iOS refuses plain HTTP to 100.64/10 — CGNAT space,
+ * not one of the private ranges its local-networking exemption covers — and
+ * ATS exceptions match by name, so only the `ts.net` name could be exempted.
+ * That was a constraint of one Apple client, encoded here in shared code. The
+ * client is retired; a browser on the tailnet has no equivalent rule, and the
+ * bare address is exactly what it can reach over plain HTTP. The record of the
+ * original decision is `docs/ios-companion-archive/ats-decision-record.md`. */
 export function hostCandidates(
   addresses: string[] = lanAddresses(),
   magicDnsName: string | null = tailnetName(),
@@ -158,6 +171,7 @@ export function hostCandidates(
   const tailscale = tailscaleAddress(addresses);
   const out: string[] = [];
   if (tailscale && magicDnsName) out.push(magicDnsName);
+  if (tailscale) out.push(tailscale);
   for (const address of addresses) {
     if (address !== tailscale) out.push(address);
   }
@@ -374,19 +388,20 @@ async function api(path, method) {
 
 /** Redraw the whole page from one state object, listeners included. */
 function render(s) {
-  // The tailnet name beats the address: iOS refuses plain HTTP to 100.64/10,
-  // which is CGNAT space rather than one of the ranges its local-networking
-  // exemption covers, and ATS exceptions match by name rather than subnet.
+  // The tailnet name beats the address because it survives Tailscale handing
+  // this machine a different one, and it is the easier of the two to type.
+  // The address is a real fallback, not a dead end — it used to be one only
+  // because iOS refused plain HTTP to 100.64/10 under App Transport Security.
   const reach = s.tailnetName ?? s.tailscale ?? s.addresses[0];
   el("where").innerHTML =
     "<h2>Where to connect</h2>" +
     (reach
       ? "<p>Enter <code>" + esc(reach) + ":" + s.port + "</code> on your phone." +
-        (s.tailnetName ? " That works from any network." : "") + "</p>"
+        (s.tailnetName || s.tailscale ? " That works from any network." : "") + "</p>"
       : "<p class=dim>No network address yet.</p>") +
     (s.tailnetName && s.lan ? "<p class=dim>On this network only: <code>" + esc(s.lan) + ":" + s.port + "</code></p>" : "") +
     (s.tailscale && !s.tailnetName
-      ? "<p class=dim>On a tailnet, but this computer's MagicDNS name could not be read from Tailscale — either MagicDNS is off, or its command line tool is not where we looked. iPhones cannot connect to a bare tailnet address; the console output lists what was tried.</p>"
+      ? "<p class=dim>On a tailnet, but this computer's MagicDNS name could not be read from Tailscale — either MagicDNS is off, or its command line tool is not where we looked. The address above still works from anywhere on the tailnet; it just changes if Tailscale ever re-issues it. The console output lists what was tried.</p>"
       : "") +
     (!s.tailscale
       ? "<p class=dim>Reachable on this network only. Install Tailscale on both this computer and your phone to reach it from anywhere — including networks that stop devices from seeing each other.</p>"

@@ -165,22 +165,51 @@ describe("origins the control server will change state for", () => {
 });
 
 describe("hostCandidates", () => {
-  it("orders by reachability: tailnet name, then LAN, then the mDNS name last", () => {
-    // 100.121.5.6 is the bare tailnet address: excluded outright, because iOS
-    // refuses plain HTTP to 100.64/10 and a candidate that can never succeed
-    // only slows the walk down. The synthetic mDNS name is last — it resolves
-    // only while the sidecar runs.
+  it("orders by reachability: tailnet name, tailnet address, then LAN, then the mDNS name last", () => {
+    // Both tailnet candidates work from anywhere the tailnet reaches, so they
+    // lead. The name comes first because it survives Tailscale re-issuing the
+    // address. The synthetic mDNS name is last — it resolves only while the
+    // sidecar runs.
     const hosts = hostCandidates(["100.121.5.6", "192.168.1.42", "10.0.0.7"], "macbook.tail1234.ts.net");
-    expect(hosts.slice(0, 3)).toEqual(["macbook.tail1234.ts.net", "192.168.1.42", "10.0.0.7"]);
+    expect(hosts.slice(0, 4)).toEqual([
+      "macbook.tail1234.ts.net",
+      "100.121.5.6",
+      "192.168.1.42",
+      "10.0.0.7",
+    ]);
     expect(hosts.at(-1)).toMatch(/^murage-[0-9a-f]{8}\.local$/);
-    expect(hosts).not.toContain("100.121.5.6");
+  });
+
+  it("keeps the bare tailnet address, which the retired iOS client could not use", () => {
+    // This list used to drop 100.64/10 outright: App Transport Security refused
+    // an iOS app plain HTTP to CGNAT space, and ATS exceptions match by name,
+    // so only the ts.net name could be allowed. That was one Apple client's
+    // rule living in shared code. A browser has no such rule, and the bare
+    // address is the candidate it can still reach when MagicDNS is off — which
+    // is precisely the next case. Dropping it would strand the browser door.
+    // See docs/ios-companion-archive/ats-decision-record.md.
+    expect(hostCandidates(["100.121.5.6", "192.168.1.42"], "macbook.tail1234.ts.net")).toContain(
+      "100.121.5.6",
+    );
+  });
+
+  it("leads with the bare tailnet address when the MagicDNS name could not be read", () => {
+    // MagicDNS off, or the Tailscale CLI not where we looked. The address is
+    // then the only candidate that works off this network, so it has to lead
+    // the LAN addresses rather than being dropped behind them.
+    expect(hostCandidates(["100.121.5.6", "192.168.1.42"], null).slice(0, 2)).toEqual([
+      "100.121.5.6",
+      "192.168.1.42",
+    ]);
   });
 
   it("skips the tailnet name when Tailscale is not part of the picture", () => {
     // A MagicDNS name left over from a cached read is only dialable while a
     // tailnet address exists; without one it would be a dead first candidate.
     expect(hostCandidates(["192.168.1.42"], "stale.tail1234.ts.net")[0]).toBe("192.168.1.42");
-    expect(hostCandidates(["100.121.5.6", "192.168.1.42"], null)[0]).toBe("192.168.1.42");
+    expect(hostCandidates(["192.168.1.42"], "stale.tail1234.ts.net")).not.toContain(
+      "stale.tail1234.ts.net",
+    );
   });
 
   it("is what /state hands the pairing panel", async () => {
