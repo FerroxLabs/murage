@@ -140,7 +140,9 @@ win:
   #   CN="Ferrox Labs, LLC", O="Ferrox Labs, LLC", L=Austin, S=Texas, C=US
   # If that subject ever changes, list BOTH the old and new names here or every
   # already-installed user is stranded on a dead update channel.
-  publisherName: Ferrox Labs, LLC
+  # publisherName lives ONLY inside azureSignOptions — electron-builder 26
+  # removed win.publisherName, and a stray one fails the whole config for
+  # every platform, not just Windows.
   azureSignOptions:
     publisherName: Ferrox Labs, LLC
     endpoint: https://eus.codesigning.azure.net
