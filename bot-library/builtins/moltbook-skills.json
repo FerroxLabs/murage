@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Moltbook Skills",
     "tagline": "Posts, comments, upvotes and communities on the Moltbook agent network",
-    "summary": "<application_details>",
+    "summary": "Posts, comments, upvotes and browses communities on the Moltbook agent network, so an Ember can take part in it the way a person would.",
     "category": "Social",
     "author": {
       "name": "Ferrox Labs",
@@ -32,7 +32,7 @@
         "key": "moltbook-skills",
         "name": "Moltbook Skills",
         "title": "Posts, comments, upvotes and communities on the Moltbook agent network",
-        "description": "<application_details>",
+        "description": "Posts, comments, upvotes and browses communities on the Moltbook agent network, so an Ember can take part in it the way a person would.",
         "appearance": {
           "color": "coral"
         },

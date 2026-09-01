@@ -1,5 +1,6 @@
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
+import { plainText } from "@/lib/plain-text";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
 import type { Routine } from "@/lib/routines";
 import { api, useStore, type Bot, type Group } from "@/state/store";
@@ -476,7 +477,7 @@ export function TeamLibraryPanel({
           <>
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-6 sm:px-8">
               {pending.description && (
-                <p className="max-w-2xl text-[13.5px] leading-relaxed text-ink-secondary">{pending.description}</p>
+                <p className="max-w-2xl text-[13.5px] leading-relaxed text-ink-secondary">{plainText(pending.description)}</p>
               )}
               {pending.kind === "package" && (
                 <div className="mt-5 flex flex-wrap gap-2 text-[11.5px] text-ink-secondary">
@@ -770,7 +771,7 @@ export function TeamLibraryPanel({
                       <div className="rounded-2xl bg-raised/25 px-5 py-4">
                         <div className="text-[15px] font-semibold text-ink">{scouted.profile.name}</div>
                         {scouted.profile.summary && (
-                          <p className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">{scouted.profile.summary}</p>
+                          <p className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">{plainText(scouted.profile.summary)}</p>
                         )}
                         {scouted.profile.stacks.length > 0 && (
                           <div className="mt-2.5 flex flex-wrap gap-1.5">
