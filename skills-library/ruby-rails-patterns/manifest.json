@@ -1,0 +1,14 @@
+{
+  "id": "ruby-rails-patterns",
+  "name": "Ruby Rails Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level ruby on rails patterns implementation: ruby and frameworks decision frameworks, production-ready patterns, and concrete templates for ruby rails patterns workflows. Use when the user asks about ruby on rails patterns, ruby rails patterns configuration, or ruby best practices for ruby projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ruby",
+    "frameworks",
+    "backend",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

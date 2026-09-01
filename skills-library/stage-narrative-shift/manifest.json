@@ -1,0 +1,13 @@
+{
+  "id": "stage-narrative-shift",
+  "name": "narrative-shift",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Stage specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "stage",
+    "narrative",
+    "shift"
+  ],
+  "requiredCapabilities": []
+}

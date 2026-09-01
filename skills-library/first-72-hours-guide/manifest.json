@@ -1,0 +1,18 @@
+{
+  "id": "first-72-hours-guide",
+  "name": "First 72 Hours Guide",
+  "version": "1.0.0",
+  "description": "Priority-based survival guidance for the critical first 72 hours after a disaster, covering water, shelter, food, medical needs, communication, and decision-making protocols Use when the user asks about first 72 hours guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of first 72 hours guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "stress-management",
+    "guide",
+    "beginner-friendly",
+    "quick-reference",
+    "networking",
+    "safety",
+    "emergency-preparedness"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "video-storyboard",
+  "name": "Video Storyboard",
+  "version": "1.0.0",
+  "description": "Produces a video storyboard as a shot-by-shot table with shot type, camera movement, subject action, audio notes, and duration for each shot. Use when the user asks to create a storyboard, plan video shots, build a shot list, or visualize a video sequence before filming. Do NOT use for writing video dialogue or narration (use video-script-writing), YouTube metadata strategy (use youtube-video-strategy), or short-form video hooks (use short-form-video-planning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "planning",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

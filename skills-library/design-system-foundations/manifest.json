@@ -1,0 +1,14 @@
+{
+  "id": "design-system-foundations",
+  "name": "Design System Foundations",
+  "version": "1.0.0",
+  "description": "Produces a foundational design system specification with spacing scale, type scale, color token structure, border radius, and shadow variables as a tool-agnostic token system. Use when the user asks to create a design system, define design tokens, establish a visual language, or set up consistent spacing and typography rules. Do NOT use for full brand identity (use brand-identity-brief), color palette creation (use color-palette-design), or typography pairing decisions (use typography-system).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "template",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

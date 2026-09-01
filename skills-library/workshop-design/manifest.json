@@ -1,0 +1,15 @@
+{
+  "id": "workshop-design",
+  "name": "Workshop Design",
+  "version": "1.0.0",
+  "description": "Designs educational workshops for K-12 or higher education settings with agendas, facilitator guides, learning activities, timing, and outcome measures. Produces a complete workshop package for educators -- distinct from professional development workshops for workplace audiences. Use when an educator asks to design a workshop for students, a faculty development session, or a training session within an academic context. Do NOT use for corporate or professional development workshops (use `professional-workshop-design`), for full course design (use `online-course-design`), or for single lesson plans (use `lesson-plan-design`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "curriculum",
+    "lesson-plan",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

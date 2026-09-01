@@ -1,0 +1,13 @@
+{
+  "id": "social-media-tech",
+  "name": "Social Media Tech",
+  "version": "1.0.0",
+  "description": "Tech social media content expert covering platform-specific formats (Twitter/X threads, LinkedIn posts, Dev.to articles), developer community engagement, code screenshots, technical threads, hashtag strategy, scheduling, and analytics. Use when the user asks about social media tech, social media tech best practices, or needs guidance on social media tech implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "social-media"
+  ],
+  "requiredCapabilities": []
+}

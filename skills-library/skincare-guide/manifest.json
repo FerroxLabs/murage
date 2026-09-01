@@ -1,0 +1,14 @@
+{
+  "id": "skincare-guide",
+  "name": "Skincare Guide",
+  "version": "1.0.0",
+  "description": "Skincare routine advisor covering skin type assessment, basic routine building with cleanser, moisturizer, and sunscreen, ingredient guides for actives like retinol, vitamin C, hyaluronic acid, and niacinamide, product layering order, morning vs evening routines, seasonal adjustments, common concerns, and SPF importance. Use when the user asks about skincare guide, or needs help with skincare routine advisor covering skin type assessment, basic routine building with cleanser, moisturizer, and sunscreen, ingredient guides for actives like retinol, vitamin c, hyaluronic acid, and niacinamide, product layering order, morning vs evening routines, seasonal adjustments, common concerns, and spf importance. Do NOT use when the request requires professional specialized advice or falls outside the scope of skincare guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fashion",
+    "design",
+    "health-wellness",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

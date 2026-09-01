@@ -1,0 +1,15 @@
+{
+  "id": "major-purchase-decision",
+  "name": "Major Purchase Decision",
+  "version": "1.0.0",
+  "description": "Applies a structured buy/wait/skip decision framework to any large purchase. Evaluates affordability, needs vs. wants, financing cost, opportunity cost, and timing. Produces a scored decision matrix using the user's actual numbers and priorities without recommending the outcome. Use when the user asks about making a large purchase, is deciding whether to buy something expensive, or wants a framework for evaluating a significant spending decision. Do NOT use for home buying (use home-buying-checklist), car buying specifically (use car-buying-analysis), or insurance decisions (use insurance-comparison).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "budgeting",
+    "decision-making",
+    "analysis",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

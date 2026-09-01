@@ -1,0 +1,19 @@
+{
+  "id": "esp32-developer",
+  "name": "Esp32 Developer",
+  "version": "1.0.0",
+  "description": "ESP32 microcontroller development expertise covering WiFi and BLE connectivity, MicroPython and Arduino framework programming, deep sleep power management, OTA firmware updates, sensor integration, FreeRTOS task management, and practical IoT project patterns for ESP32-S3, C3, and classic variants. Use when the user asks about esp32 developer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of esp32 developer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "beginner-friendly",
+    "python",
+    "planning",
+    "networking",
+    "performing-arts",
+    "sleep",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

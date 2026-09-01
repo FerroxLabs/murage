@@ -1,0 +1,14 @@
+{
+  "id": "gift-finder",
+  "name": "Gift Finder",
+  "version": "1.0.0",
+  "description": "Gift recommendation engine with suggestions by relationship, occasion, budget, and interests, plus experience gift ideas, DIY options, group gift coordination, gift registry creation, wrapping ideas, and card message templates. Use when the user asks about gift finder, or needs help with gift recommendation engine with suggestions by relationship, occasion, budget, and interests, plus experience gift ideas, diy options, group gift coordination, gift registry creation, wrapping ideas, and card message templates. Do NOT use when the request requires professional specialized advice or falls outside the scope of gift finder.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "checklist",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

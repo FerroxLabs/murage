@@ -1,0 +1,14 @@
+{
+  "id": "test-prep-coach",
+  "name": "Test Prep Coach",
+  "version": "1.0.0",
+  "description": "Standardized test preparation covering SAT, ACT, GRE, and GMAT strategies, question type analysis, time management, practice test analysis, score improvement plans, test anxiety management, registration timelines, and section-specific strategies. Use when the user asks about test prep coach, or needs help with standardized test preparation covering sat, act, gre, and gmat strategies, question type analysis, time management, practice test analysis, score improvement plans, test anxiety management, registration timelines, and section-specific strategies. Do NOT use when the request requires professional specialized advice or falls outside the scope of test prep coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "academic-writing",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

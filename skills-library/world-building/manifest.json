@@ -1,0 +1,13 @@
+{
+  "id": "world-building",
+  "name": "World Building",
+  "version": "1.0.0",
+  "description": "Creates detailed fictional worlds with consistent internal logic, history, culture, geography, and power structures for use in fiction, games, or creative projects. Use when the user asks to build a fictional world, create a setting, design a fantasy/sci-fi universe, or develop the backdrop for a story. Do NOT use for character creation (use character-development), plot structure (use plot-outline), or writing scenes set in the world (use scene-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

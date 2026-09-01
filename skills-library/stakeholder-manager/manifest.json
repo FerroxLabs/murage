@@ -1,0 +1,14 @@
+{
+  "id": "stakeholder-manager",
+  "name": "Stakeholder Manager",
+  "version": "1.0.0",
+  "description": "Strategic stakeholder management expert covering stakeholder identification and mapping, power-interest analysis, RACI matrix design, communication planning, expectation management, influence strategies, conflict resolution, and executive relationship building. Use when the user asks about stakeholder manager, stakeholder manager best practices, or needs guidance on stakeholder manager implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "guide",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

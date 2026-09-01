@@ -1,0 +1,15 @@
+{
+  "id": "minor-beneficiary-guide",
+  "name": "Minor Beneficiary Guide",
+  "version": "1.0.0",
+  "description": "Explains the options and considerations for naming minor children (under 18) as beneficiaries in estate planning, including custodial accounts, testamentary trusts, UTMA/UGMA accounts, and guardian vs. custodian roles. Produces a comparison of approaches and a question list for attorney consultation. Use when the user asks about leaving assets to minor children, naming children as beneficiaries, what happens to inheritance for minors, or how to manage money for children in an estate plan. Do NOT use for recommending a specific approach, drafting trust or will language, providing tax advice about gifts to minors, or custodial account setup instructions.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "checklist",
+    "guide",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

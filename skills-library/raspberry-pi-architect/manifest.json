@@ -1,0 +1,19 @@
+{
+  "id": "raspberry-pi-architect",
+  "name": "Raspberry Pi Architect",
+  "version": "1.0.0",
+  "description": "Guides Linux-based Raspberry Pi projects including GPIO programming, camera modules, headless setup, networking, and system architecture Use when the user asks about raspberry pi architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of raspberry pi architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "journaling",
+    "template",
+    "guide",
+    "python",
+    "api-design",
+    "automation",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "icon-design-guide",
+  "name": "Icon Design Guide",
+  "version": "1.0.0",
+  "description": "Produces an icon design specification with grid size, stroke weight, corner radius, visual style, perspective rules, and metaphor selection for consistent icon sets. Use when the user asks to design icons, create an icon set style guide, define icon grid rules, or establish consistent icon design parameters. Do NOT use for logo design (use logo-design-brief), full design systems (use design-system-foundations), or AI-generated images (use an AI image generation skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "template",
+    "checklist",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "model-evaluation-specialist",
+  "name": "Model Evaluation Specialist",
+  "version": "1.0.0",
+  "description": "Advanced model evaluation covering LLM benchmarks, evaluation frameworks (lm-evaluate-harness, HELM, RAGAS), leaderboard interpretation, custom metrics design, human evaluation protocols, automated LLM-as-judge patterns, and evaluation pipeline architecture for both traditional ML and generative AI systems. Use when the user asks about model evaluation specialist, model evaluation specialist best practices, or needs guidance on model evaluation specialist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "testing",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

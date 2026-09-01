@@ -1,0 +1,14 @@
+{
+  "id": "habit-tracker-design",
+  "name": "Habit Tracker Design",
+  "version": "1.0.0",
+  "description": "Designs a personal habit tracking system with habit definitions, tracking method, minimum viable habit specifications, and recovery protocols. Use when the user wants to build a habit tracker, define trackable habits with minimum thresholds, or create a system for monitoring daily routines. Do NOT use for behavior change coaching or motivation (use health-wellness skills), full goal-setting frameworks (use `smart-goal-builder` or `okr-builder`), or enterprise habit/culture programs.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "automation",
+    "checklist",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

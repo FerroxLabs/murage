@@ -1,0 +1,13 @@
+{
+  "id": "fan-fiction",
+  "name": "Fan Fiction",
+  "version": "1.0.0",
+  "description": "Writes fan fiction that extends, reimagines, or explores existing fictional universes while maintaining character voice consistency, world rules, and engaging narrative craft. Use when the user asks to write fan fiction, continue a story from an existing work, write characters from a known franchise, or create \"what if\" scenarios for fictional universes. Do NOT use for original fiction (use short-story-writing), parody or satire of existing works (use satire-writing), or character creation from scratch (use character-development).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

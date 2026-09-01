@@ -1,0 +1,14 @@
+{
+  "id": "flashcard-creator",
+  "name": "Flashcard Creator",
+  "version": "1.0.0",
+  "description": "Flashcard and quiz creation skill covering effective flashcard design principles (atomic, one concept per card), Anki optimization, cloze deletion, image occlusion, quiz question types (MCQ, short answer, matching), spaced repetition algorithms, and deck organization strategies. Use when the user asks about flashcard creator, or needs help with flashcard and quiz creation skill covering effective flashcard design principles (atomic, one concept per card), anki optimization, cloze deletion, image occlusion, quiz question types (mcq, short answer, matching), spaced repetition algorithms, and deck organization strategies. Do NOT use when the request requires professional specialized advice or falls outside the scope of flashcard creator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "spaced-repetition",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

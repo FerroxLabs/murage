@@ -1,0 +1,15 @@
+{
+  "id": "react-component-patterns",
+  "name": "React Component Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level react component patterns implementation: javascript and typescript decision frameworks, production-ready patterns, and concrete templates for react component patterns workflows. Use when the user asks about react component patterns, react component patterns configuration, or javascript best practices for react projects. Do NOT use when the user needs a different web development capability -- check sibling skills in the web development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "javascript",
+    "typescript",
+    "frontend",
+    "design-patterns",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

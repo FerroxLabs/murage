@@ -1,0 +1,19 @@
+{
+  "id": "theory-of-constraints-coach",
+  "name": "Theory Of Constraints Coach",
+  "version": "1.0.0",
+  "description": "Applied Theory of Constraints guide covering bottleneck identification, the Five Focusing Steps, Drum-Buffer-Rope scheduling, Thinking Processes, throughput accounting, and practical techniques for finding and exploiting system constraints. Use when the user asks about theory of constraints coach, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of theory of constraints coach or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "step-by-step",
+    "cloud",
+    "performing-arts",
+    "energy-efficiency",
+    "waste-reduction",
+    "investing",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

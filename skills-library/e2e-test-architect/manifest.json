@@ -1,0 +1,14 @@
+{
+  "id": "e2e-test-architect",
+  "name": "E2e Test Architect",
+  "version": "1.0.0",
+  "description": "End-to-end test automation expertise covering Playwright and Cypress patterns, page object model design, test selector strategies (data-testid), wait strategies for asynchronous content, screenshot comparison, parallel execution, flaky test management, CI integration, and comprehensive test reporting. Use when the user asks about e2e test architect, e2e test architect best practices, or needs guidance on e2e test architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "best-practices",
+    "guide",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

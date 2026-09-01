@@ -1,0 +1,18 @@
+{
+  "id": "data-backup-strategist",
+  "name": "Data Backup Strategist",
+  "version": "1.0.0",
+  "description": "Design and implement resilient backup strategies using the 3-2-1 rule, encryption best practices, cloud vs local tradeoffs, and restore testing procedures to protect personal and small business data from loss Use when the user asks about data backup strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of data backup strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "checklist",
+    "template",
+    "cloud",
+    "testing",
+    "automation",
+    "research",
+    "networking"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "sewing-tailor",
+  "name": "Sewing Tailor",
+  "version": "1.0.0",
+  "description": "Comprehensive sewing and tailoring guide covering machine selection, fabric types and uses, pattern reading, essential stitches, garment construction techniques, common alterations, hemming methods, zipper installation, and a structured project progression from beginner to advanced. Use when the user asks about sewing tailor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sewing",
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

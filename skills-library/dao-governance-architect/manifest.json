@@ -1,0 +1,19 @@
+{
+  "id": "dao-governance-architect",
+  "name": "Dao Governance Architect",
+  "version": "1.0.0",
+  "description": "Decentralized autonomous organization expertise covering governance framework design, voting mechanisms (token-weighted, quadratic, conviction), proposal systems, treasury management strategies, delegation patterns, on-chain vs off-chain governance, multi-sig operations, and organizational structure for web3 communities. Use when the user asks about dao governance architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of dao governance architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "budgeting",
+    "template",
+    "testing",
+    "automation",
+    "safety",
+    "emergency-preparedness",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

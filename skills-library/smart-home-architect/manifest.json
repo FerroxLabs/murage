@@ -1,0 +1,14 @@
+{
+  "id": "smart-home-architect",
+  "name": "Smart Home Architect",
+  "version": "1.0.0",
+  "description": "Smart home hub selection, automation routines, security and privacy considerations, voice control integration, energy monitoring, and system design for connected homes. Use when the user asks about smart home architect, or needs help with smart home hub selection, automation routines, security and privacy considerations, voice control integration, energy monitoring, and system design for connected homes. Do NOT use when the request requires professional specialized advice or falls outside the scope of smart home architect.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "automation",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

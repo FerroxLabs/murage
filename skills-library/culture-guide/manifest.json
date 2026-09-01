@@ -1,0 +1,14 @@
+{
+  "id": "culture-guide",
+  "name": "Culture Guide",
+  "version": "1.0.0",
+  "description": "Cultural etiquette and travel guide covering country-specific customs, greeting protocols, dining etiquette, tipping practices, dress codes, religious site respect, common faux pas, basic phrases, gesture meanings, and gift-giving customs. Use when the user asks about culture guide, or needs help with cultural etiquette and travel guide covering country-specific customs, greeting protocols, dining etiquette, tipping practices, dress codes, religious site respect, common faux pas, basic phrases, gesture meanings, and gift-giving customs. Do NOT use when the request requires professional specialized advice or falls outside the scope of culture guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "guide",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

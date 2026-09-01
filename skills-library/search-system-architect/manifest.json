@@ -1,0 +1,14 @@
+{
+  "id": "search-system-architect",
+  "name": "Search System Architect",
+  "version": "1.0.0",
+  "description": "Search infrastructure design expert covering full-text search architecture, Elasticsearch/OpenSearch cluster design, relevance tuning (BM25, TF-IDF, custom scoring), faceted search, autocomplete, query understanding, search analytics, and search quality measurement. Use when the user asks about search system architect, search system architect best practices, or needs guidance on search system architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "backend",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

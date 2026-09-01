@@ -1,0 +1,14 @@
+{
+  "id": "spreadsheet-data-cleaning",
+  "name": "Spreadsheet Data Cleaning",
+  "version": "1.0.0",
+  "description": "Produces spreadsheet-native data cleaning formulas and operations. Generates exact TRIM, CLEAN, TEXT, SUBSTITUTE formulas for text issues, IF/IFERROR wrappers for null handling, COUNTIF for duplicate detection, and a cleaning sequence with before/after column strategy. Use when the user needs to clean data using spreadsheet formulas rather than external tools. Do NOT use for a full data cleaning protocol across any tool (use data-cleaning-protocol), setting up validation rules (use data-validation-setup), or auditing a spreadsheet model (use spreadsheet-model-audit).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spreadsheets",
+    "data-science",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

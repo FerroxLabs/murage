@@ -1,0 +1,14 @@
+{
+  "id": "investment-account-types",
+  "name": "Investment Account Types",
+  "version": "1.0.0",
+  "description": "Explains the structural differences between common investment account types including employer-sponsored plans, individual retirement accounts, taxable brokerage accounts, and health savings accounts. Covers tax treatment, contribution rules, withdrawal rules, and tradeoffs for each account type. Use when the user asks about types of investment accounts, differences between retirement accounts, or which account features matter for their situation. Do NOT use for specific investment product selection (use portfolio-allocation-framework), tax filing preparation (use tax-filing-prep), or calculating retirement savings targets (use retirement-savings-calculator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "investing",
+    "personal-finance",
+    "tax-planning",
+    "retirement-planning"
+  ],
+  "requiredCapabilities": []
+}

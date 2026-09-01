@@ -1,0 +1,14 @@
+{
+  "id": "dashboard-design",
+  "name": "Dashboard Design",
+  "version": "1.0.0",
+  "description": "Produces a complete dashboard layout specification. Defines the business questions the dashboard answers, specifies each panel (chart type, data source, title, update frequency), and maps the layout grid with sizing and positioning. Use when the user needs to design a data dashboard for monitoring metrics, KPIs, or business performance. Do NOT use for selecting a single chart type (use chart-type-selector), defining KPI metrics (use kpi-definition), or formatting individual charts (use chart-formatting).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-visualization",
+    "design",
+    "analysis",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

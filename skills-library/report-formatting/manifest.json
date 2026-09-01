@@ -1,0 +1,14 @@
+{
+  "id": "report-formatting",
+  "name": "Report Formatting",
+  "version": "1.0.0",
+  "description": "Produces a data report structure with executive summary format, findings section template with chart-plus-interpretation pairs, methodology note, and appendix organization. Separates insight from supporting detail for maximum readability. Use when the user needs to structure a data-driven report for stakeholders, management, or publication. Do NOT use for single-chart formatting (use chart-formatting), infographic layout (use infographic-planning), or data narrative writing (use data-storytelling).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-visualization",
+    "report",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

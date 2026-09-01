@@ -1,0 +1,13 @@
+{
+  "id": "home-gym-advisor",
+  "name": "Home Gym Advisor",
+  "version": "1.0.0",
+  "description": "Home gym setup guide covering budget-tier equipment recommendations, space planning, essential vs nice-to-have equipment, flooring options, storage solutions, equipment maintenance, workout programs for home equipment, and apartment-friendly options. Use when the user asks about home gym advisor, or needs help with home gym setup guide covering budget-tier equipment recommendations, space planning, essential vs nice-to-have equipment, flooring options, storage solutions, equipment maintenance, workout programs for home equipment, and apartment-friendly options. Do NOT use when the request requires professional medical advice or falls outside the scope of home gym advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

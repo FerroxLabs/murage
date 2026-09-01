@@ -1,0 +1,14 @@
+{
+  "id": "caching-strategies",
+  "name": "Caching Strategies",
+  "version": "1.0.0",
+  "description": "Guides expert-level caching strategies implementation: optimization and database decision frameworks, production-ready patterns, and concrete templates for caching strategies workflows. Use when the user asks about caching strategies, caching strategies configuration, or backend best practices for caching projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "optimization",
+    "database",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

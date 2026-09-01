@@ -1,0 +1,14 @@
+{
+  "id": "budget-travel",
+  "name": "Budget Travel",
+  "version": "1.0.0",
+  "description": "Budget travel guide covering flight booking strategies and timing, accommodation alternatives like hostels, house-sitting, and Couchsurfing, free activity finding, food budget tips, travel credit card optimization, shoulder season travel, and cost comparison by destination. Use when the user asks about budget travel, or needs help with budget travel guide covering flight booking strategies and timing, accommodation alternatives like hostels, house-sitting, and couchsurfing, free activity finding, food budget tips, travel credit card optimization, shoulder season travel, and cost comparison by destination. Do NOT use when the request requires professional specialized advice or falls outside the scope of budget travel.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "budgeting",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

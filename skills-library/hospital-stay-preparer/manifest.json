@@ -1,0 +1,18 @@
+{
+  "id": "hospital-stay-preparer",
+  "name": "Hospital Stay Preparer",
+  "version": "1.0.0",
+  "description": "Prepares individuals for planned hospital stays with packing checklists, patient rights information, discharge planning guidance, and recovery preparation strategies. Use when the user asks about hospital stay preparer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of hospital stay preparer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "testing",
+    "planning",
+    "emergency-preparedness",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "brand-identity-designer",
+  "name": "Brand Identity Designer",
+  "version": "1.0.0",
+  "description": "Complete brand identity design guidance covering brand discovery workshops, moodboard creation, logo suite development, typography systems, color palettes, imagery and photography direction, brand guidelines documentation, deliverables checklists, and the strategic process of translating brand values into a cohesive visual system. Use when the user asks about brand identity designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "branding",
+    "guide",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

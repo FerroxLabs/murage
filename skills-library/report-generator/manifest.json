@@ -1,0 +1,13 @@
+{
+  "id": "report-generator",
+  "name": "Report Generator",
+  "version": "1.0.0",
+  "description": "Business report generation expert covering report structure, data visualization best practices, executive summary writing, metric presentation, trend analysis, recommendation formatting, appendix design, and automated report generation. Use when the user asks about report generator, report generator best practices, or needs guidance on report generator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "report"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "roadmap-planner",
+  "name": "Roadmap Planner",
+  "version": "1.0.0",
+  "description": "Product roadmap creation expert covering Now-Next-Later format, outcome-based roadmaps, theme-based roadmaps, dependency mapping, stakeholder alignment, review cadence, metric-driven prioritization, and roadmap communication. Use when the user asks about roadmap planner, roadmap planner best practices, or needs guidance on roadmap planner implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

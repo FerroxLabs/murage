@@ -1,0 +1,14 @@
+{
+  "id": "tax-filing-prep",
+  "name": "Tax Filing Prep",
+  "version": "1.0.0",
+  "description": "Walks through the document gathering and organization process for tax filing. Produces a personalized document checklist, filing timeline, and organization system based on the user's income sources and financial activities. Does NOT complete tax returns or provide filing advice. Use when the user asks about preparing to file taxes, what documents they need for tax season, or how to organize for tax filing. Do NOT use for year-end tax planning (use year-end-tax-checklist), tracking deductions during the year (use tax-deduction-tracker), or understanding tax-advantaged accounts (use tax-advantaged-optimizer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tax-planning",
+    "personal-finance",
+    "planning",
+    "checklist"
+  ],
+  "requiredCapabilities": []
+}

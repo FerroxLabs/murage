@@ -1,0 +1,15 @@
+{
+  "id": "financial-goal-setting",
+  "name": "Financial Goal Setting",
+  "version": "1.0.0",
+  "description": "Converts vague financial aspirations into SMART goals with specific dollar targets, timelines, and monthly savings requirements. Produces a structured goal plan that breaks large financial objectives into measurable monthly actions the user can track. Use when the user has financial aspirations but has not defined specific targets, timelines, or monthly contribution amounts. Do NOT use for creating a budget (use budget-planning), tracking multiple existing savings goals (use savings-goals-tracker), or investment planning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "budgeting",
+    "goal-setting",
+    "planning",
+    "savings"
+  ],
+  "requiredCapabilities": []
+}

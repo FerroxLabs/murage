@@ -1,0 +1,13 @@
+{
+  "id": "smith-agent-handoff",
+  "name": "Agent hand-off",
+  "version": "1.0.0",
+  "description": "Use this skill when a shaped feature or ADR is ready to implement and the next step is to hand the work to the user's coding agent (Cursor, Claude Code, the IDE-of-the-week). The output is a ticket the coding agent can execute without coming back to ask basic questions, and without drifting past the",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "smith",
+    "agent",
+    "handoff"
+  ],
+  "requiredCapabilities": []
+}

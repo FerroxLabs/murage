@@ -1,0 +1,19 @@
+{
+  "id": "decision-framework-builder",
+  "name": "Decision Framework Builder",
+  "version": "1.0.0",
+  "description": "Practical guide to structured decision-making covering RAPID and DACI accountability models, weighted scoring matrices, decision trees, pre-mortem analysis, and building reusable decision frameworks for teams and organizations. Use when the user asks about decision framework builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of decision framework builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "budgeting",
+    "template",
+    "beginner-friendly",
+    "analysis",
+    "research",
+    "performing-arts",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

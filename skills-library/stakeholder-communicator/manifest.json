@@ -1,0 +1,14 @@
+{
+  "id": "stakeholder-communicator",
+  "name": "Stakeholder Communicator",
+  "version": "1.0.0",
+  "description": "Stakeholder communication expert covering status report templates, executive summaries, risk communication, technical-to-business translation, meeting facilitation, decision documentation (DACI, RACI), escalation frameworks, and demo preparation. Use when the user asks about stakeholder communicator, stakeholder communicator best practices, or needs guidance on stakeholder communicator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "guide",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

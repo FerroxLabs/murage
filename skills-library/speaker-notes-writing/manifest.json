@@ -1,0 +1,14 @@
+{
+  "id": "speaker-notes-writing",
+  "name": "Speaker Notes Writing",
+  "version": "1.0.0",
+  "description": "Writes speaker notes for a slide deck including transition language between slides, elaboration on each visual, audience-facing questions, time estimates per slide, and contingency notes for section skips. Use when the user asks to write presentation notes, prepare talking points for slides, or create a presenter guide for a slide deck. Do NOT use for slide deck structure and content planning (use slide-deck-structure), voiceover narration scripts (use voiceover-script), or podcast interview preparation (use podcast-interview-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "presentation",
+    "template",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

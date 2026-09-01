@@ -1,0 +1,15 @@
+{
+  "id": "build-speaking-career",
+  "name": "Build Speaking Career",
+  "version": "1.0.0",
+  "description": "Step-by-step workflow for professionals who want to build a public speaking career, from identifying your signature topic and crafting compelling content through speaking at local events, building toward regional conferences, and eventually landing keynote opportunities and paid speaking engagements. Use when the user wants to build speaking career or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "presentation",
+    "content-marketing",
+    "career",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

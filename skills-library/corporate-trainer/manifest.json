@@ -1,0 +1,15 @@
+{
+  "id": "corporate-trainer",
+  "name": "Corporate Trainer",
+  "version": "1.0.0",
+  "description": "Professional guide to corporate training and development covering needs analysis, instructional design, facilitation techniques, evaluation models, ROI measurement, and building effective training programs that produce measurable business results. Use when the user asks about corporate trainer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of corporate trainer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "education-industry",
+    "teaching",
+    "budgeting",
+    "analysis",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

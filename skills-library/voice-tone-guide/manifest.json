@@ -1,0 +1,13 @@
+{
+  "id": "voice-tone-guide",
+  "name": "Voice Tone Guide",
+  "version": "1.0.0",
+  "description": "Creates brand voice and tone documentation with do/don't examples, vocabulary lists, platform-specific modifiers, and writing samples that any writer can follow to produce on-brand content. Use when the user needs to document their brand voice, create tone guidelines, build a writing style guide, or standardize how their brand communicates. Do NOT use for audience analysis (use `audience-analysis`), content strategy planning (use `editorial-calendar`), or actual content writing (use `blog-post-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

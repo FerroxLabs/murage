@@ -1,0 +1,19 @@
+{
+  "id": "kayaking-guide",
+  "name": "Kayaking Guide",
+  "version": "1.0.0",
+  "description": "Guide paddlers through kayaking fundamentals including paddle technique, water reading, safety protocols, equipment selection, trip planning, and progression from flatwater to moving water Use when the user asks about kayaking guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of kayaking guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "hiking",
+    "budgeting",
+    "nutrition",
+    "checklist",
+    "template",
+    "beginner-friendly",
+    "advanced",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

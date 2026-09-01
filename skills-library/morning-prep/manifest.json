@@ -1,0 +1,16 @@
+{
+  "id": "morning-prep",
+  "name": "Morning Prep",
+  "version": "1.0.0",
+  "description": "Daily morning scan — load saved morning layout, screenshot watchlist symbols, and summarize overnight pre-market state. Use when the user says \"good morning\", \"morning prep\", or asks for a pre-open briefing.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "morning",
+    "prep",
+    "trading",
+    "tradingview",
+    "charts",
+    "markets"
+  ],
+  "requiredCapabilities": []
+}

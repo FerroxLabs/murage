@@ -1,0 +1,14 @@
+{
+  "id": "garden-advisor",
+  "name": "Garden Advisor",
+  "version": "1.0.0",
+  "description": "Comprehensive gardening guide with zone-based planting calendars, soil preparation, companion planting, organic pest management, container gardening, vegetable garden planning, lawn care, indoor plant care, and watering schedules. Use when the user asks about garden advisor, or needs help with comprehensive gardening guide with zone-based planting calendars, soil preparation, companion planting, organic pest management, container gardening, vegetable garden planning, lawn care, indoor plant care, and watering schedules. Do NOT use when the request requires professional specialized advice or falls outside the scope of garden advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "gardening",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

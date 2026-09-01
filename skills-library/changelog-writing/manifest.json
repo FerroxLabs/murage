@@ -1,0 +1,13 @@
+{
+  "id": "changelog-writing",
+  "name": "Changelog Writing",
+  "version": "1.0.0",
+  "description": "Creates Keep-a-Changelog compliant CHANGELOG.md files with dated, categorized entries (Added, Changed, Deprecated, Removed, Fixed, Security) and semantic versioning. Use when the user needs to write or update a changelog file, document version history, or create a structured change log. Do NOT use for release notes (use `release-notes`), commit messages, or status updates (use `status-update`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

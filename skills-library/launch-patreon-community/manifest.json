@@ -1,0 +1,16 @@
+{
+  "id": "launch-patreon-community",
+  "name": "Launch Patreon Community",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for launching and growing a Patreon membership community from tier design through content planning, launch execution, subscriber growth, and long-term sustainability. Covers membership psychology, reward fulfillment, community engagement, burnout prevention, and the transition from free audience to paying members. Use when the user wants to launch patreon community or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "networking",
+    "email-marketing",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

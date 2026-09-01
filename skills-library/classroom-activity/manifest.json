@@ -1,0 +1,15 @@
+{
+  "id": "classroom-activity",
+  "name": "Classroom Activity",
+  "version": "1.0.0",
+  "description": "Designs engaging classroom activities with clear objectives, step-by-step procedures, timing, materials lists, and debrief questions for educators. Produces a complete activity guide that a teacher can implement directly -- not a list of activity ideas. Use when an educator asks to design a classroom activity, create an engaging exercise, build a hands-on learning experience, or plan an interactive lesson component. Do NOT use for full lesson plans (use `lesson-plan-design`), for discussion-only activities (use `discussion-questions`), or for online course modules (use `online-course-design`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "lesson-plan",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

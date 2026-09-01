@@ -1,0 +1,15 @@
+{
+  "id": "create-online-course",
+  "name": "Create Online Course",
+  "version": "1.0.0",
+  "description": "Guides the user through creating an online course from concept validation through student feedback collection, chaining 7 atomic skills across education, design-creative, and business categories. Step 1 serves as a validation gate with a hard stop if concept validation fails. Covers self-hosted vs. platform decisions, video vs. text format, and cohort-based vs. self-paced models. Use when the user wants to create and launch an online course. Do NOT use for in-person teaching (use lesson plan skills), writing a book or guide (use writing workflows), or creating a single tutorial (use tutorial-writing skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "curriculum",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

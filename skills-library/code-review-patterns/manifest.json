@@ -1,0 +1,14 @@
+{
+  "id": "code-review-patterns",
+  "name": "Code Review Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level code review patterns implementation: clean-code and best-practices decision frameworks, production-ready patterns, and concrete templates for code review patterns workflows. Use when the user asks about code review patterns, code review patterns configuration, or clean-code best practices for code projects. Do NOT use when the user needs a different developer tools capability -- check sibling skills in the developer tools subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "clean-code",
+    "best-practices",
+    "code-review",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

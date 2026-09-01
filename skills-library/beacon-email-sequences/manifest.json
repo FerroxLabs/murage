@@ -1,0 +1,13 @@
+{
+  "id": "beacon-email-sequences",
+  "name": "email-sequences",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Channels specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beacon",
+    "email",
+    "sequences"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "build-developer-tools",
+  "name": "Build Developer Tools",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for building developer tools that developers actually want to use. Covers pain point discovery, CLI and SDK design, documentation, developer experience optimization, and community building around your tool. Applicable to CLIs, SDKs, libraries, and internal developer platforms. Use when the user wants to build developer tools or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "documentation",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "embedding-engineer",
+  "name": "Embedding Engineer",
+  "version": "1.0.0",
+  "description": "Vector embedding specialist covering embedding model comparison, dimensionality reduction, similarity metrics (cosine, euclidean, dot product), embedding fine-tuning, multi-modal embeddings, embedding visualization, and index optimization. Use when the user asks about embedding engineer, embedding engineer best practices, or needs guidance on embedding engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "data-science",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

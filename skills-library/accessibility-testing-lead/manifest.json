@@ -1,0 +1,19 @@
+{
+  "id": "accessibility-testing-lead",
+  "name": "Accessibility Testing Lead",
+  "version": "1.0.0",
+  "description": "Design and execute comprehensive accessibility testing strategies combining automated scanning, manual evaluation, and assistive technology testing, with audit templates and stakeholder reporting. Use when the user asks about accessibility testing lead, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of accessibility testing lead or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "budgeting",
+    "checklist",
+    "template",
+    "javascript",
+    "api-design",
+    "testing",
+    "analysis",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

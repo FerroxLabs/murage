@@ -1,0 +1,14 @@
+{
+  "id": "second-order-thinking",
+  "name": "Second Order Thinking",
+  "version": "1.0.0",
+  "description": "Applies second-order thinking to a decision by mapping direct consequences, then the consequences of those consequences, then third-order effects. Surfaces non-obvious risks and opportunities before the decision is made. Use when the user asks about thinking through consequences, considering ripple effects, understanding downstream impacts, or applying second-order thinking to a decision. Do NOT use for imagining failure scenarios (use premortem-analysis), comparing options with scoring (use weighted-decision-matrix), or business strategic impact analysis (use business strategy skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decision-making",
+    "analysis",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

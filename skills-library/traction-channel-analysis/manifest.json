@@ -1,0 +1,16 @@
+{
+  "id": "traction-channel-analysis",
+  "name": "Traction Channel Analysis",
+  "version": "1.0.0",
+  "description": "Applies the Bullseye Framework to rank all 19 traction channels by potential, cost, and time-to-results for a specific business, producing a prioritized acquisition strategy with test designs for top channels. Use when the user asks about traction channels, customer acquisition channels, the Bullseye Framework, growth channels, or how to get customers. Do NOT use for marketing strategy (use marketing-strategy), paid ad copy (use paid-ad-copy), or growth experiments (use growth-experiment).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "planning",
+    "analysis",
+    "marketing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

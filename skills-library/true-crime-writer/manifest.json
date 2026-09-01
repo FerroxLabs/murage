@@ -1,0 +1,18 @@
+{
+  "id": "true-crime-writer",
+  "name": "True Crime Writer",
+  "version": "1.0.0",
+  "description": "Complete true crime writing guide covering research methodology, FOIA requests, interview techniques, ethical considerations, victim sensitivity, narrative structure, fact-checking protocols, and legal liability awareness. Use when the user asks about true crime writer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of true crime writer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "template",
+    "beginner-friendly",
+    "testing",
+    "analysis",
+    "research",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "industry-research-framework",
+  "name": "Industry Research Framework",
+  "version": "1.0.0",
+  "description": "Structures deep industry research covering key players, business models, trends, job market dynamics, and entry points. Produces a comprehensive research brief document for career decision-making. Use when the user wants to research an industry before a career move, understand a new market for job targeting, or conduct due diligence on an industry they are considering entering. Do NOT use for company-specific research before an interview (use company-research-guide), competitive analysis for business strategy (use competitive-analysis), or market research for a product (use market-research skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "analysis",
+    "research",
+    "planning",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

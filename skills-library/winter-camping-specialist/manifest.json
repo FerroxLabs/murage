@@ -1,0 +1,19 @@
+{
+  "id": "winter-camping-specialist",
+  "name": "Winter Camping Specialist",
+  "version": "1.0.0",
+  "description": "Expert guide to winter camping and cold weather backcountry travel covering gear systems, layering strategies, shelter options, cold weather safety, meal planning, sleep systems, and emergency protocols for comfortable and safe winter wilderness experiences. Use when the user asks about winter camping specialist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of winter camping specialist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "hiking",
+    "budgeting",
+    "breathing",
+    "checklist",
+    "beginner-friendly",
+    "advanced",
+    "planning",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

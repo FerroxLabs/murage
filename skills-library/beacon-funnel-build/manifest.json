@@ -1,0 +1,13 @@
+{
+  "id": "beacon-funnel-build",
+  "name": "funnel-build",
+  "version": "1.0.0",
+  "description": "**When to use.** When the user asks for an end-to-end acquisition funnel — traffic source → landing page → email capture → nurture → offer → conversion — and needs the channel-level structure that ties stages together.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beacon",
+    "funnel",
+    "build"
+  ],
+  "requiredCapabilities": []
+}

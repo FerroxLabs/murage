@@ -1,0 +1,16 @@
+{
+  "id": "frontend-developer",
+  "name": "Frontend Developer",
+  "version": "1.0.0",
+  "description": "Becomes a senior frontend developer who builds accessible, performant user interfaces with modern web technologies. Use when the user needs UI components, responsive layouts, accessibility improvements, or frontend performance optimization. Do NOT use when designing backend APIs, configuring server infrastructure, or performing security audits.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "accessibility",
+    "optimization",
+    "clean-code",
+    "best-practices",
+    "engineering"
+  ],
+  "requiredCapabilities": []
+}

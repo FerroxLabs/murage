@@ -1,0 +1,18 @@
+{
+  "id": "body-scan-guide",
+  "name": "Body Scan Guide",
+  "version": "1.0.0",
+  "description": "Lead body scan meditations including progressive relaxation scripts, tension mapping techniques, adaptations for different populations, and integration with daily stress management. Use when the user asks about body scan guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of body scan guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "breathing",
+    "journaling",
+    "stress-management",
+    "template",
+    "guide",
+    "beginner-friendly"
+  ],
+  "requiredCapabilities": []
+}

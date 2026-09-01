@@ -1,0 +1,19 @@
+{
+  "id": "cohort-analyst",
+  "name": "Cohort Analyst",
+  "version": "1.0.0",
+  "description": "Guide for cohort-based analytics including retention analysis, customer lifetime value calculation, behavioral segmentation, funnel analysis, and time-based cohort tracking with Python and SQL implementations. Use when the user asks about cohort analyst, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cohort analyst or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "checklist",
+    "beginner-friendly",
+    "python",
+    "sql",
+    "analysis",
+    "sleep",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

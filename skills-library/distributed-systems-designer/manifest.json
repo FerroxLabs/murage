@@ -1,0 +1,14 @@
+{
+  "id": "distributed-systems-designer",
+  "name": "Distributed Systems Designer",
+  "version": "1.0.0",
+  "description": "Distributed systems architecture expert covering CAP theorem application, consensus algorithms (Raft, Paxos, PBFT), partition tolerance strategies, distributed transactions (2PC, saga, outbox pattern), leader election, clock synchronization, CRDTs, and failure mode analysis. Use when the user asks about distributed systems designer, distributed systems designer best practices, or needs guidance on distributed systems designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "microservices",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

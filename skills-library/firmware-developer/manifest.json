@@ -1,0 +1,15 @@
+{
+  "id": "firmware-developer",
+  "name": "Firmware Developer",
+  "version": "1.0.0",
+  "description": "Guides bare metal and RTOS firmware development including bootloader design, OTA updates, peripheral drivers, and production firmware practices Use when the user asks about firmware developer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of firmware developer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "guide",
+    "networking",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "social-media-strategy",
+  "name": "Social Media Strategy",
+  "version": "1.0.0",
+  "description": "Produces a platform-specific social media strategy with content pillars, posting frequency, format mix, engagement tactics, and performance metrics using content calendar methodology. Use when the user asks to create a social media strategy, plan social media content, build a content calendar, or define a social media presence for a brand or business. Do NOT use for paid social ad copy (use paid-ad-copy), email marketing (use email-campaign), or full marketing strategy (use marketing-strategy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "social-media",
+    "planning",
+    "strategy",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

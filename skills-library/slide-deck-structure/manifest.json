@@ -1,0 +1,14 @@
+{
+  "id": "slide-deck-structure",
+  "name": "Slide Deck Structure",
+  "version": "1.0.0",
+  "description": "Produces a complete slide-by-slide outline with slide purpose, content type, and talking points for each slide, applying presentation narrative structure. Use when the user asks to structure a presentation, plan a slide deck, outline slides for a talk, or organize presentation content. Do NOT use for pitch deck specifically (use pitch-deck-structure), data visualization in slides (use data-in-slides), or writing speaker notes (use speaker-notes-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "presentation",
+    "planning",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

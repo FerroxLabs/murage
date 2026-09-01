@@ -1,0 +1,14 @@
+{
+  "id": "gtd-workflow",
+  "name": "Gtd Workflow",
+  "version": "1.0.0",
+  "description": "Implements the complete Getting Things Done (GTD) workflow: capture, clarify, organize, reflect, engage. Produces a deployable system specification with tools for each phase, collection triggers, and a weekly review checklist. Use when the user asks about GTD, Getting Things Done, building a personal productivity system, or implementing David Allen's methodology. Do NOT use for simple task capture only (use task-capture-system), daily planning (use daily-planning), or team project management (use business project-management skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "planning",
+    "automation",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

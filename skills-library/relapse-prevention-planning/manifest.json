@@ -1,0 +1,15 @@
+{
+  "id": "relapse-prevention-planning",
+  "name": "Relapse Prevention Planning",
+  "version": "1.0.0",
+  "description": "Creates a structured plan for getting back on track after a habit break, covering common disruption patterns (travel, illness, schedule changes, motivation loss), recovery protocols, and streak rebuilding strategies. Produces a complete recovery playbook with warning signs, action steps, and minimum viable habit rules for maintaining progress during disruptions. Use when the user asks about getting back on track after falling off a habit, recovering from a habit break, preventing habit backsliding, or maintaining habits during disruptions. Do NOT use for substance abuse relapse prevention, addiction recovery planning, or clinical relapse prevention for mental health conditions.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "mental-wellness",
+    "habits",
+    "self-care",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

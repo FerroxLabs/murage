@@ -1,0 +1,14 @@
+{
+  "id": "service-mesh-operator",
+  "name": "Service Mesh Operator",
+  "version": "1.0.0",
+  "description": "Expert guide for operating service meshes including Istio and Linkerd. Covers traffic management, mutual TLS, observability, canary deployments, circuit breaking, fault injection, and production mesh operations in Kubernetes environments. Use when the user asks about service mesh operator, service mesh operator best practices, or needs guidance on service mesh operator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "security",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

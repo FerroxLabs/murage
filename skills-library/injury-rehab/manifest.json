@@ -1,0 +1,13 @@
+{
+  "id": "injury-rehab",
+  "name": "Injury Rehab",
+  "version": "1.0.0",
+  "description": "Comprehensive injury prevention and recovery resource covering RICE protocol, common sports injuries by activity, rehabilitation exercises, stretching programs, foam rolling techniques, recovery nutrition, and return-to-activity criteria. Use when the user asks about injury rehab, or needs help with comprehensive injury prevention and recovery resource covering rice protocol, common sports injuries by activity, rehabilitation exercises, stretching programs, foam rolling techniques, recovery nutrition, and return-to-activity criteria. Do NOT use when the request requires professional medical advice or falls outside the scope of injury rehab.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "step-by-step",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

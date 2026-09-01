@@ -1,0 +1,15 @@
+{
+  "id": "failure-mode-analysis",
+  "name": "Failure Mode Analysis",
+  "version": "1.0.0",
+  "description": "Produces a failure mode and effects analysis (FMEA-lite) with failure modes, effects, severity ratings, detection methods, and recommended actions using FMEA methodology. Use when the user asks to perform a failure mode analysis, identify what could go wrong in a process or product, create an FMEA, analyze potential failures before they happen, or prioritize which failures to prevent first. Do NOT use for general risk assessment (use risk-assessment), process flow documentation (use process-mapping), or incident post-mortems (requires incident response process).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "planning",
+    "strategy",
+    "checklist",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "newsletter-growth-hacker",
+  "name": "Newsletter Growth Hacker",
+  "version": "1.0.0",
+  "description": "Email list building and newsletter growth strategies covering acquisition channels, referral programs, deliverability optimization, monetization models, retention tactics, segmentation, and scaling frameworks with concrete benchmarks and growth formulas. Use when the user asks about newsletter growth hacker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "newsletter",
+    "marketing",
+    "seo",
+    "content-marketing",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

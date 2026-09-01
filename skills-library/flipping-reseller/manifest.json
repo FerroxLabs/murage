@@ -1,0 +1,19 @@
+{
+  "id": "flipping-reseller",
+  "name": "Flipping Reseller",
+  "version": "1.0.0",
+  "description": "Complete guide to flipping and reselling for profit covering sourcing strategies, pricing research, platform selection, listing optimization, shipping logistics, and scaling a reselling business. Use when the user asks about flipping reseller, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of flipping reseller or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "entrepreneurship",
+    "budgeting",
+    "template",
+    "testing",
+    "research",
+    "safety",
+    "game-design",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

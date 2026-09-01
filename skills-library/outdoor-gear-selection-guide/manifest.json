@@ -1,0 +1,15 @@
+{
+  "id": "outdoor-gear-selection-guide",
+  "name": "Outdoor Gear Selection Guide",
+  "version": "1.0.0",
+  "description": "Provides category-by-category outdoor gear selection criteria for hiking, camping, cycling, and general outdoor recreation. Covers footwear, layering systems, packs, shelter, and navigation with fit testing guidelines, durability priorities by use intensity, and budget tier recommendations. Use when the user asks about choosing outdoor gear, comparing hiking boots, selecting a backpack, building a layering system, or evaluating gear quality and durability. Do NOT use for specific brand or product recommendations, professional mountaineering equipment, cycling-specific gear (use cycling-route-planner), or fishing, hunting, or water sports equipment.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "checklist",
+    "guide",
+    "analysis",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

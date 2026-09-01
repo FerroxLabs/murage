@@ -1,0 +1,14 @@
+{
+  "id": "job-search-strategy",
+  "name": "Job Search Strategy",
+  "version": "1.0.0",
+  "description": "Builds a structured job search plan including target role definition, company tier list, application volume targets, outreach strategy, and a weekly activity schedule. Produces a complete, actionable search plan the user can execute immediately. Use when the user wants to organize their job search, create a job hunt plan, set application targets, or structure their weekly search activities. Do NOT use for resume writing (use resume-bullet-writer), interview preparation (use behavioral-interview-prep or technical-interview-prep), or career pivot planning (use career-pivot-roadmap in career-development).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "planning",
+    "goal-setting",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

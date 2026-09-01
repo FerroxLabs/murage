@@ -1,0 +1,14 @@
+{
+  "id": "salon-owner",
+  "name": "Salon Owner",
+  "version": "1.0.0",
+  "description": "Complete operations guide for salon and barbershop owners covering booking systems, inventory management, staff commission structures, client retention, retail product sales, social media marketing, review management, and expansion planning. Use when the user asks about salon owner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

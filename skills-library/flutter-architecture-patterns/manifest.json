@@ -1,0 +1,14 @@
+{
+  "id": "flutter-architecture-patterns",
+  "name": "Flutter Architecture Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level flutter architecture patterns implementation: dart and architecture decision frameworks, production-ready patterns, and concrete templates for flutter architecture patterns workflows. Use when the user asks about flutter architecture patterns, flutter architecture patterns configuration, or mobile best practices for flutter projects. Do NOT use when the user needs a different mobile development capability -- check sibling skills in the mobile development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "dart",
+    "architecture",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "technical-presenter",
+  "name": "Technical Presenter",
+  "version": "1.0.0",
+  "description": "Technical presentation expert covering conference talk preparation, slide design for developer audiences, live coding demonstrations, demo preparation and backup plans, audience engagement techniques, storytelling for technical content, and talk proposal writing. Use when the user asks about technical presenter, technical presenter best practices, or needs guidance on technical presenter implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "presentation"
+  ],
+  "requiredCapabilities": []
+}

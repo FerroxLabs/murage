@@ -1,0 +1,15 @@
+{
+  "id": "special-needs-trust-overview",
+  "name": "Special Needs Trust Overview",
+  "version": "1.0.0",
+  "description": "Explains special needs trust concepts and planning considerations for families with dependents who have disabilities, including how trusts preserve government benefit eligibility, the types of special needs trusts, and what questions to ask a specialized attorney. Produces a concept overview and attorney consultation preparation. Use when the user asks about special needs trusts, supplemental needs trusts, planning for a dependent with disabilities, or how to leave an inheritance without affecting government benefits. Do NOT use for recommending a specific trust type, drafting trust documents, determining government benefit eligibility, or providing disability law advice.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "guide",
+    "research",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "skiing-snowboarding",
+  "name": "Skiing Snowboarding",
+  "version": "1.0.0",
+  "description": "Guide to skiing and snowboarding including technique progression, equipment selection, resort selection, fitness preparation, mountain safety, lesson value, gear rental vs buying, and terrain park basics. Use when the user asks about skiing snowboarding, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of skiing snowboarding or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "hiking",
+    "budgeting",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "analysis",
+    "research",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

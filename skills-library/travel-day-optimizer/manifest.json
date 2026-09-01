@@ -1,0 +1,15 @@
+{
+  "id": "travel-day-optimizer",
+  "name": "Travel Day Optimizer",
+  "version": "1.0.0",
+  "description": "Creates minute-by-minute travel day schedules from departure to arrival, covering airport timelines, transit connections, check-in sequences, and contingency buffers. Produces a complete travel day checklist with time stamps, action items, and what-if scenarios for delays. Use when the user asks about organizing a travel day, planning airport timing, creating a departure-to-arrival schedule, or managing tight connections. Do NOT use for multi-day trip itineraries (use trip-itinerary-builder), packing guidance (use packing-list-builder), or airport navigation (use airport-navigation-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "checklist",
+    "step-by-step",
+    "planning",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

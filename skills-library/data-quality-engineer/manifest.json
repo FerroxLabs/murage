@@ -1,0 +1,14 @@
+{
+  "id": "data-quality-engineer",
+  "name": "Data Quality Engineer",
+  "version": "1.0.0",
+  "description": "Data quality engineering covering Great Expectations suite design, data contracts between teams, schema validation at ingestion, statistical anomaly detection, automated data profiling, quality scoring frameworks, SLA monitoring, freshness checks, and remediation workflows for maintaining trustworthy data across the organization. Use when the user asks about data quality engineer, data quality engineer best practices, or needs guidance on data quality engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "testing",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

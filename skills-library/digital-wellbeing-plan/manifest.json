@@ -1,0 +1,15 @@
+{
+  "id": "digital-wellbeing-plan",
+  "name": "Digital Wellbeing Plan",
+  "version": "1.0.0",
+  "description": "Creates a personalized digital wellbeing plan with screen time boundaries, notification management rules, social media usage protocols, and device-free zone designations. Gathers the user's current digital habits and pain points, then produces a structured plan with specific rules, schedules, and a 2-week implementation timeline. Use when the user asks about reducing screen time, digital detox, managing phone addiction, setting technology boundaries, or improving their relationship with digital devices. Do NOT use for treating internet addiction disorder, gaming addiction, or compulsive social media use that requires clinical intervention.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "self-care",
+    "digital-wellness",
+    "habits",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

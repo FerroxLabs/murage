@@ -1,0 +1,14 @@
+{
+  "id": "hvac-maintenance",
+  "name": "Hvac Maintenance",
+  "version": "1.0.0",
+  "description": "Guides homeowners through HVAC system maintenance including filter replacement schedules, seasonal tune-up tasks, efficiency optimization, and troubleshooting common issues. Covers forced air, heat pumps, boilers, mini-splits, and window units with specific intervals and cost ranges. Use when the user asks about furnace or AC maintenance, filter changes, HVAC efficiency, or heating/cooling system care. Do NOT use for full annual home maintenance (use annual-home-maintenance), emergency HVAC failure diagnosis, or commercial HVAC systems.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "guide",
+    "troubleshooting",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

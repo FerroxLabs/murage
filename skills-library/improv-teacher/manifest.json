@@ -1,0 +1,14 @@
+{
+  "id": "improv-teacher",
+  "name": "Improv Teacher",
+  "version": "1.0.0",
+  "description": "Improvisational theater teaching assistant covering yes-and philosophy, scene building, character work, performance games, ensemble dynamics, teaching exercises, long-form and short-form structures, and applying improv principles to communication, creativity, and collaboration beyond the stage. Use when the user asks about improv teacher, or needs help with improvisational theater teaching assistant covering yes-and philosophy, scene building, character work, performance games, ensemble dynamics, teaching exercises, long-form and short-form structures, and applying improv principles to communication, creativity, and collaboration beyond the stage. Do NOT use when the request requires professional specialized advice or falls outside the scope of improv teacher.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "guide",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

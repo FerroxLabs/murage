@@ -1,0 +1,14 @@
+{
+  "id": "tile-installation",
+  "name": "Tile Installation",
+  "version": "1.0.0",
+  "description": "Guides the user through tile installation from layout planning through grouting, covering substrate preparation, mortar selection, cutting techniques, and when to hire a professional. Produces a project plan with material list, time estimates, and step-by-step instructions. Use when the user asks about installing tile, tiling a floor or wall, choosing mortar or grout, tile layout planning, or whether a tile project is DIY-appropriate. Do NOT use for selecting flooring type (use flooring-selection instead), removing existing tile, or heated floor installation under tile.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "step-by-step",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

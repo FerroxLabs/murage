@@ -1,0 +1,14 @@
+{
+  "id": "career-sabbatical",
+  "name": "Career Sabbatical",
+  "version": "1.0.0",
+  "description": "Guide for planning a career break including financial runway calculation, employer negotiation strategies, health insurance bridge options, sabbatical project planning for travel, study, or creative pursuits, re-entry strategy, and building a sabbatical portfolio. Use when the user asks about career sabbatical or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "planning",
+    "career",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

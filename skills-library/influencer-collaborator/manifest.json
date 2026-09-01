@@ -1,0 +1,14 @@
+{
+  "id": "influencer-collaborator",
+  "name": "Influencer Collaborator",
+  "version": "1.0.0",
+  "description": "Brand partnership strategy covering deal negotiation, media kit creation, rate card development, deliverable scoping, usage rights, FTC disclosure compliance, relationship management, and proactive brand pitching for creators. Use when the user asks about influencer collaborator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "social-media",
+    "strategy",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "dalle-prompting",
+  "name": "Dalle Prompting",
+  "version": "1.0.0",
+  "description": "Crafts DALL-E 3 and GPT-image-1 prompts using natural language style specification, quality descriptors, composition instructions, and revision dialogue patterns for iterative generation. Use when the user asks to create an image with DALL-E, GPT-image-1, ChatGPT image generation, or OpenAI image generation. Do NOT use for Midjourney prompting (use midjourney-prompting), Stable Diffusion prompting (use stable-diffusion-prompting), or translating prompts between models (use prompt-translation).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-image-generation",
+    "design",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

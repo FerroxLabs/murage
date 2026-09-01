@@ -1,0 +1,19 @@
+{
+  "id": "product-photographer",
+  "name": "Product Photographer",
+  "version": "1.0.0",
+  "description": "Expert product photography guidance covering lighting setups, background selection, e-commerce requirements, and batch workflow optimization for compelling commercial imagery Use when the user asks about product photographer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of product photographer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "budgeting",
+    "checklist",
+    "guide",
+    "quick-reference",
+    "cloud",
+    "testing",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

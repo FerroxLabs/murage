@@ -1,0 +1,18 @@
+{
+  "id": "preventive-care-scheduler",
+  "name": "Preventive Care Scheduler",
+  "version": "1.0.0",
+  "description": "Age-based screening recommendations, vaccine schedules, routine checkup planning, and health tracking calendar templates for proactive preventive healthcare management Use when the user asks about preventive care scheduler, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of preventive care scheduler or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "quick-reference",
+    "testing",
+    "planning",
+    "emergency-preparedness"
+  ],
+  "requiredCapabilities": []
+}

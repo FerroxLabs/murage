@@ -1,0 +1,14 @@
+{
+  "id": "forecast-model",
+  "name": "Forecast Model",
+  "version": "1.0.0",
+  "description": "Builds a forecasting model structure by selecting the method (moving average, linear trend, seasonal decomposition) based on data characteristics, specifying formula steps, and producing a confidence interval template. Outputs a complete forecast specification with calculations. Use when the user asks to forecast sales, predict demand, project revenue, estimate future values from historical data, or build a trend projection. Do NOT use for business financial modeling with multiple assumptions (use financial-model-template in spreadsheets), metric hierarchy design (use metric-framework), or A/B test statistical analysis (use ab-test-design).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "statistics",
+    "analysis",
+    "spreadsheets",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

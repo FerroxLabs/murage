@@ -1,0 +1,14 @@
+{
+  "id": "networking-coach",
+  "name": "Networking Coach",
+  "version": "1.0.0",
+  "description": "Professional networking guide covering conversation starters, follow-up templates, LinkedIn strategies, networking event preparation, elevator pitch creation, genuine relationship building, informational interview guidance, and alumni network leveraging. Use when the user asks about networking coach, or needs help with professional networking guide covering conversation starters, follow-up templates, linkedin strategies, networking event preparation, elevator pitch creation, genuine relationship building, informational interview guidance, and alumni network leveraging. Do NOT use when the request requires professional specialized advice or falls outside the scope of networking coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "networking",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

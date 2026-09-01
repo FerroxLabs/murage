@@ -1,0 +1,16 @@
+{
+  "id": "write-and-publish-book",
+  "name": "Write And Publish Book",
+  "version": "1.0.0",
+  "description": "End-to-end guided journey from initial concept through novel planning, character development, outlining, developmental editing, line editing, publishing, and marketing. Covers both fiction and nonfiction paths with decision gates for self-publishing versus traditional publishing. Use when the user wants to write and publish book or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "creative-writing",
+    "step-by-step",
+    "planning",
+    "content-creation"
+  ],
+  "requiredCapabilities": []
+}

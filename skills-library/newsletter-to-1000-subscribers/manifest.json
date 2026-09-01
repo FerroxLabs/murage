@@ -1,0 +1,18 @@
+{
+  "id": "newsletter-to-1000-subscribers",
+  "name": "Newsletter To 1000 Subscribers",
+  "version": "1.0.0",
+  "description": "Step-by-step workflow for launching and growing an email newsletter from zero to 1000 subscribers. Covers niche selection, platform setup, content strategy, subscriber acquisition tactics, growth optimization, and early monetization to build a sustainable newsletter business with owned audience reach. Use when the user wants to newsletter to 1000 subscribers or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "newsletter",
+    "email",
+    "email-marketing",
+    "content-marketing",
+    "writing",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

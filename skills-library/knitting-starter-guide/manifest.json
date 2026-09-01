@@ -1,0 +1,15 @@
+{
+  "id": "knitting-starter-guide",
+  "name": "Knitting Starter Guide",
+  "version": "1.0.0",
+  "description": "Teaches absolute beginners the essential knitting skills: long-tail cast-on, knit stitch, purl stitch, bind-off, and basic pattern reading. Includes a materials checklist, stitch-by-stitch technique descriptions, common mistake diagnosis, and a first-project recommendation (dishcloth or scarf). Use when the user wants to learn to knit, asks about casting on, knit and purl stitches, reading knitting patterns, or choosing a first project. Do NOT use for crochet techniques, advanced stitch patterns (cables, lace), or sewing and quilting.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beginner-friendly",
+    "step-by-step",
+    "guide",
+    "sewing",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

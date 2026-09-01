@@ -1,0 +1,14 @@
+{
+  "id": "indoor-plant-care",
+  "name": "Indoor Plant Care",
+  "version": "1.0.0",
+  "description": "Guides the selection and care of indoor houseplants based on available light, humidity, and maintenance commitment. Covers light requirements by plant type, watering frequency, humidity needs, and common houseplant selection by growing conditions. Use when the user asks about caring for houseplants, choosing plants for specific rooms, watering schedules, light requirements for indoor plants, or how to keep houseplants alive. Do NOT use for outdoor garden plants (use vegetable-garden-planning or seasonal-planting-calendar), plant disease diagnosis (use plant-care-troubleshooting), or commercial greenhouse management.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "gardening",
+    "planning",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

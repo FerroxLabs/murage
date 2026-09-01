@@ -1,0 +1,19 @@
+{
+  "id": "phone-cleanup-guide",
+  "name": "Phone Cleanup Guide",
+  "version": "1.0.0",
+  "description": "Recover storage space, audit apps, organize photos, improve battery life, and boost phone performance with step-by-step cleanup procedures for iOS and Android. Use when the user asks about phone cleanup guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of phone cleanup guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "time-management",
+    "checklist",
+    "guide",
+    "cloud",
+    "video-production",
+    "email",
+    "cleaning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

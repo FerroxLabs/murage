@@ -1,0 +1,13 @@
+{
+  "id": "spark-learner-engagement",
+  "name": "Learner engagement",
+  "version": "1.0.0",
+  "description": "The curriculum is mapped, the arc is set. The question now is whether the learner will finish. Load whenever you hear \"completion rates are bad,\" \"people start and stop,\" \"the cohort drops off after week two,\" or \"I shipped it and nobody finished.\"",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spark",
+    "learner",
+    "engagement"
+  ],
+  "requiredCapabilities": []
+}

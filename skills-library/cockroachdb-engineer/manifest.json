@@ -1,0 +1,14 @@
+{
+  "id": "cockroachdb-engineer",
+  "name": "Cockroachdb Engineer",
+  "version": "1.0.0",
+  "description": "CockroachDB distributed SQL expert covering multi-region deployment, survivability goals, schema design for distributed systems, online schema changes, transaction contention management, follower reads, locality-optimized partitioning, and operational best practices for globally distributed SQL databases. Use when the user asks about cockroachdb engineer, cockroachdb engineer best practices, or needs guidance on cockroachdb engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

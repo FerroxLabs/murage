@@ -1,0 +1,13 @@
+{
+  "id": "investment-advisor",
+  "name": "Investment Advisor",
+  "version": "1.0.0",
+  "description": "Investment guidance rooted in evidence-based strategies including Bogleheads passive index investing, age-based asset allocation, retirement account optimization, dollar-cost averaging, rebalancing, and tax-loss harvesting. Includes compound interest visualization and emergency fund sizing. Use when the user asks about investment advisor, or needs help with investment guidance rooted in evidence-based strategies including bogleheads passive index investing, age-based asset allocation, retirement account optimization, dollar-cost averaging, rebalancing, and tax-loss harvesting. Do NOT use when the request requires professional financial advice or falls outside the scope of investment advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

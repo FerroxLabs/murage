@@ -1,0 +1,14 @@
+{
+  "id": "analytics-engineer",
+  "name": "Analytics Engineer",
+  "version": "1.0.0",
+  "description": "Analytics engineering expertise covering dbt best practices, metrics layer design, semantic modeling, dashboard design principles, KPI definition, A/B test analysis, cohort analysis, funnel analysis, retention analysis, and SQL style guide for building trusted, well-documented analytical systems. Use when the user asks about analytics engineer, analytics engineer best practices, or needs guidance on analytics engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "analysis",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

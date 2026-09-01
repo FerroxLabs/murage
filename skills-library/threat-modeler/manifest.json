@@ -1,0 +1,13 @@
+{
+  "id": "threat-modeler",
+  "name": "Threat Modeler",
+  "version": "1.0.0",
+  "description": "Threat modeling expertise covering STRIDE methodology, attack trees, data flow diagrams, trust boundaries, threat prioritization with DREAD scoring, mitigation strategies, threat modeling for APIs and microservices, and automated threat modeling tools for proactively identifying security risks during system design. Use when the user asks about threat modeler, threat modeler best practices, or needs guidance on threat modeler implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "threat-modeling",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

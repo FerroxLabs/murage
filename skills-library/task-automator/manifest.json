@@ -1,0 +1,14 @@
+{
+  "id": "task-automator",
+  "name": "Task Automator",
+  "version": "1.0.0",
+  "description": "Task automation design expertise covering automation opportunity identification, script design patterns, robust error handling, structured logging, scheduling strategies, failure notification, idempotency principles, dry-run mode implementation, configuration management, and documentation standards for maintainable automation. Use when the user asks about task automator, task automator best practices, or needs guidance on task automator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

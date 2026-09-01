@@ -1,0 +1,18 @@
+{
+  "id": "technical-proposal-writer",
+  "name": "Technical Proposal Writer",
+  "version": "1.0.0",
+  "description": "Expert guide to technical proposal writing covering RFP analysis, compliance matrices, technical approach narratives, past performance documentation, pricing strategies, and review processes for winning competitive government and commercial proposals. Use when the user asks about technical proposal writer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of technical proposal writer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "template",
+    "beginner-friendly",
+    "automation",
+    "analysis",
+    "research",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "research-synthesis",
+  "name": "Research Synthesis",
+  "version": "1.0.0",
+  "description": "Synthesizes multiple sources into a structured research summary: source quality assessment, finding extraction, theme identification, evidence strength rating, and contradiction mapping. Produces a research brief, not a literature review. Use when the user asks to summarize findings from multiple reports, articles, or studies, compare conclusions across sources, identify consensus and disagreement in research, or produce an evidence-based brief for decision-making. Do NOT use for qualitative coding of interview data (use qualitative-coding), automated text mining of large corpora (use text-mining-protocol), or designing original research surveys (use survey-design).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "analysis",
+    "report",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

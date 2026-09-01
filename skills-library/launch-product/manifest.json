@@ -1,0 +1,17 @@
+{
+  "id": "launch-product",
+  "name": "Launch Product",
+  "version": "1.0.0",
+  "description": "Guides the user through a complete product launch from market research through product definition, go-to-market strategy, launch execution, sales enablement, analytics review, and post-launch iteration. Use when the user is launching a new product or major feature and needs an end-to-end process covering strategy, execution, and measurement. Do NOT use for ongoing product management (use prd-writing or product-roadmap directly), for marketing campaigns without a product launch (use create-marketing-campaign), or for SaaS-specific technical deployment (use launch-saas in software workflows).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "marketing",
+    "sales",
+    "entrepreneurship",
+    "planning",
+    "step-by-step",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

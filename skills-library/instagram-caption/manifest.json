@@ -1,0 +1,13 @@
+{
+  "id": "instagram-caption",
+  "name": "Instagram Caption",
+  "version": "1.0.0",
+  "description": "Writes Instagram captions with a hook line, story body, hashtag strategy, and platform-optimized call-to-action. Use when the user wants to write an Instagram caption, create Instagram content, or draft text to accompany an Instagram post or reel. Do NOT use for LinkedIn posts (use `linkedin-post`), Twitter threads (use `twitter-thread`), or blog posts (use `blog-post-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "social-media",
+    "writing",
+    "marketing-copy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "travel-rewards-optimizer",
+  "name": "Travel Rewards Optimizer",
+  "version": "1.0.0",
+  "description": "Creates a points and miles earning and redemption strategy organized by program type. Gathers the user's current rewards accounts, travel goals, spending patterns, and redemption preferences to produce a structured earning plan and a redemption value comparison that maximizes travel reward value per dollar spent. Use when the user asks about travel rewards, how to use points or miles, maximizing credit card travel benefits, or choosing a rewards strategy. Do NOT use for general credit card comparison (use personal-finance skills), travel insurance evaluation (use travel-insurance-evaluator), or travel budgeting (use budget-travel-planner).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "planning",
+    "personal-finance",
+    "research",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

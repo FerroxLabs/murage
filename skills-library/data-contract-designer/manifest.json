@@ -1,0 +1,14 @@
+{
+  "id": "data-contract-designer",
+  "name": "Data Contract Designer",
+  "version": "1.0.0",
+  "description": "Expertise in designing and enforcing data contracts including schema definitions, API-first data interfaces, versioning strategies, backward and forward compatibility, contract testing, SLA enforcement, data quality assertions, and governance frameworks for reliable producer-consumer data relationships. Use when the user asks about data contract designer, data contract designer best practices, or needs guidance on data contract designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "architecture",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

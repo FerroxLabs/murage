@@ -1,0 +1,14 @@
+{
+  "id": "new-baby-preparation",
+  "name": "New Baby Preparation",
+  "version": "1.0.0",
+  "description": "Provides timeline-anchored preparation checklists for welcoming a new baby, organized into phases: 12 weeks before due date, 4 weeks before, 1 week before, and first week home. Covers medical preparation, home setup, logistics, supplies, and partner/family coordination. Use when the user asks about preparing for a new baby, creating a baby preparation checklist, setting up a nursery timeline, or planning for the postpartum period. Do NOT use for medical advice about pregnancy, diagnosing complications, or replacing guidance from an OB-GYN or midwife.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "checklist",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

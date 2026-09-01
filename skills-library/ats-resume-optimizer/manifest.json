@@ -1,0 +1,14 @@
+{
+  "id": "ats-resume-optimizer",
+  "name": "Ats Resume Optimizer",
+  "version": "1.0.0",
+  "description": "Analyzes a job description for ATS (Applicant Tracking System) keywords and produces an optimized version of the user's resume bullets and summary that maximizes keyword match rate while maintaining natural readability. Identifies must-have keywords, suggests strategic placement, and rewrites content to pass automated screening. Use when the user wants to optimize their resume for ATS, match keywords from a job posting, or increase their resume's chances of passing automated screening. Do NOT use for writing resume bullets from scratch (use resume-bullet-writer), career change resume rewrites (use career-change-resume), or cover letter writing (use cover-letter-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "resume-writing",
+    "career",
+    "linkedin",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "refactoring-guru",
+  "name": "Refactoring Guru",
+  "version": "1.0.0",
+  "description": "Code refactoring specialist applying Martin Fowler's catalog, code smell detection, safe transformation steps, and metrics-driven refactoring decisions. Use when the user asks about refactoring guru, refactoring guru best practices, or needs guidance on refactoring guru implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "refactoring",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

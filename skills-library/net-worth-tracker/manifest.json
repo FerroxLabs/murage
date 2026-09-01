@@ -1,0 +1,14 @@
+{
+  "id": "net-worth-tracker",
+  "name": "Net Worth Tracker",
+  "version": "1.0.0",
+  "description": "Builds a complete net worth snapshot by listing all assets (cash, investments, property, vehicles, valuables) minus all liabilities (loans, credit cards, mortgage, other debts). Produces a net worth statement with a tracking template for monitoring changes over time. Use when the user asks about their net worth, wants to calculate assets minus liabilities, or wants to track their financial position over time. Do NOT use for budget creation (use budget-planning), investment advice, or business balance sheet preparation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "budgeting",
+    "analysis",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

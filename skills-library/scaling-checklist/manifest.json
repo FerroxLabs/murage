@@ -1,0 +1,16 @@
+{
+  "id": "scaling-checklist",
+  "name": "Scaling Checklist",
+  "version": "1.0.0",
+  "description": "Produces an operations scaling checklist covering team, systems, processes, finance, and legal readiness for a business transitioning from startup to growth stage. Use when the user asks about scaling operations, growth readiness, scaling a startup, operations checklist, or preparing to scale. Do NOT use for product launch (use product-launch-checklist), MVP scoping (use mvp-definition), or financial modeling (use financial-model-structure).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "planning",
+    "strategy",
+    "checklist",
+    "project-management",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

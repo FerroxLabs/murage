@@ -1,0 +1,15 @@
+{
+  "id": "academic-argument",
+  "name": "Academic Argument",
+  "version": "1.0.0",
+  "description": "Teaches learners to construct academic arguments using the claim-evidence-warrant structure with counterargument and rebuttal. This education skill focuses on argument CONSTRUCTION as a learning skill -- distinct from the writing category skill that focuses on producing academic argument TEXT. Use when a learner asks to build an academic argument, structure a thesis defense, learn argumentation, or practice claim-evidence-warrant reasoning. Do NOT use for writing the full academic paper (use writing category `academic-argument`), for essay outlining (use `essay-outline`), or for debate preparation (not an education skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "academic-writing",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

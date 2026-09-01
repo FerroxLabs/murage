@@ -1,0 +1,15 @@
+{
+  "id": "recruiter-outreach",
+  "name": "Recruiter Outreach",
+  "version": "1.0.0",
+  "description": "Writes a LinkedIn message or email to a recruiter that clearly communicates the user's target role, availability, and key qualifications in a concise format optimized for recruiter workflows. Produces ready-to-send message text. Use when the user wants to message a recruiter, respond to a recruiter's outreach, or proactively connect with recruiters in their field. Do NOT use for cold emails to hiring managers (use cold-outreach-email), networking or informational interview messages (use networking-message-writer), or LinkedIn profile writing (use linkedin-summary-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "linkedin",
+    "career",
+    "writing",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

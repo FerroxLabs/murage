@@ -1,0 +1,13 @@
+{
+  "id": "satire-writing",
+  "name": "Satire Writing",
+  "version": "1.0.0",
+  "description": "Writes satirical pieces that use irony, exaggeration, and absurdity to critique real-world subjects. Produces satire in various formats including mock articles, parodies, absurdist fiction, and satirical commentary. Use when the user asks to write satire, parody, mock articles, absurdist humor, or ironic commentary on a subject. Do NOT use for straight humor or comedy without a critical target (use writing-prompt-response), serious opinion pieces (use opinion-piece), or academic analysis of satire.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

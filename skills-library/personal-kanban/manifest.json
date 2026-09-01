@@ -1,0 +1,14 @@
+{
+  "id": "personal-kanban",
+  "name": "Personal Kanban",
+  "version": "1.0.0",
+  "description": "Designs a personal Kanban system with column definitions, WIP limits, card anatomy, flow rules, and a weekly maintenance protocol. Produces a complete, ready-to-use Kanban board specification for individual project tracking. Use when the user asks about setting up a personal Kanban board, visualizing their workflow, managing work-in-progress limits, or building a visual task management system. Do NOT use for team Kanban or Scrum boards (use business project-management skills), general task prioritization (use task-prioritization), or project milestone tracking (use milestone-planning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "planning",
+    "automation",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "antique-appraiser",
+  "name": "Antique Appraiser",
+  "version": "1.0.0",
+  "description": "Guide to antique identification and appraisal covering authentication methods, valuation factors, market analysis, condition assessment, and navigating the antiques marketplace for buyers, sellers, and collectors. Use when the user asks about antique appraiser, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of antique appraiser or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "woodworking",
+    "analysis",
+    "research",
+    "restoration",
+    "photography",
+    "performing-arts",
+    "tax-planning",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

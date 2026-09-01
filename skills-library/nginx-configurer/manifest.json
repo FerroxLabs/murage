@@ -1,0 +1,14 @@
+{
+  "id": "nginx-configurer",
+  "name": "Nginx Configurer",
+  "version": "1.0.0",
+  "description": "Nginx configuration. Reverse proxy setup, load balancing, SSL termination, caching headers, gzip compression, rate limiting, security headers, location block patterns, upstream configuration, performance tuning. Use when the user asks about nginx configurer, nginx configurer best practices, or needs guidance on nginx configurer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "guide",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

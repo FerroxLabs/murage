@@ -1,0 +1,14 @@
+{
+  "id": "csharp-modern-idioms",
+  "name": "Csharp Modern Idioms",
+  "version": "1.0.0",
+  "description": "Teaches expert-level modern C# patterns: records, pattern matching, nullable reference types, primary constructors, file-scoped namespaces, and global usings for C# 12+. Use when the user asks about C# records, pattern matching, nullable reference types, primary constructors, C# 12, modern C#. Do NOT use when the user asks about C# project setup (use `csharp-project-setup`), C# async (use `csharp-async-patterns`), C# testing (use `csharp-testing-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "csharp",
+    "best-practices",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

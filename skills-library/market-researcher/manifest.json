@@ -1,0 +1,15 @@
+{
+  "id": "market-researcher",
+  "name": "Market Researcher",
+  "version": "1.0.0",
+  "description": "Comprehensive market research including TAM/SAM/SOM analysis, primary and secondary research methods, customer persona creation, Jobs-to-be-Done framework, competitive intelligence, and research report generation. Use when the user asks about market researcher or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "analysis",
+    "strategy",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

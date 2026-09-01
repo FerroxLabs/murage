@@ -1,0 +1,13 @@
+{
+  "id": "academic-argument-writing",
+  "name": "Academic Argument",
+  "version": "1.0.0",
+  "description": "Constructs rigorous academic arguments with clear claims, evidence, warrants, counterarguments, and rebuttals. Produces logically structured argumentative writing for academic contexts. Use when the user asks to write an argumentative essay, build an academic argument, construct a logical case, or develop a position paper with scholarly evidence. Do NOT use for thesis statements only (use thesis-statement), persuasive business writing (use business skills), or personal opinion pieces (use creative writing skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "writing",
+    "design"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "lens-funnel-diagnosis",
+  "name": "funnel-diagnosis",
+  "version": "1.0.0",
+  "description": "As of: 2026-05-16",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "lens",
+    "funnel",
+    "diagnosis"
+  ],
+  "requiredCapabilities": []
+}

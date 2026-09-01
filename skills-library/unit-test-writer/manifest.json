@@ -1,0 +1,14 @@
+{
+  "id": "unit-test-writer",
+  "name": "Unit Test Writer",
+  "version": "1.0.0",
+  "description": "Unit test mastery covering test structure (Arrange-Act-Assert), naming conventions, test isolation principles, mocking strategies across frameworks (jest.mock, unittest.mock, Mockito), assertion patterns, edge case coverage, parameterized tests, and test doubles taxonomy (spy, stub, fake, dummy, mock). Use when the user asks about unit test writer, unit test writer best practices, or needs guidance on unit test writer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "best-practices",
+    "tdd",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

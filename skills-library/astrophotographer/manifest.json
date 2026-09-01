@@ -1,0 +1,19 @@
+{
+  "id": "astrophotographer",
+  "name": "Astrophotographer",
+  "version": "1.0.0",
+  "description": "Expert astrophotography guidance covering star trails, deep sky imaging, planetary photography, image stacking techniques, and light pollution management Use when the user asks about astrophotographer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of astrophotographer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "budgeting",
+    "guide",
+    "advanced",
+    "quick-reference",
+    "cloud",
+    "testing",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

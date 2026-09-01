@@ -1,0 +1,19 @@
+{
+  "id": "cto-playbook",
+  "name": "Cto Playbook",
+  "version": "1.0.0",
+  "description": "Chief Technology Officer leadership guidance covering architecture decision-making, technology strategy, team scaling, vendor evaluation, build vs. buy decisions, engineering culture, board communication, security posture, platform reliability, and CTO role evolution from startup to scale. Includes decision frameworks, organizational design templates, and technology roadmap planning. Use when the user asks about cto playbook, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cto playbook or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "strategy",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "branding",
+    "presentation",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

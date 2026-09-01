@@ -1,0 +1,19 @@
+{
+  "id": "api-design-review",
+  "name": "Api Design Review",
+  "version": "1.0.0",
+  "description": "Systematic API design quality assessment evaluating REST and GraphQL APIs for consistency, usability, documentation completeness, and adherence to best practices. Use when the user asks about api design review, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of api design review or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "api-design",
+    "checklist",
+    "template",
+    "guide",
+    "email",
+    "cleaning",
+    "investing",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

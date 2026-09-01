@@ -1,0 +1,18 @@
+{
+  "id": "surgery-preparation-guide",
+  "name": "Surgery Preparation Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive pre-operative preparation guidance covering questions for your surgeon, pre-op checklists, recovery planning, home preparation, support system coordination, and managing anxiety before surgery. Use when the user asks about surgery preparation guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of surgery preparation guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "breathing",
+    "checklist",
+    "guide",
+    "step-by-step",
+    "beginner-friendly",
+    "planning",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

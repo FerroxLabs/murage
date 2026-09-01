@@ -1,0 +1,14 @@
+{
+  "id": "care-facility-evaluation",
+  "name": "Care Facility Evaluation",
+  "version": "1.0.0",
+  "description": "Produces a structured evaluation framework for comparing care facilities including assisted living, memory care, and skilled nursing options. Generates criteria checklists, tour question lists, scoring matrices, and red flag indicators to support informed facility selection decisions. Use when the user asks about evaluating care facilities, comparing assisted living options, or choosing a nursing home for a family member. Do NOT use for medical care decisions (consult a physician), specific facility recommendations by name, or Medicare/Medicaid claims guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "elder-care",
+    "checklist",
+    "decision-making",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

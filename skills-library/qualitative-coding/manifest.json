@@ -1,0 +1,14 @@
+{
+  "id": "qualitative-coding",
+  "name": "Qualitative Coding",
+  "version": "1.0.0",
+  "description": "Produces a qualitative coding scheme for interview transcripts or open-text survey responses. Includes initial code list, code definitions, example quotes per code, inter-rater reliability protocol, and thematic synthesis template. Use when the user asks to analyze interview data, code open-ended survey responses, build a coding scheme for qualitative research, or synthesize themes from text data. Do NOT use for survey design (use survey-design), automated sentiment analysis (use sentiment-analysis-guide), or large-scale text mining (use text-mining-protocol).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "analysis",
+    "data-science",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

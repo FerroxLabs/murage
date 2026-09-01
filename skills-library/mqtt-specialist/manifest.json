@@ -1,0 +1,18 @@
+{
+  "id": "mqtt-specialist",
+  "name": "Mqtt Specialist",
+  "version": "1.0.0",
+  "description": "Guides MQTT message broker architecture including topic design, QoS levels, retained messages, security configuration, and client implementation patterns Use when the user asks about mqtt specialist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of mqtt specialist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "guide",
+    "python",
+    "automation",
+    "emergency-preparedness",
+    "performing-arts",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

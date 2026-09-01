@@ -1,0 +1,16 @@
+{
+  "id": "build-chrome-extension",
+  "name": "Build Chrome Extension",
+  "version": "1.0.0",
+  "description": "Step-by-step workflow for building, publishing, and iterating on a Chrome browser extension. Covers Manifest V3 architecture, UI development, Chrome Web Store publishing, user feedback loops, and growth strategies for building extensions that users love and recommend. Use when the user wants to build chrome extension or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "javascript",
+    "content-marketing",
+    "entrepreneurship",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

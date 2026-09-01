@@ -1,0 +1,15 @@
+{
+  "id": "estate-attorney-prep-guide",
+  "name": "Estate Attorney Prep Guide",
+  "version": "1.0.0",
+  "description": "Prepares users for their first estate planning attorney consultation by generating a comprehensive question list, a document gathering checklist, and evaluation criteria for choosing an estate attorney. Produces a meeting preparation packet the user can bring to their consultation. Use when the user asks about finding an estate attorney, preparing for an estate planning meeting, what to ask an estate lawyer, or how to evaluate an estate attorney. Do NOT use for providing legal advice, recommending specific attorneys, or drafting estate documents.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "checklist",
+    "guide",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

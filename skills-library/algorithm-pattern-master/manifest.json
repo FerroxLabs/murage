@@ -1,0 +1,19 @@
+{
+  "id": "algorithm-pattern-master",
+  "name": "Algorithm Pattern Master",
+  "version": "1.0.0",
+  "description": "Guides mastery of core algorithmic patterns including sliding window, two pointers, binary search, greedy, and backtracking with complexity analysis Use when the user asks about algorithm pattern master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of algorithm pattern master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "competitive-programming",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "quick-reference",
+    "testing",
+    "analysis",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "vue-builder",
+  "name": "Vue Builder",
+  "version": "1.0.0",
+  "description": "Expert Vue.js development covering Composition API patterns, Pinia state management, Vue Router, composables design, Nuxt.js integration, reactivity internals, and advanced component patterns. Use when the user asks about vue builder, vue builder best practices, or needs guidance on vue builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "javascript"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "knowledge-base-article",
+  "name": "Knowledge Base Article",
+  "version": "1.0.0",
+  "description": "Creates support knowledge base articles with issue description, cause analysis, step-by-step resolution, and prevention guidance in a structured issue/cause/resolution/prevention format. Use when the user needs to write a KB article, troubleshooting guide, or support documentation. Do NOT use for user guides (use `user-guide`), internal wiki pages (use `internal-wiki-page`), or error messages (use `error-message-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "step-by-step",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "edtech-product-builder",
+  "name": "Edtech Product Builder",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to building education technology products covering LMS integration, accessibility compliance, engagement mechanics, assessment design, learning science foundations, and go-to-market strategy for education markets. Use when the user asks about edtech product builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of edtech product builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "education-industry",
+    "teaching",
+    "budgeting",
+    "template",
+    "guide",
+    "api-design",
+    "testing",
+    "analysis",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

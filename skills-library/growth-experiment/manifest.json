@@ -1,0 +1,15 @@
+{
+  "id": "growth-experiment",
+  "name": "Growth Experiment",
+  "version": "1.0.0",
+  "description": "Produces a structured growth experiment design with hypothesis, metric, test method, success criteria, and analysis plan using lean experimentation methodology. Use when the user asks to design a growth experiment, test a marketing hypothesis, plan an A/B test, structure a growth hack test, or validate a growth assumption. Do NOT use for full marketing strategy (use marketing-strategy), campaign planning (use campaign-planning), or product A/B test design (use ab-test-design in product management skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "strategy",
+    "analysis",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

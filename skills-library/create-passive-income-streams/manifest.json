@@ -1,0 +1,17 @@
+{
+  "id": "create-passive-income-streams",
+  "name": "Create Passive Income Streams",
+  "version": "1.0.0",
+  "description": "Guided workflow for building passive and semi-passive income streams from initial assessment and skill matching through building, automating, diversifying, and optimizing income-generating assets. Covers digital products, investments, and automated business models. Use when the user wants to create passive income streams or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "investing",
+    "entrepreneurship",
+    "personal-finance",
+    "automation",
+    "step-by-step",
+    "planning",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

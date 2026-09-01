@@ -1,0 +1,14 @@
+{
+  "id": "financial-literacy-explainer",
+  "name": "Financial Literacy Explainer",
+  "version": "1.0.0",
+  "description": "Explains a financial concept (compound interest, inflation, tax-advantaged accounts, diversification, amortization, or other core concepts) in plain language with a concrete worked example using the user's actual numbers. Produces an explanation with a calculation walkthrough the user can verify and apply. Use when the user asks \"what is [financial concept]?\", wants to understand how a financial mechanism works, or needs a concept explained with their own numbers. Do NOT use for investment advice, specific product recommendations, or tax filing guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "budgeting",
+    "analysis",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

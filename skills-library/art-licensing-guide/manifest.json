@@ -1,0 +1,19 @@
+{
+  "id": "art-licensing-guide",
+  "name": "Art Licensing Guide",
+  "version": "1.0.0",
+  "description": "Art licensing business guidance covering licensing contract structures, royalty calculations, rights management, negotiation strategies, licensing categories, portfolio preparation for licensing, agent relationships, and revenue tracking. Includes contract clause templates, royalty rate references, and licensing channel strategies. Use when the user asks about art licensing guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of art licensing guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-industry",
+    "strategy",
+    "checklist",
+    "guide",
+    "analysis",
+    "research",
+    "marketing",
+    "branding",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

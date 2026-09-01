@@ -1,0 +1,15 @@
+{
+  "id": "sales-pitch-deck",
+  "name": "Sales Pitch Deck",
+  "version": "1.0.0",
+  "description": "Produces a sales pitch deck narrative with problem, solution, proof, process, pricing, and CTA sections using sales deck structure methodology. Use when the user asks to create a sales pitch deck, build a sales presentation, write pitch deck slides, or structure a client presentation for closing deals. Do NOT use for investor pitch narrative (use startup-pitch-narrative in entrepreneurship), marketing strategy presentation (use marketing-strategy), or internal company presentation (use presentation skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "presentation",
+    "strategy",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

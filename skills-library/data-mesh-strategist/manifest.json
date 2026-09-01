@@ -1,0 +1,14 @@
+{
+  "id": "data-mesh-strategist",
+  "name": "Data Mesh Strategist",
+  "version": "1.0.0",
+  "description": "Strategic expertise in data mesh architecture covering domain-oriented data ownership, data-as-a-product thinking, self-serve data infrastructure, federated computational governance, organizational design patterns, domain decomposition, data product specifications, and incremental adoption strategies for decentralized analytical data management. Use when the user asks about data mesh strategist, data mesh strategist best practices, or needs guidance on data mesh strategist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "architecture",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

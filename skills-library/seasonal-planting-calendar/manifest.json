@@ -1,0 +1,14 @@
+{
+  "id": "seasonal-planting-calendar",
+  "name": "Seasonal Planting Calendar",
+  "version": "1.0.0",
+  "description": "Creates a zone-aware planting calendar based on USDA hardiness zone and frost dates, with planting windows for vegetables, herbs, and cool/warm-season crops. Includes succession planting schedules and seed-starting timelines. Use when the user asks when to plant specific crops, needs a planting schedule for their zone, wants to know seed-starting dates, or asks about succession planting for extended harvests. Do NOT use for full garden design and layout (use vegetable-garden-planning), plant problem diagnosis (use plant-care-troubleshooting), or indoor houseplant schedules (use indoor-plant-care).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "gardening",
+    "planning",
+    "checklist",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

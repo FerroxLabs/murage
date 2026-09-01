@@ -1,0 +1,14 @@
+{
+  "id": "microscopy-guide",
+  "name": "Microscopy Guide",
+  "version": "1.0.0",
+  "description": "Guide to microscopy as a hobby including microscope selection, sample preparation, staining techniques, photography through the microscope, and identification of common specimens. Use when the user asks about microscopy guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "step-by-step",
+    "research",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

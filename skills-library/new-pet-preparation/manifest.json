@@ -1,0 +1,14 @@
+{
+  "id": "new-pet-preparation",
+  "name": "New Pet Preparation",
+  "version": "1.0.0",
+  "description": "Guides pre-arrival preparation for a new dog or cat including essential supplies, home safety proofing, first-week schedule, and veterinary appointment planning. Produces a complete checklist and day-by-day plan for the first week. Use when the user asks about bringing home a new puppy, kitten, adult dog, or cat, what supplies to buy, how to pet-proof a home, or what to expect during the first week. Do NOT use for training protocols (use dog-training-fundamentals), ongoing health monitoring (use pet-health-monitoring), nutrition planning (use pet-nutrition-guide), or exotic pet care.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "checklist",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

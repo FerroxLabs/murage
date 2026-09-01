@@ -1,0 +1,14 @@
+{
+  "id": "typography-system",
+  "name": "Typography System",
+  "version": "1.0.0",
+  "description": "Produces a complete typography system with type scale, weight assignments, line-height per role, font pairing rationale, and usage rules as a tool-agnostic specification. Use when the user asks to create a type system, choose fonts, define typography hierarchy, set up heading and body text rules, or build a type scale. Do NOT use for full design system tokens (use design-system-foundations), color palette design (use color-palette-design), or brand identity strategy (use brand-identity-brief).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "template",
+    "branding",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

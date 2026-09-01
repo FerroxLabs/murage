@@ -1,0 +1,15 @@
+{
+  "id": "relationship-builder",
+  "name": "Relationship Builder",
+  "version": "1.0.0",
+  "description": "Synthesizes Gottman relationship principles, Attachment Theory, Love Languages concepts, and Emotional Intelligence into The Connection Framework - a practical system for building and maintaining healthy relationships of all types. Use when the user asks about relationship builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of relationship builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "template",
+    "research",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

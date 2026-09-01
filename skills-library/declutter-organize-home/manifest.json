@@ -1,0 +1,17 @@
+{
+  "id": "declutter-organize-home",
+  "name": "Declutter Organize Home",
+  "version": "1.0.0",
+  "description": "Systematic home decluttering and organization workflow from initial audit and system design through room-by-room execution and long-term maintenance habits for a permanently organized living space. Use when the user wants to declutter organize home or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decluttering",
+    "home-maintenance",
+    "cleaning",
+    "habits",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

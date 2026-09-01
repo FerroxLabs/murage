@@ -1,0 +1,19 @@
+{
+  "id": "end-of-year-reviewer",
+  "name": "End Of Year Reviewer",
+  "version": "1.0.0",
+  "description": "Guides comprehensive year-end reviews covering financial assessment, career reflection, personal growth evaluation, and strategic planning for the year ahead. Use when the user asks about end of year reviewer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of end of year reviewer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "event-planning",
+    "nutrition",
+    "journaling",
+    "habits",
+    "stress-management",
+    "checklist",
+    "networking",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

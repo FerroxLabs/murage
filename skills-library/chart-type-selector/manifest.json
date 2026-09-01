@@ -1,0 +1,14 @@
+{
+  "id": "chart-type-selector",
+  "name": "Chart Type Selector",
+  "version": "1.0.0",
+  "description": "Determines the correct chart type for a specific data comparison by applying chart selection logic based on analytical intent (ranking, trend, distribution, composition, correlation, geographic). Produces a complete chart specification with axis assignments, color palette, labels, and formatting rules. Use when the user has data to visualize and needs to know which chart type to use or wants a full chart configuration. Do NOT use for dashboard layout with multiple charts (use dashboard-design), formatting an existing chart (use chart-formatting), or choosing colors (use color-in-data).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-visualization",
+    "analysis",
+    "design",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

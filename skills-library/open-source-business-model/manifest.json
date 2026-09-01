@@ -1,0 +1,18 @@
+{
+  "id": "open-source-business-model",
+  "name": "Open Source Business Model",
+  "version": "1.0.0",
+  "description": "Strategic guide to building businesses around open source software covering licensing strategy, community vs enterprise editions, developer relations, monetization models, community governance, and sustainable open source business operations. Use when the user asks about open source business model, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of open source business model or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "strategy",
+    "checklist",
+    "guide",
+    "python",
+    "cloud",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

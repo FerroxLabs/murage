@@ -1,0 +1,14 @@
+{
+  "id": "document-explainer",
+  "name": "Document Explainer",
+  "version": "1.0.0",
+  "description": "Translates legal documents into plain language. Breaks down contracts, leases, terms of service, insurance policies, and other legal texts section by section with red flag identification and a glossary of common legal terms. Use when the user asks about document explainer, or needs help with translates legal documents into plain language. Do NOT use when the request requires professional legal advice or falls outside the scope of document explainer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "step-by-step",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "story-pitch",
+  "name": "Story Pitch",
+  "version": "1.0.0",
+  "description": "Creates compelling story pitches for novels, screenplays, TV series, and short fiction including loglines, synopses, comp titles, and query letter components. Use when the user asks to pitch a story, write a logline, create a query letter, draft a book synopsis, or prepare a pitch package for agents or producers. Do NOT use for business pitches or investor decks (use business pitch skills), full plot outlines (use plot-outline), or writing the actual story (use short-story-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "proposal"
+  ],
+  "requiredCapabilities": []
+}

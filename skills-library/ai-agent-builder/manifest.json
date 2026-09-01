@@ -1,0 +1,14 @@
+{
+  "id": "ai-agent-builder",
+  "name": "Ai Agent Builder",
+  "version": "1.0.0",
+  "description": "AI agent architecture covering agent patterns (ReAct, Plan-and-Execute, LATS), tool design, memory systems (short-term, long-term, episodic), multi-agent coordination, guardrails, LangChain and LangGraph patterns, and error recovery. Use when the user asks about ai agent builder, ai agent builder best practices, or needs guidance on ai agent builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "automation",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

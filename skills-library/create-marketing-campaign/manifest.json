@@ -1,0 +1,16 @@
+{
+  "id": "create-marketing-campaign",
+  "name": "Create Marketing Campaign",
+  "version": "1.0.0",
+  "description": "Guides the user through creating a complete marketing campaign from strategic planning through copy creation, email execution, analytics measurement, and optimization testing. Use when the user needs to plan and execute a marketing campaign with coordinated messaging across channels, clear measurement, and systematic optimization. Do NOT use for a full product launch (use launch-product), for ongoing content marketing without a campaign focus (use create-content-calendar), or for single-channel email sequences only (use email-campaign directly).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "branding",
+    "content-marketing",
+    "strategy",
+    "step-by-step",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

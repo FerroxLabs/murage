@@ -1,0 +1,19 @@
+{
+  "id": "relationship-recovery",
+  "name": "Relationship Recovery",
+  "version": "1.0.0",
+  "description": "Guide for rebuilding trust after betrayal or breakdown, exploring therapy options, repairing communication patterns, and making informed decisions about whether and how to restore a damaged relationship Use when the user asks about relationship recovery, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of relationship recovery or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "nutrition",
+    "stress-management",
+    "self-care",
+    "beginner-friendly",
+    "research",
+    "safety",
+    "energy-efficiency",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

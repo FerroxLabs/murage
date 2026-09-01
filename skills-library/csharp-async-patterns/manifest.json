@@ -1,0 +1,14 @@
+{
+  "id": "csharp-async-patterns",
+  "name": "Csharp Async Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level C# async programming: async/await pitfalls, ValueTask vs Task decision tree, CancellationToken patterns, IAsyncEnumerable, and ConfigureAwait considerations. Use when the user asks about C# async, await, ValueTask, Task, CancellationToken, IAsyncEnumerable, ConfigureAwait, async patterns. Do NOT use when the user asks about C# modern idioms (use `csharp-modern-idioms`), C# performance (use `csharp-performance`), C# ASP.NET (use `csharp-aspnet-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "csharp",
+    "backend",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

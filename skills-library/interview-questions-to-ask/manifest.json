@@ -1,0 +1,14 @@
+{
+  "id": "interview-questions-to-ask",
+  "name": "Interview Questions To Ask",
+  "version": "1.0.0",
+  "description": "Generates 15-20 thoughtful questions for the user to ask interviewers, categorized by role clarity, team culture, growth opportunities, and company direction. Questions are tailored to the user's target role and demonstrate preparation and genuine interest. Produces a prioritized question bank the user can draw from during any interview. Use when the user wants questions to ask an interviewer, needs to prepare the \"do you have any questions for us?\" portion, or wants to evaluate a potential employer. Do NOT use for answering interview questions (use behavioral-interview-prep), predicting what will be asked (use interview-question-anticipator), or company research (use company-research-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "interview-prep",
+    "career",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

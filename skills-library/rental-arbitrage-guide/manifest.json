@@ -1,0 +1,19 @@
+{
+  "id": "rental-arbitrage-guide",
+  "name": "Rental Arbitrage Guide",
+  "version": "1.0.0",
+  "description": "Guide to short-term rental arbitrage covering property selection, lease negotiation, furnishing strategy, platform management, regulations compliance, and scaling a portfolio. Use when the user asks about rental arbitrage guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of rental arbitrage guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "entrepreneurship",
+    "budgeting",
+    "checklist",
+    "guide",
+    "testing",
+    "automation",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

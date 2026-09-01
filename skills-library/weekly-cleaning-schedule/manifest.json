@@ -1,0 +1,14 @@
+{
+  "id": "weekly-cleaning-schedule",
+  "name": "Weekly Cleaning Schedule",
+  "version": "1.0.0",
+  "description": "Creates a room-by-room weekly cleaning plan customized to household size, available time, and home layout. Includes task-by-task checklists with time estimates per room, daily touch-up routines, and efficiency strategies for busy schedules. Use when the user asks about cleaning routines, weekly cleaning plans, how long cleaning should take, or maintaining a clean home with limited time. Do NOT use for deep cleaning or seasonal cleaning (use deep-cleaning-checklist), move-in/move-out cleaning (use move-cleaning), or commercial cleaning schedules.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cleaning",
+    "checklist",
+    "time-management",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

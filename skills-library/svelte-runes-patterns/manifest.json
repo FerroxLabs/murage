@@ -1,0 +1,15 @@
+{
+  "id": "svelte-runes-patterns",
+  "name": "Svelte Runes Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level svelte 5 runes patterns implementation: javascript and frameworks decision frameworks, production-ready patterns, and concrete templates for svelte runes patterns workflows. Use when the user asks about svelte 5 runes patterns, svelte runes patterns configuration, or javascript best practices for svelte projects. Do NOT use when the user needs a different web development capability -- check sibling skills in the web development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "javascript",
+    "frameworks",
+    "frontend",
+    "best-practices",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

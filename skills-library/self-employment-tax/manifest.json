@@ -1,0 +1,14 @@
+{
+  "id": "self-employment-tax",
+  "name": "Self Employment Tax",
+  "version": "1.0.0",
+  "description": "Explains self-employment tax concepts for freelancers and sole proprietors including SE tax calculation, the deductible portion, business expense categories, home office rules, and mileage tracking. Uses a jurisdiction-aware framework with placeholder markers for all rates and rules. Use when the user asks about self-employment taxes, freelance tax obligations, or how taxes work when you work for yourself. Do NOT use for estimating quarterly payments (use quarterly-tax-estimator), tracking deductions (use tax-deduction-tracker), or understanding retirement accounts for the self-employed (use tax-advantaged-optimizer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tax-planning",
+    "personal-finance",
+    "freelancing",
+    "budgeting"
+  ],
+  "requiredCapabilities": []
+}

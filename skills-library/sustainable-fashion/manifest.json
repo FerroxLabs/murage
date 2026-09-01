@@ -1,0 +1,13 @@
+{
+  "id": "sustainable-fashion",
+  "name": "Sustainable Fashion",
+  "version": "1.0.0",
+  "description": "Guide to building a sustainable wardrobe including ethical brand evaluation, secondhand shopping strategies (ThredUp, Poshmark, consignment), capsule wardrobe principles for sustainability, fabric guide covering organic, recycled, and problematic materials, clothing care techniques to extend garment life, and basic repair and mending skills. Use when the user asks about sustainable fashion, or needs help with guide to building a sustainable wardrobe including ethical brand evaluation, secondhand shopping strategies (thredup, poshmark, consignment), capsule wardrobe principles for sustainability, fabric guide covering organic, recycled, and problematic materials, clothing care techniques to extend garment life, and basic repair and mending skills. Do NOT use when the request requires professional specialized advice or falls outside the scope of sustainable fashion.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "sustainable-shopping",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

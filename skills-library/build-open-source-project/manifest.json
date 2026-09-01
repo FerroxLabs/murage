@@ -1,0 +1,15 @@
+{
+  "id": "build-open-source-project",
+  "name": "Build Open Source Project",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for launching a successful open source project from initial idea through repository setup, community building, and sustainable maintainership. Covers licensing, documentation, governance, funding, and the practices that separate abandoned repos from thriving communities. Use when the user wants to build open source project or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "networking",
+    "documentation",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

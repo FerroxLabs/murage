@@ -1,0 +1,14 @@
+{
+  "id": "financial-model-template",
+  "name": "Financial Model Template",
+  "version": "1.0.0",
+  "description": "Builds a spreadsheet financial model structure with input, calculation, and output sections. Produces the formula architecture with assumption documentation and sensitivity analysis table. Outputs cell-ready formulas, not descriptions of what formulas to use. Use when the user needs to build a financial model, revenue projection, cost analysis, or business case in a spreadsheet. Do NOT use for personal budgeting (use budget-planning in personal-finance), business strategy analysis (use SWOT or financial analysis in business category), or data visualization of financial data (use chart-type-selector).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spreadsheets",
+    "analysis",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,17 @@
+{
+  "id": "accessible-mobile-developer",
+  "name": "Accessible Mobile Developer",
+  "version": "1.0.0",
+  "description": "Mobile accessibility development expertise covering iOS VoiceOver and Android TalkBack integration, accessibility APIs for SwiftUI and Jetpack Compose, touch target sizing, gesture alternatives, dynamic type support, color contrast compliance, screen reader testing, and WCAG mobile-specific success criteria. Use when the user asks about accessible mobile developer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of accessible mobile developer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "checklist",
+    "testing",
+    "automation",
+    "parenting",
+    "fashion",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

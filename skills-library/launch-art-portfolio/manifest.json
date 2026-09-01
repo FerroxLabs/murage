@@ -1,0 +1,16 @@
+{
+  "id": "launch-art-portfolio",
+  "name": "Launch Art Portfolio",
+  "version": "1.0.0",
+  "description": "Guides the user through launching a professional art or creative portfolio from curation through outreach, chaining 5 atomic skills across career-development, design-creative, and writing categories. Covers physical vs. digital portfolio, platform selection, fine art vs. commercial positioning, and curated vs. comprehensive approaches. Use when the user wants to create and launch a portfolio to attract clients, galleries, or employers. Do NOT use for building a job search portfolio in non-creative fields (use land-new-job workflow), personal brand content strategy (use build-personal-brand workflow), or creating the artwork itself.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "career",
+    "branding",
+    "photography",
+    "step-by-step",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

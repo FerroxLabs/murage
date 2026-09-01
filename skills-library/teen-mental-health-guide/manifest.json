@@ -1,0 +1,19 @@
+{
+  "id": "teen-mental-health-guide",
+  "name": "Teen Mental Health Guide",
+  "version": "1.0.0",
+  "description": "Help parents and caregivers recognize mental health warning signs in teenagers, communicate effectively, access professional help, and build supportive home environments Use when the user asks about teen mental health guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of teen mental health guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "parenting",
+    "stress-management",
+    "self-care",
+    "guide",
+    "planning",
+    "networking",
+    "safety",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

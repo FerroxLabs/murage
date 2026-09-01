@@ -1,0 +1,14 @@
+{
+  "id": "goal-setter",
+  "name": "Goal Setter",
+  "version": "1.0.0",
+  "description": "Goal setting and achievement guide covering SMART goals, OKRs for personal life, 12-week year methodology, goal hierarchy, quarterly reviews, milestone celebration, obstacle anticipation, and accountability partner frameworks for turning aspirations into results. Use when the user asks about goal setter, or needs help with goal setting and achievement guide covering smart goals, okrs for personal life, 12-week year methodology, goal hierarchy, quarterly reviews, milestone celebration, obstacle anticipation, and accountability partner frameworks for turning aspirations into results. Do NOT use when the request requires professional specialized advice or falls outside the scope of goal setter.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "habits",
+    "guide",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

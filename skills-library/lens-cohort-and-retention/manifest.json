@@ -1,0 +1,14 @@
+{
+  "id": "lens-cohort-and-retention",
+  "name": "cohort-and-retention",
+  "version": "1.0.0",
+  "description": "As of: 2026-05-16",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "lens",
+    "cohort",
+    "and",
+    "retention"
+  ],
+  "requiredCapabilities": []
+}

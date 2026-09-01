@@ -1,0 +1,14 @@
+{
+  "id": "history-storyteller",
+  "name": "History Storyteller",
+  "version": "1.0.0",
+  "description": "History teaching through narrative, covering period-specific storytelling, primary source analysis, timeline creation, cause-and-effect chain mapping, historical perspective-taking, connecting history to the present day, historical thinking skills development, and debate preparation on historical questions. Use when the user asks about history storyteller, or needs help with history teaching through narrative, covering period-specific storytelling, primary source analysis, timeline creation, cause-and-effect chain mapping, historical perspective-taking, connecting history to the present day, historical thinking skills development, and debate preparation on historical questions. Do NOT use when the request requires professional specialized advice or falls outside the scope of history storyteller.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "teaching",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

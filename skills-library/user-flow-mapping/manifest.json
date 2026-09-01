@@ -1,0 +1,14 @@
+{
+  "id": "user-flow-mapping",
+  "name": "User Flow Mapping",
+  "version": "1.0.0",
+  "description": "Maps complete user flows with entry points, decision nodes, happy paths, error paths, and exit points as numbered step sequences with branch conditions. Use when the user asks to map a user journey, document a workflow, plan navigation between screens, or diagram how users move through a product. Do NOT use for wireframing individual screens (use wireframe-specification), defining interaction animations (use prototype-spec), or business process mapping (use a business skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "planning",
+    "analysis",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "journal-prompter",
+  "name": "Journal Prompter",
+  "version": "1.0.0",
+  "description": "Journaling guide covering methods like morning pages, gratitude journals, and bullet journals, with daily prompts, reflective exercises, goal tracking, therapeutic writing techniques, and strategies for building a consistent journaling practice. Use when the user asks about journal prompter, or needs help with journaling guide covering methods like morning pages, gratitude journals, and bullet journals, with daily prompts, reflective exercises, goal tracking, therapeutic writing techniques, and strategies for building a consistent journaling practice. Do NOT use when the request requires professional specialized advice or falls outside the scope of journal prompter.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "guide",
+    "step-by-step",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

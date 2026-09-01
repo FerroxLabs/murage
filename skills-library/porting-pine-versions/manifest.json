@@ -1,0 +1,17 @@
+{
+  "id": "porting-pine-versions",
+  "name": "Porting Pine Versions",
+  "version": "1.0.0",
+  "description": "Migrate Pine Script v4 / v5 source to v6 — analyze, apply migration rules, compile-check, iterate until clean. Use when the user hands over an older script or asks to \"upgrade to v6\" / \"port this Pine code\".",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "porting",
+    "pine",
+    "versions",
+    "trading",
+    "tradingview",
+    "charts",
+    "markets"
+  ],
+  "requiredCapabilities": []
+}

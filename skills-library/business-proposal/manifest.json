@@ -1,0 +1,13 @@
+{
+  "id": "business-proposal",
+  "name": "Business Proposal",
+  "version": "1.0.0",
+  "description": "Writes structured business proposals with executive summary, scope of work, pricing, timeline, and next steps for client-facing or vendor engagements. Use when the user needs to write a business proposal, service proposal, or client engagement document. Do NOT use for internal project proposals (use `project-proposal`), academic grant proposals (use `grant-proposal-writing`), or RFP responses (use `rfp-response`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "proposal",
+    "writing",
+    "business-writing"
+  ],
+  "requiredCapabilities": []
+}

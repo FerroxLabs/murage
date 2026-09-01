@@ -1,0 +1,14 @@
+{
+  "id": "strategic-roadmap",
+  "name": "Strategic Roadmap",
+  "version": "1.0.0",
+  "description": "Produces a narrative and visual-ready strategic roadmap using horizon planning with 3-5 time-bounded phases, strategic themes, milestones, and resource allocation. Use when the user asks to create a strategic roadmap, plan multi-year strategy, structure long-term business goals, or define a phased growth plan with milestones. Do NOT use for product feature roadmap (use product-roadmap in product management), quarterly OKR setting (use okr-setting), or business plan with financial projections (use business-plan).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "planning",
+    "project-management",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "bbq-pitmaster",
+  "name": "Bbq Pitmaster",
+  "version": "1.0.0",
+  "description": "Master the art of barbecue with guidance on smoker types including offset, kamado, pellet, and kettle, wood selection and flavor profiles, meat selection and preparation, rubs and marinades, temperature management, smoking times by cut, sauce recipes, and competition BBQ fundamentals. Use when the user asks about bbq pitmaster, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of bbq pitmaster or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "budgeting",
+    "guide",
+    "beginner-friendly",
+    "testing",
+    "automation",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

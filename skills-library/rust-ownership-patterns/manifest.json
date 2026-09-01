@@ -1,0 +1,14 @@
+{
+  "id": "rust-ownership-patterns",
+  "name": "Rust Ownership Patterns",
+  "version": "1.0.0",
+  "description": "Guides advanced Rust ownership and borrowing: lifetime annotations, smart pointer decision tree (Box vs Rc vs Arc vs Cow), borrow checker strategies, and zero-cost abstraction patterns. Use when the user asks about Rust ownership, borrowing, lifetimes, smart pointers, Box, Rc, Arc, Cow, borrow checker. Do NOT use when the user asks about Rust project setup (use `rust-project-setup`), Rust error handling (use `rust-error-handling`), Rust performance (use `rust-performance`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "rust",
+    "best-practices",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

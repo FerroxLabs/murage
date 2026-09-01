@@ -1,0 +1,14 @@
+{
+  "id": "grocery-optimizer",
+  "name": "Grocery Optimizer",
+  "version": "1.0.0",
+  "description": "Smart grocery shopping optimization system that helps reduce spending through budget-based strategies, aisle-organized shopping lists, unit price comparison, seasonal produce guidance, bulk buying analysis, and food waste reduction techniques. Includes pantry staples checklists and store brand vs name brand analysis. Use when the user asks about grocery optimizer, or needs help with smart grocery shopping optimization system that helps reduce spending through budget-based strategies, aisle-organized shopping lists, unit price comparison, seasonal produce guidance, bulk buying analysis, and food waste reduction techniques. Do NOT use when the request requires professional specialized advice or falls outside the scope of grocery optimizer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "checklist",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

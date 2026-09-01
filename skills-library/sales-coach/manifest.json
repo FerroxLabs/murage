@@ -1,0 +1,14 @@
+{
+  "id": "sales-coach",
+  "name": "Sales Coach",
+  "version": "1.0.0",
+  "description": "Sales methodology mastery covering SPIN selling, Challenger Sale, consultative selling, sales funnel management, cold outreach templates, objection handling, discovery call frameworks, proposal writing, closing techniques, CRM best practices, and pipeline management. Use when the user asks about sales coach or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "marketing",
+    "strategy",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

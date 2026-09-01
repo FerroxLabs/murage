@@ -1,0 +1,18 @@
+{
+  "id": "caregiver-wellness-planner",
+  "name": "Caregiver Wellness Planner",
+  "version": "1.0.0",
+  "description": "Develop burnout prevention strategies, self-care plans, and support resources for healthcare professionals and family caregivers. Use when the user asks about caregiver wellness planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of caregiver wellness planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "healthcare",
+    "health-wellness",
+    "checklist",
+    "template",
+    "planning",
+    "performing-arts",
+    "sleep",
+    "investing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "evacuation-planner",
+  "name": "Evacuation Planner",
+  "version": "1.0.0",
+  "description": "Evacuation route planning, meeting point selection, document preparation, pet evacuation, vehicle readiness, and step-by-step guidance for creating a comprehensive household evacuation plan Use when the user asks about evacuation planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of evacuation planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "stress-management",
+    "checklist",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "cloud",
+    "testing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "documentation-as-code",
+  "name": "Documentation As Code",
+  "version": "1.0.0",
+  "description": "Treating documentation as a first-class engineering artifact with docs-in-repo workflows, automated generation, living documentation, testing, and continuous publishing pipelines. Use when the user asks about documentation as code, documentation as code best practices, or needs guidance on documentation as code implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "clean-code",
+    "documentation",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

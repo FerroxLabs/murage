@@ -1,0 +1,14 @@
+{
+  "id": "green-transportation-planner",
+  "name": "Green Transportation Planner",
+  "version": "1.0.0",
+  "description": "Analyzes personal transportation habits and produces a mode-shift plan with CO2 and cost comparisons by commute type (car vs. transit vs. bike vs. EV vs. carpool). Gathers the user's commute details, location, and constraints to produce a practical transition plan with estimated emissions reduction and financial impact. Use when the user asks about reducing transportation emissions, comparing commute options by environmental impact, evaluating transit or cycling vs. driving, or considering an EV transition. Do NOT use for daily cycling commute route planning (use cycling-route-planner for recreational routes), fleet management or commercial transportation, urban planning or public transit advocacy, or auto purchase decisions based on non-environmental criteria.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "planning",
+    "analysis",
+    "checklist"
+  ],
+  "requiredCapabilities": []
+}

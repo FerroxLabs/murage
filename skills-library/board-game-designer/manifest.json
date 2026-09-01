@@ -1,0 +1,14 @@
+{
+  "id": "board-game-designer",
+  "name": "Board Game Designer",
+  "version": "1.0.0",
+  "description": "Guide to board game design including mechanics taxonomy, theme integration, prototyping, playtesting methodology, balance iteration, rulebook writing, art direction, Kickstarter launch, and publisher pitching. Use when the user asks about board game designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "board-games",
+    "game-design",
+    "guide",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

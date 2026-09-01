@@ -1,0 +1,13 @@
+{
+  "id": "meeting-agenda",
+  "name": "Meeting Agenda",
+  "version": "1.0.0",
+  "description": "Creates structured meeting agendas with timed topics, objectives per item, pre-read materials, and expected outcomes to ensure productive meetings. Use when the user needs to prepare for a meeting, organize discussion topics, or set a meeting structure. Do NOT use for meeting notes after a meeting (use `meeting-notes`), status updates (use `status-update`), or project planning documents (use `project-proposal`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "business-writing",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

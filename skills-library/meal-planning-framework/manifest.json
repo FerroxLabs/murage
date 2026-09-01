@@ -1,0 +1,14 @@
+{
+  "id": "meal-planning-framework",
+  "name": "Meal Planning Framework",
+  "version": "1.0.0",
+  "description": "Builds structured weekly meal plans using a protein-starch-vegetable template with batch cooking integration, portion guidelines, and variety rotation. Produces a 7-day meal planning grid with shopping list categories and prep-day workflow. Use when the user asks about meal planning, creating a weekly meal plan, how to plan meals for the week, or organizing meals around a schedule. Do NOT use for clinical dietary therapy, eating disorder management, macro calculation (use macro-calculation), or specific recipe creation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "meal-planning",
+    "template",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

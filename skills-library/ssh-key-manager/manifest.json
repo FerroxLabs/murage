@@ -1,0 +1,15 @@
+{
+  "id": "ssh-key-manager",
+  "name": "Ssh Key Manager",
+  "version": "1.0.0",
+  "description": "Complete guide to SSH key generation, configuration, agent setup, multi-account management, and troubleshooting for GitHub, GitLab, and server access. Use when the user asks about ssh key manager, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ssh key manager or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "security",
+    "testing",
+    "automation",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "backpacking-planner",
+  "name": "Backpacking Planner",
+  "version": "1.0.0",
+  "description": "Guide to backpacking including gear selection, trip planning, navigation, meal planning, water treatment, Leave No Trace, bear country protocols, and fitness preparation. Use when the user asks about backpacking planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of backpacking planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "hiking",
+    "budgeting",
+    "beginner-friendly",
+    "cloud",
+    "testing",
+    "research",
+    "planning",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

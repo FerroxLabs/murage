@@ -1,0 +1,18 @@
+{
+  "id": "natural-disaster-prep",
+  "name": "Natural Disaster Prep",
+  "version": "1.0.0",
+  "description": "Disaster-specific preparation guide covering earthquakes, hurricanes, tornadoes, floods, wildfires, and winter storms with preparation checklists for each type, evacuation route planning, family communication plans, insurance review considerations, post-disaster recovery procedures, and community resilience building. Use when the user asks about natural disaster prep, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of natural disaster prep or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "cloud",
+    "testing",
+    "safety",
+    "emergency-preparedness"
+  ],
+  "requiredCapabilities": []
+}

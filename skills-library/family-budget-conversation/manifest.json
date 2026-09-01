@@ -1,0 +1,14 @@
+{
+  "id": "family-budget-conversation",
+  "name": "Family Budget Conversation",
+  "version": "1.0.0",
+  "description": "Provides conversation frameworks for discussing money within families, including shared financial goal setting, household budget conversations, teaching children about money, and navigating financial disagreements. Produces structured conversation guides with opening scripts and shared goal templates. Use when the user asks about having money conversations with a partner, family, or children, setting shared financial goals, or discussing a household budget together. Do NOT use for financial advice, investment guidance, debt management strategies, or individual budget creation (use personal-finance skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-finance",
+    "template",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

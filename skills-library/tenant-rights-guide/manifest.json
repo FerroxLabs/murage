@@ -1,0 +1,15 @@
+{
+  "id": "tenant-rights-guide",
+  "name": "Tenant Rights Guide",
+  "version": "1.0.0",
+  "description": "Provides a plain-language overview of common tenant rights including notice requirements, repair obligations, security deposit protections, eviction procedures, and anti-retaliation rules. Helps tenants understand their position and prepare for conversations with landlords, tenant rights organizations, or attorneys. Use when the user has a question about their rights as a renter, is facing a landlord dispute, wants to understand eviction procedures, or needs to know their obligations as a tenant. Do NOT use for commercial tenancies, landlord-side guidance, legal advice on specific disputes, or lease review before signing (use lease-agreement-reviewer instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "tenant-rights",
+    "guide",
+    "checklist",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "release-new-version",
+  "name": "Release New Version",
+  "version": "1.0.0",
+  "description": "Orchestrates the process of shipping a new software version by chaining four engineering skills into a structured release pipeline. Covers release planning with changelog generation, commit history analysis, deployment execution, and post-release monitoring verification. Use when the user needs to ship a release with proper versioning, documentation, and deployment verification. Do NOT use for hotfixes that bypass the normal release process or for continuous deployment where every merge auto-deploys.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "ci-cd",
+    "planning",
+    "step-by-step",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

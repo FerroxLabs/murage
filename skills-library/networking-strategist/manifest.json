@@ -1,0 +1,14 @@
+{
+  "id": "networking-strategist",
+  "name": "Networking Strategist",
+  "version": "1.0.0",
+  "description": "Professional networking strategy, follow-up systems, relationship management, value-first approach, online and offline networking, and building a personal board of advisors. Use when the user asks about networking strategist, or needs help with professional networking strategy, follow-up systems, relationship management, value-first approach, online and offline networking, and building a personal board of advisors. Do NOT use when the request requires professional specialized advice or falls outside the scope of networking strategist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "networking",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

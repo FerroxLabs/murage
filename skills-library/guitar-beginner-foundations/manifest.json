@@ -1,0 +1,14 @@
+{
+  "id": "guitar-beginner-foundations",
+  "name": "Guitar Beginner Foundations",
+  "version": "1.0.0",
+  "description": "Teaches absolute beginners the first open chord shapes (G, C, D, Em, Am), correct finger placement with fret-hand diagrams, basic strumming patterns (all-downstroke, down-down-up, alternating bass), and a first-song chord progression sequence. Use when the user wants to start learning guitar, asks about beginner chords, first strumming patterns, or how to hold and fret a guitar. Do NOT use for intermediate barre chords or lead guitar techniques, music theory beyond basic chord names (use music-theory-fundamentals), or professional recording setup (use home-recording-starter).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beginner-friendly",
+    "step-by-step",
+    "guide",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

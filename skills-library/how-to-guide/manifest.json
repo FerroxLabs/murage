@@ -1,0 +1,13 @@
+{
+  "id": "how-to-guide",
+  "name": "How To Guide",
+  "version": "1.0.0",
+  "description": "Writes step-by-step instructional guides with prerequisites, numbered procedures, tips, and troubleshooting sections. Use when the user wants to create a tutorial, how-to article, instructional post, or step-by-step guide for completing a task. Do NOT use for general blog posts (use `blog-post-writing`), listicles (use `listicle-writing`), or technical API documentation (use `api-documentation`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "blog-post",
+    "writing",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

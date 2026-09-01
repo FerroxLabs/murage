@@ -1,0 +1,13 @@
+{
+  "id": "typescript-guru",
+  "name": "Typescript Guru",
+  "version": "1.0.0",
+  "description": "Advanced TypeScript expertise covering type-level programming, generics patterns, discriminated unions, template literal types, conditional types, mapped types, declaration merging, module augmentation, and strict mode mastery. Use when the user asks about typescript guru, typescript guru best practices, or needs guidance on typescript guru implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "typescript"
+  ],
+  "requiredCapabilities": []
+}

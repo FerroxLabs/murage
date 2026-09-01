@@ -1,0 +1,18 @@
+{
+  "id": "business-model-validator",
+  "name": "Business Model Validator",
+  "version": "1.0.0",
+  "description": "Business model viability assessment evaluating revenue model strength, market fit, competitive positioning, risk factors, and unit economics to produce an actionable validation scorecard. Use when the user asks about business model validator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of business model validator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "template",
+    "testing",
+    "analysis",
+    "branding",
+    "investing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

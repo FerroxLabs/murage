@@ -1,0 +1,14 @@
+{
+  "id": "background-jobs-patterns",
+  "name": "Background Jobs Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level background jobs patterns implementation: architecture and optimization decision frameworks, production-ready patterns, and concrete templates for background jobs patterns workflows. Use when the user asks about background jobs patterns, background jobs patterns configuration, or backend best practices for background projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "architecture",
+    "optimization",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

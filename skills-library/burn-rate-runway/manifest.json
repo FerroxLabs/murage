@@ -1,0 +1,16 @@
+{
+  "id": "burn-rate-runway",
+  "name": "Burn Rate Runway",
+  "version": "1.0.0",
+  "description": "Calculates startup burn rate (gross and net), projects cash runway in months, and builds scenario analysis for different spending and revenue trajectories. Use when the user asks about burn rate, cash runway, how long their money will last, or startup cash management. Do NOT use for personal savings calculations (use budget-planning), full financial modeling (use financial-model-structure), or fundraising narrative (use fundraising-narrative).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "planning",
+    "entrepreneurship",
+    "strategy",
+    "spreadsheets",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

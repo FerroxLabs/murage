@@ -1,0 +1,14 @@
+{
+  "id": "laundry-system",
+  "name": "Laundry System",
+  "version": "1.0.0",
+  "description": "Creates an efficient laundry routine covering sorting, washing settings by fabric type, stain treatment, drying methods, and scheduling for different household sizes. Includes water temperature guides, care label decoding, and time-saving batch strategies. Use when the user asks about laundry routines, fabric care, stain removal, washing machine settings, or organizing their laundry workflow. Do NOT use for dry cleaning guidance, commercial laundry operations, or cleaning products chemistry.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cleaning",
+    "guide",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

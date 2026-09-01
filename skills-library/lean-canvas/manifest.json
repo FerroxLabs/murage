@@ -1,0 +1,16 @@
+{
+  "id": "lean-canvas",
+  "name": "Lean Canvas",
+  "version": "1.0.0",
+  "description": "Completes a Lean Canvas for a specific business idea covering problem, solution, unique value proposition, unfair advantage, customer segments, key metrics, channels, cost structure, and revenue streams. Use when the user asks about Lean Canvas, one-page business model, lean startup canvas, or business model canvas for startups. Do NOT use for a traditional business plan (use business-plan), idea validation experiments (use idea-validation), or MVP scoping (use mvp-definition).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "planning",
+    "template",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

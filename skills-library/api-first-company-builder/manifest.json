@@ -1,0 +1,19 @@
+{
+  "id": "api-first-company-builder",
+  "name": "Api First Company Builder",
+  "version": "1.0.0",
+  "description": "Strategic and tactical guide to building API-as-a-product businesses covering API design, developer experience, documentation, pricing models, go-to-market strategy, developer support, and scaling an API platform. Use when the user asks about api first company builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of api first company builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "strategy",
+    "checklist",
+    "guide",
+    "step-by-step",
+    "python",
+    "javascript",
+    "api-design",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

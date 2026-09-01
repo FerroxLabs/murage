@@ -1,0 +1,15 @@
+{
+  "id": "go-back-to-school",
+  "name": "Go Back To School",
+  "version": "1.0.0",
+  "description": "Complete returning student workflow covering program research, application strategy, financial planning, academic preparation, and success systems for adult learners going back to school at any stage of life. Use when the user wants to go back to school or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "career",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

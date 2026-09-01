@@ -1,0 +1,14 @@
+{
+  "id": "medication-management-system",
+  "name": "Medication Management System",
+  "version": "1.0.0",
+  "description": "Builds medication tracking systems including schedule templates, refill reminder frameworks, interaction question lists for providers, and storage guidelines. Produces a medication management document that helps users stay organized and have informed conversations with their healthcare providers about their medications. Use when the user asks about organizing medications, building a medication schedule, tracking refills, or preparing medication questions for their provider. Do NOT use for medication recommendations, dosage adjustments, drug interaction assessments, or any guidance that replaces a pharmacist or prescribing provider.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "checklist",
+    "template",
+    "guide",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

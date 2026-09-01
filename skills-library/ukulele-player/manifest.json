@@ -1,0 +1,19 @@
+{
+  "id": "ukulele-player",
+  "name": "Ukulele Player",
+  "version": "1.0.0",
+  "description": "Chord voicings, strumming patterns, fingerpicking technique, transposition methods, and repertoire building for soprano, concert, tenor, and baritone ukulele Use when the user asks about ukulele player, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ukulele player or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "automation",
+    "cleaning",
+    "fashion",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

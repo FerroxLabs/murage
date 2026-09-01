@@ -1,0 +1,15 @@
+{
+  "id": "nextjs-data-patterns",
+  "name": "Nextjs Data Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level next.js data patterns implementation: typescript and frameworks decision frameworks, production-ready patterns, and concrete templates for nextjs data patterns workflows. Use when the user asks about next.js data patterns, nextjs data patterns configuration, or typescript best practices for next.js projects. Do NOT use when the user needs a different web development capability -- check sibling skills in the web development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "typescript",
+    "frameworks",
+    "backend",
+    "database",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

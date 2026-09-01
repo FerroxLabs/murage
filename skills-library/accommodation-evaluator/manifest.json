@@ -1,0 +1,15 @@
+{
+  "id": "accommodation-evaluator",
+  "name": "Accommodation Evaluator",
+  "version": "1.0.0",
+  "description": "Creates a structured comparison framework for evaluating hotels, hostels, vacation rentals, and other accommodation types. Produces a weighted scoring rubric with red-flag indicators and a side-by-side comparison table. Use when the user asks about choosing between accommodation options, evaluating rental listings, comparing hotel types, or creating accommodation selection criteria for a trip. Do NOT use for general trip planning (use trip-itinerary-builder), budget optimization (use budget-travel-planner), or booking strategy (use airfare-search-strategy for flights).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "research",
+    "checklist",
+    "analysis",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

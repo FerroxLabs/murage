@@ -1,0 +1,14 @@
+{
+  "id": "hydration-planning",
+  "name": "Hydration Planning",
+  "version": "1.0.0",
+  "description": "Provides daily fluid intake frameworks, exercise hydration strategies, and electrolyte basics for maintaining adequate hydration. Produces a hydration schedule with intake targets, self-assessment methods, and adjustment guidelines for activity level and environmental conditions. Use when the user asks about how much water to drink, hydration for exercise, electrolyte basics, or building a daily hydration habit. Do NOT use for clinical dehydration treatment, kidney or heart condition fluid management, or specific electrolyte supplementation protocols.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "fitness",
+    "guide",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

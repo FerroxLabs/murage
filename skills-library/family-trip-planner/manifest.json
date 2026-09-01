@@ -1,0 +1,15 @@
+{
+  "id": "family-trip-planner",
+  "name": "Family Trip Planner",
+  "version": "1.0.0",
+  "description": "Creates age-calibrated family trip itineraries with kid-friendly pacing, nap and meal windows, backup indoor activities, and family logistics. Gathers destination, dates, children's ages, family interests, and budget to produce a day-by-day schedule optimized for families with children. Use when the user asks to plan a family vacation, create a kid-friendly itinerary, organize a trip with children, or build a family travel schedule. Do NOT use for adult-only trips (use trip-itinerary-builder), solo travel (use solo-travel-planner), or group travel without children.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "planning",
+    "parenting",
+    "itinerary",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "walking-meditation-guide",
+  "name": "Walking Meditation Guide",
+  "version": "1.0.0",
+  "description": "Indoor and outdoor walking meditation techniques, labyrinth walking, nature mindfulness practices, and integrating movement-based meditation into daily life. Use when the user asks about walking meditation guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of walking meditation guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "breathing",
+    "guide",
+    "step-by-step",
+    "beginner-friendly",
+    "safety",
+    "neurodiversity"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "cap-table-basics",
+  "name": "Cap Table Basics",
+  "version": "1.0.0",
+  "description": "Builds a simple capitalization table showing ownership percentages, share counts, and dilution scenarios for startup equity structures. Use when the user asks about cap tables, equity ownership, dilution, stock options, vesting, or startup share distribution. Do NOT use for public company stock analysis, personal investment decisions, financial modeling (use financial-model-structure), or legal advice on equity agreements.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "planning",
+    "analysis",
+    "spreadsheets",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

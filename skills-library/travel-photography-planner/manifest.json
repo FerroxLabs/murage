@@ -1,0 +1,15 @@
+{
+  "id": "travel-photography-planner",
+  "name": "Travel Photography Planner",
+  "version": "1.0.0",
+  "description": "Creates a travel photography plan with shot lists, golden-hour timing, and location scouting workflows. Produces a day-by-day photography schedule with light windows, gear checklists, and composition notes for each location. Use when the user asks about planning photography during travel, creating shot lists for a destination, timing golden hour for travel photos, or scouting photo locations before a trip. Do NOT use for professional photography technique guidance (use design-creative photography skills), camera settings tutorials, or general trip planning (use trip-itinerary-builder).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "planning",
+    "photography",
+    "itinerary",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "one-pager-creator",
+  "name": "One Pager Creator",
+  "version": "1.0.0",
+  "description": "Create compelling one-page documents - executive summaries, project proposals, product pitches, and business cases with templates optimized for quick decision-making. Use when the user asks about one pager creator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of one pager creator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "strategy",
+    "budgeting",
+    "investing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

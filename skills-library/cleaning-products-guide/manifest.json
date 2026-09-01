@@ -1,0 +1,14 @@
+{
+  "id": "cleaning-products-guide",
+  "name": "Cleaning Products Guide",
+  "version": "1.0.0",
+  "description": "Guides users in selecting the correct cleaning product type for each surface and task in the home. Covers surface-product compatibility, DIY cleaning solutions, product safety including dangerous combinations to avoid, and a minimal essential product list. Use when the user asks which cleaner to use on a surface, wants to simplify their cleaning supplies, needs DIY cleaning recipes, or asks about cleaning product safety. Do NOT use for cleaning routines or schedules (use weekly-cleaning-schedule), stain removal on clothing (use laundry-system), or industrial or commercial cleaning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cleaning",
+    "guide",
+    "cooking",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

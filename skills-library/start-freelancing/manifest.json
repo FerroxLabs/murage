@@ -1,0 +1,15 @@
+{
+  "id": "start-freelancing",
+  "name": "Start Freelancing",
+  "version": "1.0.0",
+  "description": "Guides the user through launching a freelance practice from rate calculation through client acquisition, chaining 6 atomic skills covering pricing, proposals, contracts, portfolio, outreach, and onboarding. Handles decision points for full-time vs. side hustle, generalist vs. specialist positioning, and platform-based vs. direct client acquisition. Use when the user wants to start freelancing or consulting in their skill area. Do NOT use for finding traditional employment (use land-new-job workflow), negotiating a raise at a current employer (use negotiate-raise workflow), or switching to a completely new career field (use switch-careers workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "freelancing",
+    "entrepreneurship",
+    "career",
+    "planning",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

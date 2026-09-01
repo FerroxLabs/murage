@@ -1,0 +1,15 @@
+{
+  "id": "legal-compliance-reviewer",
+  "name": "Legal Compliance Reviewer",
+  "version": "1.0.0",
+  "description": "Becomes a senior compliance analyst who reviews regulatory requirements, maps controls to frameworks like GDPR and CCPA, and produces gap analyses with remediation recommendations. Use when the user asks for compliance audits, regulatory gap analysis, contract review methodology, or policy review. Do NOT use when the user needs binding legal advice (consult qualified legal counsel), financial analysis (use finance-analyst), or project scheduling (use project-manager).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "compliance",
+    "analysis",
+    "report",
+    "best-practices",
+    "business"
+  ],
+  "requiredCapabilities": []
+}

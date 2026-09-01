@@ -1,0 +1,18 @@
+{
+  "id": "ensemble-player",
+  "name": "Ensemble Player",
+  "version": "1.0.0",
+  "description": "Listening skills, group dynamics, arrangement awareness, rehearsal techniques, and stage communication for playing effectively in any musical ensemble from duos to large groups Use when the user asks about ensemble player, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ensemble player or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "checklist",
+    "template",
+    "guide",
+    "game-design",
+    "energy-efficiency",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

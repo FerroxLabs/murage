@@ -1,0 +1,14 @@
+{
+  "id": "appliance-maintenance",
+  "name": "Appliance Maintenance",
+  "version": "1.0.0",
+  "description": "Provides maintenance schedules and troubleshooting for major household appliances including refrigerators, dishwashers, washing machines, dryers, ovens, and water heaters. Includes specific cleaning intervals, part replacement timelines, and DIY vs. professional repair guidance with cost estimates. Use when the user asks about appliance care, cleaning, unusual noises, reduced performance, or extending appliance lifespan. Do NOT use for HVAC systems (use hvac-maintenance), full home maintenance calendars (use annual-home-maintenance), or commercial kitchen equipment.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "checklist",
+    "cleaning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "monolith-to-microservices",
+  "name": "Monolith To Microservices",
+  "version": "1.0.0",
+  "description": "Guides expert-level monolith to microservices migration implementation: refactoring and backend decision frameworks, production-ready patterns, and concrete templates for monolith to microservices workflows. Use when the user asks about monolith to microservices migration, monolith to microservices configuration, or architecture best practices for monolith projects. Do NOT use when the user needs a different architecture design capability -- check sibling skills in the architecture design subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "refactoring",
+    "backend",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

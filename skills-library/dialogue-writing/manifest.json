@@ -1,0 +1,13 @@
+{
+  "id": "dialogue-writing",
+  "name": "Dialogue Writing",
+  "version": "1.0.0",
+  "description": "Writes naturalistic, character-driven dialogue with subtext, distinct voices, and narrative purpose for fiction, screenplays, or creative projects. Use when the user asks to write dialogue, improve conversation in fiction, create character voices, or draft a dialogue-heavy scene. Do NOT use for screenplay format (use screenplay-scene), full scene writing beyond dialogue (use scene-writing), or character profiles (use character-development).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "design"
+  ],
+  "requiredCapabilities": []
+}

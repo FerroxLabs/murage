@@ -1,0 +1,19 @@
+{
+  "id": "knife-skills-trainer",
+  "name": "Knife Skills Trainer",
+  "version": "1.0.0",
+  "description": "Professional knife skills training covering fundamental cuts, knife selection and anatomy, sharpening and honing techniques, safety protocols, speed development, and care and storage for building confident and efficient kitchen knife work. Use when the user asks about knife skills trainer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of knife skills trainer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "budgeting",
+    "guide",
+    "testing",
+    "safety",
+    "emergency-preparedness",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

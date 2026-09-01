@@ -1,0 +1,14 @@
+{
+  "id": "corporate-event-manager",
+  "name": "Corporate Event Manager",
+  "version": "1.0.0",
+  "description": "Complete guide to managing corporate events covering team building activities, product launches, holiday parties, awards ceremonies, hybrid event execution, vendor management, executive stakeholder expectations, and post-event ROI measurement. Use when the user asks about corporate event manager or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "event-planning",
+    "planning",
+    "strategy",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

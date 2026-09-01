@@ -1,0 +1,14 @@
+{
+  "id": "template-library-builder",
+  "name": "Template Library Builder",
+  "version": "1.0.0",
+  "description": "Builds a personal template library by identifying recurring document types, defining reusable structures, and creating fill-in-ready templates with variable placeholders. Use when the user wants to create templates for documents they write repeatedly, build a personal template collection, or standardize recurring written outputs. Do NOT use for enterprise template management systems, email template sequences (use `email-template-system`), or business process documentation (use business operations skills instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "template",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

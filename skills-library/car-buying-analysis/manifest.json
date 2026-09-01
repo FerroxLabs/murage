@@ -1,0 +1,14 @@
+{
+  "id": "car-buying-analysis",
+  "name": "Car Buying Analysis",
+  "version": "1.0.0",
+  "description": "Evaluates buying vs. leasing vs. financing a vehicle by computing total cost of ownership for each option. Factors in depreciation, insurance, maintenance, fuel, opportunity cost, and financing charges. Produces a side-by-side comparison using numbers the user provides from their actual options. Use when the user asks about buying vs. leasing a car, wants to calculate the true cost of vehicle ownership, or is comparing car financing options. Do NOT use for general major purchase decisions (use major-purchase-decision), comparing insurance policies (use insurance-comparison), or loan comparison math (use loan-comparison from financial literacy skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "analysis",
+    "planning",
+    "budgeting"
+  ],
+  "requiredCapabilities": []
+}

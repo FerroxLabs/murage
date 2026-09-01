@@ -1,0 +1,19 @@
+{
+  "id": "smart-contract-developer",
+  "name": "Smart Contract Developer",
+  "version": "1.0.0",
+  "description": "Solidity smart contract development expertise covering language fundamentals, design patterns, gas optimization, common vulnerabilities (reentrancy, overflow, front-running), auditing techniques, testing with Foundry and Hardhat, and deployment best practices for EVM-compatible chains. Use when the user asks about smart contract developer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of smart contract developer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "checklist",
+    "quick-reference",
+    "testing",
+    "automation",
+    "safety",
+    "emergency-preparedness",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

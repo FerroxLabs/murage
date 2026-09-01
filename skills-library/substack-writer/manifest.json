@@ -1,0 +1,14 @@
+{
+  "id": "substack-writer",
+  "name": "Substack Writer",
+  "version": "1.0.0",
+  "description": "Newsletter business strategy covering niche positioning, free versus paid tier design, subscriber acquisition, growth tactics, writing cadence, community features, monetization math, and cross-promotion for sustainable newsletter revenue. Use when the user asks about substack writer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "newsletter",
+    "writing",
+    "content-marketing",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

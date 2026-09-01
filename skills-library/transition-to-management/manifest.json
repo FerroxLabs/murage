@@ -1,0 +1,14 @@
+{
+  "id": "transition-to-management",
+  "name": "Transition To Management",
+  "version": "1.0.0",
+  "description": "Comprehensive workflow for individual contributors moving into their first management role. Covers self-assessment for management readiness, building essential leadership and communication skills, navigating the critical first 90 days, leading teams effectively through day-to-day challenges, and growing as a leader over the long term. Use when the user wants to transition to management or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "strategy",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

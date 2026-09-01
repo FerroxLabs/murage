@@ -1,0 +1,16 @@
+{
+  "id": "startup-pitch-narrative",
+  "name": "Startup Pitch Narrative",
+  "version": "1.0.0",
+  "description": "Creates a startup pitch narrative script covering problem, solution, market opportunity, traction, business model, team, and ask using pitch storytelling methodology. Use when the user asks about startup pitches, investor pitches, pitch decks, pitch narratives, pitch scripts, or how to pitch their startup. Do NOT use for sales pitch decks (use sales-pitch-deck), fundraising financial narratives (use fundraising-narrative), or brand positioning (use brand-positioning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "planning",
+    "presentation",
+    "branding",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

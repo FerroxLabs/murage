@@ -1,0 +1,14 @@
+{
+  "id": "wedding-planner",
+  "name": "Wedding Planner",
+  "version": "1.0.0",
+  "description": "Comprehensive wedding planning guide with 12-month countdown timeline, budget allocation, vendor selection, ceremony and reception planning, guest list management, seating arrangements, day-of timeline, and DIY versus professional decision guidance. Use when the user asks about wedding planner, or needs help with comprehensive wedding planning guide with 12-month countdown timeline, budget allocation, vendor selection, ceremony and reception planning, guest list management, seating arrangements, day-of timeline, and diy versus professional decision guidance. Do NOT use when the request requires professional specialized advice or falls outside the scope of wedding planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "event-planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

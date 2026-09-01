@@ -1,0 +1,14 @@
+{
+  "id": "quarterly-planning",
+  "name": "Quarterly Planning",
+  "version": "1.0.0",
+  "description": "Produces a personal quarterly plan with 3-5 goals, weekly milestone breakdowns, review checkpoints, and a quarter-end evaluation template. Use when the user wants to plan the next 3 months, set quarterly personal goals, or create a structured 13-week plan for achieving multiple objectives. Do NOT use for business or organizational quarterly planning (use business strategy skills), single-goal planning (use `smart-goal-builder`), or annual planning (use `annual-review` instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "planning",
+    "checklist",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

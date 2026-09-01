@@ -1,0 +1,13 @@
+{
+  "id": "research-competitive-scan",
+  "name": "Competitive scan (the customer's view, not the market's)",
+  "version": "1.0.0",
+  "description": "The team faces a positioning, pricing, or messaging decision and someone asks \"who are we competing against?\" Or the user lists three obvious competitors and you suspect those aren't the ones beating them. Or Copy is about to ship a \"the only X that does Y\" hero.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "competitive",
+    "scan"
+  ],
+  "requiredCapabilities": []
+}

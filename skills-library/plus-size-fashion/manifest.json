@@ -1,0 +1,14 @@
+{
+  "id": "plus-size-fashion",
+  "name": "Plus Size Fashion",
+  "version": "1.0.0",
+  "description": "Body-positive styling guidance with fit tips, shopping strategies, brand recommendations, and confidence-building approaches for plus size individuals. Use when the user asks about plus size fashion, or needs help with body-positive styling guidance with fit tips, shopping strategies, brand recommendations, and confidence-building approaches for plus size individuals. Do NOT use when the request requires professional specialized advice or falls outside the scope of plus size fashion.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fashion",
+    "design",
+    "guide",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

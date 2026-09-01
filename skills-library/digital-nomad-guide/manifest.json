@@ -1,0 +1,14 @@
+{
+  "id": "digital-nomad-guide",
+  "name": "Digital Nomad Guide",
+  "version": "1.0.0",
+  "description": "Digital nomad lifestyle guide covering destination selection criteria including cost, internet quality, visa, and timezone, coworking space finding, reliable internet strategies, tax implications, health insurance options, community building, gear recommendations, and time zone management. Use when the user asks about digital nomad guide, or needs help with digital nomad lifestyle guide covering destination selection criteria including cost, internet quality, visa, and timezone, coworking space finding, reliable internet strategies, tax implications, health insurance options, community building, gear recommendations, and time zone management. Do NOT use when the request requires professional specialized advice or falls outside the scope of digital nomad guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "guide",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "therapy-shopping-guide",
+  "name": "Therapy Shopping Guide",
+  "version": "1.0.0",
+  "description": "Practical guidance for finding the right therapist covering therapy modality comparison, finding and vetting providers, what to expect in a first session, how to evaluate fit, and tracking therapeutic progress. Use when the user asks about therapy shopping guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of therapy shopping guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "budgeting",
+    "stress-management",
+    "guide",
+    "networking",
+    "safety",
+    "emergency-preparedness",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

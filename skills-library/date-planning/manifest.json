@@ -1,0 +1,14 @@
+{
+  "id": "date-planning",
+  "name": "Date Planning",
+  "version": "1.0.0",
+  "description": "Creates occasion-based date plans with activity categories, surprise elements, budget tiers, and logistics frameworks. Produces complete date itineraries with timing, reservations, backup plans, and personal touches. Use when the user asks about planning a date, date ideas, anniversary celebration, or romantic outing. Do NOT use for wedding planning, large event coordination, or assessing relationship quality.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "event-planning",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

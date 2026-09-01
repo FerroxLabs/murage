@@ -1,0 +1,19 @@
+{
+  "id": "polyglot-strategist",
+  "name": "Polyglot Strategist",
+  "version": "1.0.0",
+  "description": "Multi-language management advisor covering language transfer and interference patterns, maintenance scheduling for multiple languages, strategic language selection, simultaneous learning techniques, and long-term scheduling systems for managing fluency across three or more languages. Use when the user asks about polyglot strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of polyglot strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "language-learning",
+    "journaling",
+    "stress-management",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "automation",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

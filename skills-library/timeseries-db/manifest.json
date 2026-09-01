@@ -1,0 +1,14 @@
+{
+  "id": "timeseries-db",
+  "name": "Timeseries Db",
+  "version": "1.0.0",
+  "description": "Time-series database design and operations covering InfluxDB, TimescaleDB, and QuestDB patterns, data retention policies, continuous aggregates, downsampling strategies, compression techniques, optimized query patterns for time-series data, alerting on metrics, IoT data modeling, and Grafana integration for visualization. Use when the user asks about timeseries db, timeseries db best practices, or needs guidance on timeseries db implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

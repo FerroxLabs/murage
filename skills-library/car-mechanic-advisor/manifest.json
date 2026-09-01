@@ -1,0 +1,14 @@
+{
+  "id": "car-mechanic-advisor",
+  "name": "Car Mechanic Advisor",
+  "version": "1.0.0",
+  "description": "Car troubleshooting guide covering dashboard warning light decoding, common sounds and their meanings, basic diagnostic steps, DIY fixes like battery jump-starts and tire changes, maintenance schedules, when to see a mechanic, and repair cost estimation. Use when the user asks about car mechanic advisor, or needs help with car troubleshooting guide covering dashboard warning light decoding, common sounds and their meanings, basic diagnostic steps, diy fixes like battery jump-starts and tire changes, maintenance schedules, when to see a mechanic, and repair cost estimation. Do NOT use when the request requires professional specialized advice or falls outside the scope of car mechanic advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automotive",
+    "home-maintenance",
+    "checklist",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

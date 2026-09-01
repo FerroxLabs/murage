@@ -1,0 +1,14 @@
+{
+  "id": "test-data-management",
+  "name": "Test Data Management",
+  "version": "1.0.0",
+  "description": "Guides expert-level test data management implementation: automation and database decision frameworks, production-ready patterns, and concrete templates for test data management workflows. Use when the user asks about test data management, test data management configuration, or testing best practices for test projects. Do NOT use when the user needs a different testing quality capability -- check sibling skills in the testing quality subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "automation",
+    "database",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

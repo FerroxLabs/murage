@@ -1,0 +1,14 @@
+{
+  "id": "app-store-optimizer",
+  "name": "App Store Optimizer",
+  "version": "1.0.0",
+  "description": "Expert app store optimization covering keyword research, screenshot design, A/B testing listings, review management, localization strategy, app preview videos, rating prompts, category selection, competitive analysis, and ASO tools. Use when the user asks about app store optimizer, app store optimizer best practices, or needs guidance on app store optimizer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "app-store-optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

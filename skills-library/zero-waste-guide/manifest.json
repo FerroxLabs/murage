@@ -1,0 +1,13 @@
+{
+  "id": "zero-waste-guide",
+  "name": "Zero Waste Guide",
+  "version": "1.0.0",
+  "description": "Practical guide to reducing household waste using the 5R framework (refuse, reduce, reuse, recycle, rot), including waste audit methodology, room-by-room product swaps, composting setup options, bulk shopping strategies, DIY alternatives for common products, meal planning to reduce food waste, and zero-waste approaches for bathroom and kitchen. Use when the user asks about zero waste guide, or needs help with practical guide to reducing household waste using the 5r framework (refuse, reduce, reuse, recycle, rot), including waste audit methodology, room-by-room product swaps, composting setup options, bulk shopping strategies, diy alternatives for common products, meal planning to reduce food waste, and zero-waste approaches for bathroom and kitchen. Do NOT use when the request requires professional specialized advice or falls outside the scope of zero waste guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "waste-reduction",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

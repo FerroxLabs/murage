@@ -1,0 +1,14 @@
+{
+  "id": "social-skills-builder",
+  "name": "Social Skills Builder",
+  "version": "1.0.0",
+  "description": "Conversation skills, active listening, reading social cues, building rapport, navigating group dynamics, and developing social confidence for meaningful connections. Use when the user asks about social skills builder, or needs help with conversation skills, active listening, reading social cues, building rapport, navigating group dynamics, and developing social confidence for meaningful connections. Do NOT use when the request requires professional specialized advice or falls outside the scope of social skills builder.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "guide",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

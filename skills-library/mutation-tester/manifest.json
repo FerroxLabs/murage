@@ -1,0 +1,14 @@
+{
+  "id": "mutation-tester",
+  "name": "Mutation Tester",
+  "version": "1.0.0",
+  "description": "Mutation testing expertise covering mutation operators, tool usage (Stryker for JS/TS, PITest for Java, mutmut for Python), mutation score interpretation, surviving mutant analysis, equivalent mutant handling, test suite improvement strategies, CI integration, and cost-effectiveness analysis. Use when the user asks about mutation tester, mutation tester best practices, or needs guidance on mutation tester implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "best-practices",
+    "guide",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "translation-practice",
+  "name": "Translation Practice",
+  "version": "1.0.0",
+  "description": "Creates translation exercises with source text, target language guidance, and quality criteria for language learners practicing translation skills. Produces practice exercises with model translations. Use when a learner asks to practice translating between languages, improve translation accuracy, or do translation exercises. Do NOT use for conversation practice (use `conversation-practice`), for grammar instruction (use `grammar-practice`), or for professional translation work (not an education skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "language-learning",
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

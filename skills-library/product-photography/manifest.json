@@ -1,0 +1,14 @@
+{
+  "id": "product-photography",
+  "name": "Product Photography",
+  "version": "1.0.0",
+  "description": "Produces a product photography setup including background recommendation, light position for specular vs. matte surfaces, camera angle options with visual effects, prop strategy, and retouching sequence. Applicable to any camera and any editing software. Use when the user asks to photograph products, merchandise, food, or objects for e-commerce, social media, or catalog purposes. Do NOT use for portrait photography (use portrait-technique), general lighting theory (use lighting-setup), or standalone photo editing workflow (use photo-editing-workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "photography",
+    "design",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

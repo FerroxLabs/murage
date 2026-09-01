@@ -1,0 +1,19 @@
+{
+  "id": "writing-portfolio-reviewer",
+  "name": "Writing Portfolio Reviewer",
+  "version": "1.0.0",
+  "description": "Comprehensive writing portfolio evaluation assessing quality of craft, range and versatility, market readiness, and professional presentation. Produces a scored review with specific improvement priorities for writers seeking publication, clients, or career advancement. Use when the user asks about writing portfolio reviewer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of writing portfolio reviewer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "design",
+    "template",
+    "research",
+    "marketing",
+    "presentation",
+    "freelancing",
+    "resume-writing",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

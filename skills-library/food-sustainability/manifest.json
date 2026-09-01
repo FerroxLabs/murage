@@ -1,0 +1,13 @@
+{
+  "id": "food-sustainability",
+  "name": "Food Sustainability",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to sustainable eating practices including local eating through CSAs and farmers markets, seasonal eating guide, reducing food waste through meal planning, storage, and composting, understanding food miles, exploring sustainable protein sources, garden-to-table growing, and food preservation techniques. Use when the user asks about food sustainability, or needs help with comprehensive guide to sustainable eating practices including local eating through csas and farmers markets, seasonal eating guide, reducing food waste through meal planning, storage, and composting, understanding food miles, exploring sustainable protein sources, garden-to-table growing, and food preservation techniques. Do NOT use when the request requires professional specialized advice or falls outside the scope of food sustainability.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "meal-planning",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

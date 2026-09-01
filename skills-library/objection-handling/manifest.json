@@ -1,0 +1,15 @@
+{
+  "id": "objection-handling",
+  "name": "Objection Handling",
+  "version": "1.0.0",
+  "description": "Produces an objection handling bank with 8-10 specific rebuttals using SPIN and MEDDIC methodologies for common sales objections. Use when the user asks to prepare for sales objections, create an objection handling guide, write rebuttal scripts, build a sales objection playbook, or prepare responses to common buyer pushback. Do NOT use for discovery call questioning (use discovery-call-script), full sales playbook (use sales-playbook-section), or customer complaint resolution (use customer service skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "strategy",
+    "template",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

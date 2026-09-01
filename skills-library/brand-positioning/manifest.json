@@ -1,0 +1,15 @@
+{
+  "id": "brand-positioning",
+  "name": "Brand Positioning",
+  "version": "1.0.0",
+  "description": "Produces a brand positioning statement using the standard positioning formula plus a positioning map with competitive axes. Use when the user asks to define brand positioning, create a positioning statement, differentiate their brand, or map their position relative to competitors. Do NOT use for full marketing strategy (use marketing-strategy), value proposition canvas (use value-proposition), or mission/vision statements (use mission-vision-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "branding",
+    "strategy",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

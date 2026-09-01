@@ -1,0 +1,19 @@
+{
+  "id": "tech-ethics-advisor",
+  "name": "Tech Ethics Advisor",
+  "version": "1.0.0",
+  "description": "Expert guide to technology ethics covering AI fairness and bias, data privacy and surveillance, algorithmic accountability, design ethics and dark patterns, digital rights, platform governance, and structured frameworks for evaluating ethical implications of technology decisions. Use when the user asks about tech ethics advisor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of tech ethics advisor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "checklist",
+    "testing",
+    "automation",
+    "analysis",
+    "performing-arts",
+    "competitive-programming",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

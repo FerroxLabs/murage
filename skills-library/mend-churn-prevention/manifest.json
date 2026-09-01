@@ -1,0 +1,13 @@
+{
+  "id": "mend-churn-prevention",
+  "name": "Churn prevention",
+  "version": "1.0.0",
+  "description": "Someone asks \"why are we losing accounts,\" \"what does our health score predict,\" \"how do we run a save call,\" or \"customer emailed cancellation — what now.\" Load for keeping or recovering an existing relationship — not signup activation (`onboarding-flow.md`), not in-flight tickets (`ticket-triage.m",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mend",
+    "churn",
+    "prevention"
+  ],
+  "requiredCapabilities": []
+}

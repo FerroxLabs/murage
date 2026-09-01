@@ -1,0 +1,14 @@
+{
+  "id": "data-in-slides",
+  "name": "Data In Slides",
+  "version": "1.0.0",
+  "description": "Produces chart specifications for presentation slides including chart type selection for each data comparison, simplified data optimized for presentations, and insight headlines above each chart. Uses Decision 8 chart selection logic with presentation-specific simplification. Use when the user asks to add data or charts to a presentation, visualize data in slides, or show numbers in a slide deck. Do NOT use for standalone data visualization outside presentations (use chart-type-selector), full dashboard design (use dashboard-design), or slide deck overall structure (use slide-deck-structure).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "presentation",
+    "data-visualization",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

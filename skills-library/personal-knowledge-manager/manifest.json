@@ -1,0 +1,19 @@
+{
+  "id": "personal-knowledge-manager",
+  "name": "Personal Knowledge Manager",
+  "version": "1.0.0",
+  "description": "PKM systems comparison covering PARA, Zettelkasten, GTD, and Building a Second Brain methodologies with capture workflows, processing routines, retrieval strategies, tool selection guidance, and information diet management. Use when the user asks about personal knowledge manager, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of personal knowledge manager or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "journaling",
+    "habits",
+    "research",
+    "energy-efficiency",
+    "best-practices",
+    "cleaning",
+    "savings",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "memory-palace-builder",
+  "name": "Memory Palace Builder",
+  "version": "1.0.0",
+  "description": "Master the method of loci, peg system, linking method, and advanced mnemonic techniques for memorization with practical applications and practice exercises. Use when the user asks about memory palace builder, or needs help with master the method of loci, peg system, linking method, and advanced mnemonic techniques for memorization with practical applications and practice exercises. Do NOT use when the request requires professional specialized advice or falls outside the scope of memory palace builder.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "spaced-repetition",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

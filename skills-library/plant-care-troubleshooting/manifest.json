@@ -1,0 +1,14 @@
+{
+  "id": "plant-care-troubleshooting",
+  "name": "Plant Care Troubleshooting",
+  "version": "1.0.0",
+  "description": "Diagnoses common plant health problems using symptom-based analysis for garden and houseplants. Covers overwatering, underwatering, nutrient deficiency, light issues, and pest identification. Produces a diagnosis with treatment steps and prevention plan. Use when the user asks why a plant is wilting, yellowing, dropping leaves, has spots, or shows other signs of stress. Use for plant health troubleshooting, not human health. Do NOT use for lawn care issues (use lawn-care-schedule), vegetable garden planning (use vegetable-garden-planning), or any medical or health diagnosis of humans or animals.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "gardening",
+    "troubleshooting",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "negotiate-raise",
+  "name": "Negotiate Raise",
+  "version": "1.0.0",
+  "description": "Guides the user through a structured raise negotiation process from performance documentation through follow-up conversation, chaining 4 atomic skills in sequence. Covers timing (annual review vs. ad-hoc), leverage type (internal-only vs. competing offer), and outcome handling (full approval, partial offer, or denial). Use when the user wants to negotiate a raise or promotion at their current employer. Do NOT use for job offer salary negotiation (use land-new-job workflow), freelance rate increases (use start-freelancing workflow), or career pivots (use switch-careers workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "salary-negotiation",
+    "career",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

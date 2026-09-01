@@ -1,0 +1,18 @@
+{
+  "id": "sailing-basics",
+  "name": "Sailing Basics",
+  "version": "1.0.0",
+  "description": "Guide to sailing fundamentals including points of sail, sail trim, essential knots, right of way rules, weather reading, man overboard procedure, certification paths, boat types, and terminology. Use when the user asks about sailing basics, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of sailing basics or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "hiking",
+    "budgeting",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "running",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

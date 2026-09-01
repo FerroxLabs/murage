@@ -1,0 +1,16 @@
+{
+  "id": "partnership-agreement-outline",
+  "name": "Partnership Agreement Outline",
+  "version": "1.0.0",
+  "description": "Creates a non-legal partnership discussion guide covering roles, equity split, decision rights, vesting, compensation, intellectual property, exit provisions, and dispute resolution for co-founders and business partners. Use when the user asks about partnership agreements, co-founder agreements, equity splits, co-founder terms, or business partnership structure. Do NOT use for legal contract drafting (recommend an attorney), incorporation decisions (use incorporation-comparison), or investor term sheets (use fundraising-narrative).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "planning",
+    "strategy",
+    "decision-making",
+    "template",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

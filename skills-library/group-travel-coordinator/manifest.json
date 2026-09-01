@@ -1,0 +1,15 @@
+{
+  "id": "group-travel-coordinator",
+  "name": "Group Travel Coordinator",
+  "version": "1.0.0",
+  "description": "Coordinates group travel logistics including preference gathering, consensus building, booking sequences, and cost-splitting workflows. Produces a complete group coordination plan with role assignments, decision frameworks, and shared booking timelines. Use when the user asks about organizing group trips, coordinating travel with friends or family groups, managing group booking logistics, or building consensus on travel plans. Do NOT use for couples trips (use honeymoon-trip-planner or trip-itinerary-builder), solo travel, or event planning (use family-relationships event skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "planning",
+    "event-planning",
+    "checklist",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "screenplay-scene",
+  "name": "Screenplay Scene",
+  "version": "1.0.0",
+  "description": "Writes screenplay scenes in industry-standard format with slug lines, action lines, dialogue, and parentheticals. Enforces visual storytelling and proper screenplay conventions. Use when the user asks to write a screenplay scene, script a scene, format dialogue for screen, or draft in screenplay format. Do NOT use for prose fiction scenes (use scene-writing), stage plays (different format), dialogue-only exercises (use dialogue-writing), or full screenplay structure (use plot-outline for structure first).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "technical-writing"
+  ],
+  "requiredCapabilities": []
+}

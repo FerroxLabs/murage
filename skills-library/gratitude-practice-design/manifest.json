@@ -1,0 +1,15 @@
+{
+  "id": "gratitude-practice-design",
+  "name": "Gratitude Practice Design",
+  "version": "1.0.0",
+  "description": "Designs a personalized gratitude practice using specific formats (three-item gratitude journal, gratitude letter, appreciation inventory, gratitude walk, savoring practice). Gathers the user's goals and preferences, then produces a structured practice plan with templates, prompt sets, and a weekly schedule. Use when the user asks about starting a gratitude practice, gratitude journaling, building an appreciation habit, or gratitude exercises for wellbeing. Do NOT use for clinical positive psychology interventions, treating depression, or replacing professional mental health support.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "self-care",
+    "journaling",
+    "emotional-health",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

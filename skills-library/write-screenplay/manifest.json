@@ -1,0 +1,16 @@
+{
+  "id": "write-screenplay",
+  "name": "Write Screenplay",
+  "version": "1.0.0",
+  "description": "Guides the user through writing a complete screenplay from concept through pitching, chaining 6 atomic skills in the writing category. Covers feature film, short film, and TV pilot formats with decision points for genre conventions, adaptation vs. original work, and festival submission vs. production pitch targeting. Uses screenplay-scene skill for proper screenplay formatting during the scene writing phase. Use when the user wants to write a screenplay from concept to pitch-ready draft. Do NOT use for writing prose fiction (use creative writing skills), stage plays (different format), or producing a film (this is writing only, not production planning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "editing",
+    "step-by-step",
+    "planning",
+    "content-creation"
+  ],
+  "requiredCapabilities": []
+}

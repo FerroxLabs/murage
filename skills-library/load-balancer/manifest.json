@@ -1,0 +1,14 @@
+{
+  "id": "load-balancer",
+  "name": "Load Balancer",
+  "version": "1.0.0",
+  "description": "Load balancing design. Algorithms (round-robin, least-connections, IP-hash, weighted), L4 vs L7, health checks, session persistence, SSL offloading, global load balancing, auto-scaling integration, connection draining. Use when the user asks about load balancer, load balancer best practices, or needs guidance on load balancer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "guide",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

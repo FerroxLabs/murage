@@ -1,0 +1,16 @@
+{
+  "id": "financial-model-structure",
+  "name": "Financial Model Structure",
+  "version": "1.0.0",
+  "description": "Builds a three-statement financial model architecture with revenue model, cost structure, P&L, balance sheet, and cash flow statement linked by core assumptions. Use when the user asks about financial modeling, building a financial model, startup financial projections, or structuring financial statements. Do NOT use for personal budgeting (use budget-planning), tax planning (use tax-preparation), or investment portfolio analysis.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "analysis",
+    "strategy",
+    "spreadsheets",
+    "report",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

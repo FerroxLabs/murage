@@ -1,0 +1,14 @@
+{
+  "id": "exit-your-business",
+  "name": "Exit Your Business",
+  "version": "1.0.0",
+  "description": "Guided workflow for business owners planning an exit, from business valuation and preparation through marketing the business, negotiating the sale, and managing the transition. Covers sale to a third party, management buyout, and succession planning. Use when the user wants to exit your business or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "step-by-step",
+    "planning",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

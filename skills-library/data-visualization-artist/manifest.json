@@ -1,0 +1,19 @@
+{
+  "id": "data-visualization-artist",
+  "name": "Data Visualization Artist",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to creating effective data visualizations with matplotlib, plotly, seaborn, and D3.js including chart selection frameworks, design principles, and publication-quality output. Use when the user asks about data visualization artist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of data visualization artist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "checklist",
+    "template",
+    "python",
+    "javascript",
+    "testing",
+    "analysis",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,277 @@
+{
+  "generatedBy": "scripts/import-wayland-assistants.mjs",
+  "generatedAt": "2026-09-01T11:03:45.855Z",
+  "source": "/Volumes/Mando/wayland/app/resources/builtin-extensions/waylandteams",
+  "skillsDir": "/Volumes/Mando/WaylandBots/murage-app/skills-library",
+  "specialists": 28,
+  "written": 28,
+  "packages": [
+    {
+      "id": "research",
+      "persona": "assistants/roles/research.md",
+      "skills": 9,
+      "outcomes": 3
+    },
+    {
+      "id": "copy",
+      "persona": "assistants/roles/copy.md",
+      "skills": 5,
+      "outcomes": 3
+    },
+    {
+      "id": "sales",
+      "persona": "assistants/roles/sales.md",
+      "skills": 7,
+      "outcomes": 3
+    },
+    {
+      "id": "forge",
+      "persona": "assistants/roles/forge.md",
+      "skills": 7,
+      "outcomes": 3
+    },
+    {
+      "id": "mira",
+      "persona": "assistants/roles/mira.md",
+      "skills": 6,
+      "outcomes": 3
+    },
+    {
+      "id": "beacon",
+      "persona": "assistants/roles/beacon.md",
+      "skills": 10,
+      "outcomes": 3
+    },
+    {
+      "id": "patch",
+      "persona": "assistants/roles/patch.md",
+      "skills": 8,
+      "outcomes": 3
+    },
+    {
+      "id": "spark",
+      "persona": "assistants/roles/spark.md",
+      "skills": 8,
+      "outcomes": 3
+    },
+    {
+      "id": "coin",
+      "persona": "assistants/roles/coin.md",
+      "skills": 11,
+      "outcomes": 3
+    },
+    {
+      "id": "sentry",
+      "persona": "assistants/roles/sentry.md",
+      "skills": 9,
+      "outcomes": 3
+    },
+    {
+      "id": "stage",
+      "persona": "assistants/roles/stage.md",
+      "skills": 9,
+      "outcomes": 3
+    },
+    {
+      "id": "helm",
+      "persona": "assistants/roles/helm.md",
+      "skills": 10,
+      "outcomes": 3
+    },
+    {
+      "id": "quiet-money",
+      "persona": "assistants/roles/quiet-money.md",
+      "skills": 8,
+      "outcomes": 3
+    },
+    {
+      "id": "quiet-money-position-auditor",
+      "persona": "assistants/roles/quiet-money-position-auditor.md",
+      "skills": 10,
+      "outcomes": 5
+    },
+    {
+      "id": "quiet-money-career-strategist",
+      "persona": "assistants/roles/quiet-money-career-strategist.md",
+      "skills": 10,
+      "outcomes": 5
+    },
+    {
+      "id": "quiet-money-spending-auditor",
+      "persona": "assistants/roles/quiet-money-spending-auditor.md",
+      "skills": 10,
+      "outcomes": 5
+    },
+    {
+      "id": "quiet-money-windfall-navigator",
+      "persona": "assistants/roles/quiet-money-windfall-navigator.md",
+      "skills": 10,
+      "outcomes": 5
+    },
+    {
+      "id": "quiet-money-generational-planner",
+      "persona": "assistants/roles/quiet-money-generational-planner.md",
+      "skills": 8,
+      "outcomes": 5
+    },
+    {
+      "id": "quiet-money-time-coach",
+      "persona": "assistants/roles/quiet-money-time-coach.md",
+      "skills": 9,
+      "outcomes": 5
+    },
+    {
+      "id": "probe",
+      "persona": "assistants/roles/probe.md",
+      "skills": 7,
+      "outcomes": 3
+    },
+    {
+      "id": "vault",
+      "persona": "assistants/roles/vault.md",
+      "skills": 8,
+      "outcomes": 3
+    },
+    {
+      "id": "smith",
+      "persona": "assistants/roles/smith.md",
+      "skills": 9,
+      "outcomes": 3
+    },
+    {
+      "id": "mend",
+      "persona": "assistants/roles/mend.md",
+      "skills": 8,
+      "outcomes": 3
+    },
+    {
+      "id": "lens",
+      "persona": "assistants/roles/lens.md",
+      "skills": 10,
+      "outcomes": 3
+    },
+    {
+      "id": "verdict",
+      "persona": "assistants/roles/verdict.md",
+      "skills": 7,
+      "outcomes": 3
+    },
+    {
+      "id": "slate",
+      "persona": "assistants/roles/slate.md",
+      "skills": 10,
+      "outcomes": 3
+    },
+    {
+      "id": "voiceprint",
+      "persona": "assistants/roles/voiceprint.md",
+      "skills": 9,
+      "outcomes": 3
+    },
+    {
+      "id": "humanizer",
+      "persona": "assistants/roles/humanizer.md",
+      "skills": 8,
+      "outcomes": 3
+    }
+  ],
+  "skipped": [],
+  "unresolvedSkills": {
+    "content-about-page": [
+      "copy"
+    ],
+    "content-haro-reply": [
+      "copy"
+    ],
+    "sales-prospect": [
+      "sales"
+    ],
+    "sales-qualify": [
+      "sales"
+    ],
+    "sales-contacts": [
+      "sales"
+    ],
+    "sales-icp": [
+      "sales"
+    ],
+    "market": [
+      "mira"
+    ],
+    "market-audit": [
+      "mira"
+    ],
+    "market-landing": [
+      "mira"
+    ],
+    "finance-pl": [
+      "coin"
+    ],
+    "finance-balance-sheet": [
+      "coin"
+    ],
+    "finance-cashflow": [
+      "coin"
+    ],
+    "finance-receivables": [
+      "coin"
+    ],
+    "finance-r-and-d-credit": [
+      "coin"
+    ],
+    "finance-1099-prep": [
+      "coin"
+    ],
+    "finance-payroll-prep": [
+      "coin"
+    ],
+    "finance-sales-tax": [
+      "coin"
+    ],
+    "legal": [
+      "sentry"
+    ],
+    "legal-dmca": [
+      "sentry"
+    ],
+    "legal-eula": [
+      "sentry"
+    ],
+    "legal-cease-and-desist": [
+      "sentry"
+    ],
+    "legal-gdpr": [
+      "sentry"
+    ],
+    "legal-contractor": [
+      "sentry"
+    ],
+    "commerce-ugc-prompts": [
+      "vault"
+    ],
+    "support": [
+      "mend"
+    ],
+    "hr": [
+      "slate"
+    ],
+    "hr-handbook": [
+      "slate"
+    ],
+    "hr-rif": [
+      "slate"
+    ],
+    "hr-termination-letter": [
+      "slate"
+    ],
+    "hr-offboard": [
+      "slate"
+    ],
+    "hr-leave-of-absence": [
+      "slate"
+    ],
+    "hr-accommodation-request": [
+      "slate"
+    ]
+  }
+}

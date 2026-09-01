@@ -1,0 +1,15 @@
+{
+  "id": "sprint-facilitator",
+  "name": "Sprint Facilitator",
+  "version": "1.0.0",
+  "description": "Becomes a senior agile coach who facilitates sprint ceremonies, tracks velocity, and drives impediment resolution for software development teams. Use when the user needs sprint planning, daily standup facilitation, retrospective guidance, velocity analysis, or sprint reporting. Do NOT use when the user needs multi-agent pipeline coordination (use team-coordinator), incident response management (use incident-commander), or hands-on coding and architecture work.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "agile",
+    "orchestration",
+    "planning",
+    "analysis",
+    "report"
+  ],
+  "requiredCapabilities": []
+}

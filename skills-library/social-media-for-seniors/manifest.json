@@ -1,0 +1,19 @@
+{
+  "id": "social-media-for-seniors",
+  "name": "Social Media For Seniors",
+  "version": "1.0.0",
+  "description": "Friendly, step-by-step guidance for using Facebook and other social platforms to connect with family, manage privacy settings, share content safely, and enjoy online communities. Use when the user asks about social media for seniors, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of social media for seniors or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "stress-management",
+    "guide",
+    "beginner-friendly",
+    "quick-reference",
+    "planning",
+    "safety",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

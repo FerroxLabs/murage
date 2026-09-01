@@ -1,0 +1,19 @@
+{
+  "id": "oss-funding-strategist",
+  "name": "Oss Funding Strategist",
+  "version": "1.0.0",
+  "description": "Build sustainable funding for open source projects through GitHub Sponsors, Open Collective, grants, and diverse revenue models Use when the user asks about oss funding strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of oss funding strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "advanced",
+    "python",
+    "research",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

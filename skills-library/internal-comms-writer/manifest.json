@@ -1,0 +1,13 @@
+{
+  "id": "internal-comms-writer",
+  "name": "Internal Comms Writer",
+  "version": "1.0.0",
+  "description": "Internal engineering communication expert covering RFC writing, Architecture Decision Records (ADRs), engineering announcements, all-hands updates, decision documents, incident postmortems, async communication best practices, and change management communication. Use when the user asks about internal comms writer, internal comms writer best practices, or needs guidance on internal comms writer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "business-writing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "acting-coach",
+  "name": "Acting Coach",
+  "version": "1.0.0",
+  "description": "Expert acting coaching covering method acting, Meisner technique, audition preparation, monologue selection, and character development for performers at all levels Use when the user asks about acting coach, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of acting coach or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "breathing",
+    "journaling",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "quick-reference",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

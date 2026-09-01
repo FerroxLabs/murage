@@ -1,0 +1,19 @@
+{
+  "id": "content-strategy-auditor",
+  "name": "Content Strategy Auditor",
+  "version": "1.0.0",
+  "description": "Structured content strategy assessment covering content inventory and performance analysis, gap identification, competitive benchmarking, audience alignment, and producing an actionable content optimization plan. Use when the user asks about content strategy auditor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of content strategy auditor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "design",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "analysis",
+    "research",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

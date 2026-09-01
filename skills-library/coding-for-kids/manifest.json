@@ -1,0 +1,15 @@
+{
+  "id": "coding-for-kids",
+  "name": "Coding For Kids",
+  "version": "1.0.0",
+  "description": "Age-based progression guide for teaching kids to code, covering Scratch (ages 8-12), Python (ages 12+), and web development (ages 14+), with project ideas by skill level, strategies for making coding fun through games, animations, and robots, recommended resources and platforms, a parent guide for supporting young coders, and information about camps and competitions. Use when the user asks about coding for kids or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "parenting",
+    "guide",
+    "beginner-friendly",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

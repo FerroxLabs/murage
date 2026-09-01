@@ -1,0 +1,15 @@
+{
+  "id": "swot-analysis",
+  "name": "Swot Analysis",
+  "version": "1.0.0",
+  "description": "Produces a completed SWOT analysis grid with 4-6 items per quadrant and strategic implications for a specific company, product, or initiative. Use when the user asks to do a SWOT analysis, evaluate strengths and weaknesses, assess internal and external factors, or analyze strategic position before a decision. Do NOT use for competitive benchmarking against specific rivals (use competitive-analysis), industry-level force analysis (use porters-five-forces), or macro-environment scanning (use pestle-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "analysis",
+    "planning",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "educator-objectives",
+  "name": "Educator Objectives",
+  "version": "1.0.0",
+  "description": "Creates measurable learning objectives using Bloom's taxonomy for educators designing lessons, units, or courses. Produces a set of aligned, leveled objectives with action verbs, conditions, and criteria that can be directly inserted into lesson plans or syllabi. Use when an educator asks to write learning objectives, create learning outcomes, align objectives to Bloom's taxonomy, or design measurable goals for instruction. Do NOT use for student personal learning goals (use `learning-objectives`), for full lesson plan creation (use `lesson-plan-design`), or for curriculum-level outcomes (use `curriculum-mapping`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "lesson-plan",
+    "curriculum",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

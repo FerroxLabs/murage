@@ -1,0 +1,13 @@
+{
+  "id": "set-up-monitoring",
+  "name": "Set Up Monitoring",
+  "version": "1.0.0",
+  "description": "Complete workflow for building a production monitoring stack from scratch, covering metrics collection, alerting strategy, dashboard design, runbook creation, and on-call practices. Establishes the observability foundation that enables confident deployments and fast incident resolution. Use when the user wants to set up monitoring or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

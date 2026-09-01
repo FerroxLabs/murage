@@ -1,0 +1,19 @@
+{
+  "id": "learning-style-discoverer",
+  "name": "Learning Style Discoverer",
+  "version": "1.0.0",
+  "description": "Comprehensive learning preference assessment using the VARK framework and beyond, evaluating visual, auditory, reading, and kinesthetic preferences alongside environmental factors, study habits, and cognitive strategies to produce a personalized learning profile with optimized study recommendations. Use when the user asks about learning style discoverer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of learning style discoverer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "template",
+    "guide",
+    "step-by-step",
+    "testing",
+    "performing-arts",
+    "video-production",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

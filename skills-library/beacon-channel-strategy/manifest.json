@@ -1,0 +1,13 @@
+{
+  "id": "beacon-channel-strategy",
+  "name": "channel-strategy",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Channels specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beacon",
+    "channel",
+    "strategy"
+  ],
+  "requiredCapabilities": []
+}

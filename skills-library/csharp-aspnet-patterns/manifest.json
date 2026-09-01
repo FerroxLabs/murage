@@ -1,0 +1,14 @@
+{
+  "id": "csharp-aspnet-patterns",
+  "name": "Csharp Aspnet Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level ASP.NET Core development: minimal APIs vs Controllers decision tree, middleware pipeline, filters, configuration binding, health checks, and OpenAPI integration. Use when the user asks about ASP.NET Core, minimal APIs, Controllers, middleware, filters, configuration, health checks, .NET 8. Do NOT use when the user asks about C# project setup (use `csharp-project-setup`), C# async (use `csharp-async-patterns`), C# testing (use `csharp-testing-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "csharp",
+    "backend",
+    "frameworks",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

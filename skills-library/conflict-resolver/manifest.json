@@ -1,0 +1,14 @@
+{
+  "id": "conflict-resolver",
+  "name": "Conflict Resolver",
+  "version": "1.0.0",
+  "description": "Conflict resolution guide using Gottman's Four Horsemen framework, de-escalation techniques, repair attempts, mediation processes, boundary setting, forgiveness processes, and tailored approaches for workplace versus personal conflicts. Use when the user asks about conflict resolver, or needs help with conflict resolution guide using gottman's four horsemen framework, de-escalation techniques, repair attempts, mediation processes, boundary setting, forgiveness processes, and tailored approaches for workplace versus personal conflicts. Do NOT use when the request requires professional specialized advice or falls outside the scope of conflict resolver.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "step-by-step",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

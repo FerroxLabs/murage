@@ -1,0 +1,19 @@
+{
+  "id": "virtual-team-builder",
+  "name": "Virtual Team Builder",
+  "version": "1.0.0",
+  "description": "Remote team culture and trust-building guidance covering virtual rituals, remote team bonding activities, inclusion practices for distributed teams, communication norms, conflict resolution at distance, and strategies for creating belonging without a shared physical space. Use when the user asks about virtual team builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of virtual team builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "budgeting",
+    "checklist",
+    "template",
+    "api-design",
+    "game-design",
+    "video-production",
+    "presentation",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

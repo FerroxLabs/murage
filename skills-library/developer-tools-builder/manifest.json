@@ -1,0 +1,19 @@
+{
+  "id": "developer-tools-builder",
+  "name": "Developer Tools Builder",
+  "version": "1.0.0",
+  "description": "Developer tools design and implementation covering CLI design patterns, SDK architecture, API design best practices, documentation strategy, developer experience optimization, plugin systems, error message design, versioning and changelog management, and developer onboarding flows. Includes code examples, DX audit checklists, and distribution patterns. Use when the user asks about developer tools builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of developer tools builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "best-practices",
+    "checklist",
+    "guide",
+    "python",
+    "javascript",
+    "api-design",
+    "testing",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

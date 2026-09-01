@@ -1,0 +1,16 @@
+{
+  "id": "handle-production-incident",
+  "name": "Handle Production Incident",
+  "version": "1.0.0",
+  "description": "Orchestrates end-to-end production incident management from detection through resolution and retrospective, chaining five skills into a complete incident lifecycle pipeline. Covers triage, log investigation, monitoring verification, documentation, and team retrospective. Use when handling a production incident that affects users and requires coordinated response, investigation, resolution, and follow-up. Do NOT use for non-production issues, minor bugs that do not affect users, or planned maintenance activities.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "troubleshooting",
+    "security",
+    "planning",
+    "step-by-step",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

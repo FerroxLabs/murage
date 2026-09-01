@@ -1,0 +1,14 @@
+{
+  "id": "csharp-testing-patterns",
+  "name": "Csharp Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level C# testing: xUnit, Moq, FluentAssertions, WebApplicationFactory for integration testing, and test architecture patterns for .NET applications. Use when the user asks about C# testing, xUnit, Moq, FluentAssertions, WebApplicationFactory, .NET testing, integration testing. Do NOT use when the user asks about C# project setup (use `csharp-project-setup`), C# ASP.NET (use `csharp-aspnet-patterns`), general testing concepts (use `unit-testing-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "csharp",
+    "testing",
+    "tdd",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

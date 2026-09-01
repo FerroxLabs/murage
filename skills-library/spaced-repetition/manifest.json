@@ -1,0 +1,15 @@
+{
+  "id": "spaced-repetition",
+  "name": "Spaced Repetition",
+  "version": "1.0.0",
+  "description": "Creates spaced repetition schedules using the Leitner system or SM-2 algorithm for long-term memory retention. Produces a concrete review schedule with interval recommendations calibrated to the learner's material and available time -- not a description of how spaced repetition works. Use when a learner asks to create a review schedule, build a spaced repetition plan, optimize memorization, or set up a flashcard review system. Do NOT use for flashcard content creation (use `flashcard-generation`), for general study planning (use `study-plan`), or for exam-specific preparation (use `exam-prep-plan`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spaced-repetition",
+    "study-skills",
+    "active-recall",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

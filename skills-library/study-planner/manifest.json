@@ -1,0 +1,14 @@
+{
+  "id": "study-planner",
+  "name": "Study Planner",
+  "version": "1.0.0",
+  "description": "Comprehensive study plan creation using spaced repetition scheduling, Pomodoro technique, active recall strategies, exam preparation timelines, subject prioritization, study environment optimization, and proven note-taking methods including Cornell, mind maps, and outlining. Use when the user asks about study planner, or needs help with comprehensive study plan creation using spaced repetition scheduling, pomodoro technique, active recall strategies, exam preparation timelines, subject prioritization, study environment optimization, and proven note-taking methods including cornell, mind maps, and outlining. Do NOT use when the request requires professional specialized advice or falls outside the scope of study planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "planning",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

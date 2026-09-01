@@ -1,0 +1,14 @@
+{
+  "id": "batch-image-generation",
+  "name": "Batch Image Generation",
+  "version": "1.0.0",
+  "description": "Produces batch image generation strategies with prompt templates using variable placeholders, seed management for consistent series, parameter variation approaches, and output organization systems. Use when the user asks to generate multiple images from a template, create image variations systematically, batch-produce AI art, or organize a large generation workflow. Do NOT use for single-image prompting (use model-specific skills), character consistency (use midjourney-consistency), or prompt debugging (use ai-image-prompt-debugging).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-image-generation",
+    "automation",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "mentorship-guide",
+  "name": "Mentorship Guide",
+  "version": "1.0.0",
+  "description": "Creates mentorship session guides with agendas, reflection questions, and goal-tracking frameworks for mentors and mentees in professional development relationships. Produces structured session plans -- not advice about the value of mentorship. Use when a mentor or mentee asks to structure their mentorship sessions, create a mentorship plan, design reflection activities, or track mentorship goals. Do NOT use for general learning path creation (use `learning-path`), for skill gap assessment (use `skill-gap-analysis`), or for coaching (not an education skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

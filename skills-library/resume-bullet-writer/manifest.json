@@ -1,0 +1,14 @@
+{
+  "id": "resume-bullet-writer",
+  "name": "Resume Bullet Writer",
+  "version": "1.0.0",
+  "description": "Rewrites work experience descriptions into achievement-oriented resume bullets using the Action Verb + Task + Metric/Result formula. Produces 3-5 polished bullets per role that quantify impact and highlight transferable skills. Use when the user wants to write resume bullets, improve their experience section, turn job duties into achievements, or create accomplishment statements. Do NOT use for resume summary sections (use resume-summary-writer), ATS keyword optimization (use ats-resume-optimizer), or career change resume rewrites (use career-change-resume).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "resume-writing",
+    "career",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

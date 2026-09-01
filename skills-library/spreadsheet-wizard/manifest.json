@@ -1,0 +1,19 @@
+{
+  "id": "spreadsheet-wizard",
+  "name": "Spreadsheet Wizard",
+  "version": "1.0.0",
+  "description": "Advanced Excel and Google Sheets mastery covering lookup functions, pivot tables, conditional formatting, macros and Apps Script, data validation, dashboard creation, and financial modeling techniques for business analysis. Use when the user asks about spreadsheet wizard, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of spreadsheet wizard or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "beginner-friendly",
+    "advanced",
+    "javascript",
+    "automation",
+    "analysis",
+    "performing-arts",
+    "running",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

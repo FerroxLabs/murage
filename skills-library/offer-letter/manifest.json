@@ -1,0 +1,16 @@
+{
+  "id": "offer-letter",
+  "name": "Offer Letter",
+  "version": "1.0.0",
+  "description": "Creates a structured job offer letter with role details, compensation package, start date, conditions of employment, and expiration date in a professional format. Use when the user asks about writing an offer letter, job offer, employment offer, or extending an offer to a candidate. Do NOT use for rejection letters (use rejection-letter), job descriptions (use job-description), or employment contracts which require legal review.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "template",
+    "email",
+    "planning",
+    "checklist",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

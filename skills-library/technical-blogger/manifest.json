@@ -1,0 +1,13 @@
+{
+  "id": "technical-blogger",
+  "name": "Technical Blogger",
+  "version": "1.0.0",
+  "description": "Technical blog writing expert covering blog post structure, headline optimization, code example design, SEO for tech blogs, audience targeting, content calendar, distribution strategy, measuring engagement, and evergreen vs timely content. Use when the user asks about technical blogger, technical blogger best practices, or needs guidance on technical blogger implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "blog-post"
+  ],
+  "requiredCapabilities": []
+}

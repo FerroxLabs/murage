@@ -1,0 +1,14 @@
+{
+  "id": "swift-testing-patterns",
+  "name": "Swift Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level swift testing patterns implementation: swift and mobile decision frameworks, production-ready patterns, and concrete templates for swift testing patterns workflows. Use when the user asks about swift testing patterns, swift testing patterns configuration, or swift best practices for swift projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "swift",
+    "mobile",
+    "testing",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

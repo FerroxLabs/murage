@@ -1,0 +1,14 @@
+{
+  "id": "home-energy-audit",
+  "name": "Home Energy Audit",
+  "version": "1.0.0",
+  "description": "Conducts a room-by-room home energy audit identifying energy loss points and producing a prioritized fix list with estimated kWh savings, cost per fix, and payback period. Gathers the user's housing type, climate zone, current energy costs, and budget to produce an actionable energy reduction plan distinguishing renter-accessible from homeowner-only improvements. Use when the user asks about reducing home energy bills, finding energy leaks, conducting an energy audit, improving home insulation, or lowering heating and cooling costs. Do NOT use for commercial building energy audits, HVAC system design or installation, solar panel evaluation as an investment, or utility-scale energy efficiency programs.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "energy-efficiency",
+    "sustainability",
+    "checklist",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "rest-api-design",
+  "name": "Rest Api Design",
+  "version": "1.0.0",
+  "description": "Guides expert-level rest api design implementation: api-design and best-practices decision frameworks, production-ready patterns, and concrete templates for rest api design workflows. Use when the user asks about rest api design, rest api design configuration, or api-design best practices for rest projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "api-design",
+    "backend",
+    "best-practices",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

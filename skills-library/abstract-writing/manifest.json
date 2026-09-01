@@ -1,0 +1,13 @@
+{
+  "id": "abstract-writing",
+  "name": "Abstract Writing",
+  "version": "1.0.0",
+  "description": "Writes structured academic abstracts that state the problem, method, key findings, and implications in 150-300 words. Enforces findings-first writing over coverage descriptions. Use when the user asks to write an abstract for a research paper, thesis, conference submission, or journal article. Do NOT use for executive summaries (different format), paper introductions (use research-paper-structure), or literature review summaries (use literature-review).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "writing",
+    "research"
+  ],
+  "requiredCapabilities": []
+}

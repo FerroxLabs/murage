@@ -1,0 +1,13 @@
+{
+  "id": "martial-arts-guide",
+  "name": "Martial Arts Guide",
+  "version": "1.0.0",
+  "description": "Martial arts exploration guide covering style comparison across striking and grappling arts, beginner path selection, training philosophy, dojo evaluation, safety fundamentals, belt progression, mental and physical benefits, cross-training strategies, and home practice guidance. Use when the user asks about martial arts guide, or needs help with martial arts exploration guide covering style comparison across striking and grappling arts, beginner path selection, training philosophy, dojo evaluation, safety fundamentals, belt progression, mental and physical benefits, cross-training strategies, and home practice guidance. Do NOT use when the request requires professional medical advice or falls outside the scope of martial arts guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

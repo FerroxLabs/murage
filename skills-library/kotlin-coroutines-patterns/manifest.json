@@ -1,0 +1,15 @@
+{
+  "id": "kotlin-coroutines-patterns",
+  "name": "Kotlin Coroutines Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level kotlin coroutines patterns implementation: kotlin and mobile decision frameworks, production-ready patterns, and concrete templates for kotlin coroutines patterns workflows. Use when the user asks about kotlin coroutines patterns, kotlin coroutines patterns configuration, or kotlin best practices for kotlin projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "kotlin",
+    "mobile",
+    "backend",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

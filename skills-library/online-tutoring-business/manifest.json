@@ -1,0 +1,19 @@
+{
+  "id": "online-tutoring-business",
+  "name": "Online Tutoring Business",
+  "version": "1.0.0",
+  "description": "Guide to building an online tutoring business covering platform selection, curriculum design, scheduling systems, pricing strategies, and growth from solo tutor to scalable operation. Use when the user asks about online tutoring business, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of online tutoring business or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "entrepreneurship",
+    "budgeting",
+    "advanced",
+    "testing",
+    "research",
+    "planning",
+    "tax-planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "svelte-builder",
+  "name": "Svelte Builder",
+  "version": "1.0.0",
+  "description": "Expert guidance for building applications with Svelte 5 and SvelteKit, covering runes reactivity, component patterns, stores, SSR/SSG, and production deployment. Use when the user asks about svelte builder, svelte builder best practices, or needs guidance on svelte builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "javascript"
+  ],
+  "requiredCapabilities": []
+}

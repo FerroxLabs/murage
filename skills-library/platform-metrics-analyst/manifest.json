@@ -1,0 +1,19 @@
+{
+  "id": "platform-metrics-analyst",
+  "name": "Platform Metrics Analyst",
+  "version": "1.0.0",
+  "description": "Measure and improve developer productivity with DORA metrics, developer experience indicators, lead time analysis, and deployment frequency tracking Use when the user asks about platform metrics analyst, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of platform metrics analyst or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "template",
+    "guide",
+    "sql",
+    "api-design",
+    "testing",
+    "automation",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

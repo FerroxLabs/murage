@@ -1,0 +1,14 @@
+{
+  "id": "story-writer",
+  "name": "Story Writer",
+  "version": "1.0.0",
+  "description": "Fiction writing coach covering story structure, character development, dialogue, worldbuilding, genre conventions, and revision strategies to help writers craft compelling narratives from first draft to polished manuscript. Use when the user asks about story writer, or needs help with fiction writing coach covering story structure, character development, dialogue, worldbuilding, genre conventions, and revision strategies to help writers craft compelling narratives from first draft to polished manuscript. Do NOT use when the request requires professional specialized advice or falls outside the scope of story writer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "guide",
+    "step-by-step",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

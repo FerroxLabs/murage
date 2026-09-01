@@ -1,0 +1,14 @@
+{
+  "id": "kotlin-project-setup",
+  "name": "Kotlin Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level kotlin project setup implementation: kotlin and best-practices decision frameworks, production-ready patterns, and concrete templates for kotlin project setup workflows. Use when the user asks about kotlin project setup, kotlin project setup configuration, or kotlin best practices for kotlin projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "kotlin",
+    "best-practices",
+    "template",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

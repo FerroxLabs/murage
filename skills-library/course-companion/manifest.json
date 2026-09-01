@@ -1,0 +1,15 @@
+{
+  "id": "course-companion",
+  "name": "Course Companion",
+  "version": "1.0.0",
+  "description": "Creates study guides and companion materials for online or in-person courses, including key terms, review questions, project ideas, and connection summaries for learners following a structured course. Use when a learner asks for help studying alongside a course, wants a study guide for course material, or needs companion questions and exercises for a course they are taking. Do NOT use for designing an online course (use `online-course-design`), for standalone study planning (use `study-plan`), or for book summarization (use `book-summary`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "teaching",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

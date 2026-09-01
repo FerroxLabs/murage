@@ -1,0 +1,13 @@
+{
+  "id": "tone-adjustment",
+  "name": "Tone Adjustment",
+  "version": "1.0.0",
+  "description": "Adjusts the tone, register, and voice of written text while preserving meaning, producing before/after comparisons with tone markers showing every change and its rationale. Use when the user asks to change the tone, make text more formal or casual, adjust the voice, or shift the register of existing writing. Do NOT use for content-level editing (use copy-editing), structural changes (use structural-editing), or proofreading (use proofreading).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "cold-outreach-email",
+  "name": "Cold Outreach Email",
+  "version": "1.0.0",
+  "description": "Writes a personalized cold outreach email to a hiring manager or professional contact, optimized for response rate. Produces a complete email with subject line, body, and call to action that is concise, specific, and avoids generic templates. Use when the user wants to email a hiring manager directly, reach out to a professional contact about opportunities, or write a cold email for job search purposes. Do NOT use for recruiter messages (use recruiter-outreach), networking messages for informational interviews (use networking-message-writer), or post-interview thank-you emails (use thank-you-email-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "email",
+    "writing",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

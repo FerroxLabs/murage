@@ -1,0 +1,14 @@
+{
+  "id": "color-in-data",
+  "name": "Color In Data",
+  "version": "1.0.0",
+  "description": "Applies color to data visualizations by selecting sequential, diverging, or categorical palettes based on data type. Specifies hex codes for each element, ensures colorblind accessibility with WCAG contrast ratios, and documents usage rules. Use when the user needs to choose colors for charts, dashboards, or data-driven graphics. Do NOT use for brand color palette design (use color-palette-design in the design category), chart type selection (use chart-type-selector), or chart formatting beyond color (use chart-formatting).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-visualization",
+    "design",
+    "accessibility",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "streaming-data-engineer",
+  "name": "Streaming Data Engineer",
+  "version": "1.0.0",
+  "description": "Hands-on streaming data engineering covering Apache Kafka producer/consumer tuning, Flink stateful stream processing, Spark Structured Streaming, windowing strategies (tumbling, sliding, session, global), exactly-once semantics, backpressure management, dead-letter queues, schema evolution, and production monitoring patterns. Use when the user asks about streaming data engineer, streaming data engineer best practices, or needs guidance on streaming data engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "guide",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

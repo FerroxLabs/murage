@@ -1,0 +1,13 @@
+{
+  "id": "singing-coach",
+  "name": "Singing Coach",
+  "version": "1.0.0",
+  "description": "Comprehensive vocal coaching covering breath support, placement, resonance, vocal warm-up exercises, range extension, performance preparation, microphone technique, overcoming stage fright, vocal health and hygiene, and genre-specific techniques for pop, rock, R&B, classical, and musical theater. Use when the user asks about singing coach or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "design",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

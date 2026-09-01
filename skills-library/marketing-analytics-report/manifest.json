@@ -1,0 +1,15 @@
+{
+  "id": "marketing-analytics-report",
+  "name": "Marketing Analytics Report",
+  "version": "1.0.0",
+  "description": "Produces a structured marketing analytics report with channel performance, customer acquisition cost, conversion rates, and actionable recommendations using marketing metrics methodology. Use when the user asks to create a marketing report, analyze campaign performance, review marketing metrics, build a marketing dashboard report, or present marketing results to stakeholders. Do NOT use for operations KPI dashboards (use ops-metrics-dashboard), financial P&L analysis (use finance skills), or product usage analytics (use product management skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "analysis",
+    "report",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

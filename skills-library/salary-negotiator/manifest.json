@@ -1,0 +1,14 @@
+{
+  "id": "salary-negotiator",
+  "name": "Salary Negotiator",
+  "version": "1.0.0",
+  "description": "Complete salary negotiation guide covering market rate research, total compensation analysis, negotiation scripts, counter-offer strategies, benefits negotiation for PTO, remote work, and equity, negotiation psychology, when to walk away, and annual review preparation. Use when the user asks about salary negotiator, or needs help with complete salary negotiation guide covering market rate research, total compensation analysis, negotiation scripts, counter-offer strategies, benefits negotiation for pto, remote work, and equity, negotiation psychology, when to walk away, and annual review preparation. Do NOT use when the request requires professional specialized advice or falls outside the scope of salary negotiator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "salary-negotiation",
+    "guide",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

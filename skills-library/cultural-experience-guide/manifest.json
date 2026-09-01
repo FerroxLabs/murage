@@ -1,0 +1,15 @@
+{
+  "id": "cultural-experience-guide",
+  "name": "Cultural Experience Guide",
+  "version": "1.0.0",
+  "description": "Creates a cultural site prioritization and visit planning framework for travel destinations. Produces ranked site lists with visit timing, etiquette notes, and logistical details. Use when the user asks about planning cultural visits abroad, prioritizing museums and historical sites, understanding local cultural practices, or creating a culture-focused travel day. Do NOT use for general itinerary building (use trip-itinerary-builder), local food experiences (use food-tourism-planner), or walking tour creation (use city-walking-tour-builder).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "research",
+    "guide",
+    "step-by-step",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

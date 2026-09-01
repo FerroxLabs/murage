@@ -1,0 +1,19 @@
+{
+  "id": "arabic-learner",
+  "name": "Arabic Learner",
+  "version": "1.0.0",
+  "description": "Arabic language learning expertise covering Modern Standard Arabic vs dialects, Arabic script and handwriting, root-and-pattern morphology system, pronunciation of emphatic and guttural sounds, cultural context and etiquette, dialect selection guidance, study strategies, and curated resources for Arabic acquisition at all levels. Use when the user asks about arabic learner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of arabic learner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "language-learning",
+    "beginner-friendly",
+    "advanced",
+    "research",
+    "performing-arts",
+    "cooking",
+    "travel",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

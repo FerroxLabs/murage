@@ -1,0 +1,14 @@
+{
+  "id": "active-listening-practice",
+  "name": "Active Listening Practice",
+  "version": "1.0.0",
+  "description": "Teaches active listening components with practice exercises, common failure modes to avoid, and structured conversation formats that build listening skills. Produces personalized practice plans with specific exercises and progress indicators. Use when the user asks about improving listening skills, active listening techniques, being a better listener, or communication improvement in relationships. Do NOT use for clinical communication disorders, speech therapy, or assessing hearing ability.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "teaching",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

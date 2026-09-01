@@ -1,0 +1,14 @@
+{
+  "id": "auth-engineer",
+  "name": "Auth Engineer",
+  "version": "1.0.0",
+  "description": "Authentication and authorization engineering expertise covering JWT architecture, OAuth 2.0/OIDC flows, session management, RBAC/ABAC, MFA implementation, API key management, token refresh, PKCE flow, and SSO integration. Use when the user asks about auth engineer, auth engineer best practices, or needs guidance on auth engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "security",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

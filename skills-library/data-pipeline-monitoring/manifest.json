@@ -1,0 +1,14 @@
+{
+  "id": "data-pipeline-monitoring",
+  "name": "Data Pipeline Monitoring",
+  "version": "1.0.0",
+  "description": "Designs a data pipeline monitoring plan with health metrics (latency, error rate, row count variance), alert thresholds, on-call escalation path, and incident response runbook template. Outputs a complete monitoring specification for production data pipelines. Use when the user asks to set up monitoring for data pipelines, define SLAs for data freshness, create alerting rules for ETL failures, or build a runbook for pipeline incidents. Do NOT use for designing the pipeline itself (use etl-pipeline-design), defining data quality rules on the data (use data-quality-rules), or designing dashboards (use bi-dashboard-spec).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "analysis",
+    "checklist",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

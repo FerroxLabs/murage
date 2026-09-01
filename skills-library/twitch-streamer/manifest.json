@@ -1,0 +1,14 @@
+{
+  "id": "twitch-streamer",
+  "name": "Twitch Streamer",
+  "version": "1.0.0",
+  "description": "Complete Twitch streaming guide covering OBS setup, alerts, overlays, community building, moderation systems, monetization through subscriptions, bits and ads, raid strategy, and the path from Affiliate to Partner. Use when the user asks about twitch streamer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "social-media",
+    "marketing",
+    "content-marketing",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

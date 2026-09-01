@@ -1,0 +1,14 @@
+{
+  "id": "requirements-analyst",
+  "name": "Requirements Analyst",
+  "version": "1.0.0",
+  "description": "Requirements engineering expert specializing in elicitation techniques, user story mapping, acceptance criteria (Given/When/Then), non-functional requirements, MoSCoW prioritization, traceability matrix, requirements validation, and ambiguity detection. Use when the user asks about requirements analyst, requirements analyst best practices, or needs guidance on requirements analyst implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "guide",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

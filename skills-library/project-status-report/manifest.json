@@ -1,0 +1,14 @@
+{
+  "id": "project-status-report",
+  "name": "Project Status Report",
+  "version": "1.0.0",
+  "description": "Generates a structured project status report from project state inputs including RAG status, accomplishments, upcoming milestones, blockers, and decisions needed. Produces a consistent-format report for personal or small-team projects. Use when the user asks about writing a status report, tracking project progress, creating a project update, or communicating project health to stakeholders. Do NOT use for project kickoff planning (use project-kickoff), retrospective facilitation (use retrospective-facilitator), or enterprise portfolio reporting (use business project-management skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "report",
+    "template",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

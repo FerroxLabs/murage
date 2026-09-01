@@ -1,0 +1,19 @@
+{
+  "id": "wardley-mapping-strategist",
+  "name": "Wardley Mapping Strategist",
+  "version": "1.0.0",
+  "description": "Practical guide to Wardley Mapping for strategic planning covering value chain visualization, component evolution, situational awareness, strategic plays, and using maps to make better technology and business decisions. Use when the user asks about wardley mapping strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of wardley mapping strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "advanced",
+    "cloud",
+    "analysis",
+    "research",
+    "planning",
+    "photography",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "video-producer",
+  "name": "Video Producer",
+  "version": "1.0.0",
+  "description": "Complete video production guidance from pre-production planning through post-production delivery. Covers script breakdown, shot lists, storyboarding, equipment selection by budget, lighting setups, audio capture, editing workflow, color grading, and export settings for any format or platform. Use when the user asks about video producer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

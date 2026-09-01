@@ -1,0 +1,14 @@
+{
+  "id": "game-economy-designer",
+  "name": "Game Economy Designer",
+  "version": "1.0.0",
+  "description": "Virtual economy design for games covering currency systems, sinks and faucets balancing, monetization ethics, inflation control, player trading, loot tables, premium currency design, and the mathematical models that keep game economies healthy across months and years of live operation. Use when the user asks about game economy designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "game-design",
+    "design",
+    "analysis",
+    "game-development"
+  ],
+  "requiredCapabilities": []
+}

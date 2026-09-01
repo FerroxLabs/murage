@@ -1,0 +1,15 @@
+{
+  "id": "emotional-regulation-skills",
+  "name": "Emotional Regulation Skills",
+  "version": "1.0.0",
+  "description": "Teaches specific named emotional regulation techniques (the STOP technique, urge surfing, cognitive reframing, emotional labeling, opposite action, and physiological soothing) with step-by-step sequences. Gathers the user's emotional challenges and triggers, then produces a personalized regulation toolkit with technique instructions and a situation-response plan. Use when the user asks about managing emotions, controlling anger, handling frustration, emotional regulation strategies, or building emotional resilience. Do NOT use for clinical emotional dysregulation treatment, personality disorder management, or replacing professional mental health support.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "self-care",
+    "stress-management",
+    "emotional-health",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

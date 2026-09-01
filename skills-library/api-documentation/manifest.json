@@ -1,0 +1,14 @@
+{
+  "id": "api-documentation",
+  "name": "Api Documentation",
+  "version": "1.0.0",
+  "description": "Creates API reference documentation with endpoint descriptions, HTTP methods, parameters, request/response JSON examples, error codes, and authentication details. Use when the user needs to document a REST API, write endpoint references, or create developer-facing API docs. Do NOT use for user guides (use `user-guide`), tutorials (use `tutorial-writing`), or README files (use `readme-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "guide",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

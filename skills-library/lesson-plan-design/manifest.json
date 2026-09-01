@@ -1,0 +1,15 @@
+{
+  "id": "lesson-plan-design",
+  "name": "Lesson Plan Design",
+  "version": "1.0.0",
+  "description": "Creates complete, standards-aligned lesson plans using backward design methodology for any subject and grade level. Produces a filled-in lesson plan document with learning objectives, materials list, step-by-step procedure, assessment strategy, and differentiation notes -- not guidance on how to write one. Use when an educator asks to create a lesson plan, design a lesson, plan a class session, or build instructional materials for a specific topic. Do NOT use for full curriculum or unit planning (use `curriculum-mapping`), assessment-only design (use `assessment-design`), or student study plans (use `study-plan`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "lesson-plan",
+    "teaching",
+    "curriculum",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

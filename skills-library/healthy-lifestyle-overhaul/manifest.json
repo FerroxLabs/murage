@@ -1,0 +1,18 @@
+{
+  "id": "healthy-lifestyle-overhaul",
+  "name": "Healthy Lifestyle Overhaul",
+  "version": "1.0.0",
+  "description": "Comprehensive health transformation workflow integrating fitness training, nutrition planning, weekly meal preparation, sleep optimization, and habit formation for sustainable lifestyle change rather than quick fixes. Use when the user wants to healthy lifestyle overhaul or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "nutrition",
+    "sleep",
+    "habits",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

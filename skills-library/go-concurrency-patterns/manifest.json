@@ -1,0 +1,14 @@
+{
+  "id": "go-concurrency-patterns",
+  "name": "Go Concurrency Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level Go concurrency: goroutines, channels, select statements, context cancellation, sync primitives, and race condition detection. Covers when to use each concurrency primitive. Use when the user asks about Go concurrency, goroutines, channels, select, context, sync primitives, race detection, Go parallelism. Do NOT use when the user asks about Go idioms (use `go-idioms`), Go performance (use `go-performance`), Go error handling (use `go-error-handling`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "go",
+    "backend",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

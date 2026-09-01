@@ -1,0 +1,14 @@
+{
+  "id": "sqlite-specialist",
+  "name": "Sqlite Specialist",
+  "version": "1.0.0",
+  "description": "SQLite expertise for application development covering WAL mode configuration, concurrent access patterns, FTS5 full-text search, JSON support, virtual tables, PRAGMA optimization, backup strategies, file locking behavior, embedding patterns for desktop and mobile apps, migration strategies, and understanding size and concurrency limits. Use when the user asks about sqlite specialist, sqlite specialist best practices, or needs guidance on sqlite specialist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

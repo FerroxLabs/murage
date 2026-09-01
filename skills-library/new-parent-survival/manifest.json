@@ -1,0 +1,15 @@
+{
+  "id": "new-parent-survival",
+  "name": "New Parent Survival",
+  "version": "1.0.0",
+  "description": "First-year parenting guide covering sleep strategies, feeding options (breast/formula/combo), developmental milestones, partner relationship maintenance, self-care, returning to work, and pediatrician visit preparation for new parents. Use when the user asks about new parent survival or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "parenting",
+    "planning",
+    "checklist",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

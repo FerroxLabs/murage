@@ -1,0 +1,16 @@
+{
+  "id": "mvp-definition",
+  "name": "Mvp Definition",
+  "version": "1.0.0",
+  "description": "Defines a minimum viable product with problem statement, core functionality scope, explicit exclusions, success metrics, and validation approach using MVP methodology. Use when the user asks about MVP definition, minimum viable product, scoping an MVP, what to build first, or lean product development. Do NOT use for idea validation experiments (use idea-validation), Lean Canvas creation (use lean-canvas), or feature specification (use feature-spec).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "planning",
+    "strategy",
+    "agile",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

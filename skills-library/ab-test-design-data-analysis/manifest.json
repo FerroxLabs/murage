@@ -1,0 +1,14 @@
+{
+  "id": "ab-test-design-data-analysis",
+  "name": "Ab Test Design",
+  "version": "1.0.0",
+  "description": "Designs an A/B test from scratch. Defines the hypothesis, calculates required sample size, specifies randomization method, sets success metrics and minimum detectable effect, and produces a results interpretation template. Use when the user wants to set up a controlled experiment to test whether a change produces a measurable improvement. Do NOT use for interpreting completed test results (use hypothesis-testing), analyzing existing data without experimentation (use correlation-analysis), or survey design (use survey-design in the research cluster).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "statistics",
+    "analysis",
+    "research",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

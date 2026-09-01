@@ -1,0 +1,14 @@
+{
+  "id": "credit-score-improvement",
+  "name": "Credit Score Improvement",
+  "version": "1.0.0",
+  "description": "Builds a 3-12 month action plan for improving a credit score based on the user's current credit profile. Identifies specific actions for each credit score component, estimates relative impact, and creates a sequenced timeline of steps. Produces a dated improvement plan the user can follow month by month. Use when the user wants to improve their credit score over time, needs a structured plan for credit building, or asks how to raise their score. Do NOT use for understanding what a credit score is (use credit-score-explainer), debt payoff sequencing (use debt management skills), or credit repair disputes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "debt-management",
+    "planning",
+    "goal-setting"
+  ],
+  "requiredCapabilities": []
+}

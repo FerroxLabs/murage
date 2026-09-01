@@ -1,0 +1,15 @@
+{
+  "id": "paid-ad-copy",
+  "name": "Paid Ad Copy",
+  "version": "1.0.0",
+  "description": "Produces ad copy variants for paid advertising platforms with headlines, descriptions, and CTAs using the AIDA framework and platform-specific character limits. Use when the user asks to write ad copy, create Google Ads text, write social media ad copy, draft paid advertising headlines, or produce Facebook/Instagram ad text. Also use for writing advertising copy, write ad copy, or create marketing advertisements. Do NOT use for organic social media content (use social-media-strategy), landing page copy (use landing-page-copy), or email marketing copy (use email-campaign).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "marketing-copy",
+    "writing",
+    "seo",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

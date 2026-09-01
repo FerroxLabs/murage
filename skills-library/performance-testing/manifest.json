@@ -1,0 +1,14 @@
+{
+  "id": "performance-testing",
+  "name": "Performance Testing",
+  "version": "1.0.0",
+  "description": "Guides expert-level performance testing implementation: optimization and debugging decision frameworks, production-ready patterns, and concrete templates for performance testing workflows. Use when the user asks about performance testing, performance testing configuration, or testing best practices for performance projects. Do NOT use when the user needs a different testing quality capability -- check sibling skills in the testing quality subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "optimization",
+    "debugging",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

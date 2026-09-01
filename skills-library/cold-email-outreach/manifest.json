@@ -1,0 +1,13 @@
+{
+  "id": "cold-email-outreach",
+  "name": "Cold Email Outreach",
+  "version": "1.0.0",
+  "description": "Writes cold email sequences (initial email plus 2 follow-ups) with personalization frameworks, value-first subject lines, and clear CTAs for sales prospecting and business development. Use when the user needs outbound email sequences, sales outreach templates, or cold prospecting messages. Do NOT use for professional workplace emails (use `professional-email`), newsletters (use `newsletter-writing`), or investor updates (use `investor-update-email`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "email",
+    "writing",
+    "marketing-copy"
+  ],
+  "requiredCapabilities": []
+}

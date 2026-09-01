@@ -1,0 +1,15 @@
+{
+  "id": "essay-outline",
+  "name": "Essay Outline",
+  "version": "1.0.0",
+  "description": "Creates detailed essay outlines with thesis statements, topic sentences, evidence placeholders, and conclusion structure for learners planning academic essays. Produces a complete skeleton the learner can fill in -- distinct from writing skills that produce finished text. Use when a learner asks to outline an essay, plan an academic paper, structure their writing before drafting, or organize their arguments. Do NOT use for writing the full essay (use writing category skills), for research paper structure (use writing `research-paper-structure`), or for creative writing outlines (use writing category skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "study-skills",
+    "research",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

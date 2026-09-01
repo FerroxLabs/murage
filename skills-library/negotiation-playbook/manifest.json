@@ -1,0 +1,19 @@
+{
+  "id": "negotiation-playbook",
+  "name": "Negotiation Playbook",
+  "version": "1.0.0",
+  "description": "Synthesizes Harvard Principled Negotiation, tactical empathy (Voss), BATNA analysis, ZOPA mapping, and Anchoring strategies into The Negotiation Operating System - a comprehensive framework for preparing and executing any negotiation. Use when the user asks about negotiation playbook, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of negotiation playbook or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "budgeting",
+    "checklist",
+    "advanced",
+    "testing",
+    "analysis",
+    "research",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

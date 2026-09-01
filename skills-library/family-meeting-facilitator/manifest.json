@@ -1,0 +1,14 @@
+{
+  "id": "family-meeting-facilitator",
+  "name": "Family Meeting Facilitator",
+  "version": "1.0.0",
+  "description": "Structured family meeting guide with agenda templates, age-appropriate participation strategies, conflict resolution frameworks, goal setting, calendar coordination, financial discussions, and gratitude sharing practices. Use when the user asks about family meeting facilitator, or needs help with structured family meeting guide with agenda templates, age-appropriate participation strategies, conflict resolution frameworks, goal setting, calendar coordination, financial discussions, and gratitude sharing practices. Do NOT use when the request requires professional specialized advice or falls outside the scope of family meeting facilitator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "family-events",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "mens-style-guide",
+  "name": "Mens Style Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive men's style guidance including fit principles, wardrobe essentials, grooming basics, style evolution, and building a functional personal aesthetic. Use when the user asks about mens style guide, or needs help with comprehensive men's style guidance including fit principles, wardrobe essentials, grooming basics, style evolution, and building a functional personal aesthetic. Do NOT use when the request requires professional specialized advice or falls outside the scope of mens style guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fashion",
+    "design",
+    "planning",
+    "guide",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

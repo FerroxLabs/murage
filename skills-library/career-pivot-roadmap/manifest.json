@@ -1,0 +1,14 @@
+{
+  "id": "career-pivot-roadmap",
+  "name": "Career Pivot Roadmap",
+  "version": "1.0.0",
+  "description": "Builds a dated, milestone-based career pivot roadmap covering skill gap analysis, credential requirements, portfolio plan, networking targets, and timeline. Produces a complete action plan document with specific dates and measurable milestones. Use when the user wants to change careers, transition to a new field, plan a career switch, or build a roadmap for entering a different industry. Do NOT use for job search strategy within the same field (use job-search-strategy), resume rewriting for a career change (use career-change-resume), or skill learning plans for professional development without a career change (use skill-gap-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "planning",
+    "goal-setting",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "audience-analysis",
+  "name": "Audience Analysis",
+  "version": "1.0.0",
+  "description": "Creates detailed audience persona documents with demographics, pain points, vocabulary mapping, content preferences, and behavioral insights. Use when the user needs to define their target audience, create buyer personas, build audience profiles, or understand who their content serves. Do NOT use for content auditing (use `content-audit`), editorial planning (use `editorial-calendar`), or voice and tone documentation (use `voice-tone-guide`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "marketing",
+    "research",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

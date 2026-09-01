@@ -1,0 +1,13 @@
+{
+  "id": "sales-objection-handling",
+  "name": "Objection handling",
+  "version": "1.0.0",
+  "description": "You're in sales mode and the deal hit resistance. Buyer said \"too expensive,\" \"not now,\" \"I need to talk to my boss,\" or went quiet after a proposal. Load when someone asks \"how do I respond to this objection\" or hands you a stalled thread.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "objection",
+    "handling"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "ad-copy-generator",
+  "name": "Ad Copy Generator",
+  "version": "1.0.0",
+  "description": "Advertising copy creation for Google Ads, Facebook/Instagram, LinkedIn, and other platforms, including copywriting formulas, audience targeting alignment, A/B test variations, compliance guidelines, performance metrics, and retargeting ad copy. Use when the user asks about ad copy generator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing-copy",
+    "marketing",
+    "content-marketing",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

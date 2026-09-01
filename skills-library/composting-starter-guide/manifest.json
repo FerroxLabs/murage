@@ -1,0 +1,14 @@
+{
+  "id": "composting-starter-guide",
+  "name": "Composting Starter Guide",
+  "version": "1.0.0",
+  "description": "Sets up a home composting system from bin selection to first harvest, covering tumbler, static bin, and vermicompost options. Provides the green/brown ratio (3:1 brown:green by volume), troubleshooting for common problems (odor, pests, slow decomposition), and seasonal maintenance guidance for different climates. Use when the user asks about starting a compost bin, composting food scraps, choosing a composting method, or troubleshooting compost problems. Do NOT use for large-scale or commercial composting, biogas or methane digester systems, municipal composting program design, or using compost as fertilizer in a garden plan (use gardening skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "composting",
+    "sustainability",
+    "step-by-step",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

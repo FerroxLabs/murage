@@ -1,0 +1,14 @@
+{
+  "id": "spark-engineer",
+  "name": "Spark Engineer",
+  "version": "1.0.0",
+  "description": "Apache Spark expertise covering RDD vs DataFrame vs Dataset APIs, partitioning strategies, shuffle optimization, broadcast joins, caching, Spark SQL, structured streaming, UDFs, cluster sizing, performance tuning, and PySpark patterns for building scalable distributed data processing applications. Use when the user asks about spark engineer, spark engineer best practices, or needs guidance on spark engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "guide",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

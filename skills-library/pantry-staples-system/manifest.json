@@ -1,0 +1,14 @@
+{
+  "id": "pantry-staples-system",
+  "name": "Pantry Staples System",
+  "version": "1.0.0",
+  "description": "Builds a complete pantry staples inventory organized by cuisine type, with rotation schedules, storage guidelines, and a restocking system. Covers core dry goods, canned essentials, oils, vinegars, spices, and condiments that enable cooking any weeknight meal without a special grocery trip. Use when the user asks about stocking a pantry, essential ingredients to keep on hand, building a spice collection, or creating a pantry restocking routine. Do NOT use for meal planning (use meal-prep-workflow), recipe-specific ingredient lists, or food storage safety (use food-storage-safety).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "market-research-brief",
+  "name": "Market Research Brief",
+  "version": "1.0.0",
+  "description": "Produces a completed market research brief with research question, hypothesis, methodology, data sources, and output format using research design principles. Use when the user asks to plan market research, design a survey, structure customer research, or outline a research study for business decisions. Do NOT use for competitive benchmarking (use competitive-analysis), customer persona creation (use customer-persona), or full marketing strategy (use marketing-strategy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "research",
+    "planning",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

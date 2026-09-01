@@ -1,0 +1,14 @@
+{
+  "id": "kpi-definition",
+  "name": "Kpi Definition",
+  "version": "1.0.0",
+  "description": "Produces a complete KPI definition document with metric name, business question, formula, data source, owner, update frequency, baseline, and target for each KPI. Outputs a populated metric catalog table, not advice about which KPIs to consider. Use when the user asks to define KPIs, set up performance metrics, create a measurement framework, or build a metric catalog for a business area. Do NOT use for metric hierarchy and goal trees (use metric-framework), dashboard layout design (use bi-dashboard-spec), or personal goal setting (use smart-goal-builder in productivity).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "data-visualization",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

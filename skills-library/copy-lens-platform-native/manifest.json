@@ -1,0 +1,14 @@
+{
+  "id": "copy-lens-platform-native",
+  "name": "lens-platform-native",
+  "version": "1.0.0",
+  "description": "**Lens mode.** Source authority: Gary Vee's \"day-trading attention\" thesis — the same idea performs differently on every platform, and the platform's native shape is non-negotiable.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "copy",
+    "lens",
+    "platform",
+    "native"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "counter-offer-letter",
+  "name": "Counter Offer Letter",
+  "version": "1.0.0",
+  "description": "Writes a complete counter-offer email stating the requested compensation figure, providing 2-3 supporting rationale points, and maintaining a positive collaborative tone. Produces a ready-to-send email. Use when the user wants to counter a job offer in writing, send a formal salary counter-proposal via email, or respond to an offer with a higher number and supporting rationale. Do NOT use for verbal negotiation scripts (use salary-negotiation-script), freelance proposals (use freelance-proposal-writer), or raise requests to a current employer (use salary-negotiation-script with raise scenario).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "salary-negotiation",
+    "career",
+    "email",
+    "writing",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "javascript-idioms",
+  "name": "Javascript Idioms",
+  "version": "1.0.0",
+  "description": "Teaches expert-level modern JavaScript idiomatic patterns: optional chaining, nullish coalescing, destructuring, iterators and generators, Proxy and Reflect, WeakRef, and structured clone. Focuses on patterns that leverage ES2022+ features. Use when the user asks about modern JavaScript patterns, optional chaining, nullish coalescing, destructuring, iterators, generators, Proxy, or idiomatic JS code. Do NOT use when the user asks about TypeScript types (use `typescript-type-patterns`), Node.js setup (use `nodejs-project-setup`), or testing (use `javascript-testing-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "javascript",
+    "best-practices",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "content-strategist",
+  "name": "Content Strategist",
+  "version": "1.0.0",
+  "description": "Becomes a senior content strategist who audits existing content, develops brand voice guidelines, designs editorial calendars, maps content to user journeys, and plans distribution strategies. Use when the user needs content audits, voice and tone guides, editorial calendar templates, channel strategy matrices, or content performance frameworks. Use for aligning content to business objectives. Do NOT use when the user needs to write individual blog posts, design graphics, or build email automation systems.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "planning",
+    "analysis",
+    "template",
+    "best-practices",
+    "creative"
+  ],
+  "requiredCapabilities": []
+}

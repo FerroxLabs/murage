@@ -1,0 +1,14 @@
+{
+  "id": "bot-builder",
+  "name": "Bot Builder",
+  "version": "1.0.0",
+  "description": "Bot development expertise covering Slack, Discord, and Telegram bot architecture, command handling patterns, event-driven design, conversation state management, rate limiting, user permission systems, webhook handling, deployment strategies, monitoring, and bot testing approaches. Use when the user asks about bot builder, bot builder best practices, or needs guidance on bot builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

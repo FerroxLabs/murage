@@ -1,0 +1,19 @@
+{
+  "id": "blended-family-navigator",
+  "name": "Blended Family Navigator",
+  "version": "1.0.0",
+  "description": "Guide for navigating step-parenting dynamics, establishing healthy boundaries, creating new family traditions, and building genuine connections across blended family structures Use when the user asks about blended family navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of blended family navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "beginner-friendly",
+    "quick-reference",
+    "testing",
+    "planning",
+    "game-design",
+    "parenting",
+    "cleaning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

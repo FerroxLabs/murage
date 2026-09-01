@@ -1,0 +1,19 @@
+{
+  "id": "smoking-and-bbq-master",
+  "name": "Smoking And Bbq Master",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to smoking and barbecue covering wood selection, temperature control, rub and sauce formulation, smoking times for all major cuts, equipment selection, troubleshooting, and techniques from low-and-slow to hot-and-fast methods. Use when the user asks about smoking and bbq master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of smoking and bbq master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "budgeting",
+    "guide",
+    "beginner-friendly",
+    "testing",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "sibling-conflict-navigation",
+  "name": "Sibling Conflict Navigation",
+  "version": "1.0.0",
+  "description": "Provides frameworks for managing sibling conflicts including when to intervene versus when to let children resolve disputes independently. Produces conflict resolution scripts by age, intervention decision trees, and sibling cooperation strategies. Use when the user asks about sibling fighting, rivalry, managing conflicts between children, or helping siblings get along. Do NOT use for assessing psychological dynamics between siblings, diagnosing behavioral disorders, or replacing family therapy.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "relationships",
+    "strategy",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

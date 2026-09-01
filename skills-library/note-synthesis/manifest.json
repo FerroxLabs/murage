@@ -1,0 +1,15 @@
+{
+  "id": "note-synthesis",
+  "name": "Note Synthesis",
+  "version": "1.0.0",
+  "description": "Synthesizes and connects concepts across multiple sets of notes for learners, identifying patterns, contradictions, and relationships between sources. Produces an integrative summary that goes beyond individual note sets. Use when a learner asks to connect ideas across notes, synthesize multiple readings, find patterns across study materials, or integrate notes from different lectures or sources. Do NOT use for single-source note taking (use `cornell-notes`), for concept mapping of one topic (use `concept-mapping`), or for academic literature review (use `literature-search`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "note-taking",
+    "study-skills",
+    "research",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

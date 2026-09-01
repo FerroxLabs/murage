@@ -1,0 +1,19 @@
+{
+  "id": "expense-report-builder",
+  "name": "Expense Report Builder",
+  "version": "1.0.0",
+  "description": "Organize and submit expense reports efficiently - category templates, receipt management, policy compliance, and streamlined submission workflows. Use when the user asks about expense report builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of expense report builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "strategy",
+    "budgeting",
+    "checklist",
+    "template",
+    "planning",
+    "photography",
+    "email",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

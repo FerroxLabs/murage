@@ -1,0 +1,17 @@
+{
+  "id": "parenting-approach-reflector",
+  "name": "Parenting Approach Reflector",
+  "version": "1.0.0",
+  "description": "Reflective assessment of parenting style, communication patterns, consistency, and emotional responsiveness to support intentional parenting growth Use when the user asks about parenting approach reflector, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of parenting approach reflector or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "template",
+    "testing",
+    "analysis",
+    "parenting",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

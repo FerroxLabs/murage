@@ -1,0 +1,14 @@
+{
+  "id": "recurring-task-optimizer",
+  "name": "Recurring Task Optimizer",
+  "version": "1.0.0",
+  "description": "Analyzes recurring tasks and produces a frequency-optimized schedule with batch groupings, delegation candidates, and elimination recommendations. Use when the user wants to optimize how often they do recurring tasks, reduce time on maintenance activities, or find tasks to batch, delegate, or stop doing entirely. Do NOT use for enterprise process optimization, business operations redesign, or team workload balancing (use business operations skills instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "time-management",
+    "optimization",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

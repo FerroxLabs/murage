@@ -1,0 +1,14 @@
+{
+  "id": "performance-profiling",
+  "name": "Performance Profiling",
+  "version": "1.0.0",
+  "description": "Guides expert-level performance profiling implementation: optimization and debugging decision frameworks, production-ready patterns, and concrete templates for performance profiling workflows. Use when the user asks about performance profiling, performance profiling configuration, or optimization best practices for performance projects. Do NOT use when the user needs a different developer tools capability -- check sibling skills in the developer tools subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "optimization",
+    "debugging",
+    "best-practices",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,17 @@
+{
+  "id": "plan-retirement-lifestyle",
+  "name": "Plan Retirement Lifestyle",
+  "version": "1.0.0",
+  "description": "Comprehensive retirement lifestyle planning workflow covering vision creation, location selection, financial sustainability, health optimization, and social engagement for a fulfilling and well-prepared transition into retirement. Use when the user wants to plan retirement lifestyle or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "retirement-planning",
+    "habits",
+    "personal-finance",
+    "health-wellness",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

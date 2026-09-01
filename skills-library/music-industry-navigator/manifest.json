@@ -1,0 +1,19 @@
+{
+  "id": "music-industry-navigator",
+  "name": "Music Industry Navigator",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to the music industry covering distribution, royalty streams, sync licensing, publishing, touring economics, merchandise, and building a sustainable career in modern music. Use when the user asks about music industry navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of music industry navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-industry",
+    "creative-writing",
+    "analysis",
+    "marketing",
+    "branding",
+    "performing-arts",
+    "email",
+    "investing",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

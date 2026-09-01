@@ -1,0 +1,15 @@
+{
+  "id": "collectible-authentication-guide",
+  "name": "Collectible Authentication Guide",
+  "version": "1.0.0",
+  "description": "Provides authentication criteria and provenance verification processes for collectible items including stamps, coins, trading cards, art, and memorabilia. Covers physical examination points, red flags for counterfeits, documentation verification, and professional authentication service options by collectible type. Use when the user asks about verifying the authenticity of a collectible, identifying counterfeits, checking provenance, or understanding authentication grading services. Do NOT use for determining the monetary value of collectibles (use collection-valuation-guide), cataloguing and inventory management (use collection-inventory-builder), forensic analysis or legal evidence examination, or authentication of fine art for museum or institutional purposes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "guide",
+    "checklist",
+    "analysis",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

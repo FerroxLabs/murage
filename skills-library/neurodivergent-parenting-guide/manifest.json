@@ -1,0 +1,19 @@
+{
+  "id": "neurodivergent-parenting-guide",
+  "name": "Neurodivergent Parenting Guide",
+  "version": "1.0.0",
+  "description": "Support parents raising neurodivergent children with ADHD, autism, and other neurological differences through strengths-based approaches, IEP advocacy, daily strategies, and family well-being Use when the user asks about neurodivergent parenting guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of neurodivergent parenting guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "parenting",
+    "stress-management",
+    "self-care",
+    "checklist",
+    "template",
+    "guide",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

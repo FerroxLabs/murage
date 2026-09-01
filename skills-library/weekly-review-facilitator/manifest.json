@@ -1,0 +1,19 @@
+{
+  "id": "weekly-review-facilitator",
+  "name": "Weekly Review Facilitator",
+  "version": "1.0.0",
+  "description": "Guide the weekly review process with structured reflection templates, planning rhythms, accountability systems, and habit-building strategies to maintain productivity systems over time. Use when the user asks about weekly review facilitator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of weekly review facilitator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "journaling",
+    "habits",
+    "self-care",
+    "template",
+    "research",
+    "performing-arts",
+    "energy-efficiency",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

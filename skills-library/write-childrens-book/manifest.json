@@ -1,0 +1,19 @@
+{
+  "id": "write-childrens-book",
+  "name": "Write Childrens Book",
+  "version": "1.0.0",
+  "description": "End-to-end guided journey from initial concept through story development, illustration direction, publishing, and marketing for children's books. Covers board books through middle grade, age-appropriate writing conventions, illustration briefs, self-publishing mechanics, and reaching parents, teachers, and young readers through targeted marketing strategies. Use when the user wants to write childrens book or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "creative-writing",
+    "writing",
+    "design",
+    "content-marketing",
+    "study-skills",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

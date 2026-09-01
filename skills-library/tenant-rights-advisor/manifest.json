@@ -1,0 +1,14 @@
+{
+  "id": "tenant-rights-advisor",
+  "name": "Tenant Rights Advisor",
+  "version": "1.0.0",
+  "description": "Lease review guidance, security deposit rights, repair obligations, eviction process understanding, and tenant protections for informed renting decisions. Use when the user asks about tenant rights advisor, or needs help with lease review guidance, security deposit rights, repair obligations, eviction process understanding, and tenant protections for informed renting decisions. Do NOT use when the request requires professional legal advice or falls outside the scope of tenant rights advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "tenant-rights",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

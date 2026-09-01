@@ -1,0 +1,19 @@
+{
+  "id": "lean-startup-practitioner",
+  "name": "Lean Startup Practitioner",
+  "version": "1.0.0",
+  "description": "Applied lean startup methodology covering build-measure-learn loops, MVP design, pivot decisions, validated learning, innovation accounting, and practical techniques for reducing waste in new product development. Use when the user asks about lean startup practitioner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of lean startup practitioner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "template",
+    "testing",
+    "automation",
+    "running",
+    "sales",
+    "video-production",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

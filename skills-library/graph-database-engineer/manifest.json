@@ -1,0 +1,14 @@
+{
+  "id": "graph-database-engineer",
+  "name": "Graph Database Engineer",
+  "version": "1.0.0",
+  "description": "Graph database engineering expert covering Neo4j administration and Cypher optimization, property graph modeling patterns, traversal algorithms (BFS, DFS, shortest path), graph indexing strategies, performance tuning, use case evaluation, graph data pipelines, and comparison with relational approaches. Use when the user asks about graph database engineer, graph database engineer best practices, or needs guidance on graph database engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "oauth-specialist",
+  "name": "Oauth Specialist",
+  "version": "1.0.0",
+  "description": "OAuth 2.0 and OpenID Connect implementation expertise covering Authorization Code with PKCE, Client Credentials flow, token management, scope design, consent flows, token introspection, revocation, JWT validation, provider integration patterns, and security considerations for building secure authentication and authorization systems. Use when the user asks about oauth specialist, oauth specialist best practices, or needs guidance on oauth specialist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "api-security",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "final-readthrough",
+  "name": "Final Readthrough",
+  "version": "1.0.0",
+  "description": "Performs a comprehensive final readthrough of a document before publication, checking for errors, consistency, formatting, and overall quality using a structured checklist approach. Use when the user asks for a final check, last-pass review, pre-publication review, or quality assurance pass on a nearly finished document. Do NOT use for first-pass editing (use copy-editing or structural-editing), in-depth fact-checking (use fact-check-framework), or style guide compliance (use style-guide-compliance).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "checklist"
+  ],
+  "requiredCapabilities": []
+}

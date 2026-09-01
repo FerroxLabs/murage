@@ -1,0 +1,15 @@
+{
+  "id": "conversation-practice",
+  "name": "Conversation Practice",
+  "version": "1.0.0",
+  "description": "Creates guided conversation practice with prompts, scaffolding, and feedback for language learners using the communicative approach. Produces a structured conversation exercise the learner can practice with the AI. Use when a learner asks to practice conversation in a target language, do speaking exercises, practice dialogue, or improve conversational fluency. Do NOT use for grammar instruction (use `grammar-practice`), for vocabulary building (use `vocabulary-building`), or for translation exercises (use `translation-practice`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "language-learning",
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "probe-fake-door-tests",
+  "name": "Fake-door & smoke tests",
+  "version": "1.0.0",
+  "description": "The user wants to know if a new product, feature, price point, or positioning has demand before they spend weeks building it. Load this whenever someone says \"should we build X,\" \"would people pay Y for this,\" or \"is there a market for Z.\"",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "probe",
+    "fake",
+    "door",
+    "tests"
+  ],
+  "requiredCapabilities": []
+}

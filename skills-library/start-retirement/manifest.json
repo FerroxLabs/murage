@@ -1,0 +1,16 @@
+{
+  "id": "start-retirement",
+  "name": "Start Retirement",
+  "version": "1.0.0",
+  "description": "Guides the user through the complete retirement transition from savings assessment through lifestyle design, chaining retirement calculators, financial tracking, budgeting, insurance, estate planning, and career transition skills across multiple categories. Use when the user is planning to retire, preparing for retirement within 2 years, or evaluating whether they are financially ready to retire. Do NOT use for early retirement (FIRE) investment strategy, pension administration, or Social Security disability claims.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "retirement-planning",
+    "personal-finance",
+    "estate-planning",
+    "planning",
+    "step-by-step",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "python-performance",
+  "name": "Python Performance",
+  "version": "1.0.0",
+  "description": "Guides expert-level Python performance optimization: cProfile and line_profiler usage, memory profiling with tracemalloc, NumPy vectorization vs pure Python decision tree, Cython integration points, and algorithmic optimization patterns. Use when the user asks about Python performance profiling, memory optimization, speeding up Python code, NumPy vs pure Python decisions, or Cython compilation. Do NOT use when the user asks about async concurrency (use `python-async-patterns`), general Python idioms (use `python-idioms`), or project setup (use `python-project-setup`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "python",
+    "optimization",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

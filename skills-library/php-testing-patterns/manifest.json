@@ -1,0 +1,14 @@
+{
+  "id": "php-testing-patterns",
+  "name": "Php Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level php testing patterns implementation: php and testing decision frameworks, production-ready patterns, and concrete templates for php testing patterns workflows. Use when the user asks about php testing patterns, php testing patterns configuration, or php best practices for php projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "php",
+    "testing",
+    "tdd",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

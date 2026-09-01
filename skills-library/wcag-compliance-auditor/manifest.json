@@ -1,0 +1,19 @@
+{
+  "id": "wcag-compliance-auditor",
+  "name": "Wcag Compliance Auditor",
+  "version": "1.0.0",
+  "description": "Audit digital products against WCAG 2.1/2.2 standards, determine conformance levels, identify failures, and produce actionable remediation plans with prioritized fixes. Use when the user asks about wcag compliance auditor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of wcag compliance auditor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "checklist",
+    "template",
+    "guide",
+    "javascript",
+    "testing",
+    "analysis",
+    "planning",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

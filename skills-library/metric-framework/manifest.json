@@ -1,0 +1,14 @@
+{
+  "id": "metric-framework",
+  "name": "Metric Framework",
+  "version": "1.0.0",
+  "description": "Designs a metric framework with a goal hierarchy mapping north star metric to primary metrics to diagnostic metrics. Defines each level and maps relationships as a tree structure with directional influence arrows. Use when the user asks to build a metric tree, create a measurement hierarchy, connect KPIs to a north star metric, or design a goal-metric alignment structure. Do NOT use for defining individual KPIs with formulas and owners (use kpi-definition), dashboard layout design (use bi-dashboard-spec), or personal OKRs (use okr-builder in productivity).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "data-science",
+    "planning",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

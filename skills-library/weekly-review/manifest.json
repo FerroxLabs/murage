@@ -1,0 +1,14 @@
+{
+  "id": "weekly-review",
+  "name": "Weekly Review",
+  "version": "1.0.0",
+  "description": "Produces a complete weekly review session guide with a step-by-step checklist, time estimates per step, review questions, and output artifacts. Delivers the actual review protocol, not advice about doing reviews. Use when the user asks about weekly reviews, planning their week, reflecting on what was accomplished, or building a regular review practice. Do NOT use for daily planning (use daily-planning), quarterly or annual planning (use quarterly-planning or annual-review), or team retrospectives (use retrospective-facilitator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "planning",
+    "checklist",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

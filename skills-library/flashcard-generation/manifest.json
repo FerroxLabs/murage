@@ -1,0 +1,15 @@
+{
+  "id": "flashcard-generation",
+  "name": "Flashcard Generation",
+  "version": "1.0.0",
+  "description": "Creates Anki-ready or paper-based Q/A flashcard pairs from provided study content. Produces specific, well-formulated cards following the minimum information principle -- one concept per card, clear question, concise answer. Use when a learner asks to create flashcards, make Anki cards, generate Q&A pairs for studying, or convert notes into flashcard format. Do NOT use for spaced repetition scheduling (use `spaced-repetition`), for practice test questions (use `active-recall-practice`), or for concept mapping (use `concept-mapping`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spaced-repetition",
+    "study-skills",
+    "active-recall",
+    "note-taking",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "comic-creator",
+  "name": "Comic Creator",
+  "version": "1.0.0",
+  "description": "Comic creation assistant covering panel layout, visual storytelling, pacing, lettering, digital and traditional tools, scripting formats, character design, publishing paths for webcomics and print, and the business of comics to help creators bring sequential art to life. Use when the user asks about comic creator, or needs help with comic creation assistant covering panel layout, visual storytelling, pacing, lettering, digital and traditional tools, scripting formats, character design, publishing paths for webcomics and print, and the business of comics to help creators bring sequential art to life. Do NOT use when the request requires professional specialized advice or falls outside the scope of comic creator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "design",
+    "guide",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

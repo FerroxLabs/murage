@@ -1,0 +1,15 @@
+{
+  "id": "academic-integrity",
+  "name": "Academic Integrity",
+  "version": "1.0.0",
+  "description": "Teaches learners paraphrasing, quotation, attribution, and plagiarism avoidance skills for academic writing. Produces practice exercises and self-checks for maintaining academic integrity -- not a policy document. Use when a learner asks about avoiding plagiarism, learning to paraphrase, understanding citation requirements, or practicing attribution in academic writing. Do NOT use for citation format specifics (use `citation-management`), for writing the paper itself (use writing category skills), or for institutional policy questions (refer to their institution).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "research",
+    "study-skills",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

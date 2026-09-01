@@ -1,0 +1,14 @@
+{
+  "id": "chess-strategist",
+  "name": "Chess Strategist",
+  "version": "1.0.0",
+  "description": "Comprehensive chess improvement guide covering opening principles and repertoire building, middle game tactical patterns, positional strategy, endgame technique, study methods, rating improvement plans, tournament preparation, and analysis workflow for players from beginner through advanced. Use when the user asks about chess strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "board-games",
+    "strategy",
+    "guide",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

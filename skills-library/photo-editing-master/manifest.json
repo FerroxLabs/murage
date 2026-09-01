@@ -1,0 +1,19 @@
+{
+  "id": "photo-editing-master",
+  "name": "Photo Editing Master",
+  "version": "1.0.0",
+  "description": "Expert photo editing guidance covering Lightroom, Photoshop, workflow optimization, preset creation, and batch editing techniques for efficient professional-quality results Use when the user asks about photo editing master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of photo editing master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "guide",
+    "advanced",
+    "quick-reference",
+    "testing",
+    "automation",
+    "performing-arts",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

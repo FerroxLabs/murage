@@ -1,0 +1,14 @@
+{
+  "id": "insurance-needs-assessment",
+  "name": "Insurance Needs Assessment",
+  "version": "1.0.0",
+  "description": "Evaluates insurance coverage gaps across health, life, disability, auto, and renters/homeowners categories based on the user's life situation, dependents, assets, and income. Produces a coverage assessment matrix identifying what the user has, what they may need, and what to evaluate further with a licensed professional. Use when the user asks about insurance needs, wants to evaluate their coverage, or wonders what types of insurance they should consider. Do NOT use for comparing specific insurance policies or providers (this requires licensed professional evaluation), health insurance enrollment help, or business insurance needs.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "insurance",
+    "personal-finance",
+    "analysis",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

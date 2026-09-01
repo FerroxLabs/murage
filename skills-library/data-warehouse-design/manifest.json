@@ -1,0 +1,14 @@
+{
+  "id": "data-warehouse-design",
+  "name": "Data Warehouse Design",
+  "version": "1.0.0",
+  "description": "Designs a data warehouse structure by selecting star or snowflake schema, defining fact tables and dimension tables, specifying grain for each fact table, and producing the entity-relationship description. Outputs a complete warehouse schema specification. Use when the user asks to design a data warehouse, build a dimensional model, create fact and dimension tables, or plan an analytics schema for reporting. Do NOT use for operational database schema design (use data-schema-design), ETL pipeline logic (use etl-pipeline-design), or dashboard layout (use bi-dashboard-spec).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "planning",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

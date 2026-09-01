@@ -1,0 +1,14 @@
+{
+  "id": "funnel-analysis",
+  "name": "Funnel Analysis",
+  "version": "1.0.0",
+  "description": "Produces a funnel analysis with defined conversion stages, step-by-step conversion rates, biggest drop-off identification, and diagnostic questions for each stage. Outputs a populated funnel table with actionable insights, not a description of funnel methodology. Use when the user asks to analyze conversion rates, identify where users drop off in a process, optimize a signup or purchase flow, or measure step-by-step completion rates. Do NOT use for cohort-based retention over time (use cohort-analysis), customer segmentation by attributes (use segmentation-design), or KPI definition (use kpi-definition).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "data-science",
+    "data-visualization",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

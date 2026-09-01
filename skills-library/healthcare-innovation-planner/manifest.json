@@ -1,0 +1,19 @@
+{
+  "id": "healthcare-innovation-planner",
+  "name": "Healthcare Innovation Planner",
+  "version": "1.0.0",
+  "description": "Plan and execute healthcare pilot programs, gather evidence, navigate implementation science, and bring innovations from concept to sustainable practice. Use when the user asks about healthcare innovation planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of healthcare innovation planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "healthcare",
+    "strategy",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "step-by-step",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

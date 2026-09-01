@@ -1,0 +1,18 @@
+{
+  "id": "vpn-privacy-advisor",
+  "name": "Vpn Privacy Advisor",
+  "version": "1.0.0",
+  "description": "Guide for understanding and using VPNs including protocol comparison, provider evaluation criteria, when to use a VPN, setup across devices, and privacy-focused configuration. Use when the user asks about vpn privacy advisor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of vpn privacy advisor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "checklist",
+    "guide",
+    "advanced",
+    "testing",
+    "automation",
+    "networking",
+    "iot"
+  ],
+  "requiredCapabilities": []
+}

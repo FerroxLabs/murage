@@ -1,0 +1,13 @@
+{
+  "id": "nextjs-architect",
+  "name": "Nextjs Architect",
+  "version": "1.0.0",
+  "description": "Next.js architecture expertise covering App Router patterns, server vs client components, data fetching with server actions, middleware, route handlers, ISR, streaming SSR, image optimization, parallel routes, and intercepting routes. Use when the user asks about nextjs architect, nextjs architect best practices, or needs guidance on nextjs architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "javascript"
+  ],
+  "requiredCapabilities": []
+}

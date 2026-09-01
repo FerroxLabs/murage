@@ -1,0 +1,14 @@
+{
+  "id": "spreadsheet-automation",
+  "name": "Spreadsheet Automation",
+  "version": "1.0.0",
+  "description": "Designs spreadsheet automation using built-in features including named ranges, drop-down validation lists, INDIRECT references for dynamic ranges, array formulas, and QUERY/FILTER functions. Produces the specific formula strings for self-updating, self-validating spreadsheets. Use when the user wants to make their spreadsheet more automated, dynamic, or self-maintaining without VBA or scripts. Do NOT use for data validation rule design (use data-validation-setup), data cleaning formulas (use spreadsheet-data-cleaning), or Google Apps Script programming (software-development scope).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spreadsheets",
+    "automation",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "etl-pipeline-design",
+  "name": "Etl Pipeline Design",
+  "version": "1.0.0",
+  "description": "Designs an ETL pipeline specification covering extract (source, frequency, authentication), transform (cleaning, joins, aggregations), and load (target, format, schema). Produces a pipeline spec document describing data flow logic, not executable code. Use when the user asks to design a data pipeline, move data between systems, build an ETL or ELT workflow, or plan a data integration process. Do NOT use when building application code that happens to read a database (that is software engineering), designing a data warehouse schema (use data-warehouse-design), or setting up pipeline monitoring (use data-pipeline-monitoring).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "analysis",
+    "planning",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

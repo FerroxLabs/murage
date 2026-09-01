@@ -1,0 +1,13 @@
+{
+  "id": "opinion-piece",
+  "name": "Opinion Piece",
+  "version": "1.0.0",
+  "description": "Writes structured opinion articles with a clear thesis, supporting evidence, counterargument acknowledgment, and a persuasive conclusion. Use when the user wants to argue a position, write an editorial, draft a thought leadership piece, or compose a persuasive article. Do NOT use for neutral informational posts (use `blog-post-writing`), listicles (use `listicle-writing`), or academic arguments with citations (use `academic-argument`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "blog-post",
+    "writing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

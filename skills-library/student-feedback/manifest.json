@@ -1,0 +1,15 @@
+{
+  "id": "student-feedback",
+  "name": "Student Feedback",
+  "version": "1.0.0",
+  "description": "Creates structured, actionable student feedback using the SBI (Situation-Behavior-Impact) model and other feedback frameworks for educators. Produces specific, growth-oriented feedback comments for student work -- not generic praise or criticism templates. Use when an educator asks to write feedback on student work, create feedback comments, provide constructive criticism, or design a feedback protocol for assignments. Do NOT use for grading rubrics (use `rubric-creation`), for assessment creation (use `assessment-design`), or for peer feedback frameworks among students (use `discussion-questions`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "lesson-plan",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

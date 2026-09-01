@@ -1,0 +1,14 @@
+{
+  "id": "mobile-testing",
+  "name": "Mobile Testing",
+  "version": "1.0.0",
+  "description": "Expert mobile app testing covering unit testing (XCTest, JUnit), UI testing (Espresso, XCUITest, Detox), screenshot testing, device farm testing, performance testing, network condition simulation, accessibility testing, and crash reporting. Use when the user asks about mobile testing, mobile testing best practices, or needs guidance on mobile testing implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "testing",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

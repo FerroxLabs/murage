@@ -1,0 +1,14 @@
+{
+  "id": "graph-db-architect",
+  "name": "Graph Db Architect",
+  "version": "1.0.0",
+  "description": "Graph database design expertise covering Neo4j and Cypher query language, property graph model, graph schema design, traversal patterns, path algorithms (shortest path, all paths), graph indexing, community detection, recommendation engines, knowledge graphs, and graph data modeling best practices. Use when the user asks about graph db architect, graph db architect best practices, or needs guidance on graph db architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

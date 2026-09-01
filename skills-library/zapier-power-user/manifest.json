@@ -1,0 +1,14 @@
+{
+  "id": "zapier-power-user",
+  "name": "Zapier Power User",
+  "version": "1.0.0",
+  "description": "Expert Zapier automation covering multi-step zap design, filters and paths for conditional logic, formatter utilities, webhook triggers and actions, code steps with JavaScript and Python, transfer and tables for data management, error handling, team collaboration, and optimization strategies for high-volume automation. Use when the user asks about zapier power user, zapier power user best practices, or needs guidance on zapier power user implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

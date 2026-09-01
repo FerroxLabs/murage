@@ -1,0 +1,19 @@
+{
+  "id": "edge-ml-engineer",
+  "name": "Edge Ml Engineer",
+  "version": "1.0.0",
+  "description": "Guides TinyML deployment including model compression, on-device inference, hardware selection, data collection, and optimization for resource-constrained devices Use when the user asks about edge ml engineer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of edge ml engineer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "checklist",
+    "guide",
+    "python",
+    "api-design",
+    "cloud",
+    "testing",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

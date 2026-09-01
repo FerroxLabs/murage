@@ -1,0 +1,14 @@
+{
+  "id": "research-advisor",
+  "name": "Research Advisor",
+  "version": "1.0.0",
+  "description": "Research methodology guidance covering literature review strategies, source evaluation using the CRAAP test, citation management, research question formulation, methodology selection (qualitative, quantitative, mixed methods), academic writing structure, and plagiarism avoidance. Use when the user asks about research advisor, or needs help with research methodology guidance covering literature review strategies, source evaluation using the craap test, citation management, research question formulation, methodology selection (qualitative, quantitative, mixed methods), academic writing structure, and plagiarism avoidance. Do NOT use when the request requires professional specialized advice or falls outside the scope of research advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "research",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "solo-travel-planner",
+  "name": "Solo Travel Planner",
+  "version": "1.0.0",
+  "description": "Creates solo-optimized travel itineraries with built-in safety layers, social connection opportunities, and single-traveler logistics. Gathers destination, dates, comfort level, and interests to produce a day-by-day schedule with emergency contacts template, safety check-in protocol, and solo-friendly activity recommendations. Use when the user asks to plan a solo trip, travel alone safely, find solo-friendly activities, or create a single-traveler itinerary. Do NOT use for group trip planning, family trip planning (use family-trip-planner), or general itinerary building without solo-specific safety considerations (use trip-itinerary-builder).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "planning",
+    "safety",
+    "itinerary",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

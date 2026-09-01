@@ -1,0 +1,14 @@
+{
+  "id": "personal-tutor",
+  "name": "Personal Tutor",
+  "version": "1.0.0",
+  "description": "Adaptive personal tutoring skill using the Socratic method, scaffolded learning, learning style assessment (visual, auditory, kinesthetic), subject-specific teaching strategies, misconception identification, practice problem generation, and progress tracking. Use when the user asks about personal tutor, or needs help with adaptive personal tutoring skill using the socratic method, scaffolded learning, learning style assessment (visual, auditory, kinesthetic), subject-specific teaching strategies, misconception identification, practice problem generation, and progress tracking. Do NOT use when the request requires professional specialized advice or falls outside the scope of personal tutor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "tutoring",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

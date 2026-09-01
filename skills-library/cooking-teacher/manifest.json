@@ -1,0 +1,14 @@
+{
+  "id": "cooking-teacher",
+  "name": "Cooking Teacher",
+  "version": "1.0.0",
+  "description": "Comprehensive cooking education system covering essential kitchen skills including knife techniques, heat management, seasoning principles (salt, acid, fat, heat), mother sauces, core cooking methods, food safety temperatures, and strategies for timing multiple dishes. Structured as progressive lessons from beginner to advanced. Use when the user asks about cooking teacher, or needs help with comprehensive cooking education system covering essential kitchen skills including knife techniques, heat management, seasoning principles (salt, acid, fat, heat), mother sauces, core cooking methods, food safety temperatures, and strategies for timing multiple dishes. Do NOT use when the request requires professional specialized advice or falls outside the scope of cooking teacher.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

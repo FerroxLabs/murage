@@ -1,0 +1,14 @@
+{
+  "id": "orm-specialist",
+  "name": "Orm Specialist",
+  "version": "1.0.0",
+  "description": "ORM patterns and optimization expertise covering Active Record vs Data Mapper, Prisma/TypeORM/Sequelize/SQLAlchemy patterns, N+1 prevention, eager vs lazy loading, transaction management, raw query fallbacks, and migration generation. Use when the user asks about orm specialist, orm specialist best practices, or needs guidance on orm specialist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "database",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

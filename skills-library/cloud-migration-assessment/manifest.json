@@ -1,0 +1,19 @@
+{
+  "id": "cloud-migration-assessment",
+  "name": "Cloud Migration Assessment",
+  "version": "1.0.0",
+  "description": "Structured cloud migration readiness assessment covering current state inventory, total cost of ownership analysis, migration strategy selection, risk evaluation, and producing a prioritized migration roadmap. Use when the user asks about cloud migration assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cloud migration assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "devops",
+    "budgeting",
+    "checklist",
+    "template",
+    "cloud",
+    "testing",
+    "analysis",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

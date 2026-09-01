@@ -1,0 +1,18 @@
+{
+  "id": "wildfire-preparation",
+  "name": "Wildfire Preparation",
+  "version": "1.0.0",
+  "description": "Defensible space creation, air quality protection, evacuation trigger identification, go-bag preparation, home hardening, and comprehensive wildfire readiness for at-risk communities Use when the user asks about wildfire preparation, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of wildfire preparation or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "testing",
+    "planning",
+    "safety",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

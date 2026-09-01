@@ -1,0 +1,18 @@
+{
+  "id": "sustainable-agriculture-advisor",
+  "name": "Sustainable Agriculture Advisor",
+  "version": "1.0.0",
+  "description": "Regenerative farming practices, permaculture design principles, local food systems, soil health management, and small-scale growing strategies for sustainable food production Use when the user asks about sustainable agriculture advisor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of sustainable agriculture advisor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "journaling",
+    "checklist",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "testing",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "environmental-policy-researcher",
+  "name": "Environmental Policy Researcher",
+  "version": "1.0.0",
+  "description": "Teaches the process of researching and evaluating environmental policy at local, state, and federal levels. Provides a structured research framework for identifying active legislation, understanding policy mechanisms, evaluating stakeholder positions, and forming evidence-based personal positions. Teaches HOW to research and evaluate policy, not which policies to support. Use when the user asks about researching environmental legislation, understanding environmental policy mechanisms, evaluating environmental proposals, or engaging with environmental policy as an informed citizen. Do NOT use for recommending specific policy positions, lobbying or campaign strategy, climate science education (use climate-science-explainer), personal sustainability actions (use other sustainability skills), or business regulatory compliance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "research",
+    "civic-engagement",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

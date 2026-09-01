@@ -1,0 +1,15 @@
+{
+  "id": "start-side-business",
+  "name": "Start Side Business",
+  "version": "1.0.0",
+  "description": "Guides the user through launching a side business from idea validation through first customer acquisition, chaining business planning, pricing, tax structure, budgeting, content marketing, and outreach skills across four categories. Use when the user wants to start a side hustle, launch a small business, or build a revenue stream alongside their primary employment. Do NOT use for scaling an existing business, raising venture capital, or transitioning from side business to full-time (use switch-careers instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "planning",
+    "strategy",
+    "step-by-step",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

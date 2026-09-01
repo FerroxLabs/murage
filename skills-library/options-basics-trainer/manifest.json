@@ -1,0 +1,18 @@
+{
+  "id": "options-basics-trainer",
+  "name": "Options Basics Trainer",
+  "version": "1.0.0",
+  "description": "Options trading education covering calls, puts, basic strategies like covered calls and protective puts, an overview of the Greeks, risk management principles, and common beginner mistakes. Focuses on understanding mechanics and managing risk before placing trades. Use when the user asks about options basics trainer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of options basics trainer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "journaling",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "performing-arts",
+    "contracts"
+  ],
+  "requiredCapabilities": []
+}

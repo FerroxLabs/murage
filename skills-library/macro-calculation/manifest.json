@@ -1,0 +1,14 @@
+{
+  "id": "macro-calculation",
+  "name": "Macro Calculation",
+  "version": "1.0.0",
+  "description": "Teaches macronutrient calculation frameworks including Total Daily Energy Expenditure estimation, macro ratio allocation by goal (fat loss, maintenance, muscle gain), and adjustment protocols. Walks through the math step-by-step with example calculations and produces a personalized macro target breakdown. Use when the user asks about calculating macros, TDEE estimation, how many calories or grams of protein they need, or how to set macro targets for a fitness goal. Do NOT use for clinical nutrition therapy, eating disorder guidance, specific diet prescriptions, or supplement recommendations.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "fitness",
+    "step-by-step",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

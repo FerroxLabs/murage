@@ -1,0 +1,15 @@
+{
+  "id": "annotated-bibliography",
+  "name": "Annotated Bibliography",
+  "version": "1.0.0",
+  "description": "Creates annotated bibliography entries with summary, evaluation, and relevance notes for learners compiling research sources. Produces complete annotated entries -- not a guide on what annotated bibliographies are. Use when a learner asks to create an annotated bibliography, write source annotations, summarize and evaluate sources for a research project. Do NOT use for finding sources (use `literature-search`), for evaluating single sources (use `source-evaluation`), or for citation formatting only (use `citation-management`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "research",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

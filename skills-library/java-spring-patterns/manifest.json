@@ -1,0 +1,14 @@
+{
+  "id": "java-spring-patterns",
+  "name": "Java Spring Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level Spring Boot 3.x development: dependency injection patterns, auto-configuration, actuator, configuration properties, and idiomatic Spring architecture. Use when the user asks about Spring Boot, dependency injection, Spring configuration, actuator, Spring Boot 3.x, Spring patterns. Do NOT use when the user asks about Java project setup (use `java-project-setup`), Java testing (use `java-testing-patterns`), Java concurrency (use `java-concurrency-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "java",
+    "backend",
+    "frameworks",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

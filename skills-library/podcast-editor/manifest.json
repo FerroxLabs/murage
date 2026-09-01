@@ -1,0 +1,13 @@
+{
+  "id": "podcast-editor",
+  "name": "Podcast Editor",
+  "version": "1.0.0",
+  "description": "Complete podcast audio editing and production guidance covering cleanup (noise reduction, EQ, compression), editing for pacing and storytelling, music beds and sound design, intro/outro creation, loudness standards (LUFS), show notes, transcription, and the full publishing workflow from raw recording to distribution. Use when the user asks about podcast editor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "podcast",
+    "design",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

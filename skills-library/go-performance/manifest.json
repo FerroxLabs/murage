@@ -1,0 +1,14 @@
+{
+  "id": "go-performance",
+  "name": "Go Performance",
+  "version": "1.0.0",
+  "description": "Guides expert-level Go performance optimization: pprof profiling, escape analysis, allocation optimization, GOMAXPROCS tuning, and benchmarking with testing.B. Use when the user asks about Go performance, pprof, escape analysis, allocation optimization, GOMAXPROCS, Go benchmarks, memory profiling. Do NOT use when the user asks about Go idioms (use `go-idioms`), Go concurrency (use `go-concurrency-patterns`), general performance testing (use `performance-testing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "go",
+    "optimization",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

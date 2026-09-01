@@ -1,0 +1,14 @@
+{
+  "id": "api-gateway-builder",
+  "name": "Api Gateway Builder",
+  "version": "1.0.0",
+  "description": "Expert guide for designing and configuring API gateways including Kong, AWS API Gateway, and cloud-native solutions. Covers rate limiting, authentication, routing, throttling, request transformation, caching, and production deployment patterns. Use when the user asks about api gateway builder, api gateway builder best practices, or needs guidance on api gateway builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

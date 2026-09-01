@@ -1,0 +1,12 @@
+{
+  "id": "beacon-instagram",
+  "name": "instagram",
+  "version": "1.0.0",
+  "description": "As of: 2026-05-16",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beacon",
+    "instagram"
+  ],
+  "requiredCapabilities": []
+}

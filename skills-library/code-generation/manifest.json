@@ -1,0 +1,14 @@
+{
+  "id": "code-generation",
+  "name": "Code Generation",
+  "version": "1.0.0",
+  "description": "Scaffolding, templates, and code generation strategies with project bootstrapping, boilerplate automation, template engines, AST-based generation, and maintainable codegen pipelines. Use when the user asks about code generation, code generation best practices, or needs guidance on code generation implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "clean-code",
+    "automation",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "meal-planner",
+  "name": "Meal Planner",
+  "version": "1.0.0",
+  "description": "Comprehensive weekly meal planning system with batch cooking strategies, meal prep scheduling, balanced meal composition, family-size scaling, leftover incorporation, seasonal ingredient planning, and automated shopping list generation. Designed to save time, reduce food waste, and support nutritional goals. Use when the user asks about meal planner, or needs help with comprehensive weekly meal planning system with batch cooking strategies, meal prep scheduling, balanced meal composition, family-size scaling, leftover incorporation, seasonal ingredient planning, and automated shopping list generation. Do NOT use when the request requires professional specialized advice or falls outside the scope of meal planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "photo-editing-workflow",
+  "name": "Photo Editing Workflow",
+  "version": "1.0.0",
+  "description": "Produces a priority-ordered photo editing sequence covering white balance, exposure, highlight/shadow recovery, color grading, local adjustments, sharpening, and export settings for the intended output medium. Applicable to any RAW processor or photo editor. Use when the user asks about photo editing, post-processing, color correction, or exporting photos for print or web. Do NOT use for audio editing (use audio-editing-guide), video production (use video-script-writing), or pre-shoot camera settings (use exposure-triangle).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "photography",
+    "checklist",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "seo-blog-post",
+  "name": "Seo Blog Post",
+  "version": "1.0.0",
+  "description": "Writes SEO-optimized blog posts with strategic keyword placement, meta description, internal linking plan, and search-intent alignment. Use when the user wants a blog post designed to rank in search engines, asks for keyword- focused content, or needs organic traffic growth content. Do NOT use for general blog posts without SEO goals (use `blog-post-writing`), social media content (use `linkedin-post` or `twitter-thread`), or technical documentation (use `readme-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "blog-post",
+    "seo",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

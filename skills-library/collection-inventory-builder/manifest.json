@@ -1,0 +1,15 @@
+{
+  "id": "collection-inventory-builder",
+  "name": "Collection Inventory Builder",
+  "version": "1.0.0",
+  "description": "Creates a structured collection inventory system with database schema design, cataloguing workflows, condition grading frameworks, and storage documentation for any collectible type. Gathers the user's collection type, size, and goals to produce a complete inventory template with fields, grading criteria, and maintenance protocols. Use when the user asks about cataloguing a collection, building a collection database, tracking collectible items, organizing an inventory of collectibles, or documenting collection condition and provenance. Do NOT use for determining the monetary value of collectibles (use collection-valuation-guide), authenticating items for fraud detection (use collectible-authentication-guide), insurance appraisals, or business inventory management for retail stock.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "checklist",
+    "template",
+    "planning",
+    "guide",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "penetration-tester",
+  "name": "Penetration Tester",
+  "version": "1.0.0",
+  "description": "Penetration testing methodology for authorized security testing covering OWASP Testing Guide, reconnaissance techniques, injection testing, XSS detection, CSRF testing, authentication bypass, privilege escalation, API security testing, and professional report formatting. For defensive and authorized testing purposes only. Use when the user asks about penetration tester, penetration tester best practices, or needs guidance on penetration tester implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "penetration-testing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

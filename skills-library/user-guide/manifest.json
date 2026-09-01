@@ -1,0 +1,14 @@
+{
+  "id": "user-guide",
+  "name": "User Guide",
+  "version": "1.0.0",
+  "description": "Creates task-oriented user guides with prerequisites, step-by-step procedures, expected outcomes, and troubleshooting sections. Use when the user needs documentation that teaches end users how to accomplish tasks with a product or system. Do NOT use for API reference docs (use `api-documentation`), developer tutorials (use `tutorial-writing`), or internal process docs (use `sop-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "step-by-step",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "tech-recruiter-advisor",
+  "name": "Tech Recruiter Advisor",
+  "version": "1.0.0",
+  "description": "Technical recruiting strategy covering sourcing techniques, screening frameworks, interview design, candidate evaluation, offer negotiation, employer branding, and diversity hiring. Includes scorecard templates, job description formulas, outreach message templates, and hiring pipeline metrics. Use when the user asks about tech recruiter advisor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of tech recruiter advisor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "career",
+    "budgeting",
+    "checklist",
+    "template",
+    "resume-writing",
+    "video-production",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "zero-trust-architect",
+  "name": "Zero Trust Architect",
+  "version": "1.0.0",
+  "description": "Zero trust architecture expertise covering identity-first security, microsegmentation, policy engines, continuous verification, device trust, network security modernization, ZTNA implementation, service mesh security, identity provider integration, and least-privilege access design for eliminating implicit trust in enterprise environments. Use when the user asks about zero trust architect, zero trust architect best practices, or needs guidance on zero trust architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "cloud-security",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

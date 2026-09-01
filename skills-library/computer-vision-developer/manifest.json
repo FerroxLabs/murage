@@ -1,0 +1,14 @@
+{
+  "id": "computer-vision-developer",
+  "name": "Computer Vision Developer",
+  "version": "1.0.0",
+  "description": "Hands-on computer vision development covering image classification with transfer learning, object detection with YOLO and Faster R-CNN, semantic and instance segmentation, OpenCV image processing, data augmentation strategies, model optimization for edge deployment, video processing, and metrics for measuring model performance. Use when the user asks about computer vision developer, computer vision developer best practices, or needs guidance on computer vision developer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "deep-learning",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

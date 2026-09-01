@@ -1,0 +1,14 @@
+{
+  "id": "github-actions",
+  "name": "Github Actions",
+  "version": "1.0.0",
+  "description": "GitHub Actions CI/CD. Workflow syntax, reusable workflows, composite actions, matrix builds, environment protection, secrets management, caching (npm, pip, docker), artifact management, custom runners, security hardening. Use when the user asks about github actions, github actions best practices, or needs guidance on github actions implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "ci-cd",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

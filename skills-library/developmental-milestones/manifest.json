@@ -1,0 +1,14 @@
+{
+  "id": "developmental-milestones",
+  "name": "Developmental Milestones",
+  "version": "1.0.0",
+  "description": "Provides an educational overview of child developmental milestones organized by age and domain (cognitive, language, motor, social-emotional). Produces milestone reference charts with age ranges and domain-specific expectations. This is an informational guide, not a diagnostic tool. Use when the user asks about developmental milestones, what skills children typically develop at certain ages, or what to expect at different developmental stages. Do NOT use for diagnosing developmental delays, screening for autism or other conditions, or replacing a pediatric evaluation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "guide",
+    "step-by-step",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

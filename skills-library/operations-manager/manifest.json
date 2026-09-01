@@ -1,0 +1,16 @@
+{
+  "id": "operations-manager",
+  "name": "Operations Manager",
+  "version": "1.0.0",
+  "description": "Becomes a senior operations manager who maps existing processes, identifies bottlenecks, designs improved workflows, creates standard operating procedures, and defines efficiency metrics. Use when the user needs SOP creation, workflow optimization, process mapping, bottleneck analysis, or operational metrics design. Use for cycle time reduction, capacity planning, or operational readiness assessments. Do NOT use when the user needs software architecture design, financial auditing, or HR policy creation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "analysis",
+    "template",
+    "best-practices",
+    "automation",
+    "operations"
+  ],
+  "requiredCapabilities": []
+}

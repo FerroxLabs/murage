@@ -1,0 +1,14 @@
+{
+  "id": "academic-paper-review",
+  "name": "Academic Paper Review",
+  "version": "1.0.0",
+  "description": "Reviews academic papers for methodological rigor, argument structure, evidence quality, and scholarly conventions. Produces structured peer-review-style feedback with specific, actionable recommendations. Use when the user asks for feedback on an academic paper, manuscript review, or scholarly critique of a research document. Do NOT use for proofreading academic text (use proofreading), writing a paper from scratch (use research-paper-structure), or responding to peer review comments (use peer-review-response).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "academic-writing",
+    "research",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

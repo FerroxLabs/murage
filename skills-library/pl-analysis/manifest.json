@@ -1,0 +1,16 @@
+{
+  "id": "pl-analysis",
+  "name": "Pl Analysis",
+  "version": "1.0.0",
+  "description": "Performs profit and loss (P&L) statement analysis including variance analysis, trend identification, margin analysis, and actionable recommendations. Use when the user asks about P&L analysis, income statement review, profit margin analysis, variance analysis, or financial performance review. Do NOT use for building a financial model from scratch (use financial-model-structure), personal budget review (use budget-planning), or tax preparation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "report",
+    "strategy",
+    "planning",
+    "spreadsheets",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

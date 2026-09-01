@@ -1,0 +1,15 @@
+{
+  "id": "habit-stacking-framework",
+  "name": "Habit Stacking Framework",
+  "version": "1.0.0",
+  "description": "Builds personalized habit stacks using implementation intentions that link new habits to existing daily anchors. Gathers the user's current routines and desired new habits, then produces a structured habit stack with \"After I [existing habit], I will [new habit]\" templates, a visual routine map, and a 2-week commitment plan. Use when the user asks about habit stacking, building new habits, implementation intentions, chaining habits together, or creating automatic routines. Do NOT use for breaking bad habits (use trigger-identification), addiction recovery, or clinical behavior modification programs.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "mental-wellness",
+    "habits",
+    "self-care",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

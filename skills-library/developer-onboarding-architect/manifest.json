@@ -1,0 +1,19 @@
+{
+  "id": "developer-onboarding-architect",
+  "name": "Developer Onboarding Architect",
+  "version": "1.0.0",
+  "description": "Developer onboarding architecture expertise covering first-day experience design, development environment automation, progressive documentation strategy, mentorship program structure, ramp-up metrics and milestones, knowledge transfer frameworks, and building self-service onboarding systems that scale. Use when the user asks about developer onboarding architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of developer onboarding architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "checklist",
+    "template",
+    "guide",
+    "python",
+    "api-design",
+    "testing",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

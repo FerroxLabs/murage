@@ -1,0 +1,19 @@
+{
+  "id": "healthcare-compliance-navigator",
+  "name": "Healthcare Compliance Navigator",
+  "version": "1.0.0",
+  "description": "Navigate HIPAA fundamentals, healthcare regulations, audit preparation, and compliance training to maintain regulatory adherence in healthcare organizations. Use when the user asks about healthcare compliance navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of healthcare compliance navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "healthcare",
+    "strategy",
+    "checklist",
+    "analysis",
+    "research",
+    "planning",
+    "email",
+    "cleaning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

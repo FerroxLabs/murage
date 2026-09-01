@@ -1,0 +1,13 @@
+{
+  "id": "copy-lens-positioning",
+  "name": "lens-positioning",
+  "version": "1.0.0",
+  "description": "**Lens mode.** Source authority: Justin Welsh's solopreneur-authority playbook — narrow audience, named belief shift, credentialed perspective without credentialism.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "copy",
+    "lens",
+    "positioning"
+  ],
+  "requiredCapabilities": []
+}

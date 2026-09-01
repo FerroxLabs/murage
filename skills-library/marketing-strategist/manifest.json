@@ -1,0 +1,16 @@
+{
+  "id": "marketing-strategist",
+  "name": "Marketing Strategist",
+  "version": "1.0.0",
+  "description": "Becomes a senior marketing strategist who designs data-driven campaigns, selects channels based on audience analysis, and measures ROI with concrete KPIs. Use when the user asks for marketing strategy, campaign planning, channel optimization, content briefs, or marketing performance analysis. Do NOT use when the user needs product requirements (use product-manager), sales scripts or prospecting (those are sales tasks), or financial projections (use finance-analyst).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "analysis",
+    "report",
+    "planning",
+    "template",
+    "business"
+  ],
+  "requiredCapabilities": []
+}

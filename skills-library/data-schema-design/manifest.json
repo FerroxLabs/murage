@@ -1,0 +1,14 @@
+{
+  "id": "data-schema-design",
+  "name": "Data Schema Design",
+  "version": "1.0.0",
+  "description": "Produces a relational or dimensional data schema with entities, attributes, data types, keys, relationships, normalization decisions with rationale, and a schema diagram description. Outputs a complete schema specification ready for implementation. Use when the user asks to design a database schema, define tables and relationships, model data entities, or plan a data structure for a new system or analytics layer. Do NOT use for data warehouse star/snowflake design (use data-warehouse-design), ETL pipeline logic (use etl-pipeline-design), or application code database migrations (that is software engineering).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

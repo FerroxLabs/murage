@@ -1,0 +1,15 @@
+{
+  "id": "practice-routine-builder",
+  "name": "Practice Routine Builder",
+  "version": "1.0.0",
+  "description": "Builds instrument-agnostic deliberate practice schedules with structured time allocation across warm-up, technique, repertoire, improvisation, and ear training blocks. Calibrates session length and difficulty to the user's available time (15 to 90 minutes) and skill level. Use when the user wants a structured practice routine for any musical instrument, asks how to organize practice time, wants to improve efficiently, or needs a weekly practice plan. Do NOT use for learning specific guitar chords (use guitar-beginner-foundations), music theory concepts (use music-theory-fundamentals), or recording setup (use home-recording-starter).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "workout-planning",
+    "planning",
+    "checklist",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

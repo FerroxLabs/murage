@@ -1,0 +1,15 @@
+{
+  "id": "food-tourism-planner",
+  "name": "Food Tourism Planner",
+  "version": "1.0.0",
+  "description": "Creates food-focused travel itineraries featuring local markets, signature dishes, cooking classes, and food district routing. Produces a day-by-day food itinerary with meal scheduling, neighborhood guides, and dietary accommodation notes. Use when the user asks about planning food experiences abroad, creating a food tour itinerary, finding local culinary highlights, or organizing cooking class trips. Do NOT use for general trip planning (use trip-itinerary-builder), restaurant reviews, or meal prep and cooking technique guidance (use home-household cooking skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "planning",
+    "research",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

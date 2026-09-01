@@ -1,0 +1,16 @@
+{
+  "id": "pricing-strategy",
+  "name": "Pricing Strategy",
+  "version": "1.0.0",
+  "description": "Analyzes pricing options using cost-plus, value-based, and competitive pricing frameworks with a structured recommendation for product or service pricing decisions. Use when the user asks about pricing strategy, how to price a product, pricing models, value-based pricing, or competitive pricing analysis. Do NOT use for personal finance calculations, unit economics analysis (use unit-economics), or full financial modeling (use financial-model-structure).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "analysis",
+    "planning",
+    "sales",
+    "marketing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

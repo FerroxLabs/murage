@@ -1,0 +1,19 @@
+{
+  "id": "thought-experiment-lab",
+  "name": "Thought Experiment Lab",
+  "version": "1.0.0",
+  "description": "Interactive exploration of classic and original philosophical thought experiments, with structured analysis methodology, scenario construction techniques, discussion facilitation guides, and exercises for developing philosophical reasoning through hypothetical scenario analysis. Use when the user asks about thought experiment lab, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of thought experiment lab or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "journaling",
+    "habits",
+    "checklist",
+    "guide",
+    "testing",
+    "analysis",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

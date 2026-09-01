@@ -1,0 +1,17 @@
+{
+  "id": "saas-metrics-analyst",
+  "name": "Saas Metrics Analyst",
+  "version": "1.0.0",
+  "description": "SaaS business metrics analysis covering MRR, ARR, churn rates, customer lifetime value, cohort analysis, unit economics, and dashboard design. Includes benchmark data, formula references, investor-ready reporting templates, and diagnostic frameworks for identifying growth bottlenecks. Use when the user asks about saas metrics analyst, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of saas metrics analyst or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "data-science",
+    "budgeting",
+    "template",
+    "analysis",
+    "marketing",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

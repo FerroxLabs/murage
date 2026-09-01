@@ -1,0 +1,19 @@
+{
+  "id": "oss-governance-architect",
+  "name": "Oss Governance Architect",
+  "version": "1.0.0",
+  "description": "Design RFC processes, decision-making frameworks, roadmap management, and organizational structures for open source projects at scale Use when the user asks about oss governance architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of oss governance architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "budgeting",
+    "template",
+    "api-design",
+    "planning",
+    "game-design",
+    "performing-arts",
+    "video-production",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

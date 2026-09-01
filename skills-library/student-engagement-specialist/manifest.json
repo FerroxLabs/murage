@@ -1,0 +1,19 @@
+{
+  "id": "student-engagement-specialist",
+  "name": "Student Engagement Specialist",
+  "version": "1.0.0",
+  "description": "Design gamification systems, participation strategies, feedback loops, and motivation frameworks to increase student engagement across all learning environments. Use when the user asks about student engagement specialist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of student engagement specialist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "education-industry",
+    "teaching",
+    "checklist",
+    "template",
+    "guide",
+    "step-by-step",
+    "planning",
+    "video-production",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

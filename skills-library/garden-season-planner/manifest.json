@@ -1,0 +1,19 @@
+{
+  "id": "garden-season-planner",
+  "name": "Garden Season Planner",
+  "version": "1.0.0",
+  "description": "Comprehensive garden planning guidance with zone-based planting calendars, seed starting schedules, succession planting strategies, harvest timing, and season extension techniques for productive home gardens. Use when the user asks about garden season planner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of garden season planner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "event-planning",
+    "beginner-friendly",
+    "quick-reference",
+    "testing",
+    "sustainability",
+    "cooking",
+    "gardening",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

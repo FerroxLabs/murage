@@ -1,0 +1,14 @@
+{
+  "id": "git-panic-recovery",
+  "name": "Git Panic Recovery",
+  "version": "1.0.0",
+  "description": "Emergency rescue guide for common git mistakes - undo commits, recover deleted branches, fix botched merges, and rescue lost work using reflog and other recovery techniques. Use when the user asks about git panic recovery, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of git panic recovery or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "best-practices",
+    "checklist",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

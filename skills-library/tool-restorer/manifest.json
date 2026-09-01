@@ -1,0 +1,19 @@
+{
+  "id": "tool-restorer",
+  "name": "Tool Restorer",
+  "version": "1.0.0",
+  "description": "Guide to restoring hand tools covering rust removal, cleaning methods, sharpening techniques, handle replacement, preservation treatments, and the process of bringing old tools back to functional working condition. Use when the user asks about tool restorer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of tool restorer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "woodworking",
+    "budgeting",
+    "step-by-step",
+    "beginner-friendly",
+    "testing",
+    "automation",
+    "safety",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "digital-transformation-readiness",
+  "name": "Digital Transformation Readiness",
+  "version": "1.0.0",
+  "description": "Structured digital transformation readiness evaluation covering current digital maturity, capability gaps, change management preparedness, technology stack assessment, and producing an actionable transformation roadmap. Use when the user asks about digital transformation readiness, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of digital transformation readiness or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "budgeting",
+    "template",
+    "api-design",
+    "cloud",
+    "automation",
+    "investing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

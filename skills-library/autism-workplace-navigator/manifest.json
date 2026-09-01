@@ -1,0 +1,18 @@
+{
+  "id": "autism-workplace-navigator",
+  "name": "Autism Workplace Navigator",
+  "version": "1.0.0",
+  "description": "Guidance on workplace accommodations, communication strategies, strengths-based career development, and self-advocacy for autistic professionals. Use when the user asks about autism workplace navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of autism workplace navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "self-care",
+    "analysis",
+    "research",
+    "safety",
+    "neurodiversity",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

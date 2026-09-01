@@ -1,0 +1,14 @@
+{
+  "id": "tech-debt-negotiator",
+  "name": "Tech Debt Negotiator",
+  "version": "1.0.0",
+  "description": "Technical debt negotiation expertise covering debt identification and quantification, prioritization frameworks, stakeholder communication strategies, payoff planning, ROI calculations, and the art of selling refactoring time to non-technical leadership. Use when the user asks about tech debt negotiator, tech debt negotiator best practices, or needs guidance on tech debt negotiator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "refactoring",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

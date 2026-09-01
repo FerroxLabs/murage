@@ -1,0 +1,15 @@
+{
+  "id": "renovate-a-house",
+  "name": "Renovate A House",
+  "version": "1.0.0",
+  "description": "Guides the user through a home renovation from budget planning through project completion, chaining renovation budgeting, financing, permit research, contractor evaluation, DIY assessment, project management, and finish selection skills across four categories. Use when the user wants to renovate a home, remodel rooms, or plan a major home improvement project. Do NOT use for minor repairs (use home-repair-first-response), routine maintenance (use annual-home-maintenance), or new home construction.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "planning",
+    "checklist",
+    "step-by-step",
+    "cross-domain"
+  ],
+  "requiredCapabilities": []
+}

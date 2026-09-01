@@ -1,0 +1,14 @@
+{
+  "id": "user-story-writer",
+  "name": "User Story Writer",
+  "version": "1.0.0",
+  "description": "Expert in user story creation using the As a/I want/So that format, INVEST criteria, story splitting techniques, acceptance criteria patterns, edge case identification, story mapping, epic decomposition, and definition of ready. Use when the user asks about user story writer, user story writer best practices, or needs guidance on user story writer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "guide",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

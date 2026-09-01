@@ -1,0 +1,14 @@
+{
+  "id": "internal-wiki-page",
+  "name": "Internal Wiki Page",
+  "version": "1.0.0",
+  "description": "Creates internal documentation pages with context, process descriptions, decision rationale, ownership, and cross-references for team wikis and knowledge management systems. Use when the user needs to write internal docs, team documentation, or wiki pages for onboarding and knowledge sharing. Do NOT use for external user guides (use `user-guide`), KB articles (use `knowledge-base-article`), or SOPs (use `sop-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "guide",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

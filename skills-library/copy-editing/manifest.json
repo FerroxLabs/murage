@@ -1,0 +1,13 @@
+{
+  "id": "copy-editing",
+  "name": "Copy Editing",
+  "version": "1.0.0",
+  "description": "Performs line-level copy editing for clarity, concision, grammar, consistency, and adherence to style guides. Produces tracked-change markup showing every edit with rationale. Use when the user asks for copy editing, line editing, sentence-level revision, or style-guide-consistent editing. Do NOT use for proofreading only (use proofreading), structural reorganization (use structural-editing), or fact verification (use fact-check-framework).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

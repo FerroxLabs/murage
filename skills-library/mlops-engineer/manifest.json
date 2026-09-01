@@ -1,0 +1,14 @@
+{
+  "id": "mlops-engineer",
+  "name": "Mlops Engineer",
+  "version": "1.0.0",
+  "description": "MLOps and deployment covering model serving (TorchServe, TF Serving, Triton), containerized inference, A/B testing deployment, model monitoring (data drift, concept drift), feature stores, CI/CD for ML, GPU optimization, and model compression. Use when the user asks about mlops engineer, mlops engineer best practices, or needs guidance on mlops engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "devops",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

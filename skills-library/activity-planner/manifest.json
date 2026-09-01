@@ -1,0 +1,14 @@
+{
+  "id": "activity-planner",
+  "name": "Activity Planner",
+  "version": "1.0.0",
+  "description": "Age-appropriate activity planning for children covering indoor/outdoor activities, educational and STEM projects, sensory play, seasonal ideas, and budget-friendly options organized by developmental stage. Use when the user asks about activity planner, or needs help with age-appropriate activity planning for children covering indoor/outdoor activities, educational and stem projects, sensory play, seasonal ideas, and budget-friendly options organized by developmental stage. Do NOT use when the request requires professional specialized advice or falls outside the scope of activity planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "family-events",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

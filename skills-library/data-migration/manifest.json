@@ -1,0 +1,14 @@
+{
+  "id": "data-migration",
+  "name": "Data Migration",
+  "version": "1.0.0",
+  "description": "Database migration expertise covering zero-downtime migration strategies, dual-write patterns, shadow tables, data reconciliation, schema evolution, backward compatibility, rollback strategies, large table migration, and cross-database migration for safely moving data between systems without service disruption. Use when the user asks about data migration, data migration best practices, or needs guidance on data migration implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "guide",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

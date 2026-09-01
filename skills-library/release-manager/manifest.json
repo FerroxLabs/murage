@@ -1,0 +1,19 @@
+{
+  "id": "release-manager",
+  "name": "Release Manager",
+  "version": "1.0.0",
+  "description": "Master semantic versioning, changelog generation, automated release pipelines, and CI/CD workflows for open source project releases Use when the user asks about release manager, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of release manager or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "checklist",
+    "template",
+    "guide",
+    "python",
+    "api-design",
+    "testing",
+    "automation",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

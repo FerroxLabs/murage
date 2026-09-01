@@ -1,0 +1,14 @@
+{
+  "id": "task-delegation-system",
+  "name": "Task Delegation System",
+  "version": "1.0.0",
+  "description": "Builds a delegation protocol with decision criteria for what to delegate, a handoff template, follow-up schedule, and quality check process. Produces a complete delegation system document the user can use immediately. Use when the user asks about delegating tasks, deciding what to hand off, creating handoff procedures, or building a follow-up system for delegated work. Do NOT use for team project management (use business project-management skills), hiring or staffing decisions (use business HR skills), or personal task prioritization (use task-prioritization).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "template",
+    "checklist",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

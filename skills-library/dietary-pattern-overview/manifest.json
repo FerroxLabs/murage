@@ -1,0 +1,14 @@
+{
+  "id": "dietary-pattern-overview",
+  "name": "Dietary Pattern Overview",
+  "version": "1.0.0",
+  "description": "Provides educational overviews of major dietary patterns including Mediterranean, plant-based, low-carb, DASH, paleo, and whole-food approaches. Explains the core principles, typical food composition, research-supported benefits, and practical considerations of each pattern without prescribing any specific diet for the user. Use when the user asks about different diets, what a Mediterranean or keto diet involves, comparing dietary approaches, or understanding the principles behind a specific dietary pattern. Do NOT use for personalized diet prescriptions, clinical dietary therapy, eating disorder guidance, or macro calculations (use macro-calculation).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "planning",
+    "research",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

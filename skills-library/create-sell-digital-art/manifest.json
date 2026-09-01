@@ -1,0 +1,15 @@
+{
+  "id": "create-sell-digital-art",
+  "name": "Create Sell Digital Art",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for developing a distinctive digital art style, building a professional portfolio, establishing marketplace presence, marketing artwork, and understanding licensing. Covers tools, technique development, portfolio curation, platform selection, pricing strategy, and building a sustainable art practice that generates income. Use when the user wants to create sell digital art or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

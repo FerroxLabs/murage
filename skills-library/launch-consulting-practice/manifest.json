@@ -1,0 +1,15 @@
+{
+  "id": "launch-consulting-practice",
+  "name": "Launch Consulting Practice",
+  "version": "1.0.0",
+  "description": "Guided workflow for launching a professional consulting practice from niche selection and market positioning through pipeline development, client delivery frameworks, and scaling operations. Designed for experienced professionals transitioning to independent consulting. Use when the user wants to launch consulting practice or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "freelancing",
+    "step-by-step",
+    "planning",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

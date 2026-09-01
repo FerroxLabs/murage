@@ -1,0 +1,19 @@
+{
+  "id": "international-cuisine-explorer",
+  "name": "International Cuisine Explorer",
+  "version": "1.0.0",
+  "description": "Guide home cooks through regional cuisines worldwide with pantry building, authentic techniques, flavor profiles, ingredient substitutions, and culturally respectful cooking practices Use when the user asks about international cuisine explorer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of international cuisine explorer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "cleaning",
+    "fashion",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

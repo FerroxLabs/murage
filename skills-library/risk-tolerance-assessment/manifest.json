@@ -1,0 +1,14 @@
+{
+  "id": "risk-tolerance-assessment",
+  "name": "Risk Tolerance Assessment",
+  "version": "1.0.0",
+  "description": "Guides the user through a structured questionnaire to identify their investment risk tolerance based on time horizon, income stability, financial cushion, and emotional response to portfolio fluctuations. Produces a risk profile classification from conservative to aggressive. Use when the user asks about their risk tolerance, wants to assess how much investment risk they can handle, or needs a risk profile before building a portfolio allocation. Do NOT use for choosing specific investments (use portfolio-allocation-framework), understanding account types (use investment-account-types), or calculating retirement targets (use retirement-savings-calculator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "investing",
+    "personal-finance",
+    "analysis",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

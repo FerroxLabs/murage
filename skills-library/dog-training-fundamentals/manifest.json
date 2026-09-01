@@ -1,0 +1,14 @@
+{
+  "id": "dog-training-fundamentals",
+  "name": "Dog Training Fundamentals",
+  "version": "1.0.0",
+  "description": "Teaches positive reinforcement dog training for core commands (sit, stay, come, leave it, heel) and house training protocol. Uses marker training, luring, and shaping techniques with specific timing and progression criteria. Produces a training plan with session structure and troubleshooting. Use when the user asks about training a dog, teaching commands, house training a puppy, positive reinforcement techniques, or marker training basics. Do NOT use for behavior modification of serious issues (aggression, severe anxiety, resource guarding), service dog training, or advanced competition obedience.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "step-by-step",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "listicle-writing",
+  "name": "Listicle Writing",
+  "version": "1.0.0",
+  "description": "Writes numbered listicle articles with consistent item structure, intro framing, and a conclusion that ties items together. Use when the user wants a list-format blog post, a \"top N\" article, a roundup post, or asks for content in numbered list format. Do NOT use for step-by-step instructions (use `how-to-guide`), general blog posts (use `blog-post-writing`), or editorial calendars (use `editorial-calendar`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "blog-post",
+    "writing",
+    "content-marketing"
+  ],
+  "requiredCapabilities": []
+}

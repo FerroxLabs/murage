@@ -1,0 +1,13 @@
+{
+  "id": "animation-designer",
+  "name": "Animation Designer",
+  "version": "1.0.0",
+  "description": "Web animation expertise covering CSS animations and transitions, Web Animations API, Framer Motion, GSAP, scroll-driven animations, layout animations, spring physics, reduce-motion preferences, and performance budgets. Use when the user asks about animation designer, animation designer best practices, or needs guidance on animation designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "html-css"
+  ],
+  "requiredCapabilities": []
+}

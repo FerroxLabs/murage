@@ -1,0 +1,19 @@
+{
+  "id": "remote-team-culture-builder",
+  "name": "Remote Team Culture Builder",
+  "version": "1.0.0",
+  "description": "Remote team culture expertise covering virtual ritual design, asynchronous communication norms, documentation-first practices, distributed team bonding activities, feedback mechanisms for remote teams, timezone management, and building belonging and trust in fully distributed teams. Use when the user asks about remote team culture builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of remote team culture builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "budgeting",
+    "template",
+    "safety",
+    "performing-arts",
+    "investing",
+    "tax-planning",
+    "pet-care",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

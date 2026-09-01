@@ -1,0 +1,19 @@
+{
+  "id": "streaming-setup-guide",
+  "name": "Streaming Setup Guide",
+  "version": "1.0.0",
+  "description": "Patient, step-by-step guidance for setting up and using streaming services like Netflix, YouTube, and music apps, including casting to TVs, sound system basics, troubleshooting common issues, and managing subscriptions. Use when the user asks about streaming setup guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of streaming setup guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "guide",
+    "step-by-step",
+    "networking",
+    "safety",
+    "performing-arts",
+    "accessibility",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

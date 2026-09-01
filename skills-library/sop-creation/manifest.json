@@ -1,0 +1,15 @@
+{
+  "id": "sop-creation",
+  "name": "Sop Creation",
+  "version": "1.0.0",
+  "description": "Produces a standard operating procedure document with purpose, scope, step-by-step instructions, roles, safety notes, and revision tracking using ISO-adjacent SOP format. Use when the user asks to create an SOP, write a standard operating procedure, document a business process, build a step-by-step procedure for a team, or formalize how a task should be performed. Do NOT use for process flow diagrams (use process-mapping), quality checklists without procedures (use qa-checklist), or training curriculum (use teaching skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "template",
+    "checklist",
+    "step-by-step",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

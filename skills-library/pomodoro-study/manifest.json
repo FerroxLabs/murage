@@ -1,0 +1,15 @@
+{
+  "id": "pomodoro-study",
+  "name": "Pomodoro Study",
+  "version": "1.0.0",
+  "description": "Creates structured Pomodoro study sessions with topic breakdowns, timed work intervals, breaks, and review periods for learners. Uses the Pomodoro technique to produce a ready-to-follow session plan -- not an explanation of what the Pomodoro technique is. Use when a learner asks to use the Pomodoro technique for studying, structure a focused study session, or create a timed study plan with breaks. Do NOT use for general study planning over weeks (use `study-plan`), for spaced repetition scheduling (use `spaced-repetition`), or for time management beyond study sessions (not an education skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "beginner-friendly",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

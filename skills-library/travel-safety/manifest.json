@@ -1,0 +1,14 @@
+{
+  "id": "travel-safety",
+  "name": "Travel Safety",
+  "version": "1.0.0",
+  "description": "Comprehensive travel safety guide covering destination safety research, common scams by region, personal safety tips, money safety including cards vs cash, emergency contacts, travel insurance, health precautions, solo travel safety, and natural disaster awareness. Use when the user asks about travel safety, or needs help with comprehensive travel safety guide covering destination safety research, common scams by region, personal safety tips, money safety including cards vs cash, emergency contacts, travel insurance, health precautions, solo travel safety, and natural disaster awareness. Do NOT use when the request requires professional specialized advice or falls outside the scope of travel safety.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "safety",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

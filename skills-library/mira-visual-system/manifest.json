@@ -1,0 +1,13 @@
+{
+  "id": "mira-visual-system",
+  "name": "visual-system",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Brand specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mira",
+    "visual",
+    "system"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "password-vault-manager",
+  "name": "Password Vault Manager",
+  "version": "1.0.0",
+  "description": "Complete guide for setting up and using password managers including vault setup, migration strategies, password best practices, secure sharing, and emergency access planning. Use when the user asks about password vault manager, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of password vault manager or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "budgeting",
+    "guide",
+    "quick-reference",
+    "cloud",
+    "testing",
+    "safety",
+    "emergency-preparedness"
+  ],
+  "requiredCapabilities": []
+}

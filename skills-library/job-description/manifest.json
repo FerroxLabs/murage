@@ -1,0 +1,16 @@
+{
+  "id": "job-description",
+  "name": "Job Description",
+  "version": "1.0.0",
+  "description": "Creates competency-based job descriptions with role summary, 5-8 key responsibilities, must-have and nice-to-have requirements, and compensation structure. Use when the user asks about writing a job description, creating a job posting, JD writing, or defining a role for hiring. Do NOT use for resume writing (use resume-builder), interview preparation (use interview-guide), or career advice.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "template",
+    "planning",
+    "checklist",
+    "report",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

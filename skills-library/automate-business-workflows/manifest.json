@@ -1,0 +1,14 @@
+{
+  "id": "automate-business-workflows",
+  "name": "Automate Business Workflows",
+  "version": "1.0.0",
+  "description": "Systematic workflow for identifying, designing, implementing, and monitoring business process automation. Covers auditing manual processes, selecting automation tools, building workflows with no-code and code-based solutions, and measuring the ROI of automation investments. Use when the user wants to automate business workflows or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "step-by-step",
+    "planning",
+    "cross-domain"
+  ],
+  "requiredCapabilities": []
+}

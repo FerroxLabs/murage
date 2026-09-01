@@ -1,0 +1,14 @@
+{
+  "id": "notification-system-designer",
+  "name": "Notification System Designer",
+  "version": "1.0.0",
+  "description": "Notification system architecture expert covering multi-channel delivery (email, SMS, push, in-app, Slack), user preference management, throttling and rate limiting, template engines, delivery tracking and analytics, batching/digest strategies, priority routing, and notification center design. Use when the user asks about notification system designer, notification system designer best practices, or needs guidance on notification system designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "backend",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

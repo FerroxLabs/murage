@@ -1,0 +1,15 @@
+{
+  "id": "pestle-analysis",
+  "name": "Pestle Analysis",
+  "version": "1.0.0",
+  "description": "Produces a completed PESTLE analysis grid with current factors and strategic implications for each dimension (Political, Economic, Social, Technological, Legal, Environmental). Use when the user asks to scan the macro-environment, assess external factors affecting a business, evaluate market conditions, or analyze the broader landscape before a strategic decision. Do NOT use for internal company analysis (use swot-analysis), industry competitive forces (use porters-five-forces), or direct competitor benchmarking (use competitive-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "analysis",
+    "planning",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

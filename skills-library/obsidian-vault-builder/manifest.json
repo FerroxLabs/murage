@@ -1,0 +1,19 @@
+{
+  "id": "obsidian-vault-builder",
+  "name": "Obsidian Vault Builder",
+  "version": "1.0.0",
+  "description": "Design and build Obsidian vaults with effective linking strategies, plugins, templates, graph organization, and workflows for personal knowledge management and note-taking. Use when the user asks about obsidian vault builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of obsidian vault builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "journaling",
+    "checklist",
+    "template",
+    "guide",
+    "advanced",
+    "javascript",
+    "sql",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

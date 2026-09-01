@@ -1,0 +1,14 @@
+{
+  "id": "conditional-formatting-rules",
+  "name": "Conditional Formatting Rules",
+  "version": "1.0.0",
+  "description": "Produces a conditional formatting rule set for a specific use case. Specifies rule type (cell value, formula-based, color scale, data bars), criteria, color assignments with hex codes, and rule priority order. Output is the exact configuration to apply. Use when the user wants to highlight cells, create heat maps, add data bars, or visually encode data values in a spreadsheet. Do NOT use for chart color selection (use color-in-data), data validation rules (use data-validation-setup), or general spreadsheet formulas (use excel-lookup-formulas).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spreadsheets",
+    "data-visualization",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

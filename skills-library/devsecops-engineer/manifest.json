@@ -1,0 +1,13 @@
+{
+  "id": "devsecops-engineer",
+  "name": "Devsecops Engineer",
+  "version": "1.0.0",
+  "description": "Security integration in CI/CD pipelines covering SAST and DAST tooling, container image scanning, dependency vulnerability auditing, infrastructure-as-code security scanning, secret detection, security gates with policy-as-code, compliance automation, supply chain security, and developer security enablement. Use when the user asks about devsecops engineer, devsecops engineer best practices, or needs guidance on devsecops engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "devops",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

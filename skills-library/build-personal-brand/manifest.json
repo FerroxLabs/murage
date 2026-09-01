@@ -1,0 +1,16 @@
+{
+  "id": "build-personal-brand",
+  "name": "Build Personal Brand",
+  "version": "1.0.0",
+  "description": "Guides the user through building a professional personal brand from strategy definition through audience growth, chaining 5 atomic skills across career-development and writing categories. Covers platform selection, content format, niche vs. broad positioning, and B2B vs. B2C audience targeting. Use when the user wants to build professional visibility, establish thought leadership, or grow an audience around their expertise. Do NOT use for launching a product-based business (use a business workflow), job searching (use land-new-job workflow), or building a creative portfolio (use launch-art-portfolio workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "linkedin",
+    "career",
+    "branding",
+    "content-marketing",
+    "step-by-step",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

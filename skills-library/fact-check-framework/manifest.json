@@ -1,0 +1,13 @@
+{
+  "id": "fact-check-framework",
+  "name": "Fact Check Framework",
+  "version": "1.0.0",
+  "description": "Provides a systematic framework for fact-checking written content by identifying claims, classifying their verifiability, flagging unsupported assertions, and recommending verification steps. Use when the user asks to fact-check a document, verify claims in writing, identify unsupported assertions, or assess the evidential basis of a piece. Do NOT use for citation formatting (use citation-reference), academic peer review (use academic-paper-review), or general editing (use copy-editing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "research"
+  ],
+  "requiredCapabilities": []
+}

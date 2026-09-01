@@ -1,0 +1,14 @@
+{
+  "id": "api-data-extraction",
+  "name": "Api Data Extraction",
+  "version": "1.0.0",
+  "description": "Produces an API data extraction design covering authentication approach, pagination strategy, rate limit handling, response parsing specification, and error handling protocol. Describes the extraction logic without writing executable code. Use when the user asks to plan data extraction from an API, design an API integration for analytics, or document how to pull data from a third-party service into a data warehouse. Do NOT use for building application-level API clients (that is software engineering), designing the full ETL pipeline (use etl-pipeline-design), or setting up API endpoints (use api-design in software development).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "analysis",
+    "planning",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

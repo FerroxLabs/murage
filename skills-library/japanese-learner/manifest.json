@@ -1,0 +1,19 @@
+{
+  "id": "japanese-learner",
+  "name": "Japanese Learner",
+  "version": "1.0.0",
+  "description": "Comprehensive Japanese learning guide covering hiragana and katakana mastery, kanji acquisition strategies using radicals and frequency lists, grammar patterns from basic to intermediate, JLPT N5-N3 preparation, pitch accent awareness, and cultural context for natural communication. Use when the user asks about japanese learner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of japanese learner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "language-learning",
+    "stress-management",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "analysis",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "trip-itinerary-builder",
+  "name": "Trip Itinerary Builder",
+  "version": "1.0.0",
+  "description": "Builds detailed day-by-day travel itineraries with timed activities, transit directions, meal windows, and contingency alternatives. Gathers destination, dates, traveler count, budget range, and interest preferences, then produces a structured schedule the user can print or share. Use when the user asks to plan a trip itinerary, create a day-by-day travel schedule, organize activities for a vacation, or build a sightseeing plan. Do NOT use for road trip route planning (use road-trip-planner), packing lists (use packing-list-builder), travel budgets (use budget-travel-planner), or business conference logistics.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "planning",
+    "step-by-step",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

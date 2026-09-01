@@ -1,0 +1,14 @@
+{
+  "id": "narrative-designer",
+  "name": "Narrative Designer",
+  "version": "1.0.0",
+  "description": "Game narrative design covering branching dialogue systems, world lore construction, environmental storytelling techniques, character arc design for interactive media, player agency and consequence systems, quest narrative structure, narrative documentation, and integration with game mechanics. Use when the user asks about narrative designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "game-design",
+    "creative-writing",
+    "writing",
+    "game-development"
+  ],
+  "requiredCapabilities": []
+}

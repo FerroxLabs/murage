@@ -1,0 +1,14 @@
+{
+  "id": "freelancer-toolkit",
+  "name": "Freelancer Toolkit",
+  "version": "1.0.0",
+  "description": "Complete freelancer business management guide covering rate setting, contract templates, invoice creation, client acquisition, portfolio building, time tracking, tax considerations including quarterly payments and deductions, scope creep prevention, and client communication templates. Use when the user asks about freelancer toolkit, or needs help with complete freelancer business management guide covering rate setting, contract templates, invoice creation, client acquisition, portfolio building, time tracking, tax considerations including quarterly payments and deductions, scope creep prevention, and client communication templates. Do NOT use when the request requires professional specialized advice or falls outside the scope of freelancer toolkit.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "freelancing",
+    "guide",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

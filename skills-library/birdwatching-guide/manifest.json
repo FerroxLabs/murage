@@ -1,0 +1,14 @@
+{
+  "id": "birdwatching-guide",
+  "name": "Birdwatching Guide",
+  "version": "1.0.0",
+  "description": "Guide to birdwatching including binocular selection, field guide usage, identification by sight and sound, habitat awareness, eBird recording, photography, backyard birding, and life list management. Use when the user asks about birdwatching guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "step-by-step",
+    "hiking",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

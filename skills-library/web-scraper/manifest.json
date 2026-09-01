@@ -1,0 +1,14 @@
+{
+  "id": "web-scraper",
+  "name": "Web Scraper",
+  "version": "1.0.0",
+  "description": "Web scraping expertise covering HTTP client selection, HTML parsing with BeautifulSoup and Cheerio, browser automation with Playwright and Puppeteer, rate limiting, robots.txt compliance, session and cookie handling, anti-detection techniques, data extraction patterns, pagination handling, and legal considerations. Use when the user asks about web scraper, web scraper best practices, or needs guidance on web scraper implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automation",
+    "shell-scripting",
+    "web-development",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

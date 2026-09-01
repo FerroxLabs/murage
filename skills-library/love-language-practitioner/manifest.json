@@ -1,0 +1,19 @@
+{
+  "id": "love-language-practitioner",
+  "name": "Love Language Practitioner",
+  "version": "1.0.0",
+  "description": "Guide for discovering your love language and your partner's, applying them in daily life, adapting when languages differ, and building deeper understanding through intentional expressions of care Use when the user asks about love language practitioner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of love language practitioner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "habits",
+    "stress-management",
+    "planning",
+    "safety",
+    "performing-arts",
+    "energy-efficiency",
+    "parenting",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

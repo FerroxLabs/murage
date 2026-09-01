@@ -1,0 +1,14 @@
+{
+  "id": "component-design-spec",
+  "name": "Component Design Spec",
+  "version": "1.0.0",
+  "description": "Produces a complete UI component specification with states, props, accessibility requirements, and usage guidelines as a tool-agnostic design artifact. Use when the user asks to spec out a UI component, define component states and variants, document a design component, or create component design requirements. Do NOT use for full page wireframes (use wireframe-specification), design token systems (use design-system-foundations), or coded component implementation (use a software-development skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "accessibility",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

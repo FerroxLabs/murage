@@ -1,0 +1,13 @@
+{
+  "id": "scene-writing",
+  "name": "Scene Writing",
+  "version": "1.0.0",
+  "description": "Writes complete fiction scenes with setting, action, dialogue, and interiority that advance both plot and character. Integrates all craft elements into cohesive narrative units. Use when the user asks to write a scene, draft a chapter section, or create a narrative sequence with setting and action. Do NOT use for dialogue-only exchanges (use dialogue-writing), full short stories (use short-story-writing), or screenplay format (use screenplay-scene).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

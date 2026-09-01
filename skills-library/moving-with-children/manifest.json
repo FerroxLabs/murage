@@ -1,0 +1,14 @@
+{
+  "id": "moving-with-children",
+  "name": "Moving With Children",
+  "version": "1.0.0",
+  "description": "Produces child-specific task layers for household moves including age-appropriate conversation guides, school transition checklists, emotional preparation strategies, and child-focused moving day plans. Supplements the general moving-checklist with tasks specific to relocating with children of different developmental stages. Use when the user asks about moving with kids, helping children adjust to a move, or child-specific moving logistics. Do NOT use for general moving logistics without children (use moving-checklist), international relocation, or child custody and relocation legal issues (consult an attorney).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "checklist",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

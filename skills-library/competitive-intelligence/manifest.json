@@ -1,0 +1,14 @@
+{
+  "id": "competitive-intelligence",
+  "name": "Competitive Intelligence",
+  "version": "1.0.0",
+  "description": "Produces a competitive intelligence framework: defines the competitors to track, the intelligence dimensions (product, pricing, marketing, hiring), the data sources, the collection cadence, and the comparison format. Use when the user asks to track competitors, build a competitive analysis, monitor competitor activity, create a market comparison, or set up ongoing competitive intelligence gathering. Do NOT use for sentiment analysis of brand mentions (use sentiment-analysis-guide), internal product metric frameworks (use metric-framework or kpi-definition), or general market sizing research (use research-synthesis for source synthesis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "analysis",
+    "planning",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

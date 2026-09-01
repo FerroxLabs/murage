@@ -1,0 +1,14 @@
+{
+  "id": "scenario-planning",
+  "name": "Scenario Planning",
+  "version": "1.0.0",
+  "description": "Develops three named scenarios (optimistic, base, pessimistic) for a decision or situation. Each scenario includes driving assumptions, key events, outcome description, and preparation actions. Produces a complete scenario set, not a description of scenario methodology. Use when the user asks about planning for different outcomes, thinking through best-case and worst-case scenarios, preparing for uncertainty, or building contingency plans. Do NOT use for business strategic scenario planning (use business strategy skills), risk registers for projects (use risk-assessment), or simple pros and cons comparisons (use pro-con-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decision-making",
+    "planning",
+    "analysis",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

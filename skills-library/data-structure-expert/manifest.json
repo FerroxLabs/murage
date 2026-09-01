@@ -1,0 +1,17 @@
+{
+  "id": "data-structure-expert",
+  "name": "Data Structure Expert",
+  "version": "1.0.0",
+  "description": "Guides advanced data structure mastery including segment trees, Fenwick trees, tries, union-find, sparse tables, and their applications in competitive programming Use when the user asks about data structure expert, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of data structure expert or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "competitive-programming",
+    "guide",
+    "beginner-friendly",
+    "analysis",
+    "parenting",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

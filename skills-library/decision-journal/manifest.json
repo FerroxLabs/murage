@@ -1,0 +1,14 @@
+{
+  "id": "decision-journal",
+  "name": "Decision Journal",
+  "version": "1.0.0",
+  "description": "Writes a structured decision journal entry capturing the decision, context, constraints, options considered, chosen option with rationale, predicted outcomes, and a scheduled review date. Produces the complete journal entry, not advice about journaling. Use when the user asks about documenting a decision, creating a decision record, building a decision log, or tracking decisions for future review. Do NOT use for making the decision itself (use weighted-decision-matrix or pro-con-analysis), business strategic decision documentation (use business strategy skills), or project change control (use scope-creep-management).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decision-making",
+    "template",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

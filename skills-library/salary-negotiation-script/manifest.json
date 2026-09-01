@@ -1,0 +1,14 @@
+{
+  "id": "salary-negotiation-script",
+  "name": "Salary Negotiation Script",
+  "version": "1.0.0",
+  "description": "Produces a word-for-word salary negotiation dialogue with branching responses for different scenarios including initial offers, raise requests, pushback handling, and closing techniques. Works for both new job offers and current role raises. Use when the user wants to negotiate salary, prepare for a compensation conversation, counter an offer, or ask for a raise with specific talking points. Do NOT use for written counter-offer emails (use counter-offer-letter), freelance rate setting (use freelance-rate-calculator), or general career planning (use career-pivot-roadmap).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "salary-negotiation",
+    "career",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "eisenhower-matrix",
+  "name": "Eisenhower Matrix",
+  "version": "1.0.0",
+  "description": "Applies the Eisenhower urgency/importance matrix to a user's task list, sorting every task into one of four quadrants with specific do/delegate/schedule/delete actions. Produces a populated matrix, not a framework description. Use when the user asks about prioritizing tasks by urgency and importance, needs help deciding what to work on first, or wants to sort a task list using the Eisenhower method. Do NOT use for weighted scoring prioritization (use task-prioritization), time-blocking scheduled tasks (use time-blocking), or enterprise resource allocation (use business strategy skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "decision-making",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

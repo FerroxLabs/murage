@@ -1,0 +1,13 @@
+{
+  "id": "meeting-notes",
+  "name": "Meeting Notes",
+  "version": "1.0.0",
+  "description": "Structures meeting notes with decisions made, action items with owners and due dates, and key discussion summaries in a scannable format. Use when the user needs to write up meeting notes, capture action items, or document meeting outcomes. Do NOT use for meeting agendas (use `meeting-agenda`), status updates (use `status-update`), or business memos (use `business-memo`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "business-writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

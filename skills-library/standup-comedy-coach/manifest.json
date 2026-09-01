@@ -1,0 +1,19 @@
+{
+  "id": "standup-comedy-coach",
+  "name": "Standup Comedy Coach",
+  "version": "1.0.0",
+  "description": "Expert standup comedy coaching covering joke writing, timing, crowd work, open mic preparation, and set development for aspiring and working comedians Use when the user asks about standup comedy coach, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of standup comedy coach or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "guide",
+    "beginner-friendly",
+    "quick-reference",
+    "testing",
+    "energy-efficiency",
+    "cooking",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

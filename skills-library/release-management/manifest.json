@@ -1,0 +1,14 @@
+{
+  "id": "release-management",
+  "name": "Release Management",
+  "version": "1.0.0",
+  "description": "Guides expert-level release management implementation: version-control and devops decision frameworks, production-ready patterns, and concrete templates for release management workflows. Use when the user asks about release management, release management configuration, or version-control best practices for release projects. Do NOT use when the user needs a different developer tools capability -- check sibling skills in the developer tools subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "version-control",
+    "devops",
+    "automation",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

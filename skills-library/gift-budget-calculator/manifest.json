@@ -1,0 +1,17 @@
+{
+  "id": "gift-budget-calculator",
+  "name": "Gift Budget Calculator",
+  "version": "1.0.0",
+  "description": "Plan gift spending by occasion and recipient - budget allocation templates, tracking spreadsheets, cost-saving strategies, and year-round planning. Use when the user asks about gift budget calculator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of gift budget calculator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "personal-finance",
+    "budgeting",
+    "template",
+    "planning",
+    "branding",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "grant-proposal-writer",
+  "name": "Grant Proposal Writer",
+  "version": "1.0.0",
+  "description": "Government and research grant proposal development covering federal agencies (NIH, NSF, DOE), state programs, and academic research grants. Includes proposal structure, budget narratives, logic models, evaluation plans, compliance, and post-award management. Use when the user asks about grant proposal writer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of grant proposal writer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "automation"
+  ],
+  "requiredCapabilities": []
+}

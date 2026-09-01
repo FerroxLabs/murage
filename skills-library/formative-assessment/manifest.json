@@ -1,0 +1,15 @@
+{
+  "id": "formative-assessment",
+  "name": "Formative Assessment",
+  "version": "1.0.0",
+  "description": "Creates formative assessment strategies and instruments (exit tickets, polls, think-pair-share, quick writes) for educators to check understanding during instruction. Produces ready-to-use formative assessment activities embedded within lessons -- not a guide on formative assessment theory. Use when an educator asks to create exit tickets, check-for-understanding activities, formative checks, or in-class assessment strategies for a specific lesson or topic. Do NOT use for summative assessments like tests or exams (use `summative-assessment` or `assessment-design`), for rubric creation (use `rubric-creation`), or for student self-quizzing (use `active-recall-practice`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "lesson-plan",
+    "step-by-step",
+    "active-recall",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

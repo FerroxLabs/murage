@@ -1,0 +1,19 @@
+{
+  "id": "homework-strategies",
+  "name": "Homework Strategies",
+  "version": "1.0.0",
+  "description": "Parent-facing coaching guide for supporting children's homework and study habits. Covers building routines, workspace setup, age-appropriate involvement levels, managing resistance, teacher communication, and developing executive function skills from elementary through high school. Use when the user asks about homework strategies, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of homework strategies or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "parenting",
+    "nutrition",
+    "habits",
+    "stress-management",
+    "checklist",
+    "template",
+    "guide",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

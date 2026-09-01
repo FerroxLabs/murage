@@ -1,0 +1,19 @@
+{
+  "id": "product-hunt-launcher",
+  "name": "Product Hunt Launcher",
+  "version": "1.0.0",
+  "description": "Complete Product Hunt launch strategy covering pre-launch preparation, community building, asset creation, launch day execution, post-launch follow-up, and success metrics. Includes timeline templates, copywriting frameworks, visual asset guidelines, and engagement tactics for maximizing upvotes and visibility. Use when the user asks about product hunt launcher, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of product hunt launcher or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "marketing",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "research",
+    "video-production",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

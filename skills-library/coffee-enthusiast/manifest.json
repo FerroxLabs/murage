@@ -1,0 +1,13 @@
+{
+  "id": "coffee-enthusiast",
+  "name": "Coffee Enthusiast",
+  "version": "1.0.0",
+  "description": "Guide to specialty coffee including brewing methods, grind size, water temperature, bean selection, home roasting, cupping technique, and equipment recommendations. Use when the user asks about coffee enthusiast or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

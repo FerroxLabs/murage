@@ -1,0 +1,19 @@
+{
+  "id": "oss-documentation-system",
+  "name": "Oss Documentation System",
+  "version": "1.0.0",
+  "description": "Build comprehensive open source documentation with contributor guides, architecture docs, README templates, and documentation-as-code workflows Use when the user asks about oss documentation system, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of oss documentation system or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "checklist",
+    "template",
+    "guide",
+    "step-by-step",
+    "advanced",
+    "python",
+    "javascript",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

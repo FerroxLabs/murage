@@ -1,0 +1,19 @@
+{
+  "id": "startup-legal-basics",
+  "name": "Startup Legal Basics",
+  "version": "1.0.0",
+  "description": "Foundational legal guidance for technology startups covering entity formation, equity structures, vesting schedules, intellectual property protection, co-founder agreements, contractor vs. employee classification, terms of service, privacy policies, and common contract terms. Includes templates and checklists for each legal milestone. Use when the user asks about startup legal basics, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of startup legal basics or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "legal-literacy",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "automation",
+    "planning",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

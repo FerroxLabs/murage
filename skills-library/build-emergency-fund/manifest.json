@@ -1,0 +1,16 @@
+{
+  "id": "build-emergency-fund",
+  "name": "Build Emergency Fund",
+  "version": "1.0.0",
+  "description": "Step-by-step emergency fund building workflow from financial assessment and budgeting through savings automation, milestone tracking, and insurance optimization for complete financial resilience against life's unexpected events. Use when the user wants to build emergency fund or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "savings",
+    "personal-finance",
+    "budgeting",
+    "step-by-step",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

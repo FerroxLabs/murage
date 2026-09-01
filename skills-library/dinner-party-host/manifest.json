@@ -1,0 +1,19 @@
+{
+  "id": "dinner-party-host",
+  "name": "Dinner Party Host",
+  "version": "1.0.0",
+  "description": "Plan and execute memorable dinner parties from menu planning with dietary accommodations through timing and prep timelines, table setting from formal to casual, conversation facilitation, wine selection and pairing, ambiance creation with lighting and music, make-ahead strategies, and managing hosting anxiety. Use when the user asks about dinner party host, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of dinner party host or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "budgeting",
+    "breathing",
+    "stress-management",
+    "beginner-friendly",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "incorporation-comparison",
+  "name": "Incorporation Comparison",
+  "version": "1.0.0",
+  "description": "Produces an entity comparison table covering sole proprietorship, LLC, S-corp, C-corp, and partnership structures with trade-offs across liability, taxation, governance, and cost for a specific business situation. Use when the user asks about business structures, incorporation options, LLC vs S-corp, choosing an entity type, or forming a business entity. Do NOT use for partnership agreements (use partnership-agreement-outline), startup fundraising structure (use fundraising-narrative), or cap table modeling (use cap-table-basics).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "planning",
+    "strategy",
+    "decision-making",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

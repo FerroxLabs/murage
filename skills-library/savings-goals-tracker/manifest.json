@@ -1,0 +1,14 @@
+{
+  "id": "savings-goals-tracker",
+  "name": "Savings Goals Tracker",
+  "version": "1.0.0",
+  "description": "Maps multiple savings goals (vacation, down payment, education, large purchase) against available monthly surplus, prioritizes competing goals, and creates a funded allocation plan with timelines for each goal. Produces a savings tracker with monthly contribution amounts and milestone dates. Use when the user has multiple savings goals and needs to decide how to split available funds across them. Do NOT use for emergency fund planning (use emergency-fund-planner), investment allocation, or retirement planning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "budgeting",
+    "personal-finance",
+    "savings",
+    "goal-setting"
+  ],
+  "requiredCapabilities": []
+}

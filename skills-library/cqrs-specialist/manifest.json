@@ -1,0 +1,14 @@
+{
+  "id": "cqrs-specialist",
+  "name": "Cqrs Specialist",
+  "version": "1.0.0",
+  "description": "CQRS and event sourcing expert covering command/query separation, read model projections, event store design, snapshot strategies, eventual consistency handling, compensating actions, audit trail, temporal queries, and CQRS with messaging. Use when the user asks about cqrs specialist, cqrs specialist best practices, or needs guidance on cqrs specialist implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "backend",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

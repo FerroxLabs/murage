@@ -1,0 +1,14 @@
+{
+  "id": "dropshipping-guide",
+  "name": "Dropshipping Guide",
+  "version": "1.0.0",
+  "description": "Complete guide to building a dropshipping business covering product research methodology, supplier vetting processes, store setup, advertising strategy, margin calculations, customer service operations, returns handling, and scaling techniques. Use when the user asks about dropshipping guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "guide",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

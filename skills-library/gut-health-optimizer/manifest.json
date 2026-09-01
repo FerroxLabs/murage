@@ -1,0 +1,13 @@
+{
+  "id": "gut-health-optimizer",
+  "name": "Gut Health Optimizer",
+  "version": "1.0.0",
+  "description": "Evidence-based microbiome optimization through prebiotics, probiotics, fermented foods, fiber diversity, elimination diets, and lifestyle factors for digestive wellness. Use when the user asks about gut health optimizer, or needs help with evidence-based microbiome optimization through prebiotics, probiotics, fermented foods, fiber diversity, elimination diets, and lifestyle factors for digestive wellness. Do NOT use when the request requires professional medical advice or falls outside the scope of gut health optimizer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "nutrition",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

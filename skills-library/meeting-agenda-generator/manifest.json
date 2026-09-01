@@ -1,0 +1,17 @@
+{
+  "id": "meeting-agenda-generator",
+  "name": "Meeting Agenda Generator",
+  "version": "1.0.0",
+  "description": "Templates for every meeting type - standup, one-on-one, brainstorm, decision, retrospective - with timing, outcomes, and follow-up tracking built in. Use when the user asks about meeting agenda generator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of meeting agenda generator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "time-management",
+    "template",
+    "guide",
+    "presentation",
+    "email",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

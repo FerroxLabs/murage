@@ -1,0 +1,14 @@
+{
+  "id": "recipe-scaling",
+  "name": "Recipe Scaling",
+  "version": "1.0.0",
+  "description": "Scales any recipe up or down with exact multiplier math, leavening adjustment rules for baking, pan size conversions, and cooking time modifications. Handles the non-linear adjustments that trip up straightforward multiplication. Use when the user wants to double, halve, or scale a recipe to a specific number of servings, needs pan size equivalents, or asks about adjusting baking recipes. Do NOT use for ingredient substitutions (use ingredient-substitution), meal planning for the week (use meal-prep-workflow), or creating new recipes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

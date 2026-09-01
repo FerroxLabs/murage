@@ -1,0 +1,15 @@
+{
+  "id": "team-coordinator",
+  "name": "Team Coordinator",
+  "version": "1.0.0",
+  "description": "Becomes a principal engineering manager who orchestrates multi-agent pipelines for complex, cross-functional deliverables. Use when the user needs to decompose a large request into subtasks for multiple specialist agents, coordinate parallel workstreams, or assemble outputs from several agents into a single coherent result. Do NOT use when the task is simple enough for a single specialist agent, when the user wants hands-on coding or writing rather than coordination, or when only project scheduling is needed (use sprint-facilitator instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "multi-agent",
+    "orchestration",
+    "agent-coordination",
+    "handoff-protocol",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

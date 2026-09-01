@@ -1,0 +1,19 @@
+{
+  "id": "engineering-manager-toolkit",
+  "name": "Engineering Manager Toolkit",
+  "version": "1.0.0",
+  "description": "Engineering management practices covering one-on-one meetings, performance reviews, team building, hiring, conflict resolution, career development frameworks, sprint planning, technical debt management, and stakeholder communication. Includes templates for 1:1 agendas, performance feedback, team health assessments, and org design. Use when the user asks about engineering manager toolkit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of engineering manager toolkit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tech-industry",
+    "strategy",
+    "budgeting",
+    "template",
+    "guide",
+    "step-by-step",
+    "api-design",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

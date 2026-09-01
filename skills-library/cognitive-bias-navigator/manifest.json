@@ -1,0 +1,19 @@
+{
+  "id": "cognitive-bias-navigator",
+  "name": "Cognitive Bias Navigator",
+  "version": "1.0.0",
+  "description": "Cognitive bias expertise covering a practical catalog of common biases, debiasing techniques for better decision-making, decision hygiene protocols, nudge design principles, organizational bias mitigation, and frameworks for recognizing and counteracting systematic errors in thinking. Use when the user asks about cognitive bias navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cognitive bias navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "budgeting",
+    "journaling",
+    "stress-management",
+    "quick-reference",
+    "testing",
+    "analysis",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

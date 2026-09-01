@@ -1,0 +1,13 @@
+{
+  "id": "humanizer-tell-detector",
+  "name": "tell-detector",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Humanizer specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "humanizer",
+    "tell",
+    "detector"
+  ],
+  "requiredCapabilities": []
+}

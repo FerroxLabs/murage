@@ -1,0 +1,14 @@
+{
+  "id": "search-engineer",
+  "name": "Search Engineer",
+  "version": "1.0.0",
+  "description": "Search implementation expertise covering full-text search, indexing strategies, relevance scoring, faceted search, autocomplete, fuzzy matching, search analytics, and Elasticsearch/Typesense/Meilisearch patterns. Use when the user asks about search engineer, search engineer best practices, or needs guidance on search engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "optimization",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

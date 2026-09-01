@@ -1,0 +1,13 @@
+{
+  "id": "insurance-navigator",
+  "name": "Insurance Navigator",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to insurance coverage types, policy comparison methodology, claim filing procedures, coverage gap analysis, and cost optimization strategies. Use when the user asks about insurance navigator, or needs help with comprehensive guide to insurance coverage types, policy comparison methodology, claim filing procedures, coverage gap analysis, and cost optimization strategies. Do NOT use when the request requires professional financial advice or falls outside the scope of insurance navigator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "insurance",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

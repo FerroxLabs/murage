@@ -1,0 +1,19 @@
+{
+  "id": "educational-content-creator",
+  "name": "Educational Content Creator",
+  "version": "1.0.0",
+  "description": "Design and develop courses, worksheets, videos, quizzes, and interactive educational content for diverse learning environments and audiences. Use when the user asks about educational content creator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of educational content creator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "education-industry",
+    "teaching",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "step-by-step",
+    "testing",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

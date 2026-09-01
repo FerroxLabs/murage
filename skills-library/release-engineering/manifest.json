@@ -1,0 +1,14 @@
+{
+  "id": "release-engineering",
+  "name": "Release Engineering",
+  "version": "1.0.0",
+  "description": "Release engineering expertise covering release trains, semantic versioning, changelog automation, feature freezes, rollback procedures, release notes generation, branching strategies, deployment orchestration, and release readiness validation. Use when the user asks about release engineering, release engineering best practices, or needs guidance on release engineering implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "version-control",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

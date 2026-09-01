@@ -1,0 +1,14 @@
+{
+  "id": "mobile-ui-designer",
+  "name": "Mobile Ui Designer",
+  "version": "1.0.0",
+  "description": "Expert mobile UI/UX patterns covering platform design guidelines (Material Design, Human Interface), responsive layouts, gesture handling, offline-first UI, skeleton screens, pull-to-refresh, infinite scroll, bottom sheets, and haptic feedback. Use when the user asks about mobile ui designer, mobile ui designer best practices, or needs guidance on mobile ui designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "design",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

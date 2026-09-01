@@ -1,0 +1,15 @@
+{
+  "id": "online-course-design",
+  "name": "Online Course Design",
+  "version": "1.0.0",
+  "description": "Designs online course modules with learning objectives, content outlines, activity types, assessment strategies, and engagement mechanisms for educators creating digital learning experiences. Produces a complete module outline that can be implemented in any LMS. Use when an educator asks to design an online course module, create a digital learning experience, structure an asynchronous or hybrid course, or build an e-learning unit. Do NOT use for in-person lesson plans (use `lesson-plan-design`), for full curriculum mapping (use `curriculum-mapping`), or for student course study guides (use `course-companion`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "curriculum",
+    "lesson-plan",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

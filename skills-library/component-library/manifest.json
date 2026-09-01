@@ -1,0 +1,13 @@
+{
+  "id": "component-library",
+  "name": "Component Library",
+  "version": "1.0.0",
+  "description": "Component library design expertise covering design system tokens, component API design, compound components, polymorphic components, accessibility by default, Storybook documentation, testing, versioning, and tree-shaking. Use when the user asks about component library, component library best practices, or needs guidance on component library implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "design-patterns"
+  ],
+  "requiredCapabilities": []
+}

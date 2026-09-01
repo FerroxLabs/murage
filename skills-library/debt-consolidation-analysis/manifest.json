@@ -1,0 +1,14 @@
+{
+  "id": "debt-consolidation-analysis",
+  "name": "Debt Consolidation Analysis",
+  "version": "1.0.0",
+  "description": "Evaluates whether consolidating multiple debts into a single loan is mathematically advantageous. Compares the total cost of keeping debts separate versus consolidating by calculating total interest, monthly payments, and payoff timelines under both scenarios. Produces a side-by-side comparison with a clear recommendation framework. Use when the user asks about debt consolidation, combining debts, balance transfers, or whether a consolidation loan makes sense for their situation. Do NOT use for debt payoff sequencing (use debt-snowball-planner or debt-avalanche-planner), comparing new loan offers (use loan-comparison), or business debt restructuring.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "debt-management",
+    "personal-finance",
+    "analysis",
+    "budgeting"
+  ],
+  "requiredCapabilities": []
+}

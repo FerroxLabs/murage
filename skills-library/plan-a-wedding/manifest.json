@@ -1,0 +1,16 @@
+{
+  "id": "plan-a-wedding",
+  "name": "Plan A Wedding",
+  "version": "1.0.0",
+  "description": "Guides the user through the complete wedding planning process from budget setting through day-of coordination, chaining budgeting, event planning, vendor management, and timeline skills across multiple categories. Use when the user wants to plan a wedding, organize a marriage ceremony, or coordinate a wedding celebration. Do NOT use for elopement logistics, vow renewal ceremonies, or corporate event planning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "event-planning",
+    "planning",
+    "checklist",
+    "step-by-step",
+    "family-events",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "stable-diffusion-prompting",
+  "name": "Stable Diffusion Prompting",
+  "version": "1.0.0",
+  "description": "Crafts Stable Diffusion SDXL and Flux prompts with positive and negative prompt structure, CFG scale recommendations, sampler selection, resolution settings, and LoRA reference syntax. Use when the user asks to create a Stable Diffusion prompt, generate images with SDXL or Flux, write prompts for ComfyUI or Automatic1111, or optimize generation parameters. Do NOT use for Midjourney prompting (use midjourney-prompting), DALL-E prompting (use dalle-prompting), or translating prompts between models (use prompt-translation).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-image-generation",
+    "design",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

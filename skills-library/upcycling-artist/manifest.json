@@ -1,0 +1,19 @@
+{
+  "id": "upcycling-artist",
+  "name": "Upcycling Artist",
+  "version": "1.0.0",
+  "description": "Guide to creative upcycling and repurposing covering materials identification, transformation techniques, project ideas, tool requirements, safety procedures, and building a practice around giving discarded items new life. Use when the user asks about upcycling artist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of upcycling artist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "woodworking",
+    "budgeting",
+    "beginner-friendly",
+    "advanced",
+    "testing",
+    "networking",
+    "game-design",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

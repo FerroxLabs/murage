@@ -1,0 +1,14 @@
+{
+  "id": "newsletter-subject-lines",
+  "name": "Newsletter Subject Lines",
+  "version": "1.0.0",
+  "description": "Generates 10 email subject line variants with psychological trigger analysis for each option. Use when the user needs subject lines for newsletters, email campaigns, or subscriber emails. Analyzes each option for curiosity gap, benefit clarity, and open-rate optimization. Do NOT use for full newsletter writing (use `newsletter-writing`), cold email subject lines (use `cold-email-outreach`), or professional email subjects (use `professional-email`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "newsletter",
+    "email",
+    "marketing-copy",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

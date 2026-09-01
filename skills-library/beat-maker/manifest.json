@@ -1,0 +1,13 @@
+{
+  "id": "beat-maker",
+  "name": "Beat Maker",
+  "version": "1.0.0",
+  "description": "Complete beat-making guidance covering drum programming, sampling (clearing, chopping, layering), bass design, melody creation, arrangement for hip-hop, electronic, and R&B, mixing beats for placement, selling beats online, and collaborating with vocalists and artists. Use when the user asks about beat maker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "guide",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "kpi-visualization",
+  "name": "Kpi Visualization",
+  "version": "1.0.0",
+  "description": "Designs the visualization layer for KPIs by selecting the display format (scorecard, gauge, sparkline, trend line), specifying target lines, threshold colors, and period-over-period comparison formats. Produces a complete visual specification for each KPI. Use when the user needs to display KPI metrics in a dashboard, report, or presentation with clear status indicators and context. Do NOT use for defining which KPIs to track (use kpi-definition), designing full dashboard layouts (use dashboard-design), or choosing chart types for non-KPI data (use chart-type-selector).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-visualization",
+    "analysis",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

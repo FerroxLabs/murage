@@ -1,0 +1,14 @@
+{
+  "id": "monitoring-alerting",
+  "name": "Monitoring Alerting",
+  "version": "1.0.0",
+  "description": "Guides expert-level monitoring and alerting implementation: debugging and architecture decision frameworks, production-ready patterns, and concrete templates for monitoring alerting workflows. Use when the user asks about monitoring and alerting, monitoring alerting configuration, or devops best practices for monitoring projects. Do NOT use when the user needs a different devops cloud capability -- check sibling skills in the devops cloud subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "debugging",
+    "architecture",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

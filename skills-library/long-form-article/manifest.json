@@ -1,0 +1,13 @@
+{
+  "id": "long-form-article",
+  "name": "Long Form Article",
+  "version": "1.0.0",
+  "description": "Writes in-depth articles of 1500-3000 words with research integration, expert source frameworks, narrative flow, and comprehensive topic coverage. Use when the user wants a deep-dive article, feature-length content, or a comprehensive guide that goes beyond standard blog post depth. Do NOT use for standard 800-word blog posts (use `blog-post-writing`), SEO-focused posts (use `seo-blog-post`), or white papers (use `white-paper-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "blog-post",
+    "writing",
+    "content-marketing"
+  ],
+  "requiredCapabilities": []
+}

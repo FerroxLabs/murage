@@ -1,0 +1,18 @@
+{
+  "id": "identity-theft-protector",
+  "name": "Identity Theft Protector",
+  "version": "1.0.0",
+  "description": "Protect personal identity through credit monitoring, credit freeze management, identity theft recovery planning, dark web exposure checks, and systematic reduction of personal data exposure across digital and physical channels Use when the user asks about identity theft protector, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of identity theft protector or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "checklist",
+    "template",
+    "guide",
+    "automation",
+    "photography",
+    "tax-planning",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

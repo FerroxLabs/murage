@@ -1,0 +1,19 @@
+{
+  "id": "real-estate-photographer",
+  "name": "Real Estate Photographer",
+  "version": "1.0.0",
+  "description": "Expert real estate photography guidance covering wide-angle technique, HDR methods, virtual tour creation, and the flambient lighting method for professional property imagery Use when the user asks about real estate photographer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of real estate photographer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "template",
+    "guide",
+    "quick-reference",
+    "cloud",
+    "performing-arts",
+    "gardening",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

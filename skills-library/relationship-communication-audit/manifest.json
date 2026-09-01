@@ -1,0 +1,14 @@
+{
+  "id": "relationship-communication-audit",
+  "name": "Relationship Communication Audit",
+  "version": "1.0.0",
+  "description": "Provides a self-reflection framework for assessing personal communication patterns in relationships. Produces structured self-assessments with pattern identification, strength recognition, and specific improvement actions. This is a self-reflection tool, not a diagnostic instrument. Use when the user wants to reflect on their communication patterns, identify areas for improvement, or audit how they communicate in their relationships. Do NOT use for diagnosing communication disorders, assessing relationship health, or replacing couples therapy.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "strategy",
+    "guide",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

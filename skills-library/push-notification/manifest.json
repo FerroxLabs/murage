@@ -1,0 +1,14 @@
+{
+  "id": "push-notification",
+  "name": "Push Notification",
+  "version": "1.0.0",
+  "description": "Expert push notification systems covering APNs/FCM integration, notification channels, rich notifications, silent notifications, notification grouping, deep linking, scheduling, analytics, opt-in strategies, and delivery optimization. Use when the user asks about push notification, push notification best practices, or needs guidance on push notification implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

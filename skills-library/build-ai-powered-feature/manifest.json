@@ -1,0 +1,13 @@
+{
+  "id": "build-ai-powered-feature",
+  "name": "Build Ai Powered Feature",
+  "version": "1.0.0",
+  "description": "Workflow for integrating AI/ML capabilities into an existing product, from problem definition through data preparation, model selection, integration, and production monitoring. Covers both LLM-based features and traditional ML approaches with emphasis on responsible deployment and reliability. Use when the user wants to build ai powered feature or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

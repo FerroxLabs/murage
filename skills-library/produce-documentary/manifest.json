@@ -1,0 +1,17 @@
+{
+  "id": "produce-documentary",
+  "name": "Produce Documentary",
+  "version": "1.0.0",
+  "description": "End-to-end documentary filmmaking workflow from subject selection and research through shooting, interview technique, editing, and distribution. Covers documentary storytelling, ethical considerations, interview methodology, archival research, verite and observational techniques, narrative structure in nonfiction, and festival and streaming distribution strategies. Use when the user wants to produce documentary or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "interview-prep",
+    "editing",
+    "creative-writing",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

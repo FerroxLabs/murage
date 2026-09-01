@@ -1,0 +1,14 @@
+{
+  "id": "long-distance-strategies",
+  "name": "Long Distance Strategies",
+  "version": "1.0.0",
+  "description": "Provides communication routines, visit planning frameworks, shared activity ideas, and time zone management strategies for maintaining long-distance relationships. Produces structured connection plans with daily, weekly, and monthly rituals. Use when the user asks about maintaining a long-distance relationship, communication strategies for distance, planning visits, or shared activities when apart. Do NOT use for assessing relationship health, deciding whether to pursue a long-distance relationship, or replacing couples therapy.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "planning",
+    "strategy",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

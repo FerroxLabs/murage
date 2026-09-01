@@ -1,0 +1,14 @@
+{
+  "id": "rust-performance",
+  "name": "Rust Performance",
+  "version": "1.0.0",
+  "description": "Guides advanced Rust performance optimization: flamegraph profiling, criterion benchmarks, allocation profiling, SIMD patterns, and zero-copy design. Use when the user asks about Rust performance, flamegraph, criterion, allocation profiling, SIMD, zero-copy, perf optimization. Do NOT use when the user asks about Rust ownership (use `rust-ownership-patterns`), Rust async (use `rust-async-patterns`), general performance testing (use `performance-testing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "rust",
+    "optimization",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

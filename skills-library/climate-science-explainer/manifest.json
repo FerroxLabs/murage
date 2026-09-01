@@ -1,0 +1,14 @@
+{
+  "id": "climate-science-explainer",
+  "name": "Climate Science Explainer",
+  "version": "1.0.0",
+  "description": "Explains climate science concepts including the greenhouse effect, feedback loops, carbon cycle, evidence types, and climate modeling basics at a level appropriate for non-scientists. Gathers the user's specific question or topic area and produces a structured educational explanation with diagrams in text form and evidence references. Use when the user asks about how climate change works, greenhouse gases, feedback loops, climate evidence, or the science behind global warming. Do NOT use for policy recommendations or advocacy, carbon footprint calculation (use carbon-footprint-estimator), sustainability action planning (use other sustainability skills), or academic research methodology.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "guide",
+    "research",
+    "teaching"
+  ],
+  "requiredCapabilities": []
+}

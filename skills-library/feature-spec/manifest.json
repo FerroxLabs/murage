@@ -1,0 +1,16 @@
+{
+  "id": "feature-spec",
+  "name": "Feature Spec",
+  "version": "1.0.0",
+  "description": "Creates feature specification documents with requirements, design notes, edge cases, technical considerations, and launch criteria using standard feature spec format. Use when the user asks about feature specs, feature specifications, feature design documents, or detailed feature requirements. Do NOT use for high-level PRDs (use prd-writing), technical architecture specs (use technical-specification), or user stories only (use user-story-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "template",
+    "strategy",
+    "agile",
+    "project-management",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

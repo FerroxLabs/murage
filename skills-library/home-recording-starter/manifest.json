@@ -1,0 +1,15 @@
+{
+  "id": "home-recording-starter",
+  "name": "Home Recording Starter",
+  "version": "1.0.0",
+  "description": "Guides beginners through setting up a home recording environment: the audio signal chain (instrument to interface to DAW to monitors), digital audio workstation basics, room treatment tips for reducing reflections, and gear recommendations organized by budget tier. Use when the user wants to record music at home, asks about audio interfaces, microphone selection, DAW setup, or room acoustics for recording. Do NOT use for music theory (use music-theory-fundamentals), songwriting (use songwriting-framework), or professional studio design and mixing techniques.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beginner-friendly",
+    "step-by-step",
+    "guide",
+    "checklist",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

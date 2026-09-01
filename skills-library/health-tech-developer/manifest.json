@@ -1,0 +1,19 @@
+{
+  "id": "health-tech-developer",
+  "name": "Health Tech Developer",
+  "version": "1.0.0",
+  "description": "Guide for developers building healthcare technology covering HIPAA compliance, HL7 and FHIR interoperability standards, EHR integration, patient data security, regulatory considerations, and navigating the unique technical challenges of healthcare software. Use when the user asks about health tech developer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of health tech developer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "healthcare",
+    "best-practices",
+    "budgeting",
+    "api-design",
+    "cloud",
+    "testing",
+    "automation",
+    "analysis",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "dependency-manager",
+  "name": "Dependency Manager",
+  "version": "1.0.0",
+  "description": "Dependency management expert covering version strategies, vulnerability scanning, update workflows, breaking change detection, monorepo dependencies, and license compliance. Use when the user asks about dependency manager, dependency manager best practices, or needs guidance on dependency manager implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "guide",
+    "step-by-step",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

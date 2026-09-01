@@ -1,0 +1,14 @@
+{
+  "id": "dnd-master",
+  "name": "Dnd Master",
+  "version": "1.0.0",
+  "description": "Dungeon Master assistant for D&D and tabletop RPGs covering campaign creation, encounter design, NPC generation, worldbuilding, session planning, combat balancing, loot tables, plot hooks, improvisation techniques, and session zero guidance. Use when the user asks about dnd master, or needs help with dungeon master assistant for d&d and tabletop rpgs covering campaign creation, encounter design, npc generation, worldbuilding, session planning, combat balancing, loot tables, plot hooks, improvisation techniques, and session zero guidance. Do NOT use when the request requires professional specialized advice or falls outside the scope of dnd master.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "tabletop-rpg",
+    "guide",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

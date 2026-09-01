@@ -1,0 +1,14 @@
+{
+  "id": "pitch-deck-structure",
+  "name": "Pitch Deck Structure",
+  "version": "1.0.0",
+  "description": "Produces a pitch deck outline with the 10-12 slide sequence for a business pitch, specific content required on each slide, and validation criteria for each claim. Use when the user asks to create a pitch deck, structure an investor presentation, or plan slides for a funding round or business pitch. Do NOT use for general presentation structure (use slide-deck-structure), executive summary slides (use executive-summary-slide), or business plan writing (use business-plan).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "presentation",
+    "planning",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

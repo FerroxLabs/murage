@@ -1,0 +1,14 @@
+{
+  "id": "contractor-evaluation",
+  "name": "Contractor Evaluation",
+  "version": "1.0.0",
+  "description": "Provides a structured framework for evaluating and selecting home service contractors including roofers, plumbers, electricians, HVAC technicians, and general contractors. Covers vetting criteria, bid comparison, red flags, contract essentials, and payment structures. Use when the user needs to hire a contractor for home work, wants to compare bids, or needs to know what questions to ask before signing a contract. Do NOT use for DIY repair guidance (use specific maintenance skills), commercial construction bidding, or contractor licensing requirements by state.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "decision-making",
+    "analysis",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

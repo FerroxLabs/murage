@@ -1,0 +1,19 @@
+{
+  "id": "digital-photo-organizer",
+  "name": "Digital Photo Organizer",
+  "version": "1.0.0",
+  "description": "Step-by-step guidance for backing up photos to the cloud, organizing pictures into albums, sharing photos with family, and using printing services to turn digital memories into physical keepsakes. Use when the user asks about digital photo organizer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of digital photo organizer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "guide",
+    "beginner-friendly",
+    "quick-reference",
+    "cloud",
+    "automation",
+    "safety",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

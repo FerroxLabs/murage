@@ -1,0 +1,15 @@
+{
+  "id": "value-proposition",
+  "name": "Value Proposition",
+  "version": "1.0.0",
+  "description": "Produces a structured value proposition using the Value Proposition Canvas framework, mapping customer jobs, pains, and gains to product features, pain relievers, and gain creators. Use when the user asks to define their value proposition, articulate why customers should buy, create a positioning statement, or map product benefits to customer needs. Do NOT use for brand positioning statement (use brand-positioning), full business plan (use business-plan), or customer persona development (use customer-persona).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "marketing",
+    "planning",
+    "entrepreneurship",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

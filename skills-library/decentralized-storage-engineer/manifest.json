@@ -1,0 +1,19 @@
+{
+  "id": "decentralized-storage-engineer",
+  "name": "Decentralized Storage Engineer",
+  "version": "1.0.0",
+  "description": "Decentralized storage expertise covering IPFS (content addressing, pinning, gateways, clustering), Arweave (permanent storage, bundling, profit sharing), Filecoin (storage deals, retrieval, FVM), content-addressed data patterns, and strategies for availability, redundancy, and cost optimization. Use when the user asks about decentralized storage engineer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of decentralized storage engineer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "budgeting",
+    "javascript",
+    "api-design",
+    "cloud",
+    "automation",
+    "networking",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "reconnection-after-conflict",
+  "name": "Reconnection After Conflict",
+  "version": "1.0.0",
+  "description": "Provides post-conflict repair sequences with conversation timing guidance, trust rebuilding steps, and incremental reconnection strategies. Produces structured reconnection plans with specific scripts for re-engagement after arguments or periods of distance. Use when the user wants to reconnect after a fight, rebuild after a period of emotional distance, or repair a relationship after a significant disagreement. Do NOT use for reconciliation after separation, assessing whether to continue a relationship, or replacing couples therapy.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "planning",
+    "guide",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

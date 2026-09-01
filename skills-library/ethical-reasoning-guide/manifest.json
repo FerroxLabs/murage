@@ -1,0 +1,18 @@
+{
+  "id": "ethical-reasoning-guide",
+  "name": "Ethical Reasoning Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to ethical frameworks including consequentialism, deontology, virtue ethics, and care ethics, with structured approaches to analyzing moral dilemmas, applied ethics case studies, decision-making protocols, and reflective journaling exercises. Use when the user asks about ethical reasoning guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ethical reasoning guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "template",
+    "guide",
+    "testing",
+    "analysis",
+    "marketing",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

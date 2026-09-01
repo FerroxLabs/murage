@@ -1,0 +1,14 @@
+{
+  "id": "nodejs-project-setup",
+  "name": "Nodejs Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level Node.js project initialization: ESM vs CJS module system decision, package.json configuration, Node.js version management, engine locking, and production deployment configuration. Use when the user asks about Node.js project setup, ESM vs CommonJS, package.json configuration, Node.js version management, engine field, exports field. Do NOT use when the user asks about TypeScript setup (use `typescript-project-setup`), JavaScript idioms (use `javascript-idioms`), Node.js async patterns (use `nodejs-async-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "javascript",
+    "backend",
+    "template",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

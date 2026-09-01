@@ -1,0 +1,14 @@
+{
+  "id": "aws-patterns",
+  "name": "Aws Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level aws architecture patterns implementation: cloud and architecture decision frameworks, production-ready patterns, and concrete templates for aws patterns workflows. Use when the user asks about aws architecture patterns, aws patterns configuration, or cloud best practices for aws projects. Do NOT use when the user needs a different devops cloud capability -- check sibling skills in the devops cloud subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cloud",
+    "architecture",
+    "best-practices",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

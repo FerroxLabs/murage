@@ -1,0 +1,16 @@
+{
+  "id": "build-feature-end-to-end",
+  "name": "Build Feature End To End",
+  "version": "1.0.0",
+  "description": "Orchestrates the full software feature development lifecycle from specification through production deployment, chaining five engineering skills into a cohesive build pipeline. Covers requirements gathering, branch strategy, test-driven implementation, peer review, and deployment. Use when the user needs to build a complete feature from idea to production with structured engineering practices at every stage. Do NOT use for hotfixes, one-line changes, or exploratory prototypes that skip formal review and testing.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "testing",
+    "devops",
+    "planning",
+    "step-by-step",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "market-entry-assessment",
+  "name": "Market Entry Assessment",
+  "version": "1.0.0",
+  "description": "Structured market entry readiness evaluation covering market sizing and validation, competitive landscape analysis, regulatory requirements, go-to-market strategy assessment, and producing a prioritized entry plan with risk analysis. Use when the user asks about market entry assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of market entry assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "budgeting",
+    "checklist",
+    "template",
+    "analysis",
+    "research",
+    "marketing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

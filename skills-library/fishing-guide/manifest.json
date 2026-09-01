@@ -1,0 +1,13 @@
+{
+  "id": "fishing-guide",
+  "name": "Fishing Guide",
+  "version": "1.0.0",
+  "description": "Guide to recreational fishing including species identification, tackle selection, techniques for various styles, seasonal patterns, regulations, catch and release, knot tying, and reading water. Use when the user asks about fishing guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

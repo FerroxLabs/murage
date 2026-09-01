@@ -1,0 +1,19 @@
+{
+  "id": "developer-skill-map",
+  "name": "Developer Skill Map",
+  "version": "1.0.0",
+  "description": "Technology proficiency assessment mapping current capabilities against career goals, identifying learning priorities, and building a personalized development roadmap Use when the user asks about developer skill map, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of developer skill map or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "template",
+    "api-design",
+    "cloud",
+    "testing",
+    "automation",
+    "analysis",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

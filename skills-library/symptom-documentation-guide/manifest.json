@@ -1,0 +1,14 @@
+{
+  "id": "symptom-documentation-guide",
+  "name": "Symptom Documentation Guide",
+  "version": "1.0.0",
+  "description": "Teaches how to observe, record, and organize symptoms systematically for productive medical conversations. Produces a symptom documentation template with structured observation categories, pattern tracking, and provider communication frameworks. Does NOT interpret or diagnose symptoms. Use when the user asks about documenting symptoms, keeping a symptom diary, how to describe symptoms to a doctor, or tracking health patterns over time. Do NOT use for interpreting symptoms, suggesting diagnoses, recommending treatments, or assessing symptom severity.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "template",
+    "strategy",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

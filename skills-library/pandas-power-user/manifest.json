@@ -1,0 +1,19 @@
+{
+  "id": "pandas-power-user",
+  "name": "Pandas Power User",
+  "version": "1.0.0",
+  "description": "Advanced pandas techniques for data wrangling including performance optimization, method chaining patterns, MultiIndex operations, memory management, and idiomatic pandas code. Use when the user asks about pandas power user, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of pandas power user or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "budgeting",
+    "step-by-step",
+    "advanced",
+    "python",
+    "performing-arts",
+    "sales",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

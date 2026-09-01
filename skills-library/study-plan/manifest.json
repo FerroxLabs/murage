@@ -1,0 +1,15 @@
+{
+  "id": "study-plan",
+  "name": "Study Plan",
+  "version": "1.0.0",
+  "description": "Creates structured, time-boxed study plans with sessions, topics, milestones, and review checkpoints for learners. Uses spaced learning principles to produce a personalized schedule that prevents cramming and builds lasting retention. Use when a student or learner asks to create a study plan, organize their study time, prepare for a course, or structure their learning around a deadline. Do NOT use for exam-specific preparation (use `exam-prep-plan`), for educator lesson planning (use `lesson-plan-design`), or for professional certification study (use `certification-prep`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "teaching",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

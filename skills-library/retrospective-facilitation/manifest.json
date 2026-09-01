@@ -1,0 +1,16 @@
+{
+  "id": "retrospective-facilitation",
+  "name": "Retrospective Facilitation",
+  "version": "1.0.0",
+  "description": "Creates agile retrospective agendas and facilitation guides with question sets, activity structures, action item formats, and follow-up tracking for team improvement. Use when the user asks about retrospectives, sprint retrospectives, team retros, post-mortems, or agile improvement ceremonies. Do NOT use for incident post-mortems (different format), project status updates (use status-update), or meeting agendas unrelated to team improvement (use meeting-agenda).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "agile",
+    "planning",
+    "project-management",
+    "template",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

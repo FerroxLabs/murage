@@ -1,0 +1,15 @@
+{
+  "id": "philosophy-discussion",
+  "name": "Philosophy Discussion",
+  "version": "1.0.0",
+  "description": "Provides Socratic philosophy tutoring through dialogue -- helping students clarify positions, test arguments with counterexamples, and identify logical fallacies rather than delivering philosophical conclusions. Use when a student asks to discuss a philosophical question, analyze an ethical dilemma, evaluate an argument, or practice philosophical reasoning. Do NOT use for philosophy course design (use `lesson-plan-design`), for essay writing (use writing category skills), or for debate competition prep (not an education skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tutoring",
+    "teaching",
+    "step-by-step",
+    "research",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

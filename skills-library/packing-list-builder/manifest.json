@@ -1,0 +1,15 @@
+{
+  "id": "packing-list-builder",
+  "name": "Packing List Builder",
+  "version": "1.0.0",
+  "description": "Creates categorized packing checklists with quantity columns and trip-type and weather conditionals. Gathers destination, trip duration, activities planned, weather forecast, and traveler preferences to produce a printable packing list organized by category with check-off boxes. Use when the user asks to create a packing list, figure out what to pack, prepare luggage for a trip, or organize travel gear by category. Do NOT use for trip itinerary building (use trip-itinerary-builder), travel budgets (use budget-travel-planner), or moving and relocation packing.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "packing",
+    "checklist",
+    "template",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

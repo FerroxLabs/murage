@@ -1,0 +1,14 @@
+{
+  "id": "ml-ops-engineer",
+  "name": "Ml Ops Engineer",
+  "version": "1.0.0",
+  "description": "Machine learning operations covering MLflow experiment tracking and model registry, model versioning and reproducibility, model serving with TorchServe and Triton, A/B testing models in production, data and concept drift detection, feature stores, CI/CD for ML pipelines, and GPU resource optimization. Use when the user asks about ml ops engineer, ml ops engineer best practices, or needs guidance on ml ops engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "devops",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "prompt-translation",
+  "name": "Prompt Translation",
+  "version": "1.0.0",
+  "description": "Translates AI image generation prompts between Midjourney, DALL-E, and Stable Diffusion by mapping source structure to target syntax, identifying direct transfers, and noting model-specific alternatives. Use when the user asks to convert a prompt from one AI model to another, adapt a Midjourney prompt for Stable Diffusion, or translate between prompt formats. Do NOT use for creating prompts from scratch (use model-specific skills), debugging a single-model prompt (use ai-image-prompt-debugging), or style analysis (use ai-image-style-transfer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-image-generation",
+    "design",
+    "template",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

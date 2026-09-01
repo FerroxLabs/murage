@@ -1,0 +1,15 @@
+{
+  "id": "customer-journey-map",
+  "name": "Customer Journey Map",
+  "version": "1.0.0",
+  "description": "Produces a completed customer journey map across stages from awareness through advocacy with touchpoints, emotions, pain points, and opportunities at each stage using journey mapping methodology. Use when the user asks to map the customer journey, understand customer experience across touchpoints, identify friction in the buying process, or visualize the path from prospect to advocate. Do NOT use for buyer persona creation (use customer-persona), sales funnel metrics (use pipeline-review), or marketing analytics reporting (use marketing-analytics-report).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "strategy",
+    "planning",
+    "analysis",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

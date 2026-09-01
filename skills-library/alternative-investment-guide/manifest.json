@@ -1,0 +1,18 @@
+{
+  "id": "alternative-investment-guide",
+  "name": "Alternative Investment Guide",
+  "version": "1.0.0",
+  "description": "Alternative investments education covering private equity, venture capital, commodities, precious metals, art, collectibles, farmland, cryptocurrency allocation, risk assessment frameworks, and portfolio integration. Helps users understand options beyond traditional stocks and bonds. Use when the user asks about alternative investment guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of alternative investment guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "checklist",
+    "guide",
+    "analysis",
+    "emergency-preparedness",
+    "performing-arts",
+    "sustainability"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "python-testing-patterns",
+  "name": "Python Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level Python testing with pytest: fixture design, parametrize patterns, mocking strategies with unittest.mock, async test patterns, and test organization. Covers the testing pyramid for Python projects with emphasis on fast, reliable, maintainable tests. Use when the user asks about Python testing, pytest fixtures, test mocking, parametrized tests, async testing in Python, or organizing Python test suites. Do NOT use when the user asks about project setup (use `python-project-setup`), language-agnostic testing concepts (use `unit-testing-patterns`), or Python performance profiling (use `python-performance`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "python",
+    "testing",
+    "tdd",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

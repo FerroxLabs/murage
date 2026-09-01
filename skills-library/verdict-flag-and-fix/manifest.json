@@ -1,0 +1,14 @@
+{
+  "id": "verdict-flag-and-fix",
+  "name": "flag-and-fix",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Verdict specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "verdict",
+    "flag",
+    "and",
+    "fix"
+  ],
+  "requiredCapabilities": []
+}

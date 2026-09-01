@@ -1,0 +1,18 @@
+{
+  "id": "speechwriter",
+  "name": "Speechwriter",
+  "version": "1.0.0",
+  "description": "Professional speechwriting guide covering speech structure, rhetorical devices, audience analysis, delivery notes, occasion-specific approaches, and revision techniques for creating memorable and effective spoken presentations. Use when the user asks about speechwriter, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of speechwriter or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "budgeting",
+    "breathing",
+    "stress-management",
+    "checklist",
+    "guide",
+    "beginner-friendly"
+  ],
+  "requiredCapabilities": []
+}

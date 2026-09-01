@@ -1,0 +1,14 @@
+{
+  "id": "risk-assessment-productivity",
+  "name": "Risk Assessment",
+  "version": "1.0.0",
+  "description": "Produces a project risk register by identifying risks from the project description, scoring each by likelihood and impact, assigning mitigation strategies, and setting monitoring triggers. Builds a complete risk management artifact for personal or small-team projects. Use when the user asks about identifying project risks, building a risk register, assessing what could go wrong, or creating mitigation plans for a project. Do NOT use for business strategic risk analysis (use business strategy skills), financial risk assessment (use personal-finance skills), or decision-making between options (use premortem-analysis or weighted-decision-matrix).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "analysis",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

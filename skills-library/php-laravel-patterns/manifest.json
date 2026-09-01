@@ -1,0 +1,14 @@
+{
+  "id": "php-laravel-patterns",
+  "name": "Php Laravel Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level php laravel patterns implementation: php and frameworks decision frameworks, production-ready patterns, and concrete templates for php laravel patterns workflows. Use when the user asks about php laravel patterns, php laravel patterns configuration, or php best practices for php projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "php",
+    "frameworks",
+    "backend",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

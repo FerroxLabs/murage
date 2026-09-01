@@ -1,0 +1,14 @@
+{
+  "id": "time-blocking",
+  "name": "Time Blocking",
+  "version": "1.0.0",
+  "description": "Builds a time-blocked weekly schedule from the user's working hours, fixed commitments, and task list. Produces a day-by-day block schedule with task assignments, buffer rules, and energy-level matching. Use when the user asks about time blocking, scheduling their day, creating a weekly plan with specific time slots, or structuring their workday around focused blocks. Do NOT use for prioritizing tasks without scheduling (use eisenhower-matrix or task-prioritization), building a full GTD system (use gtd-workflow), or enterprise team scheduling (use business project-management skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "planning",
+    "optimization",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

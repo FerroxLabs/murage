@@ -1,0 +1,13 @@
+{
+  "id": "writing-prompt-response",
+  "name": "Writing Prompt Response",
+  "version": "1.0.0",
+  "description": "Responds to writing prompts with crafted creative pieces that honor the prompt's constraints while demonstrating narrative skill. Produces focused creative responses in any genre. Use when the user provides a writing prompt, creative prompt, story starter, or asks for a creative writing exercise response. Do NOT use for full short stories (use short-story-writing), flash fiction under 1,000 words with specific formal constraints (use flash-fiction), or poetry prompts (use poetry-writing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "fitness"
+  ],
+  "requiredCapabilities": []
+}

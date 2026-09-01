@@ -1,0 +1,14 @@
+{
+  "id": "child-development",
+  "name": "Child Development",
+  "version": "1.0.0",
+  "description": "Child development milestone tracking based on CDC guidelines across physical, cognitive, social-emotional, and language domains, with enrichment suggestions, school readiness assessment, and guidance on when to consult a pediatrician. Use when the user asks about child development, or needs help with child development milestone tracking based on cdc guidelines across physical, cognitive, social-emotional, and language domains, with enrichment suggestions, school readiness assessment, and guidance on when to consult a pediatrician. Do NOT use when the request requires professional specialized advice or falls outside the scope of child development.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "family-events",
+    "guide",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

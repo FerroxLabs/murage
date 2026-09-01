@@ -1,0 +1,14 @@
+{
+  "id": "divorce-navigator",
+  "name": "Divorce Navigator",
+  "version": "1.0.0",
+  "description": "Sensitive, comprehensive guide to the divorce process covering mediation vs litigation, financial untangling, co-parenting planning, emotional support resources, housing transition, legal documentation, and rebuilding life after divorce. Use when the user asks about divorce navigator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "relationships",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

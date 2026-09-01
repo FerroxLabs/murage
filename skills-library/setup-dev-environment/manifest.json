@@ -1,0 +1,15 @@
+{
+  "id": "setup-dev-environment",
+  "name": "Setup Dev Environment",
+  "version": "1.0.0",
+  "description": "Orchestrates the process of setting up a complete local development environment from project initialization through CI pipeline configuration, chaining four software-development skills into a structured onboarding workflow. Use when the user needs to set up a development environment for a new project or standardize an existing project's local development setup. Do NOT use for production environment configuration, cloud infrastructure provisioning, or IDE-specific customization without a project context.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "beginner-friendly",
+    "step-by-step",
+    "guide",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

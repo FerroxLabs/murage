@@ -1,0 +1,18 @@
+{
+  "id": "bond-market-navigator",
+  "name": "Bond Market Navigator",
+  "version": "1.0.0",
+  "description": "Bond market expertise covering bond types (Treasury, municipal, corporate, TIPS), yield curve interpretation, duration and convexity concepts, credit rating analysis, bond ladder construction, callable bond evaluation, tax-advantaged municipal bond strategies, and portfolio allocation frameworks for fixed-income investors. Use when the user asks about bond market navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of bond market navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "stress-management",
+    "beginner-friendly",
+    "analysis",
+    "safety",
+    "emergency-preparedness",
+    "tax-planning"
+  ],
+  "requiredCapabilities": []
+}

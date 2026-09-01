@@ -1,0 +1,16 @@
+{
+  "id": "prd-writing",
+  "name": "Prd Writing",
+  "version": "1.0.0",
+  "description": "Creates product requirements documents (PRDs) with problem statement, user stories, acceptance criteria, out-of-scope definition, and success metrics using standard PRD format. Use when the user asks about PRDs, product requirements, feature requirements, writing requirements documents, or product specifications. Do NOT use for technical specifications (use technical-specification), user story writing alone (use user-story-writing), or feature specs (use feature-spec).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "strategy",
+    "template",
+    "agile",
+    "project-management",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

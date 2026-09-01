@@ -1,0 +1,13 @@
+{
+  "id": "rfp-response",
+  "name": "Rfp Response",
+  "version": "1.0.0",
+  "description": "Writes structured responses to Requests for Proposal (RFPs) with compliant formatting, clear capability statements, pricing structures, and persuasive differentiation for competitive procurement processes. Use when the user needs to respond to an RFP, RFI, or RFQ. Do NOT use for unsolicited business proposals (use `business-proposal`), internal project proposals (use `project-proposal`), or grant proposals (use `grant-proposal-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "proposal",
+    "writing",
+    "business-writing"
+  ],
+  "requiredCapabilities": []
+}

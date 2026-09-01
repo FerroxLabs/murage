@@ -1,0 +1,19 @@
+{
+  "id": "spring-cleaning-master",
+  "name": "Spring Cleaning Master",
+  "version": "1.0.0",
+  "description": "Comprehensive spring cleaning guidance with room-by-room checklists, deep cleaning techniques, organization systems, decluttering frameworks, and scheduling strategies to make the annual deep clean manageable and thorough. Use when the user asks about spring cleaning master, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of spring cleaning master or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "event-planning",
+    "habits",
+    "checklist",
+    "template",
+    "energy-efficiency",
+    "cooking",
+    "pet-care",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

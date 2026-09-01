@@ -1,0 +1,19 @@
+{
+  "id": "first-contribution-guide",
+  "name": "First Contribution Guide",
+  "version": "1.0.0",
+  "description": "Navigate your first open source contribution from finding issues through submitting pull requests with proper etiquette and workflow Use when the user asks about first contribution guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of first contribution guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "checklist",
+    "template",
+    "guide",
+    "step-by-step",
+    "beginner-friendly",
+    "api-design",
+    "testing",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

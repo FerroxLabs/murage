@@ -1,0 +1,13 @@
+{
+  "id": "debt-strategist",
+  "name": "Debt Strategist",
+  "version": "1.0.0",
+  "description": "Strategic debt payoff planning using proven methods including the debt snowball, avalanche method, consolidation analysis, balance transfer evaluation, and specialized strategies for student loans and mortgages. Calculates payoff timelines and total interest costs. Use when the user asks about debt strategist, or needs help with strategic debt payoff planning using proven methods including the debt snowball, avalanche method, consolidation analysis, balance transfer evaluation, and specialized strategies for student loans and mortgages. Do NOT use when the request requires professional financial advice or falls outside the scope of debt strategist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "debt-management",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

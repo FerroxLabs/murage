@@ -1,0 +1,19 @@
+{
+  "id": "food-preservation",
+  "name": "Food Preservation",
+  "version": "1.0.0",
+  "description": "Master food preservation methods including water bath canning for high-acid foods, pressure canning for low-acid foods, fermentation of sauerkraut, kimchi, and kombucha, dehydrating, freezing, and brining. Covers safety guidelines for botulism prevention, USDA-tested recipes, equipment needs, and a seasonal preservation calendar. Use when the user asks about food preservation, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of food preservation or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "budgeting",
+    "nutrition",
+    "guide",
+    "step-by-step",
+    "beginner-friendly",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

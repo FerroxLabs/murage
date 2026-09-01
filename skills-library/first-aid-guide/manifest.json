@@ -1,0 +1,13 @@
+{
+  "id": "first-aid-guide",
+  "name": "First Aid Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive first aid reference covering emergency response protocols (DRSABCD), CPR basics, choking response, wound care, burn treatment, fracture and sprain care, allergic reaction management, heat and cold emergencies, and poisoning response. Reference only - always seek certified training. Use when the user asks about first aid guide, or needs help with comprehensive first aid reference covering emergency response protocols (drsabcd), cpr basics, choking response, wound care, burn treatment, fracture and sprain care, allergic reaction management, heat and cold emergencies, and poisoning response. Do NOT use when the request requires professional medical advice or falls outside the scope of first aid guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "guide",
+    "checklist"
+  ],
+  "requiredCapabilities": []
+}

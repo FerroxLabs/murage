@@ -1,0 +1,14 @@
+{
+  "id": "workplace-conversation-prep",
+  "name": "Workplace Conversation Prep",
+  "version": "1.0.0",
+  "description": "Prepares the user for a difficult workplace conversation by scripting the opening statement, anticipated responses with branching dialogue, and de-escalation moves. Covers feedback delivery, conflict resolution, boundary setting, and saying no to scope creep. Produces a conversation script with branches. Use when the user needs to have a difficult conversation at work, deliver tough feedback, resolve a conflict with a colleague, set boundaries, or push back on unreasonable requests. Do NOT use for salary negotiation (use salary-negotiation-script), performance review preparation (use performance-review-prep), or mentorship outreach (use mentorship-outreach).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "writing",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

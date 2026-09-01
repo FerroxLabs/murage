@@ -1,0 +1,19 @@
+{
+  "id": "epistemology-explorer",
+  "name": "Epistemology Explorer",
+  "version": "1.0.0",
+  "description": "Guided exploration of epistemology covering theories of knowledge and justification, the nature of belief, skeptical challenges, the relationship between evidence and certainty, cognitive biases, and practical exercises for developing intellectual humility and rigorous thinking about what we know and how we know it. Use when the user asks about epistemology explorer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of epistemology explorer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "journaling",
+    "guide",
+    "testing",
+    "analysis",
+    "performing-arts",
+    "branding",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

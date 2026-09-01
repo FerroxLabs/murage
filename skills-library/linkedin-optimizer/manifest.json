@@ -1,0 +1,14 @@
+{
+  "id": "linkedin-optimizer",
+  "name": "Linkedin Optimizer",
+  "version": "1.0.0",
+  "description": "Comprehensive LinkedIn optimization guide covering headline formulas, summary writing, experience section optimization, skills and endorsements strategy, recommendation requests, content posting, networking approaches, job search features, and profile SEO. Use when the user asks about linkedin optimizer, or needs help with comprehensive linkedin optimization guide covering headline formulas, summary writing, experience section optimization, skills and endorsements strategy, recommendation requests, content posting, networking approaches, job search features, and profile seo. Do NOT use when the request requires professional specialized advice or falls outside the scope of linkedin optimizer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "linkedin",
+    "guide",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

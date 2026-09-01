@@ -1,0 +1,19 @@
+{
+  "id": "remote-manager-toolkit",
+  "name": "Remote Manager Toolkit",
+  "version": "1.0.0",
+  "description": "Equip managers to lead distributed teams effectively through structured 1:1 meetings, remote-adapted performance management, proactive engagement strategies, trust-building practices, and asynchronous leadership techniques Use when the user asks about remote manager toolkit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of remote manager toolkit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "checklist",
+    "template",
+    "planning",
+    "safety",
+    "performing-arts",
+    "investing",
+    "running",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

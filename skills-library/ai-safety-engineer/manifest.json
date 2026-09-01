@@ -1,0 +1,14 @@
+{
+  "id": "ai-safety-engineer",
+  "name": "Ai Safety Engineer",
+  "version": "1.0.0",
+  "description": "AI safety and alignment engineering covering guardrail implementation, red teaming methodologies, content filtering pipelines, output validation, prompt injection defense, toxicity detection, bias mitigation, and responsible deployment practices for LLM-powered systems. Use when the user asks about ai safety engineer, ai safety engineer best practices, or needs guidance on ai safety engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "best-practices",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

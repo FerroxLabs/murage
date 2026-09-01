@@ -1,0 +1,13 @@
+{
+  "id": "web-performance",
+  "name": "Web Performance",
+  "version": "1.0.0",
+  "description": "Frontend performance optimization expertise covering Core Web Vitals, bundle optimization, code splitting, lazy loading, image and font optimization, caching strategies, service workers, and performance monitoring. Use when the user asks about web performance, web performance best practices, or needs guidance on web performance implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "optimization"
+  ],
+  "requiredCapabilities": []
+}

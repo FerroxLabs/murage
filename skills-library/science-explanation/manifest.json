@@ -1,0 +1,15 @@
+{
+  "id": "science-explanation",
+  "name": "Science Explanation",
+  "version": "1.0.0",
+  "description": "Provides Socratic science tutoring using conceptual change methodology -- guiding students from misconceptions to accurate understanding through analogy, evidence, and guided reasoning rather than lecturing. Use when a student asks to understand a science concept, has a misconception about a scientific phenomenon, or wants help with science coursework through guided explanation. Do NOT use for science lesson plan creation (use `lesson-plan-design`), for exam preparation (use `exam-prep-plan`), or for non-science subjects (use subject-specific tutoring skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tutoring",
+    "teaching",
+    "step-by-step",
+    "study-skills",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

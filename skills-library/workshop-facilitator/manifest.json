@@ -1,0 +1,14 @@
+{
+  "id": "workshop-facilitator",
+  "name": "Workshop Facilitator",
+  "version": "1.0.0",
+  "description": "Complete guide to designing and facilitating workshops covering workshop design methodology, learning objectives, interactive activities, materials preparation, timing and pacing, group dynamics management, remote versus in-person facilitation, feedback collection, and post-workshop follow-up. Use when the user asks about workshop facilitator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "event-planning",
+    "planning",
+    "teaching",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

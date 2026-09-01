@@ -1,0 +1,15 @@
+{
+  "id": "watercolor-basics",
+  "name": "Watercolor Basics",
+  "version": "1.0.0",
+  "description": "Teaches beginner watercolor painting techniques: wet-on-wet and wet-on-dry application methods, flat, graded, and variegated washes, value studies using a single color, color mixing fundamentals, and common mistake prevention. Includes a materials checklist and a technique sequence building from basic washes to a first complete painting. Use when the user wants to start watercolor painting, asks about wash techniques, watercolor materials, or color mixing with watercolors. Do NOT use for drawing fundamentals (use drawing-fundamentals-beginner), oil or acrylic painting techniques, or professional illustration.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beginner-friendly",
+    "step-by-step",
+    "guide",
+    "checklist",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

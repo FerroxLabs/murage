@@ -1,0 +1,15 @@
+{
+  "id": "executor-responsibilities-guide",
+  "name": "Executor Responsibilities Guide",
+  "version": "1.0.0",
+  "description": "Explains the duties and timeline of serving as an executor (personal representative) of an estate, including probate filing, asset inventory, debt settlement, distribution, and estate closure. Produces a phase-by-phase responsibility checklist and a question list for attorney consultation. Use when the user asks about executor duties, what an executor does, how to serve as executor, or what to expect when administering an estate. Do NOT use for providing legal advice on specific estate administration decisions, tax filing guidance, or probate court procedures in a specific jurisdiction.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "guide",
+    "checklist",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

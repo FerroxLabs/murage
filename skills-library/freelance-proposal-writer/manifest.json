@@ -1,0 +1,16 @@
+{
+  "id": "freelance-proposal-writer",
+  "name": "Freelance Proposal Writer",
+  "version": "1.0.0",
+  "description": "Writes a complete client proposal document including problem statement, proposed solution, scope definition, timeline, pricing, and terms. Produces a full proposal ready to send to a prospective client. Use when the user needs to write a freelance proposal, respond to a client inquiry with a formal proposal, pitch a project to a potential client, or create a scope of work document for freelance work. Do NOT use for business proposals unrelated to freelancing (use business proposal skills), job application cover letters (use cover-letter-writer), or setting rates (use freelance-rate-calculator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "freelancing",
+    "career",
+    "template",
+    "writing",
+    "proposal",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "screen-time-management",
+  "name": "Screen Time Management",
+  "version": "1.0.0",
+  "description": "Creates family media plans with age-based screen time guidelines, content quality criteria, and alternative activity lists. Produces structured media agreements with daily limits, content evaluation frameworks, and transition strategies for reducing screen time. Use when the user asks about managing children's screen time, setting media limits, evaluating content quality, or creating a family media plan. Do NOT use for diagnosing screen addiction, treating technology dependency, or assessing a child's relationship with screens clinically.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "planning",
+    "guide",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

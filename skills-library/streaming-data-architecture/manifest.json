@@ -1,0 +1,14 @@
+{
+  "id": "streaming-data-architecture",
+  "name": "Streaming Data Architecture",
+  "version": "1.0.0",
+  "description": "Designs a streaming data architecture defining event schema, producer configuration, consumer processing logic, state management approach, and fault tolerance strategy. Produces a system specification document for real-time data pipelines. Use when the user asks to design a real-time data pipeline, build an event-driven architecture, implement stream processing, or plan a system that processes data as it arrives rather than in batches. Do NOT use for batch ETL pipelines (use etl-pipeline-design), data warehouse design (use data-warehouse-design), or API data extraction (use api-data-extraction).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "analysis",
+    "planning",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

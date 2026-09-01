@@ -1,0 +1,14 @@
+{
+  "id": "task-prioritization",
+  "name": "Task Prioritization",
+  "version": "1.0.0",
+  "description": "Applies a structured prioritization method (RICE, MoSCoW, or weighted scoring) to a list of tasks or features. Produces a ranked list with scoring rationale for each item and a clear action sequence. Use when the user asks about prioritizing a backlog, ranking tasks by impact, deciding which features to build first, or applying a scoring framework to competing priorities. Do NOT use for sorting tasks by urgency/importance (use eisenhower-matrix), scheduling tasks into time blocks (use time-blocking), or business strategic prioritization (use business strategy skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "decision-making",
+    "planning",
+    "analysis",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "ghostwriter",
+  "name": "Ghostwriter",
+  "version": "1.0.0",
+  "description": "Professional ghostwriting methodology covering voice adaptation techniques, client interview processes, NDA and legal considerations, project scoping, manuscript development workflow, credit and attribution agreements, and revision cycle management. Use when the user asks about ghostwriter, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ghostwriter or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "budgeting",
+    "template",
+    "beginner-friendly",
+    "research",
+    "performing-arts",
+    "energy-efficiency"
+  ],
+  "requiredCapabilities": []
+}

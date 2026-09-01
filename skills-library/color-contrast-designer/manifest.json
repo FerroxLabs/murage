@@ -1,0 +1,19 @@
+{
+  "id": "color-contrast-designer",
+  "name": "Color Contrast Designer",
+  "version": "1.0.0",
+  "description": "Design accessible color systems using WCAG contrast ratios and APCA, simulate color blindness, build dark mode palettes, and select tooling for contrast validation. Use when the user asks about color contrast designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of color contrast designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "quick-reference",
+    "javascript",
+    "testing",
+    "automation",
+    "analysis",
+    "safety",
+    "competitive-programming",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "interview-algorithm-coach",
+  "name": "Interview Algorithm Coach",
+  "version": "1.0.0",
+  "description": "Guides technical interview preparation including common algorithm patterns, system design fundamentals, behavioral preparation, and structured problem-solving approaches Use when the user asks about interview algorithm coach, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of interview algorithm coach or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "competitive-programming",
+    "checklist",
+    "guide",
+    "quick-reference",
+    "python",
+    "testing",
+    "performing-arts",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "ruby-testing-patterns",
+  "name": "Ruby Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level ruby testing patterns implementation: ruby and testing decision frameworks, production-ready patterns, and concrete templates for ruby testing patterns workflows. Use when the user asks about ruby testing patterns, ruby testing patterns configuration, or ruby best practices for ruby projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ruby",
+    "testing",
+    "tdd",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

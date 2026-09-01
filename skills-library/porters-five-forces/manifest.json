@@ -1,0 +1,15 @@
+{
+  "id": "porters-five-forces",
+  "name": "Porters Five Forces",
+  "version": "1.0.0",
+  "description": "Produces a completed Porter's Five Forces analysis with industry-specific drivers for each force, intensity ratings, and strategic implications. Use when the user asks to analyze industry attractiveness, evaluate competitive forces, assess market entry barriers, or understand industry dynamics using Porter's framework. Do NOT use for company-specific SWOT (use swot-analysis), direct competitor comparison (use competitive-analysis), or macro-environment scanning (use pestle-analysis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "analysis",
+    "planning",
+    "decision-making",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

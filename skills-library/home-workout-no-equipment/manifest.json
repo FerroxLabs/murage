@@ -1,0 +1,14 @@
+{
+  "id": "home-workout-no-equipment",
+  "name": "Home Workout No Equipment",
+  "version": "1.0.0",
+  "description": "Builds bodyweight-only workout programs for all fitness levels with progressive difficulty variations, structured programming across push, pull, squat, hinge, and core movement patterns. Produces a complete weekly training schedule with exercise progressions and no equipment requirements. Use when the user asks about bodyweight workouts, home training without equipment, no-gym routines, or calisthenics programs for beginners. Do NOT use for weight training programs (use beginner-strength-training), HIIT-specific sessions (use hiit-workout-design), or yoga routines (use yoga-routine-builder).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "workout-planning",
+    "beginner-friendly",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

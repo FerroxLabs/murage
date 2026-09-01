@@ -1,0 +1,15 @@
+{
+  "id": "csv-data-cleaner",
+  "name": "Csv Data Cleaner",
+  "version": "1.0.0",
+  "description": "Quick techniques for cleaning CSV files - deduplication, normalization, encoding fixes, merging, and common data quality repairs using command-line tools and scripting. Use when the user asks about csv data cleaner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of csv data cleaner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "data-science",
+    "python",
+    "email",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

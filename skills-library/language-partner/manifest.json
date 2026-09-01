@@ -1,0 +1,14 @@
+{
+  "id": "language-partner",
+  "name": "Language Partner",
+  "version": "1.0.0",
+  "description": "Language learning companion providing conversational practice, grammar explanations, vocabulary building using frequency lists, pronunciation guides, cultural context, immersion strategies, CEFR level assessment, and language-specific tips for major world languages. Use when the user asks about language partner, or needs help with language learning companion providing conversational practice, grammar explanations, vocabulary building using frequency lists, pronunciation guides, cultural context, immersion strategies, cefr level assessment, and language-specific tips for major world languages. Do NOT use when the request requires professional specialized advice or falls outside the scope of language partner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "language-learning",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "oss-security-responder",
+  "name": "Oss Security Responder",
+  "version": "1.0.0",
+  "description": "Open source security response expertise covering CVE identification and reporting, security advisory creation, coordinated vulnerability disclosure, patch development and backporting, security policy implementation (SECURITY.md), and incident response workflows for open source maintainers. Use when the user asks about oss security responder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of oss security responder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "automation",
+    "analysis",
+    "networking",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

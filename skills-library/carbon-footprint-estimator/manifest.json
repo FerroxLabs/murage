@@ -1,0 +1,14 @@
+{
+  "id": "carbon-footprint-estimator",
+  "name": "Carbon Footprint Estimator",
+  "version": "1.0.0",
+  "description": "Estimates personal carbon footprint by category (transportation, home energy, food, and consumption) and produces a ranked reduction action list with estimated CO2e savings per action. Gathers the user's lifestyle data to produce a baseline footprint estimate and prioritized reduction plan with realistic impact numbers. Use when the user asks about their carbon footprint, personal emissions, environmental impact of their lifestyle, or how to reduce their carbon output. Do NOT use for corporate or business carbon accounting, carbon offset evaluation or purchasing, climate policy analysis (use environmental-policy-researcher), or life cycle assessment of specific products.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "planning",
+    "checklist",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

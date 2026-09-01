@@ -1,0 +1,19 @@
+{
+  "id": "home-automation-builder",
+  "name": "Home Automation Builder",
+  "version": "1.0.0",
+  "description": "Guides smart home system design with Home Assistant, Zigbee/Z-Wave protocols, automation rules, dashboards, and integration patterns Use when the user asks about home automation builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of home automation builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "template",
+    "guide",
+    "cloud",
+    "testing",
+    "automation",
+    "networking",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

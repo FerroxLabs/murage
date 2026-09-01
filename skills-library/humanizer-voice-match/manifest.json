@@ -1,0 +1,13 @@
+{
+  "id": "humanizer-voice-match",
+  "name": "voice-match",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Humanizer specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "humanizer",
+    "voice",
+    "match"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "technical-interview-prep",
+  "name": "Technical Interview Prep",
+  "version": "1.0.0",
+  "description": "Prepares the user for technical interviews by building structured response frameworks for coding problems, system design questions, and technical knowledge assessments. Teaches problem decomposition, thinking aloud, and handling questions where the answer is unknown. Produces ready-to-use response templates per question type. Use when the user is preparing for a technical interview, wants to practice problem-solving approaches, or needs frameworks for system design or coding questions. Do NOT use for behavioral interview preparation (use behavioral-interview-prep), case interview preparation (use case-interview-prep), or predicting interview questions (use interview-question-anticipator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "interview-prep",
+    "career",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

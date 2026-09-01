@@ -1,0 +1,14 @@
+{
+  "id": "rust-async-patterns",
+  "name": "Rust Async Patterns",
+  "version": "1.0.0",
+  "description": "Guides advanced Rust async programming: Tokio vs async-std decision, async trait patterns, spawning strategies, blocking in async contexts, and structured concurrency with JoinSet. Use when the user asks about Rust async, Tokio, async-std, async traits, spawning, blocking in async, JoinSet, futures. Do NOT use when the user asks about Rust ownership (use `rust-ownership-patterns`), Rust performance (use `rust-performance`), Rust error handling (use `rust-error-handling`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "rust",
+    "backend",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

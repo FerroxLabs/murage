@@ -1,0 +1,15 @@
+{
+  "id": "freelance-rate-calculator",
+  "name": "Freelance Rate Calculator",
+  "version": "1.0.0",
+  "description": "Calculates sustainable freelance hourly and project rates from target annual income, billable hours assumption, overhead costs, and desired profit margin. Produces a complete rate calculation worksheet with formulas and pricing tiers. Use when the user wants to set freelance rates, calculate how much to charge for freelance work, determine project pricing, or figure out an hourly rate for consulting. Do NOT use for business financial modeling (use business finance skills), investment calculations (use personal-finance skills), or salary negotiation as an employee (use salary-negotiation-script).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "freelancing",
+    "career",
+    "budgeting",
+    "personal-finance",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

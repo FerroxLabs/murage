@@ -1,0 +1,14 @@
+{
+  "id": "community-conservation-action",
+  "name": "Community Conservation Action",
+  "version": "1.0.0",
+  "description": "Plans community environmental projects from concept to launch, covering stakeholder identification, goal setting, action planning, volunteer coordination, and impact measurement. Gathers the user's community context, environmental concern, and available resources to produce a structured project plan with timeline, roles, and measurable outcomes. Use when the user asks about starting a community environmental project, organizing a neighborhood cleanup, planning a community garden, building a conservation coalition, or measuring community environmental impact. Do NOT use for lobbying or political campaign strategy, large-scale nonprofit management, environmental policy analysis (use environmental-policy-researcher), individual personal sustainability actions (use other sustainability skills), or corporate sustainability programs.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "civic-engagement",
+    "planning",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "habit-stacking-engineer",
+  "name": "Habit Stacking Engineer",
+  "version": "1.0.0",
+  "description": "Habit formation science, stacking techniques, environment design, tracking systems, and recovery strategies for building lasting behavior change. Use when the user asks about habit stacking engineer, or needs help with habit formation science, stacking techniques, environment design, tracking systems, and recovery strategies for building lasting behavior change. Do NOT use when the request requires professional specialized advice or falls outside the scope of habit stacking engineer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "habits",
+    "step-by-step",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

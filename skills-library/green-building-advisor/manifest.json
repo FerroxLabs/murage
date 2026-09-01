@@ -1,0 +1,18 @@
+{
+  "id": "green-building-advisor",
+  "name": "Green Building Advisor",
+  "version": "1.0.0",
+  "description": "Sustainable building concepts including energy efficiency, passive design, sustainable materials, retrofitting strategies, and guidance for healthier, lower-impact homes and buildings Use when the user asks about green building advisor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of green building advisor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "budgeting",
+    "checklist",
+    "guide",
+    "advanced",
+    "testing",
+    "analysis",
+    "research"
+  ],
+  "requiredCapabilities": []
+}

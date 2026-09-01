@@ -1,0 +1,16 @@
+{
+  "id": "interview-guide",
+  "name": "Interview Guide",
+  "version": "1.0.0",
+  "description": "Creates a structured interview guide with behavioral and competency-based questions, scoring rubric, evaluation criteria, and interviewer instructions for consistent candidate assessment. Use when the user asks about interview guides, interview questions, structured interviews, behavioral interview design, or candidate evaluation rubrics. Do NOT use for resume writing, job description creation (use job-description), or interview preparation for candidates (use interview-prep skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "template",
+    "planning",
+    "checklist",
+    "strategy",
+    "guide",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "organization-coach",
+  "name": "Organization Coach",
+  "version": "1.0.0",
+  "description": "Home organization system using proven decluttering and organizing methods for room-by-room guidance, storage solutions, organizing systems, digital organization, paper management, and maintaining organized spaces long-term. Use when the user asks about organization coach, or needs help with home organization system using proven decluttering and organizing methods for room-by-room guidance, storage solutions, organizing systems, digital organization, paper management, and maintaining organized spaces long-term. Do NOT use when the request requires professional specialized advice or falls outside the scope of organization coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "decluttering",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

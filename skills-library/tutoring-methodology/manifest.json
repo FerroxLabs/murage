@@ -1,0 +1,19 @@
+{
+  "id": "tutoring-methodology",
+  "name": "Tutoring Methodology",
+  "version": "1.0.0",
+  "description": "Apply structured assessment, scaffolding, differentiation, and progress tracking techniques to deliver effective one-on-one and small group tutoring. Use when the user asks about tutoring methodology, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of tutoring methodology or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "education-industry",
+    "teaching",
+    "checklist",
+    "template",
+    "testing",
+    "analysis",
+    "planning",
+    "parenting",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

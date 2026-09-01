@@ -1,0 +1,14 @@
+{
+  "id": "performance-review-writer",
+  "name": "Performance Review Writer",
+  "version": "1.0.0",
+  "description": "Performance review self-assessment guide covering achievement documentation using the CAR method, goal reflection, SMART goal setting, strength and development area framing, self-evaluation templates, 360 feedback preparation, and building a case for promotion. Use when the user asks about performance review writer, or needs help with performance review self-assessment guide covering achievement documentation using the car method, goal reflection, smart goal setting, strength and development area framing, self-evaluation templates, 360 feedback preparation, and building a case for promotion. Do NOT use when the request requires professional specialized advice or falls outside the scope of performance review writer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "career",
+    "template",
+    "guide",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

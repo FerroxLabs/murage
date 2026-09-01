@@ -1,0 +1,15 @@
+{
+  "id": "destination-comparison",
+  "name": "Destination Comparison",
+  "version": "1.0.0",
+  "description": "Creates a scored comparison table across candidate travel destinations using weighted criteria. Gathers the user's travel priorities, budget, dates, and constraints to produce a side-by-side destination evaluation matrix with numerical scores and a ranked recommendation. Use when the user asks to compare travel destinations, choose between vacation options, decide where to travel, or evaluate multiple trip possibilities against their preferences. Do NOT use for comparing accommodations within a single destination, trip itinerary building (use trip-itinerary-builder), or travel budget creation (use budget-travel-planner).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "research",
+    "analysis",
+    "itinerary",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "corporate-video",
+  "name": "Corporate Video",
+  "version": "1.0.0",
+  "description": "Professional corporate video production guidance covering training videos, promotional content, testimonials, and product demos. Includes client brief templates, script approval workflows, achieving professional quality on budget, brand compliance, stakeholder management, and delivery specifications. Use when the user asks about corporate video or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "video-production",
+    "business-writing",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

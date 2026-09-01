@@ -1,0 +1,19 @@
+{
+  "id": "creative-portfolio-builder",
+  "name": "Creative Portfolio Builder",
+  "version": "1.0.0",
+  "description": "Helps artists, designers, and creative professionals curate, organize, and present their work through compelling portfolios across digital platforms, personal websites, and print formats for career advancement. Use when the user asks about creative portfolio builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of creative portfolio builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-industry",
+    "design",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "automation",
+    "research",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

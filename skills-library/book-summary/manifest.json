@@ -1,0 +1,15 @@
+{
+  "id": "book-summary",
+  "name": "Book Summary",
+  "version": "1.0.0",
+  "description": "Creates analytical book summaries with key ideas, core arguments, notable quotes, and application notes for learners. Produces a structured reading summary that captures the book's contribution -- not a book report or review. Use when a learner asks to summarize a book, extract key ideas from a reading, create reading notes, or synthesize a book's main arguments. Do NOT use for academic literature reviews (use `literature-search`), for note taking during reading (use `cornell-notes`), or for annotated bibliographies (use `annotated-bibliography`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "note-taking",
+    "research",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

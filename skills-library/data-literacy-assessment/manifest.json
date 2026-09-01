@@ -1,0 +1,19 @@
+{
+  "id": "data-literacy-assessment",
+  "name": "Data Literacy Assessment",
+  "version": "1.0.0",
+  "description": "Structured data literacy evaluation covering statistical understanding, data tool proficiency, data storytelling ability, analytical thinking, and producing a personalized learning plan to close skill gaps. Use when the user asks about data literacy assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of data literacy assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "checklist",
+    "python",
+    "analysis",
+    "marketing",
+    "email",
+    "cleaning",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

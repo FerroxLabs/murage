@@ -1,0 +1,14 @@
+{
+  "id": "exercise-form-cues",
+  "name": "Exercise Form Cues",
+  "version": "1.0.0",
+  "description": "Provides detailed technique cues for major compound exercises including squat, deadlift, bench press, row, and overhead press with setup checklists, common fault identification, and corrective cue sequences. Produces a form reference card for each requested exercise. Use when the user asks about proper form for compound lifts, technique cues for squats, deadlifts, bench press, or rows, or common form mistakes and corrections. Do NOT use for programming sets, reps, or training plans (use strength training skills), yoga or stretching technique (use yoga or stretching skills), or rehabilitation exercises (consult a physical therapist).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "workout-planning",
+    "checklist",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

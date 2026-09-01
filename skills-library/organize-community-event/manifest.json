@@ -1,0 +1,15 @@
+{
+  "id": "organize-community-event",
+  "name": "Organize Community Event",
+  "version": "1.0.0",
+  "description": "Guides the user through organizing a community event from concept through execution, chaining event planning, budget tracking, vendor management, communications, marketing, and project management skills across four categories. Use when the user wants to organize a community event, neighborhood gathering, charity fundraiser, or local festival. Do NOT use for corporate conferences (use business workflows), private parties (use plan-a-wedding or family-reunion-planning), or virtual-only events.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "event-planning",
+    "planning",
+    "step-by-step",
+    "guide",
+    "cross-domain"
+  ],
+  "requiredCapabilities": []
+}

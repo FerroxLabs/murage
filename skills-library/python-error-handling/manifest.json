@@ -1,0 +1,14 @@
+{
+  "id": "python-error-handling",
+  "name": "Python Error Handling",
+  "version": "1.0.0",
+  "description": "Guides expert-level Python error handling: exception hierarchy design, custom exception classes, contextlib patterns, structured logging integration, error propagation strategies, and recovery patterns. Covers designing error handling that makes debugging faster. Use when the user asks about Python exception handling, designing custom exceptions, error propagation, logging strategy, or structuring error recovery in Python applications. Do NOT use when the user asks about Python project setup (use `python-project-setup`), async-specific error handling (use `python-async-patterns`), or language-agnostic error patterns (check framework-specific skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "python",
+    "best-practices",
+    "debugging",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

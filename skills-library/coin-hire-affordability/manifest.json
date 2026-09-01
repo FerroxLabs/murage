@@ -1,0 +1,13 @@
+{
+  "id": "coin-hire-affordability",
+  "name": "Hire affordability",
+  "version": "1.0.0",
+  "description": "The user is asking whether they can afford to bring someone on — not whether the role would be useful, but whether the math survives. Load when you hear \"should I hire a [role],\" \"can I afford a $X salary,\" \"is it time for our first hire,\" \"when do we hire our second engineer,\" or \"should we go cont",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "coin",
+    "hire",
+    "affordability"
+  ],
+  "requiredCapabilities": []
+}

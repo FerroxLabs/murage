@@ -1,0 +1,15 @@
+{
+  "id": "currency-exchange-guide",
+  "name": "Currency Exchange Guide",
+  "version": "1.0.0",
+  "description": "Creates a currency exchange strategy with method comparison, cost-of-exchange calculations, and a destination-specific payment plan. Produces a decision framework for choosing between exchange methods (ATM, card, cash exchange) with fee breakdowns and tipping guidance. Use when the user asks about exchanging money for travel, comparing exchange methods, understanding foreign transaction fees, or planning how to pay abroad. Do NOT use for personal finance management (use personal-finance skills), investment in foreign currency, or travel budget planning (use budget-travel-planner).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "checklist",
+    "planning",
+    "guide",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

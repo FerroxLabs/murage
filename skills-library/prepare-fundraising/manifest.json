@@ -1,0 +1,16 @@
+{
+  "id": "prepare-fundraising",
+  "name": "Prepare Fundraising",
+  "version": "1.0.0",
+  "description": "Guides the user through preparing for a fundraising round from financial modeling through pitch deck creation, competitive analysis, due diligence preparation, term sheet literacy, narrative crafting, and investor communication. Use when the user is preparing to raise capital and needs a structured process covering every stage from financial foundation to investor outreach. Do NOT use for personal finance fundraising or crowdfunding (use personal finance skills), for grant writing (use grant-proposal-writing), or for ongoing investor relations after a round closes (use investor-update-email directly).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "proposal",
+    "planning",
+    "step-by-step",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

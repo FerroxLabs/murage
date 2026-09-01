@@ -1,0 +1,14 @@
+{
+  "id": "electronics-hobbyist",
+  "name": "Electronics Hobbyist",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to electronics projects covering Arduino and ESP32 programming, breadboard prototyping through PCB design, fundamental circuits with LEDs, sensors, and motors, soldering techniques, project ideas organized by skill level, component selection, and enclosure design. Use when the user asks about electronics hobbyist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "iot",
+    "guide",
+    "step-by-step",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

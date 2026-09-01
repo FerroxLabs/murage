@@ -1,0 +1,13 @@
+{
+  "id": "ergonomics-advisor",
+  "name": "Ergonomics Advisor",
+  "version": "1.0.0",
+  "description": "Comprehensive workspace ergonomics guide covering desk setup optimization, monitor placement, chair adjustment, keyboard and mouse positioning, posture correction, repetitive strain injury prevention, standing desk transitions, and equipment recommendations for home and office environments. Use when the user asks about ergonomics advisor, or needs help with comprehensive workspace ergonomics guide covering desk setup optimization, monitor placement, chair adjustment, keyboard and mouse positioning, posture correction, repetitive strain injury prevention, standing desk transitions, and equipment recommendations for home and office environments. Do NOT use when the request requires professional medical advice or falls outside the scope of ergonomics advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "journaling-guide",
+  "name": "Journaling Guide",
+  "version": "1.0.0",
+  "description": "Journaling methods and frameworks, writing prompts for reflection, consistency strategies, digital vs analog comparison, and integration with personal growth practices. Use when the user asks about journaling guide, or needs help with journaling methods and frameworks, writing prompts for reflection, consistency strategies, digital vs analog comparison, and integration with personal growth practices. Do NOT use when the request requires professional specialized advice or falls outside the scope of journaling guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "habits",
+    "journaling",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "history-analysis",
+  "name": "History Analysis",
+  "version": "1.0.0",
+  "description": "Provides Socratic history tutoring that guides students through historical thinking skills -- context, causation, evidence evaluation, and perspective analysis -- through guided discussion rather than delivering a history lecture. Use when a student asks for help analyzing a historical event, understanding historical causation, evaluating primary sources, or preparing for history coursework. Do NOT use for history lesson plan creation (use `lesson-plan-design`), for writing history essays (use writing category skills), or for non-history subjects.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tutoring",
+    "teaching",
+    "step-by-step",
+    "research",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

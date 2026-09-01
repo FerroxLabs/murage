@@ -1,0 +1,14 @@
+{
+  "id": "api-documentation-writer",
+  "name": "Api Documentation Writer",
+  "version": "1.0.0",
+  "description": "API documentation expertise covering OpenAPI specification authoring, endpoint documentation patterns, code examples in multiple languages, authentication guides, quickstart tutorials, SDK documentation, error reference guides, versioning strategies, interactive documentation portals, and developer experience optimization. Use when the user asks about api documentation writer, api documentation writer best practices, or needs guidance on api documentation writer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "api-design",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,17 @@
+{
+  "id": "license-advisor",
+  "name": "License Advisor",
+  "version": "1.0.0",
+  "description": "Choose and apply open source licenses with comparison of MIT, Apache, GPL and others, plus compliance guidance and attribution requirements Use when the user asks about license advisor, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of license advisor or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "checklist",
+    "guide",
+    "python",
+    "automation",
+    "networking",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

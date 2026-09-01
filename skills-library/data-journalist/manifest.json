@@ -1,0 +1,18 @@
+{
+  "id": "data-journalist",
+  "name": "Data Journalist",
+  "version": "1.0.0",
+  "description": "Combining investigative journalism with data analysis, including FOI requests, dataset acquisition, statistical analysis, visualization, and compelling data-driven storytelling. Use when the user asks about data journalist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of data journalist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "technical-writing",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "advanced"
+  ],
+  "requiredCapabilities": []
+}

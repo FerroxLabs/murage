@@ -1,0 +1,14 @@
+{
+  "id": "record-release-album",
+  "name": "Record Release Album",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for writing, pre-producing, recording, mixing, mastering, and distributing an album. Covers songwriting, arrangement, DAW workflows, studio recording, mixing techniques, mastering chain, distribution through streaming platforms, and release marketing for independent musicians. Use when the user wants to record release album or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "performing-arts",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

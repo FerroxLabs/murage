@@ -1,0 +1,15 @@
+{
+  "id": "curriculum-mapping",
+  "name": "Curriculum Mapping",
+  "version": "1.0.0",
+  "description": "Designs complete curriculum maps and unit sequences for a course or academic year, aligning standards to units, sequencing learning progressions, and planning assessment checkpoints. Produces a filled-in curriculum document for educators -- not a guide on what curriculum mapping is. Use when an educator asks to map a curriculum, design a course sequence, plan a semester or year of instruction, or align standards across units. Do NOT use for single lesson plans (use `lesson-plan-design`), individual assessment creation (use `assessment-design`), or student study plans (use `study-plan`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "curriculum",
+    "teaching",
+    "lesson-plan",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "sentry-employment-and-classification",
+  "name": "Employment and classification",
+  "version": "1.0.0",
+  "description": "This skill explains employment-law concepts and the classification framework. It does not draft binding terms, separation agreements, or equity grants. I am not your lawyer. Escalate to actual counsel when: any termination in California, New York, Washington, Massachusetts, or Illinois; any equity g",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sentry",
+    "employment",
+    "and",
+    "classification"
+  ],
+  "requiredCapabilities": []
+}

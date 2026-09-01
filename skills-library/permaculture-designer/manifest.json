@@ -1,0 +1,14 @@
+{
+  "id": "permaculture-designer",
+  "name": "Permaculture Designer",
+  "version": "1.0.0",
+  "description": "Guide to permaculture design including core principles, zone planning, food forests, companion planting, water management, soil building, seasonal planning, and community garden design. Use when the user asks about permaculture designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "gardening",
+    "sustainability",
+    "guide",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

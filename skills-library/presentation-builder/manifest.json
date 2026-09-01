@@ -1,0 +1,13 @@
+{
+  "id": "presentation-builder",
+  "name": "Presentation Builder",
+  "version": "1.0.0",
+  "description": "Technical presentation creation expert covering slide design principles, narrative structure, data visualization, live demo preparation, speaker notes, audience engagement techniques, presentation tools, remote presentation tips, and Q&A preparation. Use when the user asks about presentation builder, presentation builder best practices, or needs guidance on presentation builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "content-marketing",
+    "presentation"
+  ],
+  "requiredCapabilities": []
+}

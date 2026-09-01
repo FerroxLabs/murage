@@ -1,0 +1,17 @@
+{
+  "id": "drum-player",
+  "name": "Drum Player",
+  "version": "1.0.0",
+  "description": "Drum instruction covering rudiments, groove patterns, fill techniques, reading drum notation, practice routines, and developing musicality behind the kit. Use when the user asks about drum player, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of drum player or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "beginner-friendly",
+    "advanced",
+    "energy-efficiency",
+    "fashion",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

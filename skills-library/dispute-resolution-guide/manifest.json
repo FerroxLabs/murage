@@ -1,0 +1,15 @@
+{
+  "id": "dispute-resolution-guide",
+  "name": "Dispute Resolution Guide",
+  "version": "1.0.0",
+  "description": "Explains the escalation ladder of dispute resolution methods from direct negotiation through mediation, arbitration, and litigation. Helps users understand which approach fits their situation, what each process involves, and how to prepare for each stage. Use when the user has a dispute and wants to understand their resolution options, needs to decide between mediation and arbitration, or wants to prepare for a dispute resolution process. Do NOT use for active litigation strategy, representing the user in any process, filing lawsuits, or providing legal advice on specific disputes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "checklist",
+    "guide",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

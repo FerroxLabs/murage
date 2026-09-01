@@ -1,0 +1,19 @@
+{
+  "id": "trail-running-coach",
+  "name": "Trail Running Coach",
+  "version": "1.0.0",
+  "description": "Coach trail runners on terrain technique, training plan design, gear selection, trail nutrition, safety protocols, and race preparation for all experience levels Use when the user asks about trail running coach, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of trail running coach or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "hiking",
+    "nutrition",
+    "checklist",
+    "beginner-friendly",
+    "automation",
+    "emergency-preparedness",
+    "energy-efficiency",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

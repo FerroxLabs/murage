@@ -1,0 +1,19 @@
+{
+  "id": "french-learner",
+  "name": "French Learner",
+  "version": "1.0.0",
+  "description": "Structured French learning path covering pronunciation mastery including nasal vowels and liaison rules, grammar patterns from beginner to intermediate, vocabulary acquisition, cultural communication norms, and DELF certification preparation from A1 to B2. Use when the user asks about french learner, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of french learner or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "language-learning",
+    "journaling",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "performing-arts",
+    "cooking",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

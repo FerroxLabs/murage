@@ -1,0 +1,14 @@
+{
+  "id": "logging-architect",
+  "name": "Logging Architect",
+  "version": "1.0.0",
+  "description": "Logging strategy designer covering structured logging, log levels, correlation IDs, distributed tracing, log aggregation, PII handling, retention policies, alerting, and observability stack setup. Use when the user asks about logging architect, logging architect best practices, or needs guidance on logging architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "devops",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

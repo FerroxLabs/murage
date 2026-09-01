@@ -1,0 +1,14 @@
+{
+  "id": "graphql-schema-design",
+  "name": "Graphql Schema Design",
+  "version": "1.0.0",
+  "description": "Guides expert-level graphql schema design implementation: api-design and design-patterns decision frameworks, production-ready patterns, and concrete templates for graphql schema design workflows. Use when the user asks about graphql schema design, graphql schema design configuration, or api-design best practices for graphql projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "api-design",
+    "backend",
+    "design-patterns",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

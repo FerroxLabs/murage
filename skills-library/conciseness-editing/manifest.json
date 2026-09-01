@@ -1,0 +1,13 @@
+{
+  "id": "conciseness-editing",
+  "name": "Conciseness Editing",
+  "version": "1.0.0",
+  "description": "Edits text for conciseness by identifying and cutting redundancies, filler words, padding phrases, and unnecessary complexity while preserving meaning. Every cut is justified. Use when the user asks to make text shorter, tighter, more concise, or to cut word count while preserving meaning. Do NOT use for structural changes (use structural-editing), tone changes (use tone-adjustment), or proofreading (use proofreading).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "editing",
+    "writing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

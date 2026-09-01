@@ -1,0 +1,15 @@
+{
+  "id": "distributed-meeting-facilitator",
+  "name": "Distributed Meeting Facilitator",
+  "version": "1.0.0",
+  "description": "Design and facilitate effective meetings for distributed teams by choosing between async and synchronous formats, maximizing engagement across time zones, leveraging collaboration tools, and building meeting cultures that respect everyone's time Use when the user asks about distributed meeting facilitator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of distributed meeting facilitator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "template",
+    "guide",
+    "video-production",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

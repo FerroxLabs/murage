@@ -1,0 +1,14 @@
+{
+  "id": "python-data-modeling",
+  "name": "Python Data Modeling",
+  "version": "1.0.0",
+  "description": "Guides expert-level Python data modeling: Pydantic v2 model design, dataclass vs Pydantic decision tree, TypedDict for API contracts, validation patterns, serialization strategies, and schema evolution. Covers designing data structures that enforce correctness at runtime. Use when the user asks about Pydantic models, data validation in Python, dataclass vs Pydantic decisions, TypedDict, or serialization and deserialization patterns. Do NOT use when the user asks about Python project setup (use `python-project-setup`), type system features like generics (use `python-type-system`), or general idioms (use `python-idioms`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "python",
+    "best-practices",
+    "database",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "flash-fiction",
+  "name": "Flash Fiction",
+  "version": "1.0.0",
+  "description": "Writes complete flash fiction stories under 1,000 words with tight narrative arcs and constraint-first design. Every word must earn its place. Use when the user asks to write flash fiction, micro fiction, very short stories, or stories under 1,000 words. Do NOT use for short stories over 1,000 words (use short-story-writing), poetry (use poetry-writing), or writing prompts that need a quick response sketch (use writing-prompt-response).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "design"
+  ],
+  "requiredCapabilities": []
+}

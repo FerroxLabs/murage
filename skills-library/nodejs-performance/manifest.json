@@ -1,0 +1,14 @@
+{
+  "id": "nodejs-performance",
+  "name": "Nodejs Performance",
+  "version": "1.0.0",
+  "description": "Guides expert-level Node.js performance optimization: profiling with clinic.js, V8 optimization strategies, memory leak detection, event loop monitoring, caching strategies, and worker thread utilization. Use when the user asks about Node.js performance, profiling, clinic.js, V8 optimization, memory leak detection, event loop lag, caching. Do NOT use when the user asks about JavaScript idioms (use `javascript-idioms`), Node.js async patterns (use `nodejs-async-patterns`), general performance testing (use `performance-testing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "javascript",
+    "backend",
+    "optimization",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

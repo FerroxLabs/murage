@@ -1,0 +1,14 @@
+{
+  "id": "diy-planner",
+  "name": "Diy Planner",
+  "version": "1.0.0",
+  "description": "DIY home improvement project planner with project scoping, tool and material requirements, step-by-step guides, safety precautions, skill assessment, budget estimation, and guidance on when to DIY versus hiring a professional. Use when the user asks about diy planner, or needs help with diy home improvement project planner with project scoping, tool and material requirements, step-by-step guides, safety precautions, skill assessment, budget estimation, and guidance on when to diy versus hiring a professional. Do NOT use when the request requires professional specialized advice or falls outside the scope of diy planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "guide",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "social-media-strategist",
+  "name": "Social Media Strategist",
+  "version": "1.0.0",
+  "description": "Social media strategy covering platform selection by audience, content strategy per platform, posting cadence, engagement tactics, hashtag strategy, influencer collaboration, analytics and KPIs, community management, and crisis communication. Use when the user asks about social media strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "social-media",
+    "marketing",
+    "strategy",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

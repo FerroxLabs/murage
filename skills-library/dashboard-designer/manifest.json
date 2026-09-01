@@ -1,0 +1,19 @@
+{
+  "id": "dashboard-designer",
+  "name": "Dashboard Designer",
+  "version": "1.0.0",
+  "description": "Guide for designing effective analytical dashboards using Metabase, Grafana, and Looker including design principles, KPI selection, layout patterns, interactivity, and stakeholder-driven dashboard strategy. Use when the user asks about dashboard designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of dashboard designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "budgeting",
+    "checklist",
+    "template",
+    "sql",
+    "api-design",
+    "analysis",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

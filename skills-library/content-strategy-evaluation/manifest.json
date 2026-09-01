@@ -1,0 +1,19 @@
+{
+  "id": "content-strategy-evaluation",
+  "name": "Content Strategy Evaluation",
+  "version": "1.0.0",
+  "description": "Content strategy assessment evaluating content quality, distribution effectiveness, audience alignment, production processes, and performance metrics to produce an actionable content scorecard. Use when the user asks about content strategy evaluation, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of content strategy evaluation or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "hexagonal-architecture",
+  "name": "Hexagonal Architecture",
+  "version": "1.0.0",
+  "description": "Guides expert-level hexagonal architecture implementation: design-patterns and clean-code decision frameworks, production-ready patterns, and concrete templates for hexagonal architecture workflows. Use when the user asks about hexagonal architecture, hexagonal architecture configuration, or architecture best practices for hexagonal projects. Do NOT use when the user needs a different architecture design capability -- check sibling skills in the architecture design subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

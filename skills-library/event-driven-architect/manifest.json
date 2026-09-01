@@ -1,0 +1,14 @@
+{
+  "id": "event-driven-architect",
+  "name": "Event Driven Architect",
+  "version": "1.0.0",
+  "description": "Event-driven architecture expertise covering event sourcing, CQRS, message brokers (Kafka, RabbitMQ), saga patterns, eventual consistency, idempotency, event schema design, dead letter queues, and building resilient distributed systems. Use when the user asks about event driven architect, event driven architect best practices, or needs guidance on event driven architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "architecture",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

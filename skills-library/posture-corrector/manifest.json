@@ -1,0 +1,13 @@
+{
+  "id": "posture-corrector",
+  "name": "Posture Corrector",
+  "version": "1.0.0",
+  "description": "Comprehensive postural assessment, desk ergonomics optimization, corrective exercises, movement break protocols, and habit formation for lasting postural improvement. Use when the user asks about posture corrector, or needs help with comprehensive postural assessment, desk ergonomics optimization, corrective exercises, movement break protocols, and habit formation for lasting postural improvement. Do NOT use when the request requires professional medical advice or falls outside the scope of posture corrector.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

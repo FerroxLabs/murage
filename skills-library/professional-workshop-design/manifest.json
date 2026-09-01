@@ -1,0 +1,15 @@
+{
+  "id": "professional-workshop-design",
+  "name": "Professional Workshop Design",
+  "version": "1.0.0",
+  "description": "Designs professional development workshops for workplace audiences with agendas, facilitator guides, activities, and measurable outcomes. Produces a complete workshop package for corporate trainers and facilitators -- distinct from academic workshop design. Use when a trainer asks to design a professional workshop, create a corporate training session, or build a team development activity for workplace audiences. Do NOT use for academic or K-12 workshops (use `workshop-design`), for full course design (use `online-course-design`), or for conference presentations (not an education skill).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "curriculum",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

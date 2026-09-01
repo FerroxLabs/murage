@@ -1,0 +1,19 @@
+{
+  "id": "cynefin-navigator",
+  "name": "Cynefin Navigator",
+  "version": "1.0.0",
+  "description": "Practical guide to the Cynefin complexity framework covering domain identification, appropriate responses for each context, boundary management, and applying Cynefin to leadership decisions, crisis response, and organizational strategy. Use when the user asks about cynefin navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cynefin navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "stress-management",
+    "guide",
+    "advanced",
+    "testing",
+    "analysis",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

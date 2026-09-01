@@ -1,0 +1,14 @@
+{
+  "id": "estimation-guide",
+  "name": "Estimation Guide",
+  "version": "1.0.0",
+  "description": "Effort estimation expert covering story points, planning poker, t-shirt sizing, reference stories, velocity-based forecasting, Monte Carlo simulation, estimation anti-patterns, padding strategies, and communicating uncertainty. Use when the user asks about estimation guide, estimation guide best practices, or needs guidance on estimation guide implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "guide",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

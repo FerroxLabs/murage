@@ -1,0 +1,14 @@
+{
+  "id": "azure-patterns",
+  "name": "Azure Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level azure architecture patterns implementation: cloud and architecture decision frameworks, production-ready patterns, and concrete templates for azure patterns workflows. Use when the user asks about azure architecture patterns, azure patterns configuration, or cloud best practices for azure projects. Do NOT use when the user needs a different devops cloud capability -- check sibling skills in the devops cloud subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cloud",
+    "architecture",
+    "frameworks",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

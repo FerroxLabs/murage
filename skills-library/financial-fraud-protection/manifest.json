@@ -1,0 +1,18 @@
+{
+  "id": "financial-fraud-protection",
+  "name": "Financial Fraud Protection",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to protecting against financial fraud including identity theft prevention strategies, credit monitoring setup, scam identification (phishing, vishing, romance, investment), fraud reporting procedures, credit freeze and lock mechanisms, recovery steps after fraud occurs, elder fraud awareness, and teaching children about scam recognition. Use when the user asks about financial fraud protection, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of financial fraud protection or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "checklist",
+    "guide",
+    "cloud",
+    "safety",
+    "emergency-preparedness",
+    "investing",
+    "tax-planning"
+  ],
+  "requiredCapabilities": []
+}

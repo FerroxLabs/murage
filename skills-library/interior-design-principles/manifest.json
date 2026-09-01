@@ -1,0 +1,14 @@
+{
+  "id": "interior-design-principles",
+  "name": "Interior Design Principles",
+  "version": "1.0.0",
+  "description": "Applies core interior design principles -- scale, proportion, color theory, lighting, and traffic flow -- to residential room layouts. Produces a design assessment with specific recommendations for furniture arrangement, color palette, and lighting plan. Use when the user asks about room layout, furniture arrangement, color schemes for rooms, lighting design for living spaces, or how to make a room feel larger, cozier, or more functional. Do NOT use for commercial interior design, architectural modifications, renovation budgeting (use renovation-budget instead), or choosing specific furniture products.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "planning",
+    "budgeting",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "kitchen-organization",
+  "name": "Kitchen Organization",
+  "version": "1.0.0",
+  "description": "Designs a zone-based kitchen layout optimized for cooking efficiency. Covers work triangle design, pantry organization by category, tool hierarchy by frequency of use, and counter management strategies. Use when the user wants to organize their kitchen, optimize workflow for cooking, set up a new kitchen, or reduce time spent looking for tools and ingredients. Do NOT use for general room organization (use room-organization-system), meal planning (use meal-prep-workflow), or decluttering an entire home (use decluttering-method).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "decluttering",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

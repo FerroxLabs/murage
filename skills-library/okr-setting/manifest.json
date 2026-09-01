@@ -1,0 +1,14 @@
+{
+  "id": "okr-setting",
+  "name": "Okr Setting",
+  "version": "1.0.0",
+  "description": "Produces completed OKRs (Objectives and Key Results) with 3-5 objectives and 2-4 measurable key results each for a quarter or year. Use when the user asks to set OKRs, define team or company objectives, create quarterly goals, or structure measurable outcomes for strategic priorities. Do NOT use for personal goal setting (use goal-setting in productivity), project task breakdown (use project-management skills), or KPI definition without the OKR structure (use ops-metrics-dashboard).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "planning",
+    "goal-setting",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

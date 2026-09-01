@@ -1,0 +1,18 @@
+{
+  "id": "microservices-readiness-assessment",
+  "name": "Microservices Readiness Assessment",
+  "version": "1.0.0",
+  "description": "Structured assessment for evaluating organizational readiness to migrate from monolith to microservices, covering codebase analysis, team capabilities, infrastructure maturity, migration risk, and producing an actionable readiness scorecard. Use when the user asks about microservices readiness assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of microservices readiness assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "best-practices",
+    "template",
+    "api-design",
+    "testing",
+    "automation",
+    "investing",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

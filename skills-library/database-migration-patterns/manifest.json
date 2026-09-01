@@ -1,0 +1,14 @@
+{
+  "id": "database-migration-patterns",
+  "name": "Database Migration Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level database migration patterns implementation: database and automation decision frameworks, production-ready patterns, and concrete templates for database migration patterns workflows. Use when the user asks about database migration patterns, database migration patterns configuration, or database best practices for database projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "backend",
+    "automation",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

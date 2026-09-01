@@ -1,0 +1,15 @@
+{
+  "id": "seo-content-strategy",
+  "name": "Seo Content Strategy",
+  "version": "1.0.0",
+  "description": "Produces a completed SEO content strategy with keyword clusters, content gap analysis, page priority matrix, and internal link structure using SEO content planning methodology. Use when the user asks to plan SEO content, create a keyword strategy, identify content gaps, prioritize pages for organic search, or build a content-driven SEO plan. Do NOT use for writing individual blog posts (use writing skills), full marketing strategy (use marketing-strategy), or paid search ad copy (use paid-ad-copy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "seo",
+    "planning",
+    "strategy",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

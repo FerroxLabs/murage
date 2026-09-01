@@ -1,0 +1,14 @@
+{
+  "id": "elasticsearch-engineer",
+  "name": "Elasticsearch Engineer",
+  "version": "1.0.0",
+  "description": "Elasticsearch design and operations expertise covering index design, mapping types, custom analyzer configuration, search query construction (bool, multi-match, function_score), aggregations, index lifecycle management, cluster sizing and architecture, performance tuning, and Kibana dashboard creation. Use when the user asks about elasticsearch engineer, elasticsearch engineer best practices, or needs guidance on elasticsearch engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "database",
+    "sql",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

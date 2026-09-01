@@ -1,0 +1,18 @@
+{
+  "id": "oss-metrics-analyst",
+  "name": "Oss Metrics Analyst",
+  "version": "1.0.0",
+  "description": "Open source community health metrics expertise covering the CHAOSS framework, contributor funnel analysis, sustainability indicators, engagement metrics, project velocity measurement, community health dashboards, and data-driven strategies for improving open source project health and contributor retention. Use when the user asks about oss metrics analyst, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of oss metrics analyst or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "guide",
+    "python",
+    "sql",
+    "api-design",
+    "analysis",
+    "investing",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

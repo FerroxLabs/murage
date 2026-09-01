@@ -1,0 +1,17 @@
+{
+  "id": "deploy-to-production",
+  "name": "Deploy To Production",
+  "version": "1.0.0",
+  "description": "Orchestrates the process of deploying a software application to production, from CI pipeline verification through monitoring confirmation, chaining six software-development skills into a structured release workflow. Use when the user needs to deploy an application to production with a repeatable, safe process that includes database migration, monitoring, and rollback planning. Do NOT use for local development setup, staging-only deployments, or infrastructure provisioning without application deployment.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "ci-cd",
+    "cloud",
+    "database",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

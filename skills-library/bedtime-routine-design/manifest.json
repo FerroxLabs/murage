@@ -1,0 +1,14 @@
+{
+  "id": "bedtime-routine-design",
+  "name": "Bedtime Routine Design",
+  "version": "1.0.0",
+  "description": "Creates structured bedtime routines organized by child age with specific timing, activity sequences, and strategies for managing common resistance behaviors. Produces complete routine templates with transition cues, calming activities, and troubleshooting guides. Use when the user asks about creating a bedtime routine, managing bedtime resistance, improving children's sleep habits, or structuring the evening-to-sleep transition. Do NOT use for diagnosing sleep disorders, treating insomnia in children, or replacing guidance from a pediatric sleep specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "sleep",
+    "template",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

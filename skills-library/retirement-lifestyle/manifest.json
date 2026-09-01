@@ -1,0 +1,18 @@
+{
+  "id": "retirement-lifestyle",
+  "name": "Retirement Lifestyle",
+  "version": "1.0.0",
+  "description": "Beyond-finances retirement guide covering purpose finding, daily structure creation, social engagement, volunteering, part-time work, learning new skills, health maintenance, and relationship enrichment for a fulfilling life in retirement. Use when the user asks about retirement lifestyle, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of retirement lifestyle or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "stress-management",
+    "guide",
+    "beginner-friendly",
+    "quick-reference",
+    "research",
+    "planning",
+    "game-design"
+  ],
+  "requiredCapabilities": []
+}

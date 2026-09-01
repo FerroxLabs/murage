@@ -1,0 +1,15 @@
+{
+  "id": "exam-prep-plan",
+  "name": "Exam Prep Plan",
+  "version": "1.0.0",
+  "description": "Creates exam preparation strategies with topic priority matrices, practice schedules, and weak-area focus plans for learners approaching a specific exam. Produces a targeted prep plan calibrated to the exam format and the learner's strengths and weaknesses. Use when a learner asks to prepare for a specific exam, create an exam study strategy, or prioritize topics for an upcoming test. Do NOT use for general study planning (use `study-plan`), for professional certification exams (use `certification-prep`), or for practice question generation (use `exam-practice`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "active-recall",
+    "spaced-repetition",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

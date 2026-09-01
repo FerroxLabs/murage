@@ -1,0 +1,14 @@
+{
+  "id": "python-type-system",
+  "name": "Python Type System",
+  "version": "1.0.0",
+  "description": "Guides advanced Python type system usage: generic types with TypeVar, Protocol for structural subtyping, ParamSpec for decorator typing, TypeVarTuple for variadic generics, runtime vs static type checking tradeoffs, and py.typed marker for library distribution. Use when the user asks about Python generics, TypeVar, Protocol, ParamSpec, overload decorators, type narrowing, or distributing typed Python libraries. Do NOT use when the user asks about basic type annotations (use `python-idioms`), data validation (use `python-data-modeling`), or project setup (use `python-project-setup`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "python",
+    "best-practices",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

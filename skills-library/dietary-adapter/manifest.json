@@ -1,0 +1,14 @@
+{
+  "id": "dietary-adapter",
+  "name": "Dietary Adapter",
+  "version": "1.0.0",
+  "description": "Recipe conversion system for adapting dishes to meet dietary restrictions including vegan, vegetarian, keto, paleo, gluten-free, dairy-free, nut-free, low-sodium, diabetic-friendly, halal, and kosher requirements. Features comprehensive substitution tables, nutritional impact analysis, and cross-contamination awareness. Use when the user asks about dietary adapter, or needs help with recipe conversion system for adapting dishes to meet dietary restrictions including vegan, vegetarian, keto, paleo, gluten-free, dairy-free, nut-free, low-sodium, diabetic-friendly, halal, and kosher requirements. Do NOT use when the request requires professional specialized advice or falls outside the scope of dietary adapter.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "nutrition",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

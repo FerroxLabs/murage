@@ -1,0 +1,14 @@
+{
+  "id": "date-planner",
+  "name": "Date Planner",
+  "version": "1.0.0",
+  "description": "Date idea generator with suggestions by budget, season, interest, and energy level, including at-home date nights, adventure dates, long-distance ideas, anniversary plans, first date suggestions, group date ideas, and surprise planning. Use when the user asks about date planner, or needs help with date idea generator with suggestions by budget, season, interest, and energy level, including at-home date nights, adventure dates, long-distance ideas, anniversary plans, first date suggestions, group date ideas, and surprise planning. Do NOT use when the request requires professional specialized advice or falls outside the scope of date planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "personal-communication",
+    "guide",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "car-buying-guide",
+  "name": "Car Buying Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive car buying advisor covering new vs used decision frameworks, total cost of ownership analysis, negotiation strategies, financing options comparison, trade-in value maximization, used car inspection checklists, test drive checklists, lease vs buy analysis, and best time to buy. Use when the user asks about car buying guide, or needs help with comprehensive car buying advisor covering new vs used decision frameworks, total cost of ownership analysis, negotiation strategies, financing options comparison, trade-in value maximization, used car inspection checklists, test drive checklists, lease vs buy analysis, and best time to buy. Do NOT use when the request requires professional specialized advice or falls outside the scope of car buying guide.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "automotive",
+    "home-maintenance",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

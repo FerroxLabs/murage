@@ -1,0 +1,19 @@
+{
+  "id": "contest-strategist",
+  "name": "Contest Strategist",
+  "version": "1.0.0",
+  "description": "Guides competitive programming contest strategy including time management, problem selection, debugging under pressure, rating improvement, and practice planning Use when the user asks about contest strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of contest strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "competitive-programming",
+    "stress-management",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "python",
+    "testing",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

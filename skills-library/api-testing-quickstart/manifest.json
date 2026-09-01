@@ -1,0 +1,19 @@
+{
+  "id": "api-testing-quickstart",
+  "name": "Api Testing Quickstart",
+  "version": "1.0.0",
+  "description": "Rapid-start guide for testing APIs using Postman and similar tools, covering HTTP request types, authentication methods, collection organization, environment variables, and common debugging techniques. Use when the user asks about api testing quickstart, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of api testing quickstart or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "testing",
+    "guide",
+    "javascript",
+    "api-design",
+    "cloud",
+    "email",
+    "cleaning",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

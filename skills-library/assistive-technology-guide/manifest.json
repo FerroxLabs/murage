@@ -1,0 +1,19 @@
+{
+  "id": "assistive-technology-guide",
+  "name": "Assistive Technology Guide",
+  "version": "1.0.0",
+  "description": "Guide developers and designers in supporting the full range of assistive technologies including switch access, eye tracking, voice control, screen magnification, and alternative input devices. Use when the user asks about assistive technology guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of assistive technology guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "breathing",
+    "checklist",
+    "template",
+    "guide",
+    "testing",
+    "automation",
+    "best-practices",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

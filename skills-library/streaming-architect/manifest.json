@@ -1,0 +1,14 @@
+{
+  "id": "streaming-architect",
+  "name": "Streaming Architect",
+  "version": "1.0.0",
+  "description": "Real-time data streaming expertise covering Kafka architecture, stream processing with Flink and Kafka Streams, exactly-once semantics, windowing strategies (tumbling, sliding, session), watermarks, late data handling, schema registry, consumer group management, and production deployment patterns. Use when the user asks about streaming architect, streaming architect best practices, or needs guidance on streaming architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "guide",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

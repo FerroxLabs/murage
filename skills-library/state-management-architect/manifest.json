@@ -1,0 +1,13 @@
+{
+  "id": "state-management-architect",
+  "name": "State Management Architect",
+  "version": "1.0.0",
+  "description": "State management architecture expertise covering Redux, Zustand, Jotai, signals, server state vs client state, state machine patterns, choosing the right approach for your application, and avoiding over-engineering state solutions. Use when the user asks about state management architect, state management architect best practices, or needs guidance on state management architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "web-development",
+    "frontend",
+    "design-patterns"
+  ],
+  "requiredCapabilities": []
+}

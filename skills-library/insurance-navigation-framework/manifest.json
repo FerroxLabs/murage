@@ -1,0 +1,14 @@
+{
+  "id": "insurance-navigation-framework",
+  "name": "Insurance Navigation Framework",
+  "version": "1.0.0",
+  "description": "Teaches how to read an Explanation of Benefits, understand prior authorization processes, navigate the insurance appeal process, and decode common insurance terminology. Produces reference guides and step-by-step checklists for common insurance interactions without advising on plan selection or coverage decisions. Use when the user asks about reading an EOB, understanding a denied claim, the prior authorization process, how to appeal an insurance decision, or decoding insurance terminology. Do NOT use for recommending specific insurance plans, advising on coverage choices, interpreting specific policy benefits, or providing legal advice about insurance disputes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "checklist",
+    "step-by-step",
+    "planning",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "google-sheets-advanced",
+  "name": "Google Sheets Advanced",
+  "version": "1.0.0",
+  "description": "Produces Google Sheets-specific advanced formula patterns including ARRAYFORMULA, IMPORTRANGE, QUERY function syntax, Apps Script trigger patterns, and key behavioral differences from Excel. Generates exact formula strings for Sheets-native automation. Use when the user works in Google Sheets and needs formulas or features that differ from Excel or are unique to Sheets. Do NOT use for general spreadsheet formulas that work in both Excel and Sheets (use excel-lookup-formulas), data cleaning (use spreadsheet-data-cleaning), or full Apps Script programming (software-development scope).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spreadsheets",
+    "automation",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

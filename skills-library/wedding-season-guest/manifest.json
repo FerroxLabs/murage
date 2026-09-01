@@ -1,0 +1,19 @@
+{
+  "id": "wedding-season-guest",
+  "name": "Wedding Season Guest",
+  "version": "1.0.0",
+  "description": "Navigates wedding season as a guest with guidance on gift etiquette, travel planning, budgeting for multiple events, dress code decoding, and being a supportive attendee. Use when the user asks about wedding season guest, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of wedding season guest or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "event-planning",
+    "budgeting",
+    "checklist",
+    "guide",
+    "safety",
+    "performing-arts",
+    "accessibility",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

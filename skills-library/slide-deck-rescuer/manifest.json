@@ -1,0 +1,19 @@
+{
+  "id": "slide-deck-rescuer",
+  "name": "Slide Deck Rescuer",
+  "version": "1.0.0",
+  "description": "Fix common presentation problems fast - story flow, visual cleanup, slide reduction, speaker notes, and design principles to rescue any deck in under an hour. Use when the user asks about slide deck rescuer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of slide deck rescuer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "design",
+    "budgeting",
+    "checklist",
+    "template",
+    "testing",
+    "analysis",
+    "presentation",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

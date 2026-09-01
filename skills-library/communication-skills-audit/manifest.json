@@ -1,0 +1,19 @@
+{
+  "id": "communication-skills-audit",
+  "name": "Communication Skills Audit",
+  "version": "1.0.0",
+  "description": "Comprehensive evaluation of written, verbal, presentation, and listening communication skills with targeted improvement recommendations for professional settings Use when the user asks about communication skills audit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of communication skills audit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "template",
+    "guide",
+    "step-by-step",
+    "analysis",
+    "planning",
+    "presentation",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

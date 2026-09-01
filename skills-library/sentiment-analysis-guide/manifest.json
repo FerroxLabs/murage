@@ -1,0 +1,14 @@
+{
+  "id": "sentiment-analysis-guide",
+  "name": "Sentiment Analysis Guide",
+  "version": "1.0.0",
+  "description": "Designs a sentiment analysis approach for text data by selecting the method (lexicon-based vs. model-based), defining sentiment categories, specifying the output format, and producing an interpretation guide for the results. Use when the user asks to analyze sentiment in customer reviews, social media posts, support tickets, employee feedback, or any text corpus for positive, negative, and neutral tone. Do NOT use for manual qualitative coding of interviews (use qualitative-coding), survey question design (use survey-design), or general text mining beyond sentiment (use text-mining-protocol).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "research",
+    "analysis",
+    "ai-ml",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "kotlin-testing-patterns",
+  "name": "Kotlin Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level kotlin testing patterns implementation: kotlin and testing decision frameworks, production-ready patterns, and concrete templates for kotlin testing patterns workflows. Use when the user asks about kotlin testing patterns, kotlin testing patterns configuration, or kotlin best practices for kotlin projects. Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "kotlin",
+    "testing",
+    "tdd",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

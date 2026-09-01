@@ -1,0 +1,12 @@
+{
+  "id": "beacon-newsletter",
+  "name": "newsletter",
+  "version": "1.0.0",
+  "description": "**When to use.** When the user runs (or wants to run) a recurring newsletter as an owned-audience asset, distinct from triggered email sequences.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beacon",
+    "newsletter"
+  ],
+  "requiredCapabilities": []
+}

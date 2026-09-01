@@ -1,0 +1,14 @@
+{
+  "id": "api-designer",
+  "name": "Api Designer",
+  "version": "1.0.0",
+  "description": "REST and GraphQL API design expertise covering REST maturity model, resource naming, pagination patterns, filtering and sorting, HATEOAS, versioning strategies, error response formats, rate limiting headers, and OpenAPI specification. Use when the user asks about api designer, api designer best practices, or needs guidance on api designer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

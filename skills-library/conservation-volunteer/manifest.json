@@ -1,0 +1,18 @@
+{
+  "id": "conservation-volunteer",
+  "name": "Conservation Volunteer",
+  "version": "1.0.0",
+  "description": "Habitat restoration, citizen science projects, wildlife monitoring, invasive species management, and practical guidance for meaningful environmental volunteer work Use when the user asks about conservation volunteer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of conservation volunteer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "checklist",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "advanced",
+    "cloud",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

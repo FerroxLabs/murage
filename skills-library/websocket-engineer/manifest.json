@@ -1,0 +1,14 @@
+{
+  "id": "websocket-engineer",
+  "name": "Websocket Engineer",
+  "version": "1.0.0",
+  "description": "Real-time communication expertise covering WebSocket protocol, Socket.IO patterns, connection lifecycle, room and channel management, reconnection strategies, scaling WebSockets, SSE vs WebSocket, heartbeat/ping-pong, and message serialization. Use when the user asks about websocket engineer, websocket engineer best practices, or needs guidance on websocket engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "api-design",
+    "guide",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

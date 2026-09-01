@@ -1,0 +1,13 @@
+{
+  "id": "editorial-calendar",
+  "name": "Editorial Calendar",
+  "version": "1.0.0",
+  "description": "Creates 30 or 90-day editorial calendars with content themes, formats, publish dates, and keyword targets for content marketing programs. Use when the user needs a content calendar, content schedule, publishing plan, or editorial plan. Do NOT use for individual content briefs (use `content-brief`), content auditing (use `content-audit`), or writing actual content pieces (use `blog-post-writing`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "writing",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

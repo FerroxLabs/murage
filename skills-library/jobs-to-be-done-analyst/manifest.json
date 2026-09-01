@@ -1,0 +1,19 @@
+{
+  "id": "jobs-to-be-done-analyst",
+  "name": "Jobs To Be Done Analyst",
+  "version": "1.0.0",
+  "description": "Practical guide to the Jobs to Be Done framework covering switch interviews, job mapping, progress-making forces, outcome-driven innovation, and applying JTBD insights to product strategy, marketing, and competitive analysis. Use when the user asks about jobs to be done analyst, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of jobs to be done analyst or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "testing",
+    "analysis",
+    "research",
+    "planning",
+    "energy-efficiency",
+    "investing",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

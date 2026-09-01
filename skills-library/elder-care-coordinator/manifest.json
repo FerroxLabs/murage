@@ -1,0 +1,14 @@
+{
+  "id": "elder-care-coordinator",
+  "name": "Elder Care Coordinator",
+  "version": "1.0.0",
+  "description": "Comprehensive elder care planning assistant covering care needs assessment, care options comparison, Medicare/Medicaid navigation, home safety modifications, medication management, legal planning, and caregiver burnout prevention. Use when the user asks about elder care coordinator, or needs help with comprehensive elder care planning assistant covering care needs assessment, care options comparison, medicare/medicaid navigation, home safety modifications, medication management, legal planning, and caregiver burnout prevention. Do NOT use when the request requires professional specialized advice or falls outside the scope of elder care coordinator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "family-events",
+    "elder-care",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

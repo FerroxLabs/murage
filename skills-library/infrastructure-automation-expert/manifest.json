@@ -1,0 +1,16 @@
+{
+  "id": "infrastructure-automation-expert",
+  "name": "Infrastructure Automation Expert",
+  "version": "1.0.0",
+  "description": "Infrastructure automation expertise covering Terraform module design and composition, policy-as-code with OPA and Sentinel, drift detection and remediation, self-service provisioning platforms, GitOps workflows, state management strategies, and building internal developer platforms that abstract infrastructure complexity. Use when the user asks about infrastructure automation expert, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of infrastructure automation expert or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "api-design",
+    "automation",
+    "safety",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "knowledge-graph-builder",
+  "name": "Knowledge Graph Builder",
+  "version": "1.0.0",
+  "description": "Knowledge graph engineering covering ontology design, graph database selection (Neo4j, Amazon Neptune, ArangoDB), entity and relation extraction from text, graph-based RAG (GraphRAG), knowledge graph embeddings, graph query optimization, and integration patterns with LLM systems. Use when the user asks about knowledge graph builder, knowledge graph builder best practices, or needs guidance on knowledge graph builder implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "guide",
+    "best-practices",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

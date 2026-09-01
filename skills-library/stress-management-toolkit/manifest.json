@@ -1,0 +1,15 @@
+{
+  "id": "stress-management-toolkit",
+  "name": "Stress Management Toolkit",
+  "version": "1.0.0",
+  "description": "Builds a personalized stress management toolkit combining multiple evidence-informed techniques (progressive muscle relaxation, box breathing, cognitive reframing prompts, time-blocking for recovery). Gathers the user's primary stressors, available time, and preferences, then produces a structured toolkit with daily and acute-stress protocols. Use when the user asks about managing stress, reducing tension, coping with overwhelm, building stress resilience, or creating a stress relief plan. Do NOT use for clinical anxiety treatment, trauma processing, workplace harassment situations, or crisis intervention. Do NOT use when the user describes symptoms of panic disorder, PTSD, or severe depression.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "self-care",
+    "stress-management",
+    "emotional-health",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

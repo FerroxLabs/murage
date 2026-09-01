@@ -1,0 +1,19 @@
+{
+  "id": "home-office-architect",
+  "name": "Home Office Architect",
+  "version": "1.0.0",
+  "description": "Home office design and setup guidance covering ergonomics, lighting, acoustics, equipment selection, desk and chair recommendations, cable management, budget tiers from starter to premium, and productivity-focused workspace optimization. Use when the user asks about home office architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of home office architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "budgeting",
+    "checklist",
+    "guide",
+    "analysis",
+    "performing-arts",
+    "cleaning",
+    "running",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "cross-platform-architect",
+  "name": "Cross Platform Architect",
+  "version": "1.0.0",
+  "description": "Cross-platform mobile architecture covering React Native vs Flutter vs Kotlin Multiplatform comparison, shared business logic patterns, native bridge design, platform-specific UI strategies, performance optimization, navigation architecture, state management, testing strategies, and migration paths between frameworks. Use when the user asks about cross platform architect, cross platform architect best practices, or needs guidance on cross platform architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "best-practices",
+    "architecture",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

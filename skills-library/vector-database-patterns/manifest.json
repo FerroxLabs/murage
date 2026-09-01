@@ -1,0 +1,14 @@
+{
+  "id": "vector-database-patterns",
+  "name": "Vector Database Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level vector database patterns implementation: ai-ml and database decision frameworks, production-ready patterns, and concrete templates for vector database patterns workflows. Use when the user asks about vector database patterns, vector database patterns configuration, or ai-ml best practices for vector projects. Do NOT use when the user needs a different ai ml engineering capability -- check sibling skills in the ai ml engineering subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "database",
+    "optimization",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

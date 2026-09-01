@@ -1,0 +1,17 @@
+{
+  "id": "security-posture-assessment",
+  "name": "Security Posture Assessment",
+  "version": "1.0.0",
+  "description": "Comprehensive security posture evaluation covering vulnerability management, access controls, policy compliance, incident readiness, and security culture to produce an actionable security scorecard. Use when the user asks about security posture assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of security posture assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "security",
+    "template",
+    "api-design",
+    "cloud",
+    "testing",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

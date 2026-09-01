@@ -1,0 +1,14 @@
+{
+  "id": "caregiver-medication-management",
+  "name": "Caregiver Medication Management",
+  "version": "1.0.0",
+  "description": "Produces medication tracking systems for caregivers including medication list templates, dosing schedule organizers, pharmacy coordination checklists, provider communication templates, and refill management workflows. Teaches caregivers how to maintain accurate medication records and coordinate with healthcare providers and pharmacies. Use when the user asks about organizing medications for a family member, setting up medication tracking, or coordinating prescriptions. Do NOT use for medication selection, dosing decisions, or advice on whether to take or stop any medication -- those decisions require a physician.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "elder-care",
+    "checklist",
+    "template",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

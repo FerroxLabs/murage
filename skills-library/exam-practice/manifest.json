@@ -1,0 +1,15 @@
+{
+  "id": "exam-practice",
+  "name": "Exam Practice",
+  "version": "1.0.0",
+  "description": "Creates deliberate practice exam sessions with timed questions, scoring, error analysis, and targeted review for students preparing for specific exams. Uses Socratic follow-up on errors rather than simply providing correct answers. Use when a student asks to practice for an exam, do timed practice questions, simulate test conditions, or review mistakes from practice tests. Do NOT use for exam strategy planning (use `exam-prep-plan`), for flashcard review (use `spaced-repetition`), or for creating the actual exam (use `assessment-design`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tutoring",
+    "active-recall",
+    "study-skills",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

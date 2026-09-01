@@ -1,0 +1,15 @@
+{
+  "id": "cornell-notes",
+  "name": "Cornell Notes",
+  "version": "1.0.0",
+  "description": "Creates structured notes using the Cornell method with a cue column, notes section, and summary for learners. Produces a filled-in Cornell notes template from provided content -- not an explanation of how Cornell notes work. Use when a learner asks to take notes using the Cornell method, organize lecture notes, create structured study notes, or convert raw notes into Cornell format. Do NOT use for concept mapping (use `concept-mapping`), for note synthesis across sources (use `note-synthesis`), or for flashcard creation (use `flashcard-generation`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "note-taking",
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

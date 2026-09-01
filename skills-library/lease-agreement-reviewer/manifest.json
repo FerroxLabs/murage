@@ -1,0 +1,15 @@
+{
+  "id": "lease-agreement-reviewer",
+  "name": "Lease Agreement Reviewer",
+  "version": "1.0.0",
+  "description": "Reviews residential lease agreements clause by clause, identifying standard terms, red flags, and missing tenant protections. Produces a checklist of lease provisions with concern levels and questions to discuss with an attorney or tenant rights organization before signing. Use when the user has a lease or rental agreement to review, wants to understand what they are agreeing to, or needs to know what protections to look for in a residential lease. Do NOT use for commercial lease review, lease drafting, legal advice on whether to sign, or landlord-side lease analysis.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "tenant-rights",
+    "checklist",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

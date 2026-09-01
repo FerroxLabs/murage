@@ -1,0 +1,14 @@
+{
+  "id": "data-validation-setup",
+  "name": "Data Validation Setup",
+  "version": "1.0.0",
+  "description": "Produces a data validation rule set for a spreadsheet. Defines validation type (list, range, custom formula, date, text length), error message text, and input hint text for each field. Prevents data quality problems at the point of data entry. Use when the user needs to restrict what can be entered into spreadsheet cells to maintain data quality. Do NOT use for cleaning existing dirty data (use spreadsheet-data-cleaning), conditional formatting rules (use conditional-formatting-rules), or building lookup formulas (use excel-lookup-formulas).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spreadsheets",
+    "data-science",
+    "checklist",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

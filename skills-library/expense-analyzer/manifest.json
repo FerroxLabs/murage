@@ -1,0 +1,13 @@
+{
+  "id": "expense-analyzer",
+  "name": "Expense Analyzer",
+  "version": "1.0.0",
+  "description": "Spending pattern identification and expense optimization through subscription auditing, fixed vs variable cost analysis, cost-per-use calculations, lifestyle inflation detection, comparison to median spending by category, and savings opportunity discovery. Use when the user asks about expense analyzer, or needs help with spending pattern identification and expense optimization through subscription auditing, fixed vs variable cost analysis, cost-per-use calculations, lifestyle inflation detection, comparison to median spending by category, and savings opportunity discovery. Do NOT use when the request requires professional financial advice or falls outside the scope of expense analyzer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "expenses",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

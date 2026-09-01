@@ -1,0 +1,14 @@
+{
+  "id": "ai-agent-patterns",
+  "name": "Ai Agent Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level ai agent patterns implementation: ai-ml and architecture decision frameworks, production-ready patterns, and concrete templates for ai agent patterns workflows. Use when the user asks about ai agent patterns, ai agent patterns configuration, or ai-ml best practices for ai projects. Do NOT use when the user needs a different ai ml engineering capability -- check sibling skills in the ai ml engineering subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "architecture",
+    "automation",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

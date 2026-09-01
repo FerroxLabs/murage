@@ -1,0 +1,19 @@
+{
+  "id": "automation-architect",
+  "name": "Automation Architect",
+  "version": "1.0.0",
+  "description": "Workflow automation design using Zapier, Make, and n8n covering trigger-action architecture, multi-step automation workflows, error handling strategies, personal versus business automation patterns, ROI calculation, and a library of common automation recipes. Use when the user asks about automation architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of automation architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "budgeting",
+    "checklist",
+    "template",
+    "advanced",
+    "python",
+    "api-design",
+    "cloud",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

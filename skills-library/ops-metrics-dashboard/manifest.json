@@ -1,0 +1,15 @@
+{
+  "id": "ops-metrics-dashboard",
+  "name": "Ops Metrics Dashboard",
+  "version": "1.0.0",
+  "description": "Produces an operations KPI document with metric definitions, data sources, targets, reporting cadence, and dashboard layout using ops analytics methodology. Use when the user asks to create an operations dashboard, define operational KPIs, build a metrics framework for operations, design a reporting dashboard for operational performance, or establish metrics and targets for an operations team. Do NOT use for marketing analytics reports (use marketing-analytics-report), financial KPI dashboards (use financial-kpis), or product metrics frameworks (use metrics-framework).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "planning",
+    "report",
+    "template",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

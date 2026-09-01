@@ -1,0 +1,14 @@
+{
+  "id": "water-conservation-plan",
+  "name": "Water Conservation Plan",
+  "version": "1.0.0",
+  "description": "Creates a room-by-room water conservation plan with usage impact estimates in gallons per day saved per intervention. Gathers the user's housing type, household size, climate, and current water habits to produce a prioritized action list with estimated savings distinguishing renter-accessible from homeowner improvements. Use when the user asks about reducing water usage, lowering water bills, conserving water at home, or understanding household water consumption patterns. Do NOT use for commercial or agricultural water management, water treatment or purification systems, drought emergency response, or irrigation system design for large landscapes.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "checklist",
+    "planning",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

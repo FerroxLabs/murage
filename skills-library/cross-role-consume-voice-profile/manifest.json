@@ -1,0 +1,14 @@
+{
+  "id": "cross-role-consume-voice-profile",
+  "name": "consume-voice-profile",
+  "version": "1.0.0",
+  "description": "**Cross-role mode skill.** Loadable by any specialist drafting in the user's own voice — sales copy, course modules, pitch narrative, brand-voice rules, long-form essays, the user's newsletter or author voice.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cross-role",
+    "consume",
+    "voice",
+    "profile"
+  ],
+  "requiredCapabilities": []
+}

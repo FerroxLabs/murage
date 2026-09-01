@@ -1,0 +1,15 @@
+{
+  "id": "tiktok-creator",
+  "name": "Tiktok Creator",
+  "version": "1.0.0",
+  "description": "Short-form video mastery covering hook techniques, trending format adaptation, hashtag strategy, posting schedule optimization, algorithm understanding, cross-posting workflows, brand deal acquisition, and TikTok Shop integration. Use when the user asks about tiktok creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tiktok",
+    "social-media",
+    "marketing",
+    "content-marketing",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

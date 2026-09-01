@@ -1,0 +1,19 @@
+{
+  "id": "roam-research-power-user",
+  "name": "Roam Research Power User",
+  "version": "1.0.0",
+  "description": "Roam Research mastery covering block references and embeds, advanced queries and filters, template systems, graph analysis and visualization, spaced repetition with delta cards, daily notes workflow, namespace organization, and building a personal knowledge management system with bidirectional linking. Use when the user asks about roam research power user, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of roam research power user or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "journaling",
+    "habits",
+    "template",
+    "advanced",
+    "python",
+    "javascript",
+    "automation",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

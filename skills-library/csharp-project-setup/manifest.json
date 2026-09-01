@@ -1,0 +1,14 @@
+{
+  "id": "csharp-project-setup",
+  "name": "Csharp Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level .NET project initialization: SDK-style csproj, solution file structure, NuGet configuration, Directory.Build.props, and .NET 8+ project templates. Use when the user asks about C# project setup, .NET, csproj, solution file, NuGet, Directory.Build.props, .NET 8, dotnet new. Do NOT use when the user asks about C# modern idioms (use `csharp-modern-idioms`), C# testing (use `csharp-testing-patterns`), C# ASP.NET (use `csharp-aspnet-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "csharp",
+    "best-practices",
+    "template",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

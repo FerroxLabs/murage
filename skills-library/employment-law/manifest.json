@@ -1,0 +1,14 @@
+{
+  "id": "employment-law",
+  "name": "Employment Law",
+  "version": "1.0.0",
+  "description": "Guide to employment law fundamentals including at-will employment, discrimination protections, wage and hour rights, FMLA and leave entitlements, workplace safety under OSHA, unemployment benefits, wrongful termination indicators, and workplace issue documentation. Use when the user asks about employment law, or needs help with guide to employment law fundamentals including at-will employment, discrimination protections, wage and hour rights, fmla and leave entitlements, workplace safety under osha, unemployment benefits, wrongful termination indicators, and workplace issue documentation. Do NOT use when the request requires professional legal advice or falls outside the scope of employment law.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "guide",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

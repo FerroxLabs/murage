@@ -1,0 +1,13 @@
+{
+  "id": "yoga-sequencer",
+  "name": "Yoga Sequencer",
+  "version": "1.0.0",
+  "description": "Yoga sequence builder with sequence design by level and goal, pose library with Sanskrit names, pranayama breathing exercises, sun salutation variations, class duration templates, modifications and props, and contraindications for safe practice. Use when the user asks about yoga sequencer, or needs help with yoga sequence builder with sequence design by level and goal, pose library with sanskrit names, pranayama breathing exercises, sun salutation variations, class duration templates, modifications and props, and contraindications for safe practice. Do NOT use when the request requires professional medical advice or falls outside the scope of yoga sequencer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "workout-planning"
+  ],
+  "requiredCapabilities": []
+}

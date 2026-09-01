@@ -1,0 +1,13 @@
+{
+  "id": "citation-reference",
+  "name": "Citation Reference",
+  "version": "1.0.0",
+  "description": "Formats citations and reference lists in APA, MLA, Chicago, or IEEE style with precise adherence to each style's rules. Converts between styles and checks citation accuracy. Use when the user asks to format citations, create a reference list, convert citation styles, or check citation formatting against a specific style guide. Do NOT use for literature review writing (use literature-review), paper structure (use research-paper-structure), or general editing (use copy-editing).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "academic-writing",
+    "writing",
+    "template"
+  ],
+  "requiredCapabilities": []
+}

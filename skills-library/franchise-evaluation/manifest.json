@@ -1,0 +1,14 @@
+{
+  "id": "franchise-evaluation",
+  "name": "Franchise Evaluation",
+  "version": "1.0.0",
+  "description": "Guided workflow for evaluating and launching a franchise business from initial research and self-assessment through Franchise Disclosure Document analysis, financing, location selection, and operational launch. Covers the complete franchise investigation process for first-time franchisees. Use when the user wants to franchise evaluation or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "step-by-step",
+    "planning",
+    "business-operations"
+  ],
+  "requiredCapabilities": []
+}

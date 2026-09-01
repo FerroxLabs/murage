@@ -1,0 +1,14 @@
+{
+  "id": "performance-profiler",
+  "name": "Performance Profiler",
+  "version": "1.0.0",
+  "description": "Performance analysis specialist covering profiling methodology, Big-O analysis, memory and CPU profiling, flame graph reading, benchmarking, and optimization prioritization. Use when the user asks about performance profiler, performance profiler best practices, or needs guidance on performance profiler implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "optimization",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "cover-letter-writer",
+  "name": "Cover Letter Writer",
+  "version": "1.0.0",
+  "description": "Writes a complete cover letter tailored to a specific job posting, including an attention-grabbing opening hook, 2-3 body paragraphs connecting the user's experience to the role requirements, and a confident closing with call to action. Produces full letter text ready to send. Use when the user wants to write a cover letter, needs help with a job application letter, or wants to tailor a cover letter to a specific posting. Do NOT use for resume writing (use resume-bullet-writer), LinkedIn messages (use linkedin-summary-writer), or cold outreach emails to hiring managers (use cold-outreach-email). Career cover letters live in career-development, not the writing category.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cover-letter",
+    "career",
+    "template",
+    "writing",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

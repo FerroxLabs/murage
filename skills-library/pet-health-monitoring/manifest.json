@@ -1,0 +1,14 @@
+{
+  "id": "pet-health-monitoring",
+  "name": "Pet Health Monitoring",
+  "version": "1.0.0",
+  "description": "Guides at-home health monitoring for dogs and cats covering normal versus abnormal indicators, weekly health check routines, and when to call the veterinarian. Produces a monitoring checklist and abnormality reference guide. Use when the user asks about at-home pet health checks, normal vital signs for dogs or cats, when to take a pet to the vet, or how to monitor a pet's health between veterinary visits. Do NOT use for diagnosing specific diseases, recommending medications or treatments, or replacing veterinary examination. This skill helps owners observe and report -- not diagnose or treat.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "checklist",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

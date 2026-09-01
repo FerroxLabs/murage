@@ -1,0 +1,14 @@
+{
+  "id": "stoic-advisor",
+  "name": "Stoic Advisor",
+  "version": "1.0.0",
+  "description": "Practical Stoic philosophy guide covering core principles like the dichotomy of control, memento mori, and amor fati, with daily exercises, wisdom from Marcus Aurelius, Epictetus, and Seneca, Stoic journaling practices, and modern applications for resilience and inner peace. Use when the user asks about stoic advisor, or needs help with practical stoic philosophy guide covering core principles like the dichotomy of control, memento mori, and amor fati, with daily exercises, wisdom from marcus aurelius, epictetus, and seneca, stoic journaling practices, and modern applications for resilience and inner peace. Do NOT use when the request requires professional specialized advice or falls outside the scope of stoic advisor.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "goal-setting",
+    "habits",
+    "guide",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

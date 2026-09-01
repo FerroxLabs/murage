@@ -1,0 +1,19 @@
+{
+  "id": "resume-quick-polish",
+  "name": "Resume Quick Polish",
+  "version": "1.0.0",
+  "description": "Fast resume optimization - format fixes, keyword injection for ATS systems, achievement quantification, and common mistakes to fix in 30 minutes or less. Use when the user asks about resume quick polish, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of resume quick polish or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "career",
+    "budgeting",
+    "checklist",
+    "template",
+    "python",
+    "javascript",
+    "analysis",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

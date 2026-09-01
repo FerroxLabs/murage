@@ -1,0 +1,14 @@
+{
+  "id": "home-safety-aging",
+  "name": "Home Safety Aging",
+  "version": "1.0.0",
+  "description": "Produces a comprehensive home safety assessment checklist for aging in place, covering fall prevention, mobility accommodation, bathroom safety, lighting improvements, emergency contact setup, and room-by-room hazard identification. Generates prioritized modification plans with urgency levels and cost estimates. Use when the user asks about making a home safer for an elderly person, fall prevention, or aging-in-place modifications. Do NOT use for care facility evaluation (use care-facility-evaluation), medical assessment of fall risk (consult a physician), or full home renovation planning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "elder-care",
+    "checklist",
+    "home-maintenance",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

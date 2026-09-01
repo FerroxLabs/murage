@@ -1,0 +1,14 @@
+{
+  "id": "diy-vs-hire",
+  "name": "Diy Vs Hire",
+  "version": "1.0.0",
+  "description": "Evaluates whether a home improvement project should be done as DIY or by hiring a professional. Analyzes skill requirements, safety factors, permit needs, time investment, and cost-benefit trade-offs to produce a recommendation with rationale. Use when the user asks whether to do a project themselves or hire someone, wants to know if a job requires a professional, or is deciding between DIY and contractor for a specific task. Do NOT use for finding or vetting contractors, project budgeting (use renovation-budget instead), or scheduling home maintenance tasks.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "decision-making",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "small-claims-court-prep",
+  "name": "Small Claims Court Prep",
+  "version": "1.0.0",
+  "description": "Walks users through the small claims court filing process, case preparation, evidence organization, and courtroom presentation. Covers jurisdictional limits, filing requirements, service of process, and what to expect at a hearing. Produces a case preparation checklist and evidence organization plan. Use when the user wants to understand how small claims court works, is preparing to file a small claims case, or needs to organize evidence for a hearing. Do NOT use for cases above the small claims jurisdictional limit, criminal matters, family law disputes, or cases requiring an attorney (complex contract disputes, personal injury with significant damages).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "checklist",
+    "step-by-step",
+    "guide",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

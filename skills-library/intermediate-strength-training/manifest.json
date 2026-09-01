@@ -1,0 +1,14 @@
+{
+  "id": "intermediate-strength-training",
+  "name": "Intermediate Strength Training",
+  "version": "1.0.0",
+  "description": "Designs a 4-day upper/lower or push-pull-legs strength training program for intermediate lifters with compound and accessory programming, periodized progression, wave loading, and planned deload cycles. Gathers the user's training history, equipment, and goals to produce a structured multi-week program. Use when the user asks about intermediate lifting programs, 4-day splits, upper/lower routines, or push-pull-legs programming. Do NOT use for complete beginners with under 6 months of lifting experience (use beginner-strength-training), advanced periodization theory (use training-program-periodization), or sport-specific conditioning (use sports-specific-conditioning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "workout-planning",
+    "advanced",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

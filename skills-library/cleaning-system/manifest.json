@@ -1,0 +1,14 @@
+{
+  "id": "cleaning-system",
+  "name": "Cleaning System",
+  "version": "1.0.0",
+  "description": "Comprehensive cleaning system with daily, weekly, monthly, and deep cleaning checklists, DIY natural cleaner recipes, room-by-room protocols, speed cleaning techniques, schedule templates, stain removal guide, and spring cleaning checklists. Use when the user asks about cleaning system, or needs help with comprehensive cleaning system with daily, weekly, monthly, and deep cleaning checklists, diy natural cleaner recipes, room-by-room protocols, speed cleaning techniques, schedule templates, stain removal guide, and spring cleaning checklists. Do NOT use when the request requires professional specialized advice or falls outside the scope of cleaning system.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "cleaning",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

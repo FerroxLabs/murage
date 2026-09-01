@@ -1,0 +1,14 @@
+{
+  "id": "docker-production-patterns",
+  "name": "Docker Production Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level docker production patterns implementation: cloud and security decision frameworks, production-ready patterns, and concrete templates for docker production patterns workflows. Use when the user asks about docker production patterns, docker production patterns configuration, or devops best practices for docker projects. Do NOT use when the user needs a different devops cloud capability -- check sibling skills in the devops cloud subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "security",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

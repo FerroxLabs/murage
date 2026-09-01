@@ -1,0 +1,14 @@
+{
+  "id": "apology-repair",
+  "name": "Apology Repair",
+  "version": "1.0.0",
+  "description": "Provides the components of a meaningful apology and structured repair attempt frameworks drawn from relationship research. Produces complete apology scripts with accountability, impact acknowledgment, and concrete repair actions. Use when the user needs help apologizing, making amends, or repairing trust after causing hurt in a personal relationship. Do NOT use for legal liability situations, corporate crisis communication, or assessing whether a relationship warrants an apology.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "research",
+    "strategy",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

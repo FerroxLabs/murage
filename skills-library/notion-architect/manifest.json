@@ -1,0 +1,19 @@
+{
+  "id": "notion-architect",
+  "name": "Notion Architect",
+  "version": "1.0.0",
+  "description": "Design and build Notion workspaces with relational databases, formulas, templates, automations, and scalable information architecture for teams and individuals. Use when the user asks about notion architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of notion architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "budgeting",
+    "checklist",
+    "template",
+    "beginner-friendly",
+    "api-design",
+    "automation",
+    "performing-arts",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

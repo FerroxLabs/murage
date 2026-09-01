@@ -1,0 +1,16 @@
+{
+  "id": "performance-review",
+  "name": "Performance Review",
+  "version": "1.0.0",
+  "description": "Creates performance review documents with rating dimensions, evidence-based evaluation, development goals, and constructive feedback using structured performance management methodology. Use when the user asks about performance reviews, employee evaluations, annual reviews, performance assessments, or writing feedback for direct reports. Do NOT use for performance improvement plans (use performance-improvement-plan), interview evaluation (use interview-guide), or self-assessment preparation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "template",
+    "planning",
+    "strategy",
+    "guide",
+    "checklist",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

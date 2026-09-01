@@ -1,0 +1,13 @@
+{
+  "id": "business-report",
+  "name": "Business Report",
+  "version": "1.0.0",
+  "description": "Writes formal business reports with structured sections, data integration, analysis, findings, and actionable recommendations. Use when the user needs a business report, performance report, analysis report, or formal findings document. Do NOT use for executive summaries (use `executive-summary`), status updates (use `status-update`), or stakeholder updates (use `stakeholder-update`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "report",
+    "writing",
+    "business-writing"
+  ],
+  "requiredCapabilities": []
+}

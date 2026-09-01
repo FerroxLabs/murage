@@ -1,0 +1,19 @@
+{
+  "id": "startup-readiness-scorecard",
+  "name": "Startup Readiness Scorecard",
+  "version": "1.0.0",
+  "description": "Startup launch readiness assessment evaluating team composition, market validation, product maturity, financial preparedness, and legal foundation to produce a go/no-go scorecard. Use when the user asks about startup readiness scorecard, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of startup readiness scorecard or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "budgeting",
+    "checklist",
+    "template",
+    "testing",
+    "analysis",
+    "research",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

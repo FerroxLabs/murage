@@ -1,0 +1,15 @@
+{
+  "id": "budget-planning",
+  "name": "Budget Planning",
+  "version": "1.0.0",
+  "description": "Creates personal or household budgets using zero-based, 50/30/20, or envelope methods. Gathers the user's income, fixed expenses, variable expenses, and financial goals, then produces a populated budget table with category allocations, percentage breakdowns, and actionable next steps. Use when the user asks about budgeting, managing money, tracking expenses, creating a spending plan, or choosing a budgeting method. Do NOT use for investment advice, tax planning, business financial modeling, or debt consolidation strategy (use debt-consolidation-analysis instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "budgeting",
+    "personal-finance",
+    "expenses",
+    "savings",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

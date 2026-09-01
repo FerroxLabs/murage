@@ -1,0 +1,14 @@
+{
+  "id": "rebalancing-framework",
+  "name": "Rebalancing Framework",
+  "version": "1.0.0",
+  "description": "Explains portfolio rebalancing concepts including drift calculation, threshold triggers, and time-based approaches. Walks through how to calculate allocation drift and documents the steps to restore target allocation. Produces a rebalancing analysis with the user's actual portfolio numbers. Use when the user asks about portfolio rebalancing, how to maintain target allocations, or when to adjust their investment mix. Do NOT use for setting target allocations (use portfolio-allocation-framework), understanding account types (use investment-account-types), or assessing risk tolerance (use risk-tolerance-assessment). Never prescribes rebalancing frequency or specific target weights.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "investing",
+    "personal-finance",
+    "planning",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

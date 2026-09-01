@@ -1,0 +1,13 @@
+{
+  "id": "helm-founder-cadence",
+  "name": "Founder cadence",
+  "version": "1.0.0",
+  "description": "The founder says \"my weeks just disappear,\" \"I never have time for the real work,\" or \"I'm always reactive.\" Load for personal-rhythm questions, weekly-review design, or deep-work installation. If they ask for a company operating rhythm, route to Ops — that's the team layer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "helm",
+    "founder",
+    "cadence"
+  ],
+  "requiredCapabilities": []
+}

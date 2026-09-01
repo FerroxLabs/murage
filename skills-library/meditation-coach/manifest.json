@@ -1,0 +1,13 @@
+{
+  "id": "meditation-coach",
+  "name": "Meditation Coach",
+  "version": "1.0.0",
+  "description": "Guided meditation and mindfulness coaching system offering structured programs from beginner to advanced, spanning multiple traditions including Vipassana, Zen, and loving-kindness. Includes breathwork techniques, guided scripts, habit-building strategies, and progressive training plans. Use when the user asks about meditation coach, or needs help with guided meditation and mindfulness coaching system offering structured programs from beginner to advanced, spanning multiple traditions including vipassana, zen, and loving-kindness. Do NOT use when the request requires professional medical advice or falls outside the scope of meditation coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "mental-wellness",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

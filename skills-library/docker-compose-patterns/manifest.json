@@ -1,0 +1,14 @@
+{
+  "id": "docker-compose-patterns",
+  "name": "Docker Compose Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level docker compose patterns implementation: cloud and automation decision frameworks, production-ready patterns, and concrete templates for docker compose patterns workflows. Use when the user asks about docker compose patterns, docker compose patterns configuration, or devops best practices for docker projects. Do NOT use when the user needs a different devops cloud capability -- check sibling skills in the devops cloud subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "automation",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

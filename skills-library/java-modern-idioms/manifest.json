@@ -1,0 +1,14 @@
+{
+  "id": "java-modern-idioms",
+  "name": "Java Modern Idioms",
+  "version": "1.0.0",
+  "description": "Teaches expert-level modern Java patterns: records, sealed classes, pattern matching, text blocks, virtual threads (Project Loom), and modern Stream API usage for Java 21+. Use when the user asks about Java records, sealed classes, pattern matching, text blocks, virtual threads, Java 21, modern Java. Do NOT use when the user asks about Java project setup (use `java-project-setup`), Java testing (use `java-testing-patterns`), Java concurrency (use `java-concurrency-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "java",
+    "best-practices",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

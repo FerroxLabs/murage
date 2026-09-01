@@ -1,0 +1,15 @@
+{
+  "id": "songwriting-framework",
+  "name": "Songwriting Framework",
+  "version": "1.0.0",
+  "description": "Provides an intermediate-level framework for writing songs including song structure templates (verse, chorus, bridge, pre-chorus, intro, outro), lyric development processes (theme narrowing, imagery, rhyme scheme selection), melody-chord relationship basics, and revision techniques. Use when the user wants to write a song, develop lyrics, choose a song structure, or improve an existing song draft. Do NOT use for music theory fundamentals like scales and intervals (use music-theory-fundamentals), beginner guitar chords (use guitar-beginner-foundations), or recording and production (use home-recording-starter).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "guide",
+    "step-by-step",
+    "template",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

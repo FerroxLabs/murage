@@ -1,0 +1,15 @@
+{
+  "id": "mission-vision-writing",
+  "name": "Mission Vision Writing",
+  "version": "1.0.0",
+  "description": "Produces mission and vision statements using strategic communications formulas, with a present-focused mission statement and a future-focused vision statement tailored to the organization's purpose and aspirations. Use when the user asks to write or refine a mission statement, create a vision statement, define organizational purpose, or articulate company direction for stakeholders. Do NOT use for brand positioning statement (use brand-positioning), value proposition for customers (use value-proposition), or full business plan (use business-plan).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "planning",
+    "branding",
+    "writing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

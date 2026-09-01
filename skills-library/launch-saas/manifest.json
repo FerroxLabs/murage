@@ -1,0 +1,18 @@
+{
+  "id": "launch-saas",
+  "name": "Launch Saas",
+  "version": "1.0.0",
+  "description": "Orchestrates the full process of launching a SaaS product from system architecture through production monitoring, chaining seven software-development skills into a cohesive build-and-deploy pipeline. Use when the user wants to build and launch a SaaS application from scratch or migrate a prototype to production-ready infrastructure. Do NOT use for single-page static sites, internal tools without user authentication, or mobile-only apps without a web backend.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "api-design",
+    "devops",
+    "cloud",
+    "security",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

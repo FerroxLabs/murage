@@ -1,0 +1,13 @@
+{
+  "id": "budget-builder",
+  "name": "Budget Builder",
+  "version": "1.0.0",
+  "description": "Comprehensive budget creation and management skill using proven frameworks including the 50/30/20 rule, zero-based budgeting, and the envelope system. Guides users through income assessment, expense categorization, template creation, and ongoing budget review strategies. Use when the user asks about budget builder, or needs help with comprehensive budget creation and management skill using proven frameworks including the 50/30/20 rule, zero-based budgeting, and the envelope system. Do NOT use when the request requires professional financial advice or falls outside the scope of budget builder.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "budgeting",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

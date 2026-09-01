@@ -1,0 +1,16 @@
+{
+  "id": "onboarding-plan",
+  "name": "Onboarding Plan",
+  "version": "1.0.0",
+  "description": "Creates a 30-60-90 day onboarding plan with milestones, activities, check-in schedules, and success criteria for new employee integration. Use when the user asks about onboarding plans, new hire orientation, 30-60-90 day plans, or employee ramp-up programs. Do NOT use for job descriptions (use job-description), training curriculum design (use lesson-plan), or project onboarding documentation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "planning",
+    "template",
+    "checklist",
+    "guide",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

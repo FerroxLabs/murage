@@ -1,0 +1,15 @@
+{
+  "id": "computational-geometry-solver",
+  "name": "Computational Geometry Solver",
+  "version": "1.0.0",
+  "description": "Competitive programming computational geometry expertise covering convex hull algorithms, line segment intersection, sweep line techniques, polygon operations, Voronoi diagrams, closest pair, half-plane intersection, and robust geometric predicates with practical contest implementations. Use when the user asks about computational geometry solver, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of computational geometry solver or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "competitive-programming",
+    "beginner-friendly",
+    "testing",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

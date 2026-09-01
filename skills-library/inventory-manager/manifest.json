@@ -1,0 +1,14 @@
+{
+  "id": "inventory-manager",
+  "name": "Inventory Manager",
+  "version": "1.0.0",
+  "description": "Complete inventory management system covering stock tracking methods, reorder point calculations, demand forecasting, ABC analysis, supplier relationship management, warehouse organization, inventory management software selection, shrinkage control, and just-in-time vs safety stock strategies. Use when the user asks about inventory manager or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "planning",
+    "step-by-step",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "sql-analytics-expert",
+  "name": "Sql Analytics Expert",
+  "version": "1.0.0",
+  "description": "Advanced SQL for analytics covering window functions, CTEs, recursive queries, query optimization, pivoting, and complex analytical patterns for data warehouses and analytics databases. Use when the user asks about sql analytics expert, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of sql analytics expert or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "guide",
+    "advanced",
+    "sql",
+    "testing",
+    "analysis",
+    "running",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

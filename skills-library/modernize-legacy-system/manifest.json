@@ -1,0 +1,15 @@
+{
+  "id": "modernize-legacy-system",
+  "name": "Modernize Legacy System",
+  "version": "1.0.0",
+  "description": "Systematic legacy system modernization workflow covering code review and assessment, technical debt analysis, strategic refactoring, test coverage improvement, containerization, and CI/CD pipeline setup for a safe, incremental transition from legacy to modern architecture. Use when the user wants to modernize legacy system or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "refactoring",
+    "devops",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

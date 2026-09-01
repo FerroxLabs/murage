@@ -1,0 +1,19 @@
+{
+  "id": "teen-driver-educator",
+  "name": "Teen Driver Educator",
+  "version": "1.0.0",
+  "description": "Help parents teach their teenagers to drive safely through graduated licensing, structured practice plans progressing from parking lots to highways, insurance strategies, vehicle safety features, driving rules and consequences, phone-free driving habits, emergency procedures, and parent-teen driving contracts. Use when the user asks about teen driver educator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of teen driver educator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "parenting",
+    "habits",
+    "advanced",
+    "testing",
+    "automation",
+    "planning",
+    "safety",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

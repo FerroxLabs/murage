@@ -1,0 +1,14 @@
+{
+  "id": "segmentation-design",
+  "name": "Segmentation Design",
+  "version": "1.0.0",
+  "description": "Designs a customer or user segmentation by selecting variables, defining the segmentation method (RFM, behavioral, demographic, needs-based), producing segment definitions with names, and specifying the analysis output format. Use when the user asks to segment customers, create audience groups, build user personas from data, define target segments, or cluster users by behavior or attributes. Do NOT use for cohort analysis by time period (use cohort-analysis), funnel conversion between steps (use funnel-analysis), or individual KPI definition (use kpi-definition).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "analysis",
+    "data-science",
+    "planning",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

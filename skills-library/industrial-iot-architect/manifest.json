@@ -1,0 +1,19 @@
+{
+  "id": "industrial-iot-architect",
+  "name": "Industrial Iot Architect",
+  "version": "1.0.0",
+  "description": "Industrial IoT architecture expertise covering OPC-UA communication, SCADA system integration, predictive maintenance with vibration and thermal analysis, edge computing deployment, industrial safety standards (IEC 62443, ISA-95), time-series data management, and digital twin implementation for manufacturing environments. Use when the user asks about industrial iot architect, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of industrial iot architect or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "iot",
+    "python",
+    "api-design",
+    "cloud",
+    "analysis",
+    "planning",
+    "networking",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

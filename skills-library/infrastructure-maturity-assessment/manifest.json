@@ -1,0 +1,19 @@
+{
+  "id": "infrastructure-maturity-assessment",
+  "name": "Infrastructure Maturity Assessment",
+  "version": "1.0.0",
+  "description": "Cloud infrastructure maturity evaluation assessing automation, resilience, security, observability, and cost optimization to produce a maturity level scorecard with a roadmap. Use when the user asks about infrastructure maturity assessment, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of infrastructure maturity assessment or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "devops",
+    "template",
+    "cloud",
+    "testing",
+    "automation",
+    "analysis",
+    "planning",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "bass-player",
+  "name": "Bass Player",
+  "version": "1.0.0",
+  "description": "Groove technique, walking bass lines, slap bass, music theory for bass, and band dynamics - structured practice and performance guidance for electric and acoustic bass guitar Use when the user asks about bass player, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of bass player or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "checklist",
+    "beginner-friendly",
+    "advanced",
+    "energy-efficiency",
+    "cleaning",
+    "fashion",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

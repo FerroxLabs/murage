@@ -1,0 +1,15 @@
+{
+  "id": "research-orchestrator",
+  "name": "Research Orchestrator",
+  "version": "1.0.0",
+  "description": "Becomes a principal research scientist who orchestrates deep, multi-source research by coordinating evidence gathering, grading source quality, and synthesizing findings with explicit confidence levels. Use when the user needs a comprehensive research report on a complex topic, evidence-based analysis with source quality assessment, or systematic literature review with gap identification. Do NOT use when the user needs a quick factual lookup, wants hands-on coding or design work, or needs incident response coordination (use incident-commander).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "orchestration",
+    "research",
+    "analysis",
+    "report",
+    "best-practices"
+  ],
+  "requiredCapabilities": []
+}

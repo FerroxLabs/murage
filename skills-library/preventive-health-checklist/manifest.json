@@ -1,0 +1,14 @@
+{
+  "id": "preventive-health-checklist",
+  "name": "Preventive Health Checklist",
+  "version": "1.0.0",
+  "description": "Produces annual health maintenance checklists organized by life stage covering screenings, immunizations, dental care, vision care, and self-care habits. Creates a comprehensive yet actionable checklist that helps users stay on top of routine preventive health tasks throughout the year. Use when the user asks about annual health tasks, preventive health maintenance checklists, what health appointments to schedule each year, or building a yearly health routine. Do NOT use for interpreting health results, recommending specific screenings for individual conditions, or providing medical advice about health maintenance priorities.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "checklist",
+    "fitness",
+    "habits",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

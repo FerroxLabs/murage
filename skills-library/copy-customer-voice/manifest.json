@@ -1,0 +1,13 @@
+{
+  "id": "copy-customer-voice",
+  "name": "customer-voice",
+  "version": "1.0.0",
+  "description": "**Mode skill.** Default-enabled on the Copy specialist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "copy",
+    "customer",
+    "voice"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "home-bread-baker",
+  "name": "Home Bread Baker",
+  "version": "1.0.0",
+  "description": "Master artisan bread baking including sourdough starter creation and maintenance, bread formulas using baker's percentages, kneading techniques, shaping and scoring, oven setup with dutch ovens and steam, enriched doughs like brioche and challah, troubleshooting common problems, and practical baking schedules for busy lives. Use when the user asks about home bread baker, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of home bread baker or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "home-maintenance",
+    "meal-planning",
+    "guide",
+    "advanced",
+    "testing",
+    "cleaning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

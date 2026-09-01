@@ -1,0 +1,15 @@
+{
+  "id": "concept-mapping",
+  "name": "Concept Mapping",
+  "version": "1.0.0",
+  "description": "Creates visual concept maps with nodes, labeled relationships, and hierarchical organization from study material for learners. Produces a text-based concept map showing how ideas connect -- not an explanation of concept mapping theory. Use when a learner asks to create a concept map, mind map, or knowledge map showing relationships between ideas in their study material. Do NOT use for Cornell-style note taking (use `cornell-notes`), for note synthesis (use `note-synthesis`), or for memory palace techniques (use `memory-palace`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "note-taking",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

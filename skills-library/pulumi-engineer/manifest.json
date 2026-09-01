@@ -1,0 +1,14 @@
+{
+  "id": "pulumi-engineer",
+  "name": "Pulumi Engineer",
+  "version": "1.0.0",
+  "description": "Expert guide for infrastructure as code using Pulumi with TypeScript, Python, and Go. Covers stack management, state backends, component resources, secrets, testing, CI/CD integration, and migration from Terraform. Use when the user asks about pulumi engineer, pulumi engineer best practices, or needs guidance on pulumi engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "automation",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "pricing-strategy-audit",
+  "name": "Pricing Strategy Audit",
+  "version": "1.0.0",
+  "description": "Pricing strategy assessment evaluating pricing model effectiveness, competitive positioning, value alignment, discount practices, and revenue optimization to produce an actionable pricing scorecard. Use when the user asks about pricing strategy audit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of pricing strategy audit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "template",
+    "testing",
+    "analysis",
+    "research",
+    "branding",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "composition-guide",
+  "name": "Composition Guide",
+  "version": "1.0.0",
+  "description": "Applies photographic composition principles to a described subject including rule of thirds grid placement, leading lines direction, foreground/background layering, frame-within-frame opportunities, and negative space allocation. Produces specific framing instructions applicable to any camera. Use when the user asks about photo composition, framing a shot, or arranging visual elements in a photograph. Do NOT use for exposure or camera settings (use exposure-triangle), lighting setup (use lighting-setup), or post-processing workflow (use photo-editing-workflow).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "photography",
+    "design",
+    "checklist",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

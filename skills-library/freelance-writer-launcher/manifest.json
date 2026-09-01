@@ -1,0 +1,19 @@
+{
+  "id": "freelance-writer-launcher",
+  "name": "Freelance Writer Launcher",
+  "version": "1.0.0",
+  "description": "Complete guide to launching a freelance writing career covering pitching editors, rate negotiation, portfolio development, niche selection, and building a sustainable client pipeline. Use when the user asks about freelance writer launcher, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of freelance writer launcher or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "entrepreneurship",
+    "budgeting",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "analysis",
+    "research",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

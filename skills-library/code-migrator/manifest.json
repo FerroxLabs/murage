@@ -1,0 +1,14 @@
+{
+  "id": "code-migrator",
+  "name": "Code Migrator",
+  "version": "1.0.0",
+  "description": "Code migration specialist covering planning frameworks, strangler fig pattern, compatibility layers, feature flags, database migrations, API versioning, rollback plans, and testing migration completeness. Use when the user asks about code migrator, code migrator best practices, or needs guidance on code migrator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "clean-code",
+    "automation",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

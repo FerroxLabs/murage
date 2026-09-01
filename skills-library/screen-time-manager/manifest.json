@@ -1,0 +1,14 @@
+{
+  "id": "screen-time-manager",
+  "name": "Screen Time Manager",
+  "version": "1.0.0",
+  "description": "Evidence-based screen time management using AAP guidelines, with schedule templates, quality content selection criteria, co-viewing strategies, digital literacy education, parental controls setup, and family media plan creation. Use when the user asks about screen time manager, or needs help with evidence-based screen time management using aap guidelines, with schedule templates, quality content selection criteria, co-viewing strategies, digital literacy education, parental controls setup, and family media plan creation. Do NOT use when the request requires professional specialized advice or falls outside the scope of screen time manager.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "family-events",
+    "digital-wellness",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

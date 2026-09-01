@@ -1,0 +1,18 @@
+{
+  "id": "crypto-defi-navigator",
+  "name": "Crypto Defi Navigator",
+  "version": "1.0.0",
+  "description": "Cryptocurrency and DeFi expertise covering liquidity pool mechanics, yield farming strategies, protocol risk analysis, impermanent loss calculation, smart contract risk assessment, portfolio risk management, tax implications of DeFi activities, and frameworks for evaluating DeFi protocols and opportunities. Use when the user asks about crypto defi navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of crypto defi navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "investing",
+    "beginner-friendly",
+    "analysis",
+    "planning",
+    "networking",
+    "emergency-preparedness",
+    "performing-arts"
+  ],
+  "requiredCapabilities": []
+}

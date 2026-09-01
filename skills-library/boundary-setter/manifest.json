@@ -1,0 +1,19 @@
+{
+  "id": "boundary-setter",
+  "name": "Boundary Setter",
+  "version": "1.0.0",
+  "description": "Practical guide for identifying personal needs, communicating limits clearly and kindly, maintaining boundaries under pressure, and managing the guilt that often accompanies setting them Use when the user asks about boundary setter, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of boundary setter or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "journaling",
+    "habits",
+    "beginner-friendly",
+    "testing",
+    "safety",
+    "emergency-preparedness",
+    "performing-arts",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

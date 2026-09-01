@@ -1,0 +1,13 @@
+{
+  "id": "tax-optimization-strategist",
+  "name": "Tax Optimization Strategist",
+  "version": "1.0.0",
+  "description": "Strategic tax planning including tax-advantaged accounts, deduction strategies, income timing, estimated taxes, and year-end planning for maximizing after-tax wealth. Use when the user asks about tax optimization strategist, or needs help with strategic tax planning including tax-advantaged accounts, deduction strategies, income timing, estimated taxes, and year-end planning for maximizing after-tax wealth. Do NOT use when the request requires professional financial advice or falls outside the scope of tax optimization strategist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "tax-planning",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

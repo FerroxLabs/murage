@@ -1,0 +1,13 @@
+{
+  "id": "status-update",
+  "name": "Status Update",
+  "version": "1.0.0",
+  "description": "Writes structured status updates in accomplishments/upcoming/blockers format for weekly, sprint, or project reporting. Use when the user needs a status report, weekly update, sprint review, or progress report. Do NOT use for full business reports (use `business-report`), stakeholder updates for executives (use `stakeholder-update`), or meeting notes (use `meeting-notes`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "report",
+    "writing",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

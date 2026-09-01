@@ -1,0 +1,16 @@
+{
+  "id": "security-audit-codebase",
+  "name": "Security Audit Codebase",
+  "version": "1.0.0",
+  "description": "Orchestrates a systematic security review of a codebase by chaining five security skills into a comprehensive audit pipeline. Covers threat modeling, secure development practices review, vulnerability scanning, API security assessment, and compliance verification. Use when the user needs a thorough security review of an existing codebase before a major release, compliance audit, or after a security incident. Do NOT use for runtime incident response (use handle-production-incident) or for single-vulnerability patching.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "architecture",
+    "api-design",
+    "compliance",
+    "step-by-step",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

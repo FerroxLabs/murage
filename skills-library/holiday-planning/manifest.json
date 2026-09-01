@@ -1,0 +1,14 @@
+{
+  "id": "holiday-planning",
+  "name": "Holiday Planning",
+  "version": "1.0.0",
+  "description": "Creates comprehensive holiday planning frameworks with multi-family coordination, gift list management, travel logistics, tradition scheduling, and budget tracking. Produces structured holiday plans with timelines, task lists, and coordination templates. Use when the user asks about planning holidays, coordinating celebrations across multiple families, managing gift lists, or organizing holiday logistics. Do NOT use for planning specific religious ceremonies, corporate holiday events, or individual gift selection.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "event-planning",
+    "template",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

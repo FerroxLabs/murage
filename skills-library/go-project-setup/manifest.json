@@ -1,0 +1,14 @@
+{
+  "id": "go-project-setup",
+  "name": "Go Project Setup",
+  "version": "1.0.0",
+  "description": "Guides expert-level Go project initialization: module structure with go.mod, workspace mode for multi-module development, Makefile conventions, golangci-lint configuration, and standard project layout. Use when the user asks about Go project setup, go.mod, Go workspace, Go modules, golangci-lint, Go project structure, Makefile. Do NOT use when the user asks about Go language idioms (use `go-idioms`), Go testing (use `go-testing-patterns`), Go concurrency (use `go-concurrency-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "go",
+    "best-practices",
+    "template",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

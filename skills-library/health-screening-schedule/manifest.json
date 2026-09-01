@@ -1,0 +1,14 @@
+{
+  "id": "health-screening-schedule",
+  "name": "Health Screening Schedule",
+  "version": "1.0.0",
+  "description": "Provides age-based and sex-based preventive health screening frameworks derived from major medical guideline structures. Produces a screening timeline organized by life stage with screening types, general frequency guidelines, and questions to discuss with a healthcare provider. Use when the user asks about recommended health screenings by age, when to get certain check-ups, or how to build a preventive screening schedule. Do NOT use for interpreting screening results, recommending specific tests for individuals, or making scheduling decisions for users with existing health conditions.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "guide",
+    "strategy",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

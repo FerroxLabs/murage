@@ -1,0 +1,18 @@
+{
+  "id": "family-emergency-communicator",
+  "name": "Family Emergency Communicator",
+  "version": "1.0.0",
+  "description": "Emergency communication plans, contact lists, check-in protocols, out-of-area contacts, communication methods when networks are overloaded, and family coordination strategies during emergencies Use when the user asks about family emergency communicator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of family emergency communicator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "template",
+    "guide",
+    "testing",
+    "automation",
+    "planning",
+    "networking",
+    "safety"
+  ],
+  "requiredCapabilities": []
+}

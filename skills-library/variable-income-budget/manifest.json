@@ -1,0 +1,14 @@
+{
+  "id": "variable-income-budget",
+  "name": "Variable Income Budget",
+  "version": "1.0.0",
+  "description": "Builds budgets for freelancers, gig workers, and commission earners with irregular monthly income. Uses a baseline income method to establish essential spending, creates a surplus allocation priority list, and produces a month-by-month budget that adapts to income fluctuations. Use when the user has irregular income from freelancing, commissions, seasonal work, or multiple gig sources and wants to budget despite income variability. Do NOT use for stable-income budgets (use budget-planning or fifty-thirty-twenty-budget), business revenue forecasting, or investment planning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "budgeting",
+    "personal-finance",
+    "freelancing",
+    "savings"
+  ],
+  "requiredCapabilities": []
+}

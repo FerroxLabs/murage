@@ -1,0 +1,16 @@
+{
+  "id": "migrate-legacy-codebase",
+  "name": "Migrate Legacy Codebase",
+  "version": "1.0.0",
+  "description": "Orchestrates the systematic modernization of a legacy codebase by chaining four engineering skills into a structured migration pipeline. Covers technical debt assessment, incremental refactoring, integration testing, and safe deployment of modernized components. Use when the user needs to modernize a legacy system incrementally without breaking existing functionality. Do NOT use for greenfield rewrites, simple library upgrades, or projects where the legacy system can be replaced entirely.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "refactoring",
+    "testing",
+    "devops",
+    "step-by-step",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

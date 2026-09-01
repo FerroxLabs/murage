@@ -1,0 +1,18 @@
+{
+  "id": "chronic-condition-manager",
+  "name": "Chronic Condition Manager",
+  "version": "1.0.0",
+  "description": "Guide for living well with chronic conditions covering symptom tracking, medication management, doctor communication templates, lifestyle modifications, support groups, mental health considerations, and caregiver coordination. Use when the user asks about chronic condition manager, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of chronic condition manager or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "nutrition",
+    "journaling",
+    "stress-management",
+    "template",
+    "guide",
+    "quick-reference",
+    "testing"
+  ],
+  "requiredCapabilities": []
+}

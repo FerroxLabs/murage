@@ -1,0 +1,15 @@
+{
+  "id": "beneficiary-review-guide",
+  "name": "Beneficiary Review Guide",
+  "version": "1.0.0",
+  "description": "Guides users through auditing beneficiary designations across all account types that carry them (retirement, insurance, payable-on-death, transfer-on-death). Identifies common conflicts between beneficiary designations and will provisions, and produces a reconciliation checklist for attorney review. Use when the user asks about reviewing beneficiaries, checking who inherits their accounts, or whether their beneficiary designations are up to date. Do NOT use for recommending specific beneficiary choices, providing tax advice on beneficiary strategies, or drafting legal documents.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "checklist",
+    "guide",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "renovate-and-sell-house",
+  "name": "Renovate And Sell House",
+  "version": "1.0.0",
+  "description": "Complete house flipping workflow from property acquisition and renovation scope assessment through renovation planning, interior design staging, professional photography, and strategic selling for maximum return on investment in residential property flipping. Use when the user wants to renovate and sell house or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-buying",
+    "step-by-step",
+    "planning",
+    "cross-domain"
+  ],
+  "requiredCapabilities": []
+}

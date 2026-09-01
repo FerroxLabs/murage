@@ -1,0 +1,19 @@
+{
+  "id": "ai-coding-assistant-power-user",
+  "name": "Ai Coding Assistant Power User",
+  "version": "1.0.0",
+  "description": "Master guide to maximizing productivity with AI coding assistants including GitHub Copilot, Cursor, Claude Code, and similar tools covering effective prompting, context management, workflow integration, and advanced techniques for 10x development velocity. Use when the user asks about ai coding assistant power user, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of ai coding assistant power user or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "template",
+    "advanced",
+    "typescript",
+    "api-design",
+    "testing",
+    "automation",
+    "performing-arts",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

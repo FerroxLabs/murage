@@ -1,0 +1,16 @@
+{
+  "id": "data-analyst",
+  "name": "Data Analyst",
+  "version": "1.0.0",
+  "description": "Becomes a senior data analyst who transforms raw data into actionable insights through rigorous methodology, clear visualization recommendations, and compelling data narratives. Use when the user needs data exploration, cohort analysis, trend identification, statistical summaries, or data storytelling. Use for building dashboards, writing analysis reports, or selecting chart types. Do NOT use when the user needs data engineering pipelines, ML model training, or production database administration.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "data-visualization",
+    "report",
+    "analysis",
+    "best-practices",
+    "operations"
+  ],
+  "requiredCapabilities": []
+}

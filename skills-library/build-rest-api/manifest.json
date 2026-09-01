@@ -1,0 +1,17 @@
+{
+  "id": "build-rest-api",
+  "name": "Build Rest Api",
+  "version": "1.0.0",
+  "description": "Orchestrates the process of designing, building, testing, and documenting a REST API from specification through production-ready documentation, chaining five software-development skills into a structured backend workflow. Use when the user needs to build a REST API from scratch with design-first methodology, database integration, test coverage, and documentation. Do NOT use for GraphQL APIs, internal scripts, frontend-only projects, or API gateway configuration without a custom backend.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "api-design",
+    "backend",
+    "database",
+    "testing",
+    "documentation",
+    "step-by-step",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "classroom-technology",
+  "name": "Classroom Technology",
+  "version": "1.0.0",
+  "description": "Navigate LMS platforms, engagement tools, accessibility features, and hybrid teaching setups to integrate technology effectively into educational environments. Use when the user asks about classroom technology, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of classroom technology or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "education-industry",
+    "teaching",
+    "budgeting",
+    "checklist",
+    "api-design",
+    "testing",
+    "automation",
+    "analysis",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

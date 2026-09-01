@@ -1,0 +1,16 @@
+{
+  "id": "executive-communicator",
+  "name": "Executive Communicator",
+  "version": "1.0.0",
+  "description": "Becomes a senior communications strategist who crafts investor updates, board presentations, strategic summaries, and leadership communications using the pyramid principle and audience-calibrated messaging. Use when the user asks for board updates, investor communications, strategic memos, presentation outlines, or stakeholder briefings. Do NOT use when the user needs marketing campaign strategy (use marketing-strategist), project status reports (use project-manager), or financial modeling (use finance-analyst).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "business-writing",
+    "report",
+    "planning",
+    "template",
+    "best-practices",
+    "business"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "flutter-state-management",
+  "name": "Flutter State Management",
+  "version": "1.0.0",
+  "description": "Guides expert-level flutter state management implementation: dart and design-patterns decision frameworks, production-ready patterns, and concrete templates for flutter state management workflows. Use when the user asks about flutter state management, flutter state management configuration, or mobile best practices for flutter projects. Do NOT use when the user needs a different mobile development capability -- check sibling skills in the mobile development subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mobile",
+    "dart",
+    "design-patterns",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

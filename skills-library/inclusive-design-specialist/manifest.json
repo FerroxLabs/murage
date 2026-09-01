@@ -1,0 +1,19 @@
+{
+  "id": "inclusive-design-specialist",
+  "name": "Inclusive Design Specialist",
+  "version": "1.0.0",
+  "description": "Apply universal design principles, create diverse personas, identify edge cases, and design products that work for the widest possible range of human ability, context, and identity. Use when the user asks about inclusive design specialist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of inclusive design specialist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "budgeting",
+    "stress-management",
+    "checklist",
+    "template",
+    "javascript",
+    "safety",
+    "neurodiversity",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,17 @@
+{
+  "id": "nutrition-gap-analyzer",
+  "name": "Nutrition Gap Analyzer",
+  "version": "1.0.0",
+  "description": "Dietary assessment evaluating current eating patterns, nutrient coverage, hydration habits, and meal planning effectiveness. Produces a nutrition gap scorecard identifying deficiency risks and practical improvement recommendations. Use when the user asks about nutrition gap analyzer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of nutrition gap analyzer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "health-wellness",
+    "template",
+    "guide",
+    "analysis",
+    "planning",
+    "cooking"
+  ],
+  "requiredCapabilities": []
+}

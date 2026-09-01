@@ -1,0 +1,14 @@
+{
+  "id": "food-photography",
+  "name": "Food Photography",
+  "version": "1.0.0",
+  "description": "Complete guide to food photography and styling covering composition rules, natural and artificial lighting techniques, plating and styling methods, color theory for food, equipment recommendations, editing workflows, and content creation strategies for social media platforms including Instagram, TikTok, and food blogs. Use when the user asks about food photography, or needs help with complete guide to food photography and styling covering composition rules, natural and artificial lighting techniques, plating and styling methods, color theory for food, equipment recommendations, editing workflows, and content creation strategies for social media platforms including instagram, tiktok, and food blogs. Do NOT use when the request requires professional specialized advice or falls outside the scope of food photography.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "cooking",
+    "meal-planning",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

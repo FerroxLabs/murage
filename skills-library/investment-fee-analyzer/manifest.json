@@ -1,0 +1,13 @@
+{
+  "id": "investment-fee-analyzer",
+  "name": "Investment Fee Analyzer",
+  "version": "1.0.0",
+  "description": "Calculates the long-term cost of investment fees including expense ratios, advisor fees, and transaction costs. Expresses fee impact as both dollar amounts and percentage of final portfolio value over the user's time horizon. Use when the user asks about investment fees, wants to compare fund costs, or wants to understand how fees affect long-term returns. Do NOT use for choosing specific funds or products, understanding account types (use investment-account-types), or building a portfolio allocation (use portfolio-allocation-framework).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "investing",
+    "personal-finance",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

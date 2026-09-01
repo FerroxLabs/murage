@@ -1,0 +1,14 @@
+{
+  "id": "message-queue-patterns",
+  "name": "Message Queue Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level message queue patterns implementation: architecture and automation decision frameworks, production-ready patterns, and concrete templates for message queue patterns workflows. Use when the user asks about message queue patterns, message queue patterns configuration, or backend best practices for message projects. Do NOT use when the user needs a different backend infrastructure capability -- check sibling skills in the backend infrastructure subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "backend",
+    "architecture",
+    "automation",
+    "backend-systems"
+  ],
+  "requiredCapabilities": []
+}

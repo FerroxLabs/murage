@@ -1,0 +1,15 @@
+{
+  "id": "memory-palace",
+  "name": "Memory Palace",
+  "version": "1.0.0",
+  "description": "Designs memory palaces using the method of loci to help learners memorize ordered information by associating items with specific locations in a familiar space. Produces a complete palace design with loci assignments for the learner's specific content. Use when a learner asks to create a memory palace, use the method of loci, memorize a list or sequence, or improve memorization using spatial techniques. Do NOT use for spaced repetition scheduling (use `spaced-repetition`), for flashcard creation (use `flashcard-generation`), or for concept relationship mapping (use `concept-mapping`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "study-skills",
+    "active-recall",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

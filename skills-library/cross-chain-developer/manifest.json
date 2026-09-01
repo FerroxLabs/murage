@@ -1,0 +1,19 @@
+{
+  "id": "cross-chain-developer",
+  "name": "Cross Chain Developer",
+  "version": "1.0.0",
+  "description": "Cross-chain development expertise covering bridge architectures (lock-and-mint, burn-and-mint, liquidity networks), interoperability protocols (LayerZero, Chainlink CCIP, Axelar, Wormhole), chain abstraction patterns, multi-chain deployment strategies, and security considerations for cross-chain applications. Use when the user asks about cross chain developer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cross chain developer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "checklist",
+    "typescript",
+    "testing",
+    "networking",
+    "safety",
+    "contracts",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

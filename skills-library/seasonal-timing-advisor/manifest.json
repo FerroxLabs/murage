@@ -1,0 +1,15 @@
+{
+  "id": "seasonal-timing-advisor",
+  "name": "Seasonal Timing Advisor",
+  "version": "1.0.0",
+  "description": "Analyzes the best time to visit a travel destination across weather, crowd levels, and cost dimensions. Produces a month-by-month comparison matrix with a recommended travel window and tradeoff analysis. Use when the user asks about the best time to visit a destination, when to travel for the fewest crowds, cheapest flights, or best weather, or when comparing travel windows for a destination. Do NOT use for specific itinerary building (use trip-itinerary-builder), activity-specific seasonal availability (use adventure-activity-planner), or budget optimization (use budget-travel-planner).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "research",
+    "planning",
+    "guide",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

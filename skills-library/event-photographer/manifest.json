@@ -1,0 +1,19 @@
+{
+  "id": "event-photographer",
+  "name": "Event Photographer",
+  "version": "1.0.0",
+  "description": "Expert event photography guidance covering weddings, corporate events, candid techniques, and delivery workflows for comprehensive event documentation Use when the user asks about event photographer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of event photographer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "budgeting",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "quick-reference",
+    "cloud",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

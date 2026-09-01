@@ -1,0 +1,13 @@
+{
+  "id": "audiobook-producer",
+  "name": "Audiobook Producer",
+  "version": "1.0.0",
+  "description": "Complete audiobook production guide covering narration preparation, home studio setup, recording technique, editing and mastering to ACX standards, distribution through ACX, Findaway Voices, and Author's Republic, marketing strategies, and royalty structures for self-published and traditionally published authors. Use when the user asks about audiobook producer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "writing",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

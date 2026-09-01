@@ -1,0 +1,14 @@
+{
+  "id": "git-pr-workflow",
+  "name": "Git Pr Workflow",
+  "version": "1.0.0",
+  "description": "Guides expert-level git pr workflow implementation: version-control and best-practices decision frameworks, production-ready patterns, and concrete templates for git pr workflow workflows. Use when the user asks about git pr workflow, git pr workflow configuration, or version-control best practices for git projects. Do NOT use when the user needs a different developer tools capability -- check sibling skills in the developer tools subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "version-control",
+    "best-practices",
+    "clean-code",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "tax-deduction-tracker",
+  "name": "Tax Deduction Tracker",
+  "version": "1.0.0",
+  "description": "Builds a structured tax deduction tracking system covering common deduction categories with documentation requirements and jurisdiction-aware placeholders. Produces a categorized tracker the user populates throughout the year to maximize legitimate deductions at filing time. Use when the user asks about tracking tax deductions, organizing receipts for taxes, or building a system to document deductible expenses. Do NOT use for filing taxes (use tax-filing-prep), estimating quarterly taxes (use quarterly-tax-estimator), or understanding tax-advantaged accounts (use tax-advantaged-optimizer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "tax-planning",
+    "personal-finance",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

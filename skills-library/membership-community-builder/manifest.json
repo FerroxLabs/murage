@@ -1,0 +1,14 @@
+{
+  "id": "membership-community-builder",
+  "name": "Membership Community Builder",
+  "version": "1.0.0",
+  "description": "Complete guide to building paid membership communities covering platform selection, tier and pricing design, content strategy, member onboarding, engagement systems, retention optimization, moderation, scaling operations, and transitioning from audience to sustainable community business. Use when the user asks about membership community builder or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "entrepreneurship",
+    "strategy",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

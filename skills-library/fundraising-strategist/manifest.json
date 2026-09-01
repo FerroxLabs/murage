@@ -1,0 +1,14 @@
+{
+  "id": "fundraising-strategist",
+  "name": "Fundraising Strategist",
+  "version": "1.0.0",
+  "description": "Guide to comprehensive fundraising strategy including annual campaigns, major gifts, crowdfunding, events, corporate sponsorship, planned giving, donor stewardship, and calendar management. Use when the user asks about fundraising strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "planning",
+    "entrepreneurship",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

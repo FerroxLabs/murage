@@ -1,0 +1,19 @@
+{
+  "id": "tokenomics-designer",
+  "name": "Tokenomics Designer",
+  "version": "1.0.0",
+  "description": "Token economic design expertise covering supply models (fixed, inflationary, deflationary, dual-token), distribution and allocation strategies, vesting schedules, incentive mechanism design, staking economics, burn mechanics, liquidity bootstrapping, and sustainability analysis for protocol token economies. Use when the user asks about tokenomics designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of tokenomics designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "blockchain",
+    "stress-management",
+    "checklist",
+    "testing",
+    "analysis",
+    "networking",
+    "contracts",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

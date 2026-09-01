@@ -1,0 +1,14 @@
+{
+  "id": "permit-research",
+  "name": "Permit Research",
+  "version": "1.0.0",
+  "description": "Guides the user through the process of determining whether a home improvement project requires a building permit, how to research local requirements, and how to navigate the permit application process. Produces a research checklist and permit decision framework. Use when the user asks whether they need a permit, how to find local building codes, how to apply for a building permit, or what happens if they skip a permit. Do NOT use for commercial construction permits, zoning variance applications, or specific jurisdiction permit rules (this skill teaches the research process, not jurisdiction-specific requirements).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "checklist",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

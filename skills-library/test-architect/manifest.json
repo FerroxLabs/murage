@@ -1,0 +1,14 @@
+{
+  "id": "test-architect",
+  "name": "Test Architect",
+  "version": "1.0.0",
+  "description": "Test strategy designer covering test pyramid, coverage strategies, fixture design, mock patterns, TDD/BDD workflows, property-based testing, and test isolation. Use when the user asks about test architect, test architect best practices, or needs guidance on test architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "testing",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "startup-launcher",
+  "name": "Startup Launcher",
+  "version": "1.0.0",
+  "description": "Synthesizes Lean Startup, Jobs-to-be-Done, Design Thinking, Blue Ocean Strategy, and Business Model Canvas into The Venture Validation Engine - a systematic approach to finding, validating, and launching new business ideas. Use when the user asks about startup launcher, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of startup launcher or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "step-by-step",
+    "testing",
+    "research",
+    "planning",
+    "networking",
+    "waste-reduction",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

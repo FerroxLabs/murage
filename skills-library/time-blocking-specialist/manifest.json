@@ -1,0 +1,19 @@
+{
+  "id": "time-blocking-specialist",
+  "name": "Time Blocking Specialist",
+  "version": "1.0.0",
+  "description": "Design effective time-blocked calendars with deep work sessions, batching strategies, buffer time, energy management, and realistic scheduling that protects priorities from reactive work. Use when the user asks about time blocking specialist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of time blocking specialist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "template",
+    "automation",
+    "research",
+    "planning",
+    "emergency-preparedness",
+    "performing-arts",
+    "energy-efficiency",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

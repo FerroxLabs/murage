@@ -1,0 +1,14 @@
+{
+  "id": "tutorial-writer",
+  "name": "Tutorial Writer",
+  "version": "1.0.0",
+  "description": "Expert technical tutorial creation covering tutorial structure (goal, prerequisites, steps, verification), progressive complexity, code sample design, screenshot guidelines, common mistakes section, prerequisite validation, and hands-on exercises. Use when the user asks about tutorial writer, tutorial writer best practices, or needs guidance on tutorial writer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "teaching",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "produce-podcast-episode",
+  "name": "Produce Podcast Episode",
+  "version": "1.0.0",
+  "description": "Guides the user through producing a complete podcast episode from planning through distribution, chaining 6 atomic skills across design-creative, writing, and business categories. Covers interview vs. solo format, budget-conscious tool selection, and multi-platform distribution strategy. Use when the user wants to produce a podcast episode from concept to published audio. Do NOT use for ongoing podcast strategy (use individual skills), video-only content (use video production skills), or written content creation (use writing workflows).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "podcast",
+    "step-by-step",
+    "guide",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

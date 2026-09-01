@@ -1,0 +1,14 @@
+{
+  "id": "cicd-architect",
+  "name": "Cicd Architect",
+  "version": "1.0.0",
+  "description": "CI/CD pipeline design. Pipeline stages, build optimization, test parallelization, deployment strategies (blue-green, canary, rolling), artifact management, environment promotion, pipeline-as-code, security scanning in CI. Use when the user asks about cicd architect, cicd architect best practices, or needs guidance on cicd architect implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "ci-cd",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

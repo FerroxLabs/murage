@@ -1,0 +1,15 @@
+{
+  "id": "game-streaming-setup-guide",
+  "name": "Game Streaming Setup Guide",
+  "version": "1.0.0",
+  "description": "Guides beginners through setting up a game streaming environment: hardware requirements (PC specifications, capture cards, microphones, webcams), streaming software configuration (scenes, sources, audio routing), stream settings (bitrate, resolution, encoder), and channel setup. Organized by budget tier with a step-by-step first-stream checklist. Use when the user wants to start streaming games, asks about streaming hardware or software setup, needs help with stream settings like bitrate and resolution, or wants to configure scenes and audio routing. Do NOT use for tabletop RPG campaign design (use tabletop-rpg-campaign-builder), board game selection (use board-game-selection-guide), or video production and editing (use design-creative skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beginner-friendly",
+    "step-by-step",
+    "checklist",
+    "guide",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

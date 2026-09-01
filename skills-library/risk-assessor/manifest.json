@@ -1,0 +1,14 @@
+{
+  "id": "risk-assessor",
+  "name": "Risk Assessor",
+  "version": "1.0.0",
+  "description": "Risk assessment and mitigation expert covering risk identification techniques, probability/impact matrix, risk register, mitigation strategies, risk monitoring, contingency planning, technical risk assessment, and risk communication templates. Use when the user asks about risk assessor, risk assessor best practices, or needs guidance on risk assessor implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

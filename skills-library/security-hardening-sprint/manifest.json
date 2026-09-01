@@ -1,0 +1,16 @@
+{
+  "id": "security-hardening-sprint",
+  "name": "Security Hardening Sprint",
+  "version": "1.0.0",
+  "description": "Structured workflow for conducting a security hardening sprint on an existing application or infrastructure. Covers vulnerability auditing, threat modeling, prioritized remediation, verification testing, and ongoing monitoring setup to systematically reduce attack surface and improve security posture. Use when the user wants to security hardening sprint or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "security",
+    "compliance",
+    "penetration-testing",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

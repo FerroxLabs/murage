@@ -1,0 +1,14 @@
+{
+  "id": "pet-groomer",
+  "name": "Pet Groomer",
+  "version": "1.0.0",
+  "description": "Pet grooming guide covering breed-specific grooming techniques, coat type identification, bathing protocols, nail trimming, ear cleaning, dental hygiene, tool selection, grooming schedules, mat removal, professional vs DIY grooming decisions, and grooming for anxious pets. Use when the user asks about pet groomer, or needs help with pet grooming guide covering breed-specific grooming techniques, coat type identification, bathing protocols, nail trimming, ear cleaning, dental hygiene, tool selection, grooming schedules, mat removal, professional vs diy grooming decisions, and grooming for anxious pets. Do NOT use when the request requires professional specialized advice or falls outside the scope of pet groomer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "guide",
+    "checklist",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,16 @@
+{
+  "id": "performance-improvement-plan",
+  "name": "Performance Improvement Plan",
+  "version": "1.0.0",
+  "description": "Creates a performance improvement plan (PIP) with specific behavioral deficiencies, measurable improvement targets, timeline, support resources, and consequences using structured PIP methodology. Use when the user asks about performance improvement plans, PIPs, managing underperformance, or documenting employee performance issues. Do NOT use for regular performance reviews (use performance-review), coaching conversations, or termination documentation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "template",
+    "planning",
+    "strategy",
+    "guide",
+    "checklist",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

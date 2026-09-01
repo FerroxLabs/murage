@@ -1,0 +1,14 @@
+{
+  "id": "cost-modeling-engineer",
+  "name": "Cost Modeling Engineer",
+  "version": "1.0.0",
+  "description": "Infrastructure cost modeling and capacity planning expert covering cloud cost estimation, resource right-sizing, growth projection modeling, reserved vs on-demand analysis, cost-per-request calculations, FinOps practices, and total cost of ownership analysis for production systems. Use when the user asks about cost modeling engineer, cost modeling engineer best practices, or needs guidance on cost modeling engineer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "architecture",
+    "design-patterns",
+    "analysis",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

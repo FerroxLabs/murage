@@ -1,0 +1,19 @@
+{
+  "id": "content-monetization-strategist",
+  "name": "Content Monetization Strategist",
+  "version": "1.0.0",
+  "description": "Content monetization expertise covering revenue stream diversification, audience building strategies, pricing psychology for digital products, sponsorship and brand deal negotiation, membership and subscription models, passive income from content, and building a sustainable creator business beyond ad revenue. Use when the user asks about content monetization strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of content monetization strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "entrepreneurship",
+    "template",
+    "planning",
+    "neurodiversity",
+    "performing-arts",
+    "competitive-programming",
+    "time-management",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "behavioral-interview-prep",
+  "name": "Behavioral Interview Prep",
+  "version": "1.0.0",
+  "description": "Takes any behavioral interview question and the user's relevant experience, then writes a complete STAR-format answer (Situation, Task, Action, Result) ready to deliver in an interview. Produces polished, natural-sounding answers with specific details and quantified results. Use when the user is preparing for a behavioral interview, wants to practice STAR answers, needs help structuring their experience into interview responses, or is asked \"Tell me about a time when...\" questions. Do NOT use for technical interview preparation (use technical-interview-prep), case interview preparation (use case-interview-prep), or general interview question prediction (use interview-question-anticipator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "interview-prep",
+    "career",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

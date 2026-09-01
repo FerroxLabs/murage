@@ -1,0 +1,14 @@
+{
+  "id": "flooring-selection",
+  "name": "Flooring Selection",
+  "version": "1.0.0",
+  "description": "Compares flooring types (hardwood, LVP, laminate, tile, carpet) across traffic durability, moisture resistance, budget, DIY-ability, and maintenance requirements. Produces a scored comparison matrix with a recommendation based on the user's room conditions and priorities. Use when the user asks about choosing flooring, comparing flooring options, flooring for specific rooms, or the best floor type for their situation. Do NOT use for flooring installation instructions (use tile-installation for tile, or general DIY guidance), subfloor repair, or commercial flooring specifications.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "decision-making",
+    "analysis",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "coin-pricing-math",
+  "name": "Pricing math",
+  "version": "1.0.0",
+  "description": "The pricing specialist has picked a price or is choosing between candidates, and the question is whether the number clears the margin floor — or what margin floor is required to keep the business alive. Load when you hear \"does this price work,\" \"what gross margin do we need,\" \"what happens if we cu",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "coin",
+    "pricing",
+    "math"
+  ],
+  "requiredCapabilities": []
+}

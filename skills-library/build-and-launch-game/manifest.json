@@ -1,0 +1,14 @@
+{
+  "id": "build-and-launch-game",
+  "name": "Build And Launch Game",
+  "version": "1.0.0",
+  "description": "Complete workflow for building and shipping a video game from concept through prototype, art and audio production, core development, testing, and release. Covers game design documentation, rapid prototyping, iterative playtesting, and the discipline needed to actually ship a finished game. Use when the user wants to build and launch game or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "game-design",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

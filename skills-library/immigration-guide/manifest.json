@@ -1,0 +1,15 @@
+{
+  "id": "immigration-guide",
+  "name": "Immigration Guide",
+  "version": "1.0.0",
+  "description": "Comprehensive immigration guidance covering visa types overview, application processes, documentation requirements, settlement planning, cultural adjustment, language resources, community finding, and legal requirements for those navigating immigration. Use when the user asks about immigration guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "planning",
+    "guide",
+    "checklist",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

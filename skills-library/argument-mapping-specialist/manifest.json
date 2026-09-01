@@ -1,0 +1,19 @@
+{
+  "id": "argument-mapping-specialist",
+  "name": "Argument Mapping Specialist",
+  "version": "1.0.0",
+  "description": "Argument mapping expertise covering premise identification, logical structure analysis, deductive and inductive reasoning patterns, counterargument construction, fallacy detection, visual argument diagramming, Toulmin model application, and tools for clear thinking and effective argumentation in professional and academic contexts. Use when the user asks about argument mapping specialist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of argument mapping specialist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "template",
+    "guide",
+    "testing",
+    "analysis",
+    "research",
+    "game-design",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

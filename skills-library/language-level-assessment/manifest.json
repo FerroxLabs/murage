@@ -1,0 +1,15 @@
+{
+  "id": "language-level-assessment",
+  "name": "Language Level Assessment",
+  "version": "1.0.0",
+  "description": "Creates CEFR-aligned self-assessment diagnostics to help language learners determine their current proficiency level (A1-C2) and identify specific areas for improvement. Produces a level estimation with next steps. Use when a learner asks to assess their language level, determine their CEFR level, find out where they are in language learning, or identify what to study next. Do NOT use for vocabulary assessment (use `vocabulary-building`), for grammar diagnostics (use `grammar-practice`), or for exam-specific preparation (use `certification-prep`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "language-learning",
+    "study-skills",
+    "step-by-step",
+    "guide",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

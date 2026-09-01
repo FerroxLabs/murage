@@ -1,0 +1,14 @@
+{
+  "id": "infographic-planning",
+  "name": "Infographic Planning",
+  "version": "1.0.0",
+  "description": "Plans an infographic by defining the key message, selecting the information hierarchy, specifying the visual metaphor or layout type (comparison, process, timeline, statistical), and producing the content outline with placeholder sizes and section flow. Use when the user needs to plan the structure and content of an infographic before creating it in a design tool. Do NOT use for chart type selection (use chart-type-selector), dashboard layout (use dashboard-design), or detailed report formatting (use report-formatting).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-visualization",
+    "design",
+    "planning",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

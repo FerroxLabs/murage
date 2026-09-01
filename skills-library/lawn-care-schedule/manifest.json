@@ -1,0 +1,14 @@
+{
+  "id": "lawn-care-schedule",
+  "name": "Lawn Care Schedule",
+  "version": "1.0.0",
+  "description": "Creates a seasonal lawn care schedule covering fertilization timing, aeration, overseeding, mowing height, and watering by grass type and climate region. Produces a month-by-month maintenance calendar with specific tasks and timing. Use when the user asks about lawn care timing, fertilizer schedules, when to aerate or overseed, mowing height for their grass type, or seasonal lawn maintenance tasks. Do NOT use for garden planning (use vegetable-garden-planning), landscape design, weed identification, or commercial turf management.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "gardening",
+    "checklist",
+    "planning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

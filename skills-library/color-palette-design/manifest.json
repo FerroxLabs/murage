@@ -1,0 +1,14 @@
+{
+  "id": "color-palette-design",
+  "name": "Color Palette Design",
+  "version": "1.0.0",
+  "description": "Produces a complete color palette with primary, secondary, and neutral colors including hex codes, tint/shade scales, semantic color assignments, and WCAG contrast verification. Use when the user asks to create a color palette, choose brand colors, define color tokens, check color contrast for accessibility, or build a color system. Do NOT use for full design system tokens (use design-system-foundations), typography choices (use typography-system), or full brand identity (use brand-identity-brief).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "template",
+    "accessibility",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

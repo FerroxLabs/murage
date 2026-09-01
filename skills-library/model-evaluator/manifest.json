@@ -1,0 +1,14 @@
+{
+  "id": "model-evaluator",
+  "name": "Model Evaluator",
+  "version": "1.0.0",
+  "description": "ML model assessment covering classification metrics (precision, recall, F1, AUC-ROC), regression metrics (MAE, RMSE, R2), confusion matrix analysis, cross-validation strategies, bias detection, fairness metrics, and A/B testing for models. Use when the user asks about model evaluator, model evaluator best practices, or needs guidance on model evaluator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "testing",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

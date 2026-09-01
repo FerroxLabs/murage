@@ -1,0 +1,19 @@
+{
+  "id": "saas-idea-validator",
+  "name": "Saas Idea Validator",
+  "version": "1.0.0",
+  "description": "SaaS idea validation expertise covering problem discovery through customer interviews, market sizing (TAM/SAM/SOM), competitor analysis frameworks, landing page testing methodology, pricing strategy exploration, minimum viable product scoping, and systematic approaches to validating software business ideas before writing code. Use when the user asks about saas idea validator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of saas idea validator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "strategy",
+    "entrepreneurship",
+    "budgeting",
+    "stress-management",
+    "guide",
+    "api-design",
+    "testing",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

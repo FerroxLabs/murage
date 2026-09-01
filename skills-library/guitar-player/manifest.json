@@ -1,0 +1,17 @@
+{
+  "id": "guitar-player",
+  "name": "Guitar Player",
+  "version": "1.0.0",
+  "description": "Guitar instruction covering chord progressions, fingerpicking patterns, strumming techniques, music theory for guitar, genre exploration, and structured practice routines. Use when the user asks about guitar player, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of guitar player or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "performing-arts",
+    "beginner-friendly",
+    "advanced",
+    "automation",
+    "cleaning",
+    "creative-arts"
+  ],
+  "requiredCapabilities": []
+}

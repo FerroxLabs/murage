@@ -1,0 +1,19 @@
+{
+  "id": "curriculum-designer",
+  "name": "Curriculum Designer",
+  "version": "1.0.0",
+  "description": "Design aligned curricula with clear learning objectives, assessment strategies, materials development, and scope-and-sequence planning for any subject or grade level. Use when the user asks about curriculum designer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of curriculum designer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "education-industry",
+    "teaching",
+    "budgeting",
+    "checklist",
+    "template",
+    "guide",
+    "analysis",
+    "research",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

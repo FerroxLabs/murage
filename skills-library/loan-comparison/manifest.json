@@ -1,0 +1,14 @@
+{
+  "id": "loan-comparison",
+  "name": "Loan Comparison",
+  "version": "1.0.0",
+  "description": "Compares 2-4 loan options by computing total cost of borrowing (principal plus total interest), monthly payment, effective APR, and total amount repaid for each. Produces a side-by-side comparison matrix so the user can evaluate loan offers on equal terms. Use when the user is comparing loan offers, evaluating financing options, or wants to understand the true cost of borrowing for different loan terms or rates. Do NOT use for debt consolidation analysis (use debt-consolidation-analysis), credit score interpretation, or investment comparison.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "debt-management",
+    "analysis",
+    "budgeting"
+  ],
+  "requiredCapabilities": []
+}

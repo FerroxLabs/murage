@@ -1,0 +1,14 @@
+{
+  "id": "energy-optimizer",
+  "name": "Energy Optimizer",
+  "version": "1.0.0",
+  "description": "Home energy efficiency advisor covering DIY energy audits, insulation assessment, smart thermostat optimization, LED conversion, appliance ratings, solar evaluation, utility bill analysis, weatherization, and rebate/incentive finding. Use when the user asks about energy optimizer, or needs help with home energy efficiency advisor covering diy energy audits, insulation assessment, smart thermostat optimization, led conversion, appliance ratings, solar evaluation, utility bill analysis, weatherization, and rebate/incentive finding. Do NOT use when the request requires professional specialized advice or falls outside the scope of energy optimizer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "energy-efficiency",
+    "guide",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "plumbing-basics",
+  "name": "Plumbing Basics",
+  "version": "1.0.0",
+  "description": "Guides homeowners through common plumbing maintenance and troubleshooting including fixing running toilets, clearing slow drains, stopping minor leaks, maintaining water heaters, and understanding when to call a plumber. Provides step-by-step repair instructions with tool lists and cost estimates. Use when the user asks about plumbing problems, drain issues, toilet repairs, water heater maintenance, or basic pipe fixes. Do NOT use for full home maintenance scheduling (use annual-home-maintenance), gas line work, sewer line replacement, or commercial plumbing systems.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "troubleshooting",
+    "step-by-step",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

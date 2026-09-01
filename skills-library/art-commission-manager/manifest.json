@@ -1,0 +1,19 @@
+{
+  "id": "art-commission-manager",
+  "name": "Art Commission Manager",
+  "version": "1.0.0",
+  "description": "Guides artists through the full commission lifecycle including pricing formulas, contract templates, revision policies, client communication, and delivery workflows for sustainable freelance art practices. Use when the user asks about art commission manager, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of art commission manager or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-industry",
+    "strategy",
+    "checklist",
+    "template",
+    "guide",
+    "cloud",
+    "planning",
+    "marketing",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

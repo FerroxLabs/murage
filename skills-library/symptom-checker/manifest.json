@@ -1,0 +1,13 @@
+{
+  "id": "symptom-checker",
+  "name": "Symptom Checker",
+  "version": "1.0.0",
+  "description": "Reference-only health symptom triage guide that helps users understand when to seek emergency care, urgent care, or routine medical attention. Includes common symptom decision trees, first aid awareness, and medication interaction considerations. This is NOT a diagnostic tool. Use when the user asks about symptom checker, or needs help with reference-only health symptom triage guide that helps users understand when to seek emergency care, urgent care, or routine medical attention. Do NOT use when the request requires professional medical advice or falls outside the scope of symptom checker.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "guide",
+    "checklist"
+  ],
+  "requiredCapabilities": []
+}

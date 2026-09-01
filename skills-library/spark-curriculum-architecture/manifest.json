@@ -1,0 +1,13 @@
+{
+  "id": "spark-curriculum-architecture",
+  "name": "Curriculum architecture",
+  "version": "1.0.0",
+  "description": "The user wants a course, book, workshop, paid cohort, or any structured information product. Load whenever you hear \"I want to teach,\" \"I'm writing a book on,\" \"what should be in the curriculum,\" or \"help me outline this.\"",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "spark",
+    "curriculum",
+    "architecture"
+  ],
+  "requiredCapabilities": []
+}

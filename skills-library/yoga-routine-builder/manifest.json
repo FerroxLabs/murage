@@ -1,0 +1,14 @@
+{
+  "id": "yoga-routine-builder",
+  "name": "Yoga Routine Builder",
+  "version": "1.0.0",
+  "description": "Builds structured yoga sequences for morning, evening, and focus-specific practices (hip-opener, back relief, stress reduction) with pose selection, hold times, flow order, and modifications by flexibility level. Produces a complete sequenced routine with Sanskrit and English pose names. Use when the user asks about building a yoga routine, designing a yoga sequence, morning or evening yoga flows, or yoga for specific areas like hips, back, or shoulders. Do NOT use for meditation-only practices, injury rehabilitation yoga (consult a qualified yoga therapist), or advanced inversion and arm-balance training.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "yoga",
+    "fitness",
+    "mental-wellness",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

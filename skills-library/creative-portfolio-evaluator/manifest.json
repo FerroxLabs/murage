@@ -1,0 +1,19 @@
+{
+  "id": "creative-portfolio-evaluator",
+  "name": "Creative Portfolio Evaluator",
+  "version": "1.0.0",
+  "description": "Cross-discipline creative portfolio assessment evaluating artistic cohesion, technical skill, presentation quality, and market positioning. Produces a scored evaluation with recommendations for strengthening creative identity and professional opportunity. Use when the user asks about creative portfolio evaluator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of creative portfolio evaluator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "design",
+    "template",
+    "research",
+    "presentation",
+    "photography",
+    "cleaning",
+    "investing",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "okr-coach",
+  "name": "Okr Coach",
+  "version": "1.0.0",
+  "description": "Objectives and Key Results coaching expert covering OKR fundamentals, cascading alignment, scoring methodologies, quarterly planning and review cadences, stretch vs committed OKRs, common anti-patterns, team vs individual OKRs, and integration with product strategy. Use when the user asks about okr coach, okr coach best practices, or needs guidance on okr coach implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "strategy",
+    "goal-setting",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

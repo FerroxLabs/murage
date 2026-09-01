@@ -1,0 +1,19 @@
+{
+  "id": "debt-elimination-strategist",
+  "name": "Debt Elimination Strategist",
+  "version": "1.0.0",
+  "description": "Synthesizes Debt Snowball, Debt Avalanche, Debt Consolidation, and Balance Transfer strategies into The Debt Freedom Roadmap - a systematic approach to eliminating debt based on your financial profile and psychology. Use when the user asks about debt elimination strategist, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of debt elimination strategist or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "frameworks",
+    "checklist",
+    "research",
+    "emergency-preparedness",
+    "waste-reduction",
+    "tax-planning",
+    "cooking",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

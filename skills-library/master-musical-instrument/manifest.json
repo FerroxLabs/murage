@@ -1,0 +1,15 @@
+{
+  "id": "master-musical-instrument",
+  "name": "Master Musical Instrument",
+  "version": "1.0.0",
+  "description": "Structured musical instrument learning workflow from initial assessment and instrument selection through method design, practice system development, and performance preparation for measurable musical progress. Use when the user wants to master musical instrument or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "performing-arts",
+    "step-by-step",
+    "study-skills",
+    "planning",
+    "life-event"
+  ],
+  "requiredCapabilities": []
+}

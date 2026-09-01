@@ -1,0 +1,14 @@
+{
+  "id": "content-calendar",
+  "name": "Content Calendar",
+  "version": "1.0.0",
+  "description": "Content calendar creation and editorial planning including content pillar strategy, editorial templates, content type mix, publishing cadence, social media scheduling, content repurposing, seasonal planning, content briefs, and performance tracking. Use when the user asks about content calendar or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content-marketing",
+    "marketing",
+    "planning",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

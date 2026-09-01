@@ -1,0 +1,14 @@
+{
+  "id": "visual-storytelling",
+  "name": "Visual Storytelling",
+  "version": "1.0.0",
+  "description": "Structures a visual narrative for a presentation with emotional arc, visual type selection per narrative beat, and storyboard sequence with image direction notes. Use when the user asks to tell a story through visuals, create an emotional presentation arc, design a visual narrative, or plan imagery for a presentation that persuades or inspires. Do NOT use for slide deck content structure (use slide-deck-structure), data visualization in slides (use data-in-slides), or video storyboarding (use video-storyboard).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "presentation",
+    "design",
+    "planning",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

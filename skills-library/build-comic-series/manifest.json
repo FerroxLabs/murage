@@ -1,0 +1,16 @@
+{
+  "id": "build-comic-series",
+  "name": "Build Comic Series",
+  "version": "1.0.0",
+  "description": "End-to-end workflow for creating a multi-issue comic book series from concept development through scripting, art production, lettering, and publishing. Covers series planning, comic scripting, sequential art, digital production pipelines, lettering conventions, and distribution through webcomic platforms, print-on-demand, and crowdfunding. Use when the user wants to build comic series or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-writing",
+    "design",
+    "content-marketing",
+    "step-by-step",
+    "planning",
+    "creative-project"
+  ],
+  "requiredCapabilities": []
+}

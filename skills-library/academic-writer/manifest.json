@@ -1,0 +1,18 @@
+{
+  "id": "academic-writer",
+  "name": "Academic Writer",
+  "version": "1.0.0",
+  "description": "Complete academic writing guide covering thesis and dissertation structure, journal article format using IMRaD, literature review methodology, citation management, the peer review process, and developing an effective academic voice. Use when the user asks about academic writer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of academic writer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "creative-writing",
+    "breathing",
+    "journaling",
+    "guide",
+    "step-by-step",
+    "beginner-friendly",
+    "advanced"
+  ],
+  "requiredCapabilities": []
+}

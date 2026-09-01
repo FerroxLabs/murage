@@ -1,0 +1,15 @@
+{
+  "id": "assessment-design",
+  "name": "Assessment Design",
+  "version": "1.0.0",
+  "description": "Creates complete assessment instruments (tests, quizzes, performance tasks, projects) with item rationale, point values, answer keys, and alignment to learning objectives. Produces a ready-to-use assessment document for educators, applying assessment theory to ensure validity and reliability. Use when an educator asks to create a test, quiz, exam, performance task, or assessment rubric for a specific unit or set of learning objectives. Do NOT use for rubric-only creation (use `rubric-creation`), formative assessment strategies (use `formative-assessment`), or student exam preparation (use `exam-prep-plan`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "lesson-plan",
+    "curriculum",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

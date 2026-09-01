@@ -1,0 +1,14 @@
+{
+  "id": "linux-admin",
+  "name": "Linux Admin",
+  "version": "1.0.0",
+  "description": "Linux system administration. Process management, systemd services, user/group management, file permissions, disk management, networking (iptables, netplan), performance tuning (sysctl), log management, cron jobs, troubleshooting. Use when the user asks about linux admin, linux admin best practices, or needs guidance on linux admin implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "shell-scripting",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

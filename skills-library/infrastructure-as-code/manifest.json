@@ -1,0 +1,14 @@
+{
+  "id": "infrastructure-as-code",
+  "name": "Infrastructure As Code",
+  "version": "1.0.0",
+  "description": "Guides expert-level infrastructure as code implementation: automation and cloud decision frameworks, production-ready patterns, and concrete templates for infrastructure as code workflows. Use when the user asks about infrastructure as code, infrastructure as code configuration, or devops best practices for infrastructure projects. Do NOT use when the user needs a different devops cloud capability -- check sibling skills in the devops cloud subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "automation",
+    "cloud",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

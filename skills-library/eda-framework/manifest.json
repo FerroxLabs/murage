@@ -1,0 +1,14 @@
+{
+  "id": "eda-framework",
+  "name": "Eda Framework",
+  "version": "1.0.0",
+  "description": "Produces a structured exploratory data analysis report covering row counts, column inventory, missing values, distributions, and frequency counts. Translates raw data into a complete EDA summary with specific findings, not generic descriptions. Use when the user has a dataset and wants to understand its structure, quality, and key characteristics before deeper analysis. Do NOT use for hypothesis testing (use hypothesis-testing), data cleaning operations (use data-cleaning-protocol), or building predictive models (use regression-guide).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "analysis",
+    "statistics",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

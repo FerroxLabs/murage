@@ -1,0 +1,13 @@
+{
+  "id": "beacon-blog-content",
+  "name": "blog-content",
+  "version": "1.0.0",
+  "description": "**When to use.** When the user runs (or wants to run) a long-form blog for owned-audience content marketing, distinct from SEO-targeted cluster pages.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beacon",
+    "blog",
+    "content"
+  ],
+  "requiredCapabilities": []
+}

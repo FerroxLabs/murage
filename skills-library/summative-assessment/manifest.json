@@ -1,0 +1,15 @@
+{
+  "id": "summative-assessment",
+  "name": "Summative Assessment",
+  "version": "1.0.0",
+  "description": "Creates end-of-unit summative assessments with prompts, rubrics, and exemplar descriptions for educators. Produces a complete summative assessment package including the student-facing task, scoring criteria, and benchmark examples -- distinct from formative checks used during instruction. Use when an educator asks to create an end-of-unit assessment, final project, performance task, or summative evaluation for a completed unit of study. Do NOT use for in-class formative checks (use `formative-assessment`), for standalone rubrics (use `rubric-creation`), or for student exam preparation (use `exam-prep-plan`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "lesson-plan",
+    "curriculum",
+    "step-by-step",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

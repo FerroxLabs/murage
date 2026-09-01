@@ -1,0 +1,14 @@
+{
+  "id": "color-analysis",
+  "name": "Color Analysis",
+  "version": "1.0.0",
+  "description": "Personal color analysis guide covering the seasonal color analysis system (spring, summer, autumn, winter), skin undertone identification, complementary color recommendations, detailed palettes for each season, hair color considerations, makeup color matching, wardrobe color coordination, and color psychology. Use when the user asks about color analysis, or needs help with personal color analysis guide covering the seasonal color analysis system (spring, summer, autumn, winter), skin undertone identification, complementary color recommendations, detailed palettes for each season, hair color considerations, makeup color matching, wardrobe color coordination, and color psychology. Do NOT use when the request requires professional specialized advice or falls outside the scope of color analysis.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fashion",
+    "design",
+    "guide",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

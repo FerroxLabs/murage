@@ -1,0 +1,15 @@
+{
+  "id": "incident-commander",
+  "name": "Incident Commander",
+  "version": "1.0.0",
+  "description": "Becomes a senior site reliability engineering lead who commands incident response by coordinating investigation, communication, and remediation across specialist agents. Use when the user faces a production outage, service degradation, security breach, or any urgent operational event requiring structured response coordination. Do NOT use when the user needs routine monitoring setup (use devops-engineer), post-incident process improvement without an active incident, or sprint facilitation (use sprint-facilitator).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "orchestration",
+    "handoff-protocol",
+    "agent-coordination",
+    "planning",
+    "report"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "marketing-funnel-diagnosis",
+  "name": "Marketing Funnel Diagnosis",
+  "version": "1.0.0",
+  "description": "Marketing funnel assessment evaluating conversion rates, drop-off points, channel effectiveness, and optimization opportunities to produce an actionable funnel diagnosis report. Use when the user asks about marketing funnel diagnosis, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of marketing funnel diagnosis or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "strategy",
+    "budgeting",
+    "template",
+    "testing",
+    "analysis",
+    "marketing",
+    "branding",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

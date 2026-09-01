@@ -1,0 +1,14 @@
+{
+  "id": "family-vacation-planning",
+  "name": "Family Vacation Planning",
+  "version": "1.0.0",
+  "description": "Creates kid-friendly vacation itineraries with age-appropriate activity scheduling, logistics management for families with children of different ages, packing frameworks, and travel day strategies. Produces complete trip plans with daily schedules, backup activities, and family travel logistics. Use when the user asks about planning a family vacation, traveling with children, or creating a kid-friendly travel itinerary. Do NOT use for adult-only travel (use travel skills), business trip planning, or trip booking and reservations.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "family-events",
+    "travel",
+    "planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

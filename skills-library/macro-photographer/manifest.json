@@ -1,0 +1,19 @@
+{
+  "id": "macro-photographer",
+  "name": "Macro Photographer",
+  "version": "1.0.0",
+  "description": "Expert macro photography guidance covering equipment selection, lighting techniques, focus stacking, extreme close-up composition, subject finding, and processing workflows for stunning detail-rich images of the miniature world. Use when the user asks about macro photographer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of macro photographer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "design",
+    "photography",
+    "budgeting",
+    "checklist",
+    "guide",
+    "beginner-friendly",
+    "automation",
+    "performing-arts",
+    "design-creative"
+  ],
+  "requiredCapabilities": []
+}

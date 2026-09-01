@@ -1,0 +1,19 @@
+{
+  "id": "automation-for-life",
+  "name": "Automation For Life",
+  "version": "1.0.0",
+  "description": "Personal automation expertise covering IFTTT applets, Apple Shortcuts, Android automation, financial automation (bill pay, savings, investing), notification management, routine automation, smart home orchestration, and building systems that reduce cognitive load and save time on repetitive life tasks. Use when the user asks about automation for life, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of automation for life or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "budgeting",
+    "template",
+    "api-design",
+    "testing",
+    "automation",
+    "game-design",
+    "performing-arts",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

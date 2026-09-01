@@ -1,0 +1,14 @@
+{
+  "id": "subscription-model-designer",
+  "name": "Subscription Model Designer",
+  "version": "1.0.0",
+  "description": "Subscription business strategy advisor covering MRR/ARR metrics, pricing tier design, churn reduction strategies, retention mechanics, billing systems, free trial optimization, expansion revenue, cohort analysis, and the financial modeling required to build sustainable recurring revenue businesses across SaaS, media, services, and physical products. Use when the user asks about subscription model designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "planning",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

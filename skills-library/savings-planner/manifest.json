@@ -1,0 +1,13 @@
+{
+  "id": "savings-planner",
+  "name": "Savings Planner",
+  "version": "1.0.0",
+  "description": "Savings goal planning covering emergency fund calculation (3-6 months), sinking funds, high-yield savings strategy, CD laddering, savings automation, goal prioritization, milestone tracking, and savings rate optimization. Use when the user asks about savings planner, or needs help with savings goal planning covering emergency fund calculation (3-6 months), sinking funds, high-yield savings strategy, cd laddering, savings automation, goal prioritization, milestone tracking, and savings rate optimization. Do NOT use when the request requires professional financial advice or falls outside the scope of savings planner.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "personal-finance",
+    "savings",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

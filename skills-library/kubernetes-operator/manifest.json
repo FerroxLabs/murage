@@ -1,0 +1,14 @@
+{
+  "id": "kubernetes-operator",
+  "name": "Kubernetes Operator",
+  "version": "1.0.0",
+  "description": "Kubernetes orchestration. Pod design patterns, deployments/statefulsets/daemonsets, service types, ingress configuration, ConfigMaps/Secrets, RBAC, HPA/VPA, resource limits, helm charts, kustomize, troubleshooting pods. Use when the user asks about kubernetes operator, kubernetes operator best practices, or needs guidance on kubernetes operator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "devops",
+    "cloud",
+    "guide",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

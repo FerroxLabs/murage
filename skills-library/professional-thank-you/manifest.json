@@ -1,0 +1,13 @@
+{
+  "id": "professional-thank-you",
+  "name": "Professional Thank You",
+  "version": "1.0.0",
+  "description": "Writes professional thank-you messages for interviews, meetings, referrals, and business interactions that strengthen relationships through specific acknowledgment and genuine appreciation. Use when the user needs to thank someone in a professional context. Do NOT use for general professional emails (use `professional-email`), business letters (use `business-letter`), or meeting follow-ups that are primarily about action items (use `meeting-notes`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "email",
+    "personal-communication"
+  ],
+  "requiredCapabilities": []
+}

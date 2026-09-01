@@ -1,0 +1,14 @@
+{
+  "id": "senior-resource-navigation",
+  "name": "Senior Resource Navigation",
+  "version": "1.0.0",
+  "description": "Produces a structured guide for finding and accessing community resources for seniors including Area Agency on Aging services, senior center programs, PACE programs, transportation services, meal delivery, and benefit enrollment assistance. Teaches how to identify and connect with local equivalents of national resource types. Use when the user asks about finding senior services, community resources for aging parents, or navigating the senior care system. Do NOT use for specific facility recommendations by name, medical care guidance, or Medicare/Medicaid claims processing.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "elder-care",
+    "guide",
+    "meal-planning",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

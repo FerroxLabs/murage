@@ -1,0 +1,14 @@
+{
+  "id": "senior-pet-care",
+  "name": "Senior Pet Care",
+  "version": "1.0.0",
+  "description": "Comprehensive guide for caring for aging dogs and cats covering age-related changes, mobility support, pain management, cognitive dysfunction, nutrition adjustments, veterinary screening schedules, quality of life assessment, comfort modifications, end-of-life planning, and grief support resources. Use when the user asks about senior pet care, or needs help with comprehensive guide for caring for aging dogs and cats covering age-related changes, mobility support, pain management, cognitive dysfunction, nutrition adjustments, veterinary screening schedules, quality of life assessment, comfort modifications, end-of-life planning, and grief support resources. Do NOT use when the request requires professional specialized advice or falls outside the scope of senior pet care.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "guide",
+    "elder-care",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

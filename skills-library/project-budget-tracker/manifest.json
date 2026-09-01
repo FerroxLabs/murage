@@ -1,0 +1,14 @@
+{
+  "id": "project-budget-tracker",
+  "name": "Project Budget Tracker",
+  "version": "1.0.0",
+  "description": "Creates a project budget tracking structure with cost categories, actuals-versus-budget comparison format, variance threshold rules, and escalation criteria. Produces the tracker template for personal or small-team projects, not financial advice. Use when the user asks about tracking project expenses, creating a project budget, monitoring spending against a plan, or building a cost tracking system for a project. Do NOT use for personal household budgeting (use personal-finance budgeting skills), business financial modeling (use business finance skills), or investment tracking (use personal-finance investing skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "template",
+    "analysis",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

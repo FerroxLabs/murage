@@ -1,0 +1,15 @@
+{
+  "id": "docker-quick-fix",
+  "name": "Docker Quick Fix",
+  "version": "1.0.0",
+  "description": "Solutions for the most common Docker errors - cleanup commands, container debugging, networking issues, build failures, and performance problems. Use when the user asks about docker quick fix, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of docker quick fix or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "devops",
+    "testing",
+    "cleaning",
+    "devops-cloud"
+  ],
+  "requiredCapabilities": []
+}

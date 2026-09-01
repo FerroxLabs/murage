@@ -1,0 +1,14 @@
+{
+  "id": "training-program-periodization",
+  "name": "Training Program Periodization",
+  "version": "1.0.0",
+  "description": "Designs long-term training program structures using linear, undulating, and block periodization frameworks with macrocycle, mesocycle, and microcycle planning. Produces a multi-month program architecture with volume and intensity wave patterns, peaking protocols, and transition phases. Use when the user asks about long-term program design, periodization models, macrocycle planning, peaking for an event, or structuring training across months. Do NOT use for single workout design, beginner programs (use beginner-strength-training), or sport-specific conditioning (use sports-specific-conditioning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "fitness",
+    "workout-planning",
+    "advanced",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,19 @@
+{
+  "id": "cognitive-accessibility",
+  "name": "Cognitive Accessibility",
+  "version": "1.0.0",
+  "description": "Design interfaces that support users with cognitive and learning disabilities through plain language, clear navigation, predictable behavior, focus management, and effective error prevention. Use when the user asks about cognitive accessibility, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of cognitive accessibility or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "accessibility",
+    "stress-management",
+    "checklist",
+    "step-by-step",
+    "advanced",
+    "javascript",
+    "testing",
+    "automation",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

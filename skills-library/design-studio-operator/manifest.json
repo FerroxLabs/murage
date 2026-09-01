@@ -1,0 +1,19 @@
+{
+  "id": "design-studio-operator",
+  "name": "Design Studio Operator",
+  "version": "1.0.0",
+  "description": "Practical guide to running a design studio or creative agency covering client acquisition, project management, pricing strategies, team structure, quality standards, growth planning, and building a sustainable creative business. Use when the user asks about design studio operator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of design studio operator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "creative-industry",
+    "strategy",
+    "budgeting",
+    "research",
+    "marketing",
+    "branding",
+    "presentation",
+    "email",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

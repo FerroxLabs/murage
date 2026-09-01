@@ -1,0 +1,13 @@
+{
+  "id": "solar-evaluator",
+  "name": "Solar Evaluator",
+  "version": "1.0.0",
+  "description": "Comprehensive guide for evaluating residential solar energy systems including system sizing calculations, roof assessment, net metering policies, ROI analysis with payback period calculation, installer comparison framework, federal and state incentives (ITC, SRECs), battery storage considerations, financing options, and ongoing maintenance requirements. Use when the user asks about solar evaluator, or needs help with comprehensive guide for evaluating residential solar energy systems including system sizing calculations, roof assessment, net metering policies, roi analysis with payback period calculation, installer comparison framework, federal and state incentives (itc, srecs), battery storage considerations, financing options, and ongoing maintenance requirements. Do NOT use when the request requires professional specialized advice or falls outside the scope of solar evaluator.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainability",
+    "energy-efficiency",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

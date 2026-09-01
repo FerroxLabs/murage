@@ -1,0 +1,13 @@
+{
+  "id": "investor-update-email",
+  "name": "Investor Update Email",
+  "version": "1.0.0",
+  "description": "Writes monthly or quarterly investor update emails with key metrics, highlights, lowlights, asks, and forward outlook in a concise format that maintains investor confidence and engagement. Use when the user needs to update investors, angels, or venture partners on company progress. Do NOT use for board narratives (use `board-update-narrative`), stakeholder updates (use `stakeholder-update`), or fundraising pitch materials (those require a different skill set).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "email",
+    "writing",
+    "entrepreneurship"
+  ],
+  "requiredCapabilities": []
+}

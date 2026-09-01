@@ -1,0 +1,15 @@
+{
+  "id": "math-for-programming",
+  "name": "Math For Programming",
+  "version": "1.0.0",
+  "description": "Guides essential mathematics for competitive programming including number theory, combinatorics, computational geometry, modular arithmetic, and probability Use when the user asks about math for programming, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of math for programming or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "advanced",
+    "competitive-programming",
+    "guide",
+    "beginner-friendly",
+    "emerging-tech"
+  ],
+  "requiredCapabilities": []
+}

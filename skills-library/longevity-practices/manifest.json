@@ -1,0 +1,18 @@
+{
+  "id": "longevity-practices",
+  "name": "Longevity Practices",
+  "version": "1.0.0",
+  "description": "Evidence-based longevity guide covering centenarian research findings, Mediterranean diet, social connection, purpose and ikigai, movement patterns, sleep optimization, stress management, preventive health, and honest supplement evidence review. Use when the user asks about longevity practices, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of longevity practices or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "nutrition",
+    "stress-management",
+    "guide",
+    "quick-reference",
+    "analysis",
+    "research",
+    "networking"
+  ],
+  "requiredCapabilities": []
+}

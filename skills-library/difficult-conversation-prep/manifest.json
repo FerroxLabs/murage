@@ -1,0 +1,14 @@
+{
+  "id": "difficult-conversation-prep",
+  "name": "Difficult Conversation Prep",
+  "version": "1.0.0",
+  "description": "Provides structured preparation frameworks for difficult conversations in personal relationships. Produces pre-conversation plans with intent clarification, anticipated responses, setting and timing recommendations, opening scripts, and de-escalation strategies. Use when the user needs to prepare for a difficult conversation with a partner, family member, friend, or other personal relationship. Do NOT use for workplace difficult conversations (use business communication skills), couples therapy preparation, or assessing relationship health.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "relationships",
+    "planning",
+    "strategy",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

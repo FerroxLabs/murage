@@ -1,0 +1,14 @@
+{
+  "id": "conversion-rate-optimizer",
+  "name": "Conversion Rate Optimizer",
+  "version": "1.0.0",
+  "description": "Systematic CRO methodology covering conversion audits, hypothesis generation, A/B and multivariate testing, heatmap and session recording analysis, user research techniques, landing page optimization, funnel analysis, and statistical significance for data-driven growth. Use when the user asks about conversion rate optimizer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "seo",
+    "analysis",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

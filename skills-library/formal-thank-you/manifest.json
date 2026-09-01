@@ -1,0 +1,13 @@
+{
+  "id": "formal-thank-you",
+  "name": "Formal Thank You",
+  "version": "1.0.0",
+  "description": "Writes specific, occasion-appropriate formal thank-you letters and notes that go beyond generic gratitude by naming the exact gift, action, or impact being acknowledged. Use when the user asks to write a thank-you note, gratitude letter, acknowledgment letter, or formal expression of thanks for a specific occasion or gift. Do NOT use for casual text messages (too informal for this skill), business follow-up emails (use business email skills), or general appreciation messages to teams (use business communication skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "email",
+    "personal-communication"
+  ],
+  "requiredCapabilities": []
+}

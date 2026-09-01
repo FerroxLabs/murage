@@ -1,0 +1,14 @@
+{
+  "id": "error-handler",
+  "name": "Error Handler",
+  "version": "1.0.0",
+  "description": "Error handling architecture covering error hierarchy design, error codes vs exceptions, retry strategies, graceful degradation, error logging, user-facing messages, and error boundary patterns. Use when the user asks about error handler, error handler best practices, or needs guidance on error handler implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "debugging",
+    "guide",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

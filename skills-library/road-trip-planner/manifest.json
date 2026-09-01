@@ -1,0 +1,15 @@
+{
+  "id": "road-trip-planner",
+  "name": "Road Trip Planner",
+  "version": "1.0.0",
+  "description": "Plans road trip routes with driving legs, rest stops, overnight locations, fuel estimates, and points of interest along the way. Gathers origin, destination, trip duration, vehicle type, and interests to produce a leg-by-leg driving itinerary with daily mileage and time breakdowns. Use when the user asks to plan a road trip, create a driving route, find stops along a highway route, or organize a multi-day driving vacation. Do NOT use for city-based trip itineraries (use trip-itinerary-builder), flight-based travel, or cycling route planning.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "itinerary",
+    "planning",
+    "checklist",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

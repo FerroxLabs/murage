@@ -1,0 +1,19 @@
+{
+  "id": "entrepreneurship-readiness",
+  "name": "Entrepreneurship Readiness",
+  "version": "1.0.0",
+  "description": "Assess readiness to start a business by evaluating risk tolerance, essential skills, available resources, market awareness, and personal resilience for the entrepreneurial journey Use when the user asks about entrepreneurship readiness, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of entrepreneurship readiness or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "teaching",
+    "budgeting",
+    "checklist",
+    "template",
+    "testing",
+    "analysis",
+    "research",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

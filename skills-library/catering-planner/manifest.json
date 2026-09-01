@@ -1,0 +1,15 @@
+{
+  "id": "catering-planner",
+  "name": "Catering Planner",
+  "version": "1.0.0",
+  "description": "Complete guide to catering planning covering menu design by event type, dietary accommodation strategies, quantity calculations, event timeline management, vendor coordination, food presentation and display, per-head budgeting, and cleanup logistics. Use when the user asks about catering planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "event-planning",
+    "planning",
+    "checklist",
+    "cooking",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

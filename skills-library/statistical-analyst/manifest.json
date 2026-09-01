@@ -1,0 +1,19 @@
+{
+  "id": "statistical-analyst",
+  "name": "Statistical Analyst",
+  "version": "1.0.0",
+  "description": "Applied statistics guide covering hypothesis testing, regression analysis, ANOVA, confidence intervals, p-value interpretation, and practical statistical decision-making with Python implementations. Use when the user asks about statistical analyst, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of statistical analyst or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "statistics",
+    "checklist",
+    "template",
+    "guide",
+    "step-by-step",
+    "python",
+    "api-design",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

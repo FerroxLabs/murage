@@ -1,0 +1,15 @@
+{
+  "id": "trigger-identification",
+  "name": "Trigger Identification",
+  "version": "1.0.0",
+  "description": "Conducts a structured cue-routine-reward analysis to identify the triggers behind unwanted habits and the rewards those habits provide. Gathers the user's target habit and context, then produces a trigger analysis worksheet, pattern map, and substitution plan with healthier routines that deliver the same reward. Use when the user asks about understanding why they do a bad habit, identifying habit triggers, breaking a habit loop, cue-routine-reward analysis, or understanding behavior patterns. Do NOT use for addiction assessment or treatment, clinical behavior analysis, or substance dependency.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "mental-wellness",
+    "goal-setting",
+    "habits",
+    "emotional-health",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

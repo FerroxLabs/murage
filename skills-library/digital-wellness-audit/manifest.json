@@ -1,0 +1,18 @@
+{
+  "id": "digital-wellness-audit",
+  "name": "Digital Wellness Audit",
+  "version": "1.0.0",
+  "description": "Comprehensive digital wellness assessment covering screen time patterns, social media impact, notification overload, digital boundaries, online behavior health, and producing a personalized digital wellness improvement plan. Use when the user asks about digital wellness audit, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of digital wellness audit or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "assessment",
+    "health-wellness",
+    "testing",
+    "marketing",
+    "performing-arts",
+    "video-production",
+    "podcast",
+    "email"
+  ],
+  "requiredCapabilities": []
+}

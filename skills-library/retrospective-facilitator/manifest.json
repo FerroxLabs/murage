@@ -1,0 +1,14 @@
+{
+  "id": "retrospective-facilitator",
+  "name": "Retrospective Facilitator",
+  "version": "1.0.0",
+  "description": "Produces a project retrospective session plan with a timed agenda, structured prompts for what went well and what to improve, and an action item template with owners and due dates. Delivers the complete facilitation guide for a personal or small-team retrospective. Use when the user asks about running a retrospective, reviewing a completed project, facilitating a lessons-learned session, or reflecting on what worked and what did not. Do NOT use for weekly reviews of ongoing work (use weekly-review), project status updates (use project-status-report), or enterprise team retrospectives at organizational scale (use business project-management skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "planning",
+    "checklist",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

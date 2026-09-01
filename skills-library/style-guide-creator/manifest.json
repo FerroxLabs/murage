@@ -1,0 +1,14 @@
+{
+  "id": "style-guide-creator",
+  "name": "Style Guide Creator",
+  "version": "1.0.0",
+  "description": "Expert technical style guide creation covering tone and voice definition, terminology glossary, formatting standards, code sample conventions, inclusive language, abbreviation rules, numbering/list conventions, cross-reference patterns, and review checklist. Use when the user asks about style guide creator, style guide creator best practices, or needs guidance on style guide creator implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "technical-writing",
+    "documentation",
+    "best-practices",
+    "writing"
+  ],
+  "requiredCapabilities": []
+}

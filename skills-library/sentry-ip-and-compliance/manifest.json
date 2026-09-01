@@ -1,0 +1,14 @@
+{
+  "id": "sentry-ip-and-compliance",
+  "name": "IP and compliance",
+  "version": "1.0.0",
+  "description": "This skill explains common IP moves and the most-cited compliance regimes for early-stage product companies. It does not file your trademark, write your privacy policy, or interpret a regulator's order. Escalate to counsel any time you're in a regulated industry (health, finance, legal services, any",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sentry",
+    "ip",
+    "and",
+    "compliance"
+  ],
+  "requiredCapabilities": []
+}

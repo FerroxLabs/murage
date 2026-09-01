@@ -1,0 +1,15 @@
+{
+  "id": "trust-basics-explainer",
+  "name": "Trust Basics Explainer",
+  "version": "1.0.0",
+  "description": "Explains the fundamental trust types (revocable, irrevocable, living, testamentary), how trusts work, what problems they solve, and when to ask an attorney about them. Produces a trust type comparison table and an attorney consultation question list. Use when the user asks about trusts, whether they need a trust, revocable vs. irrevocable trusts, or how trusts compare to wills. Do NOT use for recommending a specific trust type, drafting trust documents, or providing tax advice on trust strategies.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "estate-planning",
+    "legal-literacy",
+    "guide",
+    "research",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

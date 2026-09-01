@@ -1,0 +1,15 @@
+{
+  "id": "renovation-budget",
+  "name": "Renovation Budget",
+  "version": "1.0.0",
+  "description": "Creates detailed home renovation budgets with cost-per-square-foot estimates by project type, contingency calculations, and cost-versus-value analysis. Produces a line-item budget table with material, labor, and contingency breakdowns. Use when the user asks about renovation costs, remodeling budgets, home improvement estimates, kitchen or bathroom remodel pricing, or how much a renovation will cost. Do NOT use for new construction budgets, commercial renovation, real estate investment analysis, or interior decorating without structural changes (use interior-design-principles instead).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "planning",
+    "decision-making",
+    "budgeting",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

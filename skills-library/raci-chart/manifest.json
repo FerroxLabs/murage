@@ -1,0 +1,16 @@
+{
+  "id": "raci-chart",
+  "name": "Raci Chart",
+  "version": "1.0.0",
+  "description": "Creates a RACI responsibility assignment matrix for defined processes with roles, decision rights, and escalation paths using RACI methodology. Use when the user asks about RACI charts, RACI matrices, responsibility assignment, role clarity, decision rights, or process ownership. Do NOT use for organizational charts, project management plans, or team structure design.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "template",
+    "planning",
+    "project-management",
+    "checklist",
+    "strategy",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "inbox-zero",
+  "name": "Inbox Zero",
+  "version": "1.0.0",
+  "description": "Builds a complete email processing system with batch processing schedule, decision tree for each message type, folder structure, unsubscribe protocol, and response templates. Produces a deployable system, not tips for managing email. Use when the user asks about inbox zero, email management, reducing email overload, or building an email processing workflow. Do NOT use for writing individual emails (use writing skills), building email templates for marketing (use business skills), or general task capture (use task-capture-system).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "time-management",
+    "automation",
+    "template",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

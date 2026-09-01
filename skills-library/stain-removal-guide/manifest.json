@@ -1,0 +1,17 @@
+{
+  "id": "stain-removal-guide",
+  "name": "Stain Removal Guide",
+  "version": "1.0.0",
+  "description": "Quick reference for removing common stains from clothing and fabrics - matched by stain type, fabric type, and chemical solution with step-by-step techniques. Use when the user asks about stain removal guide, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of stain removal guide or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quickstart",
+    "home-maintenance",
+    "guide",
+    "step-by-step",
+    "testing",
+    "cleaning",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

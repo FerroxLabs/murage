@@ -1,0 +1,18 @@
+{
+  "id": "emergency-kit-builder",
+  "name": "Emergency Kit Builder",
+  "version": "1.0.0",
+  "description": "Comprehensive guidance for building 72-hour emergency kits, vehicle kits, office kits, and specialized kits with seasonal considerations, maintenance schedules, and budget-friendly options Use when the user asks about emergency kit builder, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of emergency kit builder or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "budgeting",
+    "nutrition",
+    "stress-management",
+    "quick-reference",
+    "cloud",
+    "testing",
+    "planning"
+  ],
+  "requiredCapabilities": []
+}

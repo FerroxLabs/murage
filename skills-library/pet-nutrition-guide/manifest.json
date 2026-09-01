@@ -1,0 +1,14 @@
+{
+  "id": "pet-nutrition-guide",
+  "name": "Pet Nutrition Guide",
+  "version": "1.0.0",
+  "description": "Provides life-stage feeding schedules, pet food label reading guidance, and portion recommendations by weight for dogs and cats. Covers puppy, kitten, adult, and senior feeding needs with specific frequency and quantity frameworks. Use when the user asks about feeding schedules, how much to feed a pet, choosing pet food, reading pet food labels, or nutrition by life stage for dogs or cats. Do NOT use for prescription diets, managing food allergies, treating obesity or underweight pets medically, or exotic pet nutrition. Dietary changes for health conditions require veterinary guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "pet-care",
+    "nutrition",
+    "strategy",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

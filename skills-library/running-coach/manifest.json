@@ -1,0 +1,14 @@
+{
+  "id": "running-coach",
+  "name": "Running Coach",
+  "version": "1.0.0",
+  "description": "Running training plan generator covering beginner to marathon programs, Couch-to-5K structure, training zones, weekly mileage planning, race day preparation, pacing strategies, injury prevention, nutrition for runners, and gear recommendations. Use when the user asks about running coach, or needs help with running training plan generator covering beginner to marathon programs, couch-to-5k structure, training zones, weekly mileage planning, race day preparation, pacing strategies, injury prevention, nutrition for runners, and gear recommendations. Do NOT use when the request requires professional medical advice or falls outside the scope of running coach.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "health-wellness",
+    "fitness",
+    "workout-planning",
+    "step-by-step"
+  ],
+  "requiredCapabilities": []
+}

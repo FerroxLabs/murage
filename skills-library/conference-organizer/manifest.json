@@ -1,0 +1,14 @@
+{
+  "id": "conference-organizer",
+  "name": "Conference Organizer",
+  "version": "1.0.0",
+  "description": "Complete guide to organizing conferences and large events covering venue selection, speaker management, agenda design, sponsorship acquisition, registration systems, A/V requirements, volunteer coordination, post-event follow-up, and budget management. Use when the user asks about conference organizer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "event-planning",
+    "planning",
+    "strategy",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

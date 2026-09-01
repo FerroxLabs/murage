@@ -1,0 +1,14 @@
+{
+  "id": "bi-dashboard-spec",
+  "name": "Bi Dashboard Spec",
+  "version": "1.0.0",
+  "description": "Produces a BI dashboard specification for a named business function including dashboard purpose, audience, KPIs displayed, panel layout, refresh cadence, access permissions, and alert thresholds. Outputs a complete spec ready for implementation in any BI tool. Use when the user asks to design a dashboard, create a dashboard specification, plan a BI dashboard layout, or define what should appear on a business dashboard. Do NOT use for individual KPI definitions with formulas (use kpi-definition), metric hierarchy design (use metric-framework), or data visualization chart selection (use chart-type-selector).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-visualization",
+    "analysis",
+    "template",
+    "data-analysis"
+  ],
+  "requiredCapabilities": []
+}

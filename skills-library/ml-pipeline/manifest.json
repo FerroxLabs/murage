@@ -1,0 +1,14 @@
+{
+  "id": "ml-pipeline",
+  "name": "Ml Pipeline",
+  "version": "1.0.0",
+  "description": "ML pipeline design covering feature engineering, model training workflows, hyperparameter tuning, cross-validation, experiment tracking (MLflow, W&B), model versioning, data versioning (DVC), reproducibility, and pipeline orchestration. Use when the user asks about ml pipeline, ml pipeline best practices, or needs guidance on ml pipeline implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "ai-ml",
+    "automation",
+    "guide",
+    "ai-machine-learning"
+  ],
+  "requiredCapabilities": []
+}

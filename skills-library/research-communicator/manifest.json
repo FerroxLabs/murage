@@ -1,0 +1,18 @@
+{
+  "id": "research-communicator",
+  "name": "Research Communicator",
+  "version": "1.0.0",
+  "description": "Expert guidance for communicating research findings to non-specialist audiences through press releases, lay summaries, conference presentations, media interviews, and public engagement strategies. Use when the user asks about research communicator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of research communicator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "writing",
+    "technical-writing",
+    "journaling",
+    "checklist",
+    "template",
+    "step-by-step",
+    "testing",
+    "analysis"
+  ],
+  "requiredCapabilities": []
+}

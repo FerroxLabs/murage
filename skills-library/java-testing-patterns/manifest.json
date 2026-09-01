@@ -1,0 +1,14 @@
+{
+  "id": "java-testing-patterns",
+  "name": "Java Testing Patterns",
+  "version": "1.0.0",
+  "description": "Guides expert-level Java testing: JUnit 5, Mockito, AssertJ, Testcontainers, parameterized tests, and Spring Boot test slices. Use when the user asks about Java testing, JUnit 5, Mockito, AssertJ, Testcontainers, parameterized tests, Spring Boot testing. Do NOT use when the user asks about Java project setup (use `java-project-setup`), Java Spring patterns (use `java-spring-patterns`), general testing concepts (use `unit-testing-patterns`).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "java",
+    "testing",
+    "tdd",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

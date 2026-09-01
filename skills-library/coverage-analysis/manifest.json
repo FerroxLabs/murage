@@ -1,0 +1,14 @@
+{
+  "id": "coverage-analysis",
+  "name": "Coverage Analysis",
+  "version": "1.0.0",
+  "description": "Guides expert-level coverage analysis implementation: clean-code and best-practices decision frameworks, production-ready patterns, and concrete templates for coverage analysis workflows. Use when the user asks about coverage analysis, coverage analysis configuration, or testing best practices for coverage projects. Do NOT use when the user needs a different testing quality capability -- check sibling skills in the testing quality subcategory.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "clean-code",
+    "best-practices",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

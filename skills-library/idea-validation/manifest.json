@@ -1,0 +1,16 @@
+{
+  "id": "idea-validation",
+  "name": "Idea Validation",
+  "version": "1.0.0",
+  "description": "Creates an idea validation plan using lean startup methodology with assumptions mapping, riskiest assumption tests, success criteria, and timeline for systematic business idea validation. Use when the user asks about idea validation, validating a business idea, testing assumptions, lean startup validation, or riskiest assumption testing. Do NOT use for building a full business plan (use business-plan), creating a Lean Canvas (use lean-canvas), or defining an MVP (use mvp-definition).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "entrepreneurship",
+    "strategy",
+    "planning",
+    "research",
+    "analysis",
+    "business-strategy"
+  ],
+  "requiredCapabilities": []
+}

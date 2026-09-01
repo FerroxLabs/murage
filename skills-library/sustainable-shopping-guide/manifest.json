@@ -1,0 +1,14 @@
+{
+  "id": "sustainable-shopping-guide",
+  "name": "Sustainable Shopping Guide",
+  "version": "1.0.0",
+  "description": "Evaluates purchasing decisions across product categories by comparing eco-alternatives to conventional options using quality-longevity scoring, lifecycle cost analysis, and environmental impact criteria. Gathers the user's shopping needs, budget, and priorities to produce a category-by-category sustainable purchasing framework without brand endorsements. Use when the user asks about eco-friendly product alternatives, sustainable shopping practices, evaluating product longevity vs. disposability, or reducing the environmental impact of purchases. Do NOT use for grocery or food shopping (use waste-reduction-planner for food waste), investment decisions on green technology, business procurement sustainability, or evaluating corporate sustainability claims.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sustainable-shopping",
+    "sustainability",
+    "checklist",
+    "guide"
+  ],
+  "requiredCapabilities": []
+}

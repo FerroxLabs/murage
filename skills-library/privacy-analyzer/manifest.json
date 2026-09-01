@@ -1,0 +1,14 @@
+{
+  "id": "privacy-analyzer",
+  "name": "Privacy Analyzer",
+  "version": "1.0.0",
+  "description": "Framework for analyzing privacy policies and terms of service including key sections to examine, data collection red flags, opt-out rights under CCPA and GDPR, cookie consent, data sharing practices, account deletion rights, comparison framework, and children's privacy under COPPA. Use when the user asks about privacy analyzer, or needs help with framework for analyzing privacy policies and terms of service including key sections to examine, data collection red flags, opt-out rights under ccpa and gdpr, cookie consent, data sharing practices, account deletion rights, comparison framework, and children's privacy under coppa. Do NOT use when the request requires professional legal advice or falls outside the scope of privacy analyzer.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "legal-literacy",
+    "contracts",
+    "security",
+    "legal-civic"
+  ],
+  "requiredCapabilities": []
+}

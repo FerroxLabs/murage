@@ -1,0 +1,15 @@
+{
+  "id": "travel-safety-prep",
+  "name": "Travel Safety Prep",
+  "version": "1.0.0",
+  "description": "Creates a pre-departure safety checklist and emergency contacts template for travel. Gathers destination, trip type, traveler profile, and health considerations to produce a numbered action checklist with deadlines and an emergency reference card the traveler can carry. Use when the user asks about travel safety preparation, creating an emergency contacts card, pre-trip safety planning, or how to prepare for travel emergencies. Do NOT use for solo travel planning (use solo-travel-planner), travel insurance comparison (use travel-insurance-evaluator), or workplace safety compliance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "travel",
+    "safety",
+    "checklist",
+    "planning",
+    "travel-experiences"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "migrate-monolith-to-microservices",
+  "name": "Migrate Monolith To Microservices",
+  "version": "1.0.0",
+  "description": "Systematic workflow for decomposing a monolithic application into microservices using the strangler fig pattern. Covers domain analysis, service extraction, inter-service communication, data ownership migration, deployment strategies, and the organizational changes needed to support a distributed architecture. Use when the user wants to migrate monolith to microservices or needs a structured multi-step process for this goal. Do NOT use when the request is a single-step task or requires professional advice beyond educational guidance.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "microservices",
+    "architecture",
+    "step-by-step",
+    "planning",
+    "software-project"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "scope-creep-management",
+  "name": "Scope Creep Management",
+  "version": "1.0.0",
+  "description": "Builds a change control process for a project with a request intake form, evaluation criteria, impact assessment template, and decision log. Produces a deployable system that prevents uncontrolled scope expansion in personal or small-team projects. Use when the user asks about managing scope creep, handling change requests, preventing feature bloat, or building a process to evaluate additions to an ongoing project. Do NOT use for initial project scoping (use project-kickoff), enterprise change management (use business project-management skills), or product roadmap prioritization (use business strategy skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "project-management",
+    "template",
+    "planning",
+    "productivity"
+  ],
+  "requiredCapabilities": []
+}

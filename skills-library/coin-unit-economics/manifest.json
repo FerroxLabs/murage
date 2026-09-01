@@ -1,0 +1,13 @@
+{
+  "id": "coin-unit-economics",
+  "name": "Unit economics",
+  "version": "1.0.0",
+  "description": "The user is asking whether the *product* makes money — not whether the month did. Load when you hear \"is this customer profitable,\" \"what's our CAC,\" \"what's the LTV,\" \"how long until a customer pays back,\" or \"should we spend more on acquisition.\"",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "coin",
+    "unit",
+    "economics"
+  ],
+  "requiredCapabilities": []
+}

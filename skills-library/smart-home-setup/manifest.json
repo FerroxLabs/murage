@@ -1,0 +1,14 @@
+{
+  "id": "smart-home-setup",
+  "name": "Smart Home Setup",
+  "version": "1.0.0",
+  "description": "Plans a smart home system covering device compatibility frameworks, hub versus hub-free architectures, network requirements, and privacy considerations. Produces a phased implementation plan with device categories, protocol selection, and network preparation steps. Use when the user asks about setting up smart home devices, choosing a smart home platform, connecting devices together, home automation planning, or smart home privacy and security. Do NOT use for specific device configuration or troubleshooting, home network infrastructure design (routers, switches, cabling), or commercial building automation systems.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "home-maintenance",
+    "planning",
+    "automation",
+    "home-household"
+  ],
+  "requiredCapabilities": []
+}

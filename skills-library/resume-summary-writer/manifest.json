@@ -1,0 +1,14 @@
+{
+  "id": "resume-summary-writer",
+  "name": "Resume Summary Writer",
+  "version": "1.0.0",
+  "description": "Writes a 3-5 sentence professional summary section for a resume, tailored to the target role and experience level. The summary leads with the strongest differentiators and uses language aligned to the target field. Produces complete, paste-ready summary text. Use when the user wants to write or improve their resume summary, professional profile, or career summary section. Do NOT use for resume experience bullets (use resume-bullet-writer), career change resume rewrites (use career-change-resume), or LinkedIn About sections (use linkedin-summary-writer).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "resume-writing",
+    "career",
+    "template",
+    "career-development"
+  ],
+  "requiredCapabilities": []
+}

@@ -1,0 +1,14 @@
+{
+  "id": "meal-prep-batch-cooking",
+  "name": "Meal Prep Batch Cooking",
+  "version": "1.0.0",
+  "description": "Designs batch cooking workflows with optimal prep order, simultaneous cooking strategies, storage container guidance, and food-safe storage duration references. Produces a timed prep-day plan and a refrigerator inventory with use-by dates. Use when the user asks about meal prep, batch cooking, Sunday prep routines, or how to cook once and eat multiple meals throughout the week. Do NOT use for meal planning (use meal-planning-framework), macro calculations (use macro-calculation), or specific recipe creation.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "nutrition",
+    "meal-planning",
+    "cooking",
+    "health-wellness"
+  ],
+  "requiredCapabilities": []
+}

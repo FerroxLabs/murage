@@ -1,0 +1,14 @@
+{
+  "id": "sql-master",
+  "name": "Sql Master",
+  "version": "1.0.0",
+  "description": "Advanced SQL expertise including window functions, CTEs, recursive queries, query optimization with EXPLAIN plans, indexing strategies, pivot/unpivot operations, JSON operations, full-text search, stored procedures, and identification of performance anti-patterns across PostgreSQL, MySQL, and SQL Server. Use when the user asks about sql master, sql master best practices, or needs guidance on sql master implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "data-science",
+    "sql",
+    "guide",
+    "data-engineering"
+  ],
+  "requiredCapabilities": []
+}

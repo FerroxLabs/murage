@@ -1,0 +1,17 @@
+{
+  "id": "multi-symbol-scan",
+  "name": "Multi Symbol Scan",
+  "version": "1.0.0",
+  "description": "Scan multiple symbols for setups, patterns, or strategy performance. Use when comparing across instruments or screening for opportunities.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "multi",
+    "symbol",
+    "scan",
+    "trading",
+    "tradingview",
+    "charts",
+    "markets"
+  ],
+  "requiredCapabilities": []
+}

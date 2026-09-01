@@ -1,0 +1,15 @@
+{
+  "id": "product-description",
+  "name": "Product Description",
+  "version": "1.0.0",
+  "description": "Produces e-commerce product descriptions using features-benefits-proof methodology that converts browsers into buyers. Use when the user asks to write product descriptions, create e-commerce listing copy, write product page text, draft product descriptions for online stores, or write copy for product listings. Do NOT use for landing page copy (use landing-page-copy), ad copy (use paid-ad-copy), or full marketing campaign (use campaign-planning).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "marketing-copy",
+    "writing",
+    "template",
+    "marketing-sales"
+  ],
+  "requiredCapabilities": []
+}

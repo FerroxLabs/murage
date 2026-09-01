@@ -1,0 +1,15 @@
+{
+  "id": "drawing-fundamentals-beginner",
+  "name": "Drawing Fundamentals Beginner",
+  "version": "1.0.0",
+  "description": "Teaches absolute beginners the core drawing skills: gesture drawing for capturing movement, basic form construction (sphere, box, cylinder, cone), line weight control, contour drawing, and value shading. Includes 5 specific starter drills with measurable progression targets. Use when the user wants to learn to draw from scratch, improve basic drawing skills, understand form and line quality, or needs structured drawing exercises. Do NOT use for watercolor painting (use watercolor-basics), digital illustration tools, or professional illustration and design (use design-creative skills).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "beginner-friendly",
+    "step-by-step",
+    "guide",
+    "checklist",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}

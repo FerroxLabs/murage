@@ -1,0 +1,19 @@
+{
+  "id": "moral-framework-navigator",
+  "name": "Moral Framework Navigator",
+  "version": "1.0.0",
+  "description": "Structured comparative guide to major moral philosophies including consequentialism, deontology, virtue ethics, contractualism, and care ethics, with side-by-side analysis tools, framework selection guidance, case study applications, and exercises for developing ethical reasoning fluency. Use when the user asks about moral framework navigator, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of moral framework navigator or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "teaching",
+    "study-skills",
+    "template",
+    "guide",
+    "beginner-friendly",
+    "testing",
+    "analysis",
+    "performing-arts",
+    "education"
+  ],
+  "requiredCapabilities": []
+}

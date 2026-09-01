@@ -1,0 +1,14 @@
+{
+  "id": "regex-master",
+  "name": "Regex Master",
+  "version": "1.0.0",
+  "description": "Regular expression expert covering syntax reference, common patterns, performance optimization, lookaround assertions, named groups, language-specific flavors, and testing strategies. Use when the user asks about regex master, regex master best practices, or needs guidance on regex master implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "best-practices",
+    "guide",
+    "step-by-step",
+    "software-engineering"
+  ],
+  "requiredCapabilities": []
+}

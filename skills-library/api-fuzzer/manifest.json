@@ -1,0 +1,14 @@
+{
+  "id": "api-fuzzer",
+  "name": "Api Fuzzer",
+  "version": "1.0.0",
+  "description": "API fuzz testing expert covering property-based testing with Hypothesis and fast-check, fuzz testing strategies for REST and GraphQL APIs, edge case generation, mutation testing with Stryker and mutmut, boundary value analysis, schema-driven fuzzing, and automated discovery of bugs through randomized inputs. Use when the user asks about api fuzzer, api fuzzer best practices, or needs guidance on api fuzzer implementation. Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "testing",
+    "best-practices",
+    "security",
+    "testing-quality"
+  ],
+  "requiredCapabilities": []
+}

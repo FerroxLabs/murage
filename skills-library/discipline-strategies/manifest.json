@@ -1,0 +1,14 @@
+{
+  "id": "discipline-strategies",
+  "name": "Discipline Strategies",
+  "version": "1.0.0",
+  "description": "Provides positive discipline frameworks including logical consequences, positive reinforcement, and behavior management strategies organized by child age and situation type. Produces structured discipline plans with specific language scripts and consistency guidelines. Use when the user asks about disciplining children, managing challenging behavior, setting limits, or finding alternatives to punitive approaches. Do NOT use for clinical behavioral assessment, diagnosing behavioral disorders, or replacing guidance from a child psychologist.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "parenting",
+    "planning",
+    "guide",
+    "family-relationships"
+  ],
+  "requiredCapabilities": []
+}

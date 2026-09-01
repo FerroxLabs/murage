@@ -1,0 +1,19 @@
+{
+  "id": "furniture-restorer",
+  "name": "Furniture Restorer",
+  "version": "1.0.0",
+  "description": "Comprehensive guide to furniture restoration covering stripping, wood repair, finishing techniques, upholstery basics, tool requirements, and safety procedures for bringing damaged pieces back to life. Use when the user asks about furniture restorer, related techniques, best practices, or needs guidance in this domain. Do NOT use when the request is outside the scope of furniture restorer or requires a different specialized skill.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "guide",
+    "woodworking",
+    "beginner-friendly",
+    "testing",
+    "planning",
+    "safety",
+    "restoration",
+    "waste-reduction",
+    "hobbies-crafts"
+  ],
+  "requiredCapabilities": []
+}
