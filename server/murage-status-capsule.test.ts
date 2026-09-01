@@ -155,10 +155,14 @@ function cachePath(capsule: TestCapsule): string {
 posixOnly("readMurageStatus", () => {
   it("projects only fresh normalized two-VM capability data", () => {
     const capsule = successCapsule();
-    // Cross-language receipt produced by scripts/aos_murage_status.py
-    // for this exact normalized fixture.
+    // Receipt over this exact normalized fixture. The value changed when the
+    // schema id was rebranded (upstream scoped it to their app name too:
+    // aos.openmausbot_status.v1), and the schema string is inside the signed
+    // payload. Murage is the only producer and the only consumer, so the
+    // rename is safe — but this constant pins the canonical form, so a
+    // silent change to field order or normalization still fails here.
     expect(capsule.receipt_sha256).toBe(
-      "sha256:2f76115fcbf37dfc5406d4a7a460c5e3016ff87184cd9e314bf4cc11022e2d7c",
+      "sha256:491f53aec619a5e0bbe657e9be02bf58a81804842b3e4941f6e3eb0768464c65",
     );
     const path = cachePath(capsule);
 
