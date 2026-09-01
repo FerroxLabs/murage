@@ -197,7 +197,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             <img
               src="/murage-logo.png"
               alt="Murage"
-              className="mb-6 h-8 w-auto"
+              className="mb-7 h-14 w-auto"
               draggable={false}
             />
             <EmberAvatar color="orange" state="happy" size={72} />
