@@ -10,7 +10,7 @@
 // on this machine, plus (async, best-effort) whatever PATH the user's
 // real login shell reports.
 import { execFile } from "node:child_process";
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, readdirSync } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, openSync, readFileSync, readSync, statSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, extname, join } from "node:path";
 
@@ -35,6 +35,7 @@ function knownDirs(): string[] {
     join(home, ".npm-global", "bin"), // npm prefix ~/.npm-global (claude, opencode)
     join(home, ".kimi-code", "bin"), // kimi-code installer
     join(home, ".grok", "bin"), // x.ai installer
+    join(home, ".fuigo", "bin"), // fuigo installer (npm postinstall target)
     join(home, ".opencode", "bin"), // opencode installer
     join(home, ".claude", "local"), // claude "local install"
     "/opt/homebrew/bin", // brew, Apple silicon
@@ -62,6 +63,7 @@ function windowsKnownDirs(): string[] {
   return [
     join(appData, "npm"), // npm -g shims: claude, codex
     join(home, ".grok", "bin"), // x.ai installer
+    join(home, ".fuigo", "bin"), // fuigo installer (npm postinstall target)
     join(localAppData, "agy", "bin"), // Antigravity installer
     join(home, ".local", "bin"), // claude native installer
     join(home, ".claude", "local"),
@@ -339,4 +341,82 @@ export function resolveCliSpawn(cli: string, args: string[]): ResolvedSpawn {
     return resolveWord(head, [...fixed, ...args]);
   }
   return resolveWord(cli, args);
+}
+
+// Bundled Fuigo engine ──────────────────────────────────────────────────
+// Murage ships Ferrox Labs' own `fuigo` engine as a real native executable in
+// Resources so a desktop install has a working engine with no Node, npm or
+// npx on the machine. electron/harness-resources.mjs is the single place the
+// electron-builder `to:` directory and this env variable are declared, and
+// the packaged main process hands MURAGE_FUIGO_DIR to the server child.
+
+/** Keep in step with FUIGO_EXECUTABLE_NAMES in electron/harness-resources.mjs,
+ * which is what electron-builder's `to:` basenames are asserted against. */
+function fuigoExecutableName(platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? "fuigo.exe" : "fuigo";
+}
+
+/** Where the bundled engine would be, or null when nothing declared one.
+ * Null is not "no engine" — it only means this process was not told about a
+ * packaged Resources directory (an unpackaged dev run, or a build that never
+ * staged it). resolveFuigoCli turns that into a named error. */
+export function bundledFuigoPath(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  const directory = env.MURAGE_FUIGO_DIR?.trim();
+  if (!directory) return null;
+  return join(directory, fuigoExecutableName(platform));
+}
+
+export interface ResolvedEngineBinary {
+  /** Absolute path to spawn. */
+  command: string;
+  /** Which of the two candidates answered. */
+  source: "path" | "bundled";
+}
+
+/**
+ * The fuigo binary to spawn.
+ *
+ * ORDER — a `fuigo` the user installed themselves WINS over the bundled copy.
+ * The bundle exists so a clean machine works at all, not to override someone's
+ * own install: a user-installed fuigo may be newer than the pinned 1.0.1, may
+ * be a build they are developing against, and is the one their terminal runs,
+ * so the app agreeing with their terminal is the least surprising behaviour.
+ * The bundled binary is the fallback, and only the fallback.
+ *
+ * FAILS LOUDLY. An unset MURAGE_FUIGO_DIR is the exact shape of the bug that
+ * made MURAGE_SKILL_LIBRARY silently install zero skills through 0.1.44, so
+ * there is no empty-string or cwd fallback here: every way this can fail
+ * throws an error naming both places that were checked and which one broke.
+ */
+export function resolveFuigoCli(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): ResolvedEngineBinary {
+  const onPath = findCliCandidates(fuigoExecutableName(platform))[0];
+  if (onPath) return { command: onPath, source: "path" };
+
+  const bundled = bundledFuigoPath(env, platform);
+  if (!bundled) {
+    throw new Error(
+      "fuigo is unavailable: no fuigo on PATH, and MURAGE_FUIGO_DIR is not set so no bundled engine was " +
+        "declared. In a packaged app this means the fuigo resource was not shipped (see extraResources in " +
+        "electron-builder.yml); in development run `pnpm build:fuigo` and set MURAGE_FUIGO_DIR to " +
+        "dist-native/fuigo/<platform>-<arch>.",
+    );
+  }
+  if (!existsSync(bundled)) {
+    throw new Error(`fuigo is unavailable: no fuigo on PATH, and the bundled engine is missing at ${bundled}`);
+  }
+  try {
+    accessSync(bundled, constants.X_OK);
+  } catch {
+    throw new Error(
+      `fuigo is unavailable: the bundled engine at ${bundled} is not executable — its executable bit did not ` +
+        "survive packaging",
+    );
+  }
+  return { command: bundled, source: "bundled" };
 }

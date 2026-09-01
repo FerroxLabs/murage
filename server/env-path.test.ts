@@ -7,7 +7,14 @@ import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { augmentedPath, resetPathCache, resetPathCacheForTests, splitCliString } from "./env-path.ts";
+import {
+  augmentedPath,
+  bundledFuigoPath,
+  resetPathCache,
+  resetPathCacheForTests,
+  resolveFuigoCli,
+  splitCliString,
+} from "./env-path.ts";
 import { resolveCli } from "./procs.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
@@ -311,5 +318,84 @@ describe("resolveCli with wrapper commands", () => {
       command: join(bin, "murage"),
       args: ["space", "dir/nope", "two", "words", "--version"],
     });
+  });
+});
+
+// The bundled Fuigo engine. The whole point of shipping it is that a machine
+// with no Node, npm or npx still has a working engine — so a missing or
+// unrunnable bundle has to be a named error, never a quiet "no engine here".
+describe("resolveFuigoCli", () => {
+  let bundleDirectory: string;
+
+  beforeEach(() => {
+    bundleDirectory = mkdtempSync(join(tmpdir(), "murage-fuigo-"));
+    resetPathCacheForTests();
+  });
+
+  afterEach(() => {
+    delete process.env.MURAGE_FUIGO_DIR;
+    delete process.env.MURAGE_EXTRA_PATH;
+    rmSync(bundleDirectory, { recursive: true, force: true });
+    // setup.ts points homedir at a temp dir shared by this file, so a
+    // user-installed fuigo left behind would make every later case find one.
+    rmSync(join(homedir(), ".fuigo"), { recursive: true, force: true });
+    resetPathCacheForTests();
+  });
+
+  function bundle(mode = 0o755): string {
+    const binary = join(bundleDirectory, process.platform === "win32" ? "fuigo.exe" : "fuigo");
+    writeFileSync(binary, "#!/bin/sh\necho fuigo 1.0.1\n");
+    chmodSync(binary, mode);
+    return binary;
+  }
+
+  it("points at the executable inside the packaged resource directory", () => {
+    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "/R/fuigo" }, "darwin")).toBe("/R/fuigo/fuigo");
+    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "/R/fuigo" }, "win32")).toBe("/R/fuigo/fuigo.exe");
+    // Not "empty" — simply undeclared, which resolveFuigoCli turns into an error.
+    expect(bundledFuigoPath({}, "darwin")).toBeNull();
+    expect(bundledFuigoPath({ MURAGE_FUIGO_DIR: "  " }, "darwin")).toBeNull();
+  });
+
+  posixIt("falls back to the bundled engine when the user has no fuigo of their own", () => {
+    const binary = bundle();
+    process.env.MURAGE_FUIGO_DIR = bundleDirectory;
+    resetPathCacheForTests();
+    expect(resolveFuigoCli()).toEqual({ command: binary, source: "bundled" });
+  });
+
+  posixIt("lets a fuigo the user installed themselves win over the bundled copy", () => {
+    bundle();
+    process.env.MURAGE_FUIGO_DIR = bundleDirectory;
+    // ~/.fuigo/bin is where the npm postinstall puts a user's own engine, and
+    // augmentedPath() scans it even under a bare GUI PATH.
+    const installed = join(homedir(), ".fuigo", "bin");
+    mkdirSync(installed, { recursive: true });
+    const own = join(installed, "fuigo");
+    writeFileSync(own, "#!/bin/sh\necho fuigo 9.9.9\n");
+    chmodSync(own, 0o755);
+    resetPathCacheForTests();
+
+    expect(resolveFuigoCli()).toEqual({ command: own, source: "path" });
+  });
+
+  it("names the missing declaration rather than silently reporting no engine", () => {
+    delete process.env.MURAGE_FUIGO_DIR;
+    process.env.MURAGE_EXTRA_PATH = bundleDirectory; // deliberately empty
+    resetPathCacheForTests();
+    expect(() => resolveFuigoCli()).toThrow(/MURAGE_FUIGO_DIR is not set/);
+  });
+
+  it("names the missing file when the resource directory was declared but never shipped", () => {
+    process.env.MURAGE_FUIGO_DIR = join(bundleDirectory, "absent");
+    resetPathCacheForTests();
+    expect(() => resolveFuigoCli()).toThrow(/bundled engine is missing at/);
+  });
+
+  posixIt("names a lost executable bit instead of spawning something that cannot run", () => {
+    bundle(0o644);
+    process.env.MURAGE_FUIGO_DIR = bundleDirectory;
+    resetPathCacheForTests();
+    expect(() => resolveFuigoCli()).toThrow(/is not executable/);
   });
 });
