@@ -6,7 +6,7 @@ description: Build, verify, and publish the Windows desktop build (NSIS installe
 # Windows release
 
 Ships `Murage-<version>-setup.exe` and its update feed to
-[milind-soni/murage-releases](https://github.com/milind-soni/murage-releases).
+[FerroxLabs/murage-releases](https://github.com/FerroxLabs/murage-releases).
 
 **Scope: Windows only.** The macOS build is a separate flow (dmg + notarytool +
 staple) that must run on a Mac. This skill never touches mac artifacts — but see
@@ -59,7 +59,7 @@ Get-Content release\win-unpacked\resources\app-update.yml  # feed config
 - Missing `server/index.js` → `utilityProcess.fork` fails → the 🐭 "Couldn't start
   the bot server" page.
 - Missing `ui/index.html` → server has nothing to serve → black window.
-- `app-update.yml` must point at `milind-soni/murage-releases` and, while the
+- `app-update.yml` must point at `FerroxLabs/murage-releases` and, while the
   build is unsigned, **must not contain `publisherName`** — electron-updater would
   reject every update as untrusted.
 
@@ -80,7 +80,7 @@ carries both platforms.
 
 ```powershell
 Copy-Item release/Murage-<version>-setup.exe release/Murage-setup.exe
-gh release upload v<version> --repo milind-soni/murage-releases `
+gh release upload v<version> --repo FerroxLabs/murage-releases `
   release/Murage-<version>-setup.exe `
   release/Murage-setup.exe `
   release/Murage-<version>-setup.exe.blockmap `

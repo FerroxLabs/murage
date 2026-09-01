@@ -3,14 +3,14 @@
   "private": true,
   "version": "0.1.44",
   "description": "A local-first chat app for running a team of AI agents.",
-  "homepage": "https://github.com/milind-soni/Murage",
+  "homepage": "https://github.com/FerroxLabs/murage",
   "repository": {
     "type": "git",
-    "url": "https://github.com/milind-soni/Murage.git"
+    "url": "https://github.com/FerroxLabs/murage.git"
   },
   "author": {
-    "name": "Milind Soni",
-    "email": "46266943+milind-soni@users.noreply.github.com"
+    "name": "Ferrox Labs",
+    "email": "sean@ferroxlabs.com"
   },
   "license": "Apache-2.0",
   "desktopName": "com.murage.app.desktop",
