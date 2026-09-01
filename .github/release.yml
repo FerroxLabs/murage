@@ -1,0 +1,23 @@
+# Categories for GitHub's automatically generated release notes.
+#
+# Read from THIS repository when the Release workflow calls
+# repos/<owner>/<repo>/releases/generate-notes — the murage-releases repo
+# holds only assets, so it has no pull requests to generate notes from.
+# Label a pull request and it lands in the matching section of the draft.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: New features
+      labels:
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Other changes
+      labels:
+        - "*"

@@ -87,6 +87,11 @@ gh release upload v<version> --repo FerroxLabs/murage-releases `
   release/latest.yml
 ```
 
+Prefer the repository's **Release** workflow, which builds every platform from
+one pinned commit, refuses an incomplete asset set, and proves the uploaded
+bytes match what it staged. This manual path is for emergencies only, and never
+replaces the bytes of an already-published asset.
+
 Both names are required, for different consumers:
 
 - **`Murage-<version>-setup.exe`** is what `latest.yml` references by name and

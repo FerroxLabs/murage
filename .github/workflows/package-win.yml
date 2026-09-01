@@ -84,8 +84,12 @@ jobs:
           fi
           [ -f "$res/app-update.yml" ] || { echo "::error::missing $res/app-update.yml"; fail=1; }
           if [ -f "$res/app-update.yml" ]; then
-            grep -q "murage-releases" "$res/app-update.yml" || {
-              echo "::error::app-update.yml does not point at murage-releases"; fail=1; }
+            # Both halves, anchored: a substring match on the repo alone would
+            # pass a feed pointing at some other account's murage-releases.
+            grep -Eq '^owner: FerroxLabs$' "$res/app-update.yml" || {
+              echo "::error::app-update.yml does not point at owner FerroxLabs"; fail=1; }
+            grep -Eq '^repo: murage-releases$' "$res/app-update.yml" || {
+              echo "::error::app-update.yml does not point at repo murage-releases"; fail=1; }
             # the build is signed now, so publisherName is required: without
             # it electron-updater skips verification, and a mismatch rejects
             # every update as untrusted

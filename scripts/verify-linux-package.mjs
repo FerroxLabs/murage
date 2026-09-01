@@ -71,6 +71,20 @@ function requirePackageType(resources, label, expected) {
   }
 }
 
+// app-update.yml is baked into every packaged build and is the only thing
+// that tells an installed app where its updates come from. electron-builder
+// writes it from the `publish` block, so a stray edit there strands every
+// user on their installed version with no error anywhere. Pin the exact
+// owner/repo pair here, on the bytes that actually ship.
+function requireUpdaterTarget(resources, label) {
+  const updateFile = path.join(resources, "app-update.yml");
+  requireFile(updateFile);
+  const update = readFileSync(updateFile, "utf8");
+  if (!/^owner: FerroxLabs$/m.test(update) || !/^repo: murage-releases$/m.test(update)) {
+    fail(`${label} app-update.yml does not point at FerroxLabs/murage-releases`);
+  }
+}
+
 function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
@@ -413,6 +427,7 @@ for (const forbidden of ["speech-helper", "cua-driver", "cua-sdk"]) {
 }
 const unpackedCuaHashes = verifyCuaResources(resources, "linux-unpacked");
 const unpackedCloudflaredHash = verifyCloudflaredResources(resources, "linux-unpacked");
+requireUpdaterTarget(resources, "linux-unpacked");
 
 const fields = execFileSync(
   "dpkg-deb",
@@ -437,6 +452,7 @@ try {
   const debResources = path.join(debAppRoot, "resources");
   // Routes the in-app updater to the package-manager hand-off.
   requirePackageType(debResources, "DEB", "deb");
+  requireUpdaterTarget(debResources, "DEB");
   const debHashes = verifyCuaResources(debResources, "DEB");
   const debCloudflaredHash = verifyCloudflaredResources(debResources, "DEB");
   if (debCloudflaredHash !== unpackedCloudflaredHash) {
@@ -502,6 +518,7 @@ try {
   const appImageResources = path.join(squashRoot, "resources");
   // No marker: the AppImage keeps the in-place restart-to-update path.
   requirePackageType(appImageResources, "AppImage", null);
+  requireUpdaterTarget(appImageResources, "AppImage");
   // Depending on the pinned appimagetool runtime, SquashFS directories are
   // emitted as root:root 0755 or 0775. Require one mode consistently across
   // the reviewed resource tree. The app never executes through that path:
