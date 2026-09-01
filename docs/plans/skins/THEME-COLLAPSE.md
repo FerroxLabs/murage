@@ -1200,3 +1200,55 @@ subset was additionally verified by running an unmodified copy of the script
 against a scratch stylesheet containing only these two blocks. No value in this
 document was estimated, sampled from a screenshot, or rounded toward its
 threshold. Where a pair sits close to its bar it is bolded in the table.
+
+---
+
+## As built — 2026-09-02
+
+Implemented as specified. Every palette value, the migration map, the naming,
+the Automatic model and the three flash sources landed unchanged. Deltas worth
+recording:
+
+**Measured against the shipped stylesheet**, not a scratch copy.
+`node scripts/check-skin-contrast.mjs` (unmodified) reports
+`✓ dark — 37 pairs, none below target` / `✓ light — 37 pairs, none below target`,
+exit 0. Re-measuring all 51 pairs with the script's own functions reproduces
+§3.5 exactly: dark worst text **5.16:1** (`ink-secondary` on `raised-hover`),
+worst non-text **5.81:1** (`accent` on `card`), tightest surface step **1.10:1**;
+light worst text **4.69:1** (`success` on `app`), worst non-text **4.38:1**
+(`focus` on `inset`), tightest surface step **1.06:1**.
+
+**Not done, and why.** `scripts/**` and `package.json` were outside this change's
+lane, so §9.3's three edits to `scripts/check-skin-contrast.mjs` — dropping
+`BASELINE_FLOORS`, adding the 14 extra pairs, and wiring `check:contrast` into
+`pnpm test` — are still open. The two `BASELINE_FLOORS` rows are keyed
+`midnight|…` and now match nothing, so they are dead rather than dangerous, but
+they should be deleted. The 14 extra pairs were measured by hand and all pass;
+they are not yet enforced.
+
+**Two additions the spec did not anticipate.**
+
+- The stylesheet's own header comment contains the literal string
+  `[data-skin="auto"]` (explaining why no such block exists). Three parsers read
+  the CSS as text — `skins.test.ts`, `tokens.test.ts`, `skin-overlay.test.mjs` —
+  and all three found that comment and believed in a third palette. Each now
+  strips `/* … */` before parsing.
+- §8's utility scan found a live instance of the failure it was written for:
+  `src/components/LocalVmWorkspace.tsx:398` referenced `var(--accent)`, which is
+  not a token (`--color-accent` is), so its focus ring rendered nothing at all.
+  Fixed, and `tokens.test.ts` now checks `var(--…)` references as well as
+  Tailwind utility names. The same file's `bg-[#070707]` — stale Midnight black —
+  became `bg-app`.
+
+**Windows cold start.** `waitsForSkinSync`, `show: !waitsForSkinSync` and the
+`skinSyncFallback` timer are deleted per §7.4's recommendation. The window now
+opens with `backgroundColor: skinChrome(persistedSkin).color`, where
+`persistedSkin` comes from a new `skin` field in `window-state.json`, falling
+back to `nativeTheme.shouldUseDarkColors` on a first run. `desktop:skin` records
+the resolved id and rewrites that file. `electron/window-state.cjs` was not
+touched: `parseWindowState` ignores unknown keys, so the field rides along
+without changing the bounds contract or its tests.
+
+**Picker.** The selected segment's accent edge is an inset box-shadow rather
+than a border — the group is one clipped rounded rectangle, so a real border on
+one cell would shift its two neighbours by a pixel each.

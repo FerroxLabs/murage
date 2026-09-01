@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -46,7 +46,7 @@ import {
   withoutManagedCompanionTunnelAccess,
 } from "./managed-companion-tunnel.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
-import { isKnownSkin } from "./skin-overlay.cjs";
+import { isKnownSkin, skinChrome } from "./skin-overlay.cjs";
 import { readSecureCredentials } from "./secure-credentials.mjs";
 import { createControlPlaneClient } from "./control-plane-client.mjs";
 import {
@@ -124,6 +124,22 @@ function readWindowState() {
   }
 }
 
+// The palette the renderer last resolved. Persisted beside the window bounds so
+// the NEXT cold start can paint `backgroundColor` correctly — without it a light
+// user gets a black rectangle for the whole load, which is the flash the inline
+// stamp in index.html closes on the renderer side but cannot reach here.
+// Always a resolved id ("light" | "dark"), never the "auto" preference.
+let persistedSkin = null;
+
+function readPersistedSkin() {
+  try {
+    const value = JSON.parse(fs.readFileSync(windowStateFile(), "utf8"))?.skin;
+    return isKnownSkin(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function writeWindowState(win) {
   if (!win || win.isDestroyed()) return;
   const file = windowStateFile();
@@ -132,7 +148,13 @@ function writeWindowState(win) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(
       temporary,
-      JSON.stringify({ bounds: win.getNormalBounds(), maximized: win.isMaximized() }),
+      JSON.stringify({
+        bounds: win.getNormalBounds(),
+        maximized: win.isMaximized(),
+        // parseWindowState ignores unknown keys, so this rides along without
+        // touching the bounds contract or its tests.
+        ...(persistedSkin ? { skin: persistedSkin } : {}),
+      }),
       { mode: 0o600 },
     );
     fs.renameSync(temporary, file);
@@ -1075,7 +1097,7 @@ function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
     show: false,
     title,
     icon: APP_ICON,
-    backgroundColor: "#070707",
+    backgroundColor: skinChrome(persistedSkin).color,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
@@ -1356,21 +1378,27 @@ ipcMain.on("desktop:unread-count", (event, value) => {
 });
 
 function createWindow() {
-  const waitsForSkinSync = process.platform === "win32";
   const primary = screen.getPrimaryDisplay();
   const displays = [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)];
   const restored = resolveWindowState(readWindowState(), displays.map((display) => display.workArea));
+  // The palette the last session resolved, or — on a genuinely first run — what
+  // the OS is doing right now, which is also what the renderer's "auto" default
+  // will resolve to. Either way the very first frame is the right colour.
+  persistedSkin = readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light");
   const win = new BrowserWindow({
     ...restored.bounds,
     minWidth: 900,
     minHeight: 600,
-    // The renderer restores its persisted skin before mounting React and
-    // mirrors it over desktop:skin. Keep Windows hidden until that handshake
-    // recolors the native caption-button overlay, otherwise a saved light
-    // skin still flashes the Midnight-black block on every cold start.
-    show: !waitsForSkinSync,
+    // Shown immediately. This used to stay hidden on Windows until the
+    // `desktop:skin` handshake recoloured the native caption overlay — but that
+    // handler never called show(), nothing ever calls setTitleBarOverlay, and
+    // windowChromeOptions() returns {} on Windows, so there was no overlay to
+    // wait for and every Windows cold start sat invisible for the full 5s
+    // fallback. With backgroundColor now theme-correct there is nothing left to
+    // hide.
+    show: true,
     icon: APP_ICON,
-    backgroundColor: "#070707",
+    backgroundColor: skinChrome(persistedSkin).color,
     autoHideMenuBar: process.platform !== "darwin",
     ...windowChromeOptions(process.platform),
     webPreferences: {
@@ -1380,18 +1408,6 @@ function createWindow() {
   });
   mainWindow = win;
   void startBrowserSurface(win);
-  if (waitsForSkinSync) {
-    // A broken renderer or preload must not strand the app as an invisible
-    // process. Normal startup shows from desktop:skin almost immediately;
-    // this is only the bounded recovery path.
-    const skinSyncFallback = setTimeout(() => {
-      if (!win.isDestroyed() && !win.isVisible()) win.show();
-    }, 5_000);
-    skinSyncFallback.unref?.();
-    const clearSkinSyncFallback = () => clearTimeout(skinSyncFallback);
-    win.once("show", clearSkinSyncFallback);
-    win.once("closed", clearSkinSyncFallback);
-  }
   installWindowStatePersistence(win);
   applyUnreadBadge(win);
   if (restored.maximized) win.maximize();
@@ -1657,11 +1673,21 @@ ipcMain.handle("desktop:save-file", async (event, rawPath) => {
   });
 });
 
-// The renderer owns the skin. Native Windows/Linux chrome is intentionally
-// outside that surface; acknowledge the renderer handshake without creating
-// a frameless caption overlay that can cover page controls.
+// The renderer owns the palette. Native Windows/Linux chrome is intentionally
+// outside that surface; acknowledge the renderer handshake without creating a
+// frameless caption overlay that can cover page controls.
+//
+// This takes a RESOLVED id ("light" | "dark"), never the "auto" preference:
+// isKnownSkin("auto") is false, so a caller that piped the preference through
+// would be rejected here rather than silently getting dark chrome on a light
+// desktop. Recording it is what makes the NEXT cold start open with the right
+// window background instead of a black rectangle.
 ipcMain.handle("desktop:skin", (_event, skin) => {
   if (!isKnownSkin(skin)) return false;
+  if (skin !== persistedSkin) {
+    persistedSkin = skin;
+    writeWindowState(mainWindow);
+  }
   return true;
 });
 

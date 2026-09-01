@@ -1,0 +1,202 @@
+// Token drift.
+//
+// Under Tailwind v4, a utility whose token does not exist does not error — the
+// class is simply never generated, the element gets no background, and the page
+// renders wrong in silence. The same is true of a `var(--typo)` in an arbitrary
+// value. `src/` carries roughly three thousand colour-utility class names
+// against twenty-three tokens, so the surface is large and the failure mode is
+// invisible. This file is the guard.
+//
+// It is deliberately NOT a port of Wayland Desktop's check-ui-tokens.js: that
+// script's BANNED_TOKENS table encodes their specific historical typos and has
+// no meaning against different token names.
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join, relative } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
+// Comments stripped: the stylesheet explains in prose that there is no
+// [data-skin="auto"] block, and a parser that reads comments would find one.
+const css = readFileSync(join(root, "src/styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+function sourceFiles(): string[] {
+  const out: string[] = [];
+  (function walk(dir: string) {
+    for (const entry of readdirSync(dir)) {
+      const path = join(dir, entry);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(path);
+    }
+  })(join(root, "src"));
+  return out;
+}
+
+function declarationsIn(body: string): string[] {
+  return [...body.matchAll(/(--[\w-]+)\s*:/g)].map(([, name]) => name);
+}
+
+/** The `@theme` + `:root` base, restricted to the families a palette owns.
+ *  Animation tokens live in the base too and do not vary by theme. */
+const baseTokens = new Set(
+  [...css.matchAll(/(?:@theme|:root)\s*\{([^}]*)\}/g)]
+    .flatMap(([, body]) => declarationsIn(body))
+    .filter((name) => /^--(color|font|radius)-/.test(name)),
+);
+
+const palettes = new Map(
+  [...css.matchAll(/\[data-skin="([a-z-]+)"\]\s*\{([^}]*)\}/g)].map(([, id, body]) => [
+    id,
+    new Set(declarationsIn(body)),
+  ]),
+);
+
+/** Every `--color-*` the stylesheet defines anywhere. */
+const colorTokens = new Set([...css.matchAll(/(--color-[\w-]+)\s*:/g)].map(([, name]) => name));
+
+describe("token drift", () => {
+  it("has palettes to measure", () => {
+    // A parser that silently matched nothing would make every assertion below
+    // vacuously true.
+    expect([...palettes.keys()].sort()).toEqual(["dark", "light"]);
+    expect(baseTokens.size).toBeGreaterThan(20);
+  });
+
+  it("defines every base token in every palette", () => {
+    // The reference is the BASE, not the default palette. Referencing the
+    // default is what let `midnight` omit --color-focus and inherit the
+    // upstream Grok blue #459ffe with the suite green: the reference set had a
+    // hole in exactly the same place.
+    for (const [id, tokens] of palettes) {
+      const missing = [...baseTokens].filter((token) => !tokens.has(token));
+      expect(`${id}: ${missing.join(", ")}`).toBe(`${id}: `);
+    }
+  });
+
+  it("defines the same tokens in every palette, in both directions", () => {
+    // Catches a token added to one palette and forgotten in the other even when
+    // the base never mentions it — which is how --radius-lg / --radius-xl lived
+    // in all four skins with no base declaration at all, one omission away from
+    // falling through to Tailwind's own defaults instead of failing.
+    for (const [a, tokensA] of palettes) {
+      for (const [b, tokensB] of palettes) {
+        if (a === b) continue;
+        const missing = [...tokensA].filter((token) => !tokensB.has(token));
+        expect(`${b} is missing: ${missing.join(", ")}`).toBe(`${b} is missing: `);
+      }
+    }
+  });
+
+  it("names only tokens that exist from every colour utility in src", () => {
+    // Longest prefix first, so `ring-offset-app` is not read as `ring` plus a
+    // bare word. The lookbehind rejects a hyphen as well as a word character:
+    // without it `switch-to-bot` parses as the utility `to-bot`.
+    const utility =
+      /(?<![\w-])(?:ring-offset|placeholder|decoration|divide|outline|shadow|accent|border|stroke|caret|from|fill|ring|text|via|bg|to)-([a-z][a-z0-9-]*)(?![\w-])/g;
+    // Tailwind's own vocabulary for these prefixes — sizes, sides, widths,
+    // keywords and its built-in palette. Each entry is a real utility whose
+    // suffix is not a colour, so it can never name a token.
+    const NOT_A_TOKEN = new Set([
+      // border sides and widths: border-b, border-l-2, border-r-0, border-x…
+      "b", "b-0", "b-2", "l", "l-2", "r", "r-0", "t", "t-0", "t-2", "x", "y",
+      // border styles and border-collapse
+      "dashed", "dotted", "solid", "collapse", "separate", "none",
+      // CSS-wide colour keywords Tailwind ships as utilities
+      "transparent", "current", "inherit", "black", "white",
+      // text-align
+      "left", "right", "center", "justify", "start", "end",
+      // type and shadow scales (2xl etc. start with a digit and never match)
+      "xs", "sm", "base", "lg", "xl", "inner",
+      // ring-offset-N / outline-offset-N widths
+      "offset-0", "offset-1", "offset-2", "offset-4",
+      // bg-gradient-to-*
+      "gradient-to-b", "gradient-to-t", "gradient-to-l", "gradient-to-r",
+      "gradient-to-br", "gradient-to-bl", "gradient-to-tr", "gradient-to-tl",
+      // SVG presentation attributes in raw markup strings (EmberAvatar): these
+      // are `stroke-linecap` / `stroke-width` / `fill-rule`, not utilities.
+      "linecap", "linejoin", "width", "rule", "opacity",
+    ]);
+    // Tailwind's built-in palette. TeamLibraryPanel paints four categorical bot
+    // glyphs from it on purpose — they are identity colours like the mascot's,
+    // not theme surfaces, and Tailwind does generate them.
+    const TAILWIND_PALETTE =
+      /^(slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-(50|\d00)$/;
+
+    // Properties no stylesheet declares because JavaScript writes them at
+    // runtime (--vvh / --kb, from trackVisualViewport). Collected rather than
+    // hardcoded, so adding one cannot make this assertion stale.
+    const runtimeProperties = new Set(
+      sourceFiles().flatMap((file) =>
+        [...readFileSync(file, "utf8").matchAll(/setProperty\(\s*"(--[\w-]+)"/g)].map(([, n]) => n),
+      ),
+    );
+
+    const bad: string[] = [];
+    for (const file of sourceFiles()) {
+      const source = readFileSync(file, "utf8");
+      for (const [, name] of source.matchAll(utility)) {
+        if (colorTokens.has(`--color-${name}`)) continue;
+        if (NOT_A_TOKEN.has(name) || TAILWIND_PALETTE.test(name)) continue;
+        bad.push(`${relative(root, file)}: -${name}`);
+      }
+      // Arbitrary values and inline styles reach for the property directly.
+      // `var(--accent)` (the token is --color-accent) rendered nothing at all
+      // in LocalVmWorkspace until this assertion existed.
+      for (const [, name] of source.matchAll(/var\((--[\w-]+)/g)) {
+        if (!css.includes(`${name}:`) && !runtimeProperties.has(name)) {
+          bad.push(`${relative(root, file)}: var(${name})`);
+        }
+      }
+    }
+    expect([...new Set(bad)]).toEqual([]);
+  });
+
+  it("keeps raw hex out of everything but the allowlist", () => {
+    // Warning-only upstream. Here it fails, because an allowlist someone has to
+    // edit is a decision and a warning nobody reads is not.
+    const ALLOWED: Record<string, string> = {
+      "src/styles.css": "the palettes themselves",
+      "src/mascot-preview.css": "a dev-only preview page, not shipped UI",
+      "src/lib/mascot.ts": "EMBER_COLORS — agent identity, theme-invariant by design",
+      "src/components/EmberAvatar.tsx": "the mascot's own gradients and flame tones",
+      "src/components/Avatar.tsx": "mascot fallback tones",
+      "src/components/ProviderIcons.tsx": "vendor brand marks (Anthropic, OpenAI, …)",
+      "src/components/HermesMark.tsx": "vendor brand mark",
+      "src/components/CursorMark.tsx": "vendor brand mark",
+      "src/components/Sidebar.tsx":
+        "macOS traffic-light decoration — it mimics the OS, so it cannot follow the theme",
+      "src/components/PhoneSetupFlow.tsx":
+        "QR code foreground/background — a scanner needs pure black on pure white",
+      "src/components/RoutineCalendarPage.tsx":
+        "calendar chip gradients mixed from EMBER_COLORS; theme-invariant like the mascot",
+    };
+    const files: string[] = [];
+    (function walk(dir: string) {
+      for (const entry of readdirSync(dir)) {
+        const path = join(dir, entry);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.(tsx?|css)$/.test(entry)) files.push(path);
+      }
+    })(join(root, "src"));
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      // Comments are stripped first: `issue #527` in a ChatView comment is a
+      // ticket number, not a colour.
+      const source = readFileSync(file, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^[ \t]*\/\/.*$/gm, "");
+      const hits = source.match(/#[0-9a-fA-F]{3,8}\b/g);
+      if (!hits) continue;
+      const name = relative(root, file);
+      if (!(name in ALLOWED)) offenders.push(`${name} (${hits.length}: ${hits[0]})`);
+    }
+    expect(offenders).toEqual([]);
+    // The allowlist must not rot into a list of files that no longer exist.
+    for (const name of Object.keys(ALLOWED)) {
+      expect(`${name} exists`).toBe(
+        files.some((file) => relative(root, file) === name) ? `${name} exists` : `${name} missing`,
+      );
+    }
+  });
+});
