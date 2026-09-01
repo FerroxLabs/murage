@@ -1,6 +1,6 @@
 # Flux Router integration — plan
 
-**Status:** proposed, pending cross-audit
+**Status:** REVISED after cross-audit by Kimi (`flux-router-audit-kimi.md`). Five majors found; sequencing was wrong.
 **Author:** Claude Opus 5, 2026-09-01
 **Reference implementation:** `~/dev/wayland/app/src/process/task/fluxRouting.ts` (233 lines, Ferrox Labs, Apache-2.0)
 
@@ -59,7 +59,11 @@ can bill the user twice and leak which provider they actually use.
 
 ## Work breakdown
 
-Ordered by dependency. Items 1–3 are independent and parallelisable; 4 depends on 1; 5 depends on 1 and 4.
+**Corrected by audit.** Nothing here is genuinely parallel. The real critical
+path is **1 → 3 → 4 → 5**: item 4 consumes the model catalog item 3 builds
+(`selectedModelId` precedence), and item 5's non-routable-engine copy presupposes
+a roster classification that had no work item at all. Item 2 is the only thing
+that can run alongside.
 
 ### 1. Config + credential  (small)
 - `flux: { apiKey, enabled }` in `server/config.ts` schema and the typed shape.
@@ -94,7 +98,12 @@ Ordered by dependency. Items 1–3 are independent and parallelisable; 4 depends
 
 ## Risks
 
-1. **Codex is the hardest path** and needs filesystem work (scoped `CODEX_HOME`, config table). If it slips, ship 1–3 + claude/qwen and mark codex as follow-up rather than blocking the release.
+1. ~~Codex is the hardest path~~ **WRONG — audit refuted this.** That premise was
+   Wayland-shaped. Murage's codex driver already solves the provider table via
+   argv: `codexLocalProviderArgs` emits `-c model_providers.<host>.base_url/env_key`
+   with the secret on the child env (`local-inject.ts:130-148`, called from
+   `codex.ts:158`). No `CODEX_HOME`, no config.toml writes. In Murage codex is
+   arguably the *easiest* surface after openai. Do not defer it.
 2. **The Wayland reference is Electron-process-shaped.** Murage's driver model differs; a literal port will not compile. Budget for adaptation, not transcription.
 3. **Base URL is described as provisional** in Core's `flux_router.rs` ("placeholder until the production endpoint is finalized"). Confirm `api.fluxrouter.ai` is final before it ships in an installer.
 4. **Unverified claim:** that `flux-image` accepts the same request shape as OpenAI's `images/generations`. Test before rewriting `avatar-image.ts` around it.
@@ -110,3 +119,70 @@ Ordered by dependency. Items 1–3 are independent and parallelisable; 4 depends
 1. Is `https://api.fluxrouter.ai` the final production host?
 2. Should Flux be the default for new Embers when a key exists, or stay opt-in?
 3. Does a Flux key also cover the TTS path (`MURAGE_TTS_KEY`), or only transcription?
+
+
+---
+
+# Audit corrections (Kimi, 2026-09-01)
+
+Full transcript: `flux-router-audit-kimi.md`. Five majors. The plan above is
+amended; these are the ones that change the work.
+
+### A. Ambient routing vars are never stripped  (MAJOR — new work item)
+
+`PROVIDER_CREDENTIAL_ENV` (`config.ts:560-573`) contains no `OPENAI_BASE_URL`,
+`OPENAI_MODEL`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_MODEL`,
+and every spawn path spreads `...process.env` (`acp/core.ts:194`, `codex.ts:102`,
+`claude.ts:80`). A user running cc-switch, or with an ambient `OPENAI_BASE_URL`,
+silently defeats or corrupts the Flux surface.
+
+The plan said "native-key stripping" and only meant *keys*. Routing vars are
+equally load-bearing. Wayland strips both (`fluxRouting.ts:104-107, 231`).
+
+Also: the example strip list above (`OPENROUTER_API_KEY`, `GROQ_API_KEY`) is
+Wayland's. **Neither appears in Murage's `PROVIDER_CREDENTIAL_ENV`.** Rebuild the
+list from `config.ts`, not from Wayland's `KeyDiscovery`.
+
+### B. The key would land on disk with no rollback  (MAJOR)
+
+The natural Murage integration writes the Flux key as a plaintext upsert into
+`~/.qwen/settings.json` (`qwen.ts:49,74`) and `~/.hermes/config.yaml`
+(`hermes.ts:44-55, 91-92`), and never removes it — including after the user turns
+Flux off. Wayland's entire design is env-only injection to avoid exactly this.
+The plan quoted that doctrine and then specified a mechanism that violates it.
+
+**Fix:** env-only, or a real backup-write-report-rollback with an off switch that
+actually reverts.
+
+### C. Hook-ordering trap: the key gets stripped before it is used  (MAJOR)
+
+Item 1 adds `FLUX_API_KEY` to `WORKSPACE_CREDENTIAL_ENV`, so `childEnv` deletes it
+(`acp/core.ts:204`, `codex.ts:112`). A naive "set env before spawn" port is
+silently stripped and 401s.
+
+Injection must run in `transformEnv`/`applyTurnEnv` (after the strip), or use the
+`MURAGE_LOCAL_*` indirection `codexLocalProviderArgs` already uses
+(`local-inject.ts:138-139`). This also resolves the plan's own contradiction
+between item 1's "no spawned agent sees it" and codex needing the key at request
+time — the indirection satisfies both.
+
+### D. Deferring codex ships a broken picker  (MAJOR)
+
+Item 3 puts the Flux tiers in the picker, and codex's catalog merge
+(`codex-catalog.ts:365,431`) surfaces them. With codex routing deferred, picking
+`flux-auto` on codex falls through to native and POSTs `model=flux-auto` to
+api.openai.com → 400 "model does not exist". Wayland has a `resolvedModelId` guard
+for precisely this (`fluxRouting.ts:114-126`).
+
+**Fix:** gate Flux rows per-engine on implemented surfaces. Since (1) says codex is
+easy in Murage, the better answer is not to defer it.
+
+### E. Acceptance criteria contradict the risk register  (MINOR)
+
+Item 4's Done-when requires a real turn on claude, qwen **and codex**; the old
+risk 1 said ship without codex. Resolved: codex is in scope.
+
+### F. Redaction is already fine  (MINOR, no action)
+
+`redact.ts:16` matches any name containing `api_key`, so `FLUX_API_KEY` is covered
+in native logs.
