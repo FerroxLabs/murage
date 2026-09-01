@@ -4,7 +4,8 @@
 // assert what would have been dispatched to the harness. The harness itself
 // stays out of these — the integration happens in comms.test.ts (the full
 // e2e through the agents proxy + fake ACP CLI).
-import { rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CommsBus } from "./comms-visibility.ts";
@@ -20,7 +21,11 @@ import {
   recordDelegationReceipt,
   releaseDelegationsWaitingOn,
   threadsWaitingOn,
+  discardDelegations,
+  pendingThreads,
+  _loadPending,
   _pendingCount,
+  _resetPending,
 } from "./delegations.ts";
 import { peerAllowKey, resolvePeerComms } from "./peer-approval.ts";
 import { Store, type BotRecord } from "./store.ts";
@@ -489,10 +494,6 @@ describe("drainDelegations", () => {
   });
 });
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { _loadPending, _resetPending, discardDelegations, pendingThreads } from "./delegations.ts";
-
 describe("delegations survive a restart", () => {
   let store: Store;
   let from: BotRecord;
@@ -736,5 +737,206 @@ describe("busy retries and receipts", () => {
     discardDelegations(commsBus, from.threadId);
     expect(_pendingCount(from.threadId)).toBe(0);
     expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "dropped" });
+  });
+});
+
+// ── room-sourced handoffs ─────────────────────────────────────────────
+// A room turn is the one place a bot runs at comms depth 0 and therefore
+// holds the agents tools, so it is where a Chief actually delegates. The
+// queue is keyed by SOURCE THREAD, and a room thread has no owning bot:
+// the drain used to resolve its sender with botByThread alone, get null,
+// and delete the whole queue — no turn, no receipt, no chip.
+describe("delegations queued from a room", () => {
+  let store: Store;
+  let chief: BotRecord;
+  let lead: BotRecord;
+  let room: ReturnType<Store["createGroup"]>;
+  let buses: BusPair;
+  let runTargetCalls: Array<{ toBotId: string; sourceThreadId: string; fromBotId: string }>;
+
+  const runTarget = (
+    toBotId: string,
+    _message: string,
+    _commsDepth: number,
+    sourceThreadId: string,
+    _channel: unknown,
+    _taskId: string,
+    fromBotId: string,
+  ) => {
+    runTargetCalls.push({ toBotId, sourceThreadId, fromBotId });
+  };
+
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    _resetPending();
+    store = new Store(selection);
+    chief = store.patchBot(store.createBot({ name: "Ember" }).id, { chiefOfStaff: true })!;
+    lead = store.patchBot(store.createBot({ name: "Rex" }).id, { name: "Rex" })!;
+    room = store.createGroup("Exec", [chief.id, lead.id]);
+    buses = setupBuses(store);
+    runTargetCalls = [];
+  });
+  afterEach(() => _resetPending());
+
+  it("delivers a handoff queued on a room thread instead of deleting it", async () => {
+    const queued = queueDelegation(
+      buses.commsBus,
+      chief,
+      { toBotId: lead.id, message: "own the launch", depth: 0 },
+      1,
+      room.threadId,
+    );
+    expect(queued.result).toBe("ok");
+    expect(_pendingCount(room.threadId)).toBe(1);
+
+    drainDelegations(buses.commsBus, buses.approvalBus, room.threadId, runTarget);
+
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(runTargetCalls[0]).toMatchObject({
+      toBotId: lead.id,
+      sourceThreadId: room.threadId,
+      fromBotId: chief.id,
+    });
+    await waitFor(() => _pendingCount(room.threadId) === 0);
+    // the visibility chip lands in the room, not nowhere
+    expect(
+      store.messagesFor(room.threadId).some((message) => message.tool?.name === `Messaged @Rex`),
+    ).toBe(true);
+  });
+
+  it("names the sender per item, so two speakers in one room do not cross wires", async () => {
+    const other = store.patchBot(store.createBot({ name: "Nia" }).id, { name: "Nia" })!;
+    store.patchGroup(room.id, { memberIds: [chief.id, lead.id, other.id] });
+    queueDelegation(buses.commsBus, chief, { toBotId: lead.id, message: "a", depth: 0 }, 4, room.threadId);
+    queueDelegation(buses.commsBus, other, { toBotId: lead.id, message: "b", depth: 0 }, 4, room.threadId);
+
+    drainDelegations(buses.commsBus, buses.approvalBus, room.threadId, runTarget);
+
+    await waitFor(() => runTargetCalls.length === 2);
+    expect(runTargetCalls.map((call) => call.fromBotId)).toEqual([chief.id, other.id]);
+  });
+
+  it("keeps the sender across a restart, because it is persisted with the item", async () => {
+    queueDelegation(
+      buses.commsBus,
+      chief,
+      { toBotId: lead.id, message: "own the launch", depth: 0 },
+      1,
+      room.threadId,
+    );
+    expect(JSON.parse(readFileSync(join(DATA_DIR, "delegations.json"), "utf8"))[room.threadId][0])
+      .toMatchObject({ fromBotId: chief.id });
+
+    _resetPending();
+    _loadPending();
+    expect(_pendingCount(room.threadId)).toBe(1);
+    drainDelegations(buses.commsBus, buses.approvalBus, room.threadId, runTarget);
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(runTargetCalls[0]!.fromBotId).toBe(chief.id);
+  });
+
+  it("writes a dropped receipt when the room-sourced sender left the room", async () => {
+    // the post-approval re-check used to `return "settled"` with no receipt
+    // at all — a silent drop that check_delegation answers forever with
+    // "unknown task id".
+    // a standing "always allow" for this pair so the approval resolves
+    // without a card, but still through the post-approval re-check
+    const gated = store.patchBot(chief.id, {
+      approvePeerComms: true,
+      alwaysAllow: [peerAllowKey("delegate_bot", lead.id)],
+    })!;
+    const queued = queueDelegation(
+      buses.commsBus,
+      gated,
+      { toBotId: lead.id, message: "own the launch", depth: 0 },
+      1,
+      room.threadId,
+    );
+    store.patchGroup(room.id, { memberIds: [lead.id] }); // chief removed from the room
+
+    drainDelegations(buses.commsBus, buses.approvalBus, room.threadId, runTarget);
+
+    await waitFor(() => findDelegationReceipt(queued.id!));
+    expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "dropped" });
+    expect(runTargetCalls).toEqual([]);
+  });
+
+  it("tells the room when a failed turn discards its queue", async () => {
+    queueDelegation(buses.commsBus, chief, { toBotId: lead.id, message: "x", depth: 0 }, 1, room.threadId);
+    const { discardDelegations } = await import("./delegations.ts");
+    discardDelegations(buses.commsBus, room.threadId);
+    expect(
+      store.messagesFor(room.threadId).some((message) =>
+        message.tool?.name?.includes("dropped — the turn did not finish")),
+    ).toBe(true);
+  });
+
+  // A room queue has many senders, and an interruption belongs to one turn.
+  // Thread-granular discard made one member hitting Stop cancel another
+  // member's handoff, with a receipt blaming "the delegating turn did not
+  // finish" about a turn that had finished perfectly well.
+  it("does not let one member's interruption cancel another member's parked handoff", async () => {
+    const { discardDelegations } = await import("./delegations.ts");
+    // Park it the way production parks it: the target is mid-turn, so the
+    // drain retries later. It has now outlived the turn that queued it.
+    store.patchBot(lead.id, { busy: true });
+    const parked = queueDelegation(
+      buses.commsBus, chief, { toBotId: lead.id, message: "ember's", depth: 0 }, 1, room.threadId,
+    );
+    drainDelegations(buses.commsBus, buses.approvalBus, room.threadId, runTarget);
+    await waitFor(() =>
+      store.messagesFor(room.threadId).find((m) => (m.tool?.name ?? "").includes("waiting — they're busy")));
+    expect(_pendingCount(room.threadId)).toBe(1);
+
+    // A different member's turn in the same room is interrupted.
+    discardDelegations(buses.commsBus, room.threadId);
+
+    expect(findDelegationReceipt(parked.id!)).toBeNull();
+    expect(_pendingCount(room.threadId)).toBe(1);
+  });
+
+  it("drops only the interrupted bot's own handoff, not a peer's", async () => {
+    const { discardDelegations } = await import("./delegations.ts");
+    const chiefs = queueDelegation(
+      buses.commsBus, chief, { toBotId: lead.id, message: "chief's", depth: 0 }, 1, room.threadId,
+    );
+    const leads = queueDelegation(
+      buses.commsBus, lead, { toBotId: chief.id, message: "lead's", depth: 0 }, 1, room.threadId,
+    );
+    expect(_pendingCount(room.threadId)).toBe(2);
+
+    discardDelegations(buses.commsBus, room.threadId, chief.id);
+
+    expect(findDelegationReceipt(chiefs.id!)).toMatchObject({ status: "dropped" });
+    expect(findDelegationReceipt(leads.id!)).toBeNull();
+    expect(_pendingCount(room.threadId)).toBe(1);
+  });
+
+  it("still lets a workspace chief hand off across sections, and still stops a grunt", async () => {
+    store.patchBot(chief.id, { chiefScope: "workspace" });
+    store.setBotsSection([lead.id], "Sales");
+    store.setChiefOfStaff(lead.id);
+    const grunt = store.createBot({ name: "Pixel", section: "Sales" });
+
+    const ok = queueDelegation(
+      buses.commsBus,
+      store.bot(chief.id)!,
+      { toBotId: lead.id, message: "own the launch", depth: 0 },
+      4,
+      room.threadId,
+    );
+    const blocked = queueDelegation(
+      buses.commsBus,
+      store.bot(chief.id)!,
+      { toBotId: grunt.id, message: "do the pixels", depth: 0 },
+      4,
+      room.threadId,
+    );
+    drainDelegations(buses.commsBus, buses.approvalBus, room.threadId, runTarget);
+
+    await waitFor(() => findDelegationReceipt(blocked.id!));
+    expect(runTargetCalls.map((call) => call.toBotId)).toEqual([lead.id]);
+    expect(findDelegationReceipt(blocked.id!)).toMatchObject({ status: "dropped" });
+    expect(findDelegationReceipt(ok.id!)).toBeNull(); // dispatched, not dropped
   });
 });

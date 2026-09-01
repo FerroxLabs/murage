@@ -147,6 +147,8 @@ import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import {
+  canReach,
+  isWorkspaceChief,
   mentionedBots,
   roomResponders,
   sectionKey,
@@ -157,6 +159,13 @@ import {
   type Message,
   type TaskRecord,
 } from "./store.ts";
+import {
+  frameSubject,
+  requestSurface,
+  subjectResolves,
+  visibleToCompanion,
+  type FrameSubject,
+} from "./sse-visibility.ts";
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, engineIsFresh } from "./turn-context.ts";
@@ -1175,6 +1184,15 @@ interface SseClient {
    * while a bot works. A client that isn't showing the computer panel —
    * a phone on cellular, most of all — should not pay for them. */
   screens: boolean;
+  /** True unless the request proved it came from the local desktop app, in
+   * which case this stream is scoped to the conversations a person can see
+   * (see sse-visibility.ts).
+   *
+   * Named for the client it started out describing, but the default is the
+   * point: `requestSurface()` answers `remote` for anything that does not
+   * announce itself, so a door added later gets the narrow stream by
+   * omission rather than the firehose. */
+  scoped: boolean;
 }
 const sseClients = new Set<SseClient>();
 
@@ -1196,10 +1214,33 @@ const SSE_HEARTBEAT_MS =
     ? configuredSseHeartbeatMs
     : 15_000;
 let lastSeq = 0;
-const replayBuffer: Array<{ seq: number; kind: string; frame: string | null }> = [];
+/** `subject` rides along because resume replays the same frames through the
+ * same filter. Scoping the live path alone would mean a phone that dropped
+ * its connection for a second got the firehose back on reconnect. */
+const replayBuffer: Array<{ seq: number; kind: string; subject: FrameSubject; frame: string | null }> = [];
 
-/** Screen frames are the only kind a client can decline. */
-const wants = (client: SseClient, kind: string) => kind !== "screen" || client.screens;
+/** Frames withheld from a scoped stream because nothing could resolve the
+ * conversation they name — as opposed to the ones withheld on purpose.
+ *
+ * The fail-closed branch is the right default and also the one that can go
+ * wrong invisibly: a frame that outruns the store's thread→bot mapping is
+ * indistinguishable, at the filter, from a conversation the person may not
+ * see. Steady zero is the healthy reading; a number that climbs while
+ * ordinary chat happens says the filter is eating frames somebody wanted.
+ * Reported by `GET /api/health` so it can be looked at rather than guessed
+ * at — it is a symptom counter, not a metric anyone should page on. */
+let unresolvedFrameDrops = 0;
+
+/** Screen frames are the only kind a client can decline. Everything else is
+ * decided for it: a scoped stream sees only the conversations a person can
+ * see, and the desktop that opted out still sees all of them. */
+const wants = (client: SseClient, entry: { kind: string; subject: FrameSubject }) => {
+  if (entry.kind === "screen" && !client.screens) return false;
+  if (!client.scoped) return true;
+  if (visibleToCompanion(store, entry.subject)) return true;
+  if (!subjectResolves(store, entry.subject)) unresolvedFrameDrops++;
+  return false;
+};
 
 /** `<streamId>:<seq>` — opaque to clients, and the only thing they need to
  * remember to resume. Returns null when it belongs to another run. */
@@ -1215,14 +1256,18 @@ function cursorSeq(raw: string | string[] | undefined): number | null {
 function broadcast(payload: Record<string, unknown>) {
   const seq = ++lastSeq;
   const kind = String(payload.kind ?? "");
+  // Resolved once, here, rather than per client: the answer is a property of
+  // the frame, and a busy turn fans one frame out to every open stream.
+  const subject = frameSubject(payload);
   const frame = `id: ${STREAM_ID}:${seq}\ndata: ${JSON.stringify({ ...payload, seq })}\n\n`;
   // Live desktop captures can each be hundreds of kilobytes and become stale
   // as soon as the next one arrives. Keep their sequence slots so resume-gap
   // detection stays honest, but never retain their base64 payloads.
-  replayBuffer.push({ seq, kind, frame: kind === "screen" ? null : frame });
+  const entry = { seq, kind, subject, frame: kind === "screen" ? null : frame };
+  replayBuffer.push(entry);
   if (replayBuffer.length > REPLAY_MAX) replayBuffer.shift();
   for (const client of [...sseClients]) {
-    if (!wants(client, kind)) continue;
+    if (!wants(client, entry)) continue;
     try {
       client.res.write(frame);
     } catch {
@@ -2106,6 +2151,21 @@ function markTaskContextExternallyUpdated(bot: BotRecord, threadId: string): voi
   store.patchBot(bot.id, patch);
 }
 
+/** Where a delegation's result has to land. A source conversation is a bot's
+ * own thread OR a room that bot spoke in; `botByThread` only knows the
+ * former, so every room-sourced handoff used to complete into silence — the
+ * receipt was written, the reply was not. */
+function delegationSource(
+  threadId: string | undefined,
+): { kind: "bot"; bot: BotRecord } | { kind: "group"; group: GroupRecord } | null {
+  if (!threadId) return null;
+  const bot = store.botByThread(threadId);
+  if (bot) return { kind: "bot", bot };
+  const group = store.groupByThread(threadId);
+  if (group) return { kind: "group", group };
+  return null;
+}
+
 /** Consume one delegated-turn watch and mirror exactly one terminal state.
  * Some harness paths settle a busy bot without a provider turn.completed
  * event, so they call this same finalizer explicitly. */
@@ -2133,7 +2193,7 @@ function finalizeDelegationWatch(
   }
   const target = store.bot(watched.toBotId);
   const targetName = target?.name ?? watched.toBotName ?? watched.toBotId;
-  const source = watched.sourceThreadId ? store.botByThread(watched.sourceThreadId) : undefined;
+  const source = delegationSource(watched.sourceThreadId);
   if (source && watched.sourceThreadId) {
     if (ok && reply.trim()) {
       const sourceReply: Omit<Message, "id" | "at"> = {
@@ -2155,7 +2215,12 @@ function finalizeDelegationWatch(
         },
       });
     }
-    markTaskContextExternallyUpdated(source, watched.sourceThreadId);
+    // A room turn resumes no provider session — sendTurn on the room path
+    // passes no cursor and rebuilds its prompt from the transcript every
+    // time — so the external-context marker has no consumer there. Unread
+    // is the whole job, and it is what the room path itself sets.
+    if (source.kind === "bot") markTaskContextExternallyUpdated(source.bot, watched.sourceThreadId);
+    else store.patchGroup(source.group.id, { unread: true });
   }
   const channel = watched.channelId ? store.group(watched.channelId) : undefined;
   if (!target || !channel) return true;
@@ -2200,7 +2265,7 @@ bus.subscribe((event: RuntimeEvent) => {
 /** How a drained delegation becomes a real turn on the target. Shared by
  * the settle-time drain and the boot-time drain of what a previous process
  * left queued. */
-const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel, taskId) => {
+const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel, taskId, fromBotId) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
@@ -2231,17 +2296,25 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
         );
         if (finalized) return;
       }
-      const source = store.botByThread(sourceThreadId);
+      const source = delegationSource(sourceThreadId);
       if (!source) return;
+      const sender = store.bot(fromBotId);
       store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
+        // A room chip with no speaker renders unattributed; a 1:1 chip
+        // already sits in its owner's thread, so it stays as it was.
+        ...(source.kind === "group" && sender
+          ? { from: { botId: sender.id, name: sender.name, color: sender.color } }
+          : {}),
         tool: { name: `error: delegation to @${bot?.name ?? toBotId} could not start — ${why.slice(0, 120)}`, ok: false },
       });
     };
     return startTurn(toBotId, text, {
       commsDepth,
-      unattended: isUnattended(store.botByThread(sourceThreadId)?.id),
+      // The delegating bot is the one whose unattended state matters, and a
+      // room thread has no owner to look it up from.
+      unattended: isUnattended(fromBotId || store.botByThread(sourceThreadId)?.id),
       // startTurn schedules provider/integration setup after marking the bot
       // busy. Those asynchronous setup failures do not emit turn.completed,
       // so clear the watch and report them through this callback too.
@@ -2275,7 +2348,13 @@ bus.subscribe((event: RuntimeEvent) => {
   // A turn that failed or was interrupted drops its queue rather than
   // firing it later: the user who hit Stop does not expect the delegations
   // that turn queued to run anyway, minutes later, on an unrelated turn.
-  if (!event.ok) discardDelegations(commsBus, event.threadId);
+  // Scoped to the interrupted bot where the thread names one. A room queue
+  // holds handoffs from every bot that has spoken there, and one member
+  // being interrupted must not cancel another member's. A room thread names
+  // no owner, so the discard falls back to thread-wide there — bounded by
+  // the rule in discardDelegations that an item which has already outlived a
+  // turn is never collateral.
+  if (!event.ok) discardDelegations(commsBus, event.threadId, store.botByThread(event.threadId)?.id);
   else drainDelegations(commsBus, approvalBus, event.threadId, runDelegatedTurn);
   // A settling bot frees itself as a delegation TARGET too: handoffs that
   // found it busy earlier were kept queued (bounded retries) on their own
@@ -2832,11 +2911,11 @@ async function startTurn(
       // integrations.agents gate below, the prompt hint) — a bot on a driver
       // without it must not be told about tools it cannot call. Any bot can
       // still be the TARGET of ask_bot regardless of its driver.
-      const sectionPeers = store.bots.filter(
+      const reachablePeers = store.bots.filter(
         (candidate) =>
           candidate.id !== bot.id &&
           !candidate.hidden &&
-          sectionKey(candidate.section) === sectionKey(bot.section),
+          canReach(bot, candidate),
       );
       if (
         commsDepth < MAX_COMMS_DEPTH &&
@@ -2850,7 +2929,7 @@ async function startTurn(
       const tagged = integrations.agents
         ? mentionedBots(
             text,
-            sectionPeers,
+            reachablePeers,
           )
         : [];
       const coordinationPrompt = bot.chiefOfStaff
@@ -2860,7 +2939,7 @@ async function startTurn(
             Boolean(integrations.agents),
             openMurageStatusSystemPrompt(),
           )
-        : integrations.agents && sectionPeers.length > 0
+        : integrations.agents && reachablePeers.length > 0
           ? "You can work with the other bots in your section through the agents tools. list_bots shows who's available. Use delegate_bot for assigned or independent work so you remain available; use ask_bot only for a short consultation whose reply is required in your current answer."
           : "";
       const credentialPrompt = integrations.agents
@@ -3217,8 +3296,8 @@ const routineRequests = new RoutineRequestService({
     const proposer = store.bot(proposerBotId);
     const targetBot = store.bot(target.botId);
     if (!targetBot) return `@${target.name} no longer exists, so this routine cannot be scheduled for it`;
-    if (!proposer || sectionKey(targetBot.section) !== sectionKey(proposer.section)) {
-      return `@${target.name} is no longer in this section, so this routine cannot be scheduled for it`;
+    if (!proposer || !canReach(proposer, targetBot)) {
+      return `@${target.name} is no longer on your roster, so this routine cannot be scheduled for it`;
     }
     return null;
   },
@@ -3591,7 +3670,18 @@ async function runGroupMemberTurn(
     bot.description && `About: ${bot.description}`,
     `Room members: ${roster}, and ${userName} (the human).`,
     group.bulletin.trim() && `Room bulletin (shared instructions for everyone):\n${group.bulletin.trim()}`,
-    `Reply as yourself, briefly and conversationally. To bring a teammate in, mention them like @Name — they'll see the conversation and respond.`,
+    // A room turn is the ONE place a Chief runs at hop 0 and therefore holds
+    // the agents tools. Telling it to @mention instead would send its
+    // teammate down the mention chain at hop+1, where those tools are not
+    // mounted and the onward delegation dead-ends.
+    bot.chiefOfStaff
+      ? chiefOfStaffSystemPrompt(
+          bot.id,
+          store.bots,
+          Boolean(integrations.agents),
+          openMurageStatusSystemPrompt(),
+        )
+      : `Reply as yourself, briefly and conversationally. To bring a teammate in, mention them like @Name — they'll see the conversation and respond.`,
     integrations.agents &&
       "If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat.",
     integrations.agents &&
@@ -5109,6 +5199,23 @@ function isAllowedOrigin(origin: string | undefined | null): boolean {
   }
 }
 
+/** May this request read this thread's transcript at all?
+ *
+ * The other half of the same hole as the SSE firehose. `/api/threads/:id/*`
+ * authorized on thread-id alone — if you could name it you could read it —
+ * so scoping only the live stream and the grep would leave a client that
+ * learned an id from either one able to fetch the whole conversation
+ * directly. It costs the same two array scans the routes already do to
+ * resolve the thread, so there is no reason to leave it out.
+ *
+ * The answer is deliberately identical to the one `visibleToCompanion` gives
+ * a frame on the same thread — one definition of "visible", asked in two
+ * places, so a stream and a page can never disagree about a conversation. */
+function mayReadThread(req: IncomingMessage, url: URL, threadId: string): boolean {
+  if (requestSurface(req.headers, url.searchParams) === "desktop") return true;
+  return visibleToCompanion(store, { scope: "thread", threadId });
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
@@ -5138,12 +5245,7 @@ const server = createServer(async (req, res) => {
         // title/description included so a "chief of staff"-style bot can
         // judge the team (who does what, who has no job description yet)
         const bots = store.bots
-          .filter(
-            (b) =>
-              b.id !== self &&
-              !b.hidden &&
-              sectionKey(b.section) === sectionKey(sender.section),
-          )
+          .filter((b) => b.id !== self && !b.hidden && canReach(sender, b))
           .map((b) => ({
             id: b.id,
             name: b.name,
@@ -5151,6 +5253,10 @@ const server = createServer(async (req, res) => {
             busy: !!b.busy,
             title: b.title || undefined,
             description: b.description || undefined,
+            // section + chiefOfStaff so a workspace Chief can tell a lead
+            // from a peer, and one team from another, without guessing.
+            section: b.section || undefined,
+            chiefOfStaff: b.chiefOfStaff ? true : undefined,
           }));
         return json(res, 200, { bots });
       }
@@ -5203,8 +5309,8 @@ const server = createServer(async (req, res) => {
             if (!target) {
               return json(res, 404, { error: "no bot with that id — call list_bots and copy the exact id from the result" });
             }
-            if (sectionKey(target.section) !== sectionKey(from.section)) {
-              return json(res, 403, { error: "that bot belongs to a different section" });
+            if (!canReach(from, target)) {
+              return json(res, 403, { error: "that bot is not on your roster" });
             }
             forBot = { botId: target.id, name: target.name };
           }
@@ -5328,12 +5434,16 @@ const server = createServer(async (req, res) => {
         // hard refusal — every peer turn has an accountable sender.
         const from = store.bot(fromBotId);
         if (!from) return json(res, 403, { error: "unknown sender" });
-        if (sectionKey(from.section) !== sectionKey(target.section)) {
-          return json(res, 403, { error: "that bot belongs to a different section" });
+        if (!canReach(from, target)) {
+          return json(res, 403, { error: "that bot is not on your roster" });
         }
         const fromThreadId = String(body.fromThreadId ?? from.threadId);
-        if (!store.taskByThread(from.id, fromThreadId)) {
-          return json(res, 403, { error: "source thread does not belong to sender" });
+        // connectorThread, not taskByThread: a room thread belongs to a
+        // GROUP, so a bot's own task list can never match it and every peer
+        // call made from a room was refused — in the one conversation where
+        // the agents tools are actually mounted at depth 0.
+        if (!connectorThread(from.id, fromThreadId)) {
+          return json(res, 403, { error: "source conversation does not belong to sender" });
         }
         // A busy peer used to be a flat bounce ("try again later") — a
         // dead-end mid-turn that models rarely retry, so the exchange just
@@ -5383,11 +5493,11 @@ const server = createServer(async (req, res) => {
           const freshFrom = store.bot(fromBotId);
           const freshTarget = store.bot(toBotId);
           if (!freshFrom || !freshTarget) return json(res, 404, { error: "no such bot" });
-          if (sectionKey(freshFrom.section) !== sectionKey(freshTarget.section)) {
-            return json(res, 200, { error: "that bot moved to a different section" });
+          if (!canReach(freshFrom, freshTarget)) {
+            return json(res, 200, { error: "that bot is no longer on your roster" });
           }
-          if (!store.taskByThread(freshFrom.id, fromThreadId)) {
-            return json(res, 404, { error: "source task no longer exists" });
+          if (!connectorThread(freshFrom.id, fromThreadId)) {
+            return json(res, 404, { error: "source conversation no longer exists" });
           }
           // The user just approved this exact ask_bot request. Preserve that
           // decision if it has to become an async handoff; asking twice makes
@@ -5444,7 +5554,10 @@ const server = createServer(async (req, res) => {
         const fromBotId = String(url.searchParams.get("fromBotId") ?? "");
         const fromThreadId = String(url.searchParams.get("fromThreadId") ?? "");
         const from = store.bot(fromBotId);
-        if (!from || !store.taskByThread(from.id, fromThreadId)) return json(res, 403, { error: "unknown sender" });
+        // A room is a source conversation like any other: a Chief that
+        // delegated from the exec room must still be able to read the
+        // receipt back with check_delegation / wait_delegation.
+        if (!from || !connectorThread(from.id, fromThreadId)) return json(res, 403, { error: "unknown sender" });
         const waitMs = Math.min(Math.max(Number(url.searchParams.get("wait_ms")) || 0, 0), 240_000);
         const deadline = Date.now() + waitMs;
         // Bounded long-poll: the delegating bot parks ONE cheap HTTP request
@@ -5484,12 +5597,12 @@ const server = createServer(async (req, res) => {
         if (!from) return json(res, 404, { error: "no such bot" });
         const target = store.bot(toBotId);
         if (!target) return json(res, 404, { error: "no such bot" });
-        if (sectionKey(from.section) !== sectionKey(target.section)) {
-          return json(res, 403, { error: "that bot belongs to a different section" });
+        if (!canReach(from, target)) {
+          return json(res, 403, { error: "that bot is not on your roster" });
         }
         const fromThreadId = String(body.fromThreadId ?? from.threadId);
-        if (!store.taskByThread(from.id, fromThreadId)) {
-          return json(res, 403, { error: "source thread does not belong to sender" });
+        if (!connectorThread(from.id, fromThreadId)) {
+          return json(res, 403, { error: "source conversation does not belong to sender" });
         }
         const queued = queueDelegation(
           commsBus,
@@ -5530,6 +5643,41 @@ const server = createServer(async (req, res) => {
         if (!chief.chiefOfStaff) {
           return json(res, 403, { error: "only a section's Chief of Staff can create operator bots" });
         }
+        // Which team the specialist joins. A section Chief keeps verbatim
+        // inheritance (today's behaviour). The WORKSPACE Chief must name a
+        // team: inheriting her own section would make her the direct manager
+        // of the specialists she just created, which is the one thing the
+        // tier exists to prevent.
+        const requestedSection = typeof body.section === "string" ? body.section.trim() : "";
+        let targetSection: string | undefined;
+        if (isWorkspaceChief(chief)) {
+          if (!requestedSection) {
+            return json(res, 400, {
+              error: "name the team this specialist joins — create_bot cannot add bots to your own roster",
+            });
+          }
+          if (sectionKey(requestedSection) === sectionKey(chief.section)) {
+            return json(res, 400, {
+              error: "create_bot cannot add bots to your own roster — name one of the teams from list_bots",
+            });
+          }
+          const lead = store.bots.find(
+            (candidate) =>
+              !candidate.hidden &&
+              candidate.chiefOfStaff &&
+              sectionKey(candidate.section) === sectionKey(requestedSection),
+          );
+          if (!lead) {
+            return json(res, 400, { error: `the ${requestedSection} team has no lead yet — create the lead first` });
+          }
+          // the lead's own label, so a near-miss spelling cannot fork a section
+          targetSection = lead.section;
+        } else {
+          if (requestedSection && sectionKey(requestedSection) !== sectionKey(chief.section)) {
+            return json(res, 403, { error: "you can only create bots in your own section" });
+          }
+          targetSection = chief.section;
+        }
         if (store.bots.length >= MAX_WORKSPACE_BOTS) {
           return json(res, 409, { error: `this workspace is limited to ${MAX_WORKSPACE_BOTS} bots` });
         }
@@ -5547,7 +5695,7 @@ const server = createServer(async (req, res) => {
         const duplicate = store.bots.find(
           (candidate) =>
             !candidate.hidden &&
-            sectionKey(candidate.section) === sectionKey(chief.section) &&
+            sectionKey(candidate.section) === sectionKey(targetSection) &&
             candidate.name.trim().toLowerCase() === name.toLowerCase(),
         );
         if (duplicate) {
@@ -5559,7 +5707,7 @@ const server = createServer(async (req, res) => {
             title: role,
             description: instructions,
             modelSelection: { ...chief.modelSelection },
-            section: chief.section,
+            section: targetSection,
           },
           { seedMessages: false },
         );
@@ -5854,7 +6002,12 @@ const server = createServer(async (req, res) => {
 
     // ── events stream ──
     if (method === "GET" && path === "/api/events") {
-      const client: SseClient = { res, screens: url.searchParams.get("screens") !== "off" };
+      const client: SseClient = {
+        res,
+        screens: url.searchParams.get("screens") !== "off",
+        // Scoped unless the desktop said otherwise — see requestSurface().
+        scoped: requestSurface(req.headers, url.searchParams) !== "desktop",
+      };
       res.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
@@ -5893,7 +6046,7 @@ const server = createServer(async (req, res) => {
       );
       if (resumed) {
         for (const buffered of replayBuffer) {
-          if (buffered.seq > since && buffered.frame && wants(client, buffered.kind)) res.write(buffered.frame);
+          if (buffered.seq > since && buffered.frame && wants(client, buffered)) res.write(buffered.frame);
         }
       }
 
@@ -5920,11 +6073,24 @@ const server = createServer(async (req, res) => {
     if (method === "GET" && path === "/api/bots") {
       const limit = pageSize(url.searchParams.get("messages"));
       if (limit === null) return json(res, 400, { error: "messages must be a non-negative whole number" });
+      // The hydration route, and the widest read on this port: every bot and
+      // every room, each with a page of its transcript inline. Scoping the
+      // stream and the grep while this answered for everything would have
+      // been theatre — a client just asks once and gets the same content in
+      // one response. Same predicate as the SSE filter, so a remote client's
+      // first paint and its live updates describe one workspace.
+      const scoped = requestSurface(req.headers, url.searchParams) !== "desktop";
+      const bots = scoped
+        ? store.bots.filter((bot) => visibleToCompanion(store, { scope: "bot", botId: bot.id }))
+        : store.bots;
+      const groups = scoped
+        ? store.groups.filter((group) => visibleToCompanion(store, { scope: "group", groupId: group.id }))
+        : store.groups;
       return json(res, 200, {
-        bots: store.bots.map((bot) => ({ ...publicBot(bot), ...messagePage(bot.threadId, limit) })),
-        groups: store.groups.map((g) => ({ ...publicGroupState(g), ...messagePage(g.threadId, limit) })),
+        bots: bots.map((bot) => ({ ...publicBot(bot), ...messagePage(bot.threadId, limit) })),
+        groups: groups.map((g) => ({ ...publicGroupState(g), ...messagePage(g.threadId, limit) })),
         computerControl: Object.fromEntries(
-          store.bots.map((bot) => {
+          bots.map((bot) => {
             const snapshot = computerControl.snapshot(bot.id);
             return [bot.id, { held: snapshot.held, helpReason: snapshot.helpReason }];
           }),
@@ -5936,7 +6102,10 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/threads\/([\w-]+)\/messages$/);
     if (m && method === "GET") {
       const threadId = m[1];
-      if (!store.botByThread(threadId) && !store.groupByThread(threadId)) {
+      // 404 rather than 403 for a thread this surface cannot see: the two
+      // answers are the same fact, and telling the caller which one it is
+      // makes the route an oracle for the ids it was just denied.
+      if (!mayReadThread(req, url, threadId) || (!store.botByThread(threadId) && !store.groupByThread(threadId))) {
         return json(res, 404, { error: "no such conversation" });
       }
       const limit = pageSize(url.searchParams.get("limit"));
@@ -5965,7 +6134,10 @@ const server = createServer(async (req, res) => {
       // and `messagesFor` materialises and caches a ThreadState for whatever
       // it is handed. Without this, a client asking for images on ids that
       // do not exist grows the thread map for as long as it keeps asking.
-      if (!store.botByThread(m[1]) && !store.groupByThread(m[1])) {
+      // …and the visibility answer the page route gives, because a screen
+      // capture of a hidden bot's desktop is transcript content like any
+      // other and this is the route that serves the pixels.
+      if (!mayReadThread(req, url, m[1]) || (!store.botByThread(m[1]) && !store.groupByThread(m[1]))) {
         return json(res, 404, { error: "no such conversation" });
       }
       const message = store.messagesFor(m[1]).find((msg) => msg.id === m![2]);
@@ -6117,6 +6289,19 @@ const server = createServer(async (req, res) => {
       if (threadId && !store.botByThread(threadId) && !store.groupByThread(threadId)) {
         return json(res, 404, { error: "no such conversation" });
       }
+      // A full-transcript grep. The desktop is the local user and greps
+      // everything; every other surface greps what it can see, and says so up
+      // front so LIMIT counts rows it may actually be shown.
+      let scope: string[] | undefined =
+        requestSurface(req.headers, url.searchParams) === "desktop" ? undefined : store.visibleThreadIds();
+      if (threadId) {
+        // Asking for a thread outside the scope is answered as an empty
+        // result rather than a 404: the 404 above already told the caller
+        // whether the conversation exists, and a second, different answer
+        // here would turn this route into a membership oracle.
+        if (scope && !scope.includes(threadId)) return json(res, 200, { hits: [] });
+        scope = [threadId];
+      }
       // whether each hit sits on its thread's visible branch — a click on
       // one that does not has to switch versions first (and only then)
       const activePaths = new Map<string, Set<string>>();
@@ -6125,7 +6310,7 @@ const server = createServer(async (req, res) => {
         if (!ids) activePaths.set(threadId, (ids = new Set(store.activePath(threadId).map((m) => m.id))));
         return ids.has(messageId);
       };
-      const hits = searchMessages(q, limit, threadId)
+      const hits = searchMessages(q, limit, scope)
         .map((hit) => {
           const bot = store.botByThread(hit.threadId);
           const group = bot ? undefined : store.groupByThread(hit.threadId);
@@ -6151,7 +6336,12 @@ const server = createServer(async (req, res) => {
       const threadId = m[1];
       const bot = store.botByThread(threadId);
       const group = bot ? undefined : store.groupByThread(threadId);
-      if (!bot && !group) return json(res, 404, { error: "no such conversation" });
+      // An export is the whole transcript in one response — the single
+      // largest disclosure on this port, and the one that most needs the
+      // same answer the page route gives.
+      if ((!bot && !group) || !mayReadThread(req, url, threadId)) {
+        return json(res, 404, { error: "no such conversation" });
+      }
       const format = url.searchParams.get("format") ?? "markdown";
       if (format !== "markdown" && format !== "json") {
         return json(res, 400, { error: "format must be markdown or json" });
@@ -6521,7 +6711,7 @@ const server = createServer(async (req, res) => {
         // that fails validation or persistence never disturbs the current
         // workspace.
         const archivedBots = archived.flatMap(({ id }) => {
-          const bot = store.patchBot(id, { hidden: true, chiefOfStaff: false });
+          const bot = store.patchBot(id, { hidden: true, chiefOfStaff: false, chiefScope: undefined });
           return bot ? [publicBot(bot)] : [];
         });
         const publicBots = importedBots.map((bot) => publicBot(store.bot(bot.id)!));
@@ -7120,7 +7310,11 @@ const server = createServer(async (req, res) => {
         } else return json(res, 400, { error: "pinnedMessageId must be a message id" });
       }
       if (section !== undefined) patch.section = section ?? undefined;
-      if (body.chiefOfStaff === false) patch.chiefOfStaff = false;
+      if (body.chiefOfStaff === false) {
+        patch.chiefOfStaff = false;
+        // the tier is a modifier on the flag, so it cannot outlive it
+        patch.chiefScope = undefined;
+      }
       // per-bot gate on the workspace's connected apps (Composio)
       if (body.composio !== undefined) {
         if (typeof body.composio !== "boolean") return json(res, 400, { error: "composio must be true or false" });
@@ -7165,6 +7359,27 @@ const server = createServer(async (req, res) => {
       }
       if (body.chiefOfStaff !== undefined && typeof body.chiefOfStaff !== "boolean") {
         return json(res, 400, { error: "chiefOfStaff must be true or false" });
+      }
+      // Which tier this Chief occupies. Applied through setChiefOfStaff (not
+      // patch) because promoting a workspace Chief has to demote the previous
+      // holder in the same persisted change.
+      if (
+        body.chiefScope !== undefined &&
+        body.chiefScope !== null &&
+        body.chiefScope !== "workspace" &&
+        body.chiefScope !== "section"
+      ) {
+        return json(res, 400, { error: "chiefScope must be workspace or section" });
+      }
+      const requestedScope: "workspace" | "section" | undefined =
+        body.chiefScope === "workspace" ? "workspace" : body.chiefScope != null ? "section" : undefined;
+      // A tier without the role is a state with no meaning, so setting one
+      // is never a back door into electing a Chief.
+      if (requestedScope && !(body.chiefOfStaff === true || existingBot?.chiefOfStaff === true)) {
+        return json(res, 400, { error: "chiefScope applies only to a Chief of Staff" });
+      }
+      if (requestedScope && body.chiefOfStaff === false) {
+        return json(res, 400, { error: "chiefScope needs chiefOfStaff" });
       }
       if (body.cloudBackend !== undefined) {
         const backendError = cloudBackendChangeError(Boolean(existingBot?.busy), activeVpsThreads.has(m[1]));
@@ -7232,8 +7447,15 @@ const server = createServer(async (req, res) => {
       const bot = store.patchBot(m[1], patch);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const chiefChanges =
-        body.chiefOfStaff === true || chiefMovedSections
-          ? store.setChiefOfStaff(bot.id)
+        body.chiefOfStaff === true || chiefMovedSections || requestedScope
+          ? store.setChiefOfStaff(
+              bot.id,
+              undefined,
+              // Omitted scope leaves the tier alone: re-asserting a section
+              // election (or dragging a Chief into another section) must not
+              // silently demote the workspace Chief.
+              requestedScope,
+            )
           : [];
       if (chiefChanges === null) return json(res, 404, { error: "no such bot" });
       return json(res, 200, { bot: wireBot(store.bot(bot.id)!) });
@@ -7325,7 +7547,7 @@ const server = createServer(async (req, res) => {
         // a peer approval naming this bot can never be meaningfully answered
         // now, and its caller would otherwise wait out the 15-minute timeout
         cancelPeerApprovalsFor(bot.id);
-        discardDelegations(commsBus, bot.threadId);
+        discardDelegations(commsBus, bot.threadId, bot.id);
         computerControl.forget(bot.id);
         computerControlRevision.delete(bot.id);
         const target = perBotLocalVmTarget(bot.id);
@@ -8059,7 +8281,13 @@ const server = createServer(async (req, res) => {
     // child proves it is OURS by echoing its pid (a stray dev server has
     // the same API shape but a different pid)
     if (method === "GET" && path === "/api/health") {
-      return json(res, 200, { app: "murage", pid: process.pid, static: Boolean(STATIC_DIR) });
+      return json(res, 200, {
+        app: "murage",
+        pid: process.pid,
+        static: Boolean(STATIC_DIR),
+        // see unresolvedFrameDrops: steady zero is healthy
+        unresolvedFrameDrops,
+      });
     }
 
     // ── inspector: a thread's runtime events + native protocol tee ──
@@ -8071,7 +8299,10 @@ const server = createServer(async (req, res) => {
       const known =
         store.bots.some((b) => store.tasks(b.id).some((t) => t.threadId === threadId)) ||
         Boolean(store.groupByThread(threadId));
-      if (!known) return json(res, 404, { error: "no such thread" });
+      // The runtime log and the native protocol tee are the turn's prompts
+      // and tool traffic — transcript content by another name, and on the
+      // same thread, so it takes the same answer.
+      if (!known || !mayReadThread(req, url, threadId)) return json(res, 404, { error: "no such thread" });
       const rawLimit = url.searchParams.get("limit");
       const parsedLimit = rawLimit === null ? undefined : Number(rawLimit);
       if (parsedLimit !== undefined && (!Number.isInteger(parsedLimit) || parsedLimit <= 0)) {
