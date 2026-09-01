@@ -53,6 +53,24 @@ function requireExecutable(file) {
   }
 }
 
+// electron-updater picks its installer from resources/package-type: present
+// and reading "deb" routes to DebUpdater, absent falls back to AppImageUpdater.
+// electron/updater.mjs reads the same marker to decide whether the update is
+// applied in place or handed to the system package manager. If packaging ever
+// puts the marker in both artifacts (or neither), that routing silently
+// inverts, so pin it here where both trees are already extracted.
+function requirePackageType(resources, label, expected) {
+  const marker = path.join(resources, "package-type");
+  const found = statSync(marker, { throwIfNoEntry: false })?.isFile()
+    ? readFileSync(marker, "utf8").trim()
+    : null;
+  if (found !== expected) {
+    fail(
+      `${label} package-type marker is ${JSON.stringify(found)}, expected ${JSON.stringify(expected)}`,
+    );
+  }
+}
+
 function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
@@ -417,6 +435,8 @@ try {
   const debAppRoot = path.join(extracted, "opt", "Murage");
   requireDirectoryMode(debAppRoot, 0o755);
   const debResources = path.join(debAppRoot, "resources");
+  // Routes the in-app updater to the package-manager hand-off.
+  requirePackageType(debResources, "DEB", "deb");
   const debHashes = verifyCuaResources(debResources, "DEB");
   const debCloudflaredHash = verifyCloudflaredResources(debResources, "DEB");
   if (debCloudflaredHash !== unpackedCloudflaredHash) {
@@ -480,6 +500,8 @@ try {
     );
   }
   const appImageResources = path.join(squashRoot, "resources");
+  // No marker: the AppImage keeps the in-place restart-to-update path.
+  requirePackageType(appImageResources, "AppImage", null);
   // Depending on the pinned appimagetool runtime, SquashFS directories are
   // emitted as root:root 0755 or 0775. Require one mode consistently across
   // the reviewed resource tree. The app never executes through that path:
