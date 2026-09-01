@@ -60,6 +60,8 @@
     "package:win": "pnpm package:prepare && electron-builder --win --publish never",
     "package:linux": "pnpm package:prepare && pnpm build:cua:linux && electron-builder --linux --x64 --publish never",
     "package:linux:offline": "pnpm package:prepare && pnpm build:cua:linux:offline && electron-builder --linux --x64 --publish never",
+    "smoke:deb-command": "node scripts/smoke-deb-command.mjs",
+    "smoke:linux-update": "xvfb-run -a electron --no-sandbox scripts/smoke-linux-update.mjs",
     "smoke:linux-package": "node scripts/run-linux-package-smoke.mjs",
     "smoke:cua-x11-input": "node scripts/smoke-cua-x11-input.mjs",
     "package:linux:dir": "pnpm package:prepare && pnpm build:cua:linux && electron-builder --linux dir --x64 --publish never",

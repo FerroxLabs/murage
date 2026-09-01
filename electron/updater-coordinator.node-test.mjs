@@ -14,17 +14,30 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function harness() {
+function harness(options) {
   const updater = new EventEmitter();
   // electron-updater has its own error listener; model that without routing it.
   updater.on("error", () => {});
   let state = { status: "idle" };
   const states = [];
-  const coordinator = createUpdaterCoordinator(updater, (patch) => {
-    state = { ...state, ...patch };
-    states.push({ ...state });
-  });
+  const coordinator = createUpdaterCoordinator(
+    updater,
+    (patch) => {
+      state = { ...state, ...patch };
+      states.push({ ...state });
+    },
+    options,
+  );
   return { updater, coordinator, states, getState: () => state };
+}
+
+// Drives a successful download so install() has staged paths to hand off.
+async function downloadInto(h, files = ["/tmp/Murage-2.0.0-amd64.deb"]) {
+  h.updater.downloadUpdate = () => {
+    h.updater.emit("update-downloaded", { version: "2.0.0" });
+    return Promise.resolve(files);
+  };
+  await h.coordinator.download();
 }
 
 function errorStates(states) {
@@ -322,4 +335,70 @@ test("an updater error event and rejected promise produce one deterministic stat
   await download.coordinator.download();
   assert.equal(errorStates(download.states).length, 1);
   assert.deepEqual(download.getState(), { status: "error", message: "download failed once" });
+});
+
+test("the hand-off install opens the staged package instead of quitting", async () => {
+  const received = [];
+  const h = harness({
+    handOffInstall: (files) => {
+      received.push(files);
+      // what the user still has to do travels back with the state
+      return Promise.resolve({ command: "sudo apt-get install -y '/tmp/x.deb'", terminalOpened: true });
+    },
+  });
+  h.updater.quitAndInstall = () => assert.fail("a system package must not be installed by quitAndInstall");
+
+  await downloadInto(h);
+  assert.equal(h.getState().status, "downloaded");
+
+  h.coordinator.install();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(received, [["/tmp/Murage-2.0.0-amd64.deb"]]);
+  assert.equal(h.getState().status, "handed-off");
+  // the user watched something happen between the click and the result
+  assert.ok(h.states.some((entry) => entry.status === "installing"));
+  assert.equal(h.getState().command, "sudo apt-get install -y '/tmp/x.deb'");
+  assert.equal(h.getState().terminalOpened, true);
+});
+
+test("a failed hand-off is reported instead of leaving the card spinning", async () => {
+  const h = harness({ handOffInstall: () => Promise.reject(new Error("no handler for .deb")) });
+
+  await downloadInto(h);
+  h.coordinator.install();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // version survives the merge from the download — assert what the card reads
+  assert.equal(h.getState().status, "error");
+  assert.equal(h.getState().message, "no handler for .deb");
+});
+
+test("the hand-off sees no staged file when nothing downloaded", async () => {
+  const received = [];
+  const h = harness({
+    handOffInstall: (files) => {
+      received.push(files);
+      return Promise.resolve();
+    },
+  });
+
+  h.coordinator.install();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(received, [null]);
+});
+
+test("without a hand-off the install still quits and installs", async () => {
+  const h = harness();
+  let called = 0;
+  h.updater.quitAndInstall = () => {
+    called += 1;
+  };
+
+  await downloadInto(h, ["/tmp/Murage-2.0.0.AppImage"]);
+  h.coordinator.install();
+
+  assert.equal(called, 1);
+  assert.equal(h.getState().status, "installing");
 });

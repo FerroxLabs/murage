@@ -63,6 +63,20 @@ jobs:
           deb=(release/*.deb)
           test "${#deb[@]}" -eq 1
           sudo --preserve-env=CI,RUNNER_TEMP node scripts/smoke-deb-upgrade.mjs "${deb[0]}"
+      - name: Prove the handed-over Ubuntu command installs
+        # The .deb path ends with a command on the user's clipboard, so the
+        # command is the deliverable. Runs it as root on a clean Ubuntu through
+        # a real shell, and checks that the `dpkg -i` it replaced still fails
+        # there — the reason the app must not run that itself.
+        run: |
+          deb=(release/*.deb)
+          test "${#deb[@]}" -eq 1
+          pnpm smoke:deb-command "${deb[0]}"
+      - name: Prove an AppImage update lands on the launched path
+        # Installs the current published release over a copy named after a
+        # version, which is the shape that used to orphan the launcher. Runs
+        # against the real feed, so it also covers the differential download.
+        run: pnpm smoke:linux-update
       - name: Configure Chromium sandbox for the unpacked app
         run: |
           sudo chown root:root release/linux-unpacked/chrome-sandbox
