@@ -455,7 +455,7 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
   };
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
+      className="fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="w-[340px] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
@@ -1378,6 +1378,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       className={cn(
         "flex h-full shrink-0 flex-col border-r border-hairline/40 bg-panel transition-[width] duration-200",
         density === "icons" ? "w-[80px]" : density === "compact" ? "w-[272px]" : "w-[320px]",
+        // 320px of a 390px screen leaves 70px of chat behind the drawer — not
+        // enough of an edge to aim at. Cap the drawer at 86vw below md so there
+        // is always a strip of conversation to tap back to.
+        density === "icons" ? "" : "max-md:w-[min(320px,86vw)]",
+        // In black-translucent standalone mode the drawer header sits under
+        // the clock without this.
+        "max-md:pt-[env(safe-area-inset-top)]",
         // Below md only: the sidebar leaves the flow and slides in over the chat.
         // Scoped with max-md: rather than cancelled with md: on purpose — Tailwind
         // v4 emits the native `translate` property, and any value other than
@@ -1398,7 +1405,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         {macInset ? (
           <div className={density === "icons" ? "h-5 w-full" : "w-14"} />
         ) : browser ? (
-          <div className="flex items-center gap-2">
+          // Decoration that pays for itself beside a desktop browser's own
+          // chrome. On a phone there is no window to close, so three dots that
+          // look exactly like buttons and do nothing are a straight cost.
+          <div className="flex items-center gap-2 max-md:hidden">
             <span className="size-3 rounded-full bg-[#ff5f57]" />
             <span className="size-3 rounded-full bg-[#febc2e]" />
             <span className="size-3 rounded-full bg-[#28c840]" />

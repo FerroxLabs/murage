@@ -149,7 +149,7 @@ export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-6 pt-[14vh]"
+      className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-start justify-center bg-black/50 p-6 pt-[calc(0.14*var(--vvh,100dvh))]"
       onMouseDown={(e) => e.target === e.currentTarget && setOpen(false)}
       onKeyDown={onKeyDown}
     >
@@ -157,7 +157,7 @@ export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="flex max-h-[min(480px,70vh)] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-hairline/50 bg-card shadow-2xl shadow-black/60"
+        className="flex max-h-[min(480px,calc(0.7*var(--vvh,100dvh)))] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-hairline/50 bg-card shadow-2xl shadow-black/60"
       >
         <div className="flex items-center gap-3 border-b border-hairline/40 px-4 py-3">
           <Search size={16} className="shrink-0 text-ink-secondary" />

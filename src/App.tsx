@@ -22,6 +22,7 @@ import { SkillRecorderPage } from "@/components/SkillRecorderPage";
 import { TeamMapPage } from "@/components/TeamMapPage";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
+import { trackVisualViewport } from "@/lib/visual-viewport";
 import { setLocale } from "@/lib/i18n";
 
 function Shell() {
@@ -304,6 +305,10 @@ export default function App() {
   useEffect(() => {
     initAnalytics();
   }, []);
+  // One listener for the whole app: publishes --vvh/--kb/data-keyboard on
+  // <html> so #root tracks the visual viewport instead of the layout viewport.
+  // Without it the composer sits behind the iOS keyboard (styles.css #root).
+  useEffect(() => trackVisualViewport(), []);
   return (
     <DesktopCapabilitiesProvider>
       <StoreProvider>

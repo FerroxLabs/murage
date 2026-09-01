@@ -191,20 +191,25 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const setupEngines = engines.filter((e) => !engineReady(e.instance));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-app p-8">
+    <div className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-app p-8 max-md:p-4">
       {/* the engines step lays tiles out two across, so it gets more room —
           but never more than the window: the panel caps at the viewport and
           the engine list scrolls inside it, so the header and Continue stay
           put and nothing runs into the edges */}
       <div
-        className={`flex max-h-full w-full flex-col rounded-2xl border border-hairline/40 bg-panel p-8 ${step === 1 ? "max-w-[680px]" : step === 3 ? "max-w-[620px]" : "max-w-[460px]"}`}
+        className={`flex max-h-full w-full flex-col rounded-2xl border border-hairline/40 bg-panel p-8 max-md:p-5 ${step === 1 ? "max-w-[680px]" : step === 3 ? "max-w-[620px]" : "max-w-[460px]"}`}
       >
         {step === 0 && (
-          <div className="flex flex-col items-center">
+          // min-h-0 + overflow-y-auto: the card is `max-h-full`, so with the
+          // keyboard up (--vvh) this content is taller than the box that holds
+          // it. Without a scroller here the children simply render outside the
+          // card — measured at 390x508, Continue landed 34px below the fold on
+          // the one screen whose first field is autoFocus.
+          <div className="flex min-h-0 w-full flex-col items-center overflow-y-auto">
             <img
               src="/murage-logo.png"
               alt="Murage"
-              className="mb-7 h-14 w-auto"
+              className="mb-7 h-14 w-auto max-md:hidden"
               draggable={false}
             />
             <EmberAvatar color="orange" state="happy" size={72} />
@@ -294,7 +299,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         )}
 
         {step === 2 && (
-          <div className="flex flex-col">
+          <div className="flex min-h-0 flex-col overflow-y-auto">
             <h1 className="text-[18px] font-semibold text-ink">Permissions</h1>
             <p className="mt-1 text-[13.5px] text-ink-secondary">
               Optional, and only ever used when you ask for the feature.

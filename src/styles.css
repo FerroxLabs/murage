@@ -276,12 +276,83 @@ body,
   height: 100%;
 }
 
+/* The visual viewport, not the layout viewport. iOS does not shrink the layout
+   viewport when the software keyboard opens, so `height: 100%` here is the
+   pre-keyboard height — which is how a bottom-docked composer ends up behind
+   the keyboard. --vvh is written by trackVisualViewport() (src/lib/visual-viewport.ts);
+   the 100% fallback is what every browser that never fires visualViewport gets,
+   and is also the correct value on the desktop. */
+#root {
+  height: var(--vvh, 100%);
+}
+
 body {
   background-color: var(--color-app);
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+  /* Rubber-banding the document drags the whole app in a standalone iOS
+     install and reveals the page ground under a keyboard that has not moved.
+     The transcript keeps its own overscroll-y-contain (ChatView.tsx). */
+  overscroll-behavior: none;
+  /* Safari inflates text in landscape without this, which desynchronises
+     every measured layout. */
+  -webkit-text-size-adjust: 100%;
+}
+
+/* iOS zooms the page whenever a focused field's computed font-size is under
+   16px, and it never zooms back out — the composer ends up half off-screen for
+   the rest of the session. There are ~60 arbitrary `text-[13px]`-style class
+   sites on fields across src/; editing each one would either cost the desktop
+   its density or be missed by the next new field. Raise the floor once, only
+   where a coarse pointer is the input device, so the desktop is untouched by
+   construction. Unlayered, so it outranks Tailwind's utility layer without
+   !important (same trick as the :focus-visible rules below).
+   Fields that are already >=16px opt out with `keep-font-size`. */
+@media (pointer: coarse) {
+  :is(textarea, select, input):not(.keep-font-size):not(
+      [type="checkbox"],
+      [type="radio"],
+      [type="range"],
+      [type="file"],
+      [type="color"],
+      [type="button"],
+      [type="submit"],
+      [type="reset"],
+      [type="image"]
+    ) {
+    font-size: 16px;
+  }
+}
+
+/* Bubble width below md: the 78% cap is there so a message does not span a
+   1120px desktop column. On a 390px screen the same cap leaves a bot bubble
+   273px wide with a 97px dead gutter — a quarter of the only column there is,
+   spent on nothing, wrapping the text at ~29 characters. 92% below md keeps the
+   bubble reading as a bubble and gives the text back 49px. Paired with the
+   `max-w-[min(42rem,78%)]` sites in ChatView.tsx / GroupView.tsx. */
+
+/* Overlay convention: a `position: fixed` box resolves against the LAYOUT
+   viewport, which iOS never shrinks for the keyboard — so `fixed inset-0` on a
+   modal that contains a text field centres the dialog in the full pre-keyboard
+   height and puts its bottom half behind the keys, even though #root above has
+   already shrunk. Those modals use
+   `fixed inset-x-0 top-0 h-[var(--vvh,100dvh)]` instead, and any inner `vh`
+   height becomes `calc(<factor>*var(--vvh,100dvh))`. Overlays with no focusable
+   field (drag targets, confirm prompts, image lightboxes, click-away backdrops)
+   keep `inset-0`: no keyboard can be up while they are. */
+
+/* The composer dock is the bottom edge of the app, so it owes the home
+   indicator its inset — except when the keyboard is up, because the indicator
+   is behind the keyboard and #root has already shrunk to the visual viewport.
+   The state lives on <html> (trackVisualViewport), which no Tailwind variant
+   on the dock itself can read, so it is a rule rather than a utility. */
+.dock-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+:root[data-keyboard="open"] .dock-safe-bottom {
+  padding-bottom: 0;
 }
 
 /* Keep focus visible after components clear the browser outline. These

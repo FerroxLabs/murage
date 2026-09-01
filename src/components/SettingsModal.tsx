@@ -572,7 +572,10 @@ export function SettingsModal() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      // C5: `fixed` resolves against the layout viewport, which iOS does not
+      // shrink for the keyboard, so inset-0 would leave this centred in the
+      // full 844px with the bottom half behind the keys. Height tracks --vvh.
+      className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100%)] items-center justify-center bg-black/50 p-6 max-md:p-0"
       onMouseDown={(e) => e.target === e.currentTarget && dispatch({ type: "toggleAppSettings", open: false })}
     >
       <div
@@ -581,14 +584,31 @@ export function SettingsModal() {
         aria-modal="true"
         aria-labelledby="app-settings-title"
         tabIndex={-1}
-        className="flex h-[560px] w-full max-w-[860px] overflow-hidden rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none"
+        className={cn(
+          "flex w-full max-w-[860px] overflow-hidden rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
+          // 560px flat used to overflow a short window; the codebase already
+          // knows this shape (PluginsPanel, TeamLibraryPanel).
+          "h-[min(560px,calc(100dvh-2rem))]",
+          // Below md a 190px nav beside the content left 152px of settings on a
+          // 390px screen. Full-bleed sheet, nav folded to a horizontal scroller
+          // above it. --vvh rather than 100dvh so the footer buttons stay
+          // reachable with the keyboard up (100dvh is the layout viewport,
+          // which iOS does not shrink).
+          "max-md:h-[var(--vvh,100dvh)] max-md:max-w-none max-md:flex-col max-md:rounded-none",
+        )}
       >
         {/* section nav */}
-        <nav className="flex w-[190px] shrink-0 flex-col gap-0.5 border-r border-hairline/40 p-3">
-          <div id="app-settings-title" className="px-2 pb-2 pt-1 text-[15px] font-semibold text-ink">
+        <nav
+          className={cn(
+            "flex flex-col gap-0.5 border-r border-hairline/40 p-3",
+            "md:w-[190px] md:shrink-0",
+            "max-md:w-full max-md:shrink-0 max-md:flex-row max-md:items-center max-md:overflow-x-auto max-md:border-r-0 max-md:border-b",
+          )}
+        >
+          <div id="app-settings-title" className="px-2 pb-2 pt-1 text-[15px] font-semibold text-ink max-md:hidden">
             Settings
           </div>
-          <div className="mb-1.5 flex items-center gap-2 rounded-lg bg-control/70 px-2.5 py-1.5">
+          <div className="mb-1.5 flex items-center gap-2 rounded-lg bg-control/70 px-2.5 py-1.5 max-md:mb-0 max-md:w-[9rem] max-md:shrink-0">
             <Search size={14} className="shrink-0 text-ink-secondary" />
             <input
               value={query}
@@ -616,6 +636,7 @@ export function SettingsModal() {
               aria-current={section === id ? "page" : undefined}
               className={cn(
                 "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[14px]",
+                "max-md:shrink-0 max-md:whitespace-nowrap",
                 section === id ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
               )}
             >
@@ -625,7 +646,7 @@ export function SettingsModal() {
           ))}
         </nav>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex items-center justify-between px-5 py-3">
             <span className="text-[15px] font-semibold text-ink">
               {SECTIONS.find((s) => s.id === section)?.label}

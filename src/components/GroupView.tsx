@@ -237,7 +237,7 @@ const Transcript = memo(function Transcript({
                 )}
                 <div
                   className={cn(
-                    "w-fit max-w-[min(42rem,78%)] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
+                    "w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
                     user ? "whitespace-pre-wrap bg-bubble-user text-ink" : "bg-card text-ink",
                   )}
                   title={new Date(m.at).toLocaleString()}
@@ -1033,6 +1033,9 @@ export function GroupView({ group }: { group: Group }) {
           "flex items-center justify-between px-5 py-3",
           // Room for the drawer button, which overlays this corner below md.
           "pl-11 md:pl-5",
+          // Same status-bar inset as ChatView's header; calc() so the desktop
+          // keeps py-3 when the inset is 0px.
+          "pt-[calc(0.75rem+env(safe-area-inset-top))]",
         )}
       >
         <div className="flex min-w-0 items-center gap-2">
@@ -1261,7 +1264,7 @@ export function GroupView({ group }: { group: Group }) {
               answering={popping !== null}
             >
               {popping ? (
-                <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+                <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
                   <ChatMarkdown text={popping.text} />
                 </div>
               ) : null}
@@ -1269,7 +1272,7 @@ export function GroupView({ group }: { group: Group }) {
           )}
           {(state.pendingQueued[group.threadId] ?? []).map((entry) => (
             <div key={entry.queueId} className="flex flex-col items-end">
-              <div className="w-fit max-w-[min(42rem,78%)] whitespace-pre-wrap rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed text-ink-secondary">
+              <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] whitespace-pre-wrap rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed text-ink-secondary">
                 {entry.text}
               </div>
               <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
@@ -1315,7 +1318,7 @@ export function GroupView({ group }: { group: Group }) {
         </button>
       )}
 
-      <div ref={composerDockRef} className="absolute inset-x-0 bottom-0 z-[2]">
+      <div ref={composerDockRef} className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2]">
       <Composer
         key={group.threadId}
         group={group}

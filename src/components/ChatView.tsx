@@ -41,6 +41,7 @@ import { EngineSetup } from "./EngineSetup";
 import { BotAvatar, EmberAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
+import { anchoredScrollTop, useKeyboardInset } from "@/lib/visual-viewport";
 import { stateForBot } from "@/lib/mascot";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
@@ -189,7 +190,7 @@ function ErrorRow({
 }) {
   return (
     <div className="flex justify-start">
-      <div className="w-fit max-w-[min(42rem,78%)] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
+      <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
         <div className="flex items-start gap-2">
           <AlertTriangle size={15} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{message}</span>
@@ -222,7 +223,7 @@ class MessageBoundary extends Component<{ children: ReactNode; fallbackText: str
   render() {
     if (this.state.failed) {
       return (
-        <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
+        <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
           {this.props.fallbackText}
         </div>
       );
@@ -254,7 +255,7 @@ function BubbleEditor({
     if (draft.trim()) onSubmit(draft.trim());
   };
   return (
-    <div className="w-full max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
+    <div className="w-full max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
       <textarea
         ref={ref}
         value={draft}
@@ -386,7 +387,7 @@ function Bubble({
         )}
         <div
           className={cn(
-            "w-fit max-w-[min(42rem,78%)] rounded-2xl text-[15px] leading-relaxed",
+            "w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl text-[15px] leading-relaxed",
             user && webhookView
               ? "overflow-hidden border border-accent/25 bg-card text-ink shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
               : user
@@ -591,7 +592,7 @@ function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
       <img
         src={`data:${mime ?? "image/png"};base64,${png}`}
         alt="Bot's screen"
-        className="w-fit max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40"
+        className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl border border-hairline/40"
       />
     </div>
   );
@@ -652,7 +653,7 @@ const MessagesList = memo(function MessagesList({
             value={bot.name}
             onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
             className="text-[17px] font-semibold text-ink"
-            inputClassName="rounded bg-inset px-1.5 py-0.5 text-center text-[17px] font-semibold"
+            inputClassName="keep-font-size rounded bg-inset px-1.5 py-0.5 text-center text-[17px] font-semibold"
           />
           <div className="max-w-[360px] text-[14px] text-ink-secondary">
             {bot.description
@@ -970,6 +971,11 @@ export function ChatView({ bot }: { bot: Bot }) {
   const [follow, setFollow] = useState(true);
   const followRef = useRef(true);
   const previousScrollTop = useRef(0);
+  // Distance from the end at the reader's last deliberate scroll. The keyboard
+  // shrinks the pane *between* frames, so there is no "before" to measure once
+  // React has re-rendered — this is the before, kept live by onScroll.
+  const distanceFromBottom = useRef(0);
+  const keyboardInsetPx = useKeyboardInset();
   const touchY = useRef(0);
 
   const setBottomFollow = useCallback((next: boolean) => {
@@ -1005,7 +1011,25 @@ export function ChatView({ bot }: { bot: Bot }) {
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [bot.id, messages.length, streaming, reasoning, bot.busy, composerDock.pad]);
+    // keyboardInsetPx: the pane loses clientHeight when the keyboard opens
+    // while scrollHeight is unchanged, so a pinned transcript has to re-pin or
+    // the last message slides up behind the composer.
+  }, [bot.id, messages.length, streaming, reasoning, bot.busy, composerDock.pad, keyboardInsetPx]);
+
+  // Reading scrollback (follow === false): preserve the anchor rather than let
+  // the shrinking pane scroll the reader's row up out of view by exactly the
+  // keyboard height. Prior art for the bookkeeping is the show-earlier restore
+  // below; this is the same idea measured from the other edge.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || followRef.current) return;
+    el.scrollTop = anchoredScrollTop({
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+      distanceFromBottom: distanceFromBottom.current,
+    });
+    previousScrollTop.current = el.scrollTop;
+  }, [keyboardInsetPx]);
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
@@ -1073,9 +1097,19 @@ export function ChatView({ bot }: { bot: Bot }) {
           "@container/chathead flex items-center justify-between px-5 py-3",
           // Room for the drawer button, which overlays this corner below md.
           "pl-11 md:pl-5",
+          // The status bar sits over this row in a standalone install. calc()
+          // rather than a bare pt-[env()] so the desktop keeps its py-3 top
+          // padding when the inset resolves to 0px.
+          "pt-[calc(0.75rem+env(safe-area-inset-top))]",
         )}
       >
-        <div className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1">
+        {/* The right-hand cluster is all `shrink-0`, so this group is what pays
+            for a narrow column: measured at 390px the name button was 0px wide
+            and the header showed six unlabelled icons and no conversation name.
+            Container queries rather than `max-md:` on purpose — the same
+            collapse happens in a desktop window with a side panel open, which
+            is the width the container actually reports. */}
+        <div className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 @max-md/chathead:px-0">
           <button
             onClick={() => dispatch({ type: "toggleSettings", open: true })}
             className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-raised/50"
@@ -1097,10 +1131,23 @@ export function ChatView({ bot }: { bot: Bot }) {
             showEditButton
             className="truncate text-[15px] font-semibold text-ink"
             inputClassName="max-w-[220px] rounded bg-inset px-1.5 py-0.5 text-[15px] font-semibold"
+            // 40px of shrink-0 pencil beside a name that has no width left to
+            // give. Rename is the Name field in the agent profile, which the
+            // name button itself opens.
+            editButtonClassName="@max-md/chathead:hidden"
           />
           {bot.chiefOfStaff && (
-            <span className="flex items-center gap-1 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent">
-              <Crown size={11} /> Chief of Staff
+            // No shrink-0 and no nowrap: measured at 390px this pill wrapped
+            // to three lines, took the header from 72px to 85.5px, overlapped
+            // the Find button by 79.4px and left the bot name 0px wide. In a
+            // narrow column the crown alone carries the same signal, the way
+            // the chips beside it already fold to their icons.
+            <span
+              className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent @max-md/chathead:px-1"
+              title="Chief of Staff"
+            >
+              <Crown size={11} />
+              <span className="@max-md/chathead:hidden">Chief of Staff</span>
             </span>
           )}
           {bot.busy && <WorkingDots className="text-ink-secondary" />}
@@ -1134,7 +1181,11 @@ export function ChatView({ bot }: { bot: Bot }) {
           <TaskPicker bot={bot} />
           <UsageChip bot={bot} />
           <WorkingFolderChip bot={bot} />
-          <ModelPicker bot={bot} />
+          {/* The same picker is in the agent profile (SettingsPanel), which the
+              header name opens — so in a narrow column this is a duplicate that
+              costs the conversation name its width. It also drops the 380px
+              menu that has nowhere to open on a 390px screen. */}
+          <ModelPicker bot={bot} className="@max-md/chathead:hidden" />
           <CallButton bot={bot} />
           <button
             onClick={() => dispatch({ type: "toggleComputer" })}
@@ -1213,13 +1264,15 @@ export function ChatView({ bot }: { bot: Bot }) {
           const el = scrollRef.current;
           if (!el) return;
           const scrollTop = el.scrollTop;
+          const fromBottom = el.scrollHeight - scrollTop - el.clientHeight;
           const resume = shouldResumeBottomFollow({
             following: followRef.current,
             previousScrollTop: previousScrollTop.current,
             scrollTop,
-            distanceFromBottom: el.scrollHeight - scrollTop - el.clientHeight,
+            distanceFromBottom: fromBottom,
           });
           previousScrollTop.current = scrollTop;
+          distanceFromBottom.current = fromBottom;
           if (resume) setBottomFollow(true);
         }}
       >
@@ -1290,7 +1343,7 @@ export function ChatView({ bot }: { bot: Bot }) {
             since={busySince}
           >
             {popping ? (
-              <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+              <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
                 <MessageBoundary fallbackText={popping.text}>
                   <ChatMarkdown text={popping.text} />
                 </MessageBoundary>
@@ -1304,7 +1357,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           {bot.busy &&
             (state.pendingQueued[bot.threadId] ?? []).map((entry) => (
               <div key={entry.queueId} className="flex flex-col items-end">
-                <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink-secondary">
+                <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink-secondary">
                   {entry.text}
                 </div>
                 <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
@@ -1343,7 +1396,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           request can restore the old task without spilling into the newly
           selected one. ArrowUp-to-edit stays gated on busy because editing
           rewinds the thread, which a live turn forbids (the server 409s it). */}
-      <div ref={composerDockRef} className="absolute inset-x-0 bottom-0 z-[2]">
+      <div ref={composerDockRef} className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2]">
       <Composer
         key={bot.threadId}
         bot={bot}
@@ -1384,7 +1437,10 @@ function UsageChip({ bot }: { bot: Bot }) {
   return (
     <button
       onClick={() => dispatch({ type: "toggleSettings", open: true })}
-      className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
+      // Read-only status whose click target is the agent profile — the same
+      // place the header name goes. In a narrow column it is a duplicate that
+      // costs the conversation its name.
+      className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2 @max-md/chathead:hidden"
       title={detail}
     >
       <span className="@max-4xl/chathead:hidden">{text}</span>
@@ -1407,6 +1463,8 @@ function WorkingFolderChip({ bot }: { bot: Bot }) {
       onClick={() => dispatch({ type: "toggleSettings", open: true })}
       className={cn(
         "flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink",
+        // Same as UsageChip: status, and its click goes to the agent profile.
+        "@max-md/chathead:hidden",
         COMPACT_SQUARE,
       )}
       title={`Working folder: ${folder}`}

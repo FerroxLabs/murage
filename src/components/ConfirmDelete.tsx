@@ -37,7 +37,12 @@ export function ConfirmDelete({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+      // C5: this dialog autofocuses its "type the name to confirm" field, so a
+      // software keyboard is always up while it is open. `inset-0` resolves
+      // against the layout viewport, which iOS does not shrink, and would centre
+      // the dialog in the full pre-keyboard height with the confirm button
+      // behind the keys. See the overlay convention in styles.css.
+      className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/60 p-6"
       onClick={onCancel}
       role="presentation"
     >

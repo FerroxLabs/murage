@@ -202,7 +202,7 @@ function SectionContextDialog({ section, label, onClose }: { section: string; la
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
+      className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
       onMouseDown={(event) => event.target === event.currentTarget && requestClose()}
     >
       <div
@@ -211,7 +211,7 @@ function SectionContextDialog({ section, label, onClose }: { section: string; la
         aria-modal="true"
         aria-labelledby="section-context-title"
         tabIndex={-1}
-        className="animate-pop-in flex max-h-[min(680px,calc(100dvh-2rem))] w-full max-w-[680px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
+        className="animate-pop-in flex max-h-[min(680px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[680px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
       >
         <header className="flex items-start justify-between gap-4 border-b border-hairline/40 px-6 pb-4 pt-6 sm:px-8 sm:pt-7">
           <div>
