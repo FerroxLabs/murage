@@ -4,7 +4,7 @@ One workflow builds everything: **Actions → Release → Run workflow**. It
 builds macOS (arm64 + x64, signed, notarized, stapled), Windows, and Ubuntu
 from a single pinned commit, verifies every artifact the way a user would
 receive it, assembles a complete draft on
-[murage-releases](https://github.com/milind-soni/murage-releases),
+[murage-releases](https://github.com/FerroxLabs/murage-releases),
 and — if you ticked **publish** — flips it live. Leave publish unticked to
 review the draft notes first, then publish from the GitHub UI.
 
