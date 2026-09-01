@@ -107,8 +107,9 @@ const printableAliasSchema = z.string().min(1).max(64).refine((value) => {
 type JsonValue = null | undefined | boolean | number | string | ConnectedAccountSummary | ConnectorServiceState | JsonValue[] | JsonObject;
 type JsonObject = { [key: string]: JsonValue };
 
-function json(value: JsonValue, status = 200) {
-  return new Response(JSON.stringify(value), { status, headers: JSON_HEADERS });
+function json(value: JsonValue, status = 200, extraHeaders?: Record<string, string>) {
+  const headers = extraHeaders ? { ...JSON_HEADERS, ...extraHeaders } : JSON_HEADERS;
+  return new Response(JSON.stringify(value), { status, headers });
 }
 
 function normalizeAccountAlias(value: string | null | undefined): string | undefined {
@@ -264,11 +265,73 @@ async function register(request: Request, env: Env) {
   return json({ installationId, token }, 201);
 }
 
+/** Billable-call ceiling.
+ *
+ * A fuse, not a meter. Composio bills $4 per 1,000 tool calls against one
+ * account shared by every install, so a single looping bot could drain the
+ * quota for everybody. This caps that blast radius without capping anyone's
+ * real use — the default is far above a working day's tool calls.
+ *
+ * Tunable at deploy time with no code change, the same way the registration
+ * kill switch is: `wrangler deploy --var DAILY_CALL_CEILING:500`. Set it to
+ * "0" or "off" to disable the fuse entirely.
+ */
+const DEFAULT_DAILY_CALL_CEILING = 250;
+
+function dailyCallCeiling(env: Env): number {
+  const raw = (env as { DAILY_CALL_CEILING?: string }).DAILY_CALL_CEILING?.trim().toLowerCase();
+  if (raw === "off" || raw === "0") return Infinity;
+  if (!raw) return DEFAULT_DAILY_CALL_CEILING;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DAILY_CALL_CEILING;
+}
+
+/** Count one billable call and report whether this install is over its ceiling.
+ *
+ * The UTC day number is written in the same statement that increments, so the
+ * counter rolls over on comparison and needs no scheduled reset. On a database
+ * error this deliberately fails OPEN: the fuse exists to catch a runaway
+ * install, and a D1 hiccup taking every user's tools offline is the worse
+ * outcome of the two.
+ */
+async function chargeCall(installation: InstallationRow, env: Env): Promise<{ over: boolean; used: number }> {
+  const ceiling = dailyCallCeiling(env);
+  if (ceiling === Infinity) return { over: false, used: 0 };
+  const day = Math.floor(Date.now() / 86_400_000);
+  try {
+    const row = await env.DB.prepare(
+      `UPDATE installations
+          SET calls_today = CASE WHEN calls_day = ?1 THEN calls_today + 1 ELSE 1 END,
+              calls_total = calls_total + 1,
+              calls_day = ?1
+        WHERE id = ?2
+      RETURNING calls_today`,
+    ).bind(day, installation.id).first<{ calls_today: number }>();
+    const used = row?.calls_today ?? 0;
+    return { over: used > ceiling, used };
+  } catch (error) {
+    console.error(JSON.stringify({
+      message: "call ceiling accounting failed; allowing the call",
+      id: installation.id,
+      error: (error as Error).message,
+    }));
+    return { over: false, used: 0 };
+  }
+}
+
 async function proxyMcp(request: Request, installation: InstallationRow, env: Env, ctx: ExecutionContext) {
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (declared > MAX_MCP_BODY) return json({ error: "MCP request is too large" }, 413);
   const body = await request.arrayBuffer();
   if (body.byteLength > MAX_MCP_BODY) return json({ error: "MCP request is too large" }, 413);
+  const charge = await chargeCall(installation, env);
+  if (charge.over) {
+    return json({
+      error: "This install has hit today's connected-app request limit. It resets at 00:00 UTC.",
+      code: "daily_call_ceiling",
+      used: charge.used,
+    }, 429, { "retry-after": String(Math.ceil((86_400_000 - (Date.now() % 86_400_000)) / 1000)) });
+  }
   const session = await ensureSession(installation, env, ctx);
   const upstreamHeaders = new Headers(session.headers);
   upstreamHeaders.set("x-api-key", env.COMPOSIO_API_KEY);
