@@ -114,11 +114,26 @@ that can run alongside.
 - Billing, quota display, spend caps.
 - Migrating existing Embers automatically. Opt-in only.
 
-## Open questions for Sean
+## Answered (Sean, 2026-09-01)
 
-1. Is `https://api.fluxrouter.ai` the final production host?
-2. Should Flux be the default for new Embers when a key exists, or stay opt-in?
-3. Does a Flux key also cover the TTS path (`MURAGE_TTS_KEY`), or only transcription?
+1. **`api.fluxrouter.ai` is final.** Live and in production. Verified against the
+   real key: 79 models, the four tiers, `flux-image`, `flux-voice*`, and ~60
+   `flux-pinned-*` entries. Core's "placeholder" comment is stale; ignore it.
+2. **Recommendation, never a default.** Flux is Ferrox's product and its margin,
+   so it must earn the pick rather than be switched on for people. Existing CLI
+   subscriptions keep working untouched. Surface it as an offer at the right
+   moment ("got a Flux Router key? Recommended, right result at the right price"),
+   the same posture Wayland takes. This changes item 5 from a settings toggle into
+   a prompt, which is different work.
+3. **Picker order is product, not cosmetics:** Flux tiers first (Auto leads,
+   because it is the one that saves money without thought), then the user's own
+   models, then the full pinned catalog.
+
+**Also:** Fuigo already ships a Flux integration, so Fuigo-as-engine inherits it.
+Murage's remaining job is the *other* engines: claude, codex, qwen. Item 4 shrinks.
+
+Still open: does a Flux key cover the TTS path (`MURAGE_TTS_KEY`), or only
+transcription? `flux-voice*` are transcription models; TTS is unconfirmed.
 
 
 ---
