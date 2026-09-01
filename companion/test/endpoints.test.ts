@@ -46,6 +46,37 @@ describe("companionEndpointCandidates", () => {
     ]);
   });
 
+  // The tailnet address used to be dropped on the floor whenever MagicDNS
+  // was off or the Tailscale CLI could not be read: the tailnet branch
+  // required a name, and the LAN loop deliberately excludes the tailnet
+  // address. A browser that is not on the LAN was left with nothing.
+  it("still offers the tailnet address when no MagicDNS name resolves", () => {
+    expect(
+      companionEndpointCandidates(
+        8810,
+        ["100.121.5.6", "192.168.1.42"],
+        null,
+        null,
+        "murage-abcd1234.local",
+      ),
+    ).toEqual([
+      { url: "http://100.121.5.6:8810", kind: "tailnet", priority: 100 },
+      { url: "http://192.168.1.42:8810", kind: "lan", priority: 201 },
+      { url: "http://murage-abcd1234.local:8810", kind: "bonjour", priority: 300 },
+    ]);
+  });
+
+  it("prefers the MagicDNS name over the bare address when it resolves", () => {
+    // It survives an address change, and it is the name a Tailscale cert is
+    // issued to — the only tailnet origin reachable over HTTPS.
+    const tailnet = companionEndpointCandidates(
+      8810, ["100.121.5.6"], "macbook.tail1234.ts.net", null, "murage-abcd1234.local",
+    ).filter((endpoint) => endpoint.kind === "tailnet");
+    expect(tailnet).toEqual([
+      { url: "http://macbook.tail1234.ts.net:8810", kind: "tailnet", priority: 100 },
+    ]);
+  });
+
   it("keeps direct routes when no hosted route exists", () => {
     expect(
       companionEndpointCandidates(8810, ["192.168.1.42"], null, null, "murage-abcd1234.local"),

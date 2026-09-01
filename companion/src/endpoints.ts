@@ -69,8 +69,19 @@ export function companionEndpointCandidates(
   const candidates: CompanionEndpoint[] = [];
 
   if (hostedUrl) candidates.push({ url: hostedUrl, kind: "hosted", priority: 0 });
-  if (tailscale && magicDnsName) {
-    candidates.push({ url: httpOrigin(magicDnsName, port), kind: "tailnet", priority: 100 });
+  if (tailscale) {
+    // The MagicDNS name leads when it resolves: it survives an address
+    // change, and it is the name a Tailscale certificate is issued to, so it
+    // is the only tailnet origin a browser can reach over HTTPS.
+    //
+    // But requiring it dropped the bare address entirely — the forEach below
+    // excludes the tailnet address from the LAN list on purpose — so with
+    // MagicDNS off, or the Tailscale CLI simply not found, this list offered
+    // a client only LAN and Bonjour. That is the same defect A7 fixed in
+    // control.ts's hostCandidates(), and it bites harder here: these are the
+    // complete URLs handed to a new client, and a browser off the LAN has
+    // nothing left to try.
+    candidates.push({ url: httpOrigin(magicDnsName ?? tailscale, port), kind: "tailnet", priority: 100 });
   }
   addresses.forEach((address, index) => {
     if (address !== tailscale) {
