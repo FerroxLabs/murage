@@ -666,7 +666,7 @@ export function SettingsModal() {
                 <Card title="Profile" subtitle="Shown in the sidebar. Saved as you go.">
                   <ProfileFields />
                 </Card>
-                <Card title="Skin" subtitle="Applies instantly and is remembered on this machine.">
+                <Card title="Appearance" subtitle="Applies instantly and is remembered on this machine.">
                   <SkinPicker />
                 </Card>
                 <Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">

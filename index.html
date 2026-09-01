@@ -7,6 +7,31 @@
          is dead code. No maximum-scale: that would disable pinch zoom. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="icon" type="image/svg+xml" href="/app-icon.svg" />
+    <script>
+      // Stamped before the stylesheet resolves, so the first painted frame is
+      // already the right palette. index.html paints before src/main.tsx is
+      // fetched and evaluated, and `body { background: var(--color-app) }`
+      // would otherwise resolve against the @theme defaults — which are Dark,
+      // so a light user got a black frame first.
+      //
+      // Duplicates the migration map from src/lib/skins.ts on purpose: a module
+      // import here would reintroduce the gap it closes. src/lib/skins.test.ts
+      // asserts the two copies stay in step.
+      try {
+        var p = localStorage.getItem("murage-skin");
+        var legacy = { midnight: "dark", foundry: "dark", atelier: "light", lagoon: "light" };
+        p = legacy[p] || p;
+        if (p !== "light" && p !== "dark") p = "auto";
+        document.documentElement.dataset.skin =
+          p === "auto"
+            ? matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light"
+            : p;
+      } catch (e) {
+        document.documentElement.dataset.skin = "dark";
+      }
+    </script>
     <title>Murage</title>
   </head>
   <body>

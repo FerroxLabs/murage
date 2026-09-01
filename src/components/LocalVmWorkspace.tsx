@@ -395,7 +395,9 @@ function LocalVmPane({
     <section
       className={cn(
         "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-panel",
-        active ? "border-accent/80 shadow-[0_0_0_1px_rgb(var(--accent)/0.35)]" : "border-hairline/50",
+        // --accent does not exist; the token is --color-accent, so this ring
+        // silently rendered nothing. src/lib/tokens.test.ts now catches that.
+        active ? "border-accent/80 shadow-[0_0_0_1px_var(--color-accent)]" : "border-hairline/50",
       )}
     >
       <div className="flex min-h-[68px] items-center gap-3 border-b border-hairline/40 px-3 py-2.5">
@@ -460,7 +462,9 @@ function LocalVmPane({
       <div
         ref={viewportRef}
         data-native-view-host
-        className="relative min-h-0 flex-1 bg-[#070707]"
+        // The native view host paints over this; the ground behind it is the
+        // app's own, not a hardcoded Midnight black that no palette ships.
+        className="relative min-h-0 flex-1 bg-app"
       >
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
           {!bot ? (

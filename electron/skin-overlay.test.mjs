@@ -8,7 +8,9 @@ const require = createRequire(import.meta.url);
 const { SKIN_CHROME, DEFAULT_SKIN, skinChrome, isKnownSkin } = require("./skin-overlay.cjs");
 
 const here = dirname(fileURLToPath(import.meta.url));
-const css = readFileSync(join(here, "../src/styles.css"), "utf8");
+// Comments stripped: the stylesheet explains in prose that there is no
+// [data-skin="auto"] block, and a substring test would otherwise find one.
+const css = readFileSync(join(here, "../src/styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const skinIds = readFileSync(join(here, "../src/lib/skins.ts"), "utf8");
 
 // The value CSS defines for one custom property inside one skin's block.
@@ -43,11 +45,19 @@ describe("skin overlay chrome", () => {
   });
 
   it("falls back to the default skin for anything unknown, never throwing", () => {
-    expect(isKnownSkin("midnight")).toBe(true);
+    expect(isKnownSkin("dark")).toBe(true);
     expect(isKnownSkin("does-not-exist")).toBe(false);
     expect(isKnownSkin(undefined)).toBe(false);
     expect(isKnownSkin(42)).toBe(false);
     expect(skinChrome("does-not-exist")).toEqual(SKIN_CHROME[DEFAULT_SKIN]);
     expect(skinChrome(null)).toEqual(SKIN_CHROME[DEFAULT_SKIN]);
+  });
+
+  it("refuses a preference where a palette is required", () => {
+    // "auto" is what the user picked, not a colour. The renderer resolves it
+    // before it reaches IPC; an `auto` key added here would quietly paint a
+    // dark titlebar on a light desktop instead of failing loudly.
+    expect(isKnownSkin("auto")).toBe(false);
+    expect(skinChrome("auto")).toEqual(SKIN_CHROME.dark);
   });
 });
