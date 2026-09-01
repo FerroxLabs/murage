@@ -16,7 +16,7 @@ BOX_OLD="OGB_";          BOX_NEW="MURAGEBOX_"    # cloud-box env prefix (distinc
 MCPNS_OLD="ogb";         MCPNS_NEW="muragebox"  # mcp__ogb__ namespace
 
 # ---- English words that merely CONTAIN 'omb' — never touch ---------
-DENY='^(combination|combinations|combinator|combinators|combobox|combine|combines|Combine|combined|combinedRegex|zombie|zombieConfig|afterZombieConfig|bomb|tomb|tomb_abc|tombstone|tombstones|Tombstone|afterTombstone|fromBotId|randomBytes|newUrlFromBase|distanceFromBottom|Beareromb_abc)$'
+DENY='^(combination|combinations|combinator|combinators|combobox|combine|combines|Combine|combined|combinedRegex|zombie|zombieConfig|afterZombieConfig|bomb|tomb|tombstone|tombstones|Tombstone|afterTombstone|fromBotId|randomBytes|newUrlFromBase|distanceFromBottom)$'
 
 EXCLUDES=(--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=build
           --exclude-dir=dist --exclude-dir=target --exclude-dir=third_party

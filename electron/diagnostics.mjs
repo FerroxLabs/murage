@@ -20,6 +20,8 @@ export const CREDENTIAL_ENV_NAMES = [
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
   "COMPOSIO_API_KEY",
+  "SENDLANE_API_KEY",
+  "SENDLANE_HASH_KEY",
   "MURAGE_COMPOSIO_BROKER_TOKEN",
   // Browser capability files and app-owned state paths are private even
   // though they are not traditional API credentials.
