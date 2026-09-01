@@ -2538,7 +2538,18 @@ export const EmberAvatar = React.forwardRef<EmberAvatarHandle, EmberAvatarProps>
         const p = e.props
         const dt = Math.min((now - e.last) / 1000, 0.1)
         e.last = now
-        if (p.paused) return
+        // Paused must mean "a still face", not "no face". Returning here before
+        // draw() left the face layer empty, so every paused avatar rendered as a
+        // bare silhouette. Settle the morph and draw once; the equality check
+        // makes this self-limiting, so a paused avatar costs one frame, not sixty.
+        if (p.paused) {
+          if (e.morph !== 1 || e.velocity !== 0) {
+            e.morph = 1
+            e.velocity = 0
+            draw(e, now, 0)
+          }
+          return
+        }
 
         const f = e.springOverride ?? p.spring ?? 7
         e.velocity += (-2 * f * e.velocity - f * f * (e.morph - 1)) * dt
