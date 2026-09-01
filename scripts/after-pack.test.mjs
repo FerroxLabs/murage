@@ -74,3 +74,99 @@ describe.skipIf(process.platform === "win32")("Linux afterPack permissions", () 
     expect(fs.lstatSync(path.join(cua, "cua-driver")).mode & 0o777).toBe(0o664);
   });
 });
+
+// The bundled Fuigo engine is validated inside the packaged app, before either
+// artifact is assembled and before macOS signing rewrites its signature — the
+// last point the upstream bytes exist unmodified in the bundle.
+describe.skipIf(process.platform === "win32")("packaged fuigo resource", () => {
+  function machO(arch) {
+    const bytes = Buffer.alloc(128);
+    bytes.writeUInt32LE(0xfeedfacf, 0);
+    bytes.writeUInt32LE(arch === "arm64" ? 0x0100000c : 0x01000007, 4);
+    return bytes;
+  }
+
+  function elf64() {
+    const bytes = Buffer.alloc(128);
+    Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(bytes);
+    bytes.writeUInt16LE(0x3e, 18);
+    return bytes;
+  }
+
+  // Same resources path afterPack derives without an electron-builder packager.
+  function withFuigo(platform, contents, entries = {}) {
+    const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "murage-after-pack-fuigo-"));
+    temporaryDirectories.push(appOutDir);
+    const resources = platform === "darwin"
+      ? path.join(appOutDir, "Murage.app", "Contents", "Resources")
+      : path.join(appOutDir, "resources");
+    const root = path.join(resources, "fuigo");
+    fs.mkdirSync(root, { recursive: true, mode: 0o775 });
+    const executable = path.join(root, "fuigo");
+    fs.writeFileSync(executable, contents, { mode: 0o664 });
+    fs.chmodSync(executable, 0o664);
+    for (const [name, value] of Object.entries(entries)) {
+      fs.writeFileSync(path.join(root, name), value, { mode: 0o664 });
+    }
+    const licenses = path.join(resources, "licenses");
+    fs.mkdirSync(licenses, { recursive: true, mode: 0o775 });
+    for (const name of ["fuigo-LICENSE.txt", "fuigo-README.md", "fuigo-THIRD_PARTY_NOTICES.md"]) {
+      fs.writeFileSync(path.join(licenses, name), "fixture", { mode: 0o664 });
+    }
+    return { appOutDir, resources, root, executable };
+  }
+
+  it("refuses a macOS engine in a Linux package", async () => {
+    const { appOutDir } = withFuigo("linux", machO("arm64"));
+    await expect(afterPack({ electronPlatformName: "linux", appOutDir })).rejects.toThrow(
+      /wrong fuigo target: darwin-arm64/,
+    );
+  });
+
+  it("refuses a Linux engine in a macOS package", async () => {
+    const { appOutDir } = withFuigo("darwin", elf64());
+    await expect(afterPack({ electronPlatformName: "darwin", appOutDir })).rejects.toThrow(
+      /wrong fuigo target: linux-x64/,
+    );
+  });
+
+  it("accepts either macOS architecture before checking the pinned bytes", async () => {
+    for (const arch of ["arm64", "x64"]) {
+      const { appOutDir } = withFuigo("darwin", machO(arch));
+      // Past the architecture gate; only the digest stops this fixture.
+      await expect(afterPack({ electronPlatformName: "darwin", appOutDir })).rejects.toThrow(
+        /SHA-256 verification/,
+      );
+    }
+  });
+
+  it("refuses an npm shim or the compressed artifact in place of the executable", async () => {
+    const shim = Buffer.from("#!/usr/bin/env node\nrequire('./fuigo-bootstrap.js');\n");
+    const { appOutDir } = withFuigo("linux", shim);
+    await expect(afterPack({ electronPlatformName: "linux", appOutDir })).rejects.toThrow(
+      /unsupported executable format/,
+    );
+  });
+
+  it("refuses stray entries beside the engine", async () => {
+    const { appOutDir } = withFuigo("linux", elf64(), { "manifest.json": "{}" });
+    await expect(afterPack({ electronPlatformName: "linux", appOutDir })).rejects.toThrow(
+      /Unexpected entries in packaged fuigo resource/,
+    );
+  });
+
+  it("refuses bytes that are not the pinned 1.0.1 engine", async () => {
+    const { appOutDir } = withFuigo("linux", elf64());
+    await expect(afterPack({ electronPlatformName: "linux", appOutDir })).rejects.toThrow(
+      /SHA-256 verification/,
+    );
+  });
+
+  it("repairs the executable bit electron-builder drops on the copied resource", async () => {
+    const { appOutDir, executable } = withFuigo("linux", elf64());
+    await expect(afterPack({ electronPlatformName: "linux", appOutDir })).rejects.toThrow();
+    // The mode is repaired before the digest check, so a shipped engine is
+    // never left unrunnable by electron-builder's 0664 normalization.
+    expect(fs.lstatSync(executable).mode & 0o777).toBe(0o755);
+  });
+});

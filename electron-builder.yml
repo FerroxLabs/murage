@@ -60,6 +60,16 @@ extraResources:
     to: licenses/cloudflared-LICENSE.txt
   - from: third_party/cloudflared/README.md
     to: licenses/cloudflared-README.md
+  # fuigo is Ferrox Labs' own engine, derived from the Apache-2.0 licensed
+  # xai-org/grok-build. Murage itself uses the same full license text; ship
+  # another named copy so the bundled executable's terms remain unambiguous,
+  # plus the upstream third-party notices its release build embeds.
+  - from: LICENSE
+    to: licenses/fuigo-LICENSE.txt
+  - from: third_party/fuigo/README.md
+    to: licenses/fuigo-README.md
+  - from: third_party/fuigo/THIRD_PARTY_NOTICES.md
+    to: licenses/fuigo-THIRD_PARTY_NOTICES.md
   - from: dist
     to: ui
   - from: dist-server
@@ -110,6 +120,12 @@ mac:
       to: cua-sdk
     - from: dist-native/cloudflared/darwin-${arch}/cloudflared
       to: cloudflared/cloudflared
+    # The bundled Fuigo engine, so a fresh install has a working engine with
+    # no Node, npm or npx on the machine. ${arch} selects the staged target,
+    # never the build host. `to:` MUST stay <MURAGE_FUIGO_DIR>/fuigo — see
+    # electron/harness-resources.mjs, which is what the server reads.
+    - from: dist-native/fuigo/darwin-${arch}/fuigo
+      to: fuigo/fuigo
   extendInfo:
     NSMicrophoneUsageDescription: Murage uses the microphone for voice dictation into the composer.
     NSSpeechRecognitionUsageDescription: Murage transcribes your voice on-device to type messages for you.
@@ -136,6 +152,8 @@ win:
   extraResources:
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
       to: cloudflared/cloudflared.exe
+    - from: dist-native/fuigo/win32-x64/fuigo.exe
+      to: fuigo/fuigo.exe
   # Signed with Azure Trusted Signing (Microsoft now calls the role "Artifact
   # Signing"). Auth comes from AZURE_TENANT_ID / AZURE_CLIENT_ID /
   # AZURE_CLIENT_SECRET on the build env, never from this file.
@@ -187,6 +205,8 @@ linux:
       to: cua-linux-x64
     - from: dist-native/cloudflared/linux-x64/cloudflared
       to: cloudflared/cloudflared
+    - from: dist-native/fuigo/linux-x64/fuigo
+      to: fuigo/fuigo
   desktop:
     entry:
       Name: Murage
