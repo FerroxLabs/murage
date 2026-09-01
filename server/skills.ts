@@ -50,6 +50,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { LEARN_SOURCE_PREFIX } from "./skill-learn.ts";
+import { parseSkillManifest as parseLibrarySkillManifest } from "./skill-library.ts";
 import { workspaceDir } from "./workspace.ts";
 
 /** Spec rule: lowercase alphanumerics with single hyphens, 1-64 chars,
@@ -63,6 +64,13 @@ export const SKILL_FILE_MAX_BYTES = 256 * 1024;
 /** Index budget: name+description lines only, ~100 tokens per skill. */
 export const INDEX_MAX_SKILLS = 15;
 export const INDEX_MAX_BYTES = 4_000;
+/** Provenance prefix for a skill installed out of the on-disk library. The
+ * id and version that follow name the exact catalog entry the bytes came from. */
+export const LIBRARY_SOURCE_PREFIX = "library:";
+/** Where the shipped skill catalog lives. Overridable so a packaged build can
+ *  point at its own resources directory without moving the repo layout. */
+export const SKILL_LIBRARY_ROOT =
+  process.env.MURAGE_SKILL_LIBRARY || join(process.cwd(), "skills-library");
 /** Agent-authored writes sit here until a person confirms the in-app card. */
 export const MAX_STAGED_SKILLS = 20;
 export const STAGED_GIST_MAX = 240;
@@ -599,6 +607,67 @@ export function installSkill(
 ): SkillListing | { error: string } {
   const prepared = preparedSkillFiles(files);
   if ("error" in prepared) return prepared;
+  return installPreparedSkill(botId, source, prepared, { enabled: false });
+}
+
+/** Install one library skill by id, DISABLED — the same contract as
+ * installSkill, sourced from disk instead of a fetch. The library layout is
+ * the bundled-skill layout: a directory named after the id holding
+ * manifest.json and SKILL.md (skill-library.ts). Only the reviewed SKILL.md
+ * bytes are stored, and the install runs through the same preparation and
+ * commit path as a fetched import, so the content hash guard, the review
+ * warnings, and syncSkillLinks behave identically. */
+export function installSkillFromLibrary(
+  botId: string,
+  skillId: string,
+  libraryRoot: string,
+): SkillListing | { error: string } {
+  // isSkillName is the traversal gate: no dots, no slashes, so the id can
+  // only ever name one child of the library root.
+  if (!isSkillName(skillId)) return { error: `invalid library skill id: ${JSON.stringify(skillId)}` };
+  const directory = join(libraryRoot, skillId);
+  const state = directoryEntryState(directory);
+  if (state === "missing") return { error: `no library skill named "${skillId}"` };
+  if (state === "unsafe") {
+    return { error: `library skill "${skillId}" must be a real directory, not a symlink or file` };
+  }
+  const manifestPath = join(directory, "manifest.json");
+  const skillPath = join(directory, "SKILL.md");
+  let libraryManifest: { id: string; version: string };
+  let skillMd: string;
+  let siblings: string[];
+  try {
+    if (!lstatSync(manifestPath).isFile()) {
+      return { error: `library skill "${skillId}" has no manifest.json` };
+    }
+    const stat = lstatSync(skillPath);
+    if (!stat.isFile()) return { error: `library skill "${skillId}" has no SKILL.md` };
+    if (stat.size > SKILL_FILE_MAX_BYTES) {
+      return { error: `SKILL.md is larger than ${SKILL_FILE_MAX_BYTES / 1024}KB` };
+    }
+    // parseSkillManifest re-checks that the id equals the directory name, so
+    // a catalog entry can never install itself under a borrowed identity.
+    libraryManifest = parseLibrarySkillManifest(JSON.parse(readFileSync(manifestPath, "utf8")), directory);
+    skillMd = readFileSync(skillPath, "utf8");
+    siblings = readdirSync(directory).filter((entry) => entry !== "manifest.json" && entry !== "SKILL.md");
+  } catch (error) {
+    return { error: `library skill "${skillId}" could not be read: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  // Supporting files sit outside the v1 review boundary exactly as a fetched
+  // import's do. Only their paths are handed on — preparedSkillFiles reads
+  // them solely to name every skipped file on the review surface — so none of
+  // their bytes are opened, let alone stored.
+  const prepared = preparedSkillFiles([
+    { path: "SKILL.md", content: skillMd },
+    ...siblings.map((path) => ({ path, content: "" })),
+  ]);
+  if ("error" in prepared) return prepared;
+  if (prepared.parsed.name !== libraryManifest.id) {
+    return {
+      error: `library skill "${skillId}" declares frontmatter name "${prepared.parsed.name}" — they must match`,
+    };
+  }
+  const source = `${LIBRARY_SOURCE_PREFIX}${libraryManifest.id}@${libraryManifest.version}`;
   return installPreparedSkill(botId, source, prepared, { enabled: false });
 }
 

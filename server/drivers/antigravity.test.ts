@@ -179,6 +179,38 @@ describe("Antigravity turns (fake CLI)", () => {
     }
   });
 
+  it("strips ambient routing switches from the agy child env", async () => {
+    // agy reads none of these today, but it is one of the five spawn paths
+    // that spread `...process.env`; the strip is uniform across all of them
+    // rather than resting on that staying true.
+    const scratch = mkdtempSync(join(tmpdir(), "murage-agy-routing-"));
+    const dump = join(scratch, "dump.json");
+    const ambient = {
+      ANTHROPIC_BASE_URL: "https://leftover.example",
+      ANTHROPIC_AUTH_TOKEN: "sk-leftover-should-not-route",
+      ANTHROPIC_MODEL: "leftover-model",
+      OPENAI_BASE_URL: "https://leftover.example/v1",
+      OPENAI_MODEL: "leftover-openai-model",
+    } as const;
+    const saved = Object.fromEntries(Object.keys(ambient).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, ambient);
+    process.env.FAKE_AGY_DUMP = dump;
+    try {
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-routing", text: "hi" });
+      await recorder.until((event) => event.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      for (const name of Object.keys(ambient)) expect(seen.env[name]).toBeUndefined();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      await removeTempDir(scratch);
+    }
+  });
+
   it("respondToRequest resolves `unavailable` — no interactive permission channel, so the caller denies", async () => {
     await create();
     await expect(instance.adapter.respondToRequest("t-happy", "req-1", { behavior: "allow" })).resolves.toBe("unavailable");

@@ -95,6 +95,7 @@ import {
 } from "./config.ts";
 import { ComputerControl } from "./computer-control.ts";
 import { augmentedPath, findCliCandidates, resetPathCache } from "./env-path.ts";
+import { fluxSelectionRefusal } from "./flux-surface.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import { buildNotification, type Notification } from "./notify.ts";
 import {
@@ -178,6 +179,8 @@ import {
   applyStagedSkillWrite,
   getStagedSkillWrite,
   installSkill,
+  installSkillFromLibrary,
+  SKILL_LIBRARY_ROOT,
   listSkills,
   listStagedSkillWrites,
   readSkillFile,
@@ -2499,6 +2502,13 @@ async function startTurn(
       { status: 409 },
     );
   }
+  // Same rule for a Flux Router selection, and for the same reason: a
+  // flux-* model can be persisted, cloned, imported or set over MCP without
+  // ever being re-checked against the catalog (checkedModelSelection only
+  // validates ids when requireAvailableModel is set). Unrefused, it is posted
+  // to the ENGINE'S own host — api.openai.com for codex — and 400s there.
+  const fluxRefusal = fluxSelectionRefusal(model, instance.driverKind);
+  if (fluxRefusal) throw Object.assign(new Error(fluxRefusal), { status: 409 });
 
   // an edit hands us its already-branched user message; a plain send appends
   let userMessage = opts?.userMessage;
@@ -4905,6 +4915,10 @@ function configStatus() {
     // same configured-or-not way as every other credential
     tts: tts.describeVoice(cfg),
     imageGen: { configured: Boolean(cfg.imageGen?.key) },
+    // Flux Router: presence only. The key is workspace-scoped and must never
+    // reach the renderer bundle, so this stays a boolean like every other
+    // credential above.
+    flux: { configured: Boolean(cfg.flux?.apiKey) },
     // not a secret — the sidebar shows it
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
     // not a secret — the settings picker shows it; "" = follow the system
@@ -6317,8 +6331,8 @@ const server = createServer(async (req, res) => {
       const pkg = packageDocument?.package;
       const importName = pkg?.name ?? manifest!.team.name;
       const sourceMembers = pkg
-        ? pkg.agents.map((agent) => ({ member: packageAgentAsMember(agent), playbookKeys: agent.playbooks ?? [] }))
-        : manifest!.team.members.map((member) => ({ member, playbookKeys: [] as string[] }));
+        ? pkg.agents.map((agent) => ({ member: packageAgentAsMember(agent), playbookKeys: agent.playbooks ?? [], skillIds: agent.skills ?? [] }))
+        : manifest!.team.members.map((member) => ({ member, playbookKeys: [] as string[], skillIds: [] as string[] }));
 
       // Snapshot before creating anything so replace never archives the new
       // team. Old bots are hidden only after every new bot was created; a
@@ -6376,6 +6390,23 @@ const server = createServer(async (req, res) => {
             const playbook = playbookByKey.get(key);
             return playbook ? [{ ...playbook }] : [];
           });
+          // A profile's skills are what make it more than a persona. Install
+          // them from the on-disk library and switch them on: syncSkillLinks
+          // then publishes them into the engine's own skills directory, so the
+          // CLI loads one only when it is used and nothing enters the prompt.
+          // One bad id must not fail the whole import — it is reported and the
+          // rest of the team still lands.
+          for (const skillId of source.skillIds) {
+            const installed = installSkillFromLibrary(created.id, skillId, SKILL_LIBRARY_ROOT);
+            if ("error" in installed) {
+              console.error(JSON.stringify({ message: "library skill not installed", bot: created.id, skillId, error: installed.error }));
+              continue;
+            }
+            const enabled = setSkillEnabled(created.id, installed.name, true);
+            if ("error" in enabled) {
+              console.error(JSON.stringify({ message: "library skill not enabled", bot: created.id, skillId, error: enabled.error }));
+            }
+          }
           store.patchBot(created.id, {
             composio: false,
             ...(installedPlaybooks.length ? { playbooks: installedPlaybooks } : {}),
@@ -8229,6 +8260,7 @@ const server = createServer(async (req, res) => {
           if (persisted.opencodeGo?.apiKey !== undefined) persisted.opencodeGo.apiKey = "";
           if (persisted.tts?.key !== undefined) persisted.tts.key = "";
           if (persisted.imageGen?.key !== undefined) persisted.imageGen.key = "";
+          if (persisted.flux?.apiKey !== undefined) persisted.flux.apiKey = "";
           saveConfig(persisted);
           configWriteCommitted = true;
           syncCredentialEnv(patch);

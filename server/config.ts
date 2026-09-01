@@ -249,6 +249,11 @@ const appConfigSchema = z.object({
   tts: z.object({ key: optionalText, voice: optionalText, provider: z.enum(["elevenlabs", "system"]).optional() }).optional(),
   /** OpenAI key used only by the in-process avatar image generator. */
   imageGen: z.object({ key: optionalText }).optional(),
+  /** Flux Router key. Workspace-scoped on purpose: FLUX_API_KEY is listed in
+   *  WORKSPACE_CREDENTIAL_ENV, so no spawned engine CLI ever inherits it and
+   *  every route that needs it injects a copy under a harness-owned name
+   *  AFTER the strip. Absent = Flux routing is simply unavailable. */
+  flux: z.object({ apiKey: optionalText }).optional(),
   /** Sendlane list the onboarding signup writes to. Absent = signup is
    *  captured locally only and no request leaves the machine. */
   sendlane: z
@@ -288,6 +293,7 @@ export interface AppConfig {
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string; voice?: string; provider?: "elevenlabs" | "system" };
   imageGen?: { key?: string };
+  flux?: { apiKey?: string };
   sendlane?: { apiKey?: string; hashKey?: string; listId?: string };
   profile?: { name?: string; email?: string };
   rooms?: { turnTimeoutMinutes: number };
@@ -485,6 +491,8 @@ export function loadConfig(): AppConfig {
   if (process.env.MURAGE_TTS_KEY !== undefined) cfg.tts.key = process.env.MURAGE_TTS_KEY;
   cfg.imageGen = { ...cfg.imageGen };
   if (process.env.MURAGE_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.MURAGE_OPENAI_IMAGE_KEY;
+  cfg.flux = { ...cfg.flux };
+  if (process.env.FLUX_API_KEY !== undefined) cfg.flux.apiKey = process.env.FLUX_API_KEY;
   return cfg;
 }
 
@@ -504,6 +512,7 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.tts?.key, "MURAGE_TTS_KEY"],
     [patch.imageGen?.key, "MURAGE_OPENAI_IMAGE_KEY"],
+    [patch.flux?.apiKey, "FLUX_API_KEY"],
   ];
   for (const [value, name] of secrets) {
     if (value === undefined) continue;
@@ -537,6 +546,9 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENCODE_API_KEY",
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
+  // Flux Router. The whole point of listing it: the raw workspace key must
+  // never ride into a spawned CLI's env. Routing injects it post-strip.
+  "FLUX_API_KEY",
   "COMPOSIO_API_KEY",
   "SENDLANE_API_KEY",
   "SENDLANE_HASH_KEY",
@@ -572,6 +584,48 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "CURSOR_AUTH_TOKEN",
 ] as const;
 
+/** Routing switches a third-party CLI reads to pick its endpoint or model.
+ *
+ * These are not credentials, so they belong to neither strip list above and
+ * are deliberately NOT allowlistable: `credentialEnv` grants a driver a
+ * *key*, never the right to be pointed somewhere else. Every spawn path
+ * spreads `...process.env`, so a leftover overlay from a provider switcher
+ * (cc-switch and friends export these into the user's shell, and the desktop
+ * shell inherits that shell) silently redirects every turn of a CLI the user
+ * believes is on its own subscription login — and an ambient
+ * `ANTHROPIC_AUTH_TOKEN` defeats the `delete env.ANTHROPIC_API_KEY` guard in
+ * the claude driver, since Claude Code accepts either as the same Bearer
+ * identity. The harness re-sets whichever of these it means to set, after
+ * the strip (`applyClaudeInject` / `applyOpenAIInject` in local-inject.ts).
+ *
+ * Every name here has a writer or a reader in this repo, except where noted:
+ *   ANTHROPIC_BASE_URL    written local-inject.ts:417, read claude.ts:780
+ *   ANTHROPIC_AUTH_TOKEN  written local-inject.ts:418
+ *   ANTHROPIC_MODEL       written local-inject.ts:420, read claude.ts:168
+ *   OPENAI_BASE_URL       written local-inject.ts:402
+ *   OPENAI_MODEL          defensive only — no reader or writer in this repo,
+ *                         kept because an OpenAI-compatible CLI may honour it
+ *                         and nothing here can be broken by dropping it.
+ *
+ * Deliberately absent (each is a required *input*, not an ambient overlay):
+ * `UNSLOTH_STUDIO_AUTH_TOKEN` (read by hostApiKey, local-inject.ts:113),
+ * `CLAUDE_CONFIG_DIR` (read at claude.ts:130), `MURAGE_LOCAL_*_API_KEY`
+ * (written per-turn at local-inject.ts:140-141), and `KIMI_MODEL_*` (already
+ * handled by stripKimiModelEnv at kimi.ts:451). */
+export const ROUTING_ENV = [
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_MODEL",
+  "OPENAI_BASE_URL",
+  "OPENAI_MODEL",
+] as const;
+
+/** Drop every ambient routing switch from a child-process env (in place).
+ * Runs *before* the harness applies its own routing, never after. */
+export function stripRoutingEnv(env: Record<string, string | undefined>): void {
+  for (const key of ROUTING_ENV) delete env[key];
+}
+
 /** Merge a partial config into ~/.murage/config.json (secrets never
  * echoed back — callers report configured-or-not booleans only). */
 export function saveConfig(patch: Partial<AppConfig>): void {
@@ -589,7 +643,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "flux", "profile", "rooms", "localVm", "features"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);

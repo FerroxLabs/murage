@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
 import type { ModelCatalog } from "../contracts.ts";
+import { mergeFluxCatalog } from "../flux-surface.ts";
 import { killCliTree, spawnCli } from "../procs.ts";
 import { mergeLocalInject } from "./local-inject.ts";
 
@@ -27,6 +28,11 @@ export const STATIC_CODEX_MODELS: ModelCatalog = {
 /** Built-in ChatGPT / OpenAI provider id. Official picker rows force this
  *  so a user's local `model_provider = "omlx"` does not swallow GPT-5.6. */
 export const OFFICIAL_CODEX_PROVIDER = "openai";
+
+/** Must equal codex.ts's DRIVER_KIND — this module cannot import it without a
+ *  cycle (codex.ts imports this file), so codex-catalog.test.ts pins the two
+ *  together instead. Naming the engine is what unlocks the Flux gate below. */
+const CODEX_DRIVER_KIND = "codex";
 
 const SEP = "::";
 const MODEL_ID = /^[\w][\w./:+-]*$/;
@@ -362,7 +368,10 @@ export async function readCodexModelCatalog(
   const official = (cli ? await readCodexAppServerModelCatalog(cli, env) : null) ?? STATIC_CODEX_MODELS;
   const home = codexHome(env);
   const mainText = readText(join(home, "config.toml"));
-  if (!mainText) return mergeLocalInject(official, env, fetchImpl);
+  // Flux rows are gated per engine and are emitted `flux::flux-auto` style —
+  // a bare `flux-auto` would decode straight back to OFFICIAL_CODEX_PROVIDER
+  // above and be posted to api.openai.com.
+  if (!mainText) return mergeFluxCatalog(await mergeLocalInject(official, env, fetchImpl), CODEX_DRIVER_KIND);
 
   const main = parseCodexToml(mainText);
   const known = new Map(main.providers.map((provider) => [provider.id, provider]));
@@ -428,12 +437,15 @@ export async function readCodexModelCatalog(
       ? main.model
       : null;
 
-  return mergeLocalInject(
-    {
-      default: configured && seen.has(configured) ? configured : official.default,
-      options,
-    },
-    env,
-    fetchImpl,
+  return mergeFluxCatalog(
+    await mergeLocalInject(
+      {
+        default: configured && seen.has(configured) ? configured : official.default,
+        options,
+      },
+      env,
+      fetchImpl,
+    ),
+    CODEX_DRIVER_KIND,
   );
 }

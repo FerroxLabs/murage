@@ -14,8 +14,11 @@ import { createServer as createNetServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 
-import { DATA_DIR, stripWorkspaceCredentialEnv } from "../config.ts";
+import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { augmentedPath } from "../env-path.ts";
+import { fluxKey } from "../flux-config.ts";
+import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
+import { mergeFluxCatalog } from "../flux-surface.ts";
 import { brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 
 import type {
@@ -84,12 +87,52 @@ function claudeEnvironment(
   // The harness process may hold workspace credentials (xai/box/voice keys,
   // env-injected at boot); none of them are this CLI's to see.
   stripWorkspaceCredentialEnv(env);
-  const applied = applyClaudeInject(env, model);
-  if (!applied.injected) delete env.ANTHROPIC_API_KEY;
+  // A leftover `ANTHROPIC_BASE_URL`/`_AUTH_TOKEN`/`_MODEL` from a provider
+  // switcher in the user's shell would redirect this turn off the CLI's own
+  // login without a word — and `ANTHROPIC_AUTH_TOKEN` is the same Bearer
+  // identity as the API key deleted below, so that guard needs this to hold.
+  // Must run before applyClaudeInject: the inject re-sets what it means to.
+  stripRoutingEnv(env);
+  claudeRouting(env, model);
   return env;
 }
 
 const DRIVER_KIND = "claudeAgent";
+
+/** Point one ALREADY-STRIPPED claude env at whatever backend `model` names,
+ * and report the model id the CLI itself should be asked for.
+ *
+ * Flux Router and a local-host inject both write the same four `ANTHROPIC_*`
+ * vars, so they are mutually exclusive by construction here: Flux is tried
+ * first and `applyClaudeInject` only runs when Flux declined. (`decodeInjectId`
+ * returns null for a `flux-` id — local-inject.ts:73-81 — so the inject would
+ * no-op anyway, but the spec asks for the exclusion to be explicit rather than
+ * inherited: flux-router-spec.md §4.1.)
+ *
+ * Flux uses the Anthropic Messages surface, `POST /anthropic/v1/messages`
+ * (spec §1.1) — Claude Code appends `/v1/messages` to `ANTHROPIC_BASE_URL`, so
+ * the base carries `/anthropic`. Both `ANTHROPIC_AUTH_TOKEN` and
+ * `ANTHROPIC_API_KEY` are set: the gateway accepts either header, and setting
+ * both is what stops the `delete env.ANTHROPIC_API_KEY` guard below from
+ * half-routing the env.
+ *
+ * MUST run after `stripWorkspaceCredentialEnv`: `FLUX_API_KEY` is a workspace
+ * credential (config.ts:551) and is already gone from `env` by the time this
+ * runs, which is exactly why the key comes from `fluxKey()` — config and
+ * `process.env` — and is never read back off `env` (flux-config.ts:3-9).
+ */
+function claudeRouting(
+  env: NodeJS.ProcessEnv,
+  model: string | null | undefined,
+): { model: string | null; injected: boolean } {
+  const flux = applyFluxSurface(DRIVER_KIND, env, model, fluxKey());
+  if (flux.applied) return { model: flux.model, injected: true };
+  const applied = applyClaudeInject(env, model);
+  // Neither routed: the CLI runs on its own login, and an inherited API key
+  // would silently bill a subscription account pay-as-you-go.
+  if (!applied.injected) delete env.ANTHROPIC_API_KEY;
+  return applied;
+}
 
 export interface ClaudeConfig {
   cli: string;
@@ -115,12 +158,19 @@ const CLAUDE_MODEL_ID = /^[a-z0-9][a-z0-9._:/-]*$/i;
 
 /** Rewrite a leftover API slug (`orcarouter/Qwen…`) to `host::model` when a
  *  local host is serving it, so the turn injects instead of asking for /login.
- *  Official cloud ids and already-encoded inject ids skip the probe. */
+ *  Official cloud ids, Flux ids and already-encoded inject ids skip the probe.
+ *
+ *  The Flux guard is not an optimization. A `flux-*` id is neither static nor
+ *  inject-encoded, so without it every Flux turn would pay a five-host loopback
+ *  probe AND `resolveInjectId` (local-inject.ts:103-105) could silently rewrite
+ *  it into a `host::model` inject id if some local host happened to serve a
+ *  model of that name — routing the turn at localhost instead of Flux.
+ *  Prefix-based on purpose (spec §4.1): `flux-pinned-*` must be caught too. */
 async function resolveClaudeTurnModel(
   model: string | null | undefined,
   env: Record<string, string | undefined>,
 ): Promise<string | null | undefined> {
-  if (!model || decodeInjectId(model) || STATIC_CLAUDE_MODELS.options.some((option) => option.id === model)) {
+  if (!model || isFluxModel(model) || decodeInjectId(model) || STATIC_CLAUDE_MODELS.options.some((option) => option.id === model)) {
     return model;
   }
   return resolveInjectId(model, await probeLocalInjects(env)) ?? model;
@@ -530,11 +580,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
   async create(input: DriverCreateInput<ClaudeConfig>): Promise<ProviderInstance> {
     const { instanceId, config } = input;
     const catalogEnv: Record<string, string | undefined> = { ...process.env, ...input.environment };
+    // readClaudeModelCatalog reads `env.ANTHROPIC_MODEL` into an extra picker
+    // row; an ambient one from a provider switcher would offer a phantom model
+    // the spawned CLI is never pointed at.
+    stripRoutingEnv(catalogEnv);
     let models = STATIC_CLAUDE_MODELS;
     const refreshModels = async () => {
       try {
         const resolved = await mergeLocalInject(readClaudeModelCatalog(catalogEnv), catalogEnv);
-        if (resolved.options.length) models = resolved;
+        // Flux rows are gated on claudeAgent having an implemented surface AND
+        // a configured key; the key is read from config/process.env, never
+        // from catalogEnv, which is frozen at create().
+        if (resolved.options.length) models = mergeFluxCatalog(resolved, DRIVER_KIND);
       } catch {
         // Keep the last usable catalog when settings.json is unreadable.
       }
@@ -666,7 +723,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
       const turnEnvironment: NodeJS.ProcessEnv = { ...process.env, ...input.environment };
       const turnModel = await resolveClaudeTurnModel(turn.model, turnEnvironment);
-      const injected = applyClaudeInject({ ...turnEnvironment }, turnModel);
+      // argv and the process-reuse key below must come from the SAME routing
+      // decision the spawn env gets from `claudeEnvironment`. A throwaway copy
+      // is enough — only `.model` is read — but it has to go through
+      // `claudeRouting`, not `applyClaudeInject`: for a Flux id the inject
+      // returns `{ injected: false }` and argv would then carry no `--model`
+      // at all while the env said `flux-auto`, and `argsKey` would match a live
+      // natively-routed process and hand it the Flux turn.
+      const injected = claudeRouting({ ...turnEnvironment }, turnModel);
       if (injected.model) args.push("--model", injected.model);
       if (turn.effort) args.push("--effort", turn.effort);
 

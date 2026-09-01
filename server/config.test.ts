@@ -13,6 +13,7 @@ import { customMcpServers,
   localVmMode,
   parseConfigPatch,
   parseStoredConfig,
+  PROVIDER_CREDENTIAL_ENV,
   roomTurnTimeoutMinutes,
   showToolCallsEnabled,
   saveConfig,
@@ -22,11 +23,13 @@ import { customMcpServers,
   browserProfilePartitionTarget,
   browserProfileReplacementConflict,
   browserProfileRoutingConflict,
+  stripRoutingEnv,
   stripWorkspaceCredentialEnv,
   syncCredentialEnv,
   vpsSshAlias,
   withInstanceCli,
   WORKSPACE_CREDENTIAL_ENV,
+  ROUTING_ENV,
   type AppConfig,
 } from "./config.ts";
 
@@ -733,6 +736,43 @@ describe("workspace credential env strip", () => {
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_OPENAI_IMAGE_KEY");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_BROWSER_CONNECTION");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_USER_DATA");
+  });
+});
+
+describe("routing env strip", () => {
+  it("removes every ambient routing switch from a child env in place", () => {
+    const env = {
+      PATH: "/usr/bin",
+      MY_FLAG: "1",
+      ...Object.fromEntries(ROUTING_ENV.map((name) => [name, "http://leftover.example"])),
+    };
+    stripRoutingEnv(env);
+    expect(env).toEqual({ PATH: "/usr/bin", MY_FLAG: "1" });
+  });
+
+  it("names the switches a provider switcher leaves in the user's shell", () => {
+    // cc-switch and friends export these; every spawn path spreads
+    // `...process.env`, so leaving any of them would silently redirect a turn
+    expect(ROUTING_ENV).toContain("ANTHROPIC_BASE_URL");
+    expect(ROUTING_ENV).toContain("ANTHROPIC_AUTH_TOKEN");
+    expect(ROUTING_ENV).toContain("ANTHROPIC_MODEL");
+    expect(ROUTING_ENV).toContain("OPENAI_BASE_URL");
+    expect(ROUTING_ENV).toContain("OPENAI_MODEL");
+  });
+
+  it("carries no credential, so the two lists stay disjoint", () => {
+    // A routing switch is never allowlistable via a driver's `credentialEnv`:
+    // that grant is for keys. Overlap would make one grantable by accident.
+    const credentials = new Set<string>([...WORKSPACE_CREDENTIAL_ENV, ...PROVIDER_CREDENTIAL_ENV]);
+    expect(ROUTING_ENV.filter((name) => credentials.has(name))).toEqual([]);
+  });
+
+  it("keeps the routing INPUTS a driver needs to work", () => {
+    // Each of these is read by the harness or a driver as a required input,
+    // not left behind by a shell overlay — stripping them breaks real turns.
+    for (const keep of ["UNSLOTH_STUDIO_AUTH_TOKEN", "CLAUDE_CONFIG_DIR", "KIMI_MODEL_BASE_URL", "MINIMAX_BASE_URL"]) {
+      expect(ROUTING_ENV).not.toContain(keep);
+    }
   });
 });
 
