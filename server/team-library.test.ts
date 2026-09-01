@@ -62,6 +62,25 @@ describe("team library", () => {
     expect(() => parseTeamCatalog(unsafe)).toThrow("safe catalog path");
   });
 
+  // The live catalog carries 65 teams plus 57 single-agent profiles. The
+  // original ceiling was 100, so publishing the profiles made a released
+  // client throw on a catalog it had to accept — and parseTeamCatalog throws
+  // before returning anything, so the failure loses every team too, not just
+  // the new entries. Pin the real shape, not a round number.
+  it("accepts a catalog larger than the live one and still rejects an absurd one", () => {
+    const entries = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        ...catalog.teams[0]!,
+        slug: `team-${i}`,
+        manifest: `teams/team-${i}/team.emberteam.json`,
+        readme: `teams/team-${i}/README.md`,
+        skills: [],
+      }));
+
+    expect(parseTeamCatalog({ ...catalog, teams: entries(122) }).teams).toHaveLength(122);
+    expect(() => parseTeamCatalog({ ...catalog, teams: entries(401) })).toThrow("catalog is invalid");
+  });
+
   it("loads only the manifest selected by the trusted catalog", async () => {
     const fetcher = vi.fn(async (url: string | URL | Request) => {
       const target = String(url);
