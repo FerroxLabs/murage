@@ -378,11 +378,11 @@ describe("bearerToken", () => {
     expect(bearerToken("BEARER murage_abc")).toBe("murage_abc");
     expect(bearerToken("BeArEr murage_abc")).toBe("murage_abc");
     // a tab separates scheme from credential just as legally as a space
-    expect(bearerToken("BeArEr\tomb_abc")).toBe("murage_abc");
+    expect(bearerToken("BeArEr\tmurage_abc")).toBe("murage_abc");
     // still not a free-for-all: a scheme with nothing after it is not a
     // credential, however much whitespace is standing in for one
     expect(bearerToken("Bearer ")).toBeUndefined();
     expect(bearerToken("Bearer   ")).toBeUndefined();
-    expect(bearerToken("Beareromb_abc")).toBeUndefined();
+    expect(bearerToken("Bearermurage_abc")).toBeUndefined();
   });
 });
