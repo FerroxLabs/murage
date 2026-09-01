@@ -391,6 +391,17 @@ jobs:
           MURAGE_KEEP_SMOKE_DIR: "1"
           MURAGE_SMOKE_INSTALLED_DEB: "1"
         run: pnpm smoke:linux-package
+      - name: Prove the handed-over install command works on a clean Ubuntu
+        # The .deb path no longer prompts for root from inside the app; it
+        # hands the user a command. This proves that command actually installs
+        # and resolves dependencies, which dpkg -i did not.
+        run: pnpm smoke:deb-command
+      - name: Prove an AppImage update lands on the launched path
+        # Reads the live release feed, so it cannot pass until a first release
+        # exists. Reports instead of blocking — the assertion it makes is
+        # already covered by unit tests; this is the end-to-end confirmation.
+        continue-on-error: true
+        run: pnpm smoke:linux-update
       - name: Remove the installed upgrade fixture
         if: always()
         run: sudo dpkg --purge murage || true
@@ -415,6 +426,10 @@ jobs:
     name: Assemble the draft and verify every feed
     needs: [prepare, mac, windows, linux]
     runs-on: ubuntu-24.04
+    # generate-notes is a POST and needs Contents: write. Granted here rather
+    # than at the workflow level so the build jobs stay read-only.
+    permissions:
+      contents: write
     timeout-minutes: 30
     concurrency:
       group: release-assemble-v${{ needs.prepare.outputs.version }}
@@ -514,12 +529,12 @@ jobs:
         run: |
           notes="$RUNNER_TEMP/release-notes.md"
           if gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-              -f tag_name="v$VERSION" -f target_commitish="$SHA" --jq .body > "$notes" 2>/dev/null \
+              -f tag_name="v$VERSION" -f target_commitish="$SHA" --jq .body > "$notes" \
               && [ -s "$notes" ]; then
             echo "generated $(wc -l < "$notes") lines of release notes"
           else
             printf 'Built by the release workflow from %s@%s.\n' "$GITHUB_REPOSITORY" "$SHA" > "$notes"
-            echo "::notice::could not generate notes from pull requests; using the commit reference"
+            echo "::warning::could not generate notes from pull requests; using the commit reference"
           fi
       - name: Create or update the draft with the complete asset set
         env:
@@ -557,18 +572,33 @@ jobs:
             name,
             `sha256:${createHash("sha256").update(readFileSync(join("assets", name))).digest("hex")}`,
           ]));
-          const json = execFileSync(
+          const view = () => JSON.parse(execFileSync(
             "gh",
             ["release", "view", `v${version}`, "--repo", "FerroxLabs/murage-releases", "--json", "assets"],
             { encoding: "utf8" },
-          );
-          const assets = JSON.parse(json).assets;
-          // The count is ours to enforce; the digests are GitHub's and are
-          // computed asynchronously after upload, so a null digest means "not
-          // ready", never "wrong". Report that rather than failing a release
-          // over a field that had not been filled in yet.
+          )).assets;
+          // Names and upload state are deterministic and available the moment
+          // gh answers, so they are checked unconditionally. Digests are
+          // GitHub's and are computed asynchronously, so those get a bounded
+          // wait before we accept "not reported" — the earlier version took
+          // the first null as final, which let a wrong NAME through whenever
+          // the digest had simply not landed yet.
+          let assets = view();
           if (assets.length !== expected.size) {
             throw new Error(`expected ${expected.size} assets on the draft, got ${assets.length}`);
+          }
+          const missing = [...expected.keys()].filter((name) => !assets.some((a) => a.name === name));
+          const extra = assets.filter((a) => !expected.has(a.name)).map((a) => a.name);
+          if (missing.length || extra.length) {
+            throw new Error(`asset names differ — missing: ${missing.join(", ") || "none"}; unexpected: ${extra.join(", ") || "none"}`);
+          }
+          const pending = assets.filter((a) => a.state && a.state !== "uploaded").map((a) => a.name);
+          if (pending.length) {
+            throw new Error(`assets not finished uploading: ${pending.join(", ")}`);
+          }
+          for (let attempt = 0; attempt < 6 && assets.some((a) => !a.digest); attempt += 1) {
+            execFileSync("sleep", ["10"]);
+            assets = view();
           }
           const unreported = assets.filter((asset) => !asset.digest).map((asset) => asset.name);
           for (const asset of assets) {
@@ -578,7 +608,7 @@ jobs:
             }
           }
           if (unreported.length > 0) {
-            console.log(`::notice::GitHub reported no digest yet for ${unreported.length} asset(s): ${unreported.join(", ")}`);
+            console.log(`::warning::GitHub reported no digest after 60s for ${unreported.length} asset(s): ${unreported.join(", ")}`);
           }
           console.log(`ok: the draft has ${assets.length} assets, ${assets.length - unreported.length} digest-verified`);
           EOF
