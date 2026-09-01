@@ -19,7 +19,7 @@ import {
   MAX_COMPANION_ENDPOINTS,
   type CompanionEndpoint,
 } from "./endpoints.ts";
-import { denyReason, isCloudDesktopJoin } from "./routes.ts";
+import { denyReason, isCloudDesktopJoin, isRoutineWrite } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
 /** What the forwarding handler needs from the process around it. */
@@ -72,6 +72,41 @@ const HEADERS_TIMEOUT_MS = 30_000;
  * buffer is the size of the response and nothing upstream promises that is
  * small. Far above any real payload — it exists to have a ceiling at all. */
 const MAX_JSON_BODY_BYTES = 32 * 1024 * 1024;
+
+/** Read a body as raw bytes, bounded, so it can be inspected and then
+ * forwarded byte-for-byte. Re-serialising a parsed body instead would make
+ * the sidecar the author of what the harness receives, and quietly drop
+ * anything the parser round-trips imperfectly. */
+const readRaw = (req: IncomingMessage, limit = 64 * 1024): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new Error("body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("error", reject);
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+
+/** Whether a routine body asks to run in the cloud.
+ *
+ * A body that does not parse cannot create a routine either — the harness
+ * reads it the same way — so it is forwarded and refused there rather than
+ * guessed about here. */
+const declaresCloudRun = (raw: Buffer): boolean => {
+  try {
+    const parsed: unknown = JSON.parse(raw.toString("utf8"));
+    return (parsed as { runOn?: unknown } | null)?.runOn === "cloud";
+  } catch {
+    return false;
+  }
+};
 
 /** Read a JSON body, bounded. An unbounded read on an unauthenticated route
  * is a way to be memory-exhausted by anyone who can reach the port. */
@@ -197,7 +232,7 @@ const endpointSnapshot = (options: ProxyOptions): CompanionEndpointSnapshot => {
  * blocklist: `host` and `origin` must not travel (see above), `authorization`
  * is the sidecar's credential and means nothing to the harness, and hop-by-hop
  * headers are by definition not ours to relay. */
-const forwardHeaders = (req: IncomingMessage): Record<string, string> => {
+const forwardHeaders = (req: IncomingMessage, body: Buffer | null = null): Record<string, string> => {
   const out: Record<string, string> = {
     accept: String(req.headers.accept ?? "*/*"),
     // Lets a response whose URL is intentionally loopback-only (the VPS SSH
@@ -211,13 +246,19 @@ const forwardHeaders = (req: IncomingMessage): Record<string, string> => {
   // the harness must grow its disk-quota reservation as each streamed chunk
   // arrives. Node has already parsed this as one request header; keep an
   // additional canonical-decimal check before replaying it upstream.
-  const contentLength = req.headers["content-length"];
-  if (
-    typeof contentLength === "string"
-    && /^(?:0|[1-9]\d*)$/.test(contentLength)
-    && Number.isSafeInteger(Number(contentLength))
-  ) {
-    out["content-length"] = contentLength;
+  // When the body was buffered to be inspected, its measured size is the
+  // authority — the declared header may disagree with what actually arrived.
+  if (body) {
+    out["content-length"] = String(body.byteLength);
+  } else {
+    const contentLength = req.headers["content-length"];
+    if (
+      typeof contentLength === "string"
+      && /^(?:0|[1-9]\d*)$/.test(contentLength)
+      && Number.isSafeInteger(Number(contentLength))
+    ) {
+      out["content-length"] = contentLength;
+    }
   }
   // Last-Event-ID is how a reconnecting client asks for the gap. Dropping it
   // would turn every resume into a full re-hydration, silently.
@@ -307,288 +348,323 @@ export function createProxyHandler(options: ProxyOptions) {
       return sendJson(res, 200, endpointSnapshot(options));
     }
 
-    const upstream = httpRequest(
-      {
-        hostname: "127.0.0.1",
-        port: options.harnessPort,
-        path: req.url,
-        method,
-        headers: forwardHeaders(req),
-      },
-      (harness) => {
-        clearTimeout(headersDeadline);
-        // Keep liveness tied to the actual harness. Answering from the
-        // sidecar alone made a dead bot server look healthy and caused the
-        // desktop to advertise a hosted route that could not serve chats.
-        // The harness response is inspected under a tiny bound, then replaced
-        // completely so its pid/static fields never cross the public tunnel.
-        if (method === "GET" && path === "/api/health") {
+    // Forwarding is a closure because one gate below has to read the request
+    // body before it can decide, and a stream that has been read cannot be
+    // piped. `body` is the raw bytes when that happened, null otherwise.
+    const forward = (body: Buffer | null): void => {
+      const upstream = httpRequest(
+        {
+          hostname: "127.0.0.1",
+          port: options.harnessPort,
+          path: req.url,
+          method,
+          headers: forwardHeaders(req, body),
+        },
+        (harness) => {
+          clearTimeout(headersDeadline);
+          // Keep liveness tied to the actual harness. Answering from the
+          // sidecar alone made a dead bot server look healthy and caused the
+          // desktop to advertise a hosted route that could not serve chats.
+          // The harness response is inspected under a tiny bound, then replaced
+          // completely so its pid/static fields never cross the public tunnel.
+          if (method === "GET" && path === "/api/health") {
+            const chunks: Buffer[] = [];
+            let size = 0;
+            let finished = false;
+            const fail = () => {
+              if (finished) return;
+              finished = true;
+              sendJson(res, 502, { error: "Murage is not ready on this computer" });
+            };
+            harness.on("data", (chunk: Buffer) => {
+              size += chunk.length;
+              if (size > 4_096) {
+                harness.destroy();
+                fail();
+                return;
+              }
+              chunks.push(chunk);
+            });
+            harness.on("error", fail);
+            harness.on("end", () => {
+              if (finished) return;
+              let identity: unknown;
+              try {
+                identity = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              } catch {
+                fail();
+                return;
+              }
+              // SAFETY: identity came from untrusted JSON, and this assertion
+              // grants no domain behavior; it permits one optional property
+              // read whose value must equal a fixed literal before success.
+              if (
+                (harness.statusCode ?? 500) < 200 ||
+                (harness.statusCode ?? 500) >= 300 ||
+                (identity as { app?: unknown } | null)?.app !== "murage"
+              ) {
+                fail();
+                return;
+              }
+              finished = true;
+              sendJson(res, 200, { app: "murage" });
+            });
+            return;
+          }
+
+          const contentType = harness.headers["content-type"];
+          const isStream = String(contentType ?? "").includes("text/event-stream");
+
+          if (isStream) {
+            const streamStatus = harness.statusCode ?? 500;
+            const tracksDeviceConnection = method === "GET"
+              && path === "/api/events"
+              && streamStatus >= 200
+              && streamStatus < 300
+              && Boolean(device?.id);
+            const currentDevice = tracksDeviceConnection ? options.authenticate(token) : device;
+            if (tracksDeviceConnection && currentDevice?.id !== device?.id) {
+              harness.destroy();
+              return sendJson(res, 401, {
+                error: "pair this device from Phone settings in Murage on your computer",
+              });
+            }
+            const disconnect = () => {
+              if (!harness.destroyed) harness.destroy();
+              if (!res.destroyed) res.destroy();
+            };
+            let releaseConnection =
+              tracksDeviceConnection && currentDevice?.id
+                ? options.connected?.(currentDevice.id, disconnect) ?? null
+                : null;
+            const release = () => {
+              releaseConnection?.();
+              releaseConnection = null;
+            };
+            // Headers first and flushed, or nothing downstream believes the
+            // connection is live. content-length is meaningless here and
+            // content-encoding would be a lie once we rewrite the bytes.
+            res.writeHead(harness.statusCode ?? 200, {
+              "content-type": "text/event-stream",
+              ...PRIVATE_RESPONSE_HEADERS,
+              "cache-control": "private, no-store, no-transform",
+              connection: "keep-alive",
+              // Nagle would hold a small frame back waiting for company. On a
+              // stream whose frames are small and whose whole value is being
+              // timely, that is exactly wrong.
+              "x-accel-buffering": "no",
+            });
+            res.flushHeaders?.();
+            res.socket?.setNoDelay(true);
+            // The harness writes an SSE keepalive every 25 seconds. TCP
+            // keepalive covers the other direction so a vanished phone cannot
+            // leave the desktop indicator green indefinitely on a half-open
+            // connection.
+            res.socket?.setKeepAlive(true, 30_000);
+
+            const scrubStream = createSseScrubber();
+            harness.setEncoding("utf8");
+            harness.on("data", (chunk: string) => {
+              let rewritten: string;
+              try {
+                rewritten = scrubStream(chunk);
+              } catch {
+                // The buffer ceiling. Half an event cannot be forwarded safely,
+                // so the stream ends here rather than growing without bound.
+                release();
+                harness.destroy();
+                res.end();
+                return;
+              }
+              if (!rewritten) return;
+              // A phone on a slow link reads slower than the harness writes,
+              // and the difference has to go somewhere. Ignoring what write()
+              // returns puts it in this process's memory, unbounded, for as
+              // long as the phone stays connected and behind. Pausing pushes it
+              // back to the harness, which is where the backlog belongs.
+              if (!res.write(rewritten)) harness.pause();
+            });
+            res.on("drain", () => harness.resume());
+            harness.on("end", () => {
+              release();
+              res.end();
+            });
+            harness.on("error", () => {
+              release();
+              res.destroy();
+            });
+            // A device that hangs up must take the upstream connection with
+            // it, or the harness accumulates readers nobody is listening to.
+            res.on("close", () => {
+              release();
+              harness.destroy();
+            });
+            return;
+          }
+
+          const encoding = String(harness.headers["content-encoding"] ?? "")
+            .trim()
+            .toLowerCase();
+          if (!isJson(String(contentType ?? "")) || (encoding && encoding !== "identity")) {
+            // images and anything else: byte-for-byte, no parsing.
+            //
+            // Encoded bodies come through here too. Scrubbing one would mean
+            // decompressing it, and the alternative the buffering branch would
+            // otherwise reach — decode as UTF-8, re-serialise, drop the
+            // content-encoding header — corrupts it silently. `forwardHeaders`
+            // never sends accept-encoding, so this is a guard rather than a
+            // path: if it ever fires, the body passes through unscrubbed and
+            // intact rather than scrubbed and broken.
+            res.writeHead(harness.statusCode ?? 200, privateHeaders(harness.headers));
+            // `pipe` does not carry a failure from source to destination. An
+            // upstream that dies part-way through an image would otherwise
+            // leave the phone holding an open connection and a content-length
+            // that will never be satisfied — it waits for the rest forever,
+            // which reads as a frozen app rather than as a failed request.
+            harness.on("error", () => res.destroy());
+            harness.pipe(res);
+            return;
+          }
+
           const chunks: Buffer[] = [];
           let size = 0;
-          let finished = false;
-          const fail = () => {
-            if (finished) return;
-            finished = true;
-            sendJson(res, 502, { error: "Murage is not ready on this computer" });
-          };
           harness.on("data", (chunk: Buffer) => {
             size += chunk.length;
-            if (size > 4_096) {
+            if (size > MAX_JSON_BODY_BYTES) {
               harness.destroy();
-              fail();
+              if (res.headersSent) res.destroy();
+              else sendJson(res, 502, { error: "the response from Murage was too large" });
               return;
             }
             chunks.push(chunk);
           });
-          harness.on("error", fail);
+          harness.on("error", () => res.destroy());
           harness.on("end", () => {
-            if (finished) return;
-            let identity: unknown;
+            const body = Buffer.concat(chunks).toString("utf8");
+
+            // Two failures live here and they are not the same failure.
+            //
+            // A body that does not parse was never JSON — the content-type
+            // lied, or the harness sent an empty 204. There is nothing to
+            // redact in bytes that do not read as an object, so forwarding
+            // them verbatim is correct.
+            let parsed: unknown;
             try {
-              identity = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              parsed = JSON.parse(body);
             } catch {
-              fail();
+              forward(body, harness.headers, harness.statusCode ?? 200);
               return;
             }
-            // SAFETY: identity came from untrusted JSON, and this assertion
-            // grants no domain behavior; it permits one optional property
-            // read whose value must equal a fixed literal before success.
-            if (
-              (harness.statusCode ?? 500) < 200 ||
-              (harness.statusCode ?? 500) >= 300 ||
-              (identity as { app?: unknown } | null)?.app !== "murage"
-            ) {
-              fail();
+
+            // A body that parses but will not scrub is the opposite case. We
+            // know it is structured, and `scrub` is the only thing keeping the
+            // harness's internal fields — the resume cursors — off the wire to
+            // a device. Falling back to the raw body there, which is what one
+            // try around parse-and-scrub used to do, sends exactly what the
+            // scrubber exists to withhold. Not hypothetical: `scrub` recurses,
+            // so a body nested a few thousand deep throws RangeError where
+            // JSON.parse handles it fine.
+            let text: string;
+            try {
+              text = JSON.stringify(scrub(parsed));
+            } catch {
+              sendJson(res, 502, { error: "the response could not be prepared for this device" });
               return;
             }
-            finished = true;
-            sendJson(res, 200, { app: "murage" });
+            forward(text, harness.headers, harness.statusCode ?? 200);
           });
+
+          /** Re-frame and send. The body was re-serialised, so nothing the
+           * harness said about its framing survives. `transfer-encoding`
+           * matters most: leaving it alongside the content-length set here is
+           * a protocol violation, and Node's own parser rejects the response
+           * outright rather than tolerating it. */
+          function forward(text: string, upstreamHeaders: IncomingMessage["headers"], status: number): void {
+            const headers = { ...upstreamHeaders };
+            delete headers["content-length"];
+            delete headers["content-encoding"];
+            delete headers["transfer-encoding"];
+            res.writeHead(status, {
+              ...privateHeaders(headers),
+              "content-length": Buffer.byteLength(text),
+            });
+            res.end(text);
+          }
+        },
+      );
+
+      // A phone can go away at any point: before the harness has answered,
+      // while its own request body is still going up, or partway through a
+      // large response. Every one of those leaves the harness producing for
+      // nobody unless the upstream goes with it. Guarded on `writableEnded` so
+      // an ordinary finished response does not tear down a keep-alive socket
+      // on its way out.
+      res.on("close", () => {
+        if (!res.writableEnded) upstream.destroy();
+      });
+      req.on("error", () => upstream.destroy());
+
+      // `http.request` has no deadline of its own for the headers phase: a
+      // harness that accepts the connection and then says nothing holds the
+      // device's request open until one side gives up, which neither does.
+      let timedOut = false;
+      const headersDeadline = setTimeout(() => {
+        timedOut = true;
+        upstream.destroy(new Error("the harness sent no response headers"));
+      }, options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS);
+      headersDeadline.unref?.();
+
+      upstream.on("error", () => {
+        clearTimeout(headersDeadline);
+        // Headers already went out — a stream, or a piped body — or the
+        // response is finished and this is a socket dying afterwards. There is
+        // no status code left to send in either case, and writeHead here throws
+        // ERR_HTTP_HEADERS_SENT out of an event handler with nothing to catch
+        // it, taking the whole sidecar down over one dead connection. Dropping
+        // the socket is the only honest signal, and one a client recovers from.
+        if (res.headersSent || res.writableEnded) {
+          res.destroy();
           return;
         }
+        sendJson(
+          res,
+          timedOut ? 504 : 502,
+          timedOut
+            ? { error: "Murage did not respond" }
+            : { error: "Murage is not running on this computer" },
+        );
+      });
+      // A body we had to read to inspect it cannot be piped a second
+      // time; replay the exact bytes the phone sent instead.
+      if (body) upstream.end(body);
+      else req.pipe(upstream);
+    };
 
-        const contentType = harness.headers["content-type"];
-        const isStream = String(contentType ?? "").includes("text/event-stream");
-
-        if (isStream) {
-          const streamStatus = harness.statusCode ?? 500;
-          const tracksDeviceConnection = method === "GET"
-            && path === "/api/events"
-            && streamStatus >= 200
-            && streamStatus < 300
-            && Boolean(device?.id);
-          const currentDevice = tracksDeviceConnection ? options.authenticate(token) : device;
-          if (tracksDeviceConnection && currentDevice?.id !== device?.id) {
-            harness.destroy();
-            return sendJson(res, 401, {
-              error: "pair this device from Phone settings in Murage on your computer",
+    // `runOn: "cloud"` on a routine reaches box.provisionBox() on the next
+    // run — server/index.ts: `const wants = opts?.runOn === "cloud" ? "cloud"
+    // : bot.computer`, the comment on which reads "cloud routine overrides the
+    // EMBER default". That is the same billable infrastructure
+    // POST /api/bots/:id/computer/provision is denied for. The discriminator
+    // lives in the body, so the allowlist — which sees a method and a path and
+    // nothing else — cannot express it, and a routine is otherwise a perfectly
+    // ordinary thing to make from a phone. Gate it on the same per-device
+    // capability the cloud desktop uses, which is off until Sean turns it on.
+    if (isRoutineWrite(method, path) && !device?.cloudDesktopAccess) {
+      readRaw(req).then(
+        (raw) => {
+          if (declaresCloudRun(raw)) {
+            return sendJson(res, 403, {
+              error:
+                "cloud routines are set up on your computer — this phone is not allowed cloud access",
             });
           }
-          const disconnect = () => {
-            if (!harness.destroyed) harness.destroy();
-            if (!res.destroyed) res.destroy();
-          };
-          let releaseConnection =
-            tracksDeviceConnection && currentDevice?.id
-              ? options.connected?.(currentDevice.id, disconnect) ?? null
-              : null;
-          const release = () => {
-            releaseConnection?.();
-            releaseConnection = null;
-          };
-          // Headers first and flushed, or nothing downstream believes the
-          // connection is live. content-length is meaningless here and
-          // content-encoding would be a lie once we rewrite the bytes.
-          res.writeHead(harness.statusCode ?? 200, {
-            "content-type": "text/event-stream",
-            ...PRIVATE_RESPONSE_HEADERS,
-            "cache-control": "private, no-store, no-transform",
-            connection: "keep-alive",
-            // Nagle would hold a small frame back waiting for company. On a
-            // stream whose frames are small and whose whole value is being
-            // timely, that is exactly wrong.
-            "x-accel-buffering": "no",
-          });
-          res.flushHeaders?.();
-          res.socket?.setNoDelay(true);
-          // The harness writes an SSE keepalive every 25 seconds. TCP
-          // keepalive covers the other direction so a vanished phone cannot
-          // leave the desktop indicator green indefinitely on a half-open
-          // connection.
-          res.socket?.setKeepAlive(true, 30_000);
-
-          const scrubStream = createSseScrubber();
-          harness.setEncoding("utf8");
-          harness.on("data", (chunk: string) => {
-            let rewritten: string;
-            try {
-              rewritten = scrubStream(chunk);
-            } catch {
-              // The buffer ceiling. Half an event cannot be forwarded safely,
-              // so the stream ends here rather than growing without bound.
-              release();
-              harness.destroy();
-              res.end();
-              return;
-            }
-            if (!rewritten) return;
-            // A phone on a slow link reads slower than the harness writes,
-            // and the difference has to go somewhere. Ignoring what write()
-            // returns puts it in this process's memory, unbounded, for as
-            // long as the phone stays connected and behind. Pausing pushes it
-            // back to the harness, which is where the backlog belongs.
-            if (!res.write(rewritten)) harness.pause();
-          });
-          res.on("drain", () => harness.resume());
-          harness.on("end", () => {
-            release();
-            res.end();
-          });
-          harness.on("error", () => {
-            release();
-            res.destroy();
-          });
-          // A device that hangs up must take the upstream connection with
-          // it, or the harness accumulates readers nobody is listening to.
-          res.on("close", () => {
-            release();
-            harness.destroy();
-          });
-          return;
-        }
-
-        const encoding = String(harness.headers["content-encoding"] ?? "")
-          .trim()
-          .toLowerCase();
-        if (!isJson(String(contentType ?? "")) || (encoding && encoding !== "identity")) {
-          // images and anything else: byte-for-byte, no parsing.
-          //
-          // Encoded bodies come through here too. Scrubbing one would mean
-          // decompressing it, and the alternative the buffering branch would
-          // otherwise reach — decode as UTF-8, re-serialise, drop the
-          // content-encoding header — corrupts it silently. `forwardHeaders`
-          // never sends accept-encoding, so this is a guard rather than a
-          // path: if it ever fires, the body passes through unscrubbed and
-          // intact rather than scrubbed and broken.
-          res.writeHead(harness.statusCode ?? 200, privateHeaders(harness.headers));
-          // `pipe` does not carry a failure from source to destination. An
-          // upstream that dies part-way through an image would otherwise
-          // leave the phone holding an open connection and a content-length
-          // that will never be satisfied — it waits for the rest forever,
-          // which reads as a frozen app rather than as a failed request.
-          harness.on("error", () => res.destroy());
-          harness.pipe(res);
-          return;
-        }
-
-        const chunks: Buffer[] = [];
-        let size = 0;
-        harness.on("data", (chunk: Buffer) => {
-          size += chunk.length;
-          if (size > MAX_JSON_BODY_BYTES) {
-            harness.destroy();
-            if (res.headersSent) res.destroy();
-            else sendJson(res, 502, { error: "the response from Murage was too large" });
-            return;
-          }
-          chunks.push(chunk);
-        });
-        harness.on("error", () => res.destroy());
-        harness.on("end", () => {
-          const body = Buffer.concat(chunks).toString("utf8");
-
-          // Two failures live here and they are not the same failure.
-          //
-          // A body that does not parse was never JSON — the content-type
-          // lied, or the harness sent an empty 204. There is nothing to
-          // redact in bytes that do not read as an object, so forwarding
-          // them verbatim is correct.
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(body);
-          } catch {
-            forward(body, harness.headers, harness.statusCode ?? 200);
-            return;
-          }
-
-          // A body that parses but will not scrub is the opposite case. We
-          // know it is structured, and `scrub` is the only thing keeping the
-          // harness's internal fields — the resume cursors — off the wire to
-          // a device. Falling back to the raw body there, which is what one
-          // try around parse-and-scrub used to do, sends exactly what the
-          // scrubber exists to withhold. Not hypothetical: `scrub` recurses,
-          // so a body nested a few thousand deep throws RangeError where
-          // JSON.parse handles it fine.
-          let text: string;
-          try {
-            text = JSON.stringify(scrub(parsed));
-          } catch {
-            sendJson(res, 502, { error: "the response could not be prepared for this device" });
-            return;
-          }
-          forward(text, harness.headers, harness.statusCode ?? 200);
-        });
-
-        /** Re-frame and send. The body was re-serialised, so nothing the
-         * harness said about its framing survives. `transfer-encoding`
-         * matters most: leaving it alongside the content-length set here is
-         * a protocol violation, and Node's own parser rejects the response
-         * outright rather than tolerating it. */
-        function forward(text: string, upstreamHeaders: IncomingMessage["headers"], status: number): void {
-          const headers = { ...upstreamHeaders };
-          delete headers["content-length"];
-          delete headers["content-encoding"];
-          delete headers["transfer-encoding"];
-          res.writeHead(status, {
-            ...privateHeaders(headers),
-            "content-length": Buffer.byteLength(text),
-          });
-          res.end(text);
-        }
-      },
-    );
-
-    // A phone can go away at any point: before the harness has answered,
-    // while its own request body is still going up, or partway through a
-    // large response. Every one of those leaves the harness producing for
-    // nobody unless the upstream goes with it. Guarded on `writableEnded` so
-    // an ordinary finished response does not tear down a keep-alive socket
-    // on its way out.
-    res.on("close", () => {
-      if (!res.writableEnded) upstream.destroy();
-    });
-    req.on("error", () => upstream.destroy());
-
-    // `http.request` has no deadline of its own for the headers phase: a
-    // harness that accepts the connection and then says nothing holds the
-    // device's request open until one side gives up, which neither does.
-    let timedOut = false;
-    const headersDeadline = setTimeout(() => {
-      timedOut = true;
-      upstream.destroy(new Error("the harness sent no response headers"));
-    }, options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS);
-    headersDeadline.unref?.();
-
-    upstream.on("error", () => {
-      clearTimeout(headersDeadline);
-      // Headers already went out — a stream, or a piped body — or the
-      // response is finished and this is a socket dying afterwards. There is
-      // no status code left to send in either case, and writeHead here throws
-      // ERR_HTTP_HEADERS_SENT out of an event handler with nothing to catch
-      // it, taking the whole sidecar down over one dead connection. Dropping
-      // the socket is the only honest signal, and one a client recovers from.
-      if (res.headersSent || res.writableEnded) {
-        res.destroy();
-        return;
-      }
-      sendJson(
-        res,
-        timedOut ? 504 : 502,
-        timedOut
-          ? { error: "Murage did not respond" }
-          : { error: "Murage is not running on this computer" },
+          forward(raw);
+        },
+        (error: Error) => sendJson(res, 400, { error: error.message }),
       );
-    });
-    req.pipe(upstream);
+      return;
+    }
+
+    forward(null);
   };
 }
