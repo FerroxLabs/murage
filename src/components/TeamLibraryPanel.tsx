@@ -64,7 +64,6 @@ export interface TeamImportResult {
 
 type ImportSource = "library" | "file" | "github";
 type TeamTab = "explore" | "import" | "scout";
-type ImportMode = "replace" | "add";
 
 /** the scout endpoint's answer, as far as this panel renders it — the
  * manifest itself stays opaque and goes back to the server verbatim */
@@ -141,7 +140,6 @@ export function TeamLibraryPanel({
   const [githubLoading, setGithubLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [importMode, setImportMode] = useState<ImportMode>("replace");
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [scoutFolder, setScoutFolder] = useState("");
@@ -218,7 +216,6 @@ export function TeamLibraryPanel({
   const previewManifest = (preview: PendingTeamImport, nextSource: ImportSource) => {
     setPending(preview);
     setSource(nextSource);
-    setImportMode(currentBotCount > 0 ? "replace" : "add");
     setError("");
   };
 
@@ -286,7 +283,7 @@ export function TeamLibraryPanel({
     setError("");
     try {
       // SAFETY: this endpoint is owned by the app and returns imported bots.
-      const response = (await api(`/api/teams/import?mode=${importMode}`, {
+      const response = (await api("/api/teams/import?mode=add", {
         method: "POST",
         body: JSON.stringify(pending.manifest),
       })) as {
@@ -302,7 +299,7 @@ export function TeamLibraryPanel({
       for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
       const first = response.bots[0];
       if (first) dispatch({ type: "select", id: first.id });
-      track("team_imported", { members: response.bots.length, source, mode: importMode });
+      track("team_imported", { members: response.bots.length, source, mode: "add" });
       onImported({
         name: pending.name,
         members: response.bots.length,
@@ -516,17 +513,9 @@ export function TeamLibraryPanel({
             <footer className="flex flex-col gap-3 border-t border-hairline/35 px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
               <div className="text-[12.5px] text-ink-secondary">
                 {currentBotCount > 0 ? (
-                  importMode === "replace" ? (
-                    <>
-                      Replaces your {currentBotCount} current {currentBotCount === 1 ? "bot" : "bots"}. They&apos;ll be archived with conversations intact.{" "}
-                      <button onClick={() => setImportMode("add")} className="font-medium text-ink hover:underline">Add alongside instead</button>
-                    </>
-                  ) : (
-                    <>
-                      This team will be added alongside your current bots.{" "}
-                      <button onClick={() => setImportMode("replace")} className="font-medium text-ink hover:underline">Replace current team instead</button>
-                    </>
-                  )
+                  <>
+                    Joins your {currentBotCount} current {currentBotCount === 1 ? "bot" : "bots"}. Nothing is removed or replaced.
+                  </>
                 ) : (
                   pending.kind === "package" ? "Review the complete setup, then activate the playbook." : "No channel is created—you can make one later if you want."
                 )}
@@ -542,9 +531,7 @@ export function TeamLibraryPanel({
                   : pending.kind === "package" && currentBotCount === 0
                     ? "Activate playbook"
                     : currentBotCount === 0
-                    ? "Load team"
-                    : importMode === "replace"
-                      ? "Replace team"
+                      ? "Load team"
                       : "Add team"}
               </button>
             </footer>
