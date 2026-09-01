@@ -240,17 +240,34 @@ jobs:
       - name: "Gate: the installer must actually be signed"
         shell: pwsh
         run: |
-          $fail = 0
+          # Every executable we ship must carry a VALID signature, ours or a
+          # vendor's. But we bundle third-party binaries (cloudflared) that are
+          # signed by their own publisher, so demanding our subject everywhere
+          # rejects a perfectly good Cloudflare signature. Allowlist the
+          # vendors by name rather than skipping them: a swapped binary with a
+          # different signer still fails this gate.
+          $allowed = @('Ferrox Labs, LLC', 'Cloudflare, Inc.')
+          $script:fail = 0
           Get-ChildItem release -Filter *.exe -Recurse | ForEach-Object {
             $sig = Get-AuthenticodeSignature $_.FullName
-            Write-Host "$($_.Name): $($sig.Status) $($sig.SignerCertificate.Subject)"
+            $subject = $sig.SignerCertificate.Subject
+            Write-Host "$($_.Name): $($sig.Status) $subject"
             if ($sig.Status -ne 'Valid') {
-              Write-Host "::error::$($_.Name) is not validly signed ($($sig.Status))"; $fail = 1
-            } elseif ($sig.SignerCertificate.Subject -notmatch 'Ferrox Labs, LLC') {
-              Write-Host "::error::$($_.Name) signed by an unexpected subject"; $fail = 1
+              Write-Host "::error::$($_.Name) is not validly signed ($($sig.Status))"; $script:fail = 1
+            } elseif (-not ($allowed | Where-Object { $subject -match [regex]::Escape($_) })) {
+              Write-Host "::error::$($_.Name) signed by an unexpected subject: $subject"; $script:fail = 1
             }
           }
-          exit $fail
+          # the app itself must be OURS, never a vendor's — checked explicitly
+          foreach ($required in @('Murage.exe', 'Murage-*-setup.exe')) {
+            Get-ChildItem release -Filter $required -Recurse | ForEach-Object {
+              $subject = (Get-AuthenticodeSignature $_.FullName).SignerCertificate.Subject
+              if ($subject -notmatch 'Ferrox Labs, LLC') {
+                Write-Host "::error::$($_.Name) must be signed by us, got: $subject"; $script:fail = 1
+              }
+            }
+          }
+          exit $script:fail
 
       - name: Verify the packaged tree and start the packaged server
         shell: bash
