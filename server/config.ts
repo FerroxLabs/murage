@@ -249,6 +249,11 @@ const appConfigSchema = z.object({
   tts: z.object({ key: optionalText, voice: optionalText, provider: z.enum(["elevenlabs", "system"]).optional() }).optional(),
   /** OpenAI key used only by the in-process avatar image generator. */
   imageGen: z.object({ key: optionalText }).optional(),
+  /** Sendlane list the onboarding signup writes to. Absent = signup is
+   *  captured locally only and no request leaves the machine. */
+  sendlane: z
+    .object({ apiKey: optionalText, hashKey: optionalText, listId: optionalText })
+    .optional(),
   /** Non-secret profile details shown in the sidebar. */
   profile: z.object({ name: optionalText, email: optionalText }).optional(),
   /** UI language override (BCP-47, lowercase). Empty/absent = follow the
@@ -283,6 +288,7 @@ export interface AppConfig {
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string; voice?: string; provider?: "elevenlabs" | "system" };
   imageGen?: { key?: string };
+  sendlane?: { apiKey?: string; hashKey?: string; listId?: string };
   profile?: { name?: string; email?: string };
   rooms?: { turnTimeoutMinutes: number };
   /** Shared preserves the historical singleton. Per-bot gives every bot a
@@ -532,6 +538,8 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
   "COMPOSIO_API_KEY",
+  "SENDLANE_API_KEY",
+  "SENDLANE_HASH_KEY",
   "MURAGE_COMPOSIO_BROKER_TOKEN",
   // Harness-private filesystem hints are not credentials themselves, but
   // exposing them to a shell-capable agent points straight at app-owned

@@ -118,6 +118,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   const saveProfile = () => {
     identifyEmail(email.trim().toLowerCase());
+    // Our own list. Deliberately not awaited: Sendlane being slow or down must
+    // never hold someone at the welcome screen.
+    void fetch("/api/subscribe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), name: name.trim() }),
+    }).catch(() => {});
     // persisted server-side (~/.murage/config.json) — the sidebar
     // footer reads it back through /api/config
     void fetch("/api/config", {
