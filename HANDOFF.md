@@ -78,8 +78,14 @@ Three, all the same shape — infrastructure that looked like ours and was not.
 2. **Real screenshots** — README has three marked placeholders. App runs; needs a session past onboarding.
 3. **Swift file renames** — `ios/App/MausAvatar.swift`, `ios/AppShared/OpenMausShared*.swift` still carry old names. Deferred because Xcode references sources by path in `project.pbxproj`; rename and update the project file in one commit.
 4. **Mascot provenance** — Blob Studio has no published licence terms; one email would settle commercial use. The silhouette is SVGRepo's fire, not our logo's flame. Regenerating from our own vector would be strictly better branding, and needs the vector source (only PNGs exist).
-5. **Credential rotation** — the Cloudflare API token, the PyPI token and the Sendlane key were all pasted into a chat transcript. Rotate.
-6. **Contrast check** — icon tile sampled `#100F15`, Hearth bg is `#0d0d0d`. Close but not equal; reconcile.
+5. **macOS notarization is OFF.** `electron-builder.yml` has `sign: true` and
+   `hardenedRuntime: true` but `notarize: false`. A signed-but-unnotarized
+   download triggers Gatekeeper's "Apple cannot check it for malicious
+   software" dialog, which most people respond to by deleting the app. Needs an
+   Apple app-specific password and a config flip, and it adds minutes per build,
+   so it belongs in the pipeline rather than bolted on at launch.
+6. **Credential rotation** — the Cloudflare API token, the PyPI token and the Sendlane key were all pasted into a chat transcript. Rotate.
+7. **Contrast check** — icon tile sampled `#100F15`, Hearth bg is `#0d0d0d`. Close but not equal; reconcile.
 
 ## Running it
 
