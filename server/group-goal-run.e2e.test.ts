@@ -78,6 +78,16 @@ beforeAll(async () => {
         environment: { FAKE_CLAUDE_MODE: "exit-early" },
         config: { cli: FAKE_CLAUDE },
       },
+      slow: {
+        driver: "claudeAgent",
+        displayName: "Queue fixture",
+        environment: {
+          FAKE_CLAUDE_MODE: "slow",
+          FAKE_CLAUDE_REPLIES: JSON.stringify(["first response", "second response"]),
+          FAKE_CLAUDE_REPLY_STATE: join(home, "slow-replies.txt"),
+        },
+        config: { cli: FAKE_CLAUDE },
+      },
     },
   }));
   const port = await freePortBlock([0, 1]);
@@ -223,5 +233,74 @@ describe("goal-driven channel runs", () => {
 
     const dm = (await api("GET", "/api/bots?messages=0")).body.groups.find((group: { dm?: boolean }) => group.dm);
     if (dm) expect((await api("POST", `/api/groups/${dm.id}/messages`, { text: "goal", mode: "goal" })).status).toBe(400);
+  });
+
+  it("automatically dispatches channel messages queued during a running turn", async () => {
+    const bot = (await api("POST", "/api/bots", {
+      name: "Queue worker",
+      modelSelection: { instanceId: "slow", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Queue checks",
+      memberIds: [bot.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: bot.id } },
+    })).body.group;
+    const firstSendId = "channel_queue_first_1234";
+    const secondSendId = "channel_queue_second_123";
+
+    const first = await api("POST", `/api/groups/${room.id}/messages`, {
+      text: "first request",
+      sendId: firstSendId,
+    });
+    expect(first.status).toBe(202);
+    expect(first.body.message).toMatchObject({ role: "user", text: "first request", sendId: firstSendId });
+
+    await expect.poll(async () => {
+      const state = (await api("GET", "/api/bots?messages=0")).body;
+      return state.groups.find((candidate: { id: string }) => candidate.id === room.id)?.working;
+    }).toBe(true);
+
+    const queuedBody = { text: "second request", sendId: secondSendId };
+    const queued = await api("POST", `/api/groups/${room.id}/messages`, queuedBody);
+    expect(queued.status).toBe(202);
+    expect(queued.body).toMatchObject({ queued: true, threadId: room.threadId });
+    expect(queued.body.queueId).toEqual(expect.any(String));
+    expect(queued.body.message).toBeUndefined();
+
+    const retryWhileQueued = await api("POST", `/api/groups/${room.id}/messages`, queuedBody);
+    expect(retryWhileQueued.body).toMatchObject({ queued: true, queueId: queued.body.queueId });
+
+    await expect.poll(async () => {
+      const state = (await api("GET", "/api/bots?messages=30")).body;
+      const current = state.groups.find((candidate: { id: string }) => candidate.id === room.id);
+      const userLines = current?.messages.filter((message: { role?: string }) => message.role === "user") ?? [];
+      return {
+        working: current?.working,
+        sends: userLines.map((message: { sendId?: string }) => message.sendId),
+      };
+    }, { timeout: 10_000 }).toEqual({ working: false, sends: [firstSendId, secondSendId] });
+
+    const state = (await api("GET", "/api/bots?messages=30")).body;
+    const current = state.groups.find((candidate: { id: string }) => candidate.id === room.id);
+    const firstUserAt = current.messages.findIndex((message: { sendId?: string }) => message.sendId === firstSendId);
+    const secondUserAt = current.messages.findIndex((message: { sendId?: string }) => message.sendId === secondSendId);
+    const firstReplyAt = current.messages.findIndex(
+      (message: { role?: string }, index: number) => index > firstUserAt && message.role === "bot",
+    );
+    const secondReplyAt = current.messages.findIndex(
+      (message: { role?: string }, index: number) => index > secondUserAt && message.role === "bot",
+    );
+    expect(firstUserAt).toBeGreaterThanOrEqual(0);
+    expect(firstReplyAt).toBeGreaterThan(firstUserAt);
+    expect(secondUserAt).toBeGreaterThan(firstReplyAt);
+    expect(secondReplyAt).toBeGreaterThan(secondUserAt);
+    expect(current.messages[secondUserAt]).toMatchObject({ queueId: queued.body.queueId });
+
+    const retryAfterDrain = await api("POST", `/api/groups/${room.id}/messages`, queuedBody);
+    expect(retryAfterDrain.body.message).toMatchObject({
+      sendId: secondSendId,
+      queueId: queued.body.queueId,
+    });
   });
 });

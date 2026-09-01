@@ -659,6 +659,22 @@ describe("pending queued chip", () => {
     });
     expect(cancelled.pendingQueued).toEqual({});
   });
+
+  it("drops a cancelled channel follow-up from its original task", () => {
+    const queued = reducer(initialState, {
+      type: "pendingQueued",
+      threadId: "room-task-1",
+      queueId: "q-room-drop",
+      text: "never mind",
+    });
+    const cancelled = reducer(queued, {
+      type: "cancelGroupQueued",
+      groupId: "room-1",
+      threadId: "room-task-1",
+      queueId: "q-room-drop",
+    });
+    expect(cancelled.pendingQueued).toEqual({});
+  });
 });
 
 describe("messageAdded leaf adoption", () => {

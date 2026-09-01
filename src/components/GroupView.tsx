@@ -3,7 +3,7 @@
 // does not become a wall of competing motion. Plain messages go to the room's
 // default responder; @mentions override that routing.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Check, ChevronDown, Folder, FolderOpen, Loader2, MessageSquareReply, Pin, PinOff, Plus, Search, X } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, Clock, Folder, FolderOpen, Loader2, MessageSquareReply, Pin, PinOff, Plus, Search, X } from "lucide-react";
 import {
   api,
   useStore,
@@ -1267,6 +1267,33 @@ export function GroupView({ group }: { group: Group }) {
               ) : null}
             </TurnPresence>
           )}
+          {(state.pendingQueued[group.threadId] ?? []).map((entry) => (
+            <div key={entry.queueId} className="flex flex-col items-end">
+              <div className="w-fit max-w-[min(42rem,78%)] whitespace-pre-wrap rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed text-ink-secondary">
+                {entry.text}
+              </div>
+              <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
+                <Clock size={11} aria-hidden="true" />
+                <span>{group.working ? "Queued — wait, or inject now" : "Queued — sending now"}</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    dispatch({
+                      type: "cancelGroupQueued",
+                      groupId: group.id,
+                      threadId: group.threadId,
+                      queueId: entry.queueId,
+                    })
+                  }
+                  aria-label="Cancel queued message"
+                  title="Cancel queued message"
+                  className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
+                >
+                  <X size={11} strokeWidth={2.5} />
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
         )}
       </div>
