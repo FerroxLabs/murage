@@ -27,6 +27,13 @@ const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g
 const clamp = (s, n) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n - 1).trimEnd() + "…" : t; };
 const colorFor = (i) => COLORS[i % COLORS.length];
 
+function roleMarkdown(spec) {
+  const cf = spec.contextFile;
+  if (!cf) return "";
+  const f = join(WT, cf);
+  return existsSync(f) ? readFileSync(f, "utf8").trim() : "";
+}
+
 function launcher(id) {
   const f = join(WT, "assistants/launchers", `${id}.md`);
   return existsSync(f) ? readFileSync(f, "utf8").trim() : "";
@@ -81,7 +88,25 @@ for (const team of teams) {
       description: clamp(s.description, 4000) || undefined,
       appearance: { color: colorFor(i) },
       ...(skills.length ? { skills } : {}),
+      ...(roleMarkdown(s) ? { playbooks: [k] } : {}),
     };
+  });
+
+  // One playbook per member, carrying that role's written instructions.
+  // Upstream's own six teams shipped playbooks; ours shipped none, which was
+  // a regression against the thing we replaced.
+  const playbooks = members.flatMap((k) => {
+    const sp = specialists.get(k);
+    const body = roleMarkdown(sp);
+    if (!body) return [];
+    const triggers = [sp.name.toLowerCase(), k].filter((t, idx, all) => t && all.indexOf(t) === idx);
+    return [{
+      key: k,
+      name: clamp(sp.name, 100),
+      summary: clamp(sp.description || sp.name, 300),
+      triggers,
+      instructions: clamp(body, 24000),
+    }];
   });
 
   const bulletin = clamp(launcher(team.id) || team.description || team.name, 12000);
@@ -132,6 +157,7 @@ for (const team of teams) {
       enabledAfterInstall: false,
     });
   }
+  if (playbooks.length) pkg.package.playbooks = playbooks;
   if (routines.length) pkg.package.routines = routines;
 
   const dir = join(OUT, "teams", pkg.package.id);
