@@ -10,7 +10,7 @@ import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
-import { Store, type BotRecord } from "./store.ts";
+import { canReach, isWorkspaceChief, Store, type BotRecord } from "./store.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
@@ -1131,5 +1131,162 @@ describe("Store task working folder — cloud runs", () => {
     expect(store.taskByThread(bot.id, bot.threadId)?.cwd).toBeNull();
     // and it stays pinned even if a host run follows
     expect(store.pinTaskCwd(bot.id, bot.threadId)).toBeNull();
+  });
+});
+
+// ── the two-tier Chief of Staff ───────────────────────────────────────
+// One workspace Chief above the per-section leads. `canReach` is the single
+// roster predicate every gate calls; the whole design rests on it being a
+// STRICT SUPERSET of the section rule, so a workspace with no workspace
+// Chief behaves exactly as it did before this existed.
+
+describe("canReach", () => {
+  // Deliberately looser than `Partial<BotRecord>`: `section` is typed
+  // `string | undefined`, but a record loaded from disk can carry an explicit
+  // null, and normalising that is half of what the predicate is for.
+  const bot = (over: Record<string, unknown> = {}) =>
+    ({ section: undefined, ...over }) as unknown as BotRecord;
+  const ember = bot({ section: null, chiefOfStaff: true, chiefScope: "workspace" });
+  const salesLead = bot({ section: "Sales", chiefOfStaff: true });
+  const contentLead = bot({ section: "Content", chiefOfStaff: true });
+  const salesGrunt = bot({ section: "Sales" });
+  const contentGrunt = bot({ section: "Content" });
+
+  it("keeps same-section contact, including the unsectioned bucket", () => {
+    expect(canReach(salesLead, salesGrunt)).toBe(true);
+    expect(canReach(salesGrunt, salesLead)).toBe(true);
+    expect(canReach(bot({ section: null }), bot({ section: "   " }))).toBe(true);
+  });
+
+  it("opens exactly two new edges: workspace chief ⇄ section lead", () => {
+    expect(canReach(ember, salesLead)).toBe(true);
+    expect(canReach(salesLead, ember)).toBe(true);
+    expect(canReach(ember, contentLead)).toBe(true);
+  });
+
+  it("never lets the workspace chief and a specialist reach each other", () => {
+    // Sean's sentence — "she never talks to grunts" — as a predicate.
+    expect(canReach(ember, salesGrunt)).toBe(false);
+    expect(canReach(salesGrunt, ember)).toBe(false);
+  });
+
+  it("does not connect two section leads to each other", () => {
+    expect(canReach(salesLead, contentLead)).toBe(false);
+  });
+
+  it("refuses cross-section contact between ordinary bots", () => {
+    expect(canReach(salesGrunt, contentGrunt)).toBe(false);
+    expect(canReach(salesGrunt, contentLead)).toBe(false);
+  });
+
+  it("is inert without a workspace chief — a plain chiefOfStaff opens nothing", () => {
+    expect(canReach(salesLead, contentLead)).toBe(false);
+    expect(canReach(bot({ section: "Sales", chiefOfStaff: true }), bot({ section: "Ops" }))).toBe(false);
+  });
+
+  it("filters neither hidden bots nor self — each gate still owns that", () => {
+    // Four of the gates it replaces have no hidden check and two report a
+    // different error for self; folding either in here would change what an
+    // ordinary bot may do in the change whose point is that it changes nothing.
+    const hidden = bot({ section: "Sales", hidden: true });
+    expect(canReach(salesLead, hidden)).toBe(true);
+    expect(canReach(salesGrunt, salesGrunt)).toBe(true);
+  });
+
+  it("requires the flag before the tier means anything", () => {
+    expect(isWorkspaceChief(bot({ chiefScope: "workspace" }))).toBe(false);
+    expect(canReach(bot({ section: "X", chiefScope: "workspace" }), salesLead)).toBe(false);
+  });
+});
+
+describe("Store.setChiefOfStaff scope", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  const team = (store: Store) => {
+    const ember = store.createBot({ name: "Ember" });
+    const rex = store.createBot({ name: "Rex", section: "Sales" });
+    const nia = store.createBot({ name: "Nia", section: "Content" });
+    store.setChiefOfStaff(rex.id);
+    store.setChiefOfStaff(nia.id);
+    return { ember, rex, nia };
+  };
+
+  it("promotes one workspace chief and leaves the section leads leading", () => {
+    const store = new Store(selection);
+    const { ember, rex, nia } = team(store);
+    store.setChiefOfStaff(ember.id, undefined, "workspace");
+
+    expect(store.bot(ember.id)).toMatchObject({ chiefOfStaff: true, chiefScope: "workspace" });
+    expect(store.bot(rex.id)).toMatchObject({ chiefOfStaff: true });
+    expect(store.bot(rex.id)?.chiefScope).toBeUndefined();
+    expect(store.bot(nia.id)?.chiefScope).toBeUndefined();
+  });
+
+  it("hands the workspace tier over instead of stripping the old holder's role", () => {
+    const store = new Store(selection);
+    const { ember, rex } = team(store);
+    store.setChiefOfStaff(ember.id, undefined, "workspace");
+    store.setChiefOfStaff(rex.id, undefined, "workspace");
+
+    expect(store.bot(rex.id)).toMatchObject({ chiefOfStaff: true, chiefScope: "workspace" });
+    // demoted to lead of her own section, not fired
+    expect(store.bot(ember.id)).toMatchObject({ chiefOfStaff: true });
+    expect(store.bot(ember.id)?.chiefScope).toBeUndefined();
+  });
+
+  it("leaves the tier alone when scope is omitted, so a re-election cannot demote", () => {
+    const store = new Store(selection);
+    const { ember } = team(store);
+    store.setChiefOfStaff(ember.id, undefined, "workspace");
+    store.setChiefOfStaff(ember.id);
+    expect(store.bot(ember.id)?.chiefScope).toBe("workspace");
+  });
+
+  it('demotes to section lead on an explicit "section" scope', () => {
+    const store = new Store(selection);
+    const { ember } = team(store);
+    store.setChiefOfStaff(ember.id, undefined, "workspace");
+    store.setChiefOfStaff(ember.id, undefined, "section");
+    expect(store.bot(ember.id)).toMatchObject({ chiefOfStaff: true });
+    expect(store.bot(ember.id)?.chiefScope).toBeUndefined();
+  });
+
+  it("drops the tier when the bot loses the role entirely", () => {
+    const store = new Store(selection);
+    const { ember } = team(store);
+    store.setChiefOfStaff(ember.id, undefined, "workspace");
+    store.setChiefOfStaff(null, ember.section ?? null);
+    expect(store.bot(ember.id)?.chiefOfStaff).toBeFalsy();
+    expect(store.bot(ember.id)?.chiefScope).toBeUndefined();
+  });
+
+  it("de-dupes a second workspace chief at load and drops a tier with no role", () => {
+    const store = new Store(selection);
+    const { ember, rex, nia } = team(store);
+    store.setChiefOfStaff(ember.id, undefined, "workspace");
+    // hand-edited / merged bots.json: two tiers, and one on a non-chief
+    const raw = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    for (const bot of raw.bots ?? raw) {
+      if (bot.id === rex.id) bot.chiefScope = "workspace";
+      if (bot.id === nia.id) { bot.chiefScope = "workspace"; bot.chiefOfStaff = false; }
+    }
+    writeFileSync(join(DATA_DIR, "bots.json"), JSON.stringify(raw));
+
+    // the tamper really is on disk before the reload
+    expect(JSON.stringify(JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"))))
+      .toContain(`"id":"${rex.id}"`);
+    expect((JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8")) as BotRecord[])
+      .filter((bot) => bot.chiefScope === "workspace")).toHaveLength(3);
+
+    const reloaded = new Store(selection);
+    const kept = reloaded.bots.filter((bot) => bot.chiefScope === "workspace");
+    expect(kept).toHaveLength(1);
+    // "keep the first" — bots are persisted newest-first, so Rex leads the list
+    expect(kept[0]!.id).toBe(rex.id);
+    expect(reloaded.bot(ember.id)?.chiefScope).toBeUndefined();
+    expect(reloaded.bot(nia.id)?.chiefScope).toBeUndefined(); // a tier with no role
+    expect(reloaded.bot(nia.id)?.chiefOfStaff).toBeFalsy();
   });
 });

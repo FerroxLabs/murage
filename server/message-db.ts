@@ -184,24 +184,47 @@ export interface SearchHit {
 
 /** Case-insensitive substring search over text messages, newest first.
  * A LIKE scan, deliberately: local transcripts are megabytes at most, a
- * scan is milliseconds, and it needs no FTS extension to exist. */
-export function searchMessages(query: string, limit = 40, threadId?: string): SearchHit[] {
+ * scan is milliseconds, and it needs no FTS extension to exist.
+ *
+ * @param threads the only threads that may be searched — one id, or a set.
+ *   Absent means no restriction. An **empty array means nothing is visible
+ *   and returns no rows**, never "no restriction": that is the direction
+ *   this argument would otherwise fail in, and it is the direction that
+ *   leaks.
+ *
+ *   The set is bound as a single JSON parameter and unpacked by `json_each`
+ *   rather than expanded into `IN (?, ?, …)`. A workspace can hold 100 bots
+ *   (`MAX_WORKSPACE_BOTS`) each with any number of task threads, so the
+ *   placeholder count is unbounded and would eventually meet SQLite's
+ *   variable ceiling — as a runtime throw, on a big workspace, in the one
+ *   path whose job is to not leak. One parameter has no ceiling to meet.
+ *
+ *   Scoping happens **inside** the SQL so `LIMIT` counts rows the caller can
+ *   actually see. A post-filter applied to the rows this returns would cut a
+ *   full page down to a short one, and can return zero while matches exist. */
+export function searchMessages(
+  query: string,
+  limit = 40,
+  threads?: string | readonly string[],
+): SearchHit[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
+  const threadIds = typeof threads === "string" ? [threads] : threads;
+  if (threadIds && threadIds.length === 0) return [];
   // escape LIKE wildcards so a literal % or _ in the query stays literal
   const pattern = `%${needle.replace(/([\\%_])/g, "\\$1")}%`;
   // text messages by their text; activity chips by the tool name — "which
   // bot ran that migration" is a tool-name question. The chip's name lives
   // in the row's json; a JSON1 extract keeps this one query.
-  const scope = threadId ? "thread_id = ? AND " : "";
+  const scope = threadIds ? "thread_id IN (SELECT value FROM json_each(?)) AND " : "";
   const statement = db().prepare(
     "SELECT thread_id, id, at, role, kind, text, json_extract(json, '$.tool.name') AS tool_name, json_extract(json, '$.from.name') AS from_name FROM messages " +
       `WHERE ${scope}((kind = 'text' AND text IS NOT NULL AND lower(text) LIKE ? ESCAPE '\\') ` +
       "   OR (kind = 'activity' AND tool_name IS NOT NULL AND lower(tool_name) LIKE ? ESCAPE '\\')) " +
       "ORDER BY at DESC LIMIT ?",
   );
-  const rows = (threadId
-    ? statement.all(threadId, pattern, pattern, limit)
+  const rows = (threadIds
+    ? statement.all(JSON.stringify([...threadIds]), pattern, pattern, limit)
     : statement.all(pattern, pattern, limit)) as Array<{
     thread_id: string;
     id: string;

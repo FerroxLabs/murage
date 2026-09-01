@@ -94,10 +94,20 @@ describe("comms e2e (fake ACP fleet)", () => {
       await new Promise((r) => setTimeout(r, 250));
     }
   };
+  /** Stands in for the renderer, so it asks on the desktop surface.
+   *
+   * These tests read the `dm` channels the harness auto-creates for bot⇄bot
+   * exchanges — the thing `/api/bots` and `/api/events` now withhold from a
+   * scoped client by design (see sse-visibility.ts). Without the marker the
+   * assertions would be checking the phone's view of a conversation only the
+   * desktop is shown. */
   const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: {
+        "x-murage-surface": "desktop",
+        ...(body ? { "content-type": "application/json" } : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: await res.json() };

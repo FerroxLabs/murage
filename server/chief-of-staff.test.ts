@@ -77,3 +77,73 @@ describe("chiefOfStaffSystemPrompt", () => {
     expect(ordinaryPrompt).not.toContain("TRUSTED MURAGE STATUS");
   });
 });
+
+describe("chiefOfStaffSystemPrompt — the workspace tier", () => {
+  const workspace = [
+    { id: "ember", name: "Ember", title: "Chief of Staff", chiefOfStaff: true, chiefScope: "workspace" as const },
+    { id: "rex", name: "Rex", title: "Head of Sales", description: "Owns pipeline", section: "Sales", chiefOfStaff: true },
+    { id: "sdr", name: "Dash", title: "SDR", section: "Sales" },
+    { id: "sdr2", name: "Wick", title: "SDR", section: "Sales", busy: true },
+    { id: "nia", name: "Nia", title: "Editorial lead", section: "Content", chiefOfStaff: true },
+    { id: "opsGrunt", name: "Cog", title: "Operator", section: "Ops" },
+    { id: "ghost", name: "Secret", section: "Sales", hidden: true },
+    { id: "direct", name: "Scribe", title: "Note taker" },
+  ];
+
+  it("names the leads, counts their specialists, and never names a specialist", () => {
+    const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
+
+    expect(prompt).toContain("Chief of Staff for this workspace");
+    expect(prompt).toContain("Sales — @Rex — Head of Sales: Owns pipeline (available); 2 specialists");
+    expect(prompt).toContain("Content — @Nia — Editorial lead (available); 0 specialists");
+    // "that's not her department": the grunts are counted, never named
+    expect(prompt).not.toContain("Dash");
+    expect(prompt).not.toContain("Wick");
+    expect(prompt).not.toContain("Secret");
+    expect(prompt).toContain("Do not assign work to a lead's specialists yourself");
+  });
+
+  it("says a team has no lead rather than working around it", () => {
+    const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
+    expect(prompt).toContain("Ops — no lead yet (1 bot). Say so rather than working around it.");
+  });
+
+  it("lists bots in the chief's own section as direct reports", () => {
+    const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
+    expect(prompt).toContain("Reporting to you directly:");
+    expect(prompt).toContain("- @Scribe — Note taker (available)");
+  });
+
+  it("keeps the section-lead prompt verbatim for a bot without the tier", () => {
+    const prompt = chiefOfStaffSystemPrompt("rex", workspace, true);
+    expect(prompt).toContain("Chief of Staff for the Sales section");
+    expect(prompt).toContain("Dash — SDR (available)");
+    expect(prompt).toContain("Wick — SDR (working right now)");
+    expect(prompt).not.toContain("Chief of Staff for this workspace");
+    expect(prompt).not.toContain("Secret");
+  });
+
+  it("tells a section lead who the workspace chief is, since canReach opens that edge", () => {
+    expect(chiefOfStaffSystemPrompt("rex", workspace, true))
+      .toContain("@Ember is the workspace Chief of Staff and is on your roster");
+    // an ordinary bot is not given that edge, because it does not have it
+    expect(chiefOfStaffSystemPrompt("opsGrunt", workspace, true))
+      .not.toContain("workspace Chief of Staff and is on your roster");
+  });
+
+  it("clips a hostile section label and emits the team size as a number", () => {
+    const prompt = chiefOfStaffSystemPrompt("ember", [
+      workspace[0]!,
+      { id: "lead", name: "Lead", section: "S".repeat(400), chiefOfStaff: true },
+    ], true);
+    const line = prompt.split("\n").find((row) => row.startsWith("- S"))!;
+    expect(line.length).toBeLessThan(300);
+    expect(line).toContain("…");
+  });
+
+  it("still refuses to promise delegation on an engine without the tools", () => {
+    const prompt = chiefOfStaffSystemPrompt("ember", workspace, false);
+    expect(prompt).toContain("cannot contact teammates");
+    expect(prompt).not.toContain("delegate_bot");
+  });
+});

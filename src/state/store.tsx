@@ -1305,8 +1305,18 @@ export const initialState: AppState = {
 // ── API client ─────────────────────────────────────────────────────────
 export async function api(path: string, init?: RequestInit): Promise<any> {
   const res = await fetch(path, {
-    headers: { "content-type": "application/json" },
     ...init,
+    // `init` is spread FIRST on purpose: spreading it last let any caller
+    // that passed headers of its own silently drop both of these.
+    headers: {
+      "content-type": "application/json",
+      // Transcript routes are scoped to a phone's view by default. This is
+      // the desktop app talking to its own harness over loopback, so it says
+      // so — without this the sidebar loses every hidden bot and every
+      // bot-to-bot room on hydration.
+      "x-murage-surface": "desktop",
+      ...init?.headers,
+    },
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);

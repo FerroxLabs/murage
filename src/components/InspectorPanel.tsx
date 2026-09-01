@@ -36,7 +36,13 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
     const controller = new AbortController();
     loadAbort.current = controller;
     try {
-      const res = await fetch(`/api/threads/${threadId}/events?limit=400`, { signal: controller.signal });
+      // A raw fetch, so it carries the desktop surface itself — the inspector
+      // serves prompts and tool traffic, which is exactly what the scoped
+      // default withholds.
+      const res = await fetch(`/api/threads/${threadId}/events?limit=400`, {
+        signal: controller.signal,
+        headers: { "x-murage-surface": "desktop" },
+      });
       if (!res.ok) throw new Error(`${res.status}`);
       // SAFETY: this same-version renderer calls the harness's typed
       // inspector endpoint; malformed transport data is handled by catch.

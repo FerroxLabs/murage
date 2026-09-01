@@ -459,6 +459,14 @@ export interface BotRecord {
   /** The coordinator for this bot's sidebar section. The store enforces
    * at most one Chief per section (including the unsectioned area). */
   chiefOfStaff?: boolean;
+  /** Which tier this Chief occupies. Absent = today's meaning, unchanged:
+   * the bot leads its own section. "workspace" = the single Chief of Staff
+   * standing above the section leads. Meaningful only while `chiefOfStaff`
+   * is true — one flag with one modifier, never two booleans that can
+   * disagree. Deliberately NOT part of the published package format
+   * (package-export.ts writes `chiefOfStaff` only), so no downloaded
+   * package can install a bot that outranks the user's own Chief. */
+  chiefScope?: "workspace";
   /** Pause for human approval before this bot talks to a peer (ask_bot,
    * delegate_bot). Off by default: a chief-of-staff-style bot is most
    * useful when it can coordinate without nagging. */
@@ -526,6 +534,38 @@ const COLORS: EmberColor[] = [
 /** Sections are persisted as display labels, so exact trimmed labels are
  * their identity. Missing/blank means the unsectioned (General) team. */
 export const sectionKey = (section?: string | null): string => section?.trim() || "";
+
+/** The three fields the roster predicate reads. Structural rather than
+ * `BotRecord` so the Chief's prompt builder (chief-of-staff.ts) can share
+ * one predicate without pulling the whole store type into it. */
+export interface ReachableBot {
+  section?: string | null;
+  chiefOfStaff?: boolean;
+  chiefScope?: "workspace";
+}
+
+/** The one Chief above the section leads, if the workspace has elected one. */
+export const isWorkspaceChief = (bot: ReachableBot): boolean =>
+  bot.chiefOfStaff === true && bot.chiefScope === "workspace";
+
+/** Who a bot may see, name, ask, delegate to, and schedule work for.
+ *
+ * A strict SUPERSET of the `sectionKey(a) === sectionKey(b)` rule it
+ * replaces: same-section stays true, and the only new edges are
+ * workspace-chief ⇄ section lead. With no workspace chief elected this is
+ * exactly the old predicate, so promoting nobody changes nothing.
+ *
+ * Deliberately NOT a visibility filter. `hidden` and self-contact are left
+ * to each call site, because four of the gates that call this never had a
+ * hidden check and two report a different error for self — folding either
+ * in here would quietly change what an ordinary bot may do, in the change
+ * whose whole justification is that it changes nothing. */
+export function canReach(from: ReachableBot, to: ReachableBot): boolean {
+  if (sectionKey(from.section) === sectionKey(to.section)) return true;
+  if (isWorkspaceChief(from) && to.chiefOfStaff === true) return true;
+  if (from.chiefOfStaff === true && isWorkspaceChief(to)) return true;
+  return false;
+}
 
 /** Resolve @mentions in a message against a bot roster: `@` must start a
  * word, the name must end on a word boundary (so "@New Bottle" never matches
@@ -682,6 +722,20 @@ export class Store {
       b.chiefOfStaff = false;
       botsMigrated = true;
     }
+    // One workspace Chief, the same way there is one Chief per section. A
+    // hand-edited or merged bots.json naming two keeps the first; a
+    // `chiefScope` on a bot that is not a Chief at all has no meaning and is
+    // dropped, so the flag and its modifier can never disagree on disk.
+    let workspaceChiefSeen = false;
+    for (const b of this.bots) {
+      if (b.chiefScope !== "workspace") continue;
+      if (b.chiefOfStaff && !workspaceChiefSeen) {
+        workspaceChiefSeen = true;
+        continue;
+      }
+      delete b.chiefScope;
+      botsMigrated = true;
+    }
     // Peer grants originally used mutable display names (ask_bot:@Helper).
     // Convert only when exactly one bot has that name; ambiguous legacy
     // entries remain inert rather than granting access to the wrong bot.
@@ -798,6 +852,47 @@ export class Store {
     return this.groups.find(
       (group) => group.threadId === threadId || group.tasks?.some((task) => task.threadId === threadId),
     );
+  }
+
+  /** Every thread a remote client may read or search.
+   *
+   * The same answer `sse-visibility.ts` gives one frame at a time, in the
+   * shape a SQL `WHERE` can take: routes that page or grep have to state the
+   * set up front, because a post-filter runs after `LIMIT` and would return
+   * fewer rows than asked for — or none at all while matches exist.
+   *
+   * Two exclusions, each for its own reason:
+   *  - hidden bots, and their task threads: the filter the sidebar and
+   *    `/api/team-map` already apply;
+   *  - `dm` rooms: the bot⇄bot channels the harness auto-creates for
+   *    `ask_bot` exchanges. Machine chatter, and the highest-volume thing in
+   *    the database — leaving them in makes a search useless as well as leaky.
+   *
+   * `plan-security.md` §5 proposed a third — rooms every one of whose members
+   * is hidden — and it is deliberately not here. The sidebar shows those
+   * rooms (`src/lib/sidebar-layout.ts` filters rooms on `dm` alone), so
+   * excluding them would put a conversation in the user's sidebar that the
+   * search cannot find. It would also make this function disagree with
+   * `visibleToCompanion`, which answers the same question one frame at a
+   * time; two definitions of "visible" is how a stream and a page end up
+   * telling a client different things about the same room.
+   *
+   * A surface filter, not an authorization model. It decides what a remote
+   * door is shown, not what exists; anything that has to be a boundary needs
+   * a boundary, not this. */
+  visibleThreadIds(): string[] {
+    const ids = new Set<string>();
+    for (const bot of this.bots) {
+      if (bot.hidden) continue;
+      ids.add(bot.threadId);
+      for (const task of bot.tasks ?? []) ids.add(task.threadId);
+    }
+    for (const group of this.groups) {
+      if (group.dm) continue;
+      ids.add(group.threadId);
+      for (const task of group.tasks ?? []) ids.add(task.threadId);
+    }
+    return [...ids];
   }
 
   createGroup(
@@ -1314,12 +1409,26 @@ export class Store {
 
   /** Elect one Chief of Staff in its section (or clear one section) as one persisted change.
    * The changed records are returned so the server can update every open
-   * window, including the bot that just handed the role over. */
-  setChiefOfStaff(id: string | null, section?: string | null): BotRecord[] | null {
+   * window, including the bot that just handed the role over.
+   *
+   * `scope` decides the elected bot's TIER and is deliberately tri-state:
+   * omitted leaves the tier exactly as it was (what every pre-existing
+   * caller wants — re-asserting a section election must not silently demote
+   * the workspace Chief), `"section"` demotes this bot to its section's
+   * lead, `"workspace"` promotes it and demotes the previous holder to lead
+   * of its own section rather than stripping its Chief role. */
+  setChiefOfStaff(
+    id: string | null,
+    section?: string | null,
+    scope?: "section" | "workspace",
+  ): BotRecord[] | null {
     const selected = id ? this.bot(id) : null;
     if (id && !selected) return null;
     const targetSection = sectionKey(selected?.section ?? section);
     const changed: BotRecord[] = [];
+    const touch = (bot: BotRecord) => {
+      if (!changed.includes(bot)) changed.push(bot);
+    };
     for (const bot of this.bots) {
       if (sectionKey(bot.section) !== targetSection) continue;
       const next = bot.id === id;
@@ -1330,8 +1439,22 @@ export class Store {
         bot.hidden = false;
       } else {
         bot.chiefOfStaff = false;
+        // The tier is a modifier on the flag; losing the flag loses it too.
+        if (bot.chiefScope) delete bot.chiefScope;
       }
-      changed.push(bot);
+      touch(bot);
+    }
+    if (scope === "workspace") {
+      for (const bot of this.bots) {
+        const wants = bot.id === id && bot.chiefOfStaff === true;
+        if (Boolean(bot.chiefScope) === wants) continue;
+        if (wants) bot.chiefScope = "workspace";
+        else delete bot.chiefScope;
+        touch(bot);
+      }
+    } else if (scope === "section" && selected?.chiefScope) {
+      delete selected.chiefScope;
+      touch(selected);
     }
     if (changed.length) this.saveBots();
     for (const bot of changed) this.emit({ type: "bot", botId: bot.id });
