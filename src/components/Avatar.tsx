@@ -89,7 +89,7 @@ function mix(hex: string, toward: string, t: number): string {
  * ["#9FE6B5", "#3FAE6E", "#1C7A4C"].
  */
 const gradientFor = (color: EmberColor): [string, string, string] => {
-  const fill = EMBER_COLORS[color] ?? EMBER_COLORS.green;
+  const fill = EMBER_COLORS[color] ?? EMBER_COLORS.orange;
   return [mix(fill, "#ffffff", 0.55), fill, mix(fill, "#000000", 0.42)];
 };
 

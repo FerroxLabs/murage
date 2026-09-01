@@ -1,2 +1,0 @@
-{"ts":"2026-09-01T07:31:46Z","error":null,"fail":" ELIFECYCLE  Command failed with exit code 1."}
-{"ts":"2026-09-01T07:32:45Z","error":"Error: listen EADDRINUSE: address already in use 127.0.0.1:8799","fail":null}
