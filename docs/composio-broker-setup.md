@@ -29,6 +29,27 @@ You also need a Composio account: https://app.composio.dev
 
 > One key serves every Murage install. Its quota is your bill.
 
+### API key scopes
+
+Derived from the endpoints the broker actually calls. **One key serves every
+install**, so the blast radius of a leak is every user's connected accounts.
+Grant the minimum.
+
+| Scope | Read | Write | Why |
+|---|:---:|:---:|---|
+| Tools | YES | - | tool definitions |
+| Session management | YES | YES | `POST /tool_router/session` per install |
+| Session tool execution | - | YES | proxying MCP calls (the core function) |
+| Connected accounts | YES | YES | list, `/link`, `DELETE ?revoke_on_delete=true` |
+| Auth configs | YES | NO | only `GET /auth_configs` |
+| Toolkits | YES | NO | catalog read; no install call exists |
+| Observability | YES | - | usage summaries, for cost tracking |
+
+Leave OFF entirely: **Triggers**, **Webhooks**, **Tool execution (Legacy)**,
+**Proxy execute (Legacy)**, **MCP (Legacy)**. Never click "Write All" —
+auth-config write would let a key holder rewrite the OAuth configuration.
+
+
 ---
 
 ## 2. Create the D1 database
