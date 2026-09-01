@@ -3,7 +3,7 @@
 // agent can call to inspect the network and run model requests:
 //
 //   dweb_status          → ping dweb, summarize server + peer state
-//   dweb_repo_status     → the OpenMausBot repo the daemon is tracking
+//   dweb_repo_status     → the Murage repo the daemon is tracking
 //   dweb_opencode_models → models available on the opencode integration
 //   dweb_opencode_run    → run a model command, wait up to 5 min for output
 //
@@ -34,7 +34,7 @@ const TOOLS = [
   {
     name: "dweb_repo_status",
     description:
-      "Report the state of the OpenMausBot repository the dweb daemon is tracking: repo name, checked-out branch, last commit, file count, and checkout path.",
+      "Report the state of the Murage repository the dweb daemon is tracking: repo name, checked-out branch, last commit, file count, and checkout path.",
     inputSchema: { type: "object", properties: {} },
   },
   {

@@ -14,7 +14,7 @@ import type { AppConfig } from "./config.ts";
 import { ensureRemoteCuaCommand, remoteComputerBootstrapCommand } from "./remote-computer.ts";
 
 // overridable so tests can point at a stub instead of the live provider
-const BOX_API = process.env.OMB_BOX_API || "https://ascii.dev/api/box/v1";
+const BOX_API = process.env.MURAGE_BOX_API || "https://ascii.dev/api/box/v1";
 const READY = new Set(["idle", "ready", "running"]);
 const DEFAULT_BOX_TTL_SECONDS = 8 * 60 * 60;
 const TRIAL_BOX_TTL_SECONDS = 2 * 60 * 60;
@@ -43,7 +43,7 @@ async function boxNameFor(botId: string) {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")
     .slice(0, 6);
-  return `ogb-${botId.slice(0, 8).toLowerCase().replace(/[^a-z0-9]/g, "")}-${hash}`;
+  return `muragebox-${botId.slice(0, 8).toLowerCase().replace(/[^a-z0-9]/g, "")}-${hash}`;
 }
 
 export async function runCommand(cfg: AppConfig, boxId: string, command: string, { timeoutMs = 120_000 } = {}) {
@@ -219,7 +219,7 @@ export async function boxStatus(cfg: AppConfig, botId: string) {
  */
 export async function provisionBox(cfg: AppConfig, botId: string, botName: string) {
   if (!boxConfigured(cfg)) {
-    throw new Error('box provider not enabled — add {"box":{"token":"…"}} to ~/.openmausbot/config.json');
+    throw new Error('box provider not enabled — add {"box":{"token":"…"}} to ~/.murage/config.json');
   }
   const vmName = await boxNameFor(botId);
   let box = await findBox(cfg, botId);
@@ -318,7 +318,7 @@ export async function execOnBox(cfg: AppConfig, botId: string, command: string) 
 // Base64 over command stdout is NOT reliable for the panel's full-size
 // frames (probed 2026-08-12: an otherwise-complete payload came back with
 // a corrupted length), so the frame is always fetched over HTTP here.
-const PANEL_PATH = "/tmp/ogb-panel.jpg";
+const PANEL_PATH = "/tmp/muragebox-panel.jpg";
 const PANEL_WIDTH = 1024;
 const SHOT_CMD = [
   "export DISPLAY=${DISPLAY:-:0}",

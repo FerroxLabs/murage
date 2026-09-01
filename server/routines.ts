@@ -375,7 +375,7 @@ export class RoutineManager {
     for (const run of this.runs) {
       if (run.status === "running" || run.status === "waiting") {
         run.status = "failed";
-        run.error = "OpenMausBot restarted while this routine was running";
+        run.error = "Murage restarted while this routine was running";
         run.attention = undefined;
         run.finishedAt = this.now();
         recovered.push(cloneRun(run));

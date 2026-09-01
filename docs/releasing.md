@@ -4,7 +4,7 @@ One workflow builds everything: **Actions → Release → Run workflow**. It
 builds macOS (arm64 + x64, signed, notarized, stapled), Windows, and Ubuntu
 from a single pinned commit, verifies every artifact the way a user would
 receive it, assembles a complete draft on
-[openmausbot-releases](https://github.com/milind-soni/openmausbot-releases),
+[murage-releases](https://github.com/milind-soni/murage-releases),
 and — if you ticked **publish** — flips it live. Leave publish unticked to
 review the draft notes first, then publish from the GitHub UI.
 
@@ -24,7 +24,7 @@ above it.
 
 ## One-time setup: four secrets
 
-Set these in **OpenMausBot → Settings → Secrets and variables → Actions**.
+Set these in **Murage → Settings → Secrets and variables → Actions**.
 
 ### 1. `MAC_CERT_P12_BASE64` + `MAC_CERT_PASSWORD`
 
@@ -55,7 +55,7 @@ base64 -i AuthKey_XXXXXXXX.p8 | pbcopy   # → APPLE_API_KEY_P8_BASE64
 
 A fine-grained personal access token that lets the workflow write to the
 separate releases repo: **GitHub → Settings → Developer settings →
-Fine-grained tokens** → repository access: only `openmausbot-releases` →
+Fine-grained tokens** → repository access: only `murage-releases` →
 permissions: **Contents: Read and write**. Set a long expiry and a calendar
 reminder.
 

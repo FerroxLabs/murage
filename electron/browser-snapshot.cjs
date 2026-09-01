@@ -202,8 +202,8 @@ function browserNavigationAllowed(raw) {
  * Electron actually is. */
 function browserUserAgent(userAgent) {
   return String(userAgent ?? "")
-    .replace(/\s?OpenMausBot\/\S+/g, "")
-    .replace(/\s?openmausbot\/\S+/g, "")
+    .replace(/\s?Murage\/\S+/g, "")
+    .replace(/\s?murage\/\S+/g, "")
     .replace(/\s?Electron\/\S+/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -215,7 +215,7 @@ function browserUserAgent(userAgent) {
 function browserPartition(botId) {
   const safe = String(botId ?? "").replace(/[^A-Za-z0-9_-]/g, "");
   if (!safe) throw new Error("A bot id is required");
-  return `persist:openmausbot-browser-${safe}`;
+  return `persist:murage-browser-${safe}`;
 }
 
 /** A named profile is a partition several bots may share — "Work", "Client
@@ -228,7 +228,7 @@ function browserProfilePartition(partitionId) {
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(id) || id === "guest") {
     throw new Error("A valid browser profile partition id is required");
   }
-  return `persist:openmausbot-browser-profile-${id}`;
+  return `persist:murage-browser-profile-${id}`;
 }
 
 const REF = /^b(\d{1,12})$/;

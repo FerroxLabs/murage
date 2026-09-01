@@ -1,6 +1,6 @@
 # Cursor Agent CLI
 
-Cursor is an optional OpenMausBot engine. OpenMausBot runs the official
+Cursor is an optional Murage engine. Murage runs the official
 [`cursor-agent` CLI](https://cursor.com/docs/cli) in ACP stdio mode (`cursor-agent acp`), so
 sessions, streaming, coding tools, permission requests, MCP integrations,
 resume, and cancellation use the same runtime as the other ACP engines.
@@ -23,7 +23,7 @@ key.
    in the environment of the Cursor instance.
 
 3. Confirm `cursor-agent --version` works. The binary installs to `~/.local/bin` by
-   default; OpenMausBot already looks there when launched from a GUI.
+   default; Murage already looks there when launched from a GUI.
 
 The engine stays unavailable until the `cursor-agent` executable is on PATH. A
 missing login shows as unauthenticated rather than crashing the fleet.
@@ -37,14 +37,14 @@ failed listing keeps the last usable catalog (then the static fallback) rather
 than emptying the rail.
 
 `--model <id>` is passed as a global CLI flag before `acp`. When the running
-CLI also implements ACP `session/set_model`, OpenMausBot pins the same id over
+CLI also implements ACP `session/set_model`, Murage pins the same id over
 the wire. If that method is missing (`-32601`), the argv pin is left to stand
 and the turn continues.
 
 ## Autonomy
 
 Instance `fullAuto: true` adds `--force` (the CLI's documented auto-approve
-switch). OpenMausBot still answers ACP `session/request_permission` itself:
+switch). Murage still answers ACP `session/request_permission` itself:
 full-auto selects an allow option when the CLI offered one.
 
 ## What this driver does not do yet

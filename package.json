@@ -1,19 +1,19 @@
 {
-  "name": "openmausbot",
+  "name": "murage",
   "private": true,
   "version": "0.1.44",
   "description": "A local-first chat app for running a team of AI agents.",
-  "homepage": "https://github.com/milind-soni/OpenMausBot",
+  "homepage": "https://github.com/milind-soni/Murage",
   "repository": {
     "type": "git",
-    "url": "https://github.com/milind-soni/OpenMausBot.git"
+    "url": "https://github.com/milind-soni/Murage.git"
   },
   "author": {
     "name": "Milind Soni",
     "email": "46266943+milind-soni@users.noreply.github.com"
   },
   "license": "Apache-2.0",
-  "desktopName": "com.openmausbot.app.desktop",
+  "desktopName": "com.murage.app.desktop",
   "type": "module",
   "main": "electron/main.mjs",
   "engines": {
@@ -26,13 +26,13 @@
     "check:contrast": "node scripts/check-skin-contrast.mjs",
     "i18n:check": "node scripts/generate-locale.mjs --check",
     "dev": "vite",
-    "docs:dev": "pnpm --filter @openmausbot/docs dev",
-    "docs:build": "pnpm --filter @openmausbot/docs build",
-    "docs:preview": "pnpm --filter @openmausbot/docs preview",
+    "docs:dev": "pnpm --filter @murage/docs dev",
+    "docs:build": "pnpm --filter @murage/docs build",
+    "docs:preview": "pnpm --filter @murage/docs preview",
     "companion": "node --experimental-strip-types companion/src/index.ts",
     "dev:server": "node --experimental-strip-types server/index.ts",
     "mcp": "node --experimental-strip-types scripts/mcp-server.ts",
-    "control:omb": "node --experimental-strip-types scripts/control-omb.ts",
+    "control:murage": "node --experimental-strip-types scripts/control-murage.ts",
     "dev:desktop": "node scripts/prepare-cloudflared.mjs --current && electron .",
     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
@@ -69,10 +69,10 @@
     "broker:check": "pnpm broker:types && tsc -p cloudflare/composio-broker/tsconfig.json",
     "broker:test": "vitest run --config cloudflare/composio-broker/vitest.config.ts",
     "broker:deploy": "wrangler deploy --config cloudflare/composio-broker/wrangler.jsonc",
-    "control-plane:types": "pnpm --filter @openmausbot/control-plane types",
-    "control-plane:check": "pnpm --filter @openmausbot/control-plane check",
-    "control-plane:test": "pnpm --filter @openmausbot/control-plane test",
-    "control-plane:dry-run": "pnpm --filter @openmausbot/control-plane dry-run"
+    "control-plane:types": "pnpm --filter @murage/control-plane types",
+    "control-plane:check": "pnpm --filter @murage/control-plane check",
+    "control-plane:test": "pnpm --filter @murage/control-plane test",
+    "control-plane:dry-run": "pnpm --filter @murage/control-plane dry-run"
   },
   "dependencies": {
     "@trycua/cua-driver": "0.20.0",

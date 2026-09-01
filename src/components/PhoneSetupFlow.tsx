@@ -52,7 +52,7 @@ import {
   type PhonePairingAttemptLock,
   type PhonePairingAttemptQueue,
 } from "../lib/phone-setup";
-import type { CompanionAccountState } from "../types/ogb";
+import type { CompanionAccountState } from "../types/muragebox";
 import { ConnectionDetail } from "./ConnectionDetail";
 
 export interface PhoneDevice {
@@ -90,7 +90,7 @@ export type CompanionBridge = {
   revoke: (deviceId: string) => Promise<CompanionState>;
 };
 
-type AccountBridge = NonNullable<NonNullable<Window["ogb"]>["companionAccount"]>;
+type AccountBridge = NonNullable<NonNullable<Window["muragebox"]>["companionAccount"]>;
 type StateBridge<T> = { state: () => Promise<T> };
 const DIRECT_PAIRING_UNAVAILABLE =
   "Direct Wi-Fi pairing isn’t available on this computer right now. Connect this computer to Wi-Fi, then try again.";
@@ -110,11 +110,11 @@ interface PhonePairingRequest {
 
 export const companionBridge = (): CompanionBridge | null =>
   // SAFETY: the preload owns this narrow bridge; browser builds are guarded by the optional lookup.
-  (globalThis as { ogb?: { companion?: CompanionBridge } }).ogb?.companion ?? null;
+  (globalThis as { muragebox?: { companion?: CompanionBridge } }).muragebox?.companion ?? null;
 
 export const companionAccountBridge = (): AccountBridge | null =>
   // SAFETY: Electron exposes only these account operations and never sends credentials to the renderer.
-  (globalThis as { ogb?: { companionAccount?: AccountBridge } }).ogb?.companionAccount ?? null;
+  (globalThis as { muragebox?: { companionAccount?: AccountBridge } }).muragebox?.companionAccount ?? null;
 
 export const loadCompanionBridgeState = async (
   companion: StateBridge<CompanionState> | null,
@@ -913,7 +913,7 @@ export function PhoneSetupFlowView({
         <div className="flex size-14 items-center justify-center rounded-2xl bg-accent/12 text-accent">
           <Smartphone size={26} />
         </div>
-        <h2 className="mt-4 text-[19px] font-semibold text-ink">Use OpenMausBot from your phone</h2>
+        <h2 className="mt-4 text-[19px] font-semibold text-ink">Use Murage from your phone</h2>
         <p className="mt-1.5 max-w-[460px] text-[13.5px] leading-relaxed text-ink-secondary">
           Check chats, answer approvals, and send new work without staying at your computer.
         </p>
@@ -1121,7 +1121,7 @@ export function PhoneSetupFlowView({
           }}
           className="mt-5 w-full max-w-[280px] rounded-lg bg-accent py-2.5 text-[14px] font-medium text-white"
         >
-          {variant === "onboarding" ? "Start using OpenMausBot" : "Done"}
+          {variant === "onboarding" ? "Start using Murage" : "Done"}
         </button>
       </div>
     );

@@ -18,13 +18,13 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const staging = mkdtempSync(join(tmpdir(), "omb-smoke-"));
-const home = mkdtempSync(join(tmpdir(), "omb-smoke-home-"));
+const staging = mkdtempSync(join(tmpdir(), "murage-smoke-"));
+const home = mkdtempSync(join(tmpdir(), "murage-smoke-home-"));
 const port = 21000 + Math.floor(Math.random() * 9000);
 
-// OMB_SMOKE_DIST lets the release workflow aim this at a packaged app's
+// MURAGE_SMOKE_DIST lets the release workflow aim this at a packaged app's
 // Resources/server tree instead of the repo build.
-cpSync(process.env.OMB_SMOKE_DIST ?? join(root, "dist-server"), join(staging, "server"), { recursive: true });
+cpSync(process.env.MURAGE_SMOKE_DIST ?? join(root, "dist-server"), join(staging, "server"), { recursive: true });
 
 const child = spawn(process.execPath, [join(staging, "server", "index.js")], {
   cwd: staging,
@@ -33,7 +33,7 @@ const child = spawn(process.execPath, [join(staging, "server", "index.js")], {
     ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
     HOME: home,
     USERPROFILE: home,
-    OMB_PORT: String(port),
+    MURAGE_PORT: String(port),
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -112,7 +112,7 @@ if (listening) {
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
       USERPROFILE: home,
-      OMB_PORT: String(port),
+      MURAGE_PORT: String(port),
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -184,7 +184,7 @@ if (
   mcpReport.error ||
   mcpReport.exit?.timeout ||
   mcpReport.exit?.code !== 0 ||
-  mcpReport.responses?.find((response) => response.id === 1)?.result?.serverInfo?.name !== "openmausbot-mcp" ||
+  mcpReport.responses?.find((response) => response.id === 1)?.result?.serverInfo?.name !== "murage-mcp" ||
   mcpReport.responses?.find((response) => response.id === 2)?.result?.structuredContent?.status !== "connected" ||
   JSON.stringify(mcpReport.responses?.find((response) => response.id === 3)?.result) !== "{}"
 ) {

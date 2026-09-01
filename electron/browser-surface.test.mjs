@@ -45,7 +45,7 @@ function fakeView(partition) {
   const fieldClassificationQueues = new Map();
   const webContents = {
     session: {
-      getUserAgent: () => "Mozilla/5.0 Chrome/1 Electron/43 OpenMausBot/1",
+      getUserAgent: () => "Mozilla/5.0 Chrome/1 Electron/43 Murage/1",
       setUserAgent: (ua) => calls.push(["setUserAgent", ua]),
       setPermissionCheckHandler: () => {},
       setPermissionRequestHandler: () => {},
@@ -144,10 +144,10 @@ function fakeView(partition) {
             injectedContexts.add(params.contextId);
             return { result: { value: undefined } };
           }
-          if (expression.includes("Boolean(window.__ombBrowser)")) {
+          if (expression.includes("Boolean(window.__murageBrowser)")) {
             return { result: { value: injectedContexts.has(params.contextId) || (params.contextId === undefined && mainWorldSpoofed) } };
           }
-          if (expression.includes("__ombBrowser.snapshot(")) return { result: { value: { yaml: '- heading "Docs" [ref=e1]\n- textbox "Search" [ref=e2]', refs: ["e1", "e2"], truncated: false } } };
+          if (expression.includes("__murageBrowser.snapshot(")) return { result: { value: { yaml: '- heading "Docs" [ref=e1]\n- textbox "Search" [ref=e2]', refs: ["e1", "e2"], truncated: false } } };
           if (expression.includes("validateRef")) return { result: { value: richRefsValid } };
           if (expression.includes("hitTestRef")) return { result: { value: richHit } };
           if (expression.includes("boxForRef")) {
@@ -156,7 +156,7 @@ function fakeView(partition) {
           }
           if (expression.includes("focusRef")) return { result: { value: true } };
           if (expression.includes("elementForRef")) return { result: { objectId: "obj-e1" } };
-          if (expression.includes("__ombScrollAtPoint")) return { result: { value: domScrollAtPoint } };
+          if (expression.includes("__murageScrollAtPoint")) return { result: { value: domScrollAtPoint } };
           if (expression.includes("scrollingElement")) return { result: { value: { top: 0, height: 2400, view: 800 } } };
           return { result: { value: pageText } };
         }
@@ -235,13 +235,13 @@ function fakeView(partition) {
   };
   const rawSendCommand = webContents.debugger.sendCommand;
   webContents.debugger.sendCommand = async (method, params = {}) => {
-    if (method === "Runtime.callFunctionOn" && String(params.functionDeclaration).includes("__ombSensitiveField")) {
+    if (method === "Runtime.callFunctionOn" && String(params.functionDeclaration).includes("__murageSensitiveField")) {
       calls.push([method, params]);
       const queue = fieldClassificationQueues.get(params.objectId);
       const value = queue?.length ? queue.shift() : fieldClassifications.get(params.objectId) ?? "unknown";
       return { result: { value } };
     }
-    if (method === "Runtime.callFunctionOn" && String(params.functionDeclaration).includes("__ombHitRelated")) {
+    if (method === "Runtime.callFunctionOn" && String(params.functionDeclaration).includes("__murageHitRelated")) {
       calls.push([method, params]);
       return { result: { value: hitRelated } };
     }
@@ -343,7 +343,7 @@ describe("browser surface manager", () => {
 
     const state = manager.layout("bot-a", { x: 20.4, y: 30.6, width: 5000, height: 300 }, "", "compact");
     expect(views).toHaveLength(1);
-    expect(views[0].partition).toBe("persist:openmausbot-browser-bot-a");
+    expect(views[0].partition).toBe("persist:murage-browser-bot-a");
     expect(views[0].bounds).toEqual({ x: 20, y: 31, width: 1180, height: 300 });
     expect(views[0].visible).toBe(true);
     expect(owner.contentView.children).toEqual([views[0]]);
@@ -588,7 +588,7 @@ describe("browser surface manager", () => {
     // switch to a named profile: a second view in the shared partition takes the same rectangle
     manager.layout("bot-a", BOUNDS, "work", "compact");
     expect(views).toHaveLength(2);
-    expect(views[1].partition).toBe("persist:openmausbot-browser-profile-work");
+    expect(views[1].partition).toBe("persist:murage-browser-profile-work");
     expect(views[0].visible).toBe(false);
     expect(views[1].visible).toBe(true);
     expect(views[1].bounds).toEqual(BOUNDS);
@@ -608,7 +608,7 @@ describe("browser surface manager", () => {
     expect(page.url).toBe("https://own.example/");
     // another bot on the same named profile shares the session, not the view
     manager.layout("bot-b", BOUNDS, "work", "compact");
-    expect(views[2].partition).toBe("persist:openmausbot-browser-profile-work");
+    expect(views[2].partition).toBe("persist:murage-browser-profile-work");
     expect(views[1].calls.filter(([name, event]) => name === "sessionOn" && event === "will-download")).toHaveLength(1);
     expect(manager.list().filter((entry) => entry.active).map((entry) => entry.botId).sort()).toEqual(["bot-a", "bot-b"]);
     expect(states.some((state) => state.botId === "bot-a" && state.profile === "work")).toBe(true);
@@ -671,7 +671,7 @@ describe("browser surface manager", () => {
   it("forgets a Guest session the moment the bot switches off it", async () => {
     const { manager, views } = harness();
     manager.layout("bot-a", BOUNDS, GUEST_PROFILE, "compact");
-    expect(views[0].partition).toMatch(/^openmausbot-browser-guest-bot-a-\d+$/);
+    expect(views[0].partition).toMatch(/^murage-browser-guest-bot-a-\d+$/);
     expect(views[0].partition.startsWith("persist:")).toBe(false);
     await manager.navigate("bot-a", "https://secret.example");
     manager.layout("bot-a", BOUNDS, "", "compact");
@@ -829,7 +829,7 @@ describe("browser surface manager", () => {
     await manager.scroll("bot-a", "down", 600);
 
     const scrollEvaluation = cdpCalls(views[0]).findLast(([name, params]) =>
-      name === "Runtime.evaluate" && String(params.expression).includes("__ombScrollAtPoint"));
+      name === "Runtime.evaluate" && String(params.expression).includes("__murageScrollAtPoint"));
     expect(scrollEvaluation?.[1].expression).toContain('{"x":640,"y":400,"deltaX":0,"deltaY":600}');
     expect(cdpCalls(views[0]).filter(([name, params]) =>
       name === "Input.dispatchMouseEvent" && params.type === "mouseWheel")).toHaveLength(0);
@@ -1014,7 +1014,7 @@ describe("browser surface manager", () => {
       botId: "bot-a",
       open: false,
       profile: "work",
-      partition: "persist:openmausbot-browser-profile-work",
+      partition: "persist:murage-browser-profile-work",
       mode: "compact",
       code: "renderer-gone",
     });
@@ -1417,7 +1417,7 @@ describe("browser surface manager", () => {
     expect(read).toMatchObject({ url: "https://example.com/", text: "Welcome. Docs Search", truncated: false });
     const textExtraction = cdpCalls(views[0]).find(([name, params]) =>
       name === "Runtime.evaluate" && String(params.expression).includes("root.innerText"));
-    expect(textExtraction?.[1].expression).toContain("__ombSensitiveField");
+    expect(textExtraction?.[1].expression).toContain("__murageSensitiveField");
     expect(textExtraction?.[1].expression).toContain("[redacted]");
     await expect(manager.waitFor("bot-a", { text: "Docs" })).resolves.toMatchObject({ url: "https://example.com/" });
     await expect(manager.waitFor("bot-a", { text: "never there", timeoutMs: 300 })).rejects.toThrow(/timed out waiting for text "never there"/);
@@ -1503,7 +1503,7 @@ describe("browser surface manager", () => {
     expect(helperCalls.some(([, params]) => params.expression === "/*injected*/")).toBe(true);
     expect(cdpCalls(views[0])).toContainEqual([
       "Page.createIsolatedWorld",
-      { frameId: "main-frame", worldName: "openmausbot-browser-snapshot", grantUniveralAccess: false },
+      { frameId: "main-frame", worldName: "murage-browser-snapshot", grantUniveralAccess: false },
     ]);
   });
 

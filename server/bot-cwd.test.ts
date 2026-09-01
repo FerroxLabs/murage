@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { validateBotCwd } from "./bot-cwd.ts";
 
-const dir = mkdtempSync(join(tmpdir(), "omb-cwd-"));
+const dir = mkdtempSync(join(tmpdir(), "murage-cwd-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("validateBotCwd", () => {

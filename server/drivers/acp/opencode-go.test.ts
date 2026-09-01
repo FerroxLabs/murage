@@ -124,7 +124,7 @@ describe("OpenCode catalog", () => {
   });
 
   it("recognizes an OpenCode Go login stored by the CLI", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-auth-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-auth-"));
     const authDir = join(scratch, "opencode");
     mkdirSync(authDir, { recursive: true });
     writeFileSync(join(authDir, "auth.json"), JSON.stringify({
@@ -151,7 +151,7 @@ describe("OpenCode catalog", () => {
     // the CLI is xdg-flavoured everywhere. Looking only in Library/Application
     // Support is the bug that told signed-in users to sign in. No XDG override
     // here on purpose: this is the exact real-world shape.
-    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-home-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-home-"));
     const authDir = join(scratch, ".local", "share", "opencode");
     mkdirSync(authDir, { recursive: true });
     writeFileSync(join(authDir, "auth.json"), JSON.stringify({
@@ -174,7 +174,7 @@ describe("OpenCode catalog", () => {
   });
 
   it("recognizes an existing OpenCode Zen login", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-oauth-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-oauth-"));
     const authDir = join(scratch, "opencode");
     mkdirSync(authDir, { recursive: true });
     writeFileSync(join(authDir, "auth.json"), JSON.stringify({
@@ -197,7 +197,7 @@ describe("OpenCode catalog", () => {
   });
 
   it("treats OpenCode's anonymous free catalog as runnable without a saved key", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-free-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-free-"));
     const driver = createOpenCodeDriver(async () => catalog("opencode/x-preview-f-free"));
     const instance = await driver.create({
       instanceId: "opencode-free",
@@ -220,7 +220,7 @@ describe("OpenCode catalog", () => {
   });
 
   it("runs a Zen model through ACP using the exact discovered id", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-zen-only-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-zen-only-"));
     const authDir = join(scratch, "opencode");
     mkdirSync(authDir, { recursive: true });
     writeFileSync(join(authDir, "auth.json"), JSON.stringify({
@@ -262,7 +262,7 @@ describe("OpenCode catalog", () => {
   });
 
   it("keeps the OpenCode key in the child environment only", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-opencode-go-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-go-"));
     try {
       const dump = join(scratch, "env.json");
       const driver = createOpenCodeDriver(async () => catalog("opencode-go/minimax-m3"));

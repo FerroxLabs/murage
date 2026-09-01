@@ -18,7 +18,7 @@ const CONNECTION_SCHEMA_VERSION = 1;
 // Those builds could start Cua without the Xorg seat-safety flags; keeping the
 // opt-in versioned makes a newer build unable to arm an older installed copy.
 const SETTINGS_SCHEMA_VERSION = 2;
-const HOST_BUNDLE_ID = "com.openmausbot.app";
+const HOST_BUNDLE_ID = "com.murage.app";
 const CERTIFIED_CONTRACT_VERSION = "0.6.0";
 const CERTIFIED_TOOLS_LIST_SCHEMA_VERSION = "1";
 const CERTIFIED_CAPABILITY_VERSION = "1";
@@ -565,7 +565,7 @@ function createLinuxCuaRuntime({
           stat.uid === currentUid &&
           (stat.mode & 0o077) === 0
         ) {
-          const root = ensurePrivateDirectory(path.join(configured, "openmausbot-cua"));
+          const root = ensurePrivateDirectory(path.join(configured, "murage-cua"));
           cleanupStaleRuntimeDirectories(root);
           return root;
         }
@@ -575,7 +575,7 @@ function createLinuxCuaRuntime({
     // directly under the system temp root keeps the fallback deterministic
     // and short when XDG_RUNTIME_DIR is missing or unsafe.
     const currentUid = process.getuid?.() ?? os.userInfo().uid;
-    const root = ensurePrivateDirectory(path.join(os.tmpdir(), `openmausbot-cua-${currentUid}`));
+    const root = ensurePrivateDirectory(path.join(os.tmpdir(), `murage-cua-${currentUid}`));
     cleanupStaleRuntimeDirectories(root);
     return root;
   };

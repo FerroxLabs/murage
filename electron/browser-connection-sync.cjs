@@ -18,7 +18,7 @@ function removeBrowserConnectionDescriptor({ userData, fileSystem = fs }) {
 }
 
 function postBrowserConnection(proc, connection) {
-  proc.postMessage({ type: "openmausbot:browser-connection", connection: connection ?? null });
+  proc.postMessage({ type: "murage:browser-connection", connection: connection ?? null });
 }
 
 module.exports = { postBrowserConnection, removeBrowserConnectionDescriptor };

@@ -19,7 +19,7 @@ describe("credentials", () => {
     expect(ask("POST", "/api/pair", false)).toBeNull();
     expect(ask("GET", "/api/bots", false)).toEqual({
       status: 401,
-      error: "pair this device from Phone settings in OpenMausBot on your computer",
+      error: "pair this device from Phone settings in Murage on your computer",
     });
     expect(ask("POST", "/api/files", false)?.status).toBe(401);
   });

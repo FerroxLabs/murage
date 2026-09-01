@@ -55,7 +55,7 @@ export function LocalScreenPreview() {
   const start = async () => {
     if (
       !preview.available ||
-      !window.ogb?.beginScreenPreviewIntent ||
+      !window.muragebox?.beginScreenPreviewIntent ||
       !navigator.mediaDevices?.getDisplayMedia
     ) {
       setPhase("unavailable");
@@ -66,7 +66,7 @@ export function LocalScreenPreview() {
     releaseStream("requesting", "Waiting for screen selection…");
     const currentRequest = requestId.current;
     const result = await requestScreenPreview({
-      beginIntent: () => window.ogb!.beginScreenPreviewIntent(),
+      beginIntent: () => window.muragebox!.beginScreenPreviewIntent(),
       getDisplayMedia: (constraints) => navigator.mediaDevices.getDisplayMedia(constraints),
     });
 

@@ -25,7 +25,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 const MAX_TEAM_FILE_BYTES = 1_000_000;
-const COMMUNITY_TEAMS_REPOSITORY = "https://github.com/milind-soni/openmausbot-teams";
+const COMMUNITY_TEAMS_REPOSITORY = "https://github.com/milind-soni/murage-teams";
 
 interface TeamCatalogEntry {
   slug: string;
@@ -100,8 +100,8 @@ const TEAM_GLYPHS = [
 ] as const;
 
 async function openExternal(url: string): Promise<void> {
-  if (window.ogb?.openExternal) {
-    await window.ogb.openExternal(url);
+  if (window.muragebox?.openExternal) {
+    await window.muragebox.openExternal(url);
     return;
   }
   const opened = window.open(url, "_blank", "noopener,noreferrer");
@@ -354,7 +354,7 @@ export function TeamLibraryPanel({
   };
 
   const pickScoutFolder = async () => {
-    const chosen = await window.ogb?.pickFolder?.(scoutTarget || undefined);
+    const chosen = await window.muragebox?.pickFolder?.(scoutTarget || undefined);
     if (!chosen) return;
     setScoutFolder(chosen);
     await runScout(chosen);
@@ -757,7 +757,7 @@ export function TeamLibraryPanel({
                       aria-label="Project folder to scout"
                       className="min-w-0 flex-1 rounded-xl bg-raised/80 px-3 py-2.5 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
                     />
-                    {Boolean(window.ogb?.pickFolder) && (
+                    {Boolean(window.muragebox?.pickFolder) && (
                       <button
                         onClick={() => void pickScoutFolder()}
                         disabled={scouting}

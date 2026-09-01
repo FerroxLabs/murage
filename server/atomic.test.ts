@@ -9,7 +9,7 @@ import { writeFileAtomic } from "./atomic.ts";
 describe("writeFileAtomic", () => {
   let dir: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "omb-atomic-"));
+    dir = mkdtempSync(join(tmpdir(), "murage-atomic-"));
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });

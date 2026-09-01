@@ -9,7 +9,7 @@ const electronDir = path.dirname(fileURLToPath(import.meta.url));
 const projectDir = path.dirname(electronDir);
 const resourcesDir = path.join(electronDir, "resources");
 
-export const recorderHelperBundle = path.join(resourcesDir, "OpenMausBot Recorder.app");
+export const recorderHelperBundle = path.join(resourcesDir, "Murage Recorder.app");
 export const recorderHelperBinary = path.join(recorderHelperBundle, "Contents", "MacOS", "recorder-helper");
 
 export function buildRecorderHelper() {

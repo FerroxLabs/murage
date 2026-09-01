@@ -7,7 +7,7 @@ import Security
 /// `kSecAttrAccessGroup` silently selects each target's private default group,
 /// which would make a token saved by the app invisible to the share extension.
 enum OpenMausSharedKeychain {
-    private static let service = "com.openmausbot.companion.token"
+    private static let service = "com.murage.companion.token"
 
     static func save(_ token: String, for connectionID: String) throws {
         let accessGroup = try requiredAccessGroup()

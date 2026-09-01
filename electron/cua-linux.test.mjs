@@ -21,7 +21,7 @@ const temporaryDirectories = [];
 
 function temporaryDirectory() {
   const base = process.platform === "win32" ? os.tmpdir() : fs.realpathSync("/tmp");
-  const directory = fs.mkdtempSync(path.join(base, "omb-cua-linux-"));
+  const directory = fs.mkdtempSync(path.join(base, "murage-cua-linux-"));
   temporaryDirectories.push(directory);
   return directory;
 }

@@ -241,7 +241,7 @@ export function BrowserPanel({
   onCollapse?: () => void;
 }) {
   const { state, dispatch } = useStore();
-  const bridge = window.ogb?.browser;
+  const bridge = window.muragebox?.browser;
   const pageVisible = usePageVisible();
   const layoutOwner = useId();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -420,7 +420,7 @@ export function BrowserPanel({
         }
         const setLocalControl = async (held: boolean): Promise<boolean> => {
           try {
-            if (!bridge?.setHumanControl) throw new Error("Update OpenMausBot before using browser takeover.");
+            if (!bridge?.setHumanControl) throw new Error("Update Murage before using browser takeover.");
             const applied = await bridge.setHumanControl(botId, held, activePartition);
             if (!applied) throw new Error("The browser tab is not ready for takeover yet.");
             return true;
@@ -508,7 +508,7 @@ export function BrowserPanel({
       if (!(await changeControl("take"))) return;
       if (direction === "back") await bridge.back(botId, activePartition);
       else if (bridge.forward) await bridge.forward(botId, activePartition);
-      else throw new Error("Update OpenMausBot before using Forward.");
+      else throw new Error("Update Murage before using Forward.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -595,7 +595,7 @@ export function BrowserPanel({
   if (!bridge) {
     return (
       <div className="rounded-xl bg-card p-4 text-[13px] text-ink-secondary">
-        The built-in browser needs the OpenMausBot desktop app.
+        The built-in browser needs the Murage desktop app.
       </div>
     );
   }
@@ -687,7 +687,7 @@ export function BrowserPanel({
         {currentUrl && (
           <button
             type="button"
-            onClick={() => void window.ogb?.openExternal?.(currentUrl)}
+            onClick={() => void window.muragebox?.openExternal?.(currentUrl)}
             className="rounded-md p-1.5 text-ink-secondary outline-none hover:bg-control hover:text-ink focus-visible:ring-2 focus-visible:ring-accent"
             title="Open in your default browser"
             aria-label="Open in your default browser"

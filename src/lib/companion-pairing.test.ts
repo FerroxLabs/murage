@@ -7,7 +7,7 @@ import {
 } from "./companion-pairing";
 
 describe("companionPairingLink", () => {
-  const token = `omb_pair_${"a".repeat(43)}`;
+  const token = `murage_pair_${"a".repeat(43)}`;
 
   const decodedEndpoints = (link: string) => {
     const encoded = new URL(link).searchParams.get("endpoints");
@@ -26,7 +26,7 @@ describe("companionPairingLink", () => {
     });
 
     const url = new URL(link!);
-    expect(url.protocol).toBe("openmausbot:");
+    expect(url.protocol).toBe("murage:");
     expect(url.host).toBe("pair");
     expect(url.searchParams.get("address")).toBe("macbook.tail1234.ts.net:8810");
     expect(url.searchParams.get("token")).toBe(token);
@@ -52,10 +52,10 @@ describe("companionPairingLink", () => {
       port: 8810,
       code: "004209",
       token,
-      hosts: ["macbook.tail1234.ts.net", "192.168.1.42", "openmausbot-abcd1234.local"],
+      hosts: ["macbook.tail1234.ts.net", "192.168.1.42", "murage-abcd1234.local"],
     });
     expect(new URL(link!).searchParams.get("hosts")).toBe(
-      "macbook.tail1234.ts.net,192.168.1.42,openmausbot-abcd1234.local",
+      "macbook.tail1234.ts.net,192.168.1.42,murage-abcd1234.local",
     );
   });
 
@@ -65,22 +65,22 @@ describe("companionPairingLink", () => {
       port: 8810,
       code: "004209",
       token,
-      hosts: ["192.168.1.42", "openmausbot-abcd1234.local"],
+      hosts: ["192.168.1.42", "murage-abcd1234.local"],
       endpoints: [
         { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
         { url: "https://Device-123.Companion.Example/", kind: "hosted", priority: 0 },
-        { url: "http://openmausbot-abcd1234.local:8810", kind: "bonjour", priority: 300 },
+        { url: "http://murage-abcd1234.local:8810", kind: "bonjour", priority: 300 },
       ],
     });
 
     const url = new URL(link!);
     expect(url.searchParams.get("address")).toBe("192.168.1.42:8810");
-    expect(url.searchParams.get("hosts")).toBe("192.168.1.42,openmausbot-abcd1234.local");
+    expect(url.searchParams.get("hosts")).toBe("192.168.1.42,murage-abcd1234.local");
     expect(url.searchParams.get("endpoints")).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(decodedEndpoints(link!)).toEqual([
       { url: "https://device-123.companion.example", kind: "hosted", priority: 0 },
       { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
-      { url: "http://openmausbot-abcd1234.local:8810", kind: "bonjour", priority: 300 },
+      { url: "http://murage-abcd1234.local:8810", kind: "bonjour", priority: 300 },
     ]);
   });
 
@@ -124,7 +124,7 @@ describe("companionPairingLink", () => {
 
   it("makes the automatic QR hosted-only even when Tailscale and LAN are advertised", () => {
     const endpoints = [
-      { url: "https://device.openmausbot.com", kind: "hosted" as const, priority: 0 },
+      { url: "https://device.murage.ai", kind: "hosted" as const, priority: 0 },
       { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet" as const, priority: 100 },
       { url: "http://192.168.1.42:8810", kind: "lan" as const, priority: 200 },
     ];
@@ -137,15 +137,15 @@ describe("companionPairingLink", () => {
     }, "automatic");
 
     expect(route).toEqual({
-      address: "device.openmausbot.com",
+      address: "device.murage.ai",
       port: 443,
-      hosts: ["device.openmausbot.com"],
+      hosts: ["device.murage.ai"],
       endpoints: [endpoints[0]],
     });
     const link = companionPairingLink({ ...route!, code: "004209", token });
     const url = new URL(link!);
-    expect(url.searchParams.get("address")).toBe("device.openmausbot.com:443");
-    expect(url.searchParams.get("hosts")).toBe("device.openmausbot.com");
+    expect(url.searchParams.get("address")).toBe("device.murage.ai:443");
+    expect(url.searchParams.get("hosts")).toBe("device.murage.ai");
     expect(url.searchParams.get("hosts")).not.toContain("192.168.1.42");
     expect(url.searchParams.get("hosts")).not.toContain("tail1234.ts.net");
     expect(decodedEndpoints(link!)).toEqual([endpoints[0]]);
@@ -163,7 +163,7 @@ describe("companionPairingLink", () => {
       port: 8810,
       tailnetName: "mac.tail1234.ts.net",
       lan: "192.168.1.42",
-      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"],
+      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "murage-aa.local"],
       endpoints: [
         { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet" as const, priority: 0 },
         { url: "http://192.168.1.42:8810", kind: "lan" as const, priority: 100 },
@@ -180,20 +180,20 @@ describe("companionPairingLink", () => {
       lan: "192.168.1.42",
       hosts: ["192.168.1.42"],
       endpoints: [
-        { url: "https://device.openmausbot.com", kind: "hosted" as const, priority: 0 },
+        { url: "https://device.murage.ai", kind: "hosted" as const, priority: 0 },
         { url: "http://192.168.1.42:8810", kind: "lan" as const, priority: 200 },
       ],
     };
     const pin = companionPairingRoutePin(opened, "automatic");
     expect(pin?.protectedEndpoint).toEqual({
-      url: "https://device.openmausbot.com",
+      url: "https://device.murage.ai",
       kind: "hosted",
       priority: 0,
     });
     expect(pin?.route).toMatchObject({
-      address: "device.openmausbot.com",
+      address: "device.murage.ai",
       port: 443,
-      hosts: ["device.openmausbot.com"],
+      hosts: ["device.murage.ai"],
     });
 
     const withdrawn = {
@@ -210,7 +210,7 @@ describe("companionPairingLink", () => {
       port: 8810,
       tailnetName: "mac.tail1234.ts.net",
       endpoints: [
-        { url: "https://device.openmausbot.com", kind: "hosted" as const, priority: 0 },
+        { url: "https://device.murage.ai", kind: "hosted" as const, priority: 0 },
         { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet" as const, priority: 100 },
       ],
     };
@@ -227,14 +227,14 @@ describe("companionPairingLink", () => {
       lan: "192.168.1.42",
       endpoints: [
         { url: "http://192.168.1.42:8810", kind: "lan", priority: 0 },
-        { url: "https://device.openmausbot.com", kind: "hosted", priority: 100 },
+        { url: "https://device.murage.ai", kind: "hosted", priority: 100 },
       ],
     }, "automatic")?.route).toEqual({
-      address: "device.openmausbot.com",
+      address: "device.murage.ai",
       port: 443,
-      hosts: ["device.openmausbot.com"],
+      hosts: ["device.murage.ai"],
       endpoints: [
-        { url: "https://device.openmausbot.com", kind: "hosted", priority: 100 },
+        { url: "https://device.murage.ai", kind: "hosted", priority: 100 },
       ],
     });
   });
@@ -244,12 +244,12 @@ describe("companionPairingLink", () => {
       port: 8810,
       tailnetName: "mac.tail1234.ts.net",
       lan: "192.168.1.42",
-      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"],
+      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "murage-aa.local"],
       endpoints: [
-        { url: "https://device.openmausbot.com", kind: "hosted", priority: 0 },
+        { url: "https://device.murage.ai", kind: "hosted", priority: 0 },
         { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet", priority: 100 },
         { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
-        { url: "http://openmausbot-aa.local:8810", kind: "bonjour", priority: 300 },
+        { url: "http://murage-aa.local:8810", kind: "bonjour", priority: 300 },
       ],
     }, "local");
 
@@ -257,14 +257,14 @@ describe("companionPairingLink", () => {
     expect(route?.port).toBe(8810);
     expect(route?.hosts).toEqual([
       "192.168.1.42",
-      "openmausbot-aa.local",
+      "murage-aa.local",
     ]);
     const link = companionPairingLink({ ...route!, code: "004209", token });
     expect(new URL(link!).searchParams.get("address")).toBe("192.168.1.42:8810");
     expect(decodedEndpoints(link!)).toEqual([
       { url: "http://192.168.1.42:8810", kind: "lan", priority: 0 },
-      { url: "https://device.openmausbot.com", kind: "hosted", priority: 100 },
-      { url: "http://openmausbot-aa.local:8810", kind: "bonjour", priority: 200 },
+      { url: "https://device.murage.ai", kind: "hosted", priority: 100 },
+      { url: "http://murage-aa.local:8810", kind: "bonjour", priority: 200 },
     ]);
   });
 
@@ -273,12 +273,12 @@ describe("companionPairingLink", () => {
       port: 8810,
       tailnetName: "mac.tail1234.ts.net",
       lan: "192.168.1.42",
-      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"],
+      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "murage-aa.local"],
       endpoints: [
-        { url: "https://device.openmausbot.com", kind: "hosted", priority: 0 },
+        { url: "https://device.murage.ai", kind: "hosted", priority: 0 },
         { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet", priority: 100 },
         { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
-        { url: "http://openmausbot-aa.local:8810", kind: "bonjour", priority: 300 },
+        { url: "http://murage-aa.local:8810", kind: "bonjour", priority: 300 },
       ],
     }, "tailscale");
 
@@ -290,7 +290,7 @@ describe("companionPairingLink", () => {
     const link = companionPairingLink({ ...route!, code: "004209", token });
     expect(decodedEndpoints(link!)).toEqual([
       { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet", priority: 0 },
-      { url: "https://device.openmausbot.com", kind: "hosted", priority: 100 },
+      { url: "https://device.murage.ai", kind: "hosted", priority: 100 },
     ]);
     expect(new URL(link!).searchParams.get("hosts")).toBe("mac.tail1234.ts.net");
   });
@@ -311,7 +311,7 @@ describe("companionPairingLink", () => {
       tailnetName: "mac.tail1234.ts.net",
       hosts: ["mac.tail1234.ts.net"],
       endpoints: [
-        { url: "https://device.openmausbot.com", kind: "hosted", priority: 0 },
+        { url: "https://device.murage.ai", kind: "hosted", priority: 0 },
         { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet", priority: 100 },
       ],
     }, "local")).toBeNull();
@@ -320,27 +320,27 @@ describe("companionPairingLink", () => {
   it("uses an advertised Bonjour route when no LAN address is available", () => {
     const route = companionPairingRoute({
       port: 8810,
-      hosts: ["mac.tail1234.ts.net", "openmausbot-aa.local"],
-      discovery: { advertising: true, name: "openmausbot-aa.local" },
+      hosts: ["mac.tail1234.ts.net", "murage-aa.local"],
+      discovery: { advertising: true, name: "murage-aa.local" },
       endpoints: [
-        { url: "https://device.openmausbot.com", kind: "hosted", priority: 0 },
-        { url: "http://openmausbot-aa.local:8810", kind: "bonjour", priority: 300 },
+        { url: "https://device.murage.ai", kind: "hosted", priority: 0 },
+        { url: "http://murage-aa.local:8810", kind: "bonjour", priority: 300 },
       ],
     }, "local");
 
-    expect(route?.address).toBe("openmausbot-aa.local");
-    expect(route?.hosts?.[0]).toBe("openmausbot-aa.local");
+    expect(route?.address).toBe("murage-aa.local");
+    expect(route?.hosts?.[0]).toBe("murage-aa.local");
     expect(route?.endpoints?.map((endpoint) => endpoint.kind)).toEqual(["bonjour", "hosted"]);
   });
 
   it("does not treat an inactive synthetic Bonjour name as a reachable local route", () => {
     expect(companionPairingRoute({
       port: 8810,
-      hosts: ["mac.tail1234.ts.net", "openmausbot-aa.local"],
-      discovery: { advertising: false, name: "openmausbot-aa.local" },
+      hosts: ["mac.tail1234.ts.net", "murage-aa.local"],
+      discovery: { advertising: false, name: "murage-aa.local" },
       endpoints: [
-        { url: "https://device.openmausbot.com", kind: "hosted", priority: 0 },
-        { url: "http://openmausbot-aa.local:8810", kind: "bonjour", priority: 300 },
+        { url: "https://device.murage.ai", kind: "hosted", priority: 0 },
+        { url: "http://murage-aa.local:8810", kind: "bonjour", priority: 300 },
       ],
     }, "local")).toBeNull();
   });

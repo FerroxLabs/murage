@@ -88,12 +88,12 @@ beforeAll(async () => {
   child = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
     env: {
       ...process.env,
-      OMB_BROWSER_URL: `http://127.0.0.1:${stubPort}`,
-      OMB_BROWSER_TOKEN: TOKEN,
-      OMB_BOT_ID: "bot-1",
-      OMB_BROWSER_PROFILE: "work",
-      OMB_CONTROL_URL: `http://127.0.0.1:${stubPort}/control`,
-      OMB_CONTROL_TOKEN: CONTROL_TOKEN,
+      MURAGE_BROWSER_URL: `http://127.0.0.1:${stubPort}`,
+      MURAGE_BROWSER_TOKEN: TOKEN,
+      MURAGE_BOT_ID: "bot-1",
+      MURAGE_BROWSER_PROFILE: "work",
+      MURAGE_CONTROL_URL: `http://127.0.0.1:${stubPort}/control`,
+      MURAGE_CONTROL_TOKEN: CONTROL_TOKEN,
     },
     stdio: ["pipe", "pipe", "inherit"],
   });

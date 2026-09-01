@@ -23,7 +23,7 @@ export const SKINS: readonly Skin[] = [
 
 export const DEFAULT_SKIN: SkinId = "midnight";
 
-const KEY = "omb-skin";
+const KEY = "murage-skin";
 
 // The input is whatever localStorage handed back — a string this app wrote
 // on an earlier run, a value edited by hand, or a leftover from a renamed
@@ -73,7 +73,7 @@ export function applySkin(id: SkinId): void {
   // corner" of issue #454. Best-effort: a browser tab or an older desktop
   // build has no bridge, and the skin still applies without it.
   try {
-    void window.ogb?.applySkin?.(id)?.catch(() => undefined);
+    void window.muragebox?.applySkin?.(id)?.catch(() => undefined);
   } catch {
     /* no bridge */
   }

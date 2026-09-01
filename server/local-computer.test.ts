@@ -73,7 +73,7 @@ function linuxDescriptor(userData: string, { session = "x11" }: { session?: "x11
       args: ["mcp", "--embedded", "--socket", socket],
       env: {
         CUA_DRIVER_EMBEDDED: "1",
-        CUA_DRIVER_HOST_BUNDLE_ID: "com.openmausbot.app",
+        CUA_DRIVER_HOST_BUNDLE_ID: "com.murage.app",
         CUA_DRIVER_RS_UPDATE_CHECK: "false",
         CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
         ...(session === "wayland" ? { CUA_DRIVER_RS_ENABLE_WAYLAND: "1" } : {}),
@@ -95,7 +95,7 @@ const temporaryDirectories: string[] = [];
 
 function privateUserData(name: string) {
   const base = process.platform === "win32" ? tmpdir() : realpathSync("/tmp");
-  const root = mkdtempSync(join(base, "omb-local-computer-"));
+  const root = mkdtempSync(join(base, "murage-local-computer-"));
   temporaryDirectories.push(root);
   const userData = join(root, name);
   mkdirSync(userData, { recursive: true, mode: 0o700 });

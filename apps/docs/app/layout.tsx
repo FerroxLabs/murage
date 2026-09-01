@@ -6,14 +6,14 @@ import './global.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://docs.openmausbot.com'),
+  metadataBase: new URL('https://docs.murage.ai'),
   title: {
-    default: 'OpenMausBot Docs',
-    template: '%s · OpenMausBot Docs',
+    default: 'Murage Docs',
+    template: '%s · Murage Docs',
   },
   description: 'Install, configure, and extend your local-first team of AI agents.',
   openGraph: {
-    title: 'OpenMausBot Docs',
+    title: 'Murage Docs',
     description: 'Your own team of AI agents, in a chat app.',
     type: 'website',
   },

@@ -41,7 +41,7 @@ describe("desktop capability cache", () => {
       resolveInitial = resolve;
     });
     vi.stubGlobal("window", {
-      ogb: {
+      muragebox: {
         platform: "linux",
         getCapabilities: () => initial,
       },

@@ -5,7 +5,7 @@
 // and hold/clear its activeVpsThreads claim across the turn.
 //
 // The "injected VpsCommandRunner" is a fake `docker` executable on
-// OMB_EXTRA_PATH: the server runs in its own process, so injection happens
+// MURAGE_EXTRA_PATH: the server runs in its own process, so injection happens
 // where defaultRunner actually looks — argv in, canned inspect JSON out,
 // every invocation appended to a log the assertions read. The agent is the
 // fake ACP CLI in echo-gated mode (see steer-queue.test.ts), whose echo
@@ -158,8 +158,8 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
 
   beforeAll(async () => {
     chmodSync(FAKE_CLI, 0o755);
-    home = mkdtempSync(join(tmpdir(), "omb-vps-routing-"));
-    mkdirSync(join(home, ".openmausbot"), { recursive: true });
+    home = mkdtempSync(join(tmpdir(), "murage-vps-routing-"));
+    mkdirSync(join(home, ".murage"), { recursive: true });
     const fakeBin = join(home, "fakebin");
     mkdirSync(fakeBin, { recursive: true });
     gateFile = join(home, "turn.gate");
@@ -179,7 +179,7 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
     writeFileSync(dockerLog, "");
 
     writeFileSync(
-      join(home, ".openmausbot", "config.json"),
+      join(home, ".murage", "config.json"),
       JSON.stringify({
         instances: {
           vps: {
@@ -194,8 +194,8 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
     const env: NodeJS.ProcessEnv = {
       HOME: home,
       USERPROFILE: home,
-      OMB_PORT: String(PORT),
-      OMB_EXTRA_PATH: fakeBin,
+      MURAGE_PORT: String(PORT),
+      MURAGE_EXTRA_PATH: fakeBin,
       FAKE_DOCKER_DIR: fakeBin,
       FAKE_DOCKER_LOG: dockerLog,
     };

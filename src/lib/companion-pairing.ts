@@ -304,7 +304,7 @@ export function companionPairingLink({
   if (
     !host ||
     !/^\d{6}$/.test(code) ||
-    !/^omb_pair_[A-Za-z0-9_-]{43}$/.test(token) ||
+    !/^murage_pair_[A-Za-z0-9_-]{43}$/.test(token) ||
     !Number.isInteger(port) ||
     port < 1 ||
     port > 65_535
@@ -312,7 +312,7 @@ export function companionPairingLink({
     return null;
   const dialableHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 
-  const url = new URL("openmausbot://pair");
+  const url = new URL("murage://pair");
   url.searchParams.set("address", `${dialableHost}:${port}`);
   // The scanner uses the high-entropy token. The code remains in the link so
   // an older mobile build can still pair during a staggered desktop rollout.

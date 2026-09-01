@@ -12,7 +12,7 @@
 //
 // Everything is disposable. A harness is started against a temporary HOME
 // with a fabricated profile, so nothing here reads or writes your real
-// ~/.openmausbot and no real name, key or token can end up in a fixture. The
+// ~/.murage and no real name, key or token can end up in a fixture. The
 // pairing token is redacted on the way out regardless.
 //
 // One fixture is not captured: options-card.json needs a bot to actually ask
@@ -129,17 +129,17 @@ async function captureFrames(wanted, during) {
 async function main() {
   mkdirSync(OUT, { recursive: true });
   home = mkdtempSync(join(tmpdir(), "companion-fixtures-"));
-  mkdirSync(join(home, ".openmausbot"), { recursive: true });
-  writeFileSync(join(home, ".openmausbot", "config.json"), JSON.stringify({ profile: PROFILE }));
+  mkdirSync(join(home, ".murage"), { recursive: true });
+  writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({ profile: PROFILE }));
 
   console.log(`harness on ${HARNESS_PORT}, companion on ${COMPANION_PORT}`);
   const harness = start("harness", [join(ROOT, "server", "index.ts")], {
     HOME: home,
     USERPROFILE: home,
-    OMB_PORT: String(HARNESS_PORT),
+    MURAGE_PORT: String(HARNESS_PORT),
     // the receiver would otherwise take the port above, which is nothing
     // to do with this but makes the log noisy
-    OMB_WEBHOOK_PORT: String(base + 1),
+    MURAGE_WEBHOOK_PORT: String(base + 1),
   });
   await waitFor(`${HARNESS}/api/health`, "harness", harness);
 
@@ -155,11 +155,11 @@ async function main() {
   const sidecar = start("companion", [join(ROOT, "companion", "src", "index.ts")], {
     HOME: home,
     USERPROFILE: home,
-    OMB_PORT: String(HARNESS_PORT),
-    OMB_WEBHOOK_PORT: String(base + 1),
-    OMB_COMPANION_PORT: String(COMPANION_PORT),
-    OMB_CONTROL_PORT: String(CONTROL_PORT),
-    OMB_COMPANION_DIR: join(home, "companion"),
+    MURAGE_PORT: String(HARNESS_PORT),
+    MURAGE_WEBHOOK_PORT: String(base + 1),
+    MURAGE_COMPANION_PORT: String(COMPANION_PORT),
+    MURAGE_CONTROL_PORT: String(CONTROL_PORT),
+    MURAGE_COMPANION_DIR: join(home, "companion"),
   });
   await waitFor(`${CONTROL}/state`, "companion", sidecar);
 
@@ -184,7 +184,7 @@ async function main() {
   // The token is a live credential for as long as that registry exists.
   // It is thrown away with the temp directory below, but a fixture is a file
   // people copy, so it never gets written in the first place.
-  write("pair-response", { ...paired.body, token: "omb_REDACTED" });
+  write("pair-response", { ...paired.body, token: "murage_REDACTED" });
 
   // ── a bot, and a few messages for it to have said ──────────────────────
   const created = await json(`${SIDECAR}/api/bots`, asDevice({ method: "POST" }));

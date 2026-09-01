@@ -49,7 +49,7 @@ describe("hermesConfiguredModel", () => {
   });
 
   const home = (env: string, cfg?: string) => {
-    const root = mkdtempSync(join(tmpdir(), "omb-hermes-"));
+    const root = mkdtempSync(join(tmpdir(), "murage-hermes-"));
     dirs.push(root);
     const h = join(root, ".hermes");
     mkdirSync(h, { recursive: true });
@@ -108,7 +108,7 @@ describe("hermesConfiguredModel", () => {
   });
 
   it("returns null when there is no .env and no config.yaml, leaving local-only setups unchanged", () => {
-    const root = mkdtempSync(join(tmpdir(), "omb-hermes-bare-"));
+    const root = mkdtempSync(join(tmpdir(), "murage-hermes-bare-"));
     dirs.push(root);
     mkdirSync(join(root, ".hermes"), { recursive: true });
     expect(hermesConfiguredModel({ HERMES_HOME: join(root, ".hermes") })).toBeNull();
@@ -118,7 +118,7 @@ describe("hermesConfiguredModel", () => {
     // A Nous Portal user logs in via OAuth — no API key in .env, but
     // config.yaml exists with a default model. This is the most common
     // setup for `hermes setup` / `hermes login` users.
-    const root = mkdtempSync(join(tmpdir(), "omb-hermes-nous-"));
+    const root = mkdtempSync(join(tmpdir(), "murage-hermes-nous-"));
     dirs.push(root);
     const h = join(root, ".hermes");
     mkdirSync(h, { recursive: true });

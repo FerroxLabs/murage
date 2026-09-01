@@ -8,7 +8,7 @@ import { buildOTPEmail, sendOTPEmail } from "../src/email";
 import worker from "../src/index";
 import { sha256 } from "../src/installations";
 
-const BASE_URL = "https://auth.openmausbot.test";
+const BASE_URL = "https://auth.murage.test";
 
 interface CallOptions {
   method?: string;
@@ -138,7 +138,7 @@ describe("control-plane migrations and health", () => {
   it("serves a no-store health response without CORS wildcards", async () => {
     const response = await call("/healthz");
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true, service: "openmausbot-control-plane" });
+    await expect(response.json()).resolves.toEqual({ ok: true, service: "murage-control-plane" });
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
@@ -355,7 +355,7 @@ describe("Better Auth email OTP and bearer boundary", () => {
   it("requires account bearers and never confuses installation credentials", async () => {
     expect((await call("/v1/me")).status).toBe(401);
     expect((await call("/v1/me", { token: "not-a-signed-session" })).status).toBe(401);
-    expect((await call("/v1/me", { token: "omb_install_AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" })).status).toBe(401);
+    expect((await call("/v1/me", { token: "murage_install_AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" })).status).toBe(401);
 
     const account = await signIn("auth-boundary@example.com");
     expect((await call("/v1/installations/self", { token: account.token })).status).toBe(401);
@@ -366,7 +366,7 @@ describe("installation lifecycle", () => {
   it("registers once, stores no raw credential, and serves installation self", async () => {
     const account = await signIn("owner@example.com");
     const created = await createInstall(account.token, "mac-stable-1");
-    expect(created.credential).toMatch(/^omb_install_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/);
+    expect(created.credential).toMatch(/^murage_install_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/);
     expect(created.credentialExpiresAt).toBeGreaterThan(Date.now() + 89 * 24 * 60 * 60 * 1_000);
 
     const stored = await env.DB.prepare(
@@ -644,20 +644,20 @@ describe("HTTP boundary hardening", () => {
     blocked.headers.forEach((value, name) => { serializedHeaders += `${name}: ${value}\n`; });
     expect(serializedHeaders).not.toContain("*");
 
-    const allowed = await call("/v1/me", { origin: "https://app.openmausbot.test" });
+    const allowed = await call("/v1/me", { origin: "https://app.murage.test" });
     expect(allowed.status).toBe(401);
-    expect(allowed.headers.get("access-control-allow-origin")).toBe("https://app.openmausbot.test");
+    expect(allowed.headers.get("access-control-allow-origin")).toBe("https://app.murage.test");
     expect(allowed.headers.get("cache-control")).toBe("no-store");
 
     const deniedPreflight = await call("/v1/installations", {
       method: "OPTIONS",
-      origin: "https://app.openmausbot.test",
+      origin: "https://app.murage.test",
       headers: {
         "access-control-request-method": "POST",
         "access-control-request-headers": "authorization, x-unexpected",
       },
     });
     expect(deniedPreflight.status).toBe(403);
-    expect(deniedPreflight.headers.get("access-control-allow-origin")).toBe("https://app.openmausbot.test");
+    expect(deniedPreflight.headers.get("access-control-allow-origin")).toBe("https://app.murage.test");
   });
 });

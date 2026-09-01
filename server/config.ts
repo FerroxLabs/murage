@@ -1,4 +1,4 @@
-// Config + data dirs. One file, ~/.openmausbot/config.json, env fallbacks:
+// Config + data dirs. One file, ~/.murage/config.json, env fallbacks:
 //   { "xai": {"key":"xai-…"}, "composio": {"apiKey":"ak_…"}, "box": {"token":"…"},
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
 import { readFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
@@ -429,8 +429,8 @@ export function builtInBrowserEnabled(cfg: AppConfig): boolean {
   return cfg.features?.browser === true;
 }
 
-// OMB_DATA_DIR isolates test/soak rigs from the user's real fleet.
-export const DATA_DIR = process.env.OMB_DATA_DIR ?? join(homedir(), ".openmausbot");
+// MURAGE_DATA_DIR isolates test/soak rigs from the user's real fleet.
+export const DATA_DIR = process.env.MURAGE_DATA_DIR ?? join(homedir(), ".murage");
 const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
@@ -476,9 +476,9 @@ export function loadConfig(): AppConfig {
   cfg.opencodeGo = { ...cfg.opencodeGo };
   if (process.env.OPENCODE_API_KEY !== undefined) cfg.opencodeGo.apiKey = process.env.OPENCODE_API_KEY;
   cfg.tts = { ...cfg.tts };
-  if (process.env.OMB_TTS_KEY !== undefined) cfg.tts.key = process.env.OMB_TTS_KEY;
+  if (process.env.MURAGE_TTS_KEY !== undefined) cfg.tts.key = process.env.MURAGE_TTS_KEY;
   cfg.imageGen = { ...cfg.imageGen };
-  if (process.env.OMB_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.OMB_OPENAI_IMAGE_KEY;
+  if (process.env.MURAGE_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.MURAGE_OPENAI_IMAGE_KEY;
   return cfg;
 }
 
@@ -496,8 +496,8 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
     [patch.box?.token, "BOX_TOKEN"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
-    [patch.tts?.key, "OMB_TTS_KEY"],
-    [patch.imageGen?.key, "OMB_OPENAI_IMAGE_KEY"],
+    [patch.tts?.key, "MURAGE_TTS_KEY"],
+    [patch.imageGen?.key, "MURAGE_OPENAI_IMAGE_KEY"],
   ];
   for (const [value, name] of secrets) {
     if (value === undefined) continue;
@@ -529,15 +529,15 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENAI_COMPAT_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
-  "OMB_TTS_KEY",
-  "OMB_OPENAI_IMAGE_KEY",
+  "MURAGE_TTS_KEY",
+  "MURAGE_OPENAI_IMAGE_KEY",
   "COMPOSIO_API_KEY",
-  "OMB_COMPOSIO_BROKER_TOKEN",
+  "MURAGE_COMPOSIO_BROKER_TOKEN",
   // Harness-private filesystem hints are not credentials themselves, but
   // exposing them to a shell-capable agent points straight at app-owned
   // state. The built-in browser master is delivered privately in memory.
-  "OMB_BROWSER_CONNECTION",
-  "OMB_USER_DATA",
+  "MURAGE_BROWSER_CONNECTION",
+  "MURAGE_USER_DATA",
 ] as const;
 
 /** Drop every workspace credential from a child-process env (in place). */
@@ -564,7 +564,7 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "CURSOR_AUTH_TOKEN",
 ] as const;
 
-/** Merge a partial config into ~/.openmausbot/config.json (secrets never
+/** Merge a partial config into ~/.murage/config.json (secrets never
  * echoed back — callers report configured-or-not booleans only). */
 export function saveConfig(patch: Partial<AppConfig>): void {
   const p = join(DATA_DIR, "config.json");
@@ -814,15 +814,15 @@ const CUSTOM_MCP_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 /** Server keys the harness mounts itself — a custom entry must never
  * shadow or clobber one of these across any driver's namespace. */
 const RESERVED_MCP_NAMES = new Set([
-  "ogb",
+  "muragebox",
   "computer",
   "agents",
   "composio",
   "browser",
   "phone",
   "dweb",
-  "openmausbot_connectors",
-  "openmausbot_phone",
+  "murage_connectors",
+  "murage_phone",
 ]);
 
 const reportedMcpSkips = new Set<string>();

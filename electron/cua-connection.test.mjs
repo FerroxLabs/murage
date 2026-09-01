@@ -9,7 +9,7 @@ const { createCuaConnectionStore } = require("./cua-connection.cjs");
 
 describe("CUA connection persistence", () => {
   it("keeps the previous in-memory and on-disk descriptor when replacement fails", () => {
-    const userData = mkdtempSync(path.join(os.tmpdir(), "omb-cua-connection-"));
+    const userData = mkdtempSync(path.join(os.tmpdir(), "murage-cua-connection-"));
     try {
       let failReplacement = false;
       const fileSystem = {

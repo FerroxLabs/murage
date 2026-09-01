@@ -49,7 +49,7 @@ describe("composer drafts", () => {
     setDraft(store, "bot:one", "hello");
     setDraft(store, "bot:one", "");
     store.setItem(
-      "omb-draft-attachments",
+      "murage-draft-attachments",
       JSON.stringify({ "bot:one": [{ kind: "paste", id: "broken" }] }),
     );
 

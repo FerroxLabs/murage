@@ -81,7 +81,7 @@ export function AttachmentPreviewDialog({ image, onClose }: { image: PreviewImag
         <header className="flex shrink-0 items-center justify-between gap-4 border-b border-white/10 bg-black/45 px-4 py-3">
           <div className="min-w-0">
             <div className="truncate text-[13px] font-medium text-white">{image.name}</div>
-            <div className="text-[10.5px] text-white/50">Saved locally by OpenMausBot</div>
+            <div className="text-[10.5px] text-white/50">Saved locally by Murage</div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <a

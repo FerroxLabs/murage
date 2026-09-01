@@ -46,7 +46,7 @@ describe("browser connection descriptor", () => {
   });
 
   it("reads the descriptor from an explicit file, userData, or the macOS dev fallback", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-browser-conn-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-browser-conn-"));
     const userData = join(home, "userData");
     const explicit = join(home, "explicit.json");
     const descriptor = { version: 1, url: "http://127.0.0.1:52144", token: TOKEN, pid: 4242 };
@@ -58,7 +58,7 @@ describe("browser connection descriptor", () => {
       token: TOKEN,
     });
 
-    const support = join(home, "Library", "Application Support", "OpenMausBot");
+    const support = join(home, "Library", "Application Support", "Murage");
     const { mkdirSync } = require("node:fs");
     mkdirSync(support, { recursive: true });
     writeFileSync(join(support, "browser-connection.json"), JSON.stringify({ ...descriptor, url: "http://127.0.0.1:1" }));
@@ -139,7 +139,7 @@ describe("browser connection descriptor", () => {
   });
 
   it("never reads an inherited descriptor before a packaged parent speaks", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-browser-parent-race-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-browser-parent-race-"));
     const file = join(home, "browser-connection.json");
     writeFileSync(file, JSON.stringify({
       version: 1,
@@ -147,18 +147,18 @@ describe("browser connection descriptor", () => {
       token: "f".repeat(64),
       pid: process.pid,
     }));
-    const previous = process.env.OMB_DESKTOP_PARENT;
-    process.env.OMB_DESKTOP_PARENT = "1";
+    const previous = process.env.MURAGE_DESKTOP_PARENT;
+    process.env.MURAGE_DESKTOP_PARENT = "1";
     try {
       expect(availableBrowserConnection({ file })).toBeNull();
     } finally {
-      if (previous === undefined) delete process.env.OMB_DESKTOP_PARENT;
-      else process.env.OMB_DESKTOP_PARENT = previous;
+      if (previous === undefined) delete process.env.MURAGE_DESKTOP_PARENT;
+      else process.env.MURAGE_DESKTOP_PARENT = previous;
     }
   });
 
   it("prefers the packaged desktop's in-memory connection and honors an explicit clear", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-browser-memory-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-browser-memory-"));
     const file = join(home, "browser-connection.json");
     writeFileSync(file, JSON.stringify({
       version: 1,
@@ -167,7 +167,7 @@ describe("browser connection descriptor", () => {
       pid: process.pid,
     }));
     expect(applyDesktopBrowserConnectionMessage({
-      type: "openmausbot:browser-connection",
+      type: "murage:browser-connection",
       connection: {
         version: 1,
         url: "http://127.0.0.1:2222",
@@ -181,7 +181,7 @@ describe("browser connection descriptor", () => {
     });
     expect(applyDesktopBrowserConnectionMessage({ type: "something-else" })).toBe(false);
     expect(applyDesktopBrowserConnectionMessage({
-      type: "openmausbot:browser-connection",
+      type: "murage:browser-connection",
       connection: null,
     })).toBe(true);
     // A packaged clear suppresses even a valid stale descriptor on disk.

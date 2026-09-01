@@ -13,7 +13,7 @@ import { cn } from "@/lib/cn";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
 const LINUX_GUIDE_URL =
-  "https://github.com/milind-soni/OpenMausBot/blob/main/docs/linux-desktop.md#enable-local-control";
+  "https://github.com/milind-soni/Murage/blob/main/docs/linux-desktop.md#enable-local-control";
 
 export function LinuxLocalControl() {
   const { capabilities } = useDesktopCapabilities();
@@ -29,7 +29,7 @@ export function LinuxLocalControl() {
   const bundledDriver = local.driverSource === "bundled";
 
   const run = async (action: "enable" | "disable" | "retry") => {
-    if (!window.ogb?.localControl) return;
+    if (!window.muragebox?.localControl) return;
     setPending(action);
     setError(null);
     try {
@@ -37,7 +37,7 @@ export function LinuxLocalControl() {
         const response = await fetch("/api/local-computer/interrupt", { method: "POST" });
         if (!response.ok) throw new Error("Could not stop active local computer turns.");
       }
-      await window.ogb.localControl[action]();
+      await window.muragebox.localControl[action]();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {

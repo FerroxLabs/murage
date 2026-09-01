@@ -12,9 +12,9 @@ const TARGET =
     ? {
         pid: 31337,
         socketPath:
-          "\\\\.\\pipe\\openmausbot-companion-origin-31337-12345678-1234-1234-1234-123456789abc",
+          "\\\\.\\pipe\\murage-companion-origin-31337-12345678-1234-1234-1234-123456789abc",
       }
-    : { pid: 31337, socketPath: "/tmp/omb-companion-origin-guardian/origin.sock" };
+    : { pid: 31337, socketPath: "/tmp/murage-companion-origin-guardian/origin.sock" };
 
 function owner() {
   const input = new EventEmitter();

@@ -13,7 +13,7 @@ describe("cloud computer provisioning cleanup", () => {
   const nameFor = (botId: string) => {
     const prefix = botId.slice(0, 8).toLowerCase().replace(/[^a-z0-9]/g, "");
     const hash = createHash("sha256").update(botId).digest("hex").slice(0, 6);
-    return `ogb-${prefix}-${hash}`;
+    return `muragebox-${prefix}-${hash}`;
   };
 
   beforeAll(async () => {
@@ -52,7 +52,7 @@ describe("cloud computer provisioning cleanup", () => {
     });
     await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
     const port = (api.address() as any).port;
-    vi.stubEnv("OMB_BOX_API", `http://127.0.0.1:${port}/api/box/v1`);
+    vi.stubEnv("MURAGE_BOX_API", `http://127.0.0.1:${port}/api/box/v1`);
     vi.resetModules();
     ({ provisionBox } = await import("./box.ts"));
   });

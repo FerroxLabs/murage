@@ -100,7 +100,7 @@ function profileInitials(profile?: { name?: string; email?: string }): string {
 function UpdateButton() {
   const s = useUpdaterState();
   const [checkedAt, setCheckedAt] = useState(0);
-  const updater = window.ogb?.updater;
+  const updater = window.muragebox?.updater;
   const status = s?.status ?? "idle";
   // download and install both round-trip through main before the status
   // changes — spin on the click itself, and let the new status clear it
@@ -1108,7 +1108,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   }, [densityOpen]);
 
   useEffect(() => {
-    return window.ogb?.onPackageInstall?.((url) => {
+    return window.muragebox?.onPackageInstall?.((url) => {
       setTeamInstallUrl(url);
       setTeamLibraryOpen(true);
     });
@@ -1342,7 +1342,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const dropSection = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     const from =
-      event.dataTransfer.getData("application/x-openmausbot-sidebar-section") ||
+      event.dataTransfer.getData("application/x-murage-sidebar-section") ||
       event.dataTransfer.getData("text/plain") ||
       sectionDragRef.current.from;
     const over = sectionDragRef.current.over;
@@ -1607,7 +1607,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     dragging={draggingSectionId === id}
                     onDragStart={(event) => {
                       event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("application/x-openmausbot-sidebar-section", id);
+                      event.dataTransfer.setData("application/x-murage-sidebar-section", id);
                       event.dataTransfer.setData("text/plain", id);
                       sectionDragRef.current = { from: id, over: null };
                       setDraggingSectionId(id);

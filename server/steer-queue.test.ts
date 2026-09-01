@@ -255,14 +255,14 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
 
   beforeAll(async () => {
     chmodSync(FAKE_CLI, 0o755);
-    home = mkdtempSync(join(tmpdir(), "omb-steer-test-"));
-    mkdirSync(join(home, ".openmausbot"), { recursive: true });
+    home = mkdtempSync(join(tmpdir(), "murage-steer-test-"));
+    mkdirSync(join(home, ".murage"), { recursive: true });
     mkdirSync(join(home, "gates"), { recursive: true });
     drainGate = join(home, "gates", "drain.gate");
     stopGate = join(home, "gates", "stop.gate");
     stopRpcDump = join(home, "gates", "stop.rpc");
     writeFileSync(
-      join(home, ".openmausbot", "config.json"),
+      join(home, ".murage", "config.json"),
       JSON.stringify({
         instances: {
           steer: {
@@ -289,7 +289,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
     const env: NodeJS.ProcessEnv = {
       HOME: home,
       USERPROFILE: home,
-      OMB_PORT: String(PORT),
+      MURAGE_PORT: String(PORT),
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     // Without SystemRoot, winsock fails to initialize in the child.

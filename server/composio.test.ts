@@ -55,7 +55,7 @@ beforeAll(async () => {
         session_id: "trs_test",
         mcp: { type: "http", url: "https://app.composio.dev/tool_router/v3/trs_test/mcp" },
         config: {
-          user_id: "openmausbot_existing",
+          user_id: "murage_existing",
           multi_account: {
             enable: true,
             max_accounts_per_toolkit: 5,
@@ -74,7 +74,7 @@ beforeAll(async () => {
       return res.end(JSON.stringify({
         session_id: "trs_legacy",
         mcp: { type: "http", url: "https://app.composio.dev/tool_router/v3/trs_legacy/mcp" },
-        config: { user_id: "openmausbot_legacy" },
+        config: { user_id: "murage_legacy" },
       }));
     }
     if (req.method === "GET" && url.pathname.endsWith("/toolkits")) {
@@ -147,34 +147,34 @@ beforeAll(async () => {
   });
   await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${(api.address() as { port: number }).port}/api/v3.1`;
-  process.env.OMB_COMPOSIO_API = base;
+  process.env.MURAGE_COMPOSIO_API = base;
 });
 
 afterAll(async () => {
   setManagedBrokerAccess(null);
-  delete process.env.OMB_COMPOSIO_API;
+  delete process.env.MURAGE_COMPOSIO_API;
   await new Promise<void>((resolve) => api.close(() => resolve()));
 });
 
 describe.sequential("Composio Sessions", () => {
   it("rejects broker URL components and invalid tokens from the environment", () => {
-    process.env.OMB_COMPOSIO_BROKER_TOKEN = "a".repeat(64);
+    process.env.MURAGE_COMPOSIO_BROKER_TOKEN = "a".repeat(64);
     try {
       for (const url of [
         "https://user:secret@broker.example/root",
         "https://broker.example/root?redirect=evil",
         "https://broker.example/root#fragment",
       ]) {
-        process.env.OMB_COMPOSIO_BROKER_URL = url;
+        process.env.MURAGE_COMPOSIO_BROKER_URL = url;
         expect(() => connectionMode({})).toThrow(/must not include/);
       }
-      process.env.OMB_COMPOSIO_BROKER_URL = "http://[::1]:3210/root/";
+      process.env.MURAGE_COMPOSIO_BROKER_URL = "http://[::1]:3210/root/";
       expect(connectionMode({})).toBe("managed");
-      process.env.OMB_COMPOSIO_BROKER_TOKEN = "short";
+      process.env.MURAGE_COMPOSIO_BROKER_TOKEN = "short";
       expect(() => connectionMode({})).toThrow(/token is invalid/);
     } finally {
-      delete process.env.OMB_COMPOSIO_BROKER_URL;
-      delete process.env.OMB_COMPOSIO_BROKER_TOKEN;
+      delete process.env.MURAGE_COMPOSIO_BROKER_URL;
+      delete process.env.MURAGE_COMPOSIO_BROKER_TOKEN;
     }
   });
   it("accepts a private desktop credential update and rejects unsafe broker URLs", () => {
@@ -196,7 +196,7 @@ describe.sequential("Composio Sessions", () => {
     setManagedBrokerAccess(null);
   });
   it("ignores credential sync without access and clears only on explicit null", () => {
-    const messageType = "openmausbot:managed-composio";
+    const messageType = "murage:managed-composio";
     setManagedBrokerAccess({ url: "http://127.0.0.1:3210/", token: "a".repeat(64) });
 
     expect(applyManagedBrokerMessage({ type: messageType })).toBe(false);
@@ -211,14 +211,14 @@ describe.sequential("Composio Sessions", () => {
   });
 
   it("creates one stable per-installation session and reuses it", async () => {
-    const created = await prepareProjectSession("ak_test", { userId: "openmausbot_existing" });
+    const created = await prepareProjectSession("ak_test", { userId: "murage_existing" });
     expect(created).toEqual({
       apiKey: "ak_test",
-      userId: "openmausbot_existing",
+      userId: "murage_existing",
       sessionId: "trs_test",
     });
     expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/session")).at(-1)?.body).toEqual({
-      user_id: "openmausbot_existing",
+      user_id: "murage_existing",
       manage_connections: {
         enable: true,
         enable_wait_for_connections: true,
@@ -234,7 +234,7 @@ describe.sequential("Composio Sessions", () => {
     const reused = await prepareProjectSession("ak_test", created);
     expect(reused).toEqual({
       apiKey: "ak_test",
-      userId: "openmausbot_existing",
+      userId: "murage_existing",
       sessionId: "trs_test",
     });
   });
@@ -247,11 +247,11 @@ describe.sequential("Composio Sessions", () => {
     });
     expect(upgraded).toEqual({
       apiKey: "ak_test",
-      userId: "openmausbot_legacy",
+      userId: "murage_legacy",
       sessionId: "trs_test",
     });
     expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/session")).at(-1)?.body).toMatchObject({
-      user_id: "openmausbot_legacy",
+      user_id: "murage_legacy",
       multi_account: {
         enable: true,
         max_accounts_per_toolkit: 5,
@@ -272,12 +272,12 @@ describe.sequential("Composio Sessions", () => {
     ];
     sessionAuthConfigs = {};
     try {
-      const current = { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" };
+      const current = { apiKey: "ak_test", userId: "murage_existing", sessionId: "trs_test" };
       const before = calls.length;
       await expect(prepareProjectSession("ak_test", current)).resolves.toEqual({ ...current });
       const creates = calls.slice(before).filter((call) => call.method === "POST" && call.path.endsWith("/session"));
       expect(creates).toHaveLength(1);
-      expect(creates[0].body).toMatchObject({ user_id: "openmausbot_existing", auth_configs: { twitter: "ac_twitter" } });
+      expect(creates[0].body).toMatchObject({ user_id: "murage_existing", auth_configs: { twitter: "ac_twitter" } });
       // the rebuilt Session now covers the configs, so the next check reuses it
       const after = calls.length;
       await prepareProjectSession("ak_test", current);
@@ -303,11 +303,11 @@ describe.sequential("Composio Sessions", () => {
       // once against the stale Session, once against the rebuilt one
       expect(since.filter((call) => call.method === "POST" && call.path.endsWith("/link"))).toHaveLength(2);
       expect(since.filter((call) => call.method === "POST" && call.path.endsWith("/session")).at(-1)?.body).toMatchObject({
-        user_id: "openmausbot_existing",
+        user_id: "murage_existing",
         auth_configs: { twitter: "ac_twitter" },
       });
       // the same Composio user keeps every existing connection
-      expect(cfg.composio).toMatchObject({ userId: "openmausbot_existing", sessionId: "trs_test" });
+      expect(cfg.composio).toMatchObject({ userId: "murage_existing", sessionId: "trs_test" });
     } finally {
       customAuthConfigs = [];
       sessionAuthConfigs = {};
@@ -316,12 +316,12 @@ describe.sequential("Composio Sessions", () => {
 
   it("says what to create when the project has no auth config for the toolkit", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "murage_existing", sessionId: "trs_test" },
     };
     const before = calls.length;
     await expect(authorizeService(cfg, "twitter")).rejects.toThrow(/create an auth config for "twitter"/i);
     expect(calls.slice(before).some((call) => call.method === "POST" && call.path.endsWith("/session"))).toBe(false);
-    expect(cfg.composio).toMatchObject({ userId: "openmausbot_existing", sessionId: "trs_test" });
+    expect(cfg.composio).toMatchObject({ userId: "murage_existing", sessionId: "trs_test" });
     // and a failure that is not about auth configs is passed through untouched
     await expect(authorizeService(cfg, "github", "personal-three")).resolves.toEqual({
       url: "https://connect.composio.dev/link/github",
@@ -336,7 +336,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("mounts the Session MCP endpoint with the project key header", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "murage_existing", sessionId: "trs_test" },
     };
     const integration = await mcpIntegration(cfg, {
       harnessUrl: "http://127.0.0.1:8799",
@@ -348,19 +348,19 @@ describe.sequential("Composio Sessions", () => {
       command: process.execPath,
       args: [expect.stringContaining("connector-proxy")],
       env: {
-        OMB_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp",
-        OMB_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer secret" }),
-        OMB_HARNESS_URL: "http://127.0.0.1:8799",
-        OMB_COMMS_TOKEN: "secret",
-        OMB_BOT_ID: "bot-1",
-        OMB_THREAD_ID: "thread-1",
+        MURAGE_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp",
+        MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer secret" }),
+        MURAGE_HARNESS_URL: "http://127.0.0.1:8799",
+        MURAGE_COMMS_TOKEN: "secret",
+        MURAGE_BOT_ID: "bot-1",
+        MURAGE_THREAD_ID: "thread-1",
       },
     });
   });
 
   it("reports connection state, creates auth links and revokes disconnects", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "murage_existing", sessionId: "trs_test" },
     };
     await expect(connectionStatus(cfg, ["github", "gmail", "slack", "notion", "linear"])).resolves.toEqual({
       github: {
@@ -412,7 +412,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("enumerates connected services independently of catalog position", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "murage_existing", sessionId: "trs_test" },
     };
     const callCount = calls.length;
 
@@ -456,7 +456,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("falls back to complete Session toolkit state without connected-account read permission", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "murage_existing", sessionId: "trs_test" },
     };
     connectedAccountsUnavailable = true;
     try {
@@ -481,7 +481,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("falls back to session toolkit state when connected-account items is malformed", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "murage_existing", sessionId: "trs_test" },
     };
     malformedConnectedAccounts = true;
     try {

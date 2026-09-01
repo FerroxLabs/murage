@@ -462,7 +462,7 @@ stopWatcher = stopTimer
 stopTimer.resume()
 let trustOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
 guard AXIsProcessTrustedWithOptions(trustOptions) else {
-    fputs("Allow OpenMausBot Recorder in Privacy & Security → Accessibility, then try again. Input Monitoring may also be requested.\n", stderr)
+    fputs("Allow Murage Recorder in Privacy & Security → Accessibility, then try again. Input Monitoring may also be requested.\n", stderr)
     exit(3)
 }
 // Recording has its own stop-file timer, which flushes any pending typing

@@ -70,7 +70,7 @@ const waitForIsolatedServer = async (
       if (response.status === 200) {
         const health = await response.json() as { app?: unknown; pid?: unknown; static?: unknown };
         lastObservedHealth = JSON.stringify(health);
-        if (health.app === "openmausbot" && health.pid === serverChild.pid && health.static === true) return;
+        if (health.app === "murage" && health.pid === serverChild.pid && health.static === true) return;
       }
     } catch {
       /* still starting */
@@ -107,7 +107,7 @@ const readJsonFileWhenReady = async <T = unknown>(file: string, timeout = 5_000)
 };
 
 const storedMessageCount = (threadId: string): number => {
-  const db = new DatabaseSync(join(home, ".openmausbot", "messages.db"), { readOnly: true });
+  const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
   try {
     const row = z.object({ count: z.number() }).parse(
       db.prepare("SELECT COUNT(*) AS count FROM messages WHERE thread_id = ?").get(threadId),
@@ -142,16 +142,16 @@ const statusWithHeaders = (headers: Record<string, string>): Promise<number> =>
   });
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), "omb-api-test-"));
+  home = mkdtempSync(join(tmpdir(), "murage-api-test-"));
   staticDir = join(home, "static");
   fakeClaudeDump = join(home, "fake-claude-dump.json");
   // a fleet of exactly one unknown driver: no CLI probes, no network
-  mkdirSync(join(home, ".openmausbot"), { recursive: true });
+  mkdirSync(join(home, ".murage"), { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
-  writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Packaged OpenMausBot</title>");
+  writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Packaged Murage</title>");
   writeFileSync(join(staticDir, "assets", "smoke.css"), "body { color: white; }");
   writeFileSync(
-    join(home, ".openmausbot", "config.json"),
+    join(home, ".murage", "config.json"),
     JSON.stringify({
       instances: {
         ghost: { driver: "not-a-real-driver", displayName: "Ghost" },
@@ -160,7 +160,7 @@ beforeAll(async () => {
     }),
   );
   writeFileSync(
-    join(home, ".openmausbot", "groups.json"),
+    join(home, ".murage", "groups.json"),
     JSON.stringify([
       {
         id: "test-dm",
@@ -210,7 +210,7 @@ beforeAll(async () => {
   // A room transcript carrying an approval that outlived its turn: the card
   // is durable, but busyBotId is in-memory only and never survives a restart.
   writeFileSync(
-    join(home, ".openmausbot", "messages-test-stranded-room-thread.json"),
+    join(home, ".murage", "messages-test-stranded-room-thread.json"),
     JSON.stringify({
       activeLeafId: "stranded-card",
       messages: [
@@ -237,7 +237,7 @@ beforeAll(async () => {
   // A room holding an approval nobody has answered yet, so "Cancel turn"
   // has something open to close.
   writeFileSync(
-    join(home, ".openmausbot", "messages-test-cancel-room-thread.json"),
+    join(home, ".murage", "messages-test-cancel-room-thread.json"),
     JSON.stringify({
       activeLeafId: "cancel-card",
       messages: [
@@ -319,18 +319,18 @@ beforeAll(async () => {
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
       USERPROFILE: home,
-      OMB_PORT: String(PORT),
-      OMB_WEBHOOK_PORT: String(WEBHOOK_PORT),
-      OMB_BOX_API: `http://127.0.0.1:${boxStubPort}`,
-      OMB_COMPOSIO_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
-      OMB_STATIC_DIR: staticDir,
+      MURAGE_PORT: String(PORT),
+      MURAGE_WEBHOOK_PORT: String(WEBHOOK_PORT),
+      MURAGE_BOX_API: `http://127.0.0.1:${boxStubPort}`,
+      MURAGE_COMPOSIO_API: `http://127.0.0.1:${boxStubPort}/api/v3.1`,
+      MURAGE_STATIC_DIR: staticDir,
       // Created only by the browser integration test. Keeping an explicit
       // path prevents that test from ever discovering a developer app's live
       // descriptor on the host running the suite.
-      OMB_BROWSER_CONNECTION: join(home, "browser-test-connection.json"),
+      MURAGE_BROWSER_CONNECTION: join(home, "browser-test-connection.json"),
       // Production uses 15s. Keep the real timer path while making the
       // browser-visible heartbeat assertion fast and deterministic.
-      OMB_SSE_HEARTBEAT_MS: "50",
+      MURAGE_SSE_HEARTBEAT_MS: "50",
       FAKE_CLAUDE_MODE: "hang",
       FAKE_CLAUDE_DUMP: fakeClaudeDump,
     },
@@ -373,7 +373,7 @@ describe("harness HTTP API", () => {
   it("identifies itself on /api/health", async () => {
     const { status, body } = await api("GET", "/api/health");
     expect(status).toBe(200);
-    expect(body.app).toBe("openmausbot");
+    expect(body.app).toBe("murage");
     expect(typeof body.pid).toBe("number");
     expect(body.static).toBe(true);
   });
@@ -382,7 +382,7 @@ describe("harness HTTP API", () => {
     const root = await fetch(`${BASE}/`);
     expect(root.status).toBe(200);
     expect(root.headers.get("content-type")).toBe("text/html");
-    expect(await root.text()).toContain("Packaged OpenMausBot");
+    expect(await root.text()).toContain("Packaged Murage");
 
     const asset = await fetch(`${BASE}/assets/smoke.css`);
     expect(asset.status).toBe(200);
@@ -392,7 +392,7 @@ describe("harness HTTP API", () => {
     const spa = await fetch(`${BASE}/settings/desktop`);
     expect(spa.status).toBe(200);
     expect(spa.headers.get("content-type")).toBe("text/html");
-    expect(await spa.text()).toContain("Packaged OpenMausBot");
+    expect(await spa.text()).toContain("Packaged Murage");
 
     const unknownApi = await api("GET", "/api/not-a-real-route");
     expect(unknownApi.status).toBe(404);
@@ -883,12 +883,12 @@ describe("harness HTTP API", () => {
       const dump = z.object({
         mcpConfig: z.object({
           mcpServers: z.object({
-            agents: z.object({ env: z.object({ OMB_COMMS_TOKEN: z.string() }) }),
+            agents: z.object({ env: z.object({ MURAGE_COMMS_TOKEN: z.string() }) }),
           }),
         }),
       }).parse(await readJsonFileWhenReady(fakeClaudeDump));
       const internalHeaders = {
-        authorization: `Bearer ${dump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN}`,
+        authorization: `Bearer ${dump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN}`,
         "content-type": "application/json",
       };
       expect((await api("POST", `/api/bots/${chief.id}/interrupt`)).status).toBe(200);
@@ -1830,7 +1830,7 @@ describe("harness HTTP API", () => {
     expect(exported.body.team).not.toHaveProperty("room");
 
     const roomsBefore = (await api("GET", "/api/bots")).body.groups.length;
-    const folder = mkdtempSync(join(tmpdir(), "omb-project-"));
+    const folder = mkdtempSync(join(tmpdir(), "murage-project-"));
 
     const stream = await openSse(`${BASE}/api/events`);
     try {
@@ -1878,7 +1878,7 @@ describe("harness HTTP API", () => {
         tagline: "Find and explain the signal.",
         summary: "A complete two-bot signal workflow.",
         category: "Research",
-        author: { name: "OpenMausBot" },
+        author: { name: "Murage" },
         license: "MIT",
         outcomes: ["Produce a concise signal brief."],
         setupMinutes: 4,
@@ -1973,7 +1973,7 @@ describe("harness HTTP API", () => {
   });
 
   it("the scout reads a folder, proposes an importable team, and creates nothing until the human imports", async () => {
-    const folder = mkdtempSync(join(tmpdir(), "omb-scout-"));
+    const folder = mkdtempSync(join(tmpdir(), "murage-scout-"));
     writeFileSync(join(folder, "README.md"), "# Demo Shop\n\nA storefront demo.\n");
     writeFileSync(
       join(folder, "package.json"),
@@ -2702,7 +2702,7 @@ describe("harness HTTP API", () => {
     const after = await api("GET", "/api/config");
     expect(after.body.rooms).toEqual({ turnTimeoutMinutes: 20 });
 
-    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    const disk = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
     expect(disk.rooms).toEqual({ turnTimeoutMinutes: 20 });
 
     await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
@@ -2803,7 +2803,7 @@ describe("harness HTTP API", () => {
     expect(saved.status).toBe(200);
     expect(saved.body.features).toEqual({ browser: false, skillRecorder: true, showToolCalls: false });
 
-    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    const disk = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
     expect(disk.features).toEqual({ skillRecorder: true });
 
     const tools = await api("PATCH", "/api/config", { features: { showToolCalls: true } });
@@ -3099,25 +3099,25 @@ describe("harness HTTP API", () => {
           mcpServers: z.object({
             browser: z.object({
               env: z.object({
-                OMB_BROWSER_TOKEN: z.string(),
-                OMB_BOT_ID: z.string(),
-                OMB_BROWSER_PROFILE: z.string(),
+                MURAGE_BROWSER_TOKEN: z.string(),
+                MURAGE_BOT_ID: z.string(),
+                MURAGE_BROWSER_PROFILE: z.string(),
               }),
             }),
           }),
         }),
       }).parse(await readJsonFileWhenReady(fakeClaudeDump));
       const browserEnv = dump.mcpConfig.mcpServers.browser.env;
-      expect(browserEnv).toMatchObject({ OMB_BOT_ID: bot.id, OMB_BROWSER_PROFILE: "work" });
+      expect(browserEnv).toMatchObject({ MURAGE_BOT_ID: bot.id, MURAGE_BROWSER_PROFILE: "work" });
       const registration = browserCapabilityCalls.find(
         (call) => call.operation === "register" && call.body.botId === bot.id && call.body.profile === "work",
       );
       expect(registration?.authorization).toBe(`Bearer ${masterToken}`);
       expect(registration?.body.token).toMatch(/^[0-9a-f]{64}$/);
-      expect(browserEnv.OMB_BROWSER_TOKEN).toBe(registration?.body.token);
-      expect(browserEnv.OMB_BROWSER_TOKEN).not.toBe(masterToken);
-      expect(dump.env.OMB_BROWSER_CONNECTION).toBeUndefined();
-      expect(dump.env.OMB_USER_DATA).toBeUndefined();
+      expect(browserEnv.MURAGE_BROWSER_TOKEN).toBe(registration?.body.token);
+      expect(browserEnv.MURAGE_BROWSER_TOKEN).not.toBe(masterToken);
+      expect(dump.env.MURAGE_BROWSER_CONNECTION).toBeUndefined();
+      expect(dump.env.MURAGE_USER_DATA).toBeUndefined();
       expect(JSON.stringify(dump)).not.toContain(masterToken);
 
       const system = dump.systemPrompt;
@@ -3318,8 +3318,8 @@ describe("harness HTTP API", () => {
   });
 
   it("applies browser disable effects before reporting a removed-profile cleanup failure", async () => {
-    const isolatedHome = mkdtempSync(join(tmpdir(), "omb-browser-cleanup-api-"));
-    const isolatedData = join(isolatedHome, ".openmausbot");
+    const isolatedHome = mkdtempSync(join(tmpdir(), "murage-browser-cleanup-api-"));
+    const isolatedData = join(isolatedHome, ".murage");
     const isolatedStatic = join(isolatedHome, "static");
     const isolatedPort = await freePortBlock([0, 1]);
     const descriptorFile = join(isolatedHome, "browser-connection.json");
@@ -3352,7 +3352,7 @@ describe("harness HTTP API", () => {
           postMessage(message) {
             if (message?.requestId && /browser-(?:bot|profile)-deleted/.test(message.type ?? "")) {
               queueMicrotask(() => listener?.({ data: {
-                type: "openmausbot:browser-lifecycle-result",
+                type: "murage:browser-lifecycle-result",
                 requestId: message.requestId,
                 ok: false,
               } }));
@@ -3365,10 +3365,10 @@ describe("harness HTTP API", () => {
     const isolatedEnv: NodeJS.ProcessEnv = {
       HOME: isolatedHome,
       USERPROFILE: isolatedHome,
-      OMB_PORT: String(isolatedPort),
-      OMB_WEBHOOK_PORT: String(isolatedPort + 1),
-      OMB_STATIC_DIR: isolatedStatic,
-      OMB_BROWSER_CONNECTION: descriptorFile,
+      MURAGE_PORT: String(isolatedPort),
+      MURAGE_WEBHOOK_PORT: String(isolatedPort + 1),
+      MURAGE_STATIC_DIR: isolatedStatic,
+      MURAGE_BROWSER_CONNECTION: descriptorFile,
       FAKE_CLAUDE_MODE: "hang",
       FAKE_CLAUDE_DUMP: join(isolatedHome, "fake-claude-dump.json"),
     };
@@ -3432,8 +3432,8 @@ describe("harness HTTP API", () => {
   }, 30_000);
 
   it("reconciles a committed crash-stale bot reference before ACK and profile-id reuse", async () => {
-    const isolatedHome = mkdtempSync(join(tmpdir(), "omb-browser-cleanup-restart-"));
-    const isolatedData = join(isolatedHome, ".openmausbot");
+    const isolatedHome = mkdtempSync(join(tmpdir(), "murage-browser-cleanup-restart-"));
+    const isolatedData = join(isolatedHome, ".murage");
     const isolatedStatic = join(isolatedHome, "static");
     const isolatedPort = await freePortBlock([0, 1]);
     mkdirSync(join(isolatedStatic, "assets"), { recursive: true });
@@ -3476,7 +3476,7 @@ describe("harness HTTP API", () => {
           postMessage(message) {
             if (message?.requestId && /browser-(?:bot|profile)-deleted/.test(message.type ?? "")) {
               queueMicrotask(() => listener?.({ data: {
-                type: "openmausbot:browser-lifecycle-result",
+                type: "murage:browser-lifecycle-result",
                 requestId: message.requestId,
                 ok: true,
               } }));
@@ -3496,9 +3496,9 @@ describe("harness HTTP API", () => {
           ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
           HOME: isolatedHome,
           USERPROFILE: isolatedHome,
-          OMB_PORT: String(isolatedPort),
-          OMB_WEBHOOK_PORT: String(isolatedPort + 1),
-          OMB_STATIC_DIR: isolatedStatic,
+          MURAGE_PORT: String(isolatedPort),
+          MURAGE_WEBHOOK_PORT: String(isolatedPort + 1),
+          MURAGE_STATIC_DIR: isolatedStatic,
           FAKE_CLAUDE_MODE: "hang",
           FAKE_CLAUDE_DUMP: join(isolatedHome, "fake-claude-dump.json"),
         },
@@ -3538,8 +3538,8 @@ describe("harness HTTP API", () => {
   }, 30_000);
 
   it("revokes live browser access even when clearing a removed profile reference cannot persist", async () => {
-    const isolatedHome = mkdtempSync(join(tmpdir(), "omb-browser-reference-write-"));
-    const isolatedData = join(isolatedHome, ".openmausbot");
+    const isolatedHome = mkdtempSync(join(tmpdir(), "murage-browser-reference-write-"));
+    const isolatedData = join(isolatedHome, ".murage");
     const isolatedStatic = join(isolatedHome, "static");
     const isolatedPort = await freePortBlock([0, 1]);
     const descriptorFile = join(isolatedHome, "browser-connection.json");
@@ -3574,10 +3574,10 @@ describe("harness HTTP API", () => {
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: isolatedHome,
         USERPROFILE: isolatedHome,
-        OMB_PORT: String(isolatedPort),
-        OMB_WEBHOOK_PORT: String(isolatedPort + 1),
-        OMB_STATIC_DIR: isolatedStatic,
-        OMB_BROWSER_CONNECTION: descriptorFile,
+        MURAGE_PORT: String(isolatedPort),
+        MURAGE_WEBHOOK_PORT: String(isolatedPort + 1),
+        MURAGE_STATIC_DIR: isolatedStatic,
+        MURAGE_BROWSER_CONNECTION: descriptorFile,
         FAKE_CLAUDE_MODE: "hang",
         FAKE_CLAUDE_DUMP: join(isolatedHome, "fake-claude-dump.json"),
       },
@@ -3661,8 +3661,8 @@ describe("harness HTTP API", () => {
   }, 30_000);
 
   it("rejects bot deletion with no teardown when the cleanup journal is unreadable", async () => {
-    const isolatedHome = mkdtempSync(join(tmpdir(), "omb-browser-bot-delete-journal-"));
-    const isolatedData = join(isolatedHome, ".openmausbot");
+    const isolatedHome = mkdtempSync(join(tmpdir(), "murage-browser-bot-delete-journal-"));
+    const isolatedData = join(isolatedHome, ".murage");
     const isolatedStatic = join(isolatedHome, "static");
     const isolatedPort = await freePortBlock([0, 1]);
     const descriptorFile = join(isolatedHome, "browser-connection.json");
@@ -3696,10 +3696,10 @@ describe("harness HTTP API", () => {
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: isolatedHome,
         USERPROFILE: isolatedHome,
-        OMB_PORT: String(isolatedPort),
-        OMB_WEBHOOK_PORT: String(isolatedPort + 1),
-        OMB_STATIC_DIR: isolatedStatic,
-        OMB_BROWSER_CONNECTION: descriptorFile,
+        MURAGE_PORT: String(isolatedPort),
+        MURAGE_WEBHOOK_PORT: String(isolatedPort + 1),
+        MURAGE_STATIC_DIR: isolatedStatic,
+        MURAGE_BROWSER_CONNECTION: descriptorFile,
         FAKE_CLAUDE_MODE: "hang",
         FAKE_CLAUDE_DUMP: join(isolatedHome, "fake-claude-dump.json"),
       },
@@ -3878,7 +3878,7 @@ describe("harness HTTP API", () => {
     expect(invalid.status).toBe(400);
     expect(invalid.body.error).toContain("localVm.maxInstances");
 
-    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    const disk = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
     expect(disk.localVm).toEqual({ mode: "per-bot", maxInstances: 3 });
     await api("PATCH", "/api/config", { localVm: { mode: "shared", maxInstances: 2 } });
   });
@@ -4015,9 +4015,9 @@ describe("harness HTTP API", () => {
       expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "start the lead" })).status).toBe(202);
       const firstDump = await readJsonFileWhenReady<{
         pid: number;
-        mcpConfig: { mcpServers: { agents: { env: { OMB_COMMS_TOKEN: string } } } };
+        mcpConfig: { mcpServers: { agents: { env: { MURAGE_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
-      const token = firstDump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN;
+      const token = firstDump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
       expect(token).toMatch(/^[a-f0-9]{48}$/);
 
       const requested = await fetch(`${BASE}/api/internal/request-credential`, {
@@ -4086,9 +4086,9 @@ describe("harness HTTP API", () => {
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "prepare a routine" })).status).toBe(202);
       const dump = await readJsonFileWhenReady<{
-        mcpConfig: { mcpServers: { agents: { env: { OMB_COMMS_TOKEN: string } } } };
+        mcpConfig: { mcpServers: { agents: { env: { MURAGE_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
-      const token = dump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN;
+      const token = dump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
       expect(token).toMatch(/^[a-f0-9]{48}$/);
       expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
       await expect.poll(async () => {
@@ -4439,9 +4439,9 @@ describe("harness HTTP API", () => {
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "prepare a skill" })).status).toBe(202);
       const dump = await readJsonFileWhenReady<{
-        mcpConfig: { mcpServers: { agents: { env: { OMB_COMMS_TOKEN: string } } } };
+        mcpConfig: { mcpServers: { agents: { env: { MURAGE_COMMS_TOKEN: string } } } };
       }>(fakeClaudeDump);
-      const token = dump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN;
+      const token = dump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
       expect(token).toMatch(/^[a-f0-9]{48}$/);
       const internalHeaders = {
         authorization: `Bearer ${token}`,
@@ -4572,7 +4572,7 @@ describe("harness HTTP API", () => {
       );
       const skillPath = join(
         home,
-        ".openmausbot",
+        ".murage",
         "workspaces",
         bot.id,
         ".agents",
@@ -4628,7 +4628,7 @@ describe("harness HTTP API", () => {
       // composer behind a proposal that can no longer be applied.
       const missingStage = await stage("reviewed-skill-missing-stage");
       writeFileSync(
-        join(home, ".openmausbot", "skill-state", bot.id, "staged.json"),
+        join(home, ".murage", "skill-state", bot.id, "staged.json"),
         `${JSON.stringify({ writes: {} }, null, 2)}\n`,
       );
       expect(await api("POST", `/api/threads/${bot.threadId}/respond`, {
@@ -4722,7 +4722,7 @@ describe("harness HTTP API", () => {
     expect(saved.body.profile).toEqual({ name: "External Store", email: "" });
     expect(JSON.stringify(saved.body)).not.toContain("ak_good");
 
-    const disk = JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8"));
+    const disk = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
     expect(disk.composio).toMatchObject({ apiKey: "", sessionId: "trs_config_test" });
     expect(disk.opencodeGo).toEqual({ apiKey: "" });
     expect(disk.profile).toEqual({ name: "External Store" });
@@ -4736,7 +4736,7 @@ describe("harness HTTP API", () => {
   });
 
   it.skipIf(process.platform === "win32")("stores the credentials file with owner-only permissions", () => {
-    expect(statSync(join(home, ".openmausbot", "config.json")).mode & 0o777).toBe(0o600);
+    expect(statSync(join(home, ".murage", "config.json")).mode & 0o777).toBe(0o600);
   });
 
   it("stores and echoes the user profile (not write-only, unlike keys)", async () => {
@@ -4796,7 +4796,7 @@ describe("harness HTTP API", () => {
     expect((await api("DELETE", `/api/webhooks/${created.body.webhook.id}`)).status).toBe(200);
     expect((await api("GET", "/api/webhooks")).body.webhooks).toHaveLength(0);
     if (process.platform !== "win32") {
-      expect(statSync(join(home, ".openmausbot", "webhooks.json")).mode & 0o777).toBe(0o600);
+      expect(statSync(join(home, ".murage", "webhooks.json")).mode & 0o777).toBe(0o600);
     }
   });
 
@@ -4953,7 +4953,7 @@ describe("bot memory API", () => {
       req.end();
     });
 
-  const workspaceOf = (botId: string) => join(home, ".openmausbot", "workspaces", botId);
+  const workspaceOf = (botId: string) => join(home, ".murage", "workspaces", botId);
 
   it("reads empty memory for a fresh bot and 404s a bot that does not exist", async () => {
     const bot = (await api("POST", "/api/bots")).body.bot;
@@ -5024,7 +5024,7 @@ describe("bot memory API", () => {
       // as leaked content and not depend on what happens to exist
       mkdirSync(workspaceOf(bot.id), { recursive: true });
       writeFileSync(join(workspaceOf(bot.id), "MEMORY.md"), "TOP-SECRET-MARKER memory");
-      writeFileSync(join(home, ".openmausbot", "secret.md"), "TOP-SECRET-MARKER sibling");
+      writeFileSync(join(home, ".murage", "secret.md"), "TOP-SECRET-MARKER sibling");
 
       for (const name of [
         "..%2F..%2Fsecret.md", // encoded slashes

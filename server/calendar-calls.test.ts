@@ -8,7 +8,7 @@ import { CalendarCallManager, type CalendarCallInput } from "./calendar-calls.ts
 const dirs: string[] = [];
 
 function tempFile(): string {
-  const dir = mkdtempSync(join(tmpdir(), "omb-calendar-calls-"));
+  const dir = mkdtempSync(join(tmpdir(), "murage-calendar-calls-"));
   dirs.push(dir);
   return join(dir, "calendar-calls.json");
 }

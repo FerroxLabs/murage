@@ -24,7 +24,7 @@ const temporaryDirectories = [];
 
 function temporaryDirectory() {
   const base = process.platform === "win32" ? os.tmpdir() : fs.realpathSync("/tmp");
-  const directory = fs.mkdtempSync(path.join(base, "omb-cua-runtime-"));
+  const directory = fs.mkdtempSync(path.join(base, "murage-cua-runtime-"));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -72,7 +72,7 @@ function handshake(pid = 4321) {
       mcp_protocol_version: "2025-06-18",
       pid,
       embedded: true,
-      host_bundle_id: "com.openmausbot.app",
+      host_bundle_id: "com.murage.app",
     },
     tools: ["click", "get_window_state", "list_apps", "type_text"],
   };
@@ -305,7 +305,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
   });
 
   it("passes the exact packaged candidate and architecture into inspection", async () => {
-    const bundledDriverPath = "/opt/OpenMausBot/resources/cua-linux-x64/cua-driver";
+    const bundledDriverPath = "/opt/Murage/resources/cua-linux-x64/cua-driver";
     const context = harness({
       runtimeOptions: { bundledDriverPath, arch: "x64" },
     });
@@ -362,7 +362,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
     expect(spawnOptions.env).toMatchObject({
       CUA_DRIVER_EMBEDDED: "1",
       CUA_DRIVER_PARENT_LIVENESS_STDIN: "1",
-      CUA_DRIVER_HOST_BUNDLE_ID: "com.openmausbot.app",
+      CUA_DRIVER_HOST_BUNDLE_ID: "com.murage.app",
       CUA_DRIVER_RS_UPDATE_CHECK: "false",
       CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
     });
@@ -393,7 +393,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA opt-in and lifecycle", 
         args: ["mcp", "--embedded", "--socket", expect.stringMatching(/driver\.sock$/)],
         env: {
           CUA_DRIVER_EMBEDDED: "1",
-          CUA_DRIVER_HOST_BUNDLE_ID: "com.openmausbot.app",
+          CUA_DRIVER_HOST_BUNDLE_ID: "com.murage.app",
           CUA_DRIVER_RS_UPDATE_CHECK: "false",
           CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
         },

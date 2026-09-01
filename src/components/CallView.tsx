@@ -73,7 +73,7 @@ export function CallTargetButton({
   const { state, dispatch } = useStore();
   const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
   const active = useOnCall() === targetId;
-  const supported = capabilities.dictation.available && Boolean(window.ogb?.speechStart);
+  const supported = capabilities.dictation.available && Boolean(window.muragebox?.speechStart);
   const configured = Boolean(state.config?.tts?.configured);
   const everyTargetHasVoice = voices.length > 0 && voices.every((voice) => Boolean(voice));
   const voiceReady =
@@ -99,9 +99,9 @@ export function CallTargetButton({
   const reason = !capabilitiesReady
     ? "Checking whether this device can make calls."
     : !capabilities.dictation.available
-      ? "Calls require OpenMausBot for macOS because speech recognition runs on-device."
-      : !window.ogb?.speechStart
-        ? "The speech service is unavailable in this app build. Restart or update OpenMausBot."
+      ? "Calls require Murage for macOS because speech recognition runs on-device."
+      : !window.muragebox?.speechStart
+        ? "The speech service is unavailable in this app build. Restart or update Murage."
         : !configured
           ? "Add an ElevenLabs API key — or switch to the built-in Mac voices — so the bot can speak during calls."
           : !voiceReady
@@ -247,7 +247,7 @@ function Call({ bot }: { bot: Bot }) {
   }, []);
 
   const hush = useCallback(() => {
-    void window.ogb?.speechStop();
+    void window.muragebox?.speechStop();
   }, []);
 
   const listen = useCallback(() => {
@@ -255,7 +255,7 @@ function Call({ bot }: { bot: Bot }) {
     move("listening");
     setHeard("");
     setNote(null);
-    void window.ogb?.speechStart({ endpointMs: CALL_ENDPOINT_MS }).catch(() => {
+    void window.muragebox?.speechStart({ endpointMs: CALL_ENDPOINT_MS }).catch(() => {
       if (alive.current && currentCall() === bot.id) {
         setNote("The microphone couldn't start. Check Microphone and Speech Recognition access.");
       }
@@ -303,7 +303,7 @@ function Call({ bot }: { bot: Bot }) {
 
   // ── the microphone ───────────────────────────────────────────────────
   useEffect(() => {
-    const bridge = window.ogb;
+    const bridge = window.muragebox;
     if (!bridge) return;
     const offTranscript = bridge.onSpeechTranscript((line) => {
       if (!alive.current || currentCall() !== bot.id || phaseRef.current !== "listening") return;
@@ -403,7 +403,7 @@ function Call({ bot }: { bot: Bot }) {
     return () => {
       offTranscript();
       offEnd();
-      void window.ogb?.speechStop();
+      void window.muragebox?.speechStop();
     };
     // busy/approval are intentionally initial snapshots. Their live changes
     // are handled below without tearing down native event listeners.

@@ -17,7 +17,7 @@ describe("skill recorder compiler", () => {
   });
 
   it("writes a self-contained skill and strips raw screenshot data from recording JSON", () => {
-    const dataRoot = mkdtempSync(path.join(tmpdir(), "openmausbot-recording-"));
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "murage-recording-"));
     const result = saveSkillRecording({
       name: "File an expense",
       description: "Use when submitting a travel receipt",
@@ -49,7 +49,7 @@ describe("skill recorder compiler", () => {
   });
 
   it("persists click element identity and names the element in SKILL.md", () => {
-    const dataRoot = mkdtempSync(path.join(tmpdir(), "openmausbot-recording-"));
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "murage-recording-"));
     const result = saveSkillRecording({
       name: "Order a payoff",
       description: "Request a loan payoff quote",
@@ -77,7 +77,7 @@ describe("skill recorder compiler", () => {
   });
 
   it("persists a download's filename and origins and surfaces them in SKILL.md", () => {
-    const dataRoot = mkdtempSync(path.join(tmpdir(), "openmausbot-recording-"));
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "murage-recording-"));
     const result = saveSkillRecording({
       name: "Download the statement",
       description: "Grab the monthly PDF",
@@ -103,7 +103,7 @@ describe("skill recorder compiler", () => {
   });
 
   it("keeps only safe web origins for downloads", () => {
-    const dataRoot = mkdtempSync(path.join(tmpdir(), "openmausbot-recording-"));
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "murage-recording-"));
     const result = saveSkillRecording({
       name: "Download a report",
       events: [{
@@ -125,7 +125,7 @@ describe("skill recorder compiler", () => {
   });
 
   it("persists a clipboard op without ever capturing its contents", () => {
-    const dataRoot = mkdtempSync(path.join(tmpdir(), "openmausbot-recording-"));
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "murage-recording-"));
     const result = saveSkillRecording({
       name: "Copy the token",
       description: "Copy a value from the vault",
@@ -153,7 +153,7 @@ describe("skill recorder compiler", () => {
   });
 
   it("discloses truncation and preserves the first events over the cap", () => {
-    const dataRoot = mkdtempSync(path.join(tmpdir(), "openmausbot-recording-"));
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "murage-recording-"));
     const events = Array.from({ length: 650 }, (_, i) => ({
       type: "click",
       atMs: i,

@@ -474,7 +474,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const mcpServers = buildMcpServers(turn);
       let mcpTempDir: string | null = null;
       if (mcpServers) {
-        mcpTempDir = mkdtempSync(join(tmpdir(), "omb-pi-mcp-"));
+        mcpTempDir = mkdtempSync(join(tmpdir(), "murage-pi-mcp-"));
         try {
           writeFileSync(join(mcpTempDir, "mcp.json"), JSON.stringify({ mcpServers }), { mode: 0o600 });
         } catch (err) {
@@ -501,7 +501,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             env: piEnvironment({
               ...process.env,
               ...input.environment,
-              ...(mcpServers && mcpTempDir ? { OMB_MCP_CONFIG: join(mcpTempDir, "mcp.json") } : {}),
+              ...(mcpServers && mcpTempDir ? { MURAGE_MCP_CONFIG: join(mcpTempDir, "mcp.json") } : {}),
             }),
           });
         } catch (err) {

@@ -41,13 +41,13 @@ describe("Antigravity stream input compatibility", () => {
 
 describe("readAntigravityModelCatalog", () => {
   it("returns the official list when settings are missing", () => {
-    expect(readAntigravityModelCatalog({ HOME: join(tmpdir(), "omb-agy-missing-home") })).toEqual(
+    expect(readAntigravityModelCatalog({ HOME: join(tmpdir(), "murage-agy-missing-home") })).toEqual(
       STATIC_ANTIGRAVITY_MODELS,
     );
   });
 
   it("tags extra settings models as custom", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-catalog-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-catalog-"));
     mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
     writeFileSync(
       join(home, ".gemini", "antigravity-cli", "settings.json"),
@@ -154,7 +154,7 @@ describe("Antigravity turns (fake CLI)", () => {
   });
 
   it("sends a Windows-sized room prompt over stdin instead of argv", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-agy-long-prompt-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-agy-long-prompt-"));
     const dump = join(scratch, "dump.json");
     process.env.FAKE_AGY_DUMP = dump;
     await create();
@@ -253,9 +253,9 @@ describe("Antigravity snapshot", () => {
   });
 
   it("strips workspace credentials from snapshot and helper children", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-agy-env-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-agy-env-"));
     const dump = join(scratch, "dump.json");
-    const names = ["XAI_API_KEY", "COMPOSIO_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "OMB_TTS_KEY"] as const;
+    const names = ["XAI_API_KEY", "COMPOSIO_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "MURAGE_TTS_KEY"] as const;
     const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     process.env.FAKE_AGY_DUMP = dump;
     for (const name of names) process.env[name] = `${name}-must-not-leak`;
@@ -284,7 +284,7 @@ describe("Antigravity snapshot", () => {
   });
 
   it("keeps long generateText prompts off argv too", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-agy-long-helper-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-agy-long-helper-"));
     const dump = join(scratch, "dump.json");
     const instance = await AntigravityDriver.create({
       instanceId: "agy-long-helper",
@@ -326,11 +326,11 @@ describe("Antigravity OpenMaus MCP config", () => {
       args: [SPAWNED_PROXIES.agents],
       env: {
         ELECTRON_RUN_AS_NODE: "1",
-        OMB_HARNESS_URL: "http://127.0.0.1:8799",
-        OMB_COMMS_TOKEN: token,
-        OMB_BOT_ID: "gemini-bot",
-        OMB_THREAD_ID: "thread-1",
-        OMB_TURN_DEPTH: "0",
+        MURAGE_HARNESS_URL: "http://127.0.0.1:8799",
+        MURAGE_COMMS_TOKEN: token,
+        MURAGE_BOT_ID: "gemini-bot",
+        MURAGE_THREAD_ID: "thread-1",
+        MURAGE_TURN_DEPTH: "0",
       },
     },
   });
@@ -339,11 +339,11 @@ describe("Antigravity OpenMaus MCP config", () => {
     args: [SPAWNED_PROXIES.agents],
     env: {
       ELECTRON_RUN_AS_NODE: "1",
-      OMB_HARNESS_URL: "http://127.0.0.1:8799",
-      OMB_COMMS_TOKEN: token,
-      OMB_BOT_ID: "gemini-bot",
-      OMB_THREAD_ID: "thread-1",
-      OMB_TURN_DEPTH: "0",
+      MURAGE_HARNESS_URL: "http://127.0.0.1:8799",
+      MURAGE_COMMS_TOKEN: token,
+      MURAGE_BOT_ID: "gemini-bot",
+      MURAGE_THREAD_ID: "thread-1",
+      MURAGE_TURN_DEPTH: "0",
     },
   });
 
@@ -353,10 +353,10 @@ describe("Antigravity OpenMaus MCP config", () => {
       args: [SPAWNED_PROXIES.computer],
       env: {
         ELECTRON_RUN_AS_NODE: "1",
-        OGB_BOX_ID: "bx_1",
-        OGB_BOX_TOKEN: "box-tok",
-        OMB_CONTROL_URL: "http://127.0.0.1:9/control",
-        OMB_CONTROL_TOKEN: "ctl-tok",
+        MURAGEBOX_BOX_ID: "bx_1",
+        MURAGEBOX_BOX_TOKEN: "box-tok",
+        MURAGE_CONTROL_URL: "http://127.0.0.1:9/control",
+        MURAGE_CONTROL_TOKEN: "ctl-tok",
       },
     });
   });
@@ -382,7 +382,7 @@ describe("Antigravity OpenMaus MCP config", () => {
   });
 
   it("upserts only its reserved keys — the user's servers and unknown top-level keys survive", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-mcpcfg-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpcfg-"));
     try {
       mkdirSync(join(home, ".gemini", "config"), { recursive: true });
       writeFileSync(
@@ -427,7 +427,7 @@ describe("Antigravity OpenMaus MCP config", () => {
   });
 
   it("starts fresh from malformed JSON instead of failing the turn", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-mcpbad-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpbad-"));
     try {
       mkdirSync(join(home, ".gemini", "config"), { recursive: true });
       writeFileSync(configPath(home), "{{{ not json");
@@ -447,7 +447,7 @@ describe("Antigravity OpenMaus MCP config", () => {
 
   it("restricts the token-bearing config directory and file to the current user", () => {
     if (process.platform === "win32") return;
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-mcpperms-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpperms-"));
     try {
       const directory = dirname(configPath(home));
       mkdirSync(directory, { recursive: true, mode: 0o755 });
@@ -466,7 +466,7 @@ describe("Antigravity OpenMaus MCP config", () => {
   });
 
   it("preserves concurrent config edits while restoring only its reserved MCP entries", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-mcpconcurrent-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpconcurrent-"));
     try {
       const restoreNewFile = ensureAntigravityMcpServers(
         {
@@ -521,7 +521,7 @@ describe("Antigravity OpenMaus MCP config", () => {
   });
 
   it("a tool-less turn removes both reserved keys, and never creates the file just to remove", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-mcprm-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcprm-"));
     try {
       // No file at all: removal is a no-op, not an empty file in the user's home.
       ensureAntigravityMcpServers({}, { HOME: home });
@@ -583,7 +583,7 @@ describe("Antigravity OpenMaus MCP config", () => {
   it("does not mount token-bearing OpenMaus tools in safe mode even when a caller supplies them", async () => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-mcpsafe-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpsafe-"));
     const dump = join(home, "mcp-at-spawn.json");
     const instance = await AntigravityDriver.create({
       instanceId: "agy-mcp-safe",
@@ -615,7 +615,7 @@ describe("Antigravity OpenMaus MCP config", () => {
   it("uses the spawned CLI's HOME and restores the prior config when the turn exits", async () => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-mcpturn-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpturn-"));
     const dump = join(home, "mcp-at-spawn.json");
     const original = JSON.stringify({ mcpServers: { "sqlite-helper": { command: "sqlite-mcp-server", args: ["/db"] } } });
     mkdirSync(join(home, ".gemini", "config"), { recursive: true });
@@ -655,7 +655,7 @@ describe("Antigravity OpenMaus MCP config", () => {
   it("serializes overlapping turns so each child sees only its own MCP mounts and tokens", async () => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-mcplease-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcplease-"));
     const firstDump = join(home, "first.json");
     const secondDump = join(home, "second.json");
     const first = await AntigravityDriver.create({
@@ -718,7 +718,7 @@ describe("Antigravity OpenMaus MCP config", () => {
   it("reaps a child that hangs after result, restores the mount, and unblocks the next turn", async () => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-mcpreaper-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpreaper-"));
     const firstDump = join(home, "first.json");
     const secondDump = join(home, "second.json");
     const first = await AntigravityDriver.create({
@@ -783,7 +783,7 @@ describe("Antigravity OpenMaus MCP config", () => {
   it("force-reaps an interrupted child that ignores SIGTERM before result", async () => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
-    const home = mkdtempSync(join(tmpdir(), "omb-agy-mcpinterrupt-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-mcpinterrupt-"));
     const readyFile = join(home, "ready");
     const secondDump = join(home, "second.json");
     const first = await AntigravityDriver.create({

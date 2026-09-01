@@ -17,7 +17,7 @@ function lifecycleRequestId(message) {
  * release IPC can do that, after its server-first release succeeds. */
 function applyBrowserControlHold(message, take) {
   if (!message || Object.prototype.toString.call(message) !== "[object Object]") return false;
-  if (message.type !== "openmausbot:browser-control") return false;
+  if (message.type !== "murage:browser-control") return false;
   if (message.held !== true || !BOT_ID.test(String(message.botId ?? ""))) {
     throw new Error("invalid browser-control hold message");
   }
@@ -31,7 +31,7 @@ function applyBrowserControlHold(message, take) {
  * accepted from the renderer or loopback HTTP. */
 function decodeBrowserLifecycleMessage(message) {
   if (!message || Object.prototype.toString.call(message) !== "[object Object]") return null;
-  if (message.type === "openmausbot:browser-bot-deleted") {
+  if (message.type === "murage:browser-bot-deleted") {
     const botId = String(message.botId ?? "");
     if (!BOT_ID.test(botId)) throw new Error("invalid browser bot-deleted message");
     const requestId = lifecycleRequestId(message);
@@ -39,7 +39,7 @@ function decodeBrowserLifecycleMessage(message) {
     if (requestId) lifecycle.requestId = requestId;
     return lifecycle;
   }
-  if (message.type === "openmausbot:browser-profile-deleted") {
+  if (message.type === "murage:browser-profile-deleted") {
     const partitionId = String(message.partitionId ?? "");
     if (!PROFILE_PARTITION_ID.test(partitionId) || partitionId === "guest") {
       throw new Error("invalid browser profile-deleted message");
@@ -55,7 +55,7 @@ function decodeBrowserLifecycleMessage(message) {
 function browserLifecycleResult(requestId, ok) {
   const id = String(requestId ?? "");
   if (!REQUEST_ID.test(id)) throw new Error("invalid browser lifecycle result id");
-  return { type: "openmausbot:browser-lifecycle-result", requestId: id, ok: ok === true };
+  return { type: "murage:browser-lifecycle-result", requestId: id, ok: ok === true };
 }
 
 module.exports = { applyBrowserControlHold, browserLifecycleResult, decodeBrowserLifecycleMessage };

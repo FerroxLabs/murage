@@ -12,7 +12,7 @@ export function MacLocalControl() {
     setPending(true);
     setError(null);
     try {
-      await window.ogb?.localControl?.retry();
+      await window.muragebox?.localControl?.retry();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -24,8 +24,8 @@ export function MacLocalControl() {
     setError(null);
     setAwaitingGrant(true);
     try {
-      await window.ogb?.permOpenSettings?.("accessibility");
-      await window.ogb?.permOpenSettings?.("screen");
+      await window.muragebox?.permOpenSettings?.("accessibility");
+      await window.muragebox?.permOpenSettings?.("screen");
     } catch (reason) {
       setAwaitingGrant(false);
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -60,7 +60,7 @@ export function MacLocalControl() {
         <div className="min-w-0 flex-1">
           <div className="text-[14px] font-medium text-ink">Allow control of this computer</div>
           <p className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">
-            OpenMausBot needs Accessibility and Screen Recording in System Settings before a bot can
+            Murage needs Accessibility and Screen Recording in System Settings before a bot can
             use this Mac. After you grant both, click Retry — macOS may still ask you to relaunch the app.
           </p>
           {error && (

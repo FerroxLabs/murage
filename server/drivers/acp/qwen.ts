@@ -1,4 +1,4 @@
-// Qwen Code — Alibaba's `qwen --acp` CLI. Custom-only in OpenMausBot:
+// Qwen Code — Alibaba's `qwen --acp` CLI. Custom-only in Murage:
 // the official pane has no Qwen Cloud catalog; live local hosts land in
 // Custom and are written into ~/.qwen/settings.json modelProviders.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -16,7 +16,7 @@ function qwenHome(env: Record<string, string | undefined>): string {
 }
 
 function envKeyFor(hostId: string): string {
-  return `OPENMAUSBOT_QWEN_${hostId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
+  return `MURAGE_QWEN_${hostId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
 }
 
 /** Upsert an OpenAI-compatible provider row so `qwen -m` can reach the host. */

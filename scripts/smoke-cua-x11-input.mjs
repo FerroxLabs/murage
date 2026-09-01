@@ -13,7 +13,7 @@ if (process.platform !== "linux") throw new Error("the X11 input smoke is Linux-
 if (!process.env.DISPLAY) throw new Error("the X11 input smoke needs an active DISPLAY");
 if (!existsSync(driver)) throw new Error(`missing staged Cua Driver: ${driver}`);
 
-const prefix = "omb-cua-x11-input-";
+const prefix = "murage-cua-x11-input-";
 const sandbox = mkdtempSync(path.join(tmpdir(), prefix));
 if (path.dirname(sandbox) !== path.resolve(tmpdir()) || !path.basename(sandbox).startsWith(prefix)) {
   throw new Error(`unexpected smoke directory: ${sandbox}`);
@@ -27,7 +27,7 @@ mkdirSync(home, { mode: 0o700 });
 chmodSync(runtime, 0o700);
 chmodSync(home, 0o700);
 
-const title = `OpenMausBot CUA input safety ${process.pid}`;
+const title = `Murage CUA input safety ${process.pid}`;
 const xev = spawn(
   "xev",
   ["-name", title, "-geometry", "320x180+40+40"],
@@ -216,7 +216,7 @@ try {
   await rpc("initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {},
-    clientInfo: { name: "openmausbot-x11-input-smoke", version: "1" },
+    clientInfo: { name: "murage-x11-input-smoke", version: "1" },
   });
   proxy.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
   const listed = await rpc("tools/list");
@@ -225,7 +225,7 @@ try {
     if (!toolNames.has(required)) throw new Error(`Cua MCP did not expose ${required}`);
   }
 
-  const session = `openmausbot-x11-smoke-${process.pid}`;
+  const session = `murage-x11-smoke-${process.pid}`;
   assertToolResult(
     await rpc("tools/call", {
       name: "start_session",

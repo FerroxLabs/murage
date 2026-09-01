@@ -17,14 +17,14 @@ export const CREDENTIAL_ENV_NAMES = [
   "OPENAI_COMPAT_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
-  "OMB_TTS_KEY",
-  "OMB_OPENAI_IMAGE_KEY",
+  "MURAGE_TTS_KEY",
+  "MURAGE_OPENAI_IMAGE_KEY",
   "COMPOSIO_API_KEY",
-  "OMB_COMPOSIO_BROKER_TOKEN",
+  "MURAGE_COMPOSIO_BROKER_TOKEN",
   // Browser capability files and app-owned state paths are private even
   // though they are not traditional API credentials.
-  "OMB_BROWSER_CONNECTION",
-  "OMB_USER_DATA",
+  "MURAGE_BROWSER_CONNECTION",
+  "MURAGE_USER_DATA",
 ];
 
 // Credential-shaped tokens (server/redact.ts parity): unmistakable formats
@@ -268,7 +268,7 @@ export function buildDiagnosticsReport({
   now = new Date().toISOString(),
 } = {}) {
   const lines = [];
-  lines.push("OpenMausBot diagnostics");
+  lines.push("Murage diagnostics");
   lines.push(`Generated: ${now}`);
   lines.push("");
   lines.push("## App");
@@ -308,7 +308,7 @@ export function buildDiagnosticsReport({
 export function diagnosticsFileName(date = new Date()) {
   const pad = (n) => String(n).padStart(2, "0");
   return (
-    `openmausbot-diagnostics-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `murage-diagnostics-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
     `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}.txt`
   );
 }

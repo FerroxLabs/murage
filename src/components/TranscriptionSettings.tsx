@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { announceTranscriptionStatus } from "@/lib/transcription-status";
 
 export function TranscriptionSettings() {
-  const bridge = window.ogb?.transcription;
+  const bridge = window.muragebox?.transcription;
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);

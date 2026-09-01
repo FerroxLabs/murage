@@ -14,7 +14,7 @@ const TOKEN = "phc_m2hP39w8y2gLPvHgDvSXAu6xcZ3agjf4ruL56rGcMZEe";
 // opted-out install must never call posthog.init(), so no request — not even
 // the library's own — leaves the machine. Once running, opting out routes
 // through opt_out_capturing(), which also drops anything already queued.
-const OPT_OUT_KEY = "omb-analytics-opt-out";
+const OPT_OUT_KEY = "murage-analytics-opt-out";
 
 let ready = false;
 
@@ -86,8 +86,8 @@ export function initAnalytics() {
   // one-time install marker — app_first_open counts installs (the closest
   // truth to "downloads that mattered"; raw download counts live on the
   // GitHub release assets)
-  if (!localStorage.getItem("omb-installed")) {
-    localStorage.setItem("omb-installed", new Date().toISOString());
+  if (!localStorage.getItem("murage-installed")) {
+    localStorage.setItem("murage-installed", new Date().toISOString());
     posthog.capture("app_first_open", { platform });
   }
   posthog.capture("app_opened", { platform });
@@ -109,7 +109,7 @@ export function identifyEmail(email: string) {
 }
 
 // first-run email gate state
-const GATE_KEY = "omb-email-gate";
+const GATE_KEY = "murage-email-gate";
 export function emailGateDone(): boolean {
   return Boolean(localStorage.getItem(GATE_KEY));
 }

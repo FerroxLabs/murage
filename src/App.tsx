@@ -95,7 +95,7 @@ function Shell() {
   }, [state.bots, state.selectedId, dispatch]);
 
   useEffect(() => {
-    window.ogb?.setUnreadCount?.(unreadCount);
+    window.muragebox?.setUnreadCount?.(unreadCount);
   }, [unreadCount]);
 
   // Re-assert every authoritative positive hold in the process that owns the
@@ -103,7 +103,7 @@ function Shell() {
   // computer surface, and renderer reloads. Deliberately never mirror false:
   // only a trusted two-phase release may open Electron's direct browser gate.
   useEffect(() => {
-    const setter = window.ogb?.browser?.setHumanControl;
+    const setter = window.muragebox?.browser?.setHumanControl;
     if (!setter) return;
     for (const botId of heldComputerControlBotIds(state.computerControl)) {
       void setter(botId, true).catch(() => {});
@@ -195,7 +195,7 @@ function Shell() {
   // The viewer outlives ComputerPanel and can target any bot, so release control
   // here (always mounted) when a bot's viewer closes. release() is idempotent.
   useEffect(() => {
-    return window.ogb?.desktopViewer?.onState((viewer) => {
+    return window.muragebox?.desktopViewer?.onState((viewer) => {
       if (viewer.open || !viewer.contextId) return;
       const botId = viewer.contextId;
       void fetch(`/api/bots/${botId}/computer/control`, {

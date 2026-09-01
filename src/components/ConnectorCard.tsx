@@ -4,8 +4,8 @@ import { Check, Loader2, PlugZap, RefreshCw, X } from "lucide-react";
 import { api, type Message } from "@/state/store";
 
 async function openConnectionPage(url: string) {
-  if (window.ogb?.openExternal) {
-    await window.ogb.openExternal(url);
+  if (window.muragebox?.openExternal) {
+    await window.muragebox.openExternal(url);
     return;
   }
   const opened = window.open("", "_blank");

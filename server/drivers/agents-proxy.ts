@@ -20,20 +20,20 @@
 // Speaks raw JSON-RPC 2.0 over stdio (no MCP SDK — house style, matches
 // computer-proxy / permission-proxy). All state comes from env, injected by
 // the harness when it builds the integration:
-//   OMB_HARNESS_URL  base URL of the harness (http://127.0.0.1:8799)
-//   OMB_BOT_ID       the calling bot's id (excluded from list_bots; sender)
-//   OMB_COMMS_TOKEN  shared secret for the localhost-only internal endpoints
-//   OMB_TURN_DEPTH   this turn's comms depth (the harness refuses recursion)
+//   MURAGE_HARNESS_URL  base URL of the harness (http://127.0.0.1:8799)
+//   MURAGE_BOT_ID       the calling bot's id (excluded from list_bots; sender)
+//   MURAGE_COMMS_TOKEN  shared secret for the localhost-only internal endpoints
+//   MURAGE_TURN_DEPTH   this turn's comms depth (the harness refuses recursion)
 import readline from "node:readline";
 
 import { CREDENTIAL_TARGETS, isCredentialTargetId } from "../../shared/credential-request.ts";
 
-const HARNESS = process.env.OMB_HARNESS_URL ?? "http://127.0.0.1:8799";
-const BOT_ID = process.env.OMB_BOT_ID ?? "";
-const THREAD_ID = process.env.OMB_THREAD_ID ?? "";
-const TOKEN = process.env.OMB_COMMS_TOKEN ?? "";
-const DEPTH = Number(process.env.OMB_TURN_DEPTH ?? "0") || 0;
-const SKILL_AUTHORING_ENABLED = process.env.OMB_SKILL_AUTHORING_ENABLED === "1";
+const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
+const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
+const THREAD_ID = process.env.MURAGE_THREAD_ID ?? "";
+const TOKEN = process.env.MURAGE_COMMS_TOKEN ?? "";
+const DEPTH = Number(process.env.MURAGE_TURN_DEPTH ?? "0") || 0;
+const SKILL_AUTHORING_ENABLED = process.env.MURAGE_SKILL_AUTHORING_ENABLED === "1";
 const MAX_CREATED_PER_TURN = 4;
 let createdThisTurn = 0;
 const delegationTaskIdsThisTurn = new Set<string>();
@@ -173,7 +173,7 @@ const ROUTINE_FIELDS_SCHEMA = {
   run_on: {
     type: "string",
     enum: ["maus", "cloud"],
-    description: "Where the routine runs. Defaults to maus (this OpenMausBot setup).",
+    description: "Where the routine runs. Defaults to maus (this Murage setup).",
   },
   duration_minutes: {
     type: "integer",
@@ -187,7 +187,7 @@ const TOOLS = [
   {
     name: "list_bots",
     description:
-      "List the other bots (agents) in your OpenMausBot section, with their model and whether they're busy. Call this before delegate_bot or ask_bot to discover who's available. Use delegate_bot for assignments; use ask_bot only for a short consultation needed inline.",
+      "List the other bots (agents) in your Murage section, with their model and whether they're busy. Call this before delegate_bot or ask_bot to discover who's available. Use delegate_bot for assignments; use ask_bot only for a short consultation needed inline.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -259,7 +259,7 @@ const TOOLS = [
   {
     name: "request_credential",
     description:
-      "Ask the user for a supported API key through OpenMausBot's secure credential card. Use this instead of asking them to paste a secret into chat. The secret is saved by the desktop app and is never returned to you. After calling this tool, end the turn; OpenMausBot resumes the task after the user saves or declines.",
+      "Ask the user for a supported API key through Murage's secure credential card. Use this instead of asking them to paste a secret into chat. The secret is saved by the desktop app and is never returned to you. After calling this tool, end the turn; Murage resumes the task after the user saves or declines.",
     inputSchema: {
       type: "object",
       properties: {
@@ -563,7 +563,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       return { text: `${r.label ?? CREDENTIAL_TARGETS[credentialId].label} is already configured. Continue the task.` };
     }
     return {
-      text: `A secure ${r.label ?? CREDENTIAL_TARGETS[credentialId].label} card is now visible to the user. End this turn; OpenMausBot will resume the task after they save or decline. Never ask them to paste the key into chat.`,
+      text: `A secure ${r.label ?? CREDENTIAL_TARGETS[credentialId].label} card is now visible to the user. End this turn; Murage will resume the task after they save or decline. Never ask them to paste the key into chat.`,
     };
   }
   if (name === "list_routines") {

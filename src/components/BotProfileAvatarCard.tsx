@@ -83,8 +83,8 @@ export function BotProfileAvatarCard({
     setSavingKey(true);
     setError(null);
     try {
-      const status: ConfigStatus = window.ogb?.setCredential
-        ? await window.ogb.setCredential("openaiImageApiKey", key)
+      const status: ConfigStatus = window.muragebox?.setCredential
+        ? await window.muragebox.setCredential("openaiImageApiKey", key)
         : await api("/api/config", {
             method: "PUT",
             body: JSON.stringify({ imageGen: { key } }),

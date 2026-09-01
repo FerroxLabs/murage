@@ -4,7 +4,7 @@
 // asset is verified before extraction and the executable is verified again on
 // every reuse.
 // Nothing is installed globally and cloudflared's own updater stays disabled;
-// OpenMausBot updates this dependency with an ordinary reviewed app release.
+// Murage updates this dependency with an ordinary reviewed app release.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -198,7 +198,7 @@ function extractionFailure(result) {
 }
 
 async function releaseBytes(asset) {
-  const cacheDirectory = process.env.OMB_CLOUDFLARED_ARCHIVE_DIR;
+  const cacheDirectory = process.env.MURAGE_CLOUDFLARED_ARCHIVE_DIR;
   const cached = cacheDirectory ? join(cacheDirectory, asset.name) : "";
   if (cached && existsSync(cached)) return readFileSync(cached);
 
