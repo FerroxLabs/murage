@@ -65,6 +65,42 @@ export function singleLine(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+/** The pack writes most descriptions as a YAML block scalar:
+ *
+ *     description: |
+ *       Designs an A/B test from scratch...
+ *
+ * The body used to be copied out byte for byte, so every emitted SKILL.md kept
+ * that shape and only manifest.json got `singleLine`. server/skills.ts reads
+ * block scalars now, but a catalog whose frontmatter is one safely-quoted line
+ * is readable by every other consumer too — and by anyone diffing the tree.
+ * Only the description line changes; the rest of the file is untouched, and a
+ * second pass finds no block header, so re-runs are stable. */
+export function normalizeFrontmatterDescription(body) {
+  // Unanchored to the file start would let a markdown `---` rule masquerade as
+  // frontmatter, so a body that does not open with one is left alone.
+  const match = body.match(/^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/);
+  if (!match) return body;
+  const eol = match[1].endsWith("\r\n") ? "\r\n" : "\n";
+  const lines = match[2].split(/\r?\n/);
+  const start = lines.findIndex((line) => /^description:[ \t]*[|>][-+]?\d*[-+]?[ \t]*$/.test(line));
+  if (start < 0) return body;
+  // The block runs to the next line that starts in column 0.
+  let end = start + 1;
+  while (end < lines.length && !(lines[end].trim() && !/^[ \t]/.test(lines[end]))) end += 1;
+  const text = singleLine(lines.slice(start + 1, end).join(" "));
+  if (!text) return body;
+  // JSON string syntax is a valid YAML double-quoted scalar.
+  const frontmatter = [...lines.slice(0, start), `description: ${JSON.stringify(text)}`, ...lines.slice(end)];
+  return (
+    body.slice(0, match.index) +
+    match[1] +
+    frontmatter.join(eol) +
+    match[3] +
+    body.slice(match.index + match[0].length)
+  );
+}
+
 /** "executive-communicator" reads as a slug in a picker, so title-case it.
  * Words that already carry capitals are left alone. */
 export function humanName(name) {
@@ -137,6 +173,19 @@ function prepareOutDir(out, force, dryRun) {
   if (!existing.length) return;
   if (!existsSync(join(out, MARKER)) && !force) {
     throw new Error(`${out} is not empty and was not written by this script — pass --force to replace it`);
+  }
+  // A previous run's marker is not a licence to delete what a later hand
+  // added: the tree is replaced wholesale, so a directory count above what the
+  // marker recorded means someone else's skills are in here too.
+  if (!force && existsSync(join(out, MARKER))) {
+    const recorded = JSON.parse(readFileSync(join(out, MARKER), "utf8"))?.written;
+    const directories = existing.filter((name) => !name.startsWith(".")).length;
+    if (Number.isInteger(recorded) && directories > recorded) {
+      throw new Error(
+        `${out} holds ${directories} skill directories, ${directories - recorded} more than the last ` +
+          `import wrote (${recorded}). Move the additions aside or pass --force to delete them.`,
+      );
+    }
   }
   if (!dryRun) {
     rmSync(out, { recursive: true, force: true });
@@ -215,8 +264,9 @@ function main() {
       const directory = join(out, id);
       mkdirSync(directory, { recursive: true });
       writeFileSync(join(directory, "manifest.json"), `${JSON.stringify(buildManifest(entry, id), null, 2)}\n`);
-      // Verbatim: the body is the skill, frontmatter included.
-      writeFileSync(join(directory, "SKILL.md"), body);
+      // The body is the skill; only the frontmatter description is reshaped
+      // into one quoted line (see normalizeFrontmatterDescription).
+      writeFileSync(join(directory, "SKILL.md"), normalizeFrontmatterDescription(body));
     }
     written += 1;
   }
