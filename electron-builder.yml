@@ -64,6 +64,12 @@ extraResources:
     to: ui
   - from: dist-server
     to: server
+  # The shipped skill catalog installSkillFromLibrary reads every time someone
+  # hires a bot or a team. 67 MB / 4,411 files verbatim, ~20 MB compressed in
+  # each artifact. Without it MURAGE_SKILL_LIBRARY points at an absent
+  # directory and every hire installs zero skills.
+  - from: skills-library
+    to: skills-library
   # the companion sidecar — a separate process because it is the only part
   # of the app that listens off this machine, and it stays off until asked
   - from: dist-companion
