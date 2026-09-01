@@ -315,6 +315,9 @@ export interface ConfigStatus {
   tts?: { configured: boolean; ready: boolean; voice: string; provider?: "elevenlabs" | "system" };
   /** Shared write-only credential for on-demand GPT Image avatars. */
   imageGen?: { configured: boolean };
+  /** Flux Router key. Presence only — the key itself is never sent to the
+   * renderer. Write it with PATCH /api/config `{ flux: { apiKey } }`. */
+  flux?: { configured: boolean };
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
   /** UI language override; "" (or absent) follows the system language. */
@@ -335,7 +338,7 @@ export interface BrowserProfile {
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile" | "language" | "features" | "browserProfiles"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "profile" | "language" | "features" | "browserProfiles"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -349,6 +352,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     opencodeGo: frame.opencodeGo,
     tts: frame.tts,
     imageGen: frame.imageGen,
+    flux: frame.flux,
     profile: frame.profile,
     language: frame.language,
     features: frame.features,
