@@ -37,7 +37,7 @@ const key = requiredText(64).regex(/^[a-z0-9][a-z0-9_-]*$/, {
 });
 
 const packageSchema = z.object({
-  format: z.literal(BOT_PACKAGE_FORMAT, { error: "This is not an Murage package" }),
+  format: z.literal(BOT_PACKAGE_FORMAT, { error: "This is not a Murage package" }),
   version: z.literal(BOT_PACKAGE_VERSION, { error: "Package version is not supported" }),
   package: z.object({
     id: requiredText(80).regex(/^[a-z0-9][a-z0-9-]*$/, { message: "must be a lowercase slug" }),
@@ -72,6 +72,7 @@ const packageSchema = z.object({
         mascotExpression: optionalText(80),
       }),
       playbooks: z.array(key).max(40).optional(),
+      skills: z.array(key).max(200).optional(),
     })).min(1).max(200),
     chiefOfStaff: key.optional(),
     rooms: z.array(z.object({
