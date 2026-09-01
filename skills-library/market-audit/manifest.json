@@ -1,0 +1,16 @@
+{
+  "id": "market-audit",
+  "name": "Marketing audit",
+  "version": "1.0.0",
+  "description": "Run a five-dimension marketing audit on a business URL — content and messaging, conversion, SEO, competitive position, and brand and strategy — scored in parallel and aggregated into a weighted overall score with a prioritised action plan. Use when the user wants to know what is wrong with their marketing as a whole. Do NOT use for a single page's conversion teardown (use market-landing), for brand identity and visual system work (use mira-brand-foundation) or for a funnel-stage drop-off diagnosis (use marketing-funnel-diagnosis).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "marketing",
+    "audit",
+    "scoring",
+    "cro",
+    "seo",
+    "smb"
+  ],
+  "requiredCapabilities": []
+}

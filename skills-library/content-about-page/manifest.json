@@ -1,0 +1,15 @@
+{
+  "id": "content-about-page",
+  "name": "About page",
+  "version": "1.0.0",
+  "description": "Build a long-form About page that converts — not a bio in paragraphs, but a direct-response asset that opens on the reader's problem, tells the story of discovery, proves the path with results, and closes on an explicit next step, delivered as a section brief plus paste-ready copy. Use when an About page reads like a résumé or a career history, or when building one from scratch for a founder, coach or consultant. Do NOT use for a short bio or speaker blurb, for a sales page (use copywriter), or for the underlying positioning work (use personal-brand-strategy).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "content",
+    "personal-brand",
+    "about-page",
+    "storytelling",
+    "direct-response"
+  ],
+  "requiredCapabilities": []
+}

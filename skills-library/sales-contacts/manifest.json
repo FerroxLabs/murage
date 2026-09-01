@@ -1,0 +1,15 @@
+{
+  "id": "sales-contacts",
+  "name": "Buying committee map",
+  "version": "1.0.0",
+  "description": "Map the buying committee at a target company from public sources only, classify each person by buying role (economic buyer, champion, technical evaluator, end user, blocker, coach), find a genuine personalisation anchor per contact with no invented mutual connections, and propose a multi-threading sequence. Use when a deal is single-threaded and needs more of the account involved. Do NOT use for scoring whether the opportunity is real (use sales-qualify), for the full account workup (use sales-prospect) or for handling pushback once conversations start (use sales-objection-handling).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "contacts",
+    "buying-committee",
+    "multi-threading",
+    "smb"
+  ],
+  "requiredCapabilities": []
+}

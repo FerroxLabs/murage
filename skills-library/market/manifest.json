@@ -1,0 +1,16 @@
+{
+  "id": "market",
+  "name": "Marketing router",
+  "version": "1.0.0",
+  "description": "Entry point for marketing work against a URL, product or topic: clears the URL-safety and untrusted-content gates that any page-fetching marketing task needs, runs a sixty-second homepage snapshot inline, then routes to the right specialist skill for the depth the request actually needs. Use when a marketing request arrives broadly — 'look at my site', 'why isn't this converting', 'what should we be doing' — and the right instrument is not yet obvious. Do NOT use when the job is already named: go straight to market-audit for a full five-dimension site audit, market-landing for one page's conversion teardown, marketing-funnel-diagnosis for stage-by-stage drop-off, or mira-brand-foundation for identity work. Not for sales prospecting (use sales-prospect) or engineering work.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "orchestrator",
+    "marketing",
+    "audit",
+    "cro",
+    "routing",
+    "smb"
+  ],
+  "requiredCapabilities": []
+}

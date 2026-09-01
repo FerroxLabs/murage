@@ -1,0 +1,15 @@
+{
+  "id": "sales-icp",
+  "name": "Ideal customer profile",
+  "version": "1.0.0",
+  "description": "Build an ideal customer profile across firmographic, technographic, behavioural, pain-point, budget and channel dimensions, plus the negative ICP, a 100-point scoring rubric, buyer personas, a prospecting playbook and a first-outreach draft that inherits the jurisdiction gates. Use when the user is selling to everyone and closing no one, or when a new segment needs defining. Do NOT use for evaluating one named account (use sales-qualify or sales-prospect) or for the pricing and packaging that follows from the segment (use forge's pricing work).",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "sales",
+    "icp",
+    "personas",
+    "targeting",
+    "smb"
+  ],
+  "requiredCapabilities": []
+}

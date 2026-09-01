@@ -1,0 +1,15 @@
+{
+  "id": "finance-receivables",
+  "name": "Receivables and collections",
+  "version": "1.0.0",
+  "description": "Age accounts receivable, calculate DSO, and generate an escalating collection sequence for overdue invoices with FDCPA and state-UDAP-aware language, intent-gated escalation, and statute-of-limitations-aware bad-debt write-off guidance. Use when invoices are past due and someone has to write the emails. Do NOT use for money the business owes out (use finance-payroll-prep for payroll liabilities or finance-sales-tax for tax liabilities) or for whether the period was profitable (use finance-pl). Templates only — a demand that escalates to litigation belongs with an attorney.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "receivables",
+    "collections",
+    "dso",
+    "finance",
+    "smb"
+  ],
+  "requiredCapabilities": []
+}
