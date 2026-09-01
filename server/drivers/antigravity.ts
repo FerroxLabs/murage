@@ -22,7 +22,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 
-import { DATA_DIR, stripWorkspaceCredentialEnv } from "../config.ts";
+import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
@@ -86,6 +86,10 @@ function antigravityEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Proce
   // desktop shell. Antigravity uses its own login, so none belong in any of
   // its turn, snapshot, or helper children.
   stripWorkspaceCredentialEnv(env);
+  // agy uses its own login and reads none of these today, but this is the
+  // fifth `...process.env` spread reaching a live CLI: keep the whole set of
+  // spawn paths uniform rather than relying on that staying true.
+  stripRoutingEnv(env);
   return env;
 }
 

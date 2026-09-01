@@ -279,6 +279,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.BOX_TOKEN;
     delete process.env.OPENCODE_API_KEY;
     delete process.env.MURAGE_TTS_KEY;
+    // setup.ts clears this once per file; the Flux routing tests set it per
+    // test, so it must not leak into the catalog assertions that follow.
+    delete process.env.FLUX_API_KEY;
     delete process.env.MURAGE_CLAUDE_SESSION_IDLE_MS;
     delete process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS;
     recorder?.stop();
@@ -360,6 +363,163 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.XAI_API_KEY).toBeUndefined();
     expect(seen.env.BOX_TOKEN).toBeUndefined();
     expect(seen.env.MURAGE_TTS_KEY).toBeUndefined();
+  });
+
+  it("strips ambient routing switches left in the shell by a provider switcher", async () => {
+    // cc-switch and friends export these into the user's shell; the desktop
+    // shell inherits it and every spawn path spreads `...process.env`. Left
+    // alone they redirect the whole turn off the CLI's own login — and
+    // ANTHROPIC_AUTH_TOKEN is the same Bearer identity as the API key the
+    // driver already deletes, so that guard is worthless without this.
+    const ambient = {
+      ANTHROPIC_BASE_URL: "https://leftover.example",
+      ANTHROPIC_AUTH_TOKEN: "sk-leftover-should-not-route",
+      ANTHROPIC_MODEL: "leftover-model",
+      OPENAI_BASE_URL: "https://leftover.example/v1",
+      OPENAI_MODEL: "leftover-openai-model",
+    } as const;
+    const saved = Object.fromEntries(Object.keys(ambient).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, ambient);
+    try {
+      await create();
+      const dump = join(scratch, "dump-routing.json");
+      process.env.FAKE_CLAUDE_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-routing", text: "hi" });
+      await recorder.until((e) => e.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      for (const name of Object.keys(ambient)) expect(seen.env[name]).toBeUndefined();
+      // and the leftover model must not reach argv either
+      expect(JSON.stringify(seen.argv)).not.toContain("leftover-model");
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it("keeps a deliberate local inject after the ambient routing strip", async () => {
+    // The strip runs BEFORE applyClaudeInject, so the harness's own routing
+    // still lands. Getting that order wrong breaks every local-host turn.
+    const savedBase = process.env.ANTHROPIC_BASE_URL;
+    process.env.ANTHROPIC_BASE_URL = "https://leftover.example";
+    try {
+      await create(undefined, { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" });
+      const dump = join(scratch, "dump-routing-inject.json");
+      process.env.FAKE_CLAUDE_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-routing-inject", text: "hi", model: "unsloth::local-model" });
+      await recorder.until((e) => e.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect(seen.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8888");
+      expect(seen.env.ANTHROPIC_AUTH_TOKEN).toBe("unsloth-secret");
+      expect(seen.env.ANTHROPIC_MODEL).toBe("local-model");
+    } finally {
+      if (savedBase === undefined) delete process.env.ANTHROPIC_BASE_URL;
+      else process.env.ANTHROPIC_BASE_URL = savedBase;
+    }
+  });
+
+  // ---- Flux Router, Anthropic Messages surface -----------------------------
+  // The wire target these assertions encode is verified live:
+  // `POST https://api.fluxrouter.ai/anthropic/v1/messages` → 200
+  // (docs/plans/flux-router-spec.md §1.1), and Claude Code appends
+  // `/v1/messages` to ANTHROPIC_BASE_URL — so the base must carry `/anthropic`.
+  // Shape only below; never a live credential.
+  const FLUX_TEST_KEY = "sk-flux-Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+  it("routes a flux-* turn at the Flux Anthropic Messages surface", async () => {
+    process.env.FLUX_API_KEY = FLUX_TEST_KEY;
+    await create();
+    const dump = join(scratch, "dump-flux.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model: "flux-auto" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.env.ANTHROPIC_BASE_URL).toBe("https://api.fluxrouter.ai/anthropic");
+    // both headers: the gateway accepts x-api-key and Bearer, and setting both
+    // is what stops the `delete env.ANTHROPIC_API_KEY` guard half-routing it
+    expect(seen.env.ANTHROPIC_AUTH_TOKEN).toBe(FLUX_TEST_KEY);
+    expect(seen.env.ANTHROPIC_API_KEY).toBe(FLUX_TEST_KEY);
+    expect(seen.env.ANTHROPIC_MODEL).toBe("flux-auto");
+    // argv must agree with the env, or the reuse cache can hand this turn to a
+    // live natively-routed process (spec §4.1, claude.ts turn-site copy)
+    expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("flux-auto");
+    // the raw workspace credential itself never reaches the child: the value
+    // arrives only under the ANTHROPIC_* names the CLI reads
+    expect(seen.env.FLUX_API_KEY).toBeUndefined();
+  });
+
+  it("keeps the Flux route after the ambient routing strip", async () => {
+    // strip-then-inject: a provider switcher's leftovers are removed first and
+    // Flux is written after, so the leftover never wins and never survives.
+    const ambient = {
+      ANTHROPIC_BASE_URL: "https://leftover.example",
+      ANTHROPIC_AUTH_TOKEN: "sk-leftover-should-not-route",
+      ANTHROPIC_MODEL: "leftover-model",
+    } as const;
+    const saved = Object.fromEntries(Object.keys(ambient).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, ambient);
+    process.env.FLUX_API_KEY = FLUX_TEST_KEY;
+    try {
+      await create();
+      const dump = join(scratch, "dump-flux-ambient.json");
+      process.env.FAKE_CLAUDE_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-flux-ambient", text: "hi", model: "flux-reasoning" });
+      await recorder.until((e) => e.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect(seen.env.ANTHROPIC_BASE_URL).toBe("https://api.fluxrouter.ai/anthropic");
+      expect(seen.env.ANTHROPIC_AUTH_TOKEN).toBe(FLUX_TEST_KEY);
+      expect(seen.env.ANTHROPIC_MODEL).toBe("flux-reasoning");
+      expect(JSON.stringify(seen.argv)).not.toContain("leftover-model");
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it("degrades a flux-* turn to the CLI's own login when no key is configured", async () => {
+    // A half-written env would 401 and read as a bad Claude login. No key at
+    // all must leave the turn exactly as it was before Flux existed.
+    delete process.env.FLUX_API_KEY;
+    await create();
+    const dump = join(scratch, "dump-flux-nokey.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-flux-nokey", text: "hi", model: "flux-auto" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(seen.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(seen.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(seen.env.ANTHROPIC_MODEL).toBeUndefined();
+  });
+
+  it("leaves a native Claude turn untouched while a Flux key is present", async () => {
+    // The key alone must not route anything: the model id is the switch.
+    process.env.FLUX_API_KEY = FLUX_TEST_KEY;
+    await create();
+    const dump = join(scratch, "dump-flux-native.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+
+    await instance.adapter.sendTurn({ threadId: "t-flux-native", text: "hi", model: "claude-sonnet-5" });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(seen.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(seen.argv[seen.argv.indexOf("--model") + 1]).toBe("claude-sonnet-5");
+    expect(JSON.stringify(seen.env)).not.toContain(FLUX_TEST_KEY);
   });
 
   it("launches with a Windows-sized system prompt without putting it on argv", async () => {

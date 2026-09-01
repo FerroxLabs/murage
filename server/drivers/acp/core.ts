@@ -15,7 +15,7 @@
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { homedir } from "node:os";
 
-import { PROVIDER_CREDENTIAL_ENV, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
+import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
 
@@ -204,6 +204,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         for (const key of [...PROVIDER_CREDENTIAL_ENV, ...WORKSPACE_CREDENTIAL_ENV]) {
           if (!allowedCredentials.has(key)) delete env[key];
         }
+        // Routing switches are a third list, stripped unconditionally: a
+        // `credentialEnv` allowlist grants a driver a key, never the right to
+        // be pointed at someone else's endpoint, so this must not be folded
+        // into the loop above. Before transformEnv so a driver that sets its
+        // own routing (kimi) still wins.
+        stripRoutingEnv(env);
         support.transformEnv?.(env, config);
         return env;
       };

@@ -316,6 +316,37 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.env.MURAGE_TTS_KEY).toBeUndefined();
   });
 
+  it("strips ambient routing switches, which no credentialEnv allowlist can grant", async () => {
+    // The credential loop above is filtered by `support.credentialEnv`; a
+    // routing switch must never be grantable that way, so it is stripped
+    // unconditionally — a driver allowed a key still cannot be redirected.
+    const ambient = {
+      OPENAI_BASE_URL: "https://leftover.example/v1",
+      OPENAI_MODEL: "leftover-openai-model",
+      ANTHROPIC_BASE_URL: "https://leftover.example",
+      ANTHROPIC_AUTH_TOKEN: "sk-leftover-should-not-route",
+      ANTHROPIC_MODEL: "leftover-model",
+    } as const;
+    const saved = Object.fromEntries(Object.keys(ambient).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, ambient);
+    try {
+      await create();
+      const dump = join(scratch, "dump-routing.json");
+      process.env.FAKE_ACP_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-routing", text: "go" });
+      await recorder.until((e) => e.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      for (const name of Object.keys(ambient)) expect(seen.env[name]).toBeUndefined();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   // ACP session/new accepts stdio MCP entries, so connected apps use the
   // same harness-owned bridge as Claude and Codex.
   it("mounts connected apps as a stdio MCP server", async () => {

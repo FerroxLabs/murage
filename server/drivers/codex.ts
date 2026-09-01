@@ -11,7 +11,7 @@
 // and falls back to a fresh thread/start.
 import { homedir } from "node:os";
 
-import { stripWorkspaceCredentialEnv } from "../config.ts";
+import { stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
@@ -28,6 +28,9 @@ import type {
 import { newEventId, newId } from "../contracts.ts";
 import { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 import { codexLocalProviderArgs } from "./local-inject.ts";
+import { fluxKey } from "../flux-config.ts";
+import { applyFluxSurface } from "../flux-routing.ts";
+import { fluxIdIsRoutable } from "../flux-surface.ts";
 import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
@@ -110,6 +113,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // The harness process may hold workspace credentials (xai/box/voice
       // keys, env-injected at boot); none of them are this CLI's to see.
       stripWorkspaceCredentialEnv(env);
+      // An ambient OPENAI_BASE_URL/OPENAI_MODEL from a provider switcher in
+      // the user's shell would point the CLI's own ChatGPT login at a third
+      // party. Runs before codexLocalProviderArgs, which re-sets its own.
+      stripRoutingEnv(env);
       return env;
     };
     const catalogEnv = childEnv();
@@ -155,7 +162,21 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
       const launchAttempt = async (attempt: number): Promise<void> => {
         const env = childEnv();
-        const appServerArgs = ["app-server", ...codexLocalProviderArgs(env, turn.model)];
+        // Flux Router's Responses surface. This slot is the only correct one:
+        // childEnv() has just deleted FLUX_API_KEY (WORKSPACE_CREDENTIAL_ENV,
+        // config.ts:549) and the ambient routing vars, so the key has to be
+        // re-read from config/process.env by fluxKey() and re-injected under a
+        // harness-owned name AFTER the strip — and the provider table only ever
+        // exists as argv, which must be complete before spawnCli below.
+        //
+        // Gated on the codex-qualified id shape (`flux::flux-auto`). A bare
+        // `flux-auto` decodes to OFFICIAL_CODEX_PROVIDER (codex-catalog.ts:57)
+        // and is refused at spawn (index.ts:2508); it must not half-apply a
+        // provider table here that thread/start would never select.
+        const flux = fluxIdIsRoutable(turn.model, DRIVER_KIND)
+          ? applyFluxSurface(DRIVER_KIND, env, turn.model, fluxKey())
+          : null;
+        const appServerArgs = ["app-server", ...codexLocalProviderArgs(env, turn.model), ...(flux?.args ?? [])];
         if (turn.integrations?.composio) {
           mountMcpServer(appServerArgs, env, "murage_connectors", turn.integrations.composio);
         }

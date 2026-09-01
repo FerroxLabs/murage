@@ -17,6 +17,11 @@ process.env.USERPROFILE = home;
 delete process.env.MURAGE_DATA_DIR;
 // Do not let a developer's Hermes global config path leak into per-test homes.
 delete process.env.HERMES_HOME;
+// A developer with FLUX_API_KEY exported would otherwise get the Flux Router
+// picker rows in every gated engine's catalog — the gate is doing its job, but
+// it makes the model-catalog assertions depend on that developer's shell.
+// server/flux-surface.test.ts sets it deliberately, per test.
+delete process.env.FLUX_API_KEY;
 // The companion keeps its paired devices in its own directory, and resolves
 // it from homedir() the same way — so the redirect above already covers it.
 // Named explicitly all the same: the device tests delete this directory

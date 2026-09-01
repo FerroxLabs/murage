@@ -76,6 +76,42 @@ describe("bot packages", () => {
     });
   });
 
+  it("carries the library skill ids an agent uses, through parse and Markdown", () => {
+    const withSkills = {
+      ...validPackage,
+      package: {
+        ...validPackage.package,
+        agents: [{ ...validPackage.package.agents[0], skills: ["chart-analysis", "morning-prep"] }],
+      },
+    };
+    const parsed = parseBotPackage(withSkills);
+    expect(parsed.package.agents[0]!.skills).toEqual(["chart-analysis", "morning-prep"]);
+    // Library ids resolve at install time against the installed library, not
+    // against the package's own playbooks, so they are deliberately not
+    // cross-referenced here the way agent.playbooks is.
+    expect(() => parseBotPackage({
+      ...validPackage,
+      package: { ...validPackage.package, agents: [{ ...validPackage.package.agents[0], skills: ["not-installed-yet"] }] },
+    })).not.toThrow();
+    expect(parseBotPackage(renderBotPackageMarkdown(parsed)).package.agents[0]!.skills)
+      .toEqual(["chart-analysis", "morning-prep"]);
+    // an agent without the field stays valid — this is additive
+    expect(parseBotPackage(validPackage).package.agents[0]!.skills).toBeUndefined();
+  });
+
+  it("holds skill ids to the key shape and the 200 cap", () => {
+    const withSkills = (skills: string[]) => ({
+      ...validPackage,
+      package: { ...validPackage.package, agents: [{ ...validPackage.package.agents[0], skills }] },
+    });
+    for (const bad of ["Chart-Analysis", "chart analysis", "-lead", "chart/analysis", ""]) {
+      expect(() => parseBotPackage(withSkills([bad])), `skill ${JSON.stringify(bad)}`).toThrow();
+    }
+    const ids = (count: number) => Array.from({ length: count }, (_, index) => `skill-${index}`);
+    expect(parseBotPackage(withSkills(ids(200))).package.agents[0]!.skills).toHaveLength(200);
+    expect(() => parseBotPackage(withSkills(ids(201)))).toThrow();
+  });
+
   it("rejects dangling agent, room, playbook, chief, and routine references", () => {
     expect(() => parseBotPackage({
       ...validPackage,

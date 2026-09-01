@@ -15,7 +15,7 @@ import {
   type GroupDefaultResponder,
   type Message,
 } from "@/state/store";
-import { EmberAvatar } from "./Avatar";
+import { BotAvatar, EmberAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { normalizeState } from "@/lib/mascot";
@@ -1014,7 +1014,7 @@ export function GroupView({ group }: { group: Group }) {
         group.busyBotId === b.id && "ring-2 ring-accent/50 ring-offset-1 ring-offset-app",
       )}
     >
-      <EmberAvatar color={b.color} state={normalizeState(b.mascotExpression) ?? "happy"} size={24} animated={false} />
+      <BotAvatar bot={b} state={normalizeState(b.mascotExpression) ?? "happy"} size={24} animated={false} />
       {group.busyBotId === b.id && (
         <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full border border-app bg-accent" />
       )}

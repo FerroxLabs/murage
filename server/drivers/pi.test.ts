@@ -373,6 +373,43 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(JSON.stringify(rows)).not.toContain("openai-secret-value");
   });
 
+  it("scrubs ambient routing switches from every pi child env", async () => {
+    // pi is OpenAI-compatible: a leftover OPENAI_BASE_URL from a provider
+    // switcher in the user's shell would redirect every turn off pi's own
+    // settings. Planted on the harness process — the leak path is
+    // `...process.env`, not just input.environment.
+    const dir = mkdtempSync(join(tmpdir(), "murage-pi-routing-"));
+    const dump = join(dir, "dump.jsonl");
+    const ambient = {
+      OPENAI_BASE_URL: "https://leftover.example/v1",
+      OPENAI_MODEL: "leftover-openai-model",
+      ANTHROPIC_BASE_URL: "https://leftover.example",
+      ANTHROPIC_AUTH_TOKEN: "sk-leftover-should-not-route",
+      ANTHROPIC_MODEL: "leftover-model",
+    } as const;
+    const saved = Object.fromEntries(Object.keys(ambient).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, ambient);
+    try {
+      await create(undefined, { FAKE_PI_DUMP: dump });
+      await instance.dispose();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+
+    const rows = readFileSync(dump, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { envConfigured: string[] });
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.envConfigured).toContain("PATH");
+      for (const name of Object.keys(ambient)) expect(row.envConfigured).not.toContain(name);
+    }
+  });
+
   it("mounts integrations as stdio MCP servers and loads the pi-mcp-extension", async () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-pi-mcp-dump-"));
     const dump = join(dir, "dump.jsonl");

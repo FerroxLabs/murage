@@ -129,6 +129,36 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(threadStart.params).toMatchObject({ model: "gpt-5.6-sol", modelProvider: "openai" });
   });
 
+  it("strips ambient routing switches from the codex child env", async () => {
+    // An OPENAI_BASE_URL left in the shell by a provider switcher would point
+    // the CLI's own ChatGPT login at a third party, silently, every turn.
+    const ambient = {
+      OPENAI_BASE_URL: "https://leftover.example/v1",
+      OPENAI_MODEL: "leftover-openai-model",
+      ANTHROPIC_BASE_URL: "https://leftover.example",
+      ANTHROPIC_AUTH_TOKEN: "sk-leftover-should-not-route",
+      ANTHROPIC_MODEL: "leftover-model",
+    } as const;
+    const saved = Object.fromEntries(Object.keys(ambient).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, ambient);
+    try {
+      await create();
+      const dump = join(scratch, "dump-routing.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-routing", text: "hi" });
+      await recorder.until((e) => e.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      for (const name of Object.keys(ambient)) expect(seen.env[name]).toBeUndefined();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   it("keeps the full command when a Windows interpreter prefix is long", async () => {
     await create({ mode: "windows-command" });
     await instance.adapter.sendTurn({ threadId: "t-windows-command", text: "read notes" });

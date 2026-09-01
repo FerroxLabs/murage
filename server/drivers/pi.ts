@@ -24,7 +24,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PROVIDER_CREDENTIAL_ENV, stripWorkspaceCredentialEnv } from "../config.ts";
+import { PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
 import { describeSpawnFailure, killCliTree, spawnCli } from "../procs.ts";
@@ -386,6 +386,9 @@ function piEnvironment(source: Record<string, string | undefined>): Record<strin
   // neither list.
   stripWorkspaceCredentialEnv(env);
   for (const key of PROVIDER_CREDENTIAL_ENV) delete env[key];
+  // pi is OpenAI-compatible and reads OPENAI_BASE_URL: an ambient one from a
+  // provider switcher would redirect every turn away from pi's own settings.
+  stripRoutingEnv(env);
   return env;
 }
 

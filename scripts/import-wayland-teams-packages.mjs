@@ -8,7 +8,7 @@
 // talk. A bot package carries rooms[] and routines[], and its import path
 // creates the group, sets the bulletin and rolls the whole thing back on
 // failure (server/index.ts:6403-6414).
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 const WT = "/Volumes/Mando/wayland/app/resources/builtin-extensions/waylandteams";
@@ -50,20 +50,37 @@ mkdirSync(join(OUT, "teams"), { recursive: true });
 const catalog = [];
 const skipped = [];
 const droppedRituals = [];
+const missingSkills = new Set();
+// The installed skill library is the source of truth for what an agent may cite.
+const LIB = "skills-library";
+const libraryIds = new Set(existsSync(LIB) ? readdirSync(LIB).filter((d) => existsSync(join(LIB, d, "SKILL.md"))) : []);
 
 for (const team of teams) {
   const members = (team.teammates ?? []).filter((k) => specialists.has(k));
   const missing = (team.teammates ?? []).filter((k) => !specialists.has(k));
   if (members.length === 0) { skipped.push({ id: team.id, missing }); continue; }
 
+  // Display as "Name (Role)". Wayland puts the character in the ID (smith,
+  // mira, beacon) and the ROLE in .name (Code, Brand, Channels), so using
+  // .name alone gave a roster of generic labels. Where the id IS the role
+  // word (research, copy, sales) the parenthetical would just repeat itself,
+  // so those keep the plain name.
   const agents = members.map((k, i) => {
     const s = specialists.get(k);
+    const character = k.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+    const sameWord = character.toLowerCase().replace(/\s+/g, "") === s.name.toLowerCase().replace(/\s+/g, "");
+    const display = sameWord ? s.name : `${character} (${s.name})`;
+    // Only cite skills that actually exist on disk — a dangling id fails at
+    // install time, and 32 of Wayland's references exist in neither pack.
+    const skills = (s.enabledSkills ?? []).filter((id) => libraryIds.has(id));
+    for (const id of (s.enabledSkills ?? [])) if (!libraryIds.has(id)) missingSkills.add(id);
     return {
       key: k,
-      name: s.name,
+      name: clamp(display, 100),
       title: s.name,
       description: clamp(s.description, 4000) || undefined,
       appearance: { color: colorFor(i) },
+      ...(skills.length ? { skills } : {}),
     };
   });
 
@@ -154,5 +171,7 @@ console.log(`packages written  ${catalog.length}`);
 console.log(`featured          ${catalog.filter((t) => t.featured).length}`);
 console.log(`skipped           ${skipped.length}`);
 for (const s of skipped) console.log(`  ${s.id}: no known members (${s.missing.join(", ")})`);
+console.log(`skills in library ${libraryIds.size}`);
+console.log(`skill refs dropped ${missingSkills.size} (exist in neither Wayland pack)`);
 console.log(`rituals dropped   ${droppedRituals.length} (schedule not expressible)`);
 for (const d of droppedRituals) console.log(`  ${d}`);

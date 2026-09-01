@@ -5,6 +5,7 @@
 // compatible — do not remove it); dispose tears an instance down without
 // touching its siblings.
 import { findCliCandidates } from "../env-path.ts";
+import { filterFluxRows } from "../flux-surface.ts";
 import type {
   AnyProviderDriver,
   InstanceConfigMap,
@@ -165,7 +166,11 @@ export class ProviderRegistry {
           driverKind: inst.driverKind,
           displayName: inst.displayName ?? inst.driverKind,
           snapshot,
-          models: inst.models,
+          // Backstop for the per-engine Flux gate: describe() is the one choke
+          // point every catalog crosses on its way to the UI, so a driver that
+          // forgets mergeFluxCatalog still cannot offer a Flux row on an engine
+          // with no Flux surface (or with no key configured).
+          models: filterFluxRows(inst.models, inst.driverKind),
           capabilities: {
             computerMcp: inst.adapter.capabilities.computerMcp === true,
             agentsMcp: inst.adapter.capabilities.agentsMcp === true,

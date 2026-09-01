@@ -47,7 +47,20 @@ if (process.env.FAKE_PI_DUMP) {
       process.env.FAKE_PI_DUMP,
       JSON.stringify({
         argv,
-        envConfigured: ["PATH", "HOME", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "BOX_TOKEN"].filter(
+        envConfigured: [
+          "PATH",
+          "HOME",
+          "ANTHROPIC_API_KEY",
+          "OPENAI_API_KEY",
+          "XAI_API_KEY",
+          "BOX_TOKEN",
+          // routing switches a leftover shell would use to redirect the turn
+          "ANTHROPIC_BASE_URL",
+          "ANTHROPIC_AUTH_TOKEN",
+          "ANTHROPIC_MODEL",
+          "OPENAI_BASE_URL",
+          "OPENAI_MODEL",
+        ].filter(
           (k) => process.env[k] !== undefined,
         ),
         mcpConfig,
