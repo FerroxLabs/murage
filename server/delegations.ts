@@ -19,7 +19,7 @@ import { getOrCreateChannel, mirrorExchange, type CommsBus } from "./comms-visib
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
 import { requestPeerApproval, type ApprovalBus } from "./peer-approval.ts";
-import { sectionKey, type BotRecord, type GroupRecord } from "./store.ts";
+import { canReach, type BotRecord, type GroupRecord } from "./store.ts";
 
 export interface DelegationItem {
   toBotId: string;
@@ -40,6 +40,11 @@ interface PendingDelegationItem extends DelegationItem {
   /** Stable acknowledgement key for crash-safe removal from the queue —
    * and the task id the delegating bot uses with check/wait_delegation. */
   id: string;
+  /** Who queued this handoff. A 1:1 source thread identifies its owner, so
+   * the drain used to recover the sender with botByThread alone — which is
+   * null for a ROOM thread, and the whole queue was then deleted with no
+   * receipt and no turn. Persisted so that survives a restart too. */
+  fromBotId?: string;
   /** Busy-target retries so far. The item stays queued (not canceled) while
    * the target is busy, and is retried when any of the target's turns
    * settles — up to MAX_BUSY_ATTEMPTS. */
@@ -189,6 +194,7 @@ export function _loadPending(): void {
           ...(typeof item.reason === "string" ? { reason: item.reason } : {}),
           depth: Math.max(0, Math.trunc(item.depth!)),
           attempts: Number.isFinite(item.attempts) ? Math.max(0, Math.trunc(item.attempts!)) : 0,
+          ...(typeof item.fromBotId === "string" && item.fromBotId ? { fromBotId: item.fromBotId } : {}),
         };
         if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
         if (item.waitingOnBusy === true) loaded.waitingOnBusy = true;
@@ -271,7 +277,7 @@ export function queueDelegation(
   // and fan out into as many real turns on the next settle.
   if (list.length >= MAX_QUEUED_PER_THREAD) return { result: "too_many" };
   const id = newId();
-  list.push({ ...item, id, attempts: 0 });
+  list.push({ ...item, id, attempts: 0, fromBotId: from.id });
   pendingDelegations.set(sourceThreadId, list);
   savePending();
   const label = `Delegated to @${target.name}${item.reason ? `: ${item.reason}` : ""}`;
@@ -300,6 +306,7 @@ export function drainDelegations(
     sourceThreadId: string,
     channel: GroupRecord | undefined,
     taskId: string,
+    fromBotId: string,
   ) => void | Promise<void>,
 ): void {
   if (drainingThreads.has(threadId)) {
@@ -308,16 +315,33 @@ export function drainDelegations(
   }
   const list = pendingDelegations.get(threadId);
   if (!list?.length) return;
-  const from = bus.store.botByThread(threadId);
-  if (!from) {
+  // A room thread has many speakers and no owning bot, so botByThread alone
+  // resolved nothing and this function deleted the whole queue — a handoff
+  // launched from a room vanished with no turn and no receipt. The queueing
+  // bot names itself on the item; botByThread stays the fallback for queues
+  // written before that field existed.
+  const threadOwner = bus.store.botByThread(threadId);
+  const senderFor = (item: PendingDelegationItem): BotRecord | null =>
+    (item.fromBotId ? bus.store.bot(item.fromBotId) : null) ?? threadOwner;
+  const snapshot = [...list];
+  if (!snapshot.some((item) => senderFor(item))) {
     pendingDelegations.delete(threadId);
     savePending();
     return;
   }
-  const snapshot = [...list];
   drainingThreads.add(threadId);
   void (async () => {
     for (const item of snapshot) {
+      // A discard during an earlier item's approval already receipted this
+      // one; the snapshot is stale by that much.
+      if (!(pendingDelegations.get(threadId) ?? []).some((p) => p.id === item.id)) continue;
+      const from = senderFor(item);
+      if (!from) {
+        // The sender was deleted while this item waited. Nothing to run and
+        // nobody to tell; drop it rather than retrying forever.
+        acknowledgeDelegation(threadId, item.id);
+        continue;
+      }
       let outcome: "settled" | "requeued" = "settled";
       try {
         outcome = await processOne(bus, approvalBus, from, threadId, item, runTarget);
@@ -371,12 +395,36 @@ function acknowledgeDelegation(threadId: string, itemId: string): void {
   savePending();
 }
 
-/** Drop a thread's queued handoffs without running them, telling the user
- * they were dropped. Used when the queueing turn failed or was interrupted. */
-export function discardDelegations(bus: CommsBus, threadId: string): void {
-  const list = pendingDelegations.get(threadId);
-  if (!list?.length) return;
-  pendingDelegations.delete(threadId);
+/** Drop queued handoffs without running them, telling the user they were
+ * dropped. Used when the queueing turn failed or was interrupted.
+ *
+ * `fromBotId` scopes the discard to one sender, and on a room thread that is
+ * the only correct behaviour: a room queue holds items from every bot that
+ * has spoken there, so a thread-wide discard means Nia hitting Stop silently
+ * cancels the handoff Ember queued minutes ago, with a receipt blaming "the
+ * delegating turn did not finish" about a turn that finished fine. A bot's
+ * own thread has exactly one sender, so passing its id there is a no-op that
+ * keeps the two call sites honest about which turn they are cancelling.
+ * Omitting it keeps the old thread-wide behaviour for callers that mean it. */
+export function discardDelegations(bus: CommsBus, threadId: string, fromBotId?: string): void {
+  const all = pendingDelegations.get(threadId);
+  if (!all?.length) return;
+  const owns = (item: PendingDelegationItem) => {
+    // An item that has already outlived a turn — retried, or parked waiting
+    // for a busy target — cannot belong to the turn that just failed, so no
+    // interruption may drop it. This is what protects a room: Ember queues a
+    // handoff, Rex is busy, it parks; Nia speaks in the same room and hits
+    // Stop, and Ember's handoff is not collateral.
+    if (item.attempts > 0 || item.waitingOnBusy) return false;
+    // An item queued before `fromBotId` existed names nobody; on a
+    // single-sender thread it is still this sender's, so it is dropped.
+    return !fromBotId || !item.fromBotId || item.fromBotId === fromBotId;
+  };
+  const list = all.filter(owns);
+  if (!list.length) return;
+  const kept = all.filter((item) => !owns(item));
+  if (kept.length) pendingDelegations.set(threadId, kept);
+  else pendingDelegations.delete(threadId);
   savePending();
   for (const item of list) {
     recordDelegationReceipt({
@@ -388,8 +436,9 @@ export function discardDelegations(bus: CommsBus, threadId: string): void {
       result: "the delegating turn did not finish",
     });
   }
-  const from = bus.store.botByThread(threadId);
-  if (!from) return;
+  // The chip lands in the source conversation, which is a bot's own thread
+  // OR a room it spoke in — botByThread alone silenced the room case.
+  if (!bus.store.botByThread(threadId) && !bus.store.groupByThread(threadId)) return;
   bus.store.appendMessage(threadId, {
     role: "bot",
     kind: "activity",
@@ -410,6 +459,7 @@ async function processOne(
     sourceThreadId: string,
     channel: GroupRecord | undefined,
     taskId: string,
+    fromBotId: string,
   ) => void | Promise<void>,
 ): Promise<"settled" | "requeued"> {
   let sender = from;
@@ -430,7 +480,7 @@ async function processOne(
     });
     return "settled";
   }
-  if (dropIfSectionsChanged(bus, sender, target, sourceThreadId, item)) {
+  if (dropIfUnreachable(bus, sender, target, sourceThreadId, item)) {
     return "settled";
   }
   if (target.busy) {
@@ -494,10 +544,34 @@ async function processOne(
     // checked above is a stale snapshot now: re-read both bots and re-check
     // busy, or an allow can start a second turn on a bot that is mid-turn —
     // and mirror a "Messaged @X" chip for an exchange that never happens.
+    // Including whether this item still exists. The drain iterates a
+    // snapshot taken before the approval, so a discard that arrived while
+    // the card sat there has already written this item a "dropped" receipt;
+    // dispatching now would run a handoff the user was told was cancelled.
+    if (!(pendingDelegations.get(sourceThreadId) ?? []).some((p) => p.id === item.id)) {
+      return "settled";
+    }
     const current = bus.store.bot(item.toBotId);
     const currentSender = bus.store.bot(from.id);
-    if (!current || !currentSender || !bus.store.taskByThread(currentSender.id, sourceThreadId)) return "settled";
-    if (dropIfSectionsChanged(bus, currentSender, current, sourceThreadId, item)) {
+    if (!current || !currentSender || !sourceStillOwned(bus, currentSender.id, sourceThreadId)) {
+      // This used to `return "settled"` with no receipt at all: a handoff
+      // approved by the user then vanished, and check_delegation answered
+      // "unknown task id" forever. It is also the gate that a room-sourced
+      // handoff failed unconditionally, because taskByThread never matches
+      // a group thread.
+      recordDelegationReceipt({
+        id: item.id,
+        sourceThreadId,
+        toBotId: item.toBotId,
+        toBotName: current?.name ?? item.toBotId,
+        status: "dropped",
+        result: current && currentSender
+          ? "the source conversation is no longer available"
+          : "one of the bots no longer exists",
+      });
+      return "settled";
+    }
+    if (dropIfUnreachable(bus, currentSender, current, sourceThreadId, item)) {
       return "settled";
     }
     if (current.busy) {
@@ -535,22 +609,33 @@ async function processOne(
   mirrorExchange(bus, sender, target, item.message, channel, sourceThreadId);
   const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
   const prefixed = `[Delegated by @${sender.name}, another bot in this Murage workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
-  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id);
+  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id, sender.id);
   return "settled";
 }
 
-/** Section membership is an execution boundary, not just sidebar styling.
- * A queued handoff may wait through a turn, a busy target, or human approval,
- * so the permission granted when it was queued must be checked again at the
- * final dispatch edge. */
-function dropIfSectionsChanged(
+/** The source conversation still belongs to the sender: its own task thread,
+ * or a room it is still a member of. Mirrors index.ts's `connectorThread`;
+ * without the group arm a room-sourced handoff can never clear this check. */
+function sourceStillOwned(bus: CommsBus, botId: string, threadId: string): boolean {
+  if (bus.store.taskByThread(botId, threadId)) return true;
+  const group = bus.store.groupByThread(threadId);
+  return Boolean(group?.memberIds.includes(botId));
+}
+
+/** The roster is an execution boundary, not just sidebar styling. A queued
+ * handoff may wait through a turn, a busy target, or human approval, so the
+ * permission granted when it was queued must be checked again at the final
+ * dispatch edge. The chip text still says "sections" because that is what
+ * separates two ordinary bots; the only extra edges canReach adds are
+ * workspace-chief ⇄ section lead. */
+function dropIfUnreachable(
   bus: CommsBus,
   sender: BotRecord,
   target: BotRecord,
   sourceThreadId: string,
   item: PendingDelegationItem,
 ): boolean {
-  if (sectionKey(sender.section) === sectionKey(target.section)) return false;
+  if (canReach(sender, target)) return false;
   const result = `@${sender.name} and @${target.name} now belong to different sections`;
   recordDelegationReceipt({
     id: item.id,
