@@ -137,8 +137,15 @@ function verifyCompliance(licenses, label) {
   }
   const registryIds = new Set();
   for (const component of registry) {
+    // The CUA driver SBOM is produced by a downloaded upstream release, so it
+    // still carries the pre-fork namespace. The rebrand renamed this reader and
+    // left the producer alone, which is why this gate started failing. Accept
+    // either name: ours for when we build the driver, theirs for the artifact
+    // we actually ship today.
     const packageId = component.properties?.find(
-      (property) => property.name === "murage:cargo:package-id",
+      (property) =>
+        property.name === "murage:cargo:package-id" ||
+        property.name === "openmausbot:cargo:package-id",
     )?.value;
     if (typeof packageId !== "string" || !packageId.startsWith("registry+")) {
       fail(`${label} SBOM registry component has no exact Cargo package ID`);
