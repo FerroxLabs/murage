@@ -5,7 +5,7 @@
 //
 // Everything under ./src and ./isomorphic is vendored from Microsoft
 // Playwright (Apache-2.0, see LICENSE and UPSTREAM_COMMIT) unmodified. This
-// file is ours: it exposes the pieces the surface needs on `window.__ombBrowser`
+// file is ours: it exposes the pieces the surface needs on `window.__murageBrowser`
 // and keeps the ref → element table of the last snapshot so a click on
 // `e12` resolves to the element the model was shown.
 import { generateAriaTree, renderAriaTreeAsJSON, type AriaSnapshot } from "./src/ariaSnapshot";
@@ -210,7 +210,7 @@ function focusRef(ref: string): boolean {
 
 declare global {
   interface Window {
-    __ombBrowser?: {
+    __murageBrowser?: {
       version: number;
       snapshot: typeof snapshot;
       elementForRef: typeof elementForRef;
@@ -222,4 +222,4 @@ declare global {
   }
 }
 
-window.__ombBrowser = { version: VERSION, snapshot, elementForRef, validateRef, hitTestRef, boxForRef, focusRef };
+window.__murageBrowser = { version: VERSION, snapshot, elementForRef, validateRef, hitTestRef, boxForRef, focusRef };
