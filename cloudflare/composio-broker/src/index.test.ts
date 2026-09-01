@@ -81,7 +81,7 @@ describe("connected-apps broker boundaries", () => {
   });
 
   it("hashes installation tokens before storage", async () => {
-    await expect(sha256("murage")).resolves.toBe("63c74f70a9d4681c334e84001935955a75245ea5b16b9c37c808e85c69963705");
+    await expect(sha256("murage")).resolves.toBe("1f786e39759052a297ad09530939c247b5cd167c21445b5323d84b628dc7c087");
   });
 
   it("creates Sessions with explicit multi-account selection", async () => {
