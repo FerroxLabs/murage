@@ -64,7 +64,7 @@ export const EMBER_COLORS = {
   green: "#009957",
   blue: "#377FE6",
   red: "#D94B52",
-  orange: "#FD5609",
+  orange: "#FF6B35",
   purple: "#8057C8",
   cyan: "#0EA5C6",
   pink: "#D84F8B",
