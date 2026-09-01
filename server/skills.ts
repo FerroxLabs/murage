@@ -90,21 +90,144 @@ export interface ParsedSkill {
   body: string;
 }
 
-/** Minimal frontmatter reader for the two required keys plus the two we
- * display. Deliberately not a YAML engine: values are single-line strings in
- * every skill the spec's own examples show, and a parser that cannot
- * evaluate anchors or tags cannot be surprised by them. */
+/** Frontmatter keys we read. A key nested under a mapping is deliberately not
+ * one of them. */
+const TOP_LEVEL_KEY = /^([A-Za-z][\w-]*):[ \t]*(.*)$/;
+/** `key: |`, `key: >-`, `key: |2+` — style, chomping indicator, explicit indent. */
+const BLOCK_HEADER = /^([A-Za-z][\w-]*):[ \t]*([|>])([-+]?)(\d*)([-+]?)[ \t]*(?:#.*)?$/;
+
+/** The escapes YAML defines inside a double-quoted scalar. An unknown escape is
+ * kept verbatim — copying is safer than guessing. */
+const DOUBLE_QUOTED_ESCAPE: Record<string, string> = {
+  "0": "\0", a: "\x07", b: "\b", t: "\t", "\t": "\t", n: "\n", v: "\v", f: "\f",
+  r: "\r", e: "\x1b", " ": " ", '"': '"', "/": "/", "\\": "\\", N: "\x85", _: "\xa0",
+};
+
+function unescapeDoubleQuoted(text: string): string {
+  return text.replace(/\\(u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|[\s\S])/g, (all, seq: string) => {
+    if (seq[0] === "u" || seq[0] === "x") return String.fromCodePoint(parseInt(seq.slice(1), 16));
+    return DOUBLE_QUOTED_ESCAPE[seq] ?? all;
+  });
+}
+
+/** Plain, single-quoted and double-quoted flow scalars. An unbalanced quote is
+ * trimmed the way the original reader trimmed it rather than rejected: a stray
+ * quote should not cost someone their skill. */
+function readFlowScalar(raw: string): string {
+  const value = raw.trim();
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return unescapeDoubleQuoted(value.slice(1, -1));
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replace(/''/g, "'");
+  }
+  return value.replace(/^["']|["']$/g, "").trim();
+}
+
+/** YAML folding: one break between two normal lines becomes a space, N blank
+ * lines become N breaks, and a more-indented line keeps its breaks. */
+function foldBlockLines(lines: readonly string[]): string {
+  const parts: string[] = [];
+  let blanks = 0;
+  let previousWasIndented = false;
+  for (const line of lines) {
+    if (!line.trim()) {
+      blanks += 1;
+      continue;
+    }
+    const indented = /^[ \t]/.test(line);
+    if (parts.length) {
+      parts.push(blanks > 0 ? "\n".repeat(blanks) : indented || previousWasIndented ? "\n" : " ");
+    }
+    parts.push(line);
+    previousWasIndented = indented;
+    blanks = 0;
+  }
+  return parts.join("");
+}
+
+/** Reads the indented block after a `|`/`>` header. Returns the value and the
+ * index of the first line that is not part of the block. */
+function readBlockScalar(
+  lines: readonly string[],
+  start: number,
+  style: "|" | ">",
+  chomp: string,
+  explicitIndent: number,
+): { value: string; next: number } {
+  let next = start;
+  const raw: string[] = [];
+  for (; next < lines.length; next += 1) {
+    const line = lines[next]!;
+    if (line.trim() && !/^[ \t]/.test(line)) break;
+    raw.push(line);
+  }
+  // Trailing blank lines are the chomping indicator's business, not content's.
+  let end = raw.length;
+  while (end > 0 && !raw[end - 1]!.trim()) end -= 1;
+  const content = raw.slice(0, end);
+  const trailingBlanks = raw.length - end;
+
+  const detected = content
+    .filter((line) => line.trim())
+    .reduce((min, line) => Math.min(min, line.match(/^[ \t]*/)![0].length), Infinity);
+  const indent = explicitIndent || (Number.isFinite(detected) ? detected : 0);
+  const stripped = content.map((line) => (line.trim() ? line.slice(indent) : ""));
+
+  let value = style === "|" ? stripped.join("\n") : foldBlockLines(stripped);
+  if (chomp === "+") value += "\n".repeat(value ? 1 + trailingBlanks : trailingBlanks);
+  else if (chomp !== "-" && value) value += "\n";
+  return { value, next };
+}
+
+/** Top-level frontmatter scalars, block scalars included. Nested mappings and
+ * sequences are skipped whole: hoisting `metadata.version` to `version` would
+ * also let a nested `description` shadow the real one. Still not a YAML engine
+ * — no anchors, no tags, no flow collections — because a parser that cannot
+ * evaluate them cannot be surprised by them. */
+export function parseFrontmatterScalars(frontmatter: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+  const lines = frontmatter.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (!line.trim() || /^[ \t]/.test(line)) continue;
+    const header = line.match(BLOCK_HEADER);
+    if (header) {
+      const block = readBlockScalar(
+        lines,
+        index + 1,
+        header[2] as "|" | ">",
+        header[3] || header[5] || "",
+        Number(header[4] || 0),
+      );
+      fields[header[1]!.toLowerCase()] = block.value;
+      index = block.next - 1;
+      continue;
+    }
+    const kv = line.match(TOP_LEVEL_KEY);
+    if (!kv) continue;
+    fields[kv[1]!.toLowerCase()] = readFlowScalar(kv[2]!);
+  }
+  return fields;
+}
+
+/** Every field parseSkillMd surfaces is a one-line label — the prompt index is
+ * one line per skill and DESCRIPTION_MAX budgets for that — so a multi-line
+ * block scalar is folded here instead of at each caller. */
+function singleLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+/** Frontmatter reader for the two required keys plus the two we display.
+ * Real-world skills write the description as a block scalar (2,024 of the
+ * 2,194 in skills-library/ do), so those are read properly and folded to the
+ * single line the index wants. */
 export function parseSkillMd(raw: string): ParsedSkill | { error: string } {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) return { error: "SKILL.md has no YAML frontmatter (--- block) at the top" };
-  const fields: Record<string, string> = {};
-  for (const line of match[1]!.split(/\r?\n/)) {
-    const kv = line.match(/^([A-Za-z][\w-]*):\s*(.*)$/);
-    if (!kv) continue;
-    fields[kv[1]!.toLowerCase()] = kv[2]!.replace(/^["']|["']$/g, "").trim();
-  }
-  const name = fields.name ?? "";
-  const description = fields.description ?? "";
+  const fields = parseFrontmatterScalars(match[1]!);
+  const name = singleLine(fields.name ?? "");
+  const description = singleLine(fields.description ?? "");
   if (!isSkillName(name)) {
     return { error: `frontmatter name ${JSON.stringify(name)} is not a valid skill name (lowercase, hyphens, max ${SKILL_NAME_MAX})` };
   }
@@ -114,8 +237,8 @@ export function parseSkillMd(raw: string): ParsedSkill | { error: string } {
   return {
     name,
     description,
-    license: fields.license || undefined,
-    compatibility: fields.compatibility || undefined,
+    license: singleLine(fields.license ?? "") || undefined,
+    compatibility: singleLine(fields.compatibility ?? "") || undefined,
     body: match[2] ?? "",
   };
 }
