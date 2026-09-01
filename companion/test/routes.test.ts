@@ -68,7 +68,6 @@ describe("what the app may do", () => {
     ["POST", "/api/threads/th_1/messages/msg_2/reactions"],
     ["GET", "/api/threads/th_1/export"],
     ["POST", "/api/threads/th_1/respond"],
-    ["GET", "/api/search"],
     ["POST", "/api/attachments"],
     ["GET", "/api/attachments/avatar-123.webp"],
     ["POST", "/api/files"],
@@ -82,7 +81,6 @@ describe("what the app may do", () => {
     ["GET", "/api/connectors/catalog"],
     ["GET", "/api/connectors/connected"],
     ["GET", "/api/connectors"],
-    ["POST", "/api/connectors/slack/authorize"],
   ];
 
   for (const [method, path] of calls) {
@@ -138,6 +136,31 @@ describe("what it may not", () => {
     }
     expect(ask("GET", "/api/routines")).toBeNull();
     expect(ask("POST", "/api/routines/routine_1/run")).toBeNull();
+  });
+
+  // Both of these were allowed once. Removing a line from an allowlist leaves
+  // no trace, so the refusal is asserted here rather than merely implied by
+  // the absence above.
+  it("refuses the cross-thread transcript grep outright", () => {
+    // No visibility scoping exists on this route: `?q=e` returned hits from
+    // every thread on the machine. There is no per-thread form to allow, so
+    // it is denied as a route the companion has never heard of.
+    expect(ask("GET", "/api/search")).toEqual({
+      status: 404,
+      error: "no route: GET /api/search",
+    });
+  });
+
+  it("lets the phone see connected apps but never bind a new one", () => {
+    expect(allowed("GET", "/api/connectors")).toBe(true);
+    expect(allowed("GET", "/api/connectors/catalog")).toBe(true);
+    expect(allowed("GET", "/api/connectors/connected")).toBe(true);
+    // Binding and revoking are both keyboard decisions.
+    expect(ask("POST", "/api/connectors/gmail/authorize")).toEqual({
+      status: 403,
+      error: "connected apps are set up on your computer",
+    });
+    expect(ask("DELETE", "/api/connectors/gmail")?.status).toBe(403);
   });
 
   it("denies the peer-agent endpoints exist at all", () => {
