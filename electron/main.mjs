@@ -15,6 +15,7 @@ import {
   startRecorder,
   stopRecorder,
 } from "./skill-recorder.mjs";
+import { harnessResourceEnvironment } from "./harness-resources.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import {
@@ -846,9 +847,9 @@ async function startServerOn(port) {
     // from the launching shell. It starts fail-closed until this exact main
     // process sends the private in-memory connection after spawn.
     MURAGE_DESKTOP_PARENT: "1",
-    MURAGE_STATIC_DIR: path.join(process.resourcesPath, "ui"),
-    MURAGE_RESOURCES_PATH: process.resourcesPath,
-    MURAGE_SKILLS_DIR: path.join(process.resourcesPath, "skills"),
+    // ui / skills / skills-library, all resolved out of Resources. Set here,
+    // before the fork, because the child reads them at module load.
+    ...harnessResourceEnvironment(process.resourcesPath),
     MURAGE_PORT: String(port),
     MURAGE_USER_DATA: app.getPath("userData"),
     ...(secureCredentials.composioApiKey
