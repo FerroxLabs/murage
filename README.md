@@ -3,7 +3,7 @@
 <img src="brand/MurageLogo-Dark.png#gh-light-mode-only" alt="Murage" width="420">
 <img src="brand/MurageLogo-Light.png#gh-dark-mode-only" alt="Murage" width="420">
 
-**One desktop. Every AI engine. Agents that keep working after you close the laptop.**
+**One desktop. Every AI engine. Doing real work on their own computer.**
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-FF6B35)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-111)](#install)
@@ -18,9 +18,9 @@ You're already paying for the models. You're just missing the thing that runs th
 
 Here's the deal. You've got a Claude subscription. Probably a ChatGPT one too. Maybe Gemini, maybe Grok, and a terminal agent or two you installed at 1am and forgot about. Every one of them lives in its own window. Its own chat history. Its own idea of who you are. You copy-paste between them like it's 2023.
 
-And the second you shut the lid, all of them stop.
+None of them can touch anything. They write you an answer and it's on you to go and do it.
 
-Murage is one window that runs all of them. Same roster, same memory, same connected apps, and your agents keep going whether you're watching or not.
+Murage is one window that runs all of them. Same roster, same memory, same connected apps. And an Ember can be handed a real machine of its own, so the work actually gets done instead of described.
 
 ### Where this came from
 
@@ -113,7 +113,7 @@ Your Embers get those tools automatically. Ask one to go through your inbox and 
 
 ## What else is in there
 
-**Routines.** Say "every weekday at 8, check the overnight PRs and tell me what broke." It runs whether the app is open or not, and reports back where you asked it to.
+**Routines.** Say "every weekday at 8, check the overnight PRs and tell me what broke." It runs whether you're watching or not, and reports back where you asked it to.
 
 **Skills that learn.** When an Ember works out a better way to do something you asked for twice, it writes it down. You review the change before it sticks. Nothing edits itself behind your back.
 

@@ -306,9 +306,21 @@ body {
   color: var(--color-ink);
 }
 
+/* Chromium honours EITHER the standard properties OR the ::-webkit-scrollbar
+ * pseudo-elements, never both: the moment an element sets `scrollbar-width`,
+ * every webkit rule below is dropped and you get the default light scrollbar
+ * on a dark panel. So the standard pair is declared here too, and the two
+ * paths are kept in sync. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar) transparent;
+}
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-scrollbar);

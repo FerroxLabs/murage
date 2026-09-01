@@ -210,8 +210,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             <EmberAvatar color="orange" state="happy" size={72} />
             <h1 className="mt-4 text-[20px] font-semibold text-ink">Welcome to Murage</h1>
             <p className="mt-1.5 text-center text-[14px] leading-relaxed text-ink-secondary">
-              Bots that do real work on their own computer. Tell us who you are
-              and we&rsquo;ll let you know when big things ship.
+              One desktop, every AI engine doing REAL work on their OWN computer.
+              Tell us who you are and we&rsquo;ll let you know when big things ship.
             </p>
             <input
               autoFocus
@@ -254,7 +254,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             <p className="mt-1 text-[13.5px] text-ink-secondary">
               Bots run on AI tools installed on this computer — here&rsquo;s what we found.
             </p>
-            <div className="mt-4 flex min-h-0 flex-col gap-2.5 overflow-y-auto pr-1 [scrollbar-width:thin]">
+            <div className="mt-4 flex min-h-0 flex-col gap-2.5 overflow-y-auto pr-1">
               {!instances ? (
                 <div className="flex items-center gap-2 py-6 text-ink-secondary">
                   <Loader2 size={16} className="animate-spin" /> Checking…
