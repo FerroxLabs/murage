@@ -145,6 +145,74 @@ the terms before making the cloud box a subscription workhorse.
 
 ---
 
+## MASTER PLAN — landed. `docs/plans/universal-client/MASTER-PLAN.md`
+
+It re-ran the three load-bearing claims itself. **Two hold, one is false as I stated it.**
+
+**(a) Room turn at hop 0 — TRUE.** Booted the harness; injected agents env carried
+`MURAGE_TURN_DEPTH="0"` with `MURAGE_THREAD_ID` equal to the ROOM thread. `server/index.ts:4190`
+passes literal `0`; `:3474` mounts on `hop < MAX_COMMS_DEPTH`. Chief of Staff design is solid.
+
+**(b) Companion proxy serving static — FALSE on the existing port.** `dist/index.html` loads its
+bundle with `<script type="module" crossorigin>`, a CORS-mode fetch that sends `Origin` **even
+same-origin**, and `companion/src/proxy.ts:236-242` 403s any `Origin` *before* the token check and
+before `denyReason` runs. The app's own entry bundle would be refused. Needs a **new listener**, and
+**port 8813 — not 8812**, which `electron/companion-origin-gateway.mjs:12` already owns.
+
+**(c) Headless BYOK auth — TRUE.** An unlogged-in `claude` in an empty `HOME` completed a real turn
+via env vars alone: `{"is_error":false,"result":"HEADLESS_OK"}`. Zero new code. But
+`claude auth status --json` returns `{"loggedIn": true}` for a **fake** token, so the cloud plan's
+health monitor never fires for the failure it exists to catch. Coverage is 3 of 13 engines.
+
+### The finding that outranks the security plan
+
+**`GET /api/events` is an unfiltered firehose.** `server/index.ts:1087-1090` broadcasts every
+persisted message to every SSE client; the only filter is `screen` (`:1202`). It is allowlisted today
+(`routes.ts:57`). **Scoping `/api/search` does not close transcript exposure** — it removes a grep and
+changes nothing about what is reachable. I told Sean the search fix was the answer; it is half of one.
+
+### Verdicts
+
+| Track | Verdict |
+|---|---|
+| iOS retirement | **BUILD** |
+| Chief of Staff | **BUILD** steps 0–5 · **DO NOT BUILD** step 6 (its cycle controls are reset by any connector/secret resume and by a restart) |
+| Security | BUILD WITH CHANGES — 4 defects incl. the 8812 collision and a tailnet selector that can silently bind a LAN interface (`listener.ts:26-29`) |
+| PWA | BUILD WITH CHANGES — the service worker as specified is **measured broken**: offline, `#root` empty, both cached assets `ERR_FAILED`, recovery script then unregisters and lands on `chrome-error://` |
+| Cloud | BUILD WITH CHANGES, but **defer** |
+
+### Effort, honestly
+
+**252–305 h total — 8–10 weeks for one engineer.** The five plans summed to 165 h, so they were
+collectively **~40% under**. A phone in Sean's hand that is safe and works (Phases A+B+C) is
+**144–172 h, five to six weeks**. If only three weeks exist: A + C — a responsive Murage over an SSH
+forward with the live holes closed and no new attack surface.
+
+### DO FIRST — 3–5 h, safe, unblocked, closes live holes
+
+1. Delete `GET /api/search` from `companion/src/routes.ts:102` **and `companion/test/routes.test.ts:71`**
+   — the plan's edit without the test line turns CI red; the auditor proved it.
+2. Delete `POST /api/connectors/:slug/authorize` from `routes.ts:132` — a paired phone can currently
+   bind a Google account to this machine.
+3. Decide `/api/events` (§0b, decision D1). **Do not ship the browser door before this is answered.**
+   8–14 h if `broadcast()` is scoped per client.
+
+Retirement is the one moment removing the search route costs nothing: no client will exist to call it.
+
+### Confirmed live, worth knowing
+
+- `POST /api/cli-test {"cli":"/bin/echo"}` → `200 {"ok":true}`. The RCE primitive is real.
+- The SPA fallback returns `200 text/html` for `/assets/index-NOPE.js`, `/sw.js`,
+  `/manifest.webmanifest` and `/icons/*.png` — an allowlist that denies a path still serves the shell.
+- No `nosniff` on any static response.
+- **`CertDomains: null` — Tailscale HTTPS is OFF.** A blocking PWA prerequisite (`isSecureContext`).
+- `delegations.ts:311-316` silently deletes room-sourced delegations.
+
+**Every `server/index.ts` line citation in three of the five plans is STALE.** Real anchors are in
+MASTER-PLAN §8. Trust the master plan's line numbers over the individual plans'.
+
+---
+
 ## PLAN AUDITS — all five landed. **Read this before building anything.**
 
 Verdicts: **4 SOUND_WITH_CHANGES, 1 BROKEN.** The audits ran the code rather than reading it, and
