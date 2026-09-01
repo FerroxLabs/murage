@@ -44,6 +44,19 @@ export function isCloudDesktopJoin(method: string, path: string): boolean {
   return method === CLOUD_DESKTOP_JOIN_ROUTE.method && CLOUD_DESKTOP_JOIN_ROUTE.path.test(path);
 }
 
+/** The two routine routes that can carry a `runOn` field.
+ *
+ * Creating or amending a routine is an ordinary thing to do from a phone, but
+ * `runOn: "cloud"` inside the body reaches the same provisioning call that
+ * POST /api/bots/:id/computer/provision is denied for. A path-and-method
+ * allowlist cannot see a body, so the proxy reads these two and applies the
+ * cloud capability check itself. Running an *existing* routine is deliberately
+ * not here: that routine was configured at the keyboard. */
+export function isRoutineWrite(method: string, path: string): boolean {
+  if (method !== "POST" && method !== "PATCH") return false;
+  return /^\/api\/routines(?:\/[\w-]+)?$/.test(path);
+}
+
 /** Every request the iOS app makes, and nothing else.
  *
  * Ids are `[\w-]+`, matching the harness's own route patterns. The paths
