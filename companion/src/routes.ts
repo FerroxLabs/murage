@@ -99,7 +99,10 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },
-  { method: "GET", path: /^\/api\/search$/ },
+  // GET /api/search is deliberately absent. It is a full-transcript grep with
+  // no visibility scoping — one character of `q` returns hits from every
+  // thread on the machine, including hidden bots and bot-to-bot rooms. A
+  // paired device gets transcripts one thread id at a time or not at all.
 
   // App-owned profile images. Upload is image-only and capped at 10 MB by
   // the harness; GET is a single bare generated filename, never a path.
@@ -129,7 +132,9 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/api\/connectors\/catalog$/ },
   { method: "GET", path: /^\/api\/connectors\/connected$/ },
   { method: "GET", path: /^\/api\/connectors$/ },
-  { method: "POST", path: /^\/api\/connectors\/[\w-]+\/authorize$/ },
+  // Authorising an account is also absent, for the same reason the DELETE is:
+  // binding a Google or Slack account to this machine is a decision that
+  // belongs at the keyboard, not on a credential that lives in a pocket.
 ];
 
 /** Route families worth naming in the refusal.
