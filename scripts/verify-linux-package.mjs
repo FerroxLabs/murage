@@ -404,7 +404,7 @@ const fields = execFileSync(
 for (const expected of [
   "Package: murage",
   "Architecture: amd64",
-  "Maintainer: Milind Soni",
+  "Maintainer: Ferrox Labs",
   "Section: utils",
   "Priority: optional",
 ]) {
