@@ -1,5 +1,90 @@
 # Murage — session handoff
 
+## OVERNIGHT 2026-09-02 — nine commits, pushed to `main` at `94ef6689`
+
+Suite: **src 539/539 · electron 375 · companion 223 · server 1919/1**. The one failure is
+`control-murage`, environment-dependent — it hardcodes `["claude"]` and this machine has a real
+`qwen` on PATH. All four typechecks exit 0. Contrast script exits 0 on both palettes.
+
+### Landed
+| Commit | What |
+|---|---|
+| `5756fdd0` | `GET /api/search` and `POST /api/connectors/:slug/authorize` out of the companion allowlist |
+| `c08ad64d` | Routines were the way around the computer-provision denial (`runOn: "cloud"` → `provisionBox`) |
+| `4b57fd3b` | A room's delegation queue is multi-sender; one Stop must not empty it |
+| `a3ef2b36` | iOS retired, salvage hash-verified against HEAD |
+| `3fc050c9` | The endpoint list dropped the bare tailnet address — the one a browser can reach |
+| `62232f2c` | Fuigo bundled |
+| `359f0a15` | Phase C responsive: C1, C3, C4, C5, measured |
+| `c82c009f` + `637f9de7` | `/api/events` scoped, and every route that could rebuild the firehose |
+| `427936d6` + `94ef6689` | Four skins collapse to Light / Dark / Automatic |
+
+### The D1 decision, and how it was made
+Three models were asked independently whether to scope `broadcast()` or drop `/api/events` from the
+device surface. **2–1 for scope.** The deciding fact: `/api/events` is not a UX nicety on that
+surface — it is the device-presence signal *and* the in-flight revocation lever
+(`companion/src/proxy.ts:418-431`), so dropping it trades a confidentiality hole for the loss of the
+one control that matters when a phone goes missing. The dissent (GPT-5.6) is worth keeping: the
+control plane should not ride on the application event bus at all, and a dedicated device-session
+stream carrying no thread ids would be the cleaner long-run shape.
+
+All three agreed on the condition that actually mattered, which no plan contained: scoping the push
+side while the pull side authorises on thread id alone is **theatre**. So the pull side was closed
+too — including `/api/bots`, which nobody's list named and which was the widest transcript read on
+the port.
+
+**Polarity is inverted from `plan-security.md`: scoped is the default, the desktop opts out.** The
+cost is that the renderer must say so in three places (`src/lib/live-events.ts` via query string —
+EventSource cannot set headers — plus `api()` and `InspectorPanel`'s raw fetch). Pinned by
+`src/lib/desktop-surface.test.ts`, negative-controlled 4/4. Miss one in future and it goes red
+rather than quiet.
+
+### Tailscale — unblocked
+HTTPS certificates enabled. A real Let's Encrypt cert mints for
+`seans-macbook-pro.tail0a48a4.ts.net`, **expires 30 Nov 2026**. `isSecureContext` is now true, so
+the PWA half can run at all. **Renewal is a live design constraint**: Tailscale renews only when
+something asks. `tailscale serve` does; a hand-rolled listener reading cert files does not, and will
+serve an expired cert in late November with no obvious cause.
+
+### Needs Sean
+1. **Publish `fuigo-win32-arm64@1.0.1`** — declared an optionalDependency of `fuigo@1.0.1`, registry
+   answers 404. Windows ships x64 so nothing breaks here, but `npx fuigo` is broken on Windows ARM.
+2. **Artifact size** — the bundled Fuigo binary is 165–174 MB per mac arch on a ~177 MB app, roughly
+   doubling each artifact. A release decision, not a technical one.
+3. **CT logs** — enabling certs published the machine hostname publicly. Rename before a PWA is
+   pinned to that origin if that matters.
+
+### Queued, deliberately not done
+- **Phase C rows C2 (tap-44), C6 (hover-only), C7 (touch-unreachable), C8, C9, C10.** C6 is the
+  sharpest: six per-message controls measure opacity 0 at 390px with `any-hover: hover` false.
+- **Sidebar near-alignment** — rows at x=8 vs x=12, icons at x=21 vs x=24. Pre-existing, cross-cuts
+  desktop, belongs in C10. One value, three sites.
+- **`GroupView.tsx:1030`** likely has ChatView's header collapse, unverified — this dataset has zero
+  rooms, so it was not blind-fixed. Add to C3's site list and measure with a room.
+- **Settings nav** hides 6 of 8 sections behind a scroll with no affordance (`scrollWidth 917` vs
+  `clientWidth 388`), and Search eats the first 37%.
+- **CoS**: two Mediums and two Lows from the audit, unfixed per the Critical/High rule. E5 (UI) not
+  built, so electing a workspace Chief still needs a hand-rolled PATCH. **E6 stays unbuilt.**
+- **`scripts/check-skin-contrast.mjs`** still has dead `BASELINE_FLOORS` rows keyed `midnight|…`,
+  and `check:contrast` is not wired into `pnpm test`.
+- **Fuigo CI gates**: `release.yml` and `package-win.yml` have per-resource gates for cloudflared and
+  none for fuigo. Rated the most important follow-up by the agent that built it.
+- **`resolveFuigoCli()` is exported, tested, and called by nobody** — wiring Fuigo in as a selectable
+  engine needs `server/drivers/**` and `src/**`.
+
+### Process notes, honestly
+- A workflow whose `.output` file is 0 bytes is **running, not dead**. I misread that, dispatched an
+  overlapping agent, and two agents edited `server/store.ts` and the delegation tests at once.
+  Repaired, nothing lost. Check with `TaskStop`/`TaskOutput`, never file size.
+- Commit `4b57fd3b` swept in 288 lines of `server/index.ts` that were another agent's in-flight
+  work, not its own six-line fix. Stage by explicit path when lanes are live.
+- I committed `c82c009f` red — re-ran the server suite after adding a renderer test and never re-ran
+  `src/` or `tsc -b`. Fixed in `42b425d8`. Run the suite for the lane you actually touched.
+- Three agents died together on Anthropic 522s. Restart with a "what is already on disk" brief so
+  they verify rather than redo.
+
+---
+
 **Updated:** 2026-09-02, ~00:30 · **Branch:** `upstream-apply-test` · **main:** `a3154a62`
 **Repo:** `github.com/FerroxLabs/murage` · **Local:** `/Volumes/Mando/WaylandBots/murage-app`
 
