@@ -10,8 +10,8 @@
 //                                          immediately, the peer runs after your
 //                                          current turn finishes, the result is
 //                                          delivered to the source conversation
-//   create_bot(name, role, instructions) → Chiefs can add a specialist to
-//                                          their own section
+//   create_bot(name, role, instructions, → Chiefs can add a specialist; the
+//              section?)                   workspace Chief must name the team
 //   request_credential(id, reason?)       → show a secure, allowlisted key card
 //   list_routines()                       → inspect this bot's scheduled work
 //   propose_routine(...)                  → show a confirmation card for a new routine
@@ -245,13 +245,17 @@ const TOOLS = [
   {
     name: "create_bot",
     description:
-      "Create a specialist bot in your section. Only a section's Chief of Staff may use this. The new bot inherits the Chief's engine, starts with connected apps and automatic approvals disabled, and can then receive work through delegate_bot. Create only the smallest useful team (maximum four per turn).",
+      "Create a specialist bot. Only a Chief of Staff may use this. The new bot inherits the Chief's engine, starts with connected apps and automatic approvals disabled, and can then receive work through delegate_bot. A section's Chief creates into its own section; the workspace Chief of Staff must name the team the specialist joins, and that team must already have a lead. Create only the smallest useful team (maximum four per turn).",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Short, unique display name for the specialist." },
         role: { type: "string", description: "The specialist's job title or role." },
         instructions: { type: "string", description: "What this specialist is responsible for and how it should work." },
+        section: {
+          type: "string",
+          description: "The team the specialist joins, exactly as list_bots spells it. Required if you are the workspace Chief of Staff; omit it otherwise.",
+        },
       },
       required: ["name", "role", "instructions"],
     },
@@ -523,6 +527,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const botName = String(args.name ?? "").trim();
     const role = String(args.role ?? "").trim();
     const instructions = String(args.instructions ?? "").trim();
+    const section = String(args.section ?? "").trim();
     if (!botName || !role || !instructions) {
       return { text: "create_bot needs name, role, and instructions.", isError: true };
     }
@@ -537,6 +542,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
         name: botName,
         role,
         instructions,
+        ...(section ? { section } : {}),
       }),
     });
     createdThisTurn += 1;

@@ -162,4 +162,50 @@ describe("peer approval card lifecycle", () => {
     expect(pendingCard(store, from)).toBeTruthy();
     cancelPeerApprovalsFor(from.id); // don't leave a timer pending
   });
+
+  it("dismisses a stale card left in a ROOM thread", () => {
+    // A Chief's peer call is made FROM the room it is speaking in, so the
+    // card lands on a GROUP thread. The boot sweep used to walk only each
+    // bot's own threads, so this card could never be settled after a crash
+    // and the room's composer stayed blocked forever.
+    const room = store.createGroup("Exec", [from.id, target.id]);
+    const orphan = store.appendMessage(room.threadId, {
+      role: "bot",
+      kind: "options",
+      card: {
+        title: "@Asker wants to contact @Helper",
+        subtitle: "ping",
+        options: ["Allow", "Deny"],
+        requestId: "room-dead-process",
+        tool: "ask_bot",
+      },
+    });
+
+    expect(dismissStalePeerCards(bus)).toBe(1);
+    expect(
+      store.messagesFor(room.threadId).find((message) => message.id === orphan.id)?.card?.dismissed,
+    ).toBe(true);
+    expect(dismissStalePeerCards(bus)).toBe(0);
+  });
+
+  it("dismisses a stale card in a room's non-active task thread", () => {
+    const room = store.createGroup("Exec", [from.id, target.id]);
+    const task = store.createGroupTask(room.id, "Side quest")!;
+    const orphan = store.appendMessage(task.threadId, {
+      role: "bot",
+      kind: "options",
+      card: {
+        title: "@Asker wants to delegate to @Helper",
+        subtitle: "ping",
+        options: ["Allow", "Deny"],
+        requestId: "room-task-dead-process",
+        tool: "delegate_bot",
+      },
+    });
+
+    expect(dismissStalePeerCards(bus)).toBe(1);
+    expect(
+      store.messagesFor(task.threadId).find((message) => message.id === orphan.id)?.card?.dismissed,
+    ).toBe(true);
+  });
 });

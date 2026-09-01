@@ -543,7 +543,9 @@ describe("harness HTTP API", () => {
     const attempted = await api("PATCH", "/api/groups/test-dm", { memberIds: ["test-bot-a"] });
     expect(attempted.status).toBe(400);
     expect(attempted.body.error).toMatch(/direct-message.*members/i);
-    const state = await api("GET", "/api/bots");
+    // dm channels are withheld from a scoped roster by design, so this
+    // assertion has to ask as the desktop
+    const state = await api("GET", "/api/bots?surface=desktop");
     const dm = state.body.groups.find((group: { id: string }) => group.id === "test-dm");
     expect(dm.memberIds).toEqual(["test-bot-a", "test-bot-b"]);
   });
@@ -998,7 +1000,9 @@ describe("harness HTTP API", () => {
     const attempted = await api("PATCH", "/api/groups/test-dm", { cwd: home });
     expect(attempted.status).toBe(400);
     expect(attempted.body.error).toMatch(/direct-message.*working folder/i);
-    const state = await api("GET", "/api/bots");
+    // dm channels are withheld from a scoped roster by design, so this
+    // assertion has to ask as the desktop
+    const state = await api("GET", "/api/bots?surface=desktop");
     expect(state.body.groups.find((group: { id: string }) => group.id === "test-dm")).not.toHaveProperty("cwd");
     expect((await api("DELETE", "/api/groups/test-dm")).status).toBe(200);
   });
@@ -1007,7 +1011,9 @@ describe("harness HTTP API", () => {
     const attempted = await api("PATCH", "/api/groups/test-pinned-room", { cwd: home });
     expect(attempted.status).toBe(409);
     expect(attempted.body.error).toMatch(/fixed after its first turn/i);
-    const state = await api("GET", "/api/bots");
+    // dm channels are withheld from a scoped roster by design, so this
+    // assertion has to ask as the desktop
+    const state = await api("GET", "/api/bots?surface=desktop");
     expect(state.body.groups.find((group: { id: string }) => group.id === "test-pinned-room")).not.toHaveProperty("cwd");
     expect((await api("DELETE", "/api/groups/test-pinned-room")).status).toBe(200);
   });
@@ -5485,5 +5491,178 @@ describe("computer control API (who is driving)", () => {
   it("keeps the internal who-is-driving endpoint behind the boot token", async () => {
     const res = await fetch(`${BASE}/api/internal/computer-control?botId=${botId}`);
     expect(res.status).toBe(401);
+  });
+});
+
+// The transcript-disclosure holes, closed end to end against the real
+// harness. Each of these was reachable with nothing but a paired device
+// token: hold /api/events open and every message on every thread arrives in
+// real time, then read or grep whatever ids that stream just handed you.
+describe("remote surfaces see only the conversations a person can see", () => {
+  /** A bot with one distinctive line in its transcript, then hidden. */
+  const seedHiddenBot = async (needle: string) => {
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    const posted = await api("POST", `/api/bots/${bot.id}/messages`, { text: needle });
+    expect(posted.status).toBe(202);
+    // the user's own message is persisted before the turn is dispatched, so
+    // the transcript is searchable without waiting on a provider
+    await expect
+      .poll(async () => (await api("GET", `/api/threads/${bot.threadId}/messages`)).body.messages.length)
+      .toBeGreaterThan(0);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { hidden: true })).status).toBe(200);
+    return bot;
+  };
+
+  it("does not push a hidden bot's frames to a stream that did not opt out", async () => {
+    const bot = await seedHiddenBot("firehose probe alpha");
+
+    // Two streams, one workspace, one event: the only difference is the
+    // marker. Opening the desktop stream second and waiting on IT proves the
+    // scoped stream was given a real chance to receive the frame.
+    const scoped = await openSse(`${BASE}/api/events`);
+    const desktop = await openSse(`${BASE}/api/events?surface=desktop`);
+    try {
+      await scoped.until((f) => f.kind === "hello");
+      await desktop.until((f) => f.kind === "hello");
+
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { unread: true })).status).toBe(200);
+      await desktop.until((f) => f.kind === "bot" && f.bot?.id === bot.id);
+      expect(scoped.frames.some((f) => f.kind === "bot" && f.bot?.id === bot.id)).toBe(false);
+
+      // and the scoped stream is not merely dead — a visible bot still lands
+      const open = (await api("GET", "/api/bots")).body.bots.find((b: any) => !b.hidden);
+      expect((await api("PATCH", `/api/bots/${open.id}`, { unread: true })).status).toBe(200);
+      await scoped.until((f) => f.kind === "bot" && f.bot?.id === open.id);
+    } finally {
+      scoped.close();
+      desktop.close();
+    }
+  });
+
+  it("filters the replay buffer too, so a reconnect is not the way back in", async () => {
+    // Scoping only the live write would mean a phone that dropped its
+    // connection for one second got the firehose back on resume.
+    const bot = await seedHiddenBot("firehose probe beta");
+
+    const first = await openSse(`${BASE}/api/events?surface=desktop`);
+    const hello = await first.until((f) => f.kind === "hello");
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { unread: true })).status).toBe(200);
+    await first.until((f) => f.kind === "bot" && f.bot?.id === bot.id);
+    first.close();
+
+    const since = encodeURIComponent(hello.cursor);
+    const resumed = await openSse(`${BASE}/api/events?since=${since}`);
+    const resumedDesktop = await openSse(`${BASE}/api/events?since=${since}&surface=desktop`);
+    try {
+      expect((await resumed.until((f) => f.kind === "hello")).resumed).toBe(true);
+      // the desktop's replay carries the frame, so it really was in the
+      // buffer and really was withheld from the other one
+      await resumedDesktop.until((f) => f.kind === "bot" && f.bot?.id === bot.id);
+      expect(resumed.frames.some((f) => f.kind === "bot" && f.bot?.id === bot.id)).toBe(false);
+    } finally {
+      resumed.close();
+      resumedDesktop.close();
+    }
+  });
+
+  it("scopes /api/search in SQL rather than after LIMIT", async () => {
+    const needle = "firehose probe gamma";
+    const bot = await seedHiddenBot(needle);
+
+    const q = `/api/search?q=${encodeURIComponent(needle)}`;
+    const desktop = await api("GET", `${q}&surface=desktop`);
+    expect(desktop.status).toBe(200);
+    expect(desktop.body.hits.some((hit: any) => hit.threadId === bot.threadId)).toBe(true);
+
+    const scoped = await api("GET", q);
+    expect(scoped.status).toBe(200);
+    expect(scoped.body.hits.some((hit: any) => hit.threadId === bot.threadId)).toBe(false);
+
+    // asking for the thread by name is answered as "no hits", not as a
+    // different status — the route must not become a membership oracle
+    const named = await api("GET", `${q}&threadId=${bot.threadId}`);
+    expect(named.status).toBe(200);
+    expect(named.body.hits).toEqual([]);
+  });
+
+  it("refuses the direct reads that a harvested thread id used to unlock", async () => {
+    const bot = await seedHiddenBot("firehose probe delta");
+
+    for (const path of [
+      `/api/threads/${bot.threadId}/messages`,
+      `/api/threads/${bot.threadId}/export`,
+      `/api/threads/${bot.threadId}/export?format=json`,
+      // the inspector: the turn's prompts and tool traffic, which is
+      // transcript content under another name and on the same thread
+      `/api/threads/${bot.threadId}/events`,
+    ]) {
+      // 404, not 403: the two answers are the same fact, and distinguishing
+      // them would hand back exactly the ids the scoping just withheld
+      const scoped = await fetch(`${BASE}${path}`);
+      expect(scoped.status, path).toBe(404);
+      const joiner = path.includes("?") ? "&" : "?";
+      const desktop = await fetch(`${BASE}${path}${joiner}surface=desktop`);
+      expect(desktop.status, path).toBe(200);
+    }
+  });
+
+  it("does not lose the first messages of a brand-new conversation", async () => {
+    // The staleness direction, and the likelier bug of the two. A frame that
+    // outruns the store's thread→bot mapping is indistinguishable, at the
+    // filter, from a conversation the person may not see — so the fix for a
+    // leak becomes a phone that silently misses the opening lines of every
+    // new chat and nobody finds out until someone is looking at a phone.
+    const scoped = await openSse(`${BASE}/api/events`);
+    try {
+      await scoped.until((f) => f.kind === "hello");
+      const before = (await api("GET", "/api/health")).body.unresolvedFrameDrops;
+
+      const bot = (await api("POST", "/api/bots", { name: "Brand New" })).body.bot;
+      const needle = "opening line of a new conversation";
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: needle })).status).toBe(202);
+
+      // the very first frame on a thread created moments ago
+      const first = await scoped.until(
+        (f) => f.kind === "message" && f.threadId === bot.threadId && f.message?.role === "user",
+        20_000,
+      );
+      expect(first.message.text).toContain(needle);
+
+      // and nothing was withheld because it could not be resolved — the
+      // counter exists so this is observable instead of inferred
+      const after = (await api("GET", "/api/health")).body.unresolvedFrameDrops;
+      expect(after).toBe(before);
+    } finally {
+      scoped.close();
+    }
+  }, 40_000);
+
+  it("hydrates /api/bots with the same workspace the stream describes", async () => {
+    // The widest read on the port: every bot and room with a page of
+    // transcript inline. Scoping the stream while this answered for
+    // everything would have been theatre — one request gets the content back.
+    const bot = await seedHiddenBot("firehose probe zeta");
+
+    const scoped = await api("GET", "/api/bots?messages=20");
+    expect(scoped.status).toBe(200);
+    expect(scoped.body.bots.some((b: any) => b.id === bot.id)).toBe(false);
+    expect(JSON.stringify(scoped.body)).not.toContain("firehose probe zeta");
+    expect(scoped.body.computerControl[bot.id]).toBeUndefined();
+    // still a working hydration, not an empty one
+    expect(scoped.body.bots.length).toBeGreaterThan(0);
+
+    const desktop = await api("GET", "/api/bots?messages=20&surface=desktop");
+    expect(desktop.body.bots.some((b: any) => b.id === bot.id)).toBe(true);
+    expect(JSON.stringify(desktop.body)).toContain("firehose probe zeta");
+  }, 40_000);
+
+  it("keeps a companion scoped even when it appends the desktop marker itself", async () => {
+    // proxy.ts forwards req.url whole, so the query string is the device's
+    // to write. The header is checked first for exactly this reason.
+    const bot = await seedHiddenBot("firehose probe epsilon");
+    const res = await fetch(`${BASE}/api/threads/${bot.threadId}/export?surface=desktop`, {
+      headers: { "x-murage-companion": "1" },
+    });
+    expect(res.status).toBe(404);
   });
 });

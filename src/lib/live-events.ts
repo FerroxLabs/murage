@@ -61,6 +61,12 @@ export interface LiveEventsHandlers {
 
 export function liveEventsUrl(options?: { since?: string | null; screens?: boolean }): string {
   const params = new URLSearchParams();
+  // The harness scopes this stream to a phone's narrow view by default, so
+  // that a paired device cannot receive frames for hidden bots or bot-to-bot
+  // rooms simply by holding the stream open. This renderer IS the desktop, so
+  // it opts out. EventSource cannot send headers, which is why the surface
+  // travels in the query string here and in a header everywhere else.
+  params.set("surface", "desktop");
   if (options?.since) params.set("since", options.since);
   if (options?.screens === false) params.set("screens", "off");
   const query = params.toString();

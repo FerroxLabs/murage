@@ -187,19 +187,29 @@ export function cancelPeerApprovalsForThread(threadId: string): void {
  * crashed run doesn't leave a thread with a permanently blocked composer. */
 export function dismissStalePeerCards(bus: ApprovalBus): number {
   let dismissed = 0;
+  // Every thread a peer card can be pushed into. Rooms are included because
+  // a Chief's peer call is made FROM a room thread, and that card is where
+  // the room's composer stays blocked until something settles it — a sweep
+  // over each bot's own threads alone can never reach it.
+  const threadIds = new Set<string>();
   for (const bot of bus.store.bots) {
-    const threadIds = new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)]);
-    for (const threadId of threadIds) {
-      for (const message of bus.store.messagesFor(threadId)) {
-        const card = message.card;
-        if (!card?.requestId || card.answered || card.dismissed) continue;
-        if (card.tool !== "ask_bot" && card.tool !== "delegate_bot") continue;
-        if (pendingComms.has(card.requestId)) continue;
-        const patched = bus.store.patchMessage(threadId, message.id, {
-          card: { ...card, answered: "deny", dismissed: true },
-        });
-        if (patched) dismissed += 1;
-      }
+    threadIds.add(bot.threadId);
+    for (const task of bot.tasks ?? []) threadIds.add(task.threadId);
+  }
+  for (const group of bus.store.groups) {
+    threadIds.add(group.threadId);
+    for (const task of group.tasks ?? []) threadIds.add(task.threadId);
+  }
+  for (const threadId of threadIds) {
+    for (const message of bus.store.messagesFor(threadId)) {
+      const card = message.card;
+      if (!card?.requestId || card.answered || card.dismissed) continue;
+      if (card.tool !== "ask_bot" && card.tool !== "delegate_bot") continue;
+      if (pendingComms.has(card.requestId)) continue;
+      const patched = bus.store.patchMessage(threadId, message.id, {
+        card: { ...card, answered: "deny", dismissed: true },
+      });
+      if (patched) dismissed += 1;
     }
   }
   return dismissed;
