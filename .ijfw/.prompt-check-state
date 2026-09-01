@@ -1,1 +1,1 @@
-{"fired":true,"signals":["no_target","missing_constraint"],"intent":null,"feedback_kinds":[]}
+{"fired":false,"signals":["scope_plural","missing_constraint"],"intent":null,"feedback_kinds":["correction"]}
