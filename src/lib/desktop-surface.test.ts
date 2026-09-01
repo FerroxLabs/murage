@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { liveEventsUrl } from "./live-events.ts";
+import { liveEventsUrl } from "./live-events";
 
 const read = (relative: string) =>
   readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");

@@ -94,13 +94,13 @@ afterEach(() => vi.useRealTimers());
 
 describe("live events URL", () => {
   it("builds cold, resumable, and screen-free stream URLs", () => {
-    expect(liveEventsUrl()).toBe("/api/events");
-    expect(liveEventsUrl({ screens: true })).toBe("/api/events");
-    expect(liveEventsUrl({ since: "ab12cd34:9" })).toBe("/api/events?since=ab12cd34%3A9");
+    expect(liveEventsUrl()).toBe("/api/events?surface=desktop");
+    expect(liveEventsUrl({ screens: true })).toBe("/api/events?surface=desktop");
+    expect(liveEventsUrl({ since: "ab12cd34:9" })).toBe("/api/events?surface=desktop&since=ab12cd34%3A9");
     expect(liveEventsUrl({ since: "ab12cd34:9", screens: false })).toBe(
-      "/api/events?since=ab12cd34%3A9&screens=off",
+      "/api/events?surface=desktop&since=ab12cd34%3A9&screens=off",
     );
-    expect(liveEventsUrl({ screens: false })).toBe("/api/events?screens=off");
+    expect(liveEventsUrl({ screens: false })).toBe("/api/events?surface=desktop&screens=off");
   });
 });
 
@@ -126,7 +126,7 @@ describe("live events supervisor", () => {
     test.setNow(1_900);
     vi.advanceTimersByTime(500);
     expect(test.sources).toHaveLength(2);
-    expect(test.sources[1].url).toBe("/api/events?since=run00000%3A4");
+    expect(test.sources[1].url).toBe("/api/events?surface=desktop&since=run00000%3A4");
     expect(test.sources[0].close).toHaveBeenCalledOnce();
     stop();
   });
@@ -168,14 +168,14 @@ describe("live events supervisor", () => {
     test.sources[0].message({ kind: "message" }, "oldrun00:10");
     test.sources[0].error();
     vi.advanceTimersByTime(100);
-    expect(test.sources[1].url).toBe("/api/events?since=oldrun00%3A10");
+    expect(test.sources[1].url).toBe("/api/events?surface=desktop&since=oldrun00%3A10");
 
     // The server has three replay frames queued. If the socket dies before
     // they arrive, the next attempt still asks from the last consumed frame.
     test.sources[1].message({ kind: "hello", resumed: true, cursor: "oldrun00:13" });
     test.sources[1].error();
     vi.advanceTimersByTime(100);
-    expect(test.sources[2].url).toBe("/api/events?since=oldrun00%3A10");
+    expect(test.sources[2].url).toBe("/api/events?surface=desktop&since=oldrun00%3A10");
 
     // A restart/expired replay window has no frames to replay. Application
     // frames may arrive while the consumer rebuilds, but neither their id nor
@@ -185,7 +185,7 @@ describe("live events supervisor", () => {
     snapshotResolutions.shift()?.(false);
     await Promise.resolve();
     vi.advanceTimersByTime(100);
-    expect(test.sources[3].url).toBe("/api/events?since=oldrun00%3A10");
+    expect(test.sources[3].url).toBe("/api/events?surface=desktop&since=oldrun00%3A10");
 
     test.sources[3].message({ kind: "hello", resumed: false, cursor: "newrun00:8" });
     test.sources[3].message({ kind: "message", value: "after snapshot" }, "newrun00:9");
@@ -193,7 +193,7 @@ describe("live events supervisor", () => {
     await Promise.resolve();
     test.sources[3].error();
     vi.advanceTimersByTime(100);
-    expect(test.sources[4].url).toBe("/api/events?since=newrun00%3A9");
+    expect(test.sources[4].url).toBe("/api/events?surface=desktop&since=newrun00%3A9");
     expect(frames).toEqual([
       { kind: "message" },
       { kind: "message", value: "behind failed snapshot" },
