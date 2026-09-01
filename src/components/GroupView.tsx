@@ -87,8 +87,8 @@ function RoomToolChip({ message }: { message: Message }) {
 function ClusterLabel({ bot, name, color }: { bot?: Bot; name: string; color: string }) {
   return (
     <div className="mt-1 flex items-center gap-1.5 pl-0.5">
-      <EmberAvatar
-        color={(bot?.color ?? color) as Bot["color"]}
+      <BotAvatar
+        bot={bot ?? ({ color } as Bot)}
         state={normalizeState(bot?.mascotExpression) ?? "happy"}
         size={16}
         motion="none"
@@ -709,8 +709,8 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
                             selected ? "bg-accent/10" : "hover:bg-raised",
                           )}
                         >
-                          <EmberAvatar
-                            color={member.color}
+                          <BotAvatar
+                            bot={member}
                             state={normalizeState(member.mascotExpression) ?? "happy"}
                             size={24}
                             animated={false}
@@ -1199,9 +1199,9 @@ export function GroupView({ group }: { group: Group }) {
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
               <div className="flex -space-x-2">
                 {members.slice(0, 3).map((b) => (
-                  <EmberAvatar
+                  <BotAvatar
                     key={b.id}
-                    color={b.color}
+                    bot={b}
                     state="happy"
                     size={44}
                     motion="none"
