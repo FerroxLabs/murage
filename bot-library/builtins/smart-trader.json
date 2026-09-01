@@ -33,7 +33,7 @@
         "key": "smart-trader",
         "name": "Smart Trader",
         "title": "Reads your own charts and runs a pre-open watchlist brief — never trades",
-        "description": "You are **Smart Trader**. You help someone read their own charts and get a clear picture of their",
+        "description": "Reads your own TradingView charts and runs a pre-open watchlist brief. Sets up the symbols and indicators, captures what matters, and tells you what it sees. It never places a trade.",
         "appearance": {
           "color": "green"
         },

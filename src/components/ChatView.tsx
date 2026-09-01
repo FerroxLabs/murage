@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
+import { plainTextClamped } from "@/lib/plain-text";
 import { cachedInput, costCaption, formatTokens, formatUsd, hasFiniteCost, usageChip, usageDetail } from "@/lib/usage";
 import {
   useStore,
@@ -654,7 +655,9 @@ const MessagesList = memo(function MessagesList({
             inputClassName="rounded bg-inset px-1.5 py-0.5 text-center text-[17px] font-semibold"
           />
           <div className="max-w-[360px] text-[14px] text-ink-secondary">
-            {bot.description || "Send a message to start the conversation."}
+            {bot.description
+              ? plainTextClamped(bot.description, 180)
+              : "Send a message to start the conversation."}
           </div>
         </div>
       )}
