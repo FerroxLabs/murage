@@ -102,6 +102,18 @@ jobs:
       - name: Package both architectures
         run: pnpm package:mac
 
+      - name: "Gate: both packaged apps use the Murage updater feed"
+        # app-update.yml is what an installed app reads forever. Anchored on
+        # both halves: a substring match on the repo alone would pass a feed
+        # pointing at some other account's murage-releases.
+        run: |
+          for app in release/mac-arm64/Murage.app release/mac/Murage.app; do
+            update="$app/Contents/Resources/app-update.yml"
+            test -f "$update" || { echo "::error::missing $update"; exit 1; }
+            grep -Eq '^owner: FerroxLabs$' "$update" || { echo "::error::wrong update owner in $update"; exit 1; }
+            grep -Eq '^repo: murage-releases$' "$update" || { echo "::error::wrong update repo in $update"; exit 1; }
+          done
+
       - name: "Gate: the signature must verify BEFORE notarization"
         run: |
           for app in release/mac-arm64/Murage.app release/mac/Murage.app; do
@@ -284,7 +296,8 @@ jobs:
           "$res/cloudflared/cloudflared.exe" version | grep -Fq "cloudflared version 2026.8.2 " || {
             echo "::error::cloudflared has the wrong version"; exit 1; }
           [ -f "$res/app-update.yml" ] || { echo "::error::missing app-update.yml"; exit 1; }
-          grep -q "murage-releases" "$res/app-update.yml" || { echo "::error::wrong update repo"; exit 1; }
+          grep -Eq '^owner: FerroxLabs$' "$res/app-update.yml" || { echo "::error::wrong update owner"; exit 1; }
+          grep -Eq '^repo: murage-releases$' "$res/app-update.yml" || { echo "::error::wrong update repo"; exit 1; }
           # Now that the build is signed, the inverse is the danger: without
           # publisherName electron-updater skips verification entirely, and a
           # mismatch rejects every update as untrusted.
@@ -345,6 +358,12 @@ jobs:
       - name: Prove overlay-free X11 input routing
         run: dbus-run-session -- xvfb-run -a pnpm smoke:cua-x11-input
       - run: pnpm package:linux
+      - name: Verify the packaged updater target
+        run: |
+          update=release/linux-unpacked/resources/app-update.yml
+          test -f "$update" || { echo "::error::missing $update"; exit 1; }
+          grep -Eq '^owner: FerroxLabs$' "$update" || { echo "::error::wrong update owner"; exit 1; }
+          grep -Eq '^repo: murage-releases$' "$update" || { echo "::error::wrong update repo"; exit 1; }
       - name: Verify package contents and metadata
         run: node scripts/verify-linux-package.mjs
       - name: Match a normal Ubuntu package parent on the ephemeral runner
@@ -397,24 +416,82 @@ jobs:
     needs: [prepare, mac, windows, linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    concurrency:
+      group: release-assemble-v${{ needs.prepare.outputs.version }}
+      cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: assets
           merge-multiple: true
+      - name: Refuse an incomplete installer or updater set
+        # A release missing one stable download name or one feed is the
+        # failure that strands users silently: the README button 404s, or an
+        # installed app never sees the update. Name every file the release
+        # must carry, and refuse anything extra so a stray artifact cannot
+        # ride along unnoticed.
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          required=(
+            latest-linux.yml latest-mac.yml latest.yml
+            "Murage-$VERSION-amd64.deb"
+            "Murage-$VERSION-arm64.dmg"
+            "Murage-$VERSION-arm64.dmg.blockmap"
+            "Murage-$VERSION-arm64.zip"
+            "Murage-$VERSION-arm64.zip.blockmap"
+            "Murage-$VERSION-setup.exe"
+            "Murage-$VERSION-setup.exe.blockmap"
+            "Murage-$VERSION-x64.dmg"
+            "Murage-$VERSION-x64.dmg.blockmap"
+            "Murage-$VERSION-x64.zip"
+            "Murage-$VERSION-x64.zip.blockmap"
+            "Murage-$VERSION-x86_64.AppImage"
+            Murage-amd64.deb Murage-intel.dmg Murage-setup.exe
+            Murage.AppImage Murage.dmg SHA256SUMS-ubuntu-x64.txt
+          )
+          for file in "${required[@]}"; do
+            test -s "assets/$file" || { echo "::error::missing or empty release asset: $file"; exit 1; }
+          done
+          test "$(find assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = "${#required[@]}" || {
+            echo "::error::unexpected release asset set"; find assets -maxdepth 1 -type f -print; exit 1; }
       - name: Verify every feed hash against the actual bytes
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           cd assets
-          node --input-type=module - <<'EOF'
+          node --input-type=module - "$VERSION" <<'EOF'
           import { createHash } from "node:crypto";
-          import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+          import { readFileSync, readdirSync, statSync } from "node:fs";
+          const version = process.argv[2];
           const sha512 = (f) => createHash("sha512").update(readFileSync(f)).digest("base64");
+          // Naming the files each feed must list turns "the feed happens to be
+          // absent" and "the feed lists nothing" from silent passes into
+          // failures. The old loop skipped a missing feed entirely.
+          const expected = new Map([
+            ["latest-mac.yml", [
+              `Murage-${version}-x64.zip`,
+              `Murage-${version}-arm64.zip`,
+              `Murage-${version}-x64.dmg`,
+              `Murage-${version}-arm64.dmg`,
+            ]],
+            ["latest.yml", [`Murage-${version}-setup.exe`]],
+            ["latest-linux.yml", [
+              `Murage-${version}-x86_64.AppImage`,
+              `Murage-${version}-amd64.deb`,
+            ]],
+          ]);
           let bad = 0;
-          for (const feed of ["latest-mac.yml", "latest.yml", "latest-linux.yml"]) {
-            if (!existsSync(feed)) continue;
+          for (const [feed, expectedUrls] of expected) {
             const text = readFileSync(feed, "utf8");
-            for (const [, url, hash, size] of text.matchAll(/url:\s+(\S+)[\s\S]*?sha512:\s+(\S+)\n\s+size:\s+(\d+)/g)) {
-              if (!existsSync(url)) { console.error(`MISSING ${url} (listed in ${feed})`); bad++; continue; }
+            const entries = [...text.matchAll(/url:\s+(\S+)[\s\S]*?sha512:\s+(\S+)\n\s+size:\s+(\d+)/g)];
+            const urls = entries.map(([, url]) => url).sort();
+            if (JSON.stringify(urls) !== JSON.stringify([...expectedUrls].sort())) {
+              console.error(`WRONG PATHS in ${feed}: ${urls.join(", ") || "none"}`);
+              bad++;
+              continue;
+            }
+            for (const [, url, hash, size] of entries) {
               const okHash = sha512(url) === hash;
               const okSize = statSync(url).size === Number(size);
               if (!okHash || !okSize) { console.error(`MISMATCH ${url} in ${feed}`); bad++; }
@@ -424,23 +501,87 @@ jobs:
           if (bad) process.exit(1);
           console.log(`\nall feeds verified; ${readdirSync(".").length} assets staged`);
           EOF
+      - name: Generate the release notes from merged pull requests
+        # The draft body used to be a hand-written placeholder nobody replaced.
+        # The releases repo holds no commits, so the notes are generated
+        # against the SOURCE repo (categories come from .github/release.yml
+        # there) and handed to the releases repo as a file. A failure here is
+        # cosmetic, never fatal: fall back to naming the pinned commit.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          notes="$RUNNER_TEMP/release-notes.md"
+          if gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="v$VERSION" -f target_commitish="$SHA" --jq .body > "$notes" 2>/dev/null \
+              && [ -s "$notes" ]; then
+            echo "generated $(wc -l < "$notes") lines of release notes"
+          else
+            printf 'Built by the release workflow from %s@%s.\n' "$GITHUB_REPOSITORY" "$SHA" > "$notes"
+            echo "::notice::could not generate notes from pull requests; using the commit reference"
+          fi
       - name: Create or update the draft with the complete asset set
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
-          SHA: ${{ needs.prepare.outputs.sha }}
         run: |
-          cd assets
           tag="v$VERSION"
+          # Only a NEW draft takes the generated notes. A rerun must not wipe
+          # edits a human made while reviewing the draft.
           if ! gh release view "$tag" --repo FerroxLabs/murage-releases > /dev/null 2>&1; then
             gh release create "$tag" --repo FerroxLabs/murage-releases \
               --draft --title "Murage $VERSION" \
-              --notes "Draft assembled by the release workflow from FerroxLabs/murage@$SHA. Edit these notes, then publish."
+              --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
-          for f in *; do
-            gh release upload "$tag" "$f" --repo FerroxLabs/murage-releases --clobber
+          for file in assets/*; do
+            gh release upload "$tag" "$file" --repo FerroxLabs/murage-releases --clobber
           done
           echo "asset count: $(gh release view "$tag" --repo FerroxLabs/murage-releases --json assets --jq '.assets | length')"
+
+      - name: Prove the draft holds the exact staged bytes
+        # An upload that half-succeeded, or a --clobber that silently kept the
+        # old asset, is invisible until a user's download fails its checksum.
+        # Compare GitHub's own digest for every asset against what we staged.
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          node --input-type=module - "$VERSION" <<'EOF'
+          import { createHash } from "node:crypto";
+          import { execFileSync } from "node:child_process";
+          import { readFileSync, readdirSync } from "node:fs";
+          import { join } from "node:path";
+          const version = process.argv[2];
+          const expected = new Map(readdirSync("assets").map((name) => [
+            name,
+            `sha256:${createHash("sha256").update(readFileSync(join("assets", name))).digest("hex")}`,
+          ]));
+          const json = execFileSync(
+            "gh",
+            ["release", "view", `v${version}`, "--repo", "FerroxLabs/murage-releases", "--json", "assets"],
+            { encoding: "utf8" },
+          );
+          const assets = JSON.parse(json).assets;
+          // The count is ours to enforce; the digests are GitHub's and are
+          // computed asynchronously after upload, so a null digest means "not
+          // ready", never "wrong". Report that rather than failing a release
+          // over a field that had not been filled in yet.
+          if (assets.length !== expected.size) {
+            throw new Error(`expected ${expected.size} assets on the draft, got ${assets.length}`);
+          }
+          const unreported = assets.filter((asset) => !asset.digest).map((asset) => asset.name);
+          for (const asset of assets) {
+            if (!asset.digest) continue;
+            if (expected.get(asset.name) !== asset.digest) {
+              throw new Error(`digest mismatch for ${asset.name}`);
+            }
+          }
+          if (unreported.length > 0) {
+            console.log(`::notice::GitHub reported no digest yet for ${unreported.length} asset(s): ${unreported.join(", ")}`);
+          }
+          console.log(`ok: the draft has ${assets.length} assets, ${assets.length - unreported.length} digest-verified`);
+          EOF
 
       - name: Publish (only when asked to)
         if: ${{ inputs.publish }}

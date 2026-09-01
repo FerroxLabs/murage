@@ -21,9 +21,15 @@ pnpm --filter @murage/docs types:check
 pnpm --filter @murage/docs lint
 ```
 
+The changelog reads published releases from `FerroxLabs/murage-releases` and
+caches the result for five minutes. If GitHub is temporarily unavailable, the
+page links straight to the releases instead of failing the build.
+
 ## Deploy to Vercel
 
-This is a fully static site. Deploying it does not deploy the Electron app, local harness, credentials, agents, or user data.
+This deploys only the public documentation. It does not deploy the Electron app,
+local harness, credentials, agents, or user data. The changelog page uses Next.js
+incremental regeneration so published releases appear without a source commit.
 
 Create a second Vercel project beside the existing `murage.com` project:
 
@@ -33,4 +39,6 @@ Create a second Vercel project beside the existing `murage.com` project:
 4. Set the production branch to `main` and deploy.
 5. Add `docs.murage.ai` under **Settings → Domains**.
 
-Vercel will build the static `out` directory, publish every push to `main`, and create preview URLs for documentation pull requests. Keep `murage.com` on the existing marketing project and add a Docs link there after the new domain is live.
+Vercel will build the Next.js docs app, publish every push to `main`, and create
+preview URLs for documentation pull requests. Keep `murage.com` on the existing
+marketing project and add a Docs link there after the new domain is live.

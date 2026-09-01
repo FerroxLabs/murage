@@ -4,13 +4,42 @@ One workflow builds everything: **Actions → Release → Run workflow**. It
 builds macOS (arm64 + x64, signed, notarized, stapled), Windows, and Ubuntu
 from a single pinned commit, verifies every artifact the way a user would
 receive it, assembles a complete draft on
-[murage-releases](https://github.com/FerroxLabs/murage-releases),
-and — if you ticked **publish** — flips it live. Leave publish unticked to
-review the draft notes first, then publish from the GitHub UI.
+[murage-releases](https://github.com/FerroxLabs/murage-releases) with
+generated notes, and — if you ticked **publish** — flips it live. Leave
+publish unticked to review the draft notes first, then publish from the
+GitHub UI.
 
 The workflow refuses to overwrite an already-published version, so the only
 prerequisite per release is that `package.json`'s version is bumped on the
-ref you run it against.
+ref you run it against. A release is also rejected if any installer, stable
+download name, updater feed, blockmap, size, or digest is absent or
+inconsistent — the complete asset set is named in `release.yml`, and anything
+missing or extra fails the run rather than shipping a half release.
+
+## Release notes are generated
+
+The draft body is generated from the pull requests merged since the previous
+release. `murage-releases` holds only assets, so the notes are generated
+against **this** repository and handed over as a file; `.github/release.yml`
+here decides the section each pull request lands in (label a PR `enhancement`,
+`bug`, `documentation`, or `ignore-for-release`). Only a *new* draft takes the
+generated notes — rerunning the workflow re-uploads assets without touching
+edits you made while reviewing.
+
+The docs changelog reads the published releases straight from
+`FerroxLabs/murage-releases` and caches them for five minutes, so a published
+release appears without a source commit.
+
+## The updater feed is a contract
+
+`app-update.yml` is baked into every packaged desktop app and is the only
+thing that tells an installed copy where its updates come from. It is written
+from `electron-builder.yml`'s `publish` block, which must stay
+`owner: FerroxLabs` / `repo: murage-releases`. Changing it strands every
+already-installed user with no error anywhere, so the mac, Windows, and Ubuntu
+jobs each assert both halves on the packaged bytes, and
+`scripts/verify-linux-package.mjs` re-checks them inside the `.deb` and the
+AppImage. `murage-releases` must stay public: users' machines carry no token.
 
 ## Why the gates exist
 
