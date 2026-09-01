@@ -226,7 +226,32 @@ jobs:
       - name: Clean generated output
         shell: bash
         run: rm -rf dist dist-server release
-      - run: pnpm package:win
+      - name: Package (Azure Trusted Signing)
+        run: pnpm package:win
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      # The mac job gates on codesign BEFORE notarizing, for the same reason
+      # this gate exists: a build that silently skipped signing looks entirely
+      # normal until a user's SmartScreen says otherwise. Prove it, do not
+      # assume it.
+      - name: "Gate: the installer must actually be signed"
+        shell: pwsh
+        run: |
+          $fail = 0
+          Get-ChildItem release -Filter *.exe -Recurse | ForEach-Object {
+            $sig = Get-AuthenticodeSignature $_.FullName
+            Write-Host "$($_.Name): $($sig.Status) $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') {
+              Write-Host "::error::$($_.Name) is not validly signed ($($sig.Status))"; $fail = 1
+            } elseif ($sig.SignerCertificate.Subject -notmatch 'Ferrox Labs, LLC') {
+              Write-Host "::error::$($_.Name) signed by an unexpected subject"; $fail = 1
+            }
+          }
+          exit $fail
+
       - name: Verify the packaged tree and start the packaged server
         shell: bash
         run: |
@@ -243,9 +268,13 @@ jobs:
             echo "::error::cloudflared has the wrong version"; exit 1; }
           [ -f "$res/app-update.yml" ] || { echo "::error::missing app-update.yml"; exit 1; }
           grep -q "murage-releases" "$res/app-update.yml" || { echo "::error::wrong update repo"; exit 1; }
-          if grep -q "publisherName" "$res/app-update.yml"; then
-            echo "::error::publisherName on an unsigned build breaks every update"; exit 1
-          fi
+          # Now that the build is signed, the inverse is the danger: without
+          # publisherName electron-updater skips verification entirely, and a
+          # mismatch rejects every update as untrusted.
+          grep -q "publisherName" "$res/app-update.yml" || {
+            echo "::error::app-update.yml has no publisherName on a signed build"; exit 1; }
+          grep -q "Ferrox Labs, LLC" "$res/app-update.yml" || {
+            echo "::error::app-update.yml publisherName does not match the signing certificate"; exit 1; }
           HOME="$RUNNER_TEMP/smoke" USERPROFILE="$RUNNER_TEMP/smoke" MURAGE_PORT=21987 \
             node "$res/server/index.js" > "$RUNNER_TEMP/server.log" 2>&1 &
           pid=$!
