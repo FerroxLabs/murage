@@ -4,10 +4,18 @@
 // it would ship the $el_text of clicked elements, and the sidebar/option
 // cards render model output and message previews, so it would leak fragments
 // of private conversations to a third party. Email submissions call
-// identify(), so PostHog's Persons tab doubles as the collected-email list.
+// identify(), which links the address to the person record.
+//
+// The token is injected at build time and has NO default. An unconfigured
+// build sends nothing at all: initAnalytics() returns before init(), so the
+// library never opens a connection. The upstream fork shipped a hardcoded
+// token pointing at its own project, which meant every install's events and
+// every submitted email landed in someone else's account.
 import posthog from "posthog-js";
 
-const TOKEN = "phc_m2hP39w8y2gLPvHgDvSXAu6xcZ3agjf4ruL56rGcMZEe";
+const TOKEN = (import.meta.env?.VITE_POSTHOG_KEY as string | undefined)?.trim() ?? "";
+const API_HOST =
+  (import.meta.env?.VITE_POSTHOG_HOST as string | undefined)?.trim() || "https://us.i.posthog.com";
 
 // Analytics are on by default; Settings → General turns them off. The choice
 // lives in localStorage because it has to be readable BEFORE init() runs: an
@@ -68,9 +76,9 @@ export function setAnalyticsEnabled(enabled: boolean) {
 }
 
 export function initAnalytics() {
-  if (ready || !analyticsEnabled()) return;
+  if (ready || !TOKEN || !analyticsEnabled()) return;
   posthog.init(TOKEN, {
-    api_host: "https://us.i.posthog.com",
+    api_host: API_HOST,
     autocapture: false, // never capture clicked-element text (conversation leak)
     capture_pageview: false, // single-window desktop app — no page routes
     person_profiles: "identified_only",
