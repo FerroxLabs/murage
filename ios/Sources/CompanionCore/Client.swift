@@ -196,7 +196,7 @@ public struct PairingInvite: Equatable, Sendable {
     }
 
     public static func parse(_ url: URL) -> PairingInvite? {
-        guard url.scheme?.lowercased() == "openmausbot",
+        guard url.scheme?.lowercased() == "murage",
               url.host?.lowercased() == "pair",
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         else { return nil }
@@ -272,9 +272,9 @@ public struct PairingInvite: Equatable, Sendable {
 
     private static func credential(from values: [String: String]) -> String? {
         if let token = values["token"] {
-            guard token.hasPrefix("omb_pair_"),
+            guard token.hasPrefix("murage_pair_"),
                   token.utf8.count == 52,
-                  token.dropFirst("omb_pair_".count).utf8.allSatisfy({
+                  token.dropFirst("murage_pair_".count).utf8.allSatisfy({
                       (48...57).contains($0) || (65...90).contains($0) ||
                       (97...122).contains($0) || $0 == 45 || $0 == 95
                   })
@@ -314,7 +314,7 @@ public struct PairingRouteError: Error, LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         let routes = attemptedHosts.joined(separator: ", ")
-        return "Couldn’t reach this computer through any available route (\(routes)). Keep Phone access turned on in OpenMausBot, then try again."
+        return "Couldn’t reach this computer through any available route (\(routes)). Keep Phone access turned on in Murage, then try again."
     }
 }
 
@@ -598,7 +598,7 @@ public struct CompanionClient: Sendable {
     /// that exact route is the user's preferred, explicit choice; neither a
     /// pairing credential nor the later bearer token is sprayed onto the
     /// current wifi merely because a private address was once advertised.
-    /// Only the first response that identifies itself as OpenMausBot receives
+    /// Only the first response that identifies itself as Murage receives
     /// the one-time pairing POST. The request id makes that redemption safely
     /// replayable by newer desktop builds if its response is lost in transit.
     public static func pairFirstReachable(
@@ -689,7 +689,7 @@ public struct CompanionClient: Sendable {
             guard !Task.isCancelled,
                   let http = response as? HTTPURLResponse,
                   (200...299).contains(http.statusCode),
-                  try JSONDecoder().decode(HealthIdentity.self, from: data).app == "openmausbot"
+                  try JSONDecoder().decode(HealthIdentity.self, from: data).app == "murage"
             else { return false }
             return true
         } catch {

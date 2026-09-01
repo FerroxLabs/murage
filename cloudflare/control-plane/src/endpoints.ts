@@ -103,7 +103,7 @@ async function ensureEndpointRow(
       `INSERT OR IGNORE INTO installation_endpoints
         (installation_id, hostname, tunnel_name, status, created_at, updated_at)
        VALUES (?, ?, ?, 'pending', ?, ?)`,
-    ).bind(installationId, `c-${opaque}.${hostSuffix}`, `omb-c-${opaque}`, now, now).run();
+    ).bind(installationId, `c-${opaque}.${hostSuffix}`, `murage-c-${opaque}`, now, now).run();
     const row = await endpointRow(env, installationId);
     if (row) return row;
   }

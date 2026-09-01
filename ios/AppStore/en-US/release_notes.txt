@@ -1,6 +1,6 @@
 Welcome to OpenMausMobile 1.0.
 
-• Pair securely with your OpenMausBot computer
+• Pair securely with your Murage computer
 • Default QR pairing now stays on hosted HTTPS; Tailscale and local routes remain explicit choices
 • Chat with bots and rooms
 • Answer approvals and questions

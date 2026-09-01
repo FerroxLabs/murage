@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Circle, Loader2, RotateCcw, ShieldCheck, Smartphone, Usb } from "lucide-react";
 import { usePageVisible } from "@/lib/page-visible";
-import type { AndroidDeviceInput, AndroidDeviceStatus, AndroidUsbDevice } from "@/types/ogb";
+import type { AndroidDeviceInput, AndroidDeviceStatus, AndroidUsbDevice } from "@/types/muragebox";
 
 type UnitPoint = { x: number; y: number };
 
 const EMPTY_STATUS: AndroidDeviceStatus = { available: false, devices: [] };
 
 export function useAndroidUsbDevices() {
-  const bridge = window.ogb?.androidDevice;
+  const bridge = window.muragebox?.androidDevice;
   const [status, setStatus] = useState<AndroidDeviceStatus>(EMPTY_STATUS);
   const pageVisible = usePageVisible();
 
@@ -47,7 +47,7 @@ function deviceLabel(device: AndroidUsbDevice) {
 }
 
 export function AndroidDevicePanel({ status }: { status: AndroidDeviceStatus }) {
-  const bridge = window.ogb?.androidDevice;
+  const bridge = window.muragebox?.androidDevice;
   const pageVisible = usePageVisible();
   const authorized = status.devices.filter((device) => device.state === "device");
   const [serial, setSerial] = useState(authorized[0]?.serial ?? status.devices[0]?.serial ?? "");

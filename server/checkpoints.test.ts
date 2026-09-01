@@ -13,10 +13,10 @@ import { afterAll, describe, expect, it } from "vitest";
 import { removeTempDir } from "./testing/cleanup.ts";
 
 // The module stores shadow repos under DATA_DIR, which config.ts reads from
-// OMB_DATA_DIR at import time — so the env var must be set before the import
+// MURAGE_DATA_DIR at import time — so the env var must be set before the import
 // is evaluated (same pattern as attachments.test.ts).
-const DATA_ROOT = mkdtempSync(join(tmpdir(), "omb-checkpoints-"));
-process.env.OMB_DATA_DIR = join(DATA_ROOT, "data");
+const DATA_ROOT = mkdtempSync(join(tmpdir(), "murage-checkpoints-"));
+process.env.MURAGE_DATA_DIR = join(DATA_ROOT, "data");
 
 const { checkpointsEnabled, listCheckpoints, refusalReason, restore, snapshot } = await import(
   "./checkpoints.ts"
@@ -29,7 +29,7 @@ afterAll(async () => {
 
 let seq = 0;
 function workspace() {
-  const cwd = mkdtempSync(join(tmpdir(), "omb-ckpt-ws-"));
+  const cwd = mkdtempSync(join(tmpdir(), "murage-ckpt-ws-"));
   scratchDirs.push(cwd);
   seq += 1;
   return { bot: `ckpt-test-bot-${seq}`, cwd };
@@ -239,7 +239,7 @@ describe("refusals", () => {
     expect(refusalReason(homedir())).not.toBeNull();
     expect(refusalReason("/")).not.toBeNull();
     expect(refusalReason(join(homedir(), "Documents"))).not.toBeNull();
-    expect(refusalReason(join(tmpdir(), "omb-ckpt-definitely-missing-xyz"))).not.toBeNull();
+    expect(refusalReason(join(tmpdir(), "murage-ckpt-definitely-missing-xyz"))).not.toBeNull();
     expect(refusalReason("relative/path")).not.toBeNull();
 
     expect(await snapshot(bot, homedir(), "turn 1")).toBeNull();
@@ -265,7 +265,7 @@ describe("refusals", () => {
   it("lists nothing (and creates nothing) for a folder never snapshotted", async () => {
     const { bot, cwd } = workspace();
     expect(await listCheckpoints(bot, cwd)).toEqual([]);
-    const shadow = join(process.env.OMB_DATA_DIR!, "checkpoints", bot);
+    const shadow = join(process.env.MURAGE_DATA_DIR!, "checkpoints", bot);
     expect(existsSync(shadow)).toBe(false);
   });
 });

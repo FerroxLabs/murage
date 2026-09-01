@@ -28,10 +28,10 @@ import { augmentedPath } from "./env-path.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 
 export const VPS_IMAGE = CUA_IMAGE;
-export const VPS_MANAGED_LABEL = "com.openmausbot.vps";
-export const VPS_CONTAINER_LABEL = "com.openmausbot.container";
-export const VPS_VIEWER_LABEL = "com.openmausbot.vps-viewer";
-export const VPS_CONTAINER_PREFIX = "openmausbot-vps";
+export const VPS_MANAGED_LABEL = "com.murage.vps";
+export const VPS_CONTAINER_LABEL = "com.murage.container";
+export const VPS_VIEWER_LABEL = "com.murage.vps-viewer";
+export const VPS_CONTAINER_PREFIX = "murage-vps";
 // SIGTERM must give ssh + docker time to tear down the remote exec before the
 // SIGKILL escalation; 1s was routinely too short over a WAN round-trip, and an
 // orphaned remote exec keeps the driver socket busy for the next command.
@@ -41,7 +41,7 @@ const CONTAINER_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/;
 const CONTAINER_ID = /^[a-f0-9]{12,64}$/i;
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/i;
 const PIDS_LIMIT = 512;
-const SCREENSHOT_PATH = "/tmp/openmausbot-vps-preview.png";
+const SCREENSHOT_PATH = "/tmp/murage-vps-preview.png";
 const INTERNAL_VIEWER_PORT = 6901;
 const VIEWER_VERSION = "1";
 const lifecycleLocks = new Map<string, Promise<void>>();
@@ -368,14 +368,14 @@ function hasNoPublishedPorts(config: {
 function statusProblem(status: VpsComputerStatus): string | null {
   if (!status.configured) return "Configure a VPS SSH alias in App Settings → Connections";
   if (!status.daemonUp) return "Docker over SSH could not reach the VPS; check the SSH alias and Docker on the VPS";
-  if (!status.image) return `Prepare the pinned OpenMausBot Cua image on the VPS (Driver ${CUA_DRIVER_VERSION})`;
-  if (status.container === "missing") return "No OpenMausBot container exists for this bot on the VPS";
-  if (!status.imageMatches) return "The VPS container uses an incompatible or untrusted OpenMausBot image";
-  if (!status.managed) return "The VPS container name is occupied by a container OpenMausBot did not create";
+  if (!status.image) return `Prepare the pinned Murage Cua image on the VPS (Driver ${CUA_DRIVER_VERSION})`;
+  if (status.container === "missing") return "No Murage container exists for this bot on the VPS";
+  if (!status.imageMatches) return "The VPS container uses an incompatible or untrusted Murage image";
+  if (!status.managed) return "The VPS container name is occupied by a container Murage did not create";
   if (status.network === "unsafe") return "The VPS container uses an unapproved network or publishes ports; refusing to use it";
   if (status.mounts === "unsafe") return "The VPS container has host mounts; refusing to use it";
-  if (status.security === "unsafe") return "The VPS container is missing OpenMausBot safety limits";
-  if (status.container === "stopped") return "The OpenMausBot VPS container is stopped";
+  if (status.security === "unsafe") return "The VPS container is missing Murage safety limits";
+  if (status.container === "stopped") return "The Murage VPS container is stopped";
   if (status.desktop_error) return `The VPS Cua desktop failed to start: ${status.desktop_error}`;
   if (!status.desktopReady) return "The VPS container started, but Cua Driver is not ready yet";
   return null;
@@ -792,12 +792,12 @@ export async function vpsComputerAction(
         // IMAGE_LAYER_VERSION bump otherwise bricks the bot: provision 409s
         // on assertUsableContainer forever), so it deliberately skips that
         // check. The ownership labels from the inspect are the only gate:
-        // never docker-rm a container OpenMausBot did not create, even one
+        // never docker-rm a container Murage did not create, even one
         // squatting on our name.
         if (before.container === "missing") return before;
         if (!before.managed) {
           throw Object.assign(
-            new Error("The VPS container name is occupied by a container OpenMausBot did not create — remove it on the VPS yourself"),
+            new Error("The VPS container name is occupied by a container Murage did not create — remove it on the VPS yourself"),
             { status: 409 },
           );
         }

@@ -54,8 +54,8 @@ const statusProbe = `${driverExec} status --socket ${CUA_SOCKET}`;
 const healthProbe = `${driverExec} call health_report {} --socket ${CUA_SOCKET}`;
 const readinessProbe =
   `${driverExec} call get_desktop_state {} --socket ${CUA_SOCKET} ` +
-  "--screenshot-out-file /tmp/openmausbot-readiness.png";
-const readinessRead = `docker exec ${CONTAINER} base64 -w0 /tmp/openmausbot-readiness.png`;
+  "--screenshot-out-file /tmp/murage-readiness.png";
+const readinessRead = `docker exec ${CONTAINER} base64 -w0 /tmp/murage-readiness.png`;
 const validPng = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   Buffer.alloc(600),
@@ -157,10 +157,10 @@ describe("containerComputerStatus", () => {
     const derived = perBotLocalVmTarget("bot-win");
     const target: LocalVmTarget = {
       ...derived,
-      workspaceDir: "C:\\Users\\light\\.openmausbot\\vm-homes\\win-target",
+      workspaceDir: "C:\\Users\\light\\.murage\\vm-homes\\win-target",
     };
     const detail = JSON.parse(perBotReadyInspect("bot-win", 41629))[0];
-    detail.Mounts[0].Source = "/mnt/c/Users/light/.openmausbot/vm-homes/win-target";
+    detail.Mounts[0].Source = "/mnt/c/Users/light/.murage/vm-homes/win-target";
     detail.HostConfig = {
       ...detail.HostConfig,
       CapDrop: ["CAP_CHOWN", "CAP_DAC_OVERRIDE"],
@@ -187,8 +187,8 @@ describe("containerComputerStatus", () => {
         overall: "ok",
         checks: [],
       }),
-      [`${targetDriverExec} call get_desktop_state {} --socket ${CUA_SOCKET} --screenshot-out-file /tmp/openmausbot-readiness.png`]: "{}\n",
-      [`podman exec ${target.containerName} base64 -w0 /tmp/openmausbot-readiness.png`]: validPng.toString("base64"),
+      [`${targetDriverExec} call get_desktop_state {} --socket ${CUA_SOCKET} --screenshot-out-file /tmp/murage-readiness.png`]: "{}\n",
+      [`podman exec ${target.containerName} base64 -w0 /tmp/murage-readiness.png`]: validPng.toString("base64"),
     });
 
     const status = await containerComputerStatus(fake.run, "win32", target);
@@ -254,8 +254,8 @@ describe("containerComputerStatus", () => {
         overall: "ok",
         checks: [],
       }),
-      [`${targetDriverExec} call get_desktop_state {} --socket ${CUA_SOCKET} --screenshot-out-file /tmp/openmausbot-readiness.png`]: "{}\n",
-      [`docker exec ${target.containerName} base64 -w0 /tmp/openmausbot-readiness.png`]: validPng.toString("base64"),
+      [`${targetDriverExec} call get_desktop_state {} --socket ${CUA_SOCKET} --screenshot-out-file /tmp/murage-readiness.png`]: "{}\n",
+      [`docker exec ${target.containerName} base64 -w0 /tmp/murage-readiness.png`]: validPng.toString("base64"),
     });
 
     const status = await containerComputerStatus(fake.run, "linux", target);
@@ -287,7 +287,7 @@ describe("containerComputerStatus", () => {
 
     expect(status.managed).toBe(false);
     expect(status.ready).toBe(false);
-    expect(status.problem).toContain("not created by OpenMausBot");
+    expect(status.problem).toContain("not created by Murage");
   });
 
   it("prefers a running runtime over an earlier installed but stopped one", async () => {
@@ -565,8 +565,8 @@ describe("containerComputerStatus", () => {
 describe("Cua integration", () => {
   it("hands cloud credentials only to the isolated remote adapter", () => {
     expect(computerProxyEnv({ boxId: "bx_1", token: "t" })).toEqual({
-      OGB_BOX_ID: "bx_1",
-      OGB_BOX_TOKEN: "t",
+      MURAGEBOX_BOX_ID: "bx_1",
+      MURAGEBOX_BOX_TOKEN: "t",
     });
   });
 
@@ -591,7 +591,7 @@ describe("Cua integration", () => {
     expect(dockerfile).toContain(`cua-driver ${CUA_DRIVER_VERSION}`);
     expect(dockerfile).toContain(`serve --socket ${CUA_SOCKET} --permission-mode standard`);
     expect(dockerfile).toContain("CUA_DRIVER_RS_TELEMETRY_ENABLED=0");
-    expect(dockerfile).toContain("prepare-openmausbot-workspace.sh");
+    expect(dockerfile).toContain("prepare-murage-workspace.sh");
     expect(dockerfile).toContain('if ! chmod 0700 "$workspace"');
     expect(dockerfile).toContain('test -r "$directory" && test -w "$directory" && test -x "$directory"');
     expect(dockerfile).toContain("migrate_profile google-chrome");
@@ -620,7 +620,7 @@ describe("Cua integration", () => {
   it("captures the preview through Cua Driver rather than xdotool or VNC", async () => {
     const screenshotCall =
       `${driverExec} call get_desktop_state {} --socket ${CUA_SOCKET} ` +
-      "--screenshot-out-file /tmp/openmausbot-preview.png";
+      "--screenshot-out-file /tmp/murage-preview.png";
     const png = validPng;
     const fake = runner({
       "/usr/bin/which docker": "docker\n",
@@ -634,7 +634,7 @@ describe("Cua integration", () => {
       [readinessProbe]: "{}\n",
       [readinessRead]: png.toString("base64"),
       [screenshotCall]: "{}\n",
-      [`docker exec ${CONTAINER} base64 -w0 /tmp/openmausbot-preview.png`]: png.toString("base64"),
+      [`docker exec ${CONTAINER} base64 -w0 /tmp/murage-preview.png`]: png.toString("base64"),
     });
 
     const image = await containerComputerScreenshot(fake.run, "linux");
@@ -766,9 +766,9 @@ describe("setupCommands", () => {
   });
 
   it("uses an explicit local image name so Podman never resolves the managed build on Docker Hub", () => {
-    expect(IMAGE).toMatch(/^localhost\/openmausbot\/cua-local-vm:/);
+    expect(IMAGE).toMatch(/^localhost\/murage\/cua-local-vm:/);
     expect(setupCommands("podman", "darwin").run).toContain(IMAGE);
-    expect(setupCommands("podman", "darwin").run).not.toContain("docker.io/openmausbot");
+    expect(setupCommands("podman", "darwin").run).not.toContain("docker.io/murage");
   });
 
   it("generates Apple container lifecycle commands without Docker-only flags", () => {

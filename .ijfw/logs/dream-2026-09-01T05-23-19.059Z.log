@@ -1,0 +1,7 @@
+[2026-09-01T05:23:19.060Z] start: host=claude-code, reason=session_end, project=/Volumes/Mando/WaylandBots/murage-app
+[2026-09-01T05:23:19.061Z] journal: 1 entries across 1 sessions
+[2026-09-01T05:23:19.063Z] tier-promotion: db open skipped (Cannot find package 'better-sqlite3' imported from /Users/seandonahoe/.ijfw/mcp-server/src/memory/fts5.js)
+[2026-09-01T05:23:19.063Z] wiki-compile: db open skipped (Cannot find package 'better-sqlite3' imported from /Users/seandonahoe/.ijfw/mcp-server/src/memory/fts5.js)
+[2026-09-01T05:23:19.064Z] profile_derive: no signals -> no-op
+[2026-09-01T05:23:19.064Z] mark-completed: ok
+[2026-09-01T05:23:19.065Z] end: completed=5 failed=0

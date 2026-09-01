@@ -9,7 +9,7 @@ import { cn } from "@/lib/cn";
 type Platform = "darwin" | "win32" | "linux";
 
 function hostPlatform(): Platform {
-  const platform = window.ogb?.platform;
+  const platform = window.muragebox?.platform;
   if (platform === "darwin" || platform === "win32" || platform === "linux") return platform;
   const userAgent = navigator.userAgent;
   if (userAgent.includes("Mac")) return "darwin";
@@ -36,7 +36,7 @@ export function needsCli(instance: InstanceInfo | undefined): boolean {
 
 function CommandRow({ command, actionLabel }: { command: string; actionLabel: string }) {
   const [status, setStatus] = useState<"copied" | "opened" | null>(null);
-  const canOpen = Boolean(window.ogb?.openInstallTerminal);
+  const canOpen = Boolean(window.muragebox?.openInstallTerminal);
 
   const settle = (next: "copied" | "opened") => {
     setStatus(next);
@@ -53,7 +53,7 @@ function CommandRow({ command, actionLabel }: { command: string; actionLabel: st
   };
 
   const openTerminal = async () => {
-    const opened = await window.ogb!.openInstallTerminal!(command);
+    const opened = await window.muragebox!.openInstallTerminal!(command);
     settle(opened ? "opened" : "copied");
   };
 

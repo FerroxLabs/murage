@@ -103,7 +103,7 @@ final class ShareClientTests: XCTestCase {
 
     func testRawImageUploadKeepsBytesOutOfJSONAndReturnsMacPath() async throws {
         ShareRequestStub.statusCode = 201
-        ShareRequestStub.responseBody = Data(#"{"path":"/Users/test/.openmausbot/attachments/image.png","mime":"image/png","bytes":4}"#.utf8)
+        ShareRequestStub.responseBody = Data(#"{"path":"/Users/test/.murage/attachments/image.png","mime":"image/png","bytes":4}"#.utf8)
         let bytes = Data([0x89, 0x50, 0x4E, 0x47])
 
         let uploadId = "7DB8737D-85B9-4BE5-A3D8-FA8D74EBA52B"
@@ -113,7 +113,7 @@ final class ShareClientTests: XCTestCase {
             uploadId: uploadId
         )
 
-        XCTAssertEqual(path, "/Users/test/.openmausbot/attachments/image.png")
+        XCTAssertEqual(path, "/Users/test/.murage/attachments/image.png")
         XCTAssertEqual(ShareRequestStub.capturedRequest?.url?.path, "/api/attachments")
         XCTAssertEqual(
             URLComponents(url: try XCTUnwrap(ShareRequestStub.capturedRequest?.url), resolvingAgainstBaseURL: false)?
@@ -128,7 +128,7 @@ final class ShareClientTests: XCTestCase {
 
     func testRawFileUploadEncodesDisplayNameAndReturnsMacPath() async throws {
         ShareRequestStub.statusCode = 201
-        ShareRequestStub.responseBody = Data(#"{"path":"/Users/test/.openmausbot/files/id.pdf","name":"Q3 plan.pdf","mime":"application/pdf","bytes":3}"#.utf8)
+        ShareRequestStub.responseBody = Data(#"{"path":"/Users/test/.murage/files/id.pdf","name":"Q3 plan.pdf","mime":"application/pdf","bytes":3}"#.utf8)
         let bytes = Data([1, 2, 3])
 
         let uploadId = "7DB8737D-85B9-4BE5-A3D8-FA8D74EBA52B"
@@ -139,7 +139,7 @@ final class ShareClientTests: XCTestCase {
             uploadId: uploadId
         )
 
-        XCTAssertEqual(uploaded.path, "/Users/test/.openmausbot/files/id.pdf")
+        XCTAssertEqual(uploaded.path, "/Users/test/.murage/files/id.pdf")
         XCTAssertEqual(uploaded.name, "Q3 plan.pdf")
         XCTAssertEqual(ShareRequestStub.capturedRequest?.url?.path, "/api/files")
         XCTAssertEqual(
@@ -159,7 +159,7 @@ final class ShareClientTests: XCTestCase {
     func testFileUploadRejectsAnUnsafeReturnedDisplayName() async {
         ShareRequestStub.statusCode = 201
         ShareRequestStub.responseBody = Data(
-            #"{"path":"/Users/test/.openmausbot/attachments/id.pdf","name":"../secret.pdf","mime":"application/pdf","bytes":3}"#.utf8
+            #"{"path":"/Users/test/.murage/attachments/id.pdf","name":"../secret.pdf","mime":"application/pdf","bytes":3}"#.utf8
         )
 
         do {

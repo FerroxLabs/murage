@@ -17,11 +17,11 @@ the channel composer.
 Create two fixture bots with `new-bot`, then:
 
 ```sh
-pnpm control:omb new-channel --name Review --members BOT_A_ID,BOT_B_ID --url http://127.0.0.1:PORT
+pnpm control:murage new-channel --name Review --members BOT_A_ID,BOT_B_ID --url http://127.0.0.1:PORT
 # Copy channel.id from the JSON above as CHANNEL_ID.
-pnpm control:omb send-channel --channel CHANNEL_ID --text "Reply once" --url http://127.0.0.1:PORT
-pnpm control:omb wait --channel CHANNEL_ID --timeout 60 --url http://127.0.0.1:PORT
-pnpm control:omb messages --channel CHANNEL_ID --limit 20 --url http://127.0.0.1:PORT
+pnpm control:murage send-channel --channel CHANNEL_ID --text "Reply once" --url http://127.0.0.1:PORT
+pnpm control:murage wait --channel CHANNEL_ID --timeout 60 --url http://127.0.0.1:PORT
+pnpm control:murage messages --channel CHANNEL_ID --limit 20 --url http://127.0.0.1:PORT
 ```
 
 Capture the returned channel ID from `new-channel`. The wait result must be

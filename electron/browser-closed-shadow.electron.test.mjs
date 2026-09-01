@@ -14,7 +14,7 @@ const xvfb = process.platform === "linux" && !process.env.DISPLAY
   : "";
 const canRun = process.platform !== "linux" || Boolean(process.env.DISPLAY) || Boolean(xvfb);
 const canRunRealElectronFixture = canRun
-  && !(process.platform === "win32" && process.env.OMB_SKIP_REAL_ELECTRON_BROWSER_FIXTURE === "1");
+  && !(process.platform === "win32" && process.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE === "1");
 const windowsSandboxSid = "S-1-15-2-2";
 const fixtureTimeoutMs = 45_000;
 
@@ -140,11 +140,11 @@ function prepareWindowsElectronSandbox(executable) {
 }
 
 it("constructs Chromium-style Windows Electron sandbox ACL commands without a shell", () => {
-  const executable = "D:\\a\\OpenMausBot\\node_modules\\electron\\dist\\electron.exe";
+  const executable = "D:\\a\\Murage\\node_modules\\electron\\dist\\electron.exe";
   expect(windowsSandboxRootAclCommand(executable)).toEqual({
     command: "icacls",
     args: [
-      "D:\\a\\OpenMausBot\\node_modules\\electron\\dist",
+      "D:\\a\\Murage\\node_modules\\electron\\dist",
       "/grant",
       "*S-1-15-2-2:(OI)(CI)(RX)",
     ],
@@ -152,7 +152,7 @@ it("constructs Chromium-style Windows Electron sandbox ACL commands without a sh
   expect(windowsSandboxSaveAclCommand(executable, "D:\\temp\\electron.acl")).toEqual({
     command: "icacls",
     args: [
-      "D:\\a\\OpenMausBot\\node_modules\\electron\\dist",
+      "D:\\a\\Murage\\node_modules\\electron\\dist",
       "/save",
       "D:\\temp\\electron.acl",
       "/T",
@@ -167,7 +167,7 @@ it("constructs Chromium-style Windows Electron sandbox ACL commands without a sh
 });
 
 it("finds hardlinked Windows Electron files that missed the inherited sandbox ACL", () => {
-  const aclRoot = "D:\\a\\OpenMausBot\\node_modules\\electron\\dist";
+  const aclRoot = "D:\\a\\Murage\\node_modules\\electron\\dist";
   const records = parseWindowsSavedAcls([
     "dist",
     "D:AI(A;OICI;0x1200a9;;;S-1-15-2-2)",
@@ -178,7 +178,7 @@ it("finds hardlinked Windows Electron files that missed the inherited sandbox AC
     "",
   ].join("\r\n"), aclRoot);
   expect(windowsEntriesMissingSandboxAcl(records)).toEqual([
-    "D:\\a\\OpenMausBot\\node_modules\\electron\\dist\\electron.exe",
+    "D:\\a\\Murage\\node_modules\\electron\\dist\\electron.exe",
   ]);
 });
 

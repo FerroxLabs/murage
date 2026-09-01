@@ -2,7 +2,7 @@ import fs from "node:fs";
 import type { Server } from "node:http";
 import path from "node:path";
 
-const RUNTIME_PREFIX = "omb-companion-origin-";
+const RUNTIME_PREFIX = "murage-companion-origin-";
 const SOCKET_NAME = "origin.sock";
 
 /** Accept only the private endpoint shape allocated by Electron. A malformed
@@ -14,7 +14,7 @@ export function companionOriginSocket(
 ): string | null {
   if (!value) return null;
   if (platform === "win32") {
-    return /^\\\\\.\\pipe\\openmausbot-companion-origin-[1-9][0-9]*-[0-9a-f-]{36}$/i.test(value)
+    return /^\\\\\.\\pipe\\murage-companion-origin-[1-9][0-9]*-[0-9a-f-]{36}$/i.test(value)
       ? value
       : null;
   }

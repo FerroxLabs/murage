@@ -1,4 +1,4 @@
-import type { CompanionAccountState } from "../types/ogb";
+import type { CompanionAccountState } from "../types/muragebox";
 import type { CompanionEndpoint } from "./companion-pairing";
 
 export type PhoneSetupPhase = "intro" | "sign-in" | "verifying" | "qr" | "success";
@@ -283,7 +283,7 @@ export function companionPairingOpenFailure(
   if (
     !pairing
     || pairing.token === previousToken
-    || !/^omb_pair_[A-Za-z0-9_-]{43}$/.test(pairing.token)
+    || !/^murage_pair_[A-Za-z0-9_-]{43}$/.test(pairing.token)
     || !/^\d{6}$/.test(pairing.code ?? "")
     || !Number.isFinite(pairing.expiresAt)
     || (pairing.expiresAt ?? 0) <= now
@@ -385,7 +385,7 @@ const PUBLIC_ACCOUNT_MESSAGES = [
   /^The secure connection request (?:was not accepted|was not allowed)\./,
   /^That code (?:is not valid|expired)\./,
   /^Your sign-in expired\./,
-  /^OpenMausBot could not reach its secure connection service\./,
+  /^Murage could not reach its secure connection service\./,
   /^Too many attempts were made\./,
   /^This computer was reconnected too often\./,
   /^This account has reached its computer limit\./,

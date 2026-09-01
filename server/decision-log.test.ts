@@ -28,7 +28,7 @@ const row = (overrides: Partial<DecisionRow> = {}): Omit<DecisionRow, "at"> => (
 });
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "omb-decisions-"));
+  dir = mkdtempSync(join(tmpdir(), "murage-decisions-"));
 });
 
 afterEach(async () => {

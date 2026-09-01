@@ -1,11 +1,11 @@
-// End-to-end check of a running OpenMausBot harness server — the exact
+// End-to-end check of a running Murage harness server — the exact
 // flows the app drives, over the same HTTP API. No deps; Node 22+.
 //
 //   node scripts/e2e-server.mjs [--port 8799] [--with-box]
 //
 // Covered: server up + SSE hello, instance snapshots, a claude turn with a
 // streamed reply, the permission broker (allow AND deny), interrupt, a
-// codex turn, and — with --with-box + OMB_E2E_BOX_TOKEN — box provisioning,
+// codex turn, and — with --with-box + MURAGE_E2E_BOX_TOKEN — box provisioning,
 // a turn that runs ON the box (boxAgent), the computer MCP tools over the
 // claude driver, and a panel screenshot. Box computers are put to sleep at
 // the end. Test bots are deleted unless --keep-bots.
@@ -18,14 +18,14 @@ const opt = (n, d) => {
   const i = args.indexOf(n);
   return i >= 0 ? args[i + 1] : d;
 };
-const PORT = Number(opt("--port", process.env.OMB_PORT ?? 8799));
+const PORT = Number(opt("--port", process.env.MURAGE_PORT ?? 8799));
 const BASE = `http://127.0.0.1:${PORT}`;
 const WITH_BOX = flag("--with-box");
 const KEEP_BOTS = flag("--keep-bots");
-const BOX_TOKEN = process.env.OMB_E2E_BOX_TOKEN ?? "";
+const BOX_TOKEN = process.env.MURAGE_E2E_BOX_TOKEN ?? "";
 
 const tag = Date.now().toString(36).slice(-6);
-const marker = (s) => `omb-e2e-${s}-${tag}`;
+const marker = (s) => `murage-e2e-${s}-${tag}`;
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // throw (not exit) so main's finally still deletes the test bots
@@ -145,7 +145,7 @@ async function main() {
       // permission broker: allow (curl usually trips the CLI's permission
       // layer; its safe-command classifier occasionally auto-allows —
       // soft-pass then, but a silent stall is a hard failure)
-      await send(bot.id, `Run exactly one shell command: curl -sS https://example.com -o omb_${tag}_allow.html — then tell me the first word of the downloaded file.`);
+      await send(bot.id, `Run exactly one shell command: curl -sS https://example.com -o murage_${tag}_allow.html — then tell me the first word of the downloaded file.`);
       const allowTry = await waitAskOrSettle(bot.id, 180_000);
       if (allowTry.ask) {
         log(`  ✓ permission card appeared (${allowTry.ask.card.subtitle?.slice(0, 60)})`);
@@ -167,7 +167,7 @@ async function main() {
       // remembered by the resumed CLI session (no second ask otherwise)
       const denyBot = await makeBot("E2E Claude Deny", "claude", byKind.claudeAgent.models.default);
       created.push(denyBot.id);
-      await send(denyBot.id, `Run the shell command "curl -sS https://example.org -o omb_${tag}_deny.html" — nothing else.`);
+      await send(denyBot.id, `Run the shell command "curl -sS https://example.org -o murage_${tag}_deny.html" — nothing else.`);
       const denyTry = await waitAskOrSettle(denyBot.id, 180_000);
       if (denyTry.ask) {
         await api(`/api/bots/${denyBot.id}/respond`, {
@@ -217,7 +217,7 @@ async function main() {
 
     // ── box: cloud computer ──
     if (WITH_BOX) {
-      if (!BOX_TOKEN) fail("--with-box needs OMB_E2E_BOX_TOKEN");
+      if (!BOX_TOKEN) fail("--with-box needs MURAGE_E2E_BOX_TOKEN");
       await api("/api/config", { method: "PUT", body: JSON.stringify({ box: { token: BOX_TOKEN } }) });
       const cfg = await api("/api/config");
       if (!cfg.box?.configured) fail("box token saved but /api/config still says unconfigured");

@@ -71,7 +71,7 @@ describe("approvalKey", () => {
 
   it("leaves ordinary tools alone", () => {
     expect(approvalKey("Read", "src/index.ts")).toBe("Read");
-    expect(approvalKey("mcp__ogb__computer_batch", "click 5,5")).toBe("mcp__ogb__computer_batch");
+    expect(approvalKey("mcp__muragebox__computer_batch", "click 5,5")).toBe("mcp__muragebox__computer_batch");
   });
 
   it("names local and cloud grants in different scopes", () => {

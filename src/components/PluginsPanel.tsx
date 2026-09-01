@@ -379,8 +379,8 @@ export function PluginsPanel() {
   }, [dispatch]);
 
   const openConnectUrl = async (url: string) => {
-    if (window.ogb?.openExternal) {
-      await window.ogb.openExternal(url);
+    if (window.muragebox?.openExternal) {
+      await window.muragebox.openExternal(url);
       return;
     }
     // Browser development fallback. If a popup blocker rejects the first
@@ -511,7 +511,7 @@ export function PluginsPanel() {
             <TriangleAlert size={14} className="mt-px shrink-0" />
             <span>
               Showing what was connected last time — this Mac's credential store could not be opened just now, so these
-              could not be re-checked. Your apps are still connected; restarting OpenMausBot usually clears this.
+              could not be re-checked. Your apps are still connected; restarting Murage usually clears this.
             </span>
           </div>
         )}

@@ -169,7 +169,7 @@ process.stdin.on("data", (chunk) => {
             ].join(" ")
           : "ls -la";
         notify("item/started", { item: { id: "i1", type: "commandExecution", command } });
-        notify("item/started", { item: { id: "w1", type: "webSearch", query: "OpenMausBot" } });
+        notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
         if (mode === "mcp-elicitation") {
           out({
             jsonrpc: "2.0",

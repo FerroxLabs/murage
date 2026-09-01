@@ -103,14 +103,14 @@ const descriptorSchema = z.object({
   pid: z.number().int().positive(),
 }).strict();
 const desktopConnectionMessageSchema = z.object({
-  type: z.literal("openmausbot:browser-connection"),
+  type: z.literal("murage:browser-connection"),
   connection: descriptorSchema.nullable(),
 }).strict();
 
 // `undefined` means no desktop parent ever spoke, so a standalone/dev server
 // may use the descriptor fallback. `null` is an explicit packaged-desktop
 // "unavailable" and must not rediscover a stale on-disk master token.
-const hasDesktopParent = process.env.OMB_DESKTOP_PARENT === "1";
+const hasDesktopParent = process.env.MURAGE_DESKTOP_PARENT === "1";
 let desktopConnection: BrowserConnection | null | undefined = hasDesktopParent ? null : undefined;
 
 function loopbackOrigin(value: string): string | null {
@@ -157,7 +157,7 @@ export function applyDesktopBrowserConnectionMessage(message: unknown): boolean 
   if (
     typeof message !== "object" ||
     message === null ||
-    (message as { type?: unknown }).type !== "openmausbot:browser-connection"
+    (message as { type?: unknown }).type !== "murage:browser-connection"
   ) {
     return false;
   }
@@ -174,9 +174,9 @@ export function applyDesktopBrowserConnectionMessage(message: unknown): boolean 
 
 export function readBrowserConnection({
   platform = process.platform,
-  userData = process.env.OMB_USER_DATA,
+  userData = process.env.MURAGE_USER_DATA,
   home = homedir(),
-  file = process.env.OMB_BROWSER_CONNECTION,
+  file = process.env.MURAGE_BROWSER_CONNECTION,
   alive,
 }: {
   platform?: NodeJS.Platform;
@@ -196,7 +196,7 @@ export function readBrowserConnection({
     } else if (platform === "darwin") {
       // Dev fallback (Electron and the dev server are separate processes);
       // the packaged app passes its exact userData path.
-      for (const directory of ["OpenMausBot", "openmausbot"]) {
+      for (const directory of ["Murage", "murage"]) {
         candidates.push(join(home, "Library", "Application Support", directory, "browser-connection.json"));
       }
     }
@@ -221,7 +221,7 @@ export function availableBrowserConnection(
   // or a future refactor leaves the state undefined. A utility child may use
   // only the connection delivered over its private parent port, never a file
   // path inherited from the shell that launched Electron.
-  if (process.env.OMB_DESKTOP_PARENT === "1" && desktopConnection === undefined) return null;
+  if (process.env.MURAGE_DESKTOP_PARENT === "1" && desktopConnection === undefined) return null;
   return desktopConnection !== undefined ? desktopConnection : readBrowserConnection(options);
 }
 

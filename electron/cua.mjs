@@ -2,8 +2,8 @@
 //
 // Two modes, per cua-driver's EMBEDDING.md:
 //  - "embedded" (packaged app): spawn our own private daemon via
-//    EmbeddedCuaDriverHost so TCC grants attribute to OpenMausBot and the
-//    driver inherits them. One prompt, named OpenMausBot, out of the box.
+//    EmbeddedCuaDriverHost so TCC grants attribute to Murage and the
+//    driver inherits them. One prompt, named Murage, out of the box.
 //  - "standalone" (dev): attach to an already-installed CuaDriver.app daemon
 //    (its own TCC identity, typically already granted on a dev machine).
 //
@@ -41,7 +41,7 @@ const STANDALONE_SOCKET = path.join(
   app.getPath("home"),
   "Library/Caches/cua-driver/cua-driver.sock",
 );
-const HOST_BUNDLE_ID = "com.openmausbot.app";
+const HOST_BUNDLE_ID = "com.murage.app";
 const CUA_ENV = { CUA_DRIVER_RS_TELEMETRY_ENABLED: "0" };
 process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED ??= "0";
 
@@ -142,7 +142,7 @@ async function loadEmbeddedSdk() {
     ]);
     return { ...embedded, ...permissions };
   }
-  process.env.OPENMAUSBOT_CUA_SDK_LIBRARY = path.join(
+  process.env.MURAGE_CUA_SDK_LIBRARY = path.join(
     process.resourcesPath,
     "cua-sdk",
     "native",
@@ -157,7 +157,7 @@ async function attachStandalone() {
   if (!(await socketAlive(STANDALONE_SOCKET))) {
     // Launch CuaDriver.app through LaunchServices so Accessibility /
     // Screen Recording stay on com.trycua.driver — the identity this
-    // machine already granted — instead of the freshly signed OpenMausBot.
+    // machine already granted — instead of the freshly signed Murage.
     spawnSync("open", ["-a", "CuaDriver"], { timeout: 8000 });
     for (let i = 0; i < 25; i++) {
       if (await socketAlive(STANDALONE_SOCKET)) break;
@@ -180,14 +180,14 @@ async function startEmbedded(binary) {
   const sdk = await loadEmbeddedSdk();
   // CUA's embedding contract requires grants before the child daemon starts;
   // these SDK calls execute in Electron main so macOS attributes them to
-  // OpenMausBot rather than to a terminal or helper process.
+  // Murage rather than to a terminal or helper process.
   const permissionStatus = sdk.requestMacOSPermissions();
   if (!sdk.hasRequiredMacOSPermissions(permissionStatus)) {
     const missing = [
       !permissionStatus.accessibility && "Accessibility",
       !permissionStatus.screenRecording && "Screen Recording",
     ].filter(Boolean).join(" and ");
-    throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart OpenMausBot`);
+    throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart Murage`);
   }
   const host = new sdk.EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
   try {
@@ -222,7 +222,7 @@ export async function startCua() {
   }
 
   const wantEmbedded =
-    app.isPackaged || process.env.OPENMAUSBOT_CUA_EMBEDDED === "1";
+    app.isPackaged || process.env.MURAGE_CUA_EMBEDDED === "1";
   let nextConnection;
 
   if (wantEmbedded) {

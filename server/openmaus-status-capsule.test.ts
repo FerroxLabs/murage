@@ -84,7 +84,7 @@ function successCapsule(options: {
   const expected = options.expected === undefined ? DUAL_VIEW_SHA : options.expected;
   const twoUp = options.twoUp ?? (source !== null && source === expected);
   return sign({
-    schema: "aos.openmausbot_status.v1",
+    schema: "aos.murage_status.v1",
     observed_at: "2026-08-22T06:30:00Z",
     fresh_until: "2026-08-22T06:35:00Z",
     ttl_seconds: 300,
@@ -123,7 +123,7 @@ function failedCapsule(
   expected: string | null = DUAL_VIEW_SHA,
 ): TestCapsule {
   return sign({
-    schema: "aos.openmausbot_status.v1",
+    schema: "aos.murage_status.v1",
     observed_at: "2026-08-22T06:30:00Z",
     fresh_until: "2026-08-22T06:35:00Z",
     ttl_seconds: 300,
@@ -143,7 +143,7 @@ function failedCapsule(
 function cachePath(capsule: TestCapsule): string {
   const root = mkdtempSync(join(tmpdir(), "openmaus-status-"));
   roots.push(root);
-  const parent = join(root, "openmausbot");
+  const parent = join(root, "murage");
   mkdirSync(parent, { mode: 0o700 });
   chmodSync(parent, 0o700);
   const path = join(parent, "latest.json");
@@ -155,7 +155,7 @@ function cachePath(capsule: TestCapsule): string {
 posixOnly("readOpenMausStatus", () => {
   it("projects only fresh normalized two-VM capability data", () => {
     const capsule = successCapsule();
-    // Cross-language receipt produced by scripts/aos_openmausbot_status.py
+    // Cross-language receipt produced by scripts/aos_murage_status.py
     // for this exact normalized fixture.
     expect(capsule.receipt_sha256).toBe(
       "sha256:2f76115fcbf37dfc5406d4a7a460c5e3016ff87184cd9e314bf4cc11022e2d7c",
@@ -293,7 +293,7 @@ posixOnly("readOpenMausStatus", () => {
     const targetPath = cachePath(successCapsule());
     const linkRoot = mkdtempSync(join(tmpdir(), "openmaus-status-parent-link-"));
     roots.push(linkRoot);
-    const linkedParent = join(linkRoot, "openmausbot");
+    const linkedParent = join(linkRoot, "murage");
     symlinkSync(dirname(targetPath), linkedParent, "dir");
     expect(
       readOpenMausStatus({ cachePath: join(linkedParent, "latest.json"), now: NOW }).reason,

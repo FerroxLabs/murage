@@ -1,7 +1,7 @@
 # Bring your own MCP servers
 
 Give every capable engine extra tools by listing MCP servers in
-`~/.openmausbot/config.json` — the same shape Claude Code and friends use:
+`~/.murage/config.json` — the same shape Claude Code and friends use:
 
 ```json
 {
@@ -27,7 +27,7 @@ opencode, Qwen, Hermes, and `customAcp`) gets the tools on its next turn.
   relay the agent's own permission asks. Built-ins stay pre-quieted — only
   *your* servers ask.
 - **Reserved names are refused** (`computer`, `agents`, `composio`,
-  `browser`, `phone`, `dweb`, `ogb`, …) so a custom entry can never shadow
+  `browser`, `phone`, `dweb`, `muragebox`, …) so a custom entry can never shadow
   a built-in tool surface. Names are lowercase letters/digits/`_`/`-`, max
   32 chars, starting with a letter.
 - **One bad entry never takes the fleet down.** Invalid entries are skipped

@@ -1,4 +1,4 @@
-# OpenMausBot control plane
+# Murage control plane
 
 This directory is an isolated Cloudflare Worker for cloud account identity,
 installation ownership, and per-installation managed companion endpoints. It
@@ -13,7 +13,7 @@ tool output.
   messages. Authentication responses remain generic even when delivery fails;
   email addresses, OTPs, secrets, and provider errors are never logged.
 - Owner-scoped desktop installations and independently revocable
-  `omb_install_…` credentials. Account bearer tokens are never accepted as
+  `murage_install_…` credentials. Account bearer tokens are never accepted as
   installation credentials, or vice versa.
 - Exact-origin CORS, bounded JSON bodies, redacted errors, and `no-store` on
   every response.
@@ -69,7 +69,7 @@ requests cannot both return credentials while one invalidates the other.
 
 ### Managed endpoint contract
 
-All three endpoint methods require `Authorization: Bearer <omb_install_…>`.
+All three endpoint methods require `Authorization: Bearer <murage_install_…>`.
 Account bearer tokens are rejected.
 
 - `GET` returns `{ "endpoint": null }` before allocation or after deletion.
@@ -136,8 +136,8 @@ non-production scoped `CLOUDFLARE_API_TOKEN`, apply the migrations locally, and
 start Wrangler:
 
 ```sh
-pnpm --filter @openmausbot/control-plane exec wrangler d1 migrations apply DB --local --config wrangler.jsonc
-pnpm --filter @openmausbot/control-plane exec wrangler dev --config wrangler.jsonc
+pnpm --filter @murage/control-plane exec wrangler d1 migrations apply DB --local --config wrangler.jsonc
+pnpm --filter @murage/control-plane exec wrangler dev --config wrangler.jsonc
 ```
 
 Do not commit `.dev.vars`.
@@ -174,7 +174,7 @@ Before a production deployment, an operator must:
 7. Replace `ALLOWED_ORIGINS` with a comma-separated allow-list of exact HTTPS
    application origins. Wildcards are deliberately unsupported.
 8. Deploy the Worker and verify that `GET <BETTER_AUTH_URL>/healthz` returns
-   exactly `{ "ok": true, "service": "openmausbot-control-plane" }` over
+   exactly `{ "ok": true, "service": "murage-control-plane" }` over
    HTTPS before shipping the desktop build. Electron probes this endpoint and
    keeps new hosted onboarding hidden until it is healthy; an already signed-in
    user remains visible so cleanup and recovery are not stranded.

@@ -172,7 +172,7 @@ describe("hostCandidates", () => {
     // only while the sidecar runs.
     const hosts = hostCandidates(["100.121.5.6", "192.168.1.42", "10.0.0.7"], "macbook.tail1234.ts.net");
     expect(hosts.slice(0, 3)).toEqual(["macbook.tail1234.ts.net", "192.168.1.42", "10.0.0.7"]);
-    expect(hosts.at(-1)).toMatch(/^openmausbot-[0-9a-f]{8}\.local$/);
+    expect(hosts.at(-1)).toMatch(/^murage-[0-9a-f]{8}\.local$/);
     expect(hosts).not.toContain("100.121.5.6");
   });
 
@@ -190,9 +190,9 @@ describe("hostCandidates", () => {
     expect(Array.isArray(body.endpoints)).toBe(true);
     // Whatever this machine's interfaces are, the mDNS fallback is always
     // present and always last.
-    expect(body.hosts.at(-1)).toMatch(/^openmausbot-[0-9a-f]{8}\.local$/);
+    expect(body.hosts.at(-1)).toMatch(/^murage-[0-9a-f]{8}\.local$/);
     expect(body.endpoints.at(-1)).toMatchObject({ kind: "bonjour", priority: 300 });
-    expect(body.endpoints.at(-1).url).toMatch(/^http:\/\/openmausbot-[0-9a-f]{8}\.local:8810$/);
+    expect(body.endpoints.at(-1).url).toMatch(/^http:\/\/murage-[0-9a-f]{8}\.local:8810$/);
   });
 
   it("reports only the device ids backed by live authenticated streams", async () => {
@@ -229,13 +229,13 @@ describe("hosted endpoint advertisement", () => {
       "PUT",
       "/hosted-endpoint",
       headers,
-      JSON.stringify({ url: "https://C-Opaque.OpenMausBot.Test/" }),
+      JSON.stringify({ url: "https://C-Opaque.Murage.Test/" }),
     );
     expect(published.status).toBe(200);
     expect(published.body.endpoints[0]).toEqual({
       kind: "hosted",
       priority: 0,
-      url: "https://c-opaque.openmausbot.test",
+      url: "https://c-opaque.murage.test",
     });
 
     expect(
@@ -262,7 +262,7 @@ describe("hosted endpoint advertisement", () => {
       { url: false },
       [],
       null,
-      "https://c-opaque.openmausbot.test",
+      "https://c-opaque.murage.test",
     ]) {
       const result = await ask("PUT", "/hosted-endpoint", headers, JSON.stringify(body));
       expect(result).toEqual({ status: 400, body: { error: "invalid JSON body" } });

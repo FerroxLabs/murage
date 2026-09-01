@@ -30,7 +30,7 @@ let cached: DesktopCapabilities | null = null;
 let cacheRevision = 0;
 
 export function initialDesktopCapabilities(): DesktopCapabilities {
-  const platform = window.ogb?.platform;
+  const platform = window.muragebox?.platform;
   if (!platform) return browserCapabilities;
   const isMac = platform === "darwin";
   const dictation: DesktopCapabilities["dictation"] = {
@@ -53,11 +53,11 @@ export function initialDesktopCapabilities(): DesktopCapabilities {
 
 export async function loadDesktopCapabilities(): Promise<DesktopCapabilities> {
   if (cached) return cached;
-  if (!window.ogb?.getCapabilities) return browserCapabilities;
+  if (!window.muragebox?.getCapabilities) return browserCapabilities;
   const revisionAtStart = cacheRevision;
   let loaded: DesktopCapabilities;
   try {
-    loaded = await window.ogb.getCapabilities();
+    loaded = await window.muragebox.getCapabilities();
   } catch {
     loaded = browserCapabilities;
   }

@@ -115,7 +115,7 @@ describe("buildDiagnosticsReport", () => {
       appInfo,
       configSummary: {},
       logTail: "server ready",
-      logPath: "/Users/ada/Library/Logs/OpenMausBot/server.log",
+      logPath: "/Users/ada/Library/Logs/Murage/server.log",
     });
     expect(report).toContain("## Server log tail");
     expect(report).not.toContain("/Users/ada");
@@ -228,7 +228,7 @@ describe("formatDesktopCrashRecord", () => {
     error.stack = [
       "TypeError: secret user text from C:\\Users\\Ada\\private.txt",
       "secret-client.ts:1:1",
-      "    at boot (file:///C:/Users/Ada/OpenMausBot/electron/main.mjs:412:7)",
+      "    at boot (file:///C:/Users/Ada/Murage/electron/main.mjs:412:7)",
     ].join("\n");
     const record = formatDesktopCrashRecord({ kind: "main", origin: "unhandledRejection", error });
     expect(record).toBe("event=main-process-failure origin=unhandledRejection error=TypeError");
@@ -320,7 +320,7 @@ describe("decodeLogTail", () => {
 
 describe("readSafeLogTail", () => {
   it("reads a bounded tail from a regular app-owned log", () => {
-    const directory = mkdtempSync(join(tmpdir(), "openmausbot-log-tail-"));
+    const directory = mkdtempSync(join(tmpdir(), "murage-log-tail-"));
     try {
       const log = join(directory, "server.log");
       writeFileSync(log, "partial-secret\nfirst\nsecond\n", { mode: 0o600 });
@@ -331,7 +331,7 @@ describe("readSafeLogTail", () => {
   });
 
   it.skipIf(process.platform === "win32")("rejects a log-path symlink", () => {
-    const directory = mkdtempSync(join(tmpdir(), "openmausbot-log-symlink-"));
+    const directory = mkdtempSync(join(tmpdir(), "murage-log-symlink-"));
     try {
       const privateFile = join(directory, "private.txt");
       const log = join(directory, "desktop-crashes.log");
@@ -345,9 +345,9 @@ describe("readSafeLogTail", () => {
 });
 
 describe("diagnosticsFileName", () => {
-  it("uses openmausbot-diagnostics-YYYYMMDD-HHmmss.txt", () => {
+  it("uses murage-diagnostics-YYYYMMDD-HHmmss.txt", () => {
     expect(diagnosticsFileName(new Date(2026, 7, 22, 16, 5, 9))).toBe(
-      "openmausbot-diagnostics-20260822-160509.txt",
+      "murage-diagnostics-20260822-160509.txt",
     );
   });
 });

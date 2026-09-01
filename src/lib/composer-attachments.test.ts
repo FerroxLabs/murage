@@ -50,9 +50,9 @@ function image(path: string): ImageAttachment {
 
 describe("composeMessage with images", () => {
   it("emits an attached-image tag carrying the server path", () => {
-    const prompt = composeMessage("what is this?", [image("/home/u/.openmausbot/attachments/abc.png")]);
+    const prompt = composeMessage("what is this?", [image("/home/u/.murage/attachments/abc.png")]);
     expect(prompt).toBe(
-      'what is this?\n\n<attached-image path="/home/u/.openmausbot/attachments/abc.png" />',
+      'what is this?\n\n<attached-image path="/home/u/.murage/attachments/abc.png" />',
     );
   });
 
@@ -95,11 +95,11 @@ describe("splitTranscriptAttachments", () => {
 
   it("uses the saved basename for old file tags without a name", () => {
     const { display, files } = splitTranscriptAttachments(
-      '<attached-file path="/home/me/.openmausbot/attachments/report.pdf" />',
+      '<attached-file path="/home/me/.murage/attachments/report.pdf" />',
     );
     expect(display).toBe("");
     expect(files).toEqual([
-      { path: "/home/me/.openmausbot/attachments/report.pdf", name: "report.pdf" },
+      { path: "/home/me/.murage/attachments/report.pdf", name: "report.pdf" },
     ]);
   });
 

@@ -71,7 +71,7 @@ describe("the stored choice", () => {
     fresh.setAnalyticsEnabled(false);
     expect(fresh.analyticsEnabled()).toBe(false);
     fresh.initAnalytics();
-    expect(store.get("omb-installed")).toBeUndefined();
+    expect(store.get("murage-installed")).toBeUndefined();
   });
 
   it("treats unusable storage as a fresh install rather than failing", () => {
@@ -95,7 +95,7 @@ describe("initAnalytics while opted out", () => {
     // the opt-out. resetModules is not module mocking — nothing is replaced,
     // the real module is simply loaded again.
     vi.resetModules();
-    store.set("omb-analytics-opt-out", "1"); // as a previous session left it
+    store.set("murage-analytics-opt-out", "1"); // as a previous session left it
     const fresh = await import("./analytics");
 
     expect(fresh.analyticsEnabled()).toBe(false);
@@ -104,6 +104,6 @@ describe("initAnalytics while opted out", () => {
     // No client is stubbed on purpose: if init() got past the guard it would
     // reach the real posthog-js and set this marker. Its absence is the
     // proof — and it also means opting back in later still counts the install.
-    expect(store.get("omb-installed")).toBeUndefined();
+    expect(store.get("murage-installed")).toBeUndefined();
   });
 });

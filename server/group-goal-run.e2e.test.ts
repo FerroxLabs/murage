@@ -43,8 +43,8 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
 };
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), "omb-goal-run-"));
-  const data = join(home, ".openmausbot");
+  home = mkdtempSync(join(tmpdir(), "murage-goal-run-"));
+  const data = join(home, ".murage");
   const staticDir = join(home, "static");
   mkdirSync(data, { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
@@ -89,9 +89,9 @@ beforeAll(async () => {
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
       USERPROFILE: home,
-      OMB_PORT: String(port),
-      OMB_WEBHOOK_PORT: String(port + 1),
-      OMB_STATIC_DIR: staticDir,
+      MURAGE_PORT: String(port),
+      MURAGE_WEBHOOK_PORT: String(port + 1),
+      MURAGE_STATIC_DIR: staticDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

@@ -14,11 +14,11 @@ Create or select a bot in the sidebar, type in the composer, and send.
 ## Driving it
 
 ```sh
-pnpm control:omb new-bot --name Probe --url http://127.0.0.1:PORT
+pnpm control:murage new-bot --name Probe --url http://127.0.0.1:PORT
 # Copy bot.id from the JSON above as BOT_ID.
-pnpm control:omb send --bot BOT_ID --text "hello" --url http://127.0.0.1:PORT
-pnpm control:omb wait --bot BOT_ID --timeout 30 --url http://127.0.0.1:PORT
-pnpm control:omb messages --bot BOT_ID --limit 10 --url http://127.0.0.1:PORT
+pnpm control:murage send --bot BOT_ID --text "hello" --url http://127.0.0.1:PORT
+pnpm control:murage wait --bot BOT_ID --timeout 30 --url http://127.0.0.1:PORT
+pnpm control:murage messages --bot BOT_ID --limit 10 --url http://127.0.0.1:PORT
 ```
 
 The wait result must be `settled`, and the messages result must contain the

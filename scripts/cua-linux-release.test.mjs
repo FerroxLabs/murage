@@ -15,7 +15,7 @@ const BLOCK = 512;
 const temporaryDirectories = [];
 
 function temporaryProject() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "omb-cua-stage-test-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "murage-cua-stage-test-"));
   temporaryDirectories.push(root);
   fs.writeFileSync(
     path.join(root, "package.json"),
@@ -206,7 +206,7 @@ describe("Linux CUA release staging", () => {
       root,
       "node_modules",
       ".cache",
-      "openmausbot",
+      "murage",
       "cua-driver-rs-0.19.3-linux-x86_64-binary.tar.gz",
     );
     fs.mkdirSync(path.dirname(cache), { recursive: true });

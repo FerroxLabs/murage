@@ -27,7 +27,7 @@ export function startCall(targetId: string) {
   // Switching calls must silence both halves before ownership changes; the
   // old overlay may not unmount until React's next render.
   speaker.stop();
-  void window.ogb?.speechStop();
+  void window.muragebox?.speechStop();
   current = targetId;
   notify();
 }
@@ -39,7 +39,7 @@ export function endCall(targetId?: string): boolean {
   if (current === null) return false;
   current = null;
   speaker.stop();
-  void window.ogb?.speechStop();
+  void window.muragebox?.speechStop();
   notify();
   return true;
 }

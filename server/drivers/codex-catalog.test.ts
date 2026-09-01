@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 function scratchHome(files: Record<string, string>): string {
-  const home = mkdtempSync(join(tmpdir(), "omb-codex-catalog-"));
+  const home = mkdtempSync(join(tmpdir(), "murage-codex-catalog-"));
   scratchDirs.push(home);
   const root = join(home, ".codex");
   mkdirSync(root, { recursive: true });
@@ -58,7 +58,7 @@ describe("decodeCodexSelection", () => {
 
 describe("readCodexModelCatalog", () => {
   it("returns the static cloud fallback when there is no config or CLI probe", async () => {
-    expect(await readCodexModelCatalog({ HOME: join(tmpdir(), "omb-codex-missing-home") })).toEqual(
+    expect(await readCodexModelCatalog({ HOME: join(tmpdir(), "murage-codex-missing-home") })).toEqual(
       STATIC_CODEX_MODELS,
     );
   });
@@ -66,7 +66,7 @@ describe("readCodexModelCatalog", () => {
   it("uses every visible page from the installed Codex app-server catalog", async () => {
     chmodSync(FAKE_CLI, 0o755);
     const catalog = await readCodexModelCatalog(
-      { HOME: join(tmpdir(), "omb-codex-app-server-models"), PATH: process.env.PATH },
+      { HOME: join(tmpdir(), "murage-codex-app-server-models"), PATH: process.env.PATH },
       fetch,
       FAKE_CLI,
     );
@@ -142,7 +142,7 @@ name = "oMLX"
     const ignored = scratchHome({
       "config.toml": `model_provider = "omlx"\nmodel = "ignored"\n`,
     });
-    const parent = mkdtempSync(join(tmpdir(), "omb-codex-home-"));
+    const parent = mkdtempSync(join(tmpdir(), "murage-codex-home-"));
     scratchDirs.push(parent);
     const codexHome = join(parent, "codex");
     mkdirSync(codexHome, { recursive: true });

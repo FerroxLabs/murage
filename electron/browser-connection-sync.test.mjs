@@ -24,7 +24,7 @@ describe("packaged browser connection transport", () => {
     const connection = { version: 1, url: "http://127.0.0.1:54321", token: "a".repeat(64), pid: 42 };
     postBrowserConnection(proc, connection);
     postBrowserConnection(proc, null);
-    expect(proc.postMessage).toHaveBeenNthCalledWith(1, { type: "openmausbot:browser-connection", connection });
-    expect(proc.postMessage).toHaveBeenNthCalledWith(2, { type: "openmausbot:browser-connection", connection: null });
+    expect(proc.postMessage).toHaveBeenNthCalledWith(1, { type: "murage:browser-connection", connection });
+    expect(proc.postMessage).toHaveBeenNthCalledWith(2, { type: "murage:browser-connection", connection: null });
   });
 });

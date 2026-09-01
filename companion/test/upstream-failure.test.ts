@@ -80,7 +80,7 @@ describe("an upstream that fails mid-stream", () => {
     );
 
     const escaped = await watchingForCrashes(async () => {
-      const res = await fetch(`${base}/api/events`, { headers: { authorization: "Bearer omb_x" } });
+      const res = await fetch(`${base}/api/events`, { headers: { authorization: "Bearer murage_x" } });
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toContain("text/event-stream");
       try {
@@ -96,7 +96,7 @@ describe("an upstream that fails mid-stream", () => {
     expect(escaped).toEqual([]);
 
     // and the sidecar is still answering, which is the whole claim
-    const after = await fetch(`${base}/api/health`, { headers: { authorization: "Bearer omb_x" } });
+    const after = await fetch(`${base}/api/health`, { headers: { authorization: "Bearer murage_x" } });
     expect([200, 502]).toContain(after.status);
   }, 20_000);
 
@@ -116,7 +116,7 @@ describe("an upstream that fails mid-stream", () => {
 
     const escaped = await watchingForCrashes(async () => {
       const res = await fetch(`${base}/api/threads/t1/messages/m1/image`, {
-        headers: { authorization: "Bearer omb_x" },
+        headers: { authorization: "Bearer murage_x" },
       });
       expect(res.status).toBe(200);
       // the assertion is that this settles at all, either way — the bug was
@@ -151,10 +151,10 @@ describe("an upstream that fails mid-stream", () => {
     const base = `http://127.0.0.1:${await listen(sidecar)}`;
 
     const escaped = await watchingForCrashes(async () => {
-      const res = await fetch(`${base}/api/health`, { headers: { authorization: "Bearer omb_x" } });
+      const res = await fetch(`${base}/api/health`, { headers: { authorization: "Bearer murage_x" } });
       expect(res.status).toBe(502);
       expect((await res.json()) as { error: string }).toEqual({
-        error: "OpenMausBot is not running on this computer",
+        error: "Murage is not running on this computer",
       });
     });
     expect(escaped).toEqual([]);

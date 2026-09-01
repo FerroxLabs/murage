@@ -455,7 +455,7 @@ function cardCopy(
   }
   const nextRunAt = nextForOperation(operation, manager, now);
   const when = operation.action === "run_now" ? "Now" : scheduleText(definition.schedule, timeZone);
-  const destination = definition.runOn === "cloud" ? "Cloud VM" : "This OpenMausBot setup";
+  const destination = definition.runOn === "cloud" ? "Cloud VM" : "This Murage setup";
   const current = operation.action === "create"
     ? null
     : manager.listRoutines().find((routine) => routine.id === operation.routineId) ?? null;

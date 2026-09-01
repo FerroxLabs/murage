@@ -1,12 +1,12 @@
 // Shared provisioning and shell contract for the cloud computer's Cua Driver.
 // The box command API is the transport boundary: the daemon stays loopback-only
-// inside the VM and OpenMausBot never exposes another inbound port.
+// inside the VM and Murage never exposes another inbound port.
 
 export const REMOTE_CUA_VERSION = "0.20.0";
-export const REMOTE_CUA_EXECUTABLE = "/opt/ogb/cua-driver";
-export const REMOTE_CUA_SOCKET = "/opt/ogb/run/cua.sock";
-export const REMOTE_CUA_SESSION = "openmausbot";
-export const REMOTE_CDP_HELPER = "/opt/ogb/openmausbot-cdp.mjs";
+export const REMOTE_CUA_EXECUTABLE = "/opt/muragebox/cua-driver";
+export const REMOTE_CUA_SOCKET = "/opt/muragebox/run/cua.sock";
+export const REMOTE_CUA_SESSION = "murage";
+export const REMOTE_CDP_HELPER = "/opt/muragebox/murage-cdp.mjs";
 
 const REMOTE_CUA_WHEELS = {
   x86_64: {
@@ -102,7 +102,7 @@ export function ensureRemoteCuaCommand(): string {
     `    rm -f ${REMOTE_CUA_SOCKET}`,
     '    display=${DISPLAY:-$(find /tmp/.X11-unix -maxdepth 1 -name "X*" -printf ":%f\\n" 2>/dev/null | sed "s/:X/:/" | head -1)}',
     '    display=${display:-:0}',
-    `    nohup env HOME="$HOME" DISPLAY="$display" CUA_DRIVER_INSTALL_CHANNEL=python_package CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${REMOTE_CUA_EXECUTABLE} serve --socket ${REMOTE_CUA_SOCKET} --permission-mode standard > /tmp/ogb-cua-driver.log 2>&1 &`,
+    `    nohup env HOME="$HOME" DISPLAY="$display" CUA_DRIVER_INSTALL_CHANNEL=python_package CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${REMOTE_CUA_EXECUTABLE} serve --socket ${REMOTE_CUA_SOCKET} --permission-mode standard > /tmp/muragebox-cua-driver.log 2>&1 &`,
     `    for i in 1 2 3 4 5 6 7 8 9 10; do ${REMOTE_CUA_EXECUTABLE} status --socket ${REMOTE_CUA_SOCKET} >/dev/null 2>&1 && break; sleep 0.2; done`,
     "  fi",
     "fi",
@@ -116,29 +116,29 @@ export function remoteComputerBootstrapCommand(botName: string): string {
   const helper = Buffer.from(CDP_HELPER_SOURCE).toString("base64");
   const installer = [
     "set -eu",
-    "trap 'rm -f /tmp/ogb-cua-installing' EXIT",
-    "sudo mkdir -p /opt/ogb/run",
-    'sudo chown -R "$(id -u):$(id -g)" /opt/ogb',
+    "trap 'rm -f /tmp/muragebox-cua-installing' EXIT",
+    "sudo mkdir -p /opt/muragebox/run",
+    'sudo chown -R "$(id -u):$(id -g)" /opt/muragebox',
     'arch="$(uname -m)"',
     `case "$arch" in x86_64) url=${shellQuote(REMOTE_CUA_WHEELS.x86_64.url)}; sha=${REMOTE_CUA_WHEELS.x86_64.sha256} ;; aarch64|arm64) url=${shellQuote(REMOTE_CUA_WHEELS.aarch64.url)}; sha=${REMOTE_CUA_WHEELS.aarch64.sha256} ;; *) echo "unsupported architecture: $arch" >&2; exit 1 ;; esac`,
     'wheel="/tmp/cua-driver-${sha}.whl"',
     'curl -fsSL "$url" -o "$wheel"',
     'echo "$sha  $wheel" | sha256sum -c -',
-    'python3 - "$wheel" <<\'PY\'\nimport os, sys, zipfile\nwheel = sys.argv[1]\nwith zipfile.ZipFile(wheel) as archive:\n    names = [name for name in archive.namelist() if name == "cua_driver/bin/cua-driver" or name.endswith("/cua_driver/bin/cua-driver")]\n    if len(names) != 1:\n        raise SystemExit("cua-driver executable missing from wheel")\n    with archive.open(names[0]) as source, open("/opt/ogb/cua-driver", "wb") as target:\n        target.write(source.read())\nos.chmod("/opt/ogb/cua-driver", 0o755)\nPY',
+    'python3 - "$wheel" <<\'PY\'\nimport os, sys, zipfile\nwheel = sys.argv[1]\nwith zipfile.ZipFile(wheel) as archive:\n    names = [name for name in archive.namelist() if name == "cua_driver/bin/cua-driver" or name.endswith("/cua_driver/bin/cua-driver")]\n    if len(names) != 1:\n        raise SystemExit("cua-driver executable missing from wheel")\n    with archive.open(names[0]) as source, open("/opt/muragebox/cua-driver", "wb") as target:\n        target.write(source.read())\nos.chmod("/opt/muragebox/cua-driver", 0o755)\nPY',
     `test "$(${REMOTE_CUA_EXECUTABLE} --version)" = "cua-driver ${REMOTE_CUA_VERSION}"`,
-    `touch /opt/ogb/cua-${REMOTE_CUA_VERSION}-ready`,
+    `touch /opt/muragebox/cua-${REMOTE_CUA_VERSION}-ready`,
     'rm -f "$wheel"',
   ].join("\n");
   const safeName = botName.replace(/["'\\]/g, "");
   return [
     "if ! command -v xdotool >/dev/null || ! command -v convert >/dev/null || ! command -v curl >/dev/null || ! command -v python3 >/dev/null; then sudo apt-get update -qq || true; sudo apt-get install -y -qq ca-certificates curl python3 gnome-screenshot xclip wmctrl xdotool imagemagick scrot >/dev/null 2>&1 || true; fi",
-    "sudo mkdir -p /opt/ogb/run",
+    "sudo mkdir -p /opt/muragebox/run",
     `printf %s ${shellQuote(helper)} | base64 -d | sudo tee ${REMOTE_CDP_HELPER} >/dev/null`,
     `sudo chmod 0755 ${REMOTE_CDP_HELPER}`,
-    'pkill -f "^/opt/ogb/venv/bin/python -m computer_server( |$)" >/dev/null 2>&1 || true',
-    `[ -f /opt/ogb/cua-${REMOTE_CUA_VERSION}-ready ] || [ -f /tmp/ogb-cua-installing ] || { touch /tmp/ogb-cua-installing; nohup bash -c ${shellQuote(installer)} > /tmp/ogb-cua-install.log 2>&1 & }`,
+    'pkill -f "^/opt/muragebox/venv/bin/python -m computer_server( |$)" >/dev/null 2>&1 || true',
+    `[ -f /opt/muragebox/cua-${REMOTE_CUA_VERSION}-ready ] || [ -f /tmp/muragebox-cua-installing ] || { touch /tmp/muragebox-cua-installing; nohup bash -c ${shellQuote(installer)} > /tmp/muragebox-cua-install.log 2>&1 & }`,
     ensureRemoteCuaCommand(),
-    `tmux has-session -t work 2>/dev/null || tmux new-session -d -s work 'echo; echo "  ▦ ${safeName}'"'"'s computer — OpenMausBot"; echo; exec bash -i'`,
+    `tmux has-session -t work 2>/dev/null || tmux new-session -d -s work 'echo; echo "  ▦ ${safeName}'"'"'s computer — Murage"; echo; exec bash -i'`,
     "echo bootstrapped",
   ].join("\n");
 }

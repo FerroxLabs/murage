@@ -51,7 +51,7 @@ function decodeConfig(raw: unknown): CodexConfig {
 
 const QUESTION_TIMEOUT_NOTE = "No answer was given — use your best judgment.";
 const DENY_TIMEOUT_NOTE =
-  "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+  "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 
 type StdioMcpServer = { command: string; args: string[]; env: Record<string, string> };
 
@@ -157,7 +157,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const env = childEnv();
         const appServerArgs = ["app-server", ...codexLocalProviderArgs(env, turn.model)];
         if (turn.integrations?.composio) {
-          mountMcpServer(appServerArgs, env, "openmausbot_connectors", turn.integrations.composio);
+          mountMcpServer(appServerArgs, env, "murage_connectors", turn.integrations.composio);
         }
         if (turn.integrations?.agents) {
           mountMcpServer(appServerArgs, env, "agents", turn.integrations.agents);
@@ -169,12 +169,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             args: [SPAWNED_PROXIES.computer],
             env: {
               ELECTRON_RUN_AS_NODE: "1",
-              OGB_BOX_ID: proxyEnv.OGB_BOX_ID ?? "",
-              OGB_BOX_TOKEN: proxyEnv.OGB_BOX_TOKEN ?? "",
+              MURAGEBOX_BOX_ID: proxyEnv.MURAGEBOX_BOX_ID ?? "",
+              MURAGEBOX_BOX_TOKEN: proxyEnv.MURAGEBOX_BOX_TOKEN ?? "",
               // who-is-driving endpoint, so a person taking the wheel in the
               // panel pauses this bot's hands mid-turn
-              OMB_CONTROL_URL: proxyEnv.OMB_CONTROL_URL ?? "",
-              OMB_CONTROL_TOKEN: proxyEnv.OMB_CONTROL_TOKEN ?? "",
+              MURAGE_CONTROL_URL: proxyEnv.MURAGE_CONTROL_URL ?? "",
+              MURAGE_CONTROL_TOKEN: proxyEnv.MURAGE_CONTROL_TOKEN ?? "",
             },
           });
         } else if (turn.integrations?.localComputer) {
@@ -191,7 +191,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.phone) {
           const bridge = turn.integrations.phone;
           Object.assign(env, bridge.env);
-          const prefix = "mcp_servers.openmausbot_phone";
+          const prefix = "mcp_servers.murage_phone";
           appServerArgs.push(
             "-c", `${prefix}.command=${JSON.stringify(bridge.command)}`,
             "-c", `${prefix}.args=${JSON.stringify(bridge.args)}`,
@@ -256,7 +256,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const settle = (ok: boolean, stopReason: string | null) => {
         if (state.settled) return;
         state.settled = true;
-        for (const finish of [...asks.values()]) finish("deny", "OpenMausBot: the turn ended", "system");
+        for (const finish of [...asks.values()]) finish("deny", "Murage: the turn ended", "system");
         for (const p of rpcPending.values()) p.reject(new Error("turn settled"));
         rpcPending.clear();
         active.delete(threadId);
@@ -519,7 +519,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // one relaunch of the whole app-server after backoff — but only when
       // nothing streamed yet, and never for auth/shape errors or interrupts
       try {
-        await request("initialize", { clientInfo: { name: "openmausbot", version: "1" } });
+        await request("initialize", { clientInfo: { name: "murage", version: "1" } });
         send({ jsonrpc: "2.0", method: "initialized", params: {} });
         const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
         let codexThreadId: string | null = null;

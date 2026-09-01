@@ -121,14 +121,14 @@ describe("host credentials", () => {
   });
 
   it("reads the Unsloth studio key file from HOME", () => {
-    const home = scratchHome("omb-unsloth-key-");
+    const home = scratchHome("murage-unsloth-key-");
     mkdirSync(join(home, ".unsloth", "studio", "auth"), { recursive: true });
     writeFileSync(join(home, ".unsloth", "studio", "auth", "agent_api_key.json"), JSON.stringify({ api_key: "from-file" }));
     expect(hostApiKey(localHost("unsloth")!, { HOME: home })).toBe("from-file");
   });
 
   it("reads a minted Unsloth Studio token from the servers map", () => {
-    const home = scratchHome("omb-unsloth-minted-");
+    const home = scratchHome("murage-unsloth-minted-");
     mkdirSync(join(home, ".unsloth", "studio", "auth"), { recursive: true });
     writeFileSync(
       join(home, ".unsloth", "studio", "auth", "agent_api_key.json"),
@@ -143,7 +143,7 @@ describe("host credentials", () => {
   });
 
   it("prefers a localhost minted token over a stale top-level api_key", () => {
-    const home = scratchHome("omb-unsloth-mixed-");
+    const home = scratchHome("murage-unsloth-mixed-");
     mkdirSync(join(home, ".unsloth", "studio", "auth"), { recursive: true });
     writeFileSync(
       join(home, ".unsloth", "studio", "auth", "agent_api_key.json"),
@@ -204,7 +204,7 @@ describe("Grok / Kimi / Droid / OpenCode writers × live ids", () => {
   it.each(["gemma-4-31b-it-bf16", "mlx-community/GLM-5.2-mxfp4", "Qwen3.6-35B-A3B-bf16:qwen3-5-6-n-r-reasoning"] as const)(
     "Grok writes a reusable slug for %s",
     (model) => {
-      const home = scratchHome("omb-grok-mx-");
+      const home = scratchHome("murage-grok-mx-");
       mkdirSync(join(home, ".grok"), { recursive: true });
       const slug = ensureGrokInjectSlug(encodeInjectId("omlx", model), { HOME: home });
       expect(slug).not.toContain("::");
@@ -215,7 +215,7 @@ describe("Grok / Kimi / Droid / OpenCode writers × live ids", () => {
   );
 
   it("Kimi keeps the API id in model= and sanitizes slashes only in the alias", () => {
-    const home = scratchHome("omb-kimi-mx-");
+    const home = scratchHome("murage-kimi-mx-");
     mkdirSync(join(home, ".kimi-code"), { recursive: true });
     const alias = ensureKimiInjectAlias("omlx::qwen/qwen3-coder-next", { HOME: home });
     expect(alias).toBe("omlx/qwen-qwen3-coder-next");
@@ -225,7 +225,7 @@ describe("Grok / Kimi / Droid / OpenCode writers × live ids", () => {
   });
 
   it.each(UNIQUE_HOSTS)("Droid BYOK row for $id uses generic-chat-completion-api", (host) => {
-    const home = scratchHome("omb-droid-mx-");
+    const home = scratchHome("murage-droid-mx-");
     mkdirSync(join(home, ".factory"), { recursive: true });
     writeFileSync(join(home, ".factory", "settings.json"), "{}");
     const id = ensureDroidInjectModel(encodeInjectId(host.id, "gemma-4-31b-it-bf16"), {
@@ -233,7 +233,7 @@ describe("Grok / Kimi / Droid / OpenCode writers × live ids", () => {
       UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret",
     });
     expect(id).toBe(droidInjectId(host.id, "gemma-4-31b-it-bf16"));
-    expect(id.startsWith("custom:openmausbot-")).toBe(true);
+    expect(id.startsWith("custom:murage-")).toBe(true);
     const settings = JSON.parse(readFileSync(join(home, ".factory", "settings.json"), "utf8")) as {
       customModels: Array<{ provider: string; baseUrl: string; apiKey: string; model: string }>;
     };
@@ -246,7 +246,7 @@ describe("Grok / Kimi / Droid / OpenCode writers × live ids", () => {
   });
 
   it.each(["omlx", "ollama", "lmstudio"] as const)("OpenCode provider/%s model key keeps slashes", (hostId) => {
-    const home = scratchHome("omb-oc-mx-");
+    const home = scratchHome("murage-oc-mx-");
     const native = ensureOpenCodeInjectModel(encodeInjectId(hostId, "qwen/qwen3-coder-next"), { HOME: home });
     expect(native).toBe(`${hostId}/qwen/qwen3-coder-next`);
     const config = JSON.parse(readFileSync(join(home, ".config", "opencode", "opencode.json"), "utf8")) as {
@@ -259,7 +259,7 @@ describe("Grok / Kimi / Droid / OpenCode writers × live ids", () => {
 
 describe("Qwen writer × hosts", () => {
   it.each(UNIQUE_HOSTS)("stores $id credentials in settings.env, not in the model row", (host) => {
-    const home = scratchHome("omb-qwen-mx-");
+    const home = scratchHome("murage-qwen-mx-");
     mkdirSync(join(home, ".qwen"), { recursive: true });
     const native = ensureQwenInjectModel(encodeInjectId(host.id, "gemma-4-31b-it-bf16"), {
       HOME: home,
@@ -278,7 +278,7 @@ describe("Qwen writer × hosts", () => {
   });
 
   it("leaves official Qwen slugs untouched", () => {
-    expect(ensureQwenInjectModel("qwen3-coder-plus", { HOME: scratchHome("omb-qwen-cloud-") })).toBe("qwen3-coder-plus");
+    expect(ensureQwenInjectModel("qwen3-coder-plus", { HOME: scratchHome("murage-qwen-cloud-") })).toBe("qwen3-coder-plus");
   });
 });
 
@@ -288,7 +288,7 @@ describe("Hermes writer — OpenRouter 401 class", () => {
   });
 
   it.each(UNIQUE_HOSTS)("writes providers.$id without flipping model.provider away from auto", (host) => {
-    const home = scratchHome("omb-hermes-mx-");
+    const home = scratchHome("murage-hermes-mx-");
     mkdirSync(join(home, ".hermes"), { recursive: true });
     writeFileSync(
       join(home, ".hermes", "config.yaml"),
@@ -309,7 +309,7 @@ describe("Hermes writer — OpenRouter 401 class", () => {
   });
 
   it("does not rewrite the user's OpenRouter default when the pick is a cloud slug", () => {
-    const home = scratchHome("omb-hermes-cloud-");
+    const home = scratchHome("murage-hermes-cloud-");
     mkdirSync(join(home, ".hermes"), { recursive: true });
     const original = "model:\n  provider: auto\n";
     writeFileSync(join(home, ".hermes", "config.yaml"), original);
@@ -318,7 +318,7 @@ describe("Hermes writer — OpenRouter 401 class", () => {
   });
 
   it("upserts the same host once when two models share oMLX", () => {
-    const home = scratchHome("omb-hermes-two-");
+    const home = scratchHome("murage-hermes-two-");
     mkdirSync(join(home, ".hermes"), { recursive: true });
     ensureHermesInjectProvider("omlx::gemma-4-31b-it-bf16", { HOME: home });
     ensureHermesInjectProvider("omlx::GLM-5.2-fp8", { HOME: home });
@@ -331,7 +331,7 @@ describe("probe payload dialects", () => {
   const probe = (payload: unknown) =>
     mergeLocalInject(
       { default: "keep", options: [{ id: "keep", label: "Keep" }] },
-      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      { VITEST: "true", MURAGE_PROBE_LOCAL_INJECT: "1" },
       async (url) => {
         if (String(url).includes(":8080")) return new Response(JSON.stringify(payload), { status: 200 });
         return new Response("nope", { status: 500 });
@@ -366,7 +366,7 @@ describe("loaded host probes", () => {
   it("pins every host's actually-loaded models in one Custom list", async () => {
     const catalog = await mergeLocalInject(
       { default: "keep", options: [{ id: "keep", label: "Keep" }] },
-      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      { VITEST: "true", MURAGE_PROBE_LOCAL_INJECT: "1" },
       async (url) => {
         const href = String(url);
         if (href.includes("/v1/models/status")) {
@@ -426,7 +426,7 @@ describe("loaded host probes", () => {
 
 describe("Qwen / Hermes ACP turns", () => {
   it("Qwen argv is --acp -m <api-id>, never the encoded picker id", async () => {
-    const home = scratchHome("omb-qwen-turn-");
+    const home = scratchHome("murage-qwen-turn-");
     const dump = join(home, "env.json");
     const instance = await QwenAgentDriver.create({
       instanceId: "qwen",
@@ -447,7 +447,7 @@ describe("Qwen / Hermes ACP turns", () => {
   });
 
   it("Hermes ACP does not inherit OPENAI_API_KEY and set_model uses custom:omlx:…", async () => {
-    const home = scratchHome("omb-hermes-turn-");
+    const home = scratchHome("murage-hermes-turn-");
     mkdirSync(join(home, ".hermes"), { recursive: true });
     writeFileSync(
       join(home, ".hermes", "config.yaml"),
@@ -493,7 +493,7 @@ describe("Qwen / Hermes ACP turns", () => {
 
 describe("room turns must pass the picker model", () => {
   it("Qwen without a model never injects — the room used to do this", async () => {
-    const home = scratchHome("omb-qwen-noroom-");
+    const home = scratchHome("murage-qwen-noroom-");
     const dump = join(home, "env.json");
     const instance = await QwenAgentDriver.create({
       instanceId: "qwen",
@@ -514,7 +514,7 @@ describe("room turns must pass the picker model", () => {
   });
 
   it("Hermes without a model never session/set_model — that is the OpenRouter 401", async () => {
-    const home = scratchHome("omb-hermes-noroom-");
+    const home = scratchHome("murage-hermes-noroom-");
     mkdirSync(join(home, ".hermes"), { recursive: true });
     const dump = join(home, "env.json");
     const instance = await HermesAgentDriver.create({
@@ -543,7 +543,7 @@ describe("room turns must pass the picker model", () => {
 
 describe("Pi writer × hosts", () => {
   it.each(UNIQUE_HOSTS)("stores $id in ~/.pi/agent/models.json as openai-completions", (host) => {
-    const home = scratchHome("omb-pi-mx-");
+    const home = scratchHome("murage-pi-mx-");
     const split = ensurePiInjectModel(encodeInjectId(host.id, "gemma-4-31b-it-bf16"), {
       HOME: home,
       UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret",
@@ -563,7 +563,7 @@ describe("Pi writer × hosts", () => {
   });
 
   it("leaves official pi slugs untouched", () => {
-    expect(ensurePiInjectModel("ollama-cloud/glm-5.2", { HOME: scratchHome("omb-pi-cloud-") })).toEqual({
+    expect(ensurePiInjectModel("ollama-cloud/glm-5.2", { HOME: scratchHome("murage-pi-cloud-") })).toEqual({
       provider: "ollama-cloud",
       modelId: "glm-5.2",
     });

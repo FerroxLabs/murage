@@ -86,13 +86,13 @@ function bestEffortRelease(botId: string, controlLeaseId: string) {
     // The server lease is the source of truth; only clear Electron after the
     // workspace-owned release was actually accepted.
     if (snapshot?.held === false) {
-      await window.ogb?.browser?.setHumanControl?.(botId, false).catch(() => {});
+      await window.muragebox?.browser?.setHumanControl?.(botId, false).catch(() => {});
     }
   }).catch(() => {});
 }
 
 async function setNativeBrowserControl(botId: string, held: boolean): Promise<boolean> {
-  const setter = window.ogb?.browser?.setHumanControl;
+  const setter = window.muragebox?.browser?.setHumanControl;
   if (!setter) return true;
   return (await setter(botId, held)) === true;
 }
@@ -279,14 +279,14 @@ function LocalVmPane({
   }, [obscured]);
 
   useEffect(() => {
-    const bridge = window.ogb?.desktopWorkspace;
+    const bridge = window.muragebox?.desktopWorkspace;
     return bridge?.onState((next) => {
       if (next.contextId === contextId) setNativeState(next);
     });
   }, [contextId]);
 
   useEffect(() => {
-    const bridge = window.ogb?.desktopWorkspace;
+    const bridge = window.muragebox?.desktopWorkspace;
     let alive = true;
     const controller = new AbortController();
     setStatus(null);
@@ -297,7 +297,7 @@ function LocalVmPane({
       if (bridge) await bridge.close(contextId).catch(() => {});
       if (!alive || !botId) return;
       if (!bridge) {
-        setError("The two-desktop workspace requires the OpenMausBot desktop app.");
+        setError("The two-desktop workspace requires the Murage desktop app.");
         return;
       }
       try {
@@ -348,7 +348,7 @@ function LocalVmPane({
         setError(
           cause instanceof Error && cause.message === "layout-unavailable"
             ? "The viewer area is not laid out yet. Retry after resizing the window."
-            : "OpenMausBot could not connect this Local VM viewer.",
+            : "Murage could not connect this Local VM viewer.",
         );
       }
     };
@@ -366,12 +366,12 @@ function LocalVmPane({
   }, [botId, botName, contextId, retry]);
 
   const updateLayout = useCallback(() => {
-    const bridge = window.ogb?.desktopWorkspace;
+    const bridge = window.muragebox?.desktopWorkspace;
     const bounds = elementBounds(viewportRef);
     if (!bridge || !bounds || !nativeState.open) return;
     void bridge
       .layout([{ contextId, bounds, visible: !obscured }])
-      .catch(() => setError("OpenMausBot could not position this Local VM viewer."));
+      .catch(() => setError("Murage could not position this Local VM viewer."));
   }, [contextId, nativeState.open, obscured]);
 
   useEffect(() => {
@@ -570,7 +570,7 @@ export function LocalVmWorkspace({
         return snapshot;
       },
       async setInteractive(contextId) {
-        const bridge = window.ogb?.desktopWorkspace;
+        const bridge = window.muragebox?.desktopWorkspace;
         if (!bridge) throw new Error("The desktop workspace bridge is unavailable");
         return bridge.setInteractive(contextId);
       },
@@ -623,7 +623,7 @@ export function LocalVmWorkspace({
     return () => {
       mountedRef.current = false;
       const controlled = controlledBotIdRef.current;
-      const bridge = window.ogb?.desktopWorkspace;
+      const bridge = window.muragebox?.desktopWorkspace;
       if (!bridge) {
         if (controlled) bestEffortRelease(controlled, controlLeaseId);
         return;
@@ -659,7 +659,7 @@ export function LocalVmWorkspace({
       setControlledBotId(null);
       return true;
     } catch {
-      setControlError("OpenMausBot could not hand control back. The workspace stayed open.");
+      setControlError("Murage could not hand control back. The workspace stayed open.");
       return false;
     } finally {
       controlBusyRef.current = false;
@@ -670,7 +670,7 @@ export function LocalVmWorkspace({
   const takeControl = useCallback(
     async (botId: string) => {
       if (controlBusyRef.current || controlledBotIdRef.current === botId) return;
-      const bridge = window.ogb?.desktopWorkspace;
+      const bridge = window.muragebox?.desktopWorkspace;
       const contextId = contextForBot(botId);
       if (!bridge || !contextId) return;
       controlBusyRef.current = true;

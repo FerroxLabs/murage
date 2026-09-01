@@ -109,7 +109,7 @@ describe("ClaudeDriver.decodeConfig", () => {
 
   it.skipIf(process.platform !== "win32")("names permission pipes per harness process", () => {
     expect(permissionSocketPath("thread-abc")).toMatch(
-      new RegExp(`^\\\\\\\\\\.\\\\pipe\\\\openmausbot-perm-${process.pid}-thre[0-9a-f]{4}$`),
+      new RegExp(`^\\\\\\\\\\.\\\\pipe\\\\murage-perm-${process.pid}-thre[0-9a-f]{4}$`),
     );
   });
 
@@ -162,7 +162,7 @@ describe("ClaudeDriver.decodeConfig", () => {
       // macOS has a small Unix-socket path limit, so a deep HOME needs a
       // short fallback under the OS temp root.
       expect(candidates).toHaveLength(2);
-      expect(candidates[1]).toMatch(/omb-perm-[0-9a-f]{16}\.sock$/);
+      expect(candidates[1]).toMatch(/murage-perm-[0-9a-f]{16}\.sock$/);
       expect(candidates[1]).not.toBe(candidates[0]);
     }
   });
@@ -173,7 +173,7 @@ describe("ClaudeDriver.decodeConfig", () => {
   it.skipIf(process.platform === "win32")(
     "binds the next candidate when the first is unbindable, and asks round-trip on it",
     async () => {
-      const dir = mkdtempSync(join(tmpdir(), "omb-broker-fallback-"));
+      const dir = mkdtempSync(join(tmpdir(), "murage-broker-fallback-"));
       const held = join(dir, "held.sock");
       // a directory squats the path the way a hung child holds a pipe:
       // unlink fails, listen fails — the broker must move on, not go dark
@@ -215,7 +215,7 @@ describe("ClaudeDriver.decodeConfig", () => {
   it.skipIf(process.platform === "win32")(
     "rejects instead of returning an occupied path when every candidate is unavailable",
     async () => {
-      const dir = mkdtempSync(join(tmpdir(), "omb-broker-unavailable-"));
+      const dir = mkdtempSync(join(tmpdir(), "murage-broker-unavailable-"));
       const heldOne = join(dir, "held-one.sock");
       const heldTwo = join(dir, "held-two.sock");
       mkdirSync(heldOne);
@@ -263,7 +263,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   beforeEach(() => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
-    scratch = mkdtempSync(join(tmpdir(), "omb-claude-test-"));
+    scratch = mkdtempSync(join(tmpdir(), "murage-claude-test-"));
   });
 
   afterEach(async () => {
@@ -278,9 +278,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.COMPOSIO_API_KEY;
     delete process.env.BOX_TOKEN;
     delete process.env.OPENCODE_API_KEY;
-    delete process.env.OMB_TTS_KEY;
-    delete process.env.OMB_CLAUDE_SESSION_IDLE_MS;
-    delete process.env.OMB_CLAUDE_SESSION_IDLE_MIN_MS;
+    delete process.env.MURAGE_TTS_KEY;
+    delete process.env.MURAGE_CLAUDE_SESSION_IDLE_MS;
+    delete process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
@@ -341,7 +341,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // the desktop shell) must never ride into the CLI child
     process.env.XAI_API_KEY = "xai-should-not-leak";
     process.env.BOX_TOKEN = "box-should-not-leak";
-    process.env.OMB_TTS_KEY = "tts-should-not-leak";
+    process.env.MURAGE_TTS_KEY = "tts-should-not-leak";
 
     await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "the secret prompt", system: "You are Testy." });
     await recorder.until((e) => e.type === "turn.completed");
@@ -359,7 +359,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
     expect(seen.env.XAI_API_KEY).toBeUndefined();
     expect(seen.env.BOX_TOKEN).toBeUndefined();
-    expect(seen.env.OMB_TTS_KEY).toBeUndefined();
+    expect(seen.env.MURAGE_TTS_KEY).toBeUndefined();
   });
 
   it("launches with a Windows-sized system prompt without putting it on argv", async () => {
@@ -437,7 +437,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         agents: {
           command: process.execPath,
           args: ["/fake/agents-proxy.js"],
-          env: { OMB_HARNESS_URL: "http://127.0.0.1:1", OMB_BOT_ID: "b1", OMB_COMMS_TOKEN: "tok", OMB_TURN_DEPTH: "0" },
+          env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok", MURAGE_TURN_DEPTH: "0" },
         },
       },
     });
@@ -446,7 +446,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.mcpConfig.mcpServers.agents).toMatchObject({
       args: ["/fake/agents-proxy.js"],
-      env: { OMB_BOT_ID: "b1", OMB_COMMS_TOKEN: "tok" },
+      env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok" },
     });
     // the config goes in a private file, never on argv, where `ps` would
     // show the comms token to every other user on the machine
@@ -470,7 +470,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         agents: {
           command: process.execPath,
           args: ["/fake/agents-proxy.js"],
-          env: { OMB_HARNESS_URL: "http://127.0.0.1:1", OMB_BOT_ID: "b1", OMB_COMMS_TOKEN: "tok", OMB_TURN_DEPTH: "0" },
+          env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok", MURAGE_TURN_DEPTH: "0" },
         },
       },
     });
@@ -484,7 +484,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       env: { NOTES_TOKEN: "tok-notes" },
     });
     // …but its tools are NOT pre-allowed: acceptEdits denies unlisted tools,
-    // which routes every custom call through the ogb broker into a card.
+    // which routes every custom call through the muragebox broker into a card.
     const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
     expect(allowed).toContain("mcp__agents");
     expect(allowed).not.toContain("mcp__notes");
@@ -555,7 +555,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         composio: {
           command: process.execPath,
           args: ["/tmp/connector-proxy.js"],
-          env: { OMB_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" },
+          env: { MURAGE_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" },
         },
       },
     });
@@ -565,7 +565,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.mcpConfig.mcpServers.composio).toMatchObject({
       command: process.execPath,
       args: ["/tmp/connector-proxy.js"],
-      env: { OMB_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" },
+      env: { MURAGE_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" },
     });
     // the user's Composio key must not be readable via `ps`
     expect(JSON.stringify(seen.argv)).not.toContain("ak_test");
@@ -590,7 +590,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         composio: {
           command: process.execPath,
           args: ["/tmp/connector-proxy.js"],
-          env: { OMB_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" },
+          env: { MURAGE_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" },
         },
       },
     });
@@ -600,7 +600,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       return seen.argv[seen.argv.indexOf("--mcp-config") + 1] as string;
     })();
-    expect(configPath).toMatch(/omb-mcp-/);
+    expect(configPath).toMatch(/murage-mcp-/);
     expect(existsSync(configPath)).toBe(false);
     expect(existsSync(dirname(configPath))).toBe(false);
   });
@@ -714,7 +714,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await expect(answer).resolves.toMatchObject({
       id: "ask-between",
       behavior: "deny",
-      message: "OpenMausBot: the turn ended",
+      message: "Murage: the turn ended",
     });
     expect(recorder.events.filter((e) => e.type === "request.opened")).toHaveLength(opensBefore);
     await expect(
@@ -744,8 +744,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   });
 
   it("closes an idle session after the configured window", async () => {
-    process.env.OMB_CLAUDE_SESSION_IDLE_MIN_MS = "10";
-    process.env.OMB_CLAUDE_SESSION_IDLE_MS = "50";
+    process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS = "10";
+    process.env.MURAGE_CLAUDE_SESSION_IDLE_MS = "50";
     await create();
     await instance.adapter.sendTurn({ threadId: "t-idle", text: "one" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -970,7 +970,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       await expect.poll(() => existsSync(dump), { timeout: 5_000 }).toBe(true);
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       const mcpPath = seen.argv[seen.argv.indexOf("--mcp-config") + 1];
-      const actual = JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers.ogb.args[1];
+      const actual = JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers.muragebox.args[1];
       if (process.platform === "win32") expect(actual).not.toBe(basePath);
       const conn = connect(actual);
       await new Promise<void>((resolve, reject) => {
@@ -1047,7 +1047,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(await nextAnswer()).toMatchObject({
       id: "dup-1",
       behavior: "deny",
-      message: "OpenMausBot: duplicate ask id — skipping this request.",
+      message: "Murage: duplicate ask id — skipping this request.",
     });
     expect(recorder.events.filter((e) => e.type === "request.opened" && e.requestId === "dup-1")).toHaveLength(1);
 
@@ -1079,7 +1079,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(await conn2Answer).toMatchObject({
       id: "dup-2",
       behavior: "deny",
-      message: "OpenMausBot: duplicate ask id — skipping this request.",
+      message: "Murage: duplicate ask id — skipping this request.",
     });
     expect(recorder.events.filter((e) => e.type === "request.opened" && e.requestId === "dup-2")).toHaveLength(1);
 
@@ -1137,7 +1137,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(await nextAnswer()).toMatchObject({
       id: "dup-4",
       behavior: "deny",
-      message: "OpenMausBot: duplicate ask id — skipping this request.",
+      message: "Murage: duplicate ask id — skipping this request.",
     });
     expect(recorder.events.filter((e) => e.type === "request.opened" && e.requestId === "dup-4")).toHaveLength(1);
 
@@ -1185,7 +1185,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(await reply).toMatchObject({
       id: "ask-late",
       behavior: "deny",
-      message: "OpenMausBot: the turn ended",
+      message: "Murage: the turn ended",
     });
     expect(recorder.events.filter((e) => e.type === "request.opened")).toHaveLength(opensBefore);
     await expect(instance.adapter.respondToRequest("t-perm-late", "ask-late", { behavior: "allow" })).resolves.toBe(
@@ -1225,7 +1225,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(await reply).toMatchObject({
       id: "q-late",
       behavior: "answer",
-      message: "OpenMausBot: the turn is ending — wrap up.",
+      message: "Murage: the turn is ending — wrap up.",
     });
     expect(recorder.events.filter((e) => e.type === "request.opened")).toHaveLength(opensBefore);
     await expect(
@@ -1266,7 +1266,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create(undefined, { CLAUDE_CONFIG_DIR: instanceConfigDir });
     const dump = join(scratch, "generate-text-env.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    const names = ["XAI_API_KEY", "COMPOSIO_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "OMB_TTS_KEY"] as const;
+    const names = ["XAI_API_KEY", "COMPOSIO_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "MURAGE_TTS_KEY"] as const;
     for (const name of names) process.env[name] = `${name}-must-not-leak`;
 
     await instance.generateText?.("summarize safely");

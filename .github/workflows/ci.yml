@@ -48,7 +48,7 @@ jobs:
           # on GitHub's Windows runners even after Chromium's required sandbox
           # ACL is present. Production fails closed there through the tested
           # browser-platform gate; keep probing the upstream regression below.
-          OMB_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
       - name: Probe upstream Electron Windows sandbox regression
         if: matrix.os == 'windows-latest'
         continue-on-error: true
@@ -56,7 +56,7 @@ jobs:
           # Keep the canary honest: no --no-sandbox or sandbox-disabling flags.
           # When electron/electron#51761 is resolved, make this blocking first,
           # then remove the production Windows gate in browser-platform.cjs.
-          OMB_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: "0"
+          MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: "0"
         run: pnpm exec vitest run electron/browser-closed-shadow.electron.test.mjs
       - run: pnpm check:electron
       - name: production UI build
@@ -128,20 +128,20 @@ jobs:
           test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
       - name: Launch packaged app and verify lifecycle
         env:
-          OMB_KEEP_SMOKE_DIR: "1"
-          OMB_SMOKE_INSTALLED_DEB: "1"
+          MURAGE_KEEP_SMOKE_DIR: "1"
+          MURAGE_SMOKE_INSTALLED_DEB: "1"
         run: pnpm smoke:linux-package
       - name: Remove the installed upgrade fixture
         if: always()
-        run: sudo dpkg --purge openmausbot || true
+        run: sudo dpkg --purge murage || true
       - name: Upload smoke diagnostics on failure
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
-          name: openmausbot-ubuntu-smoke-diagnostics
+          name: murage-ubuntu-smoke-diagnostics
           path: |
-            /tmp/omb-linux-smoke-*
-            /tmp/omb-linux-smoke-runtime-*
+            /tmp/murage-linux-smoke-*
+            /tmp/murage-linux-smoke-runtime-*
           if-no-files-found: warn
           include-hidden-files: true
           retention-days: 7

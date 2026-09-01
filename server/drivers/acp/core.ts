@@ -173,7 +173,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
   const SOURCE = support.nativeSource;
   const decodeConfig = decodeAcpConfig(support.defaultCli);
   const DENY_TIMEOUT_NOTE =
-    "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+    "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 
   return {
     driverKind: DRIVER_KIND,

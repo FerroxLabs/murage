@@ -32,7 +32,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = path.join(__dirname, "resources", "recorder-helper.swift");
 const INFO = path.join(__dirname, "resources", "recorder-helper-Info.plist");
 const BUNDLE = app.isPackaged
-  ? path.join(process.resourcesPath, "OpenMausBot Recorder.app")
+  ? path.join(process.resourcesPath, "Murage Recorder.app")
   : recorderHelperBundle;
 const BINARY = app.isPackaged
   ? path.join(BUNDLE, "Contents", "MacOS", "recorder-helper")
@@ -67,7 +67,7 @@ export function startRecorder(win) {
   const permission = recorderPermissionStatus();
   if (!permission.supported) throw new Error("Skill recording is currently available on macOS.");
   ensureBuilt();
-  const sessionDir = mkdtempSync(path.join(app.getPath("temp"), "openmausbot-recorder-"));
+  const sessionDir = mkdtempSync(path.join(app.getPath("temp"), "murage-recorder-"));
   const outputPath = path.join(sessionDir, "events.ndjson");
   const errorPath = path.join(sessionDir, "stderr.log");
   const stopPath = path.join(sessionDir, "stop");
@@ -336,7 +336,7 @@ export function saveSkillRecording(payload, options = {}) {
   const name = cleanText(payload.name, 100);
   if (!name) throw new Error("Name the skill before creating it");
   const description = cleanText(payload.description, 300);
-  const dataRoot = options.dataRoot ?? process.env.OMB_DATA_DIR ?? path.join(os.homedir(), ".openmausbot");
+  const dataRoot = options.dataRoot ?? process.env.MURAGE_DATA_DIR ?? path.join(os.homedir(), ".murage");
   const skillsRoot = path.join(dataRoot, "skills");
   mkdirSync(skillsRoot, { recursive: true });
   const target = uniqueSkillDirectory(skillsRoot, name);

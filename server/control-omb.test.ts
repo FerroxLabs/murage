@@ -6,10 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   controlResultSucceeded,
   launchVerificationServer,
-  runControlOmb,
-} from "../scripts/control-omb.ts";
+  runControlMurage,
+} from "../scripts/control-murage.ts";
 
-describe("control-omb command mapping", () => {
+describe("control-murage command mapping", () => {
   it("treats unhealthy doctor and non-settled waits as command failures", () => {
     expect(controlResultSucceeded("doctor", { ok: true })).toBe(true);
     expect(controlResultSucceeded("doctor", { ok: false })).toBe(false);
@@ -22,23 +22,23 @@ describe("control-omb command mapping", () => {
   it("runs directly under Node's strip-only TypeScript loader", () => {
     const result = spawnSync(process.execPath, [
       "--experimental-strip-types",
-      join(process.cwd(), "scripts", "control-omb.ts"),
+      join(process.cwd(), "scripts", "control-murage.ts"),
       "help",
     ], { encoding: "utf8" });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("control-omb");
+    expect(result.stdout).toContain("control-murage");
   });
 
   it("composes doctor from the shared health and model tools", async () => {
     const callTool = vi.fn(async (name: string) => name === "get_system_health"
-      ? { status: "connected", app: "openmausbot" }
+      ? { status: "connected", app: "murage" }
       : {
           instances: [
             { instanceId: "ready", snapshot: { state: "available" } },
             { instanceId: "missing", snapshot: { state: "unavailable" } },
           ],
         });
-    const result = await runControlOmb(["doctor", "--url", "http://127.0.0.1:19999"], {
+    const result = await runControlMurage(["doctor", "--url", "http://127.0.0.1:19999"], {
       callTool: callTool as any,
     }) as any;
     expect(callTool.mock.calls.map(([name]) => name)).toEqual(["get_system_health", "list_available_models"]);
@@ -49,12 +49,12 @@ describe("control-omb command mapping", () => {
     });
   });
 
-  it("rejects an available engine when the endpoint is not OpenMausBot", async () => {
+  it("rejects an available engine when the endpoint is not Murage", async () => {
     const callTool = vi.fn(async (name: string) => name === "get_system_health"
       ? { status: "connected", app: "another-app" }
       : { instances: [{ instanceId: "ready", snapshot: { state: "available" } }] });
 
-    const result = await runControlOmb(["doctor", "--url", "http://127.0.0.1:19999"], {
+    const result = await runControlMurage(["doctor", "--url", "http://127.0.0.1:19999"], {
       callTool: callTool as any,
     }) as any;
 
@@ -62,23 +62,23 @@ describe("control-omb command mapping", () => {
   });
 
   it("refuses to mutate a silently discovered live app", async () => {
-    await expect(runControlOmb(["new-bot", "--name", "Probe"], {
+    await expect(runControlMurage(["new-bot", "--name", "Probe"], {
       callTool: vi.fn() as any,
       env: {},
     })).rejects.toMatchObject({
-      message: "mutating commands require an explicit OpenMausBot instance",
+      message: "mutating commands require an explicit Murage instance",
     });
   });
 
   it("maps bounded reads and dry-run actions without reimplementing them", async () => {
     const callTool = vi.fn(async (name: string, args: Record<string, unknown>) => ({ name, args }));
-    const env = { OPENMAUSBOT_URL: "http://127.0.0.1:19999" };
-    await expect(runControlOmb(["messages", "--channel", "room-1", "--limit", "20"], {
+    const env = { MURAGE_URL: "http://127.0.0.1:19999" };
+    await expect(runControlMurage(["messages", "--channel", "room-1", "--limit", "20"], {
       callTool: callTool as any,
       env,
     })).resolves.toEqual({ name: "get_channel_messages", args: { channel_id: "room-1", limit: 20 } });
 
-    await expect(runControlOmb(["send", "--bot", "bot-1", "--text", "hello", "--dry-run"], {
+    await expect(runControlMurage(["send", "--bot", "bot-1", "--text", "hello", "--dry-run"], {
       callTool: callTool as any,
       env: {},
     })).resolves.toMatchObject({
@@ -91,7 +91,7 @@ describe("control-omb command mapping", () => {
 
   it("rejects invalid bounds before the shared tool is called", async () => {
     const callTool = vi.fn();
-    await expect(runControlOmb(["wait", "--bot", "bot-1", "--timeout", "0"], {
+    await expect(runControlMurage(["wait", "--bot", "bot-1", "--timeout", "0"], {
       callTool: callTool as any,
       env: {},
     })).rejects.toThrow("--timeout must be an integer from 1 to 120");
@@ -99,30 +99,30 @@ describe("control-omb command mapping", () => {
   });
 });
 
-describe("control-omb isolated verification loop", () => {
+describe("control-murage isolated verification loop", () => {
   it("launches, drives a real fake-engine turn, and removes only its test data", async () => {
     const session = await launchVerificationServer({
       ...process.env,
       COMPOSIO_API_KEY: "must-not-reach-the-fixture",
-      OMB_SKILLS_DIR: "/must/not/reach/the/fixture",
+      MURAGE_SKILLS_DIR: "/must/not/reach/the/fixture",
       XAI_API_KEY: "must-not-reach-the-fixture",
     });
-    const env = { OPENMAUSBOT_URL: session.info.url };
+    const env = { MURAGE_URL: session.info.url };
     try {
-      const doctor = await runControlOmb(["doctor"], { env }) as any;
+      const doctor = await runControlMurage(["doctor"], { env }) as any;
       expect(doctor.ok).toBe(true);
       expect(doctor.availableEngines).toEqual(["claude"]);
 
-      const created = await runControlOmb(["new-bot", "--name", "Verification Probe"], { env }) as any;
+      const created = await runControlMurage(["new-bot", "--name", "Verification Probe"], { env }) as any;
       const botId = created.bot.id as string;
-      await runControlOmb(["send", "--bot", botId, "--text", "hello from the verification test"], { env });
-      const settled = await runControlOmb(["wait", "--bot", botId, "--timeout", "20"], { env }) as any;
+      await runControlMurage(["send", "--bot", botId, "--text", "hello from the verification test"], { env });
+      const settled = await runControlMurage(["wait", "--bot", botId, "--timeout", "20"], { env }) as any;
       expect(settled.status).toBe("settled");
-      const transcript = await runControlOmb(["messages", "--bot", botId, "--limit", "10"], { env }) as any;
+      const transcript = await runControlMurage(["messages", "--bot", botId, "--limit", "10"], { env }) as any;
       expect(transcript.messages.some((message: { role?: string }) => message.role === "bot")).toBe(true);
       const fixtureEnv = JSON.parse(readFileSync(session.fixtureDumpPath, "utf8")).env as Record<string, string>;
       expect(fixtureEnv).not.toHaveProperty("COMPOSIO_API_KEY");
-      expect(fixtureEnv).not.toHaveProperty("OMB_SKILLS_DIR");
+      expect(fixtureEnv).not.toHaveProperty("MURAGE_SKILLS_DIR");
       expect(fixtureEnv).not.toHaveProperty("XAI_API_KEY");
       expect(JSON.stringify(fixtureEnv)).not.toContain("must-not-reach-the-fixture");
     } finally {

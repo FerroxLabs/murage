@@ -17,8 +17,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // The module reads DATA_DIR at import time, so the env var must be set
 // before the import is evaluated.
-const DATA_ROOT = mkdtempSync(join(tmpdir(), "omb-attachments-"));
-process.env.OMB_DATA_DIR = join(DATA_ROOT, "data");
+const DATA_ROOT = mkdtempSync(join(tmpdir(), "murage-attachments-"));
+process.env.MURAGE_DATA_DIR = join(DATA_ROOT, "data");
 
 const {
   ATTACHMENTS_DIR,

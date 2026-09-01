@@ -70,8 +70,8 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   if (!companionBridge()) {
     return (
       <Card
-        title="Use OpenMausBot from your phone"
-        subtitle="Open Settings in the OpenMausBot desktop app to set up a phone."
+        title="Use Murage from your phone"
+        subtitle="Open Settings in the Murage desktop app to set up a phone."
       />
     );
   }
@@ -126,7 +126,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
 
       <Card
         title="Paired phones"
-        subtitle={pairedCount ? "Manage the phones that can use this OpenMausBot." : "No phones are paired yet."}
+        subtitle={pairedCount ? "Manage the phones that can use this Murage." : "No phones are paired yet."}
       >
         {pairedCount > 0 && (
           <ul className="flex flex-col gap-2">

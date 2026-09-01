@@ -373,7 +373,7 @@ function RoomWorkingFolder({ group }: { group: Group }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const canPick = Boolean(window.ogb?.pickFolder);
+  const canPick = Boolean(window.muragebox?.pickFolder);
   const pinned = group.pinnedCwd; // undefined = not yet, null = each bot's own, string = folder
   const locked = pinned !== undefined;
   const shownCwd = locked ? (pinned ?? undefined) : group.cwd;
@@ -391,7 +391,7 @@ function RoomWorkingFolder({ group }: { group: Group }) {
     }
   };
   const pick = async () => {
-    const chosen = await window.ogb?.pickFolder?.(group.cwd);
+    const chosen = await window.muragebox?.pickFolder?.(group.cwd);
     if (chosen) void save(chosen);
   };
 
@@ -585,7 +585,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
   };
 
   const pickFolder = async () => {
-    const chosen = await window.ogb?.pickFolder?.(folder || group.cwd);
+    const chosen = await window.muragebox?.pickFolder?.(folder || group.cwd);
     if (chosen) setFolder(chosen);
   };
 
@@ -623,7 +623,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
               placeholder="Each bot's own folder"
               className="min-w-0 flex-1 rounded-xl border border-hairline/50 bg-inset px-3 py-2.5 font-mono text-[12.5px] text-ink placeholder:text-ink-secondary focus:border-accent focus:outline-none"
             />
-            {window.ogb?.pickFolder && (
+            {window.muragebox?.pickFolder && (
               <button
                 type="button"
                 onClick={() => void pickFolder()}

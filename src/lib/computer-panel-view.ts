@@ -1,6 +1,6 @@
 export type ComputerPanelView = "computer" | "android" | "browser";
 
-const STORAGE_PREFIX = "omb-computer-panel-view";
+const STORAGE_PREFIX = "murage-computer-panel-view";
 
 function storageKey(botId: string): string {
   return `${STORAGE_PREFIX}:${botId}`;

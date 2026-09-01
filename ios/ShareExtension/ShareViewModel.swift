@@ -616,14 +616,14 @@ final class ShareViewModel: ObservableObject {
     private func friendlyMessage(for error: Error) -> String {
         if let apiError = error as? APIError {
             if apiError.isUnauthorized {
-                return "This phone's pairing has expired. Open OpenMausBot and pair it again."
+                return "This phone's pairing has expired. Open Murage and pair it again."
             }
             if isAmbiguousTransport(error) {
-                return "Couldn't reach your computer. Keep OpenMausBot open and Phone access on, then try again."
+                return "Couldn't reach your computer. Keep Murage open and Phone access on, then try again."
             }
         }
         return (error as? LocalizedError)?.errorDescription
-            ?? "OpenMausBot couldn't send this. Please try again."
+            ?? "Murage couldn't send this. Please try again."
     }
 
     private func destinationKey(for connectionID: String) -> String {
@@ -694,13 +694,13 @@ private enum ShareExtensionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notPaired:
-            return "Open the OpenMausBot app once after updating. If this phone still isn't connected, pair it before sharing."
+            return "Open the Murage app once after updating. If this phone still isn't connected, pair it before sharing."
         case .noDestinations:
             return "There aren't any bots or channels to send this to yet. Create one on your computer first."
         case .imageSupportUnavailable:
-            return "Update OpenMausBot on this computer before sharing images."
+            return "Update Murage on this computer before sharing images."
         case let .offline(name):
-            return "Couldn't reach \(name). Keep OpenMausBot open and Phone access on, then try again."
+            return "Couldn't reach \(name). Keep Murage open and Phone access on, then try again."
         case .sendTimedOut:
             return "Sending took too long. Check your connection and try again."
         }

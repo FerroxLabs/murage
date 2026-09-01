@@ -67,7 +67,7 @@ function blobDataUrl(blob: Blob): Promise<string> {
 
 export function SkillRecorderPage() {
   const { dispatch } = useStore();
-  const bridge = window.ogb?.skillRecorder;
+  const bridge = window.muragebox?.skillRecorder;
   const [phase, setPhase] = useState<Phase>("idle");
   const phaseRef = useRef<Phase>("idle");
   const [events, setEvents] = useState<RecordedSkillEvent[]>([]);
@@ -146,7 +146,7 @@ export function SkillRecorderPage() {
       setTranscriptionConfigured(event.detail.configured);
     };
     window.addEventListener(TRANSCRIPTION_STATUS_EVENT, onStatus);
-    window.ogb?.transcription?.status()
+    window.muragebox?.transcription?.status()
       .then((status) => alive && setTranscriptionConfigured(status.configured))
       .catch(() => alive && setTranscriptionConfigured(false));
     return () => {
@@ -179,11 +179,11 @@ export function SkillRecorderPage() {
 
   const start = async () => {
     setError("");
-    if (!bridge || !window.ogb?.beginScreenPreviewIntent || !navigator.mediaDevices?.getDisplayMedia) {
-      setError("Skill recording requires the OpenMausBot desktop app on macOS.");
+    if (!bridge || !window.muragebox?.beginScreenPreviewIntent || !navigator.mediaDevices?.getDisplayMedia) {
+      setError("Skill recording requires the Murage desktop app on macOS.");
       return;
     }
-    if (!transcriptionConfigured || !window.ogb.transcription) {
+    if (!transcriptionConfigured || !window.muragebox.transcription) {
       setError("Add your AssemblyAI key under Cloud transcription before recording.");
       return;
     }
@@ -195,7 +195,7 @@ export function SkillRecorderPage() {
     updatePhase("starting");
     try {
       const selected = await requestScreenPreview({
-        beginIntent: () => window.ogb!.beginScreenPreviewIntent(),
+        beginIntent: () => window.muragebox!.beginScreenPreviewIntent(),
         getDisplayMedia: (constraints) => navigator.mediaDevices.getDisplayMedia(constraints),
       });
       if (!selected.ok) throw new Error(selected.message);
@@ -228,7 +228,7 @@ export function SkillRecorderPage() {
       cloudTranscriptRef.current = { turns: new Map(), finalText: "", partialText: "" };
       transcriptionSessionRef.current = await startAssemblyAITranscription({
         stream: mic,
-        getToken: () => window.ogb!.transcription!.streamingToken(),
+        getToken: () => window.muragebox!.transcription!.streamingToken(),
         onTurn: (turn) => {
           const next = mergeAssemblyAITurn(cloudTranscriptRef.current, turn);
           cloudTranscriptRef.current = next;
@@ -371,7 +371,7 @@ export function SkillRecorderPage() {
                 </div>
                 <h2 className="mt-5 text-[25px] font-semibold tracking-[-0.02em]">Record yourself doing the task</h2>
                 <p className="mt-2 max-w-xl text-[14px] leading-6 text-ink-secondary">
-                  Speak naturally while you work. OpenMausBot lines up your clicks, app changes, screenshots, and narration, then turns the reviewed demonstration into a reusable local skill.
+                  Speak naturally while you work. Murage lines up your clicks, app changes, screenshots, and narration, then turns the reviewed demonstration into a reusable local skill.
                 </p>
 
                 <div className="mt-7 grid gap-3 sm:grid-cols-3">

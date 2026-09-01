@@ -203,7 +203,7 @@ describe("CursorAgentDriver", () => {
   it("spawns `agent [--force] [--model …] acp` and keeps Cursor credentials", async () => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
-    const scratch = mkdtempSync(join(tmpdir(), "omb-cursor-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-cursor-"));
     scratchDirs.push(scratch);
     const dump = join(scratch, "dump.json");
     process.env.FAKE_ACP_DUMP = dump;
@@ -240,7 +240,7 @@ describe("CursorAgentDriver", () => {
   it("omits --force when fullAuto is off and still completes a turn", async () => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
-    const scratch = mkdtempSync(join(tmpdir(), "omb-cursor-safe-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-cursor-safe-"));
     scratchDirs.push(scratch);
     const dump = join(scratch, "dump.json");
     process.env.FAKE_ACP_DUMP = dump;
@@ -337,7 +337,7 @@ describe("cursor ACP model namespace (NS: set_model wiring)", () => {
   it("sends the session's parameterised id, not the argv slug", async () => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
-    const scratch = mkdtempSync(join(tmpdir(), "omb-cursor-acpid-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-cursor-acpid-"));
     const dump = join(scratch, "dump.json");
     process.env.FAKE_ACP_DUMP = dump;
     // What cursor-agent 2026.08.11 really advertises: `auto` is `default[]`.

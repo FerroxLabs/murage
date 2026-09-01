@@ -216,17 +216,17 @@ type AskBehavior = "allow" | "deny" | "answer";
 type AskResolutionSource = "user" | "timeout" | "system";
 
 const DENY_TIMEOUT_NOTE =
-  "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
-const QUESTION_TIMEOUT_NOTE = "OpenMausBot: nobody answered in time. Use your best judgment and continue.";
-const DUPLICATE_ASK_ID_NOTE = "OpenMausBot: duplicate ask id — skipping this request.";
+  "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+const QUESTION_TIMEOUT_NOTE = "Murage: nobody answered in time. Use your best judgment and continue.";
+const DUPLICATE_ASK_ID_NOTE = "Murage: duplicate ask id — skipping this request.";
 
 /** The system-source reply for an ask that outlives the turn — used both to
  * drain in-flight `pending` asks on close() and to answer one that arrives
  * on an already-closed broker (see the `closed` branch below). */
 function systemEndedReply(kind: Ask["kind"]): { behavior: AskBehavior; message: string } {
   return kind === "question"
-    ? { behavior: "answer", message: "OpenMausBot: the turn is ending — wrap up." }
-    : { behavior: "deny", message: "OpenMausBot: the turn ended" };
+    ? { behavior: "answer", message: "Murage: the turn is ending — wrap up." }
+    : { behavior: "deny", message: "Murage: the turn ended" };
 }
 
 /** One human-readable line for an ask — what the card subtitle shows. */
@@ -268,7 +268,7 @@ export function brokerSocketCandidates(threadId: string): string[] {
       .update(`${DATA_DIR}\0${process.pid}\0${threadId}`)
       .digest("hex")
       .slice(0, 16);
-    return [base, join(tmpdir(), `omb-perm-${scope}.sock`)];
+    return [base, join(tmpdir(), `murage-perm-${scope}.sock`)];
   }
   return [
     base,
@@ -568,11 +568,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       stderr: string;
     }
     const sessions = new Map<string, Session>();
-    const configuredIdleMinimum = Number(process.env.OMB_CLAUDE_SESSION_IDLE_MIN_MS);
+    const configuredIdleMinimum = Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS);
     const sessionIdleMinimum = Number.isFinite(configuredIdleMinimum) && configuredIdleMinimum > 0
       ? configuredIdleMinimum
       : 10_000;
-    const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, Number(process.env.OMB_CLAUDE_SESSION_IDLE_MS) || 10 * 60_000);
+    const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MS) || 10 * 60_000);
 
     const closeSession = (threadId: string, why: string) => {
       const s = sessions.get(threadId);
@@ -700,7 +700,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           env: local.env,
         };
         // The isolated Local VM preserves the established pre-allow behavior.
-        // Host tools always route through OpenMausBot's permission broker.
+        // Host tools always route through Murage's permission broker.
         if (!controlsHost) allowed.push("mcp__computer");
       }
       // peer-agent comms (list_bots/ask_bot) — the harness builds the whole
@@ -734,7 +734,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
       // user-configured servers mount like any integration but are NOT
       // pre-allowed: acceptEdits silently denies unlisted tools, which
-      // routes every custom tool call through the ogb permission broker
+      // routes every custom tool call through the muragebox permission broker
       // into an Allow/Deny card. Reserved names were filtered upstream;
       // skip any residual collision instead of clobbering a built-in.
       for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
@@ -748,9 +748,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       let socketPath: string | null = null;
       if (config.permissionMode !== "bypassPermissions") {
         socketPath = permissionSocketPath(threadId);
-        args.push("--permission-prompt-tool", "mcp__ogb__approve");
-        mcpServers.ogb = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG } };
-        allowed.push("mcp__ogb");
+        args.push("--permission-prompt-tool", "mcp__muragebox__approve");
+        mcpServers.muragebox = { command: process.execPath, args: [PERM_PROXY_PATH, socketPath], env: { ...NODE_ENV_FLAG } };
+        allowed.push("mcp__muragebox");
       }
       // The MCP config carries credentials — a Composio consumer key in a
       // header, the box token in the computer proxy's env, the comms token in
@@ -760,7 +760,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // is removed when the turn settles.
       let mcpConfigPath: string | null = null;
       if (Object.keys(mcpServers).length) {
-        mcpConfigPath = join(mkdtempSync(join(tmpdir(), "omb-mcp-")), "mcp.json");
+        mcpConfigPath = join(mkdtempSync(join(tmpdir(), "murage-mcp-")), "mcp.json");
         args.push("--mcp-config", mcpConfigPath);
         args.push("--allowedTools", allowed.join(","));
       }
@@ -835,7 +835,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // Create the prompt file only for a new process. A compatible live
         // session has already consumed the same system prompt at launch.
         if (turn.system) {
-          systemPromptPath = join(mkdtempSync(join(tmpdir(), "omb-system-")), "prompt.txt");
+          systemPromptPath = join(mkdtempSync(join(tmpdir(), "murage-system-")), "prompt.txt");
           writeFileSync(systemPromptPath, turn.system, { mode: 0o600 });
           args.push("--append-system-prompt-file", systemPromptPath);
         }
@@ -885,7 +885,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // the base path: the nonce is not part of the spawn contract, and a
           // retained session keeps its own broker object anyway.
           if (broker.socketPath !== socketPath && mcpConfigPath) {
-            mcpServers.ogb = { command: process.execPath, args: [PERM_PROXY_PATH, broker.socketPath], env: { ...NODE_ENV_FLAG } };
+            mcpServers.muragebox = { command: process.execPath, args: [PERM_PROXY_PATH, broker.socketPath], env: { ...NODE_ENV_FLAG } };
           }
         }
 

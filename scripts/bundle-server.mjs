@@ -88,7 +88,7 @@ await build({
   logLevel: "info",
 });
 
-// pi-mcp-extension.ts is NOT an OpenMausBot entry point: it is loaded by the
+// pi-mcp-extension.ts is NOT an Murage entry point: it is loaded by the
 // external `pi` process (pi's own jiti), which resolves its
 // @earendil-works/pi-coding-agent and typebox imports from pi's install. Ship
 // it verbatim as .ts so the packaged app has it too — never bundle it, or

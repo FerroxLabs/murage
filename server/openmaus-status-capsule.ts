@@ -14,7 +14,7 @@ import { z } from "zod";
 
 import { parseJson, type JsonObject, type JsonValue } from "./schema.ts";
 
-const SCHEMA = "aos.openmausbot_status.v1";
+const SCHEMA = "aos.murage_status.v1";
 const TTL_SECONDS = 300;
 const MAX_CACHE_BYTES = 16_384;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
@@ -64,7 +64,7 @@ const jsonObjectSchema = z.record(z.string(), z.custom<JsonValue>());
 
 export const OPENMAUS_STATUS_CACHE_PATH = join(
   homedir(),
-  ".local/state/aos-session-bridge/openmausbot/latest.json",
+  ".local/state/aos-session-bridge/murage/latest.json",
 );
 
 type OpenMausSlot = z.output<typeof slotSchema>;
@@ -373,7 +373,7 @@ export function openMausStatusSystemPrompt(options: OpenMausStatusReadOptions = 
         .join(",")
     : "none";
   return [
-    "TRUSTED OPENMAUSBOT STATUS (read-only, validated, no transcript or credential data):",
+    "TRUSTED MURAGE STATUS (read-only, validated, no transcript or credential data):",
     `schema=${status.schema}; freshness=${status.freshness}${status.reason ? `; reason=${status.reason}` : ""}`,
     receipt || "receipt=unavailable",
     runtime,

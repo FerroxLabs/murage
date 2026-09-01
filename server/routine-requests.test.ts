@@ -62,7 +62,7 @@ function harness(
   ) => { ok: true } | { ok: false; status: number; error: string },
 ) {
   const clock = { now: start };
-  const dir = mkdtempSync(join(tmpdir(), "omb-routine-request-"));
+  const dir = mkdtempSync(join(tmpdir(), "murage-routine-request-"));
   tempDirs.push(dir);
   const routines = new RoutineManager({
     file: join(dir, "routines.json"),
@@ -865,7 +865,7 @@ describe("RoutineRequestService", () => {
 describe("cross-bot routine targeting", () => {
   function targetedHarness(validateTarget?: (proposerBotId: string, target: { botId: string; name: string }) => string | null) {
     const clock = { now: Date.parse("2026-08-28T10:00:00Z") };
-    const dir = mkdtempSync(join(tmpdir(), "omb-routine-target-"));
+    const dir = mkdtempSync(join(tmpdir(), "murage-routine-target-"));
     tempDirs.push(dir);
     const routines = new RoutineManager({
       file: join(dir, "routines.json"),

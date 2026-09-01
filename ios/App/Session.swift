@@ -17,7 +17,7 @@ import UIKit
 /// Stream lifecycle, in Console.app and the Xcode console. A companion that
 /// is silently not connected looks exactly like one with nothing to say, so
 /// the transitions are worth being able to read.
-private let log = Logger(subsystem: "com.openmausbot.companion", category: "stream")
+private let log = Logger(subsystem: "com.murage.companion", category: "stream")
 
 @MainActor
 final class Session: ObservableObject {

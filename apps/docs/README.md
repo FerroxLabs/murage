@@ -1,4 +1,4 @@
-# OpenMausBot documentation
+# Murage documentation
 
 The public documentation site is a Next.js 16 + Fumadocs app. User-facing content lives in `content/docs`; the repository's top-level `docs` folder remains available for implementation notes and detailed platform records.
 
@@ -17,20 +17,20 @@ The site opens at `http://localhost:3000`.
 
 ```bash
 pnpm docs:build
-pnpm --filter @openmausbot/docs types:check
-pnpm --filter @openmausbot/docs lint
+pnpm --filter @murage/docs types:check
+pnpm --filter @murage/docs lint
 ```
 
 ## Deploy to Vercel
 
 This is a fully static site. Deploying it does not deploy the Electron app, local harness, credentials, agents, or user data.
 
-Create a second Vercel project beside the existing `openmausbot.com` project:
+Create a second Vercel project beside the existing `murage.com` project:
 
-1. Import the `milind-soni/OpenMausBot` repository.
+1. Import the `milind-soni/Murage` repository.
 2. Set **Root Directory** to `apps/docs`.
 3. Keep the detected **Next.js** framework settings.
 4. Set the production branch to `main` and deploy.
-5. Add `docs.openmausbot.com` under **Settings → Domains**.
+5. Add `docs.murage.ai` under **Settings → Domains**.
 
-Vercel will build the static `out` directory, publish every push to `main`, and create preview URLs for documentation pull requests. Keep `openmausbot.com` on the existing marketing project and add a Docs link there after the new domain is live.
+Vercel will build the static `out` directory, publish every push to `main`, and create preview URLs for documentation pull requests. Keep `murage.com` on the existing marketing project and add a Docs link there after the new domain is live.

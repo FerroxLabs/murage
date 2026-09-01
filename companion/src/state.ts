@@ -2,7 +2,7 @@
 //
 // Its own directory, not the harness's. The two processes have separate
 // lifecycles and separate concerns, and a sidecar that writes into
-// ~/.openmausbot would be reaching into somebody else's data layout — the
+// ~/.murage would be reaching into somebody else's data layout — the
 // exact coupling this design exists to avoid. If the harness reorganises its
 // files tomorrow, nothing here notices.
 import { randomUUID } from "node:crypto";
@@ -19,8 +19,8 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** OMB_COMPANION_DIR isolates a test rig from a real paired fleet. */
-export const DATA_DIR = process.env.OMB_COMPANION_DIR ?? join(homedir(), ".openmausbot-companion");
+/** MURAGE_COMPANION_DIR isolates a test rig from a real paired fleet. */
+export const DATA_DIR = process.env.MURAGE_COMPANION_DIR ?? join(homedir(), ".murage-companion");
 
 /** 0700 on the directory, 0600 on the files it holds.
  *

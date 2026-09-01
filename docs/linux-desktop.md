@@ -1,12 +1,12 @@
 # Ubuntu Desktop
 
-OpenMausBot has an Ubuntu 24.04 LTS x86_64 desktop beta. The Electron package embeds the harness server, so
+Murage has an Ubuntu 24.04 LTS x86_64 desktop beta. The Electron package embeds the harness server, so
 installed builds do not require Node, pnpm, Swift, or a terminal at runtime. For giving a bot the same kind
 of Linux desktop on your own server instead of this machine, see [byo-vps.md](byo-vps.md).
 
 ## What works
 
-- The native Electron window and embedded OpenMausBot server on GNOME Xorg and GNOME Wayland.
+- The native Electron window and embedded Murage server on GNOME Xorg and GNOME Wayland.
 - Local Claude, Codex, Grok, Gemini, and other configured agent CLIs.
 - Chat, streaming turns, approvals, bot-to-bot communication, and local data storage.
 - Composio connected apps and Box cloud computers.
@@ -22,22 +22,22 @@ The local preview does **not** give the bot control of this computer by itself. 
 the global **Enable local control** choice and assigning a bot to **This computer**; every action still enters the
 approval flow. On Wayland, local control is disabled and legacy opt-ins are cleared automatically. Automatic Wayland
 helper installation, Linux dictation, and ARM64 remain unavailable and fail closed; follow their
-progress in [issue #29](https://github.com/milind-soni/OpenMausBot/issues/29) and the safety hold in
-[issue #345](https://github.com/milind-soni/OpenMausBot/issues/345). Bundled
-CUA supply-chain work is tracked in [issue #113](https://github.com/milind-soni/OpenMausBot/issues/113). Xorg is tracked in
-[issue #79](https://github.com/milind-soni/OpenMausBot/issues/79), and guarded GNOME/Wayland support in
-[issue #109](https://github.com/milind-soni/OpenMausBot/issues/109).
+progress in [issue #29](https://github.com/milind-soni/Murage/issues/29) and the safety hold in
+[issue #345](https://github.com/milind-soni/Murage/issues/345). Bundled
+CUA supply-chain work is tracked in [issue #113](https://github.com/milind-soni/Murage/issues/113). Xorg is tracked in
+[issue #79](https://github.com/milind-soni/Murage/issues/79), and guarded GNOME/Wayland support in
+[issue #109](https://github.com/milind-soni/Murage/issues/109).
 
 ## Download packages
 
 Choose one Ubuntu 24.04 x86_64 package from the latest release:
 
-- [Debian package (`OpenMausBot-amd64.deb`)](https://github.com/milind-soni/openmausbot-releases/releases/latest/download/OpenMausBot-amd64.deb) — recommended; APT installs its desktop dependencies.
-- [Portable AppImage (`OpenMausBot.AppImage`)](https://github.com/milind-soni/openmausbot-releases/releases/latest/download/OpenMausBot.AppImage) — does not install system files.
-- [SHA-256 checksums](https://github.com/milind-soni/openmausbot-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt)
+- [Debian package (`Murage-amd64.deb`)](https://github.com/milind-soni/murage-releases/releases/latest/download/Murage-amd64.deb) — recommended; APT installs its desktop dependencies.
+- [Portable AppImage (`Murage.AppImage`)](https://github.com/milind-soni/murage-releases/releases/latest/download/Murage.AppImage) — does not install system files.
+- [SHA-256 checksums](https://github.com/milind-soni/murage-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt)
 
 Versioned packages and previous releases remain available on the
-[releases page](https://github.com/milind-soni/openmausbot-releases/releases).
+[releases page](https://github.com/milind-soni/murage-releases/releases).
 
 ## Build packages
 
@@ -48,8 +48,8 @@ Requirements for building from source:
 - pnpm 10.33.0 (Corepack can install the version declared by the project)
 
 ```sh
-git clone https://github.com/milind-soni/OpenMausBot.git
-cd OpenMausBot
+git clone https://github.com/milind-soni/Murage.git
+cd Murage
 corepack enable
 pnpm install --frozen-lockfile
 pnpm package:linux
@@ -57,8 +57,8 @@ pnpm package:linux
 
 The build creates:
 
-- `release/OpenMausBot-<version>-amd64.deb`
-- `release/OpenMausBot-<version>-x86_64.AppImage`
+- `release/Murage-<version>-amd64.deb`
+- `release/Murage-<version>-x86_64.AppImage`
 
 The AppImage uses a static runtime and does not require the legacy `libfuse2` package.
 
@@ -67,26 +67,26 @@ The AppImage uses a static runtime and does not require the legacy `libfuse2` pa
 Install a downloaded Debian package with APT so its desktop dependencies are resolved:
 
 ```sh
-sudo apt install ./OpenMausBot-amd64.deb
+sudo apt install ./Murage-amd64.deb
 ```
 
-Then open **OpenMausBot** from the GNOME application launcher. To remove it:
+Then open **Murage** from the GNOME application launcher. To remove it:
 
 ```sh
-sudo apt remove openmausbot
+sudo apt remove murage
 ```
 
 The portable AppImage does not install system files:
 
 ```sh
-chmod +x release/OpenMausBot-*-x86_64.AppImage
-./release/OpenMausBot-*-x86_64.AppImage
+chmod +x release/Murage-*-x86_64.AppImage
+./release/Murage-*-x86_64.AppImage
 ```
 
-For a downloaded release AppImage, use `OpenMausBot.AppImage` in place of the versioned path above.
+For a downloaded release AppImage, use `Murage.AppImage` in place of the versioned path above.
 
-Application data remains local in `~/.openmausbot`. Electron browser data and window state use the normal XDG
-configuration directory (`~/.config/openmausbot` unless the environment overrides it).
+Application data remains local in `~/.murage`. Electron browser data and window state use the normal XDG
+configuration directory (`~/.config/murage` unless the environment overrides it).
 
 ## Develop the desktop shell
 
@@ -102,12 +102,12 @@ For a package-shaped build without creating `.deb` or AppImage artifacts:
 
 ```sh
 pnpm package:linux:dir
-./release/linux-unpacked/openmausbot
+./release/linux-unpacked/murage
 ```
 
 ## Agent CLI discovery
 
-Applications launched from GNOME do not inherit the same interactive shell `PATH` as a terminal. OpenMausBot
+Applications launched from GNOME do not inherit the same interactive shell `PATH` as a terminal. Murage
 keeps the inherited path and adds existing common locations such as:
 
 - `~/.local/bin`
@@ -123,16 +123,16 @@ It also probes the login shell in the background. If a CLI still is not detected
 path before launching the app from a terminal and verify it there:
 
 ```sh
-OMB_EXTRA_PATH=/your/custom/bin ./release/OpenMausBot-*-x86_64.AppImage
+MURAGE_EXTRA_PATH=/your/custom/bin ./release/Murage-*-x86_64.AppImage
 ```
 
-Restart OpenMausBot after installing or signing in to a CLI.
+Restart Murage after installing or signing in to a CLI.
 
 ## Xorg and Wayland
 
 The shell, chat, cloud computers, connected apps, and preview-only capture work in both GNOME session types.
 The Wayland chooser/select/persistent-stream/cancel/end/retry lifecycle has been validated in a real Ubuntu
-24.04 GNOME Wayland session. OpenMausBot detects Wayland before XWayland when both `WAYLAND_DISPLAY` and
+24.04 GNOME Wayland session. Murage detects Wayland before XWayland when both `WAYLAND_DISPLAY` and
 `DISPLAY` exist, so capture cannot accidentally bypass portal-mediated behavior.
 
 Open the Computer panel and use the separate **Preview this computer** card. Capture never starts when the app
@@ -143,7 +143,7 @@ or panel opens.
   you press **Stop preview**, close the panel, end sharing from GNOME, or quit the app.
 
 Cancelling or ending Wayland sharing returns to a calm **Try again** state and never reopens the chooser
-automatically. OpenMausBot does not capture screen audio, remember the selected monitor after restart, or
+automatically. Murage does not capture screen audio, remember the selected monitor after restart, or
 offer an **Open Settings** action on Linux.
 
 Local computer control is independent from preview. It is available after explicit opt-in on Xorg and remains
@@ -154,7 +154,7 @@ fail-closed on Wayland. XWayland's `DISPLAY` never bypasses the Wayland safety g
 Installed `.deb` and AppImage builds include the certified **Cua Driver 0.19.3** CLI and cursor-theme sidecar.
 On GNOME Xorg, open Settings, choose **Enable local control (Beta)**, wait for **Ready**, then explicitly assign a bot
 to **This computer**. No driver download, terminal command, `chmod`, or daemon setup is required. The owned daemon
-starts with `--no-overlay`, so Cua's decorative full-screen X11 cursor surface is never created. OpenMausBot also
+starts with `--no-overlay`, so Cua's decorative full-screen X11 cursor surface is never created. Murage also
 uses Electron software rendering on Linux to avoid the reproduced NVIDIA/libGLES GPU-process failure that could
 leave an invisible focused app window receiving input.
 
@@ -191,7 +191,7 @@ package-owned path to `root:root 0755` automatically.
 The packaged runtime remains outside ASAR for deterministic provenance and validation. In packaged builds neither a
 `CUA_DRIVER_PATH` value nor an ambient PATH candidate can replace it; on Wayland neither can bypass the safety gate.
 
-The Xorg runtime uses private sockets, standard permission mode, per-action OpenMausBot approvals,
+The Xorg runtime uses private sockets, standard permission mode, per-action Murage approvals,
 telemetry/update-check suppression, strict driver identity, overlay-free startup, and lifecycle cleanup tests. Those
 defenses remain necessary, but none substitutes for the real-seat acceptance evidence required to enable Wayland. Linux
 **Auto** never routes to the user's desktop, and no Cloud or Local VM approval can authorize it.
@@ -212,7 +212,7 @@ pnpm smoke:linux-package
 The verifier checks `.deb` metadata, desktop identity, the exact dormant Cua resource tree and provenance,
 SquashFS/DEB directory modes, runtime path policy, and matching binary hashes across all artifacts. The local smoke
 launches the unpacked app and AppImage without `--no-sandbox`; CI first reproduces a `0.1.7` in-place DEB upgrade and
-then runs the same smoke against `/opt/OpenMausBot/openmausbot`. These lanes prove the embedded server and UI are
+then runs the same smoke against `/opt/Murage/murage`. These lanes prove the embedded server and UI are
 usable while an optional Composio broker stalls, verify that an old local-control opt-in is cleared, and assert that
 no Cua executable starts on Xorg or simulated Wayland. Low-level runtime tests retain the future private-daemon
 contract without activating it in a packaged app. Only a real-seat acceptance matrix can authorize re-enablement.
@@ -221,8 +221,8 @@ contract without activating it in a packaged app. Only a real-seat acceptance ma
 
 ### An agent CLI is missing
 
-Run the CLI directly in a terminal, finish its sign-in flow, then restart OpenMausBot. If it lives outside the
-common directories above, use `OMB_EXTRA_PATH` while testing and report the install location so it can be
+Run the CLI directly in a terminal, finish its sign-in flow, then restart Murage. If it lives outside the
+common directories above, use `MURAGE_EXTRA_PATH` while testing and report the install location so it can be
 considered for automatic discovery.
 
 ### A bot needs computer tools
@@ -247,8 +247,8 @@ open a new chooser. Cancelling or stopping sharing never causes an automatic sec
 Confirm the executable bit and architecture:
 
 ```sh
-chmod +x OpenMausBot-*-x86_64.AppImage
-file OpenMausBot-*-x86_64.AppImage
+chmod +x Murage-*-x86_64.AppImage
+file Murage-*-x86_64.AppImage
 ```
 
 Run it from a terminal once to collect the startup output. Do not install `libfuse2` just for this AppImage; the

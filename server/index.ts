@@ -1,4 +1,4 @@
-// OpenMausBot server — the harness host. Clients hold no transports
+// Murage server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -232,9 +232,9 @@ import {
 } from "./turn-dispatch-guard.ts";
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
 
-const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
-const WEBHOOK_PORT = Number(process.env.OMB_WEBHOOK_PORT || PORT + 1);
-const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
+const PORT = Number(process.env.MURAGE_PORT || process.env.MURAGEBOX_PORT || 8799);
+const WEBHOOK_PORT = Number(process.env.MURAGE_WEBHOOK_PORT || PORT + 1);
+const STATIC_DIR = process.env.MURAGE_STATIC_DIR || null;
 const MIME: Record<string, string> = {
   ".html": "text/html",
   ".js": "text/javascript",
@@ -265,7 +265,7 @@ type UtilityParentPort = {
 // supplies parentPort; plain Node intentionally leaves it absent.
 const utilityParentPort = (process as NodeJS.Process & { parentPort?: UtilityParentPort }).parentPort;
 type DesktopPrivateMessage = BrowserCleanupWireRequest | {
-  type: "openmausbot:browser-control";
+  type: "murage:browser-control";
   botId: string;
   held: true;
 };
@@ -333,12 +333,12 @@ function agentsIntegration(botId: string, threadId: string, depth: number, skill
     args: [agentsProxyPath],
     env: {
       ...AGENTS_NODE_FLAG,
-      OMB_HARNESS_URL: `http://127.0.0.1:${PORT}`,
-      OMB_BOT_ID: botId,
-      OMB_THREAD_ID: threadId,
-      OMB_COMMS_TOKEN: COMMS_TOKEN,
-      OMB_TURN_DEPTH: String(depth),
-      OMB_SKILL_AUTHORING_ENABLED: skillAuthoring ? "1" : "0",
+      MURAGE_HARNESS_URL: `http://127.0.0.1:${PORT}`,
+      MURAGE_BOT_ID: botId,
+      MURAGE_THREAD_ID: threadId,
+      MURAGE_COMMS_TOKEN: COMMS_TOKEN,
+      MURAGE_TURN_DEPTH: String(depth),
+      MURAGE_SKILL_AUTHORING_ENABLED: skillAuthoring ? "1" : "0",
     },
   };
 }
@@ -554,12 +554,12 @@ async function browserIntegration(
       args: [SPAWNED_PROXIES.browser],
       env: {
         ...AGENTS_NODE_FLAG,
-        OMB_BROWSER_URL: connection.url,
-        OMB_BROWSER_TOKEN: capability.token,
-        OMB_BROWSER_PROFILE: partitionId,
-        OMB_BOT_ID: botId,
-        OMB_CONTROL_URL: control.url,
-        OMB_CONTROL_TOKEN: control.token,
+        MURAGE_BROWSER_URL: connection.url,
+        MURAGE_BROWSER_TOKEN: capability.token,
+        MURAGE_BROWSER_PROFILE: partitionId,
+        MURAGE_BOT_ID: botId,
+        MURAGE_CONTROL_URL: control.url,
+        MURAGE_CONTROL_TOKEN: control.token,
       },
     },
   };
@@ -567,8 +567,8 @@ async function browserIntegration(
 
 function phoneIntegration() {
   const env: Record<string, string> = { ...AGENTS_NODE_FLAG };
-  if (process.env.OMB_ADB_PATH) env.OMB_ADB_PATH = process.env.OMB_ADB_PATH;
-  if (process.env.OMB_RESOURCES_PATH) env.OMB_RESOURCES_PATH = process.env.OMB_RESOURCES_PATH;
+  if (process.env.MURAGE_ADB_PATH) env.MURAGE_ADB_PATH = process.env.MURAGE_ADB_PATH;
+  if (process.env.MURAGE_RESOURCES_PATH) env.MURAGE_RESOURCES_PATH = process.env.MURAGE_RESOURCES_PATH;
   if (process.env.PH_ANDROID_SERIAL) env.PH_ANDROID_SERIAL = process.env.PH_ANDROID_SERIAL;
   return { command: process.execPath, args: [phoneProxyPath], env };
 }
@@ -594,7 +594,7 @@ const computerControl = new ComputerControl((botId, snapshot) => {
   // server record, while only the trusted Browser panel may clear Electron's
   // local gate after its server-first release succeeds.
   if (snapshot.held && /^[A-Za-z0-9_-]{1,120}$/.test(botId)) {
-    postDesktopPrivateMessage({ type: "openmausbot:browser-control", botId, held: true });
+    postDesktopPrivateMessage({ type: "murage:browser-control", botId, held: true });
   }
   broadcast({ kind: "computer-control", botId, held: snapshot.held, helpReason: snapshot.helpReason });
 });
@@ -1176,7 +1176,7 @@ const sseClients = new Set<SseClient>();
  * correctly through its own Last-Event-ID with no client code at all. */
 const STREAM_ID = randomUUID().slice(0, 8);
 const REPLAY_MAX = 500;
-const configuredSseHeartbeatMs = Number(process.env.OMB_SSE_HEARTBEAT_MS);
+const configuredSseHeartbeatMs = Number(process.env.MURAGE_SSE_HEARTBEAT_MS);
 const SSE_HEARTBEAT_MS =
   Number.isFinite(configuredSseHeartbeatMs) && configuredSseHeartbeatMs > 0
     ? configuredSseHeartbeatMs
@@ -1351,10 +1351,10 @@ const repeats = new RepeatDetector({ thresholds: [5, 10, 20], maxKeysPerThread: 
 // left its bot busy forever. The watchdog stops a turn whose thread has emitted NOTHING for stallMs —
 // activity-based, so an hour-long turn that keeps streaming is never
 // touched, and turns parked on a human approval are exempt.
-const TURN_STALL_MS = Math.max(60_000, Number(process.env.OMB_TURN_STALL_MS) || 20 * 60_000);
+const TURN_STALL_MS = Math.max(60_000, Number(process.env.MURAGE_TURN_STALL_MS) || 20 * 60_000);
 /** How long ask_bot waits synchronously before the ask is converted into a
  * delegation claim ticket (the peer's turn keeps running either way). */
-const ASK_BOT_TIMEOUT_MS = Math.max(5_000, Number(process.env.OMB_ASK_BOT_TIMEOUT_MS) || 4 * 60_000);
+const ASK_BOT_TIMEOUT_MS = Math.max(5_000, Number(process.env.MURAGE_ASK_BOT_TIMEOUT_MS) || 4 * 60_000);
 const roomStallCompletions = new RoomTurnStallRegistry();
 const watchdog = new TurnWatchdog({
   stallMs: TURN_STALL_MS,
@@ -2567,7 +2567,7 @@ async function startTurn(
   const resumeCursor = resume ? task.resumeCursors[instanceId] : undefined;
 
   const persona = [
-    `You are ${bot.name}, a personal bot in OpenMausBot.`,
+    `You are ${bot.name}, a personal bot in Murage.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
   ]
@@ -2695,7 +2695,7 @@ async function startTurn(
           throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
         }
         const cua = readCuaConnection();
-        if (!cua) throw new Error("CUA Driver is not ready for this computer — check permissions and restart OpenMausBot");
+        if (!cua) throw new Error("CUA Driver is not ready for this computer — check permissions and restart Murage");
         integrations.localComputer = cua;
         computerKind = "local";
       }
@@ -2718,7 +2718,7 @@ async function startTurn(
             const vpsControl = controlIntegration(bot.id);
             integrations.localComputer = {
               ...vpsMcp,
-              env: { ...vpsMcp.env, OMB_CONTROL_URL: vpsControl.url, OMB_CONTROL_TOKEN: vpsControl.token },
+              env: { ...vpsMcp.env, MURAGE_CONTROL_URL: vpsControl.url, MURAGE_CONTROL_TOKEN: vpsControl.token },
             };
             computerKind = "vps";
             previewCapture = () => vps.vpsComputerScreenshot(targetCfg, bot.id);
@@ -3171,7 +3171,7 @@ async function cloudRoutineReadiness(): Promise<{ ready: boolean; reason?: strin
   }
   const instance = registry.instances().find((candidate) => candidate.driverKind === "boxAgent");
   if (!instance) {
-    return { ready: false, reason: "The Cloud VM runner is unavailable. Restart OpenMausBot and try again." };
+    return { ready: false, reason: "The Cloud VM runner is unavailable. Restart Murage and try again." };
   }
   try {
     const snapshot = await instance.snapshot();
@@ -3320,10 +3320,10 @@ let webhookIngress: WebhookIngress | null = null;
 let webhookIngressError: string | null = null;
 try {
   webhookIngress = await listenWebhookIngress(webhooks, { port: WEBHOOK_PORT });
-  console.log(`openmausbot webhook receiver on ${webhookIngress.baseUrl}`);
+  console.log(`murage webhook receiver on ${webhookIngress.baseUrl}`);
 } catch (error) {
   webhookIngressError = error instanceof Error ? error.message : String(error);
-  console.error(`openmausbot webhook receiver unavailable: ${webhookIngressError}`);
+  console.error(`murage webhook receiver unavailable: ${webhookIngressError}`);
 }
 
 const webhookIngressStatus = () => ({
@@ -3565,7 +3565,7 @@ async function runGroupMemberTurn(
     .map((b) => `@${b.name}${b.title ? ` (${b.title})` : ""}`)
     .join(", ");
   const system = [
-    `You are ${bot.name}, a bot in the room "${group.name}" in OpenMausBot.`,
+    `You are ${bot.name}, a bot in the room "${group.name}" in Murage.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
     `Room members: ${roster}, and ${userName} (the human).`,
@@ -4595,7 +4595,7 @@ function dispatchConnectorResume(entry: { botId: string; threadId: string; resum
   const owner = connectorThread(entry.botId, entry.threadId);
   if (!owner) return;
   const names = entry.labels.join(", ");
-  const prompt = `OpenMausBot connection update: the user securely connected ${names}. Continue the task that paused for this connection. Do not ask them to connect it again.`;
+  const prompt = `Murage connection update: the user securely connected ${names}. Continue the task that paused for this connection. Do not ask them to connect it again.`;
   if (owner.bot.busy) {
     pendingConnectorResumes.set(`${entry.threadId}:${entry.resumeKey}`, entry);
     return;
@@ -4693,8 +4693,8 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
   if (!owner) return;
   const prompt =
     entry.outcome === "provided"
-      ? `OpenMausBot credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
-      : `OpenMausBot credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
+      ? `Murage credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
+      : `Murage credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
   if (owner.bot.busy) {
     pendingSecretResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
     return;
@@ -4840,9 +4840,9 @@ function cliProbeEnvironment(): NodeJS.ProcessEnv {
     "BOX_TOKEN",
     "OPENCODE_API_KEY",
     "COMPOSIO_API_KEY",
-    "OMB_COMPOSIO_BROKER_TOKEN",
-    "OMB_TTS_KEY",
-    "OMB_OPENAI_IMAGE_KEY",
+    "MURAGE_COMPOSIO_BROKER_TOKEN",
+    "MURAGE_TTS_KEY",
+    "MURAGE_OPENAI_IMAGE_KEY",
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
   ]) {
@@ -5340,7 +5340,7 @@ const server = createServer(async (req, res) => {
         }
         const channel = getOrCreateChannel(store, currentFrom, currentTarget);
         mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
-        const prefixed = `[Message from @${currentFrom.name}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
+        const prefixed = `[Message from @${currentFrom.name}, another bot in this Murage workspace. Reply to them.]\n\n${message}`;
         const outcome = await askBotAndWait(toBotId, prefixed, depth, fromBotId);
         if (outcome.status === "timeout" && !delegationWatch.has(currentTarget.threadId)) {
           // The peer's turn is still running — only the wait ended. Convert
@@ -5755,7 +5755,7 @@ const server = createServer(async (req, res) => {
     // ── independent webhook triggers ────────────────────────────────────
     // Management stays on the app-only server. Actual deliveries land on a
     // second, webhook-only loopback listener so Funnel or a future hosted
-    // relay never has to expose the rest of OpenMausBot's control surface.
+    // relay never has to expose the rest of Murage's control surface.
     if (path === "/api/webhooks" && method === "GET") {
       return json(res, 200, { webhooks: webhooks.list(), attempts: webhooks.listAttempts(), ingress: webhookIngressStatus() });
     }
@@ -7956,7 +7956,7 @@ const server = createServer(async (req, res) => {
     // child proves it is OURS by echoing its pid (a stray dev server has
     // the same API shape but a different pid)
     if (method === "GET" && path === "/api/health") {
-      return json(res, 200, { app: "openmausbot", pid: process.pid, static: Boolean(STATIC_DIR) });
+      return json(res, 200, { app: "murage", pid: process.pid, static: Boolean(STATIC_DIR) });
     }
 
     // ── inspector: a thread's runtime events + native protocol tee ──
@@ -8574,7 +8574,7 @@ const server = createServer(async (req, res) => {
           return json(res, 409, { error: "the VPS computer is being used by this bot — interrupt the turn first" });
         }
         if (m[2] === "join") {
-          if (req.headers["x-openmausbot-companion"] === "1") {
+          if (req.headers["x-murage-companion"] === "1") {
             return json(res, 409, {
               error: "VPS live desktop control is currently available in the desktop app; the SSH viewer is loopback-only",
             });
@@ -8606,7 +8606,7 @@ const server = createServer(async (req, res) => {
     }
 
     // packaged app: the server serves the built UI too (window → :8799 for
-    // everything, no dev proxy to die). OMB_STATIC_DIR is set by Electron.
+    // everything, no dev proxy to die). MURAGE_STATIC_DIR is set by Electron.
     if (method === "GET" && !path.startsWith("/api/") && STATIC_DIR) {
       const safe = path === "/" ? "/index.html" : path.replace(/\.\./g, "");
       const file = join(STATIC_DIR, safe);
@@ -8636,7 +8636,7 @@ const server = createServer(async (req, res) => {
 calendarCalls.start();
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`openmausbot server on http://127.0.0.1:${PORT}`);
+  console.log(`murage server on http://127.0.0.1:${PORT}`);
 });
 
 const gracefulShutdown = createGracefulShutdown({

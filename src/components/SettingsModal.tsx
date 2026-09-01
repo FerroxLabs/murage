@@ -84,8 +84,8 @@ function ProfileFields() {
 
 function UpdatesRow() {
   const s = useUpdaterState();
-  if (!window.ogb?.updater) return null;
-  const updater = window.ogb.updater;
+  if (!window.muragebox?.updater) return null;
+  const updater = window.muragebox.updater;
   const label =
     s?.status === "checking"
       ? "Checking…"
@@ -242,8 +242,8 @@ function ExperimentalFeaturesRow() {
   const { state, dispatch } = useStore();
   const skillRecorder = skillRecorderEnabled(state.config);
   const browser = builtInBrowserEnabled(state.config);
-  const desktopBrowser = Boolean(window.ogb?.browser);
-  const browserBlockedOnWindows = window.ogb?.platform === "win32" && !desktopBrowser;
+  const desktopBrowser = Boolean(window.muragebox?.browser);
+  const browserBlockedOnWindows = window.muragebox?.platform === "win32" && !desktopBrowser;
   const [saving, setSaving] = useState<"skillRecorder" | "browser" | null>(null);
   const [error, setError] = useState("");
 
@@ -294,7 +294,7 @@ function ExperimentalFeaturesRow() {
                 : "Off by default. Enable it to let supported bots use a browser tab you can watch and take over."
               : browserBlockedOnWindows
                 ? "Temporarily unavailable on Windows while Electron's production sandbox support is being verified."
-                : "Needs the OpenMausBot desktop app."}
+                : "Needs the Murage desktop app."}
           </div>
         </div>
         <Switch
@@ -322,7 +322,7 @@ function BrowserProfilesRow() {
   // must still be able to rename or permanently erase existing sessions.
   // The packaged server can perform that private lifecycle cleanup without
   // exposing the browser renderer bridge.
-  if (!window.ogb || (!builtInBrowserEnabled(state.config) && profiles.length === 0)) return null;
+  if (!window.muragebox || (!builtInBrowserEnabled(state.config) && profiles.length === 0)) return null;
 
   const save = async (next: typeof profiles) => {
     try {
@@ -372,9 +372,9 @@ function BrowserProfilesRow() {
       // from the server. Keep this idempotent fallback for split-process
       // desktop development, where the server has no parent message port.
       try {
-        await window.ogb?.browser?.forgetProfile?.(profile.partitionId ?? profile.id);
+        await window.muragebox?.browser?.forgetProfile?.(profile.partitionId ?? profile.id);
       } catch {
-        setError("The profile was removed, but its local browser data could not be erased. Restart OpenMausBot before reusing that profile name.");
+        setError("The profile was removed, but its local browser data could not be erased. Restart Murage before reusing that profile name.");
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not delete the browser profile.");
@@ -472,11 +472,11 @@ function DiagnosticsRow() {
   const [result, setResult] = useState<{ kind: "success" | "error"; message: string } | null>(null);
 
   const exportDiagnostics = async () => {
-    if (!window.ogb?.exportDiagnostics || exporting) return;
+    if (!window.muragebox?.exportDiagnostics || exporting) return;
     setExporting(true);
     setResult(null);
     try {
-      const path = await window.ogb.exportDiagnostics();
+      const path = await window.muragebox.exportDiagnostics();
       if (path) setResult({ kind: "success", message: `Saved to ${path}` });
     } catch (e) {
       setResult({ kind: "error", message: e instanceof Error ? e.message : String(e) });

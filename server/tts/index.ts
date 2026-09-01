@@ -1,7 +1,7 @@
 // Voice, wired to config. Two engines live behind this file: ElevenLabs
 // (elevenlabs.ts, needs a key) and the Mac's built-in voices
 // (system-voices.ts, no key). This file is only the part that reads
-// ~/.openmausbot/config.json, picks the engine, and decides whether there
+// ~/.murage/config.json, picks the engine, and decides whether there
 // is a voice at all.
 import type { AppConfig } from "../config.ts";
 import * as elevenlabs from "./elevenlabs.ts";

@@ -46,11 +46,11 @@ posixOnly("mid-turn steering e2e", () => {
   beforeAll(async () => {
     chmodSync(FAKE_CLAUDE, 0o755);
     chmodSync(FAKE_ACP, 0o755);
-    home = mkdtempSync(join(tmpdir(), "omb-steer-"));
-    mkdirSync(join(home, ".openmausbot"), { recursive: true });
+    home = mkdtempSync(join(tmpdir(), "murage-steer-"));
+    mkdirSync(join(home, ".murage"), { recursive: true });
     steerGate = join(home, "delayed-steer.gate");
     writeFileSync(
-      join(home, ".openmausbot", "config.json"),
+      join(home, ".murage", "config.json"),
       JSON.stringify({
         instances: {
           claude: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "slow" }, config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" } },
@@ -66,7 +66,7 @@ posixOnly("mid-turn steering e2e", () => {
     );
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
-      env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, OMB_PORT: String(PORT) },
+      env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(PORT) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stderr!.on("data", (c) => (stderr += c));

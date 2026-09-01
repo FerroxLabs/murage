@@ -203,7 +203,7 @@ const forwardHeaders = (req: IncomingMessage): Record<string, string> => {
     // Lets a response whose URL is intentionally loopback-only (the VPS SSH
     // viewer) fail before opening a tunnel a phone cannot reach. This header
     // carries no authority; it only narrows behavior at the harness.
-    "x-openmausbot-companion": "1",
+    "x-murage-companion": "1",
   };
   const contentType = req.headers["content-type"];
   if (contentType) out["content-type"] = String(contentType);
@@ -259,7 +259,7 @@ export function createProxyHandler(options: ProxyOptions) {
     // The computer owner enables this capability per device, off by default.
     if (isCloudDesktopJoin(method, path) && !device?.cloudDesktopAccess) {
       return sendJson(res, 403, {
-        error: "cloud desktop access is off for this phone — enable it in OpenMausBot → Settings → Phone",
+        error: "cloud desktop access is off for this phone — enable it in Murage → Settings → Phone",
       });
     }
 
@@ -329,7 +329,7 @@ export function createProxyHandler(options: ProxyOptions) {
           const fail = () => {
             if (finished) return;
             finished = true;
-            sendJson(res, 502, { error: "OpenMausBot is not ready on this computer" });
+            sendJson(res, 502, { error: "Murage is not ready on this computer" });
           };
           harness.on("data", (chunk: Buffer) => {
             size += chunk.length;
@@ -356,13 +356,13 @@ export function createProxyHandler(options: ProxyOptions) {
             if (
               (harness.statusCode ?? 500) < 200 ||
               (harness.statusCode ?? 500) >= 300 ||
-              (identity as { app?: unknown } | null)?.app !== "openmausbot"
+              (identity as { app?: unknown } | null)?.app !== "murage"
             ) {
               fail();
               return;
             }
             finished = true;
-            sendJson(res, 200, { app: "openmausbot" });
+            sendJson(res, 200, { app: "murage" });
           });
           return;
         }
@@ -381,7 +381,7 @@ export function createProxyHandler(options: ProxyOptions) {
           if (tracksDeviceConnection && currentDevice?.id !== device?.id) {
             harness.destroy();
             return sendJson(res, 401, {
-              error: "pair this device from Phone settings in OpenMausBot on your computer",
+              error: "pair this device from Phone settings in Murage on your computer",
             });
           }
           const disconnect = () => {
@@ -488,7 +488,7 @@ export function createProxyHandler(options: ProxyOptions) {
           if (size > MAX_JSON_BODY_BYTES) {
             harness.destroy();
             if (res.headersSent) res.destroy();
-            else sendJson(res, 502, { error: "the response from OpenMausBot was too large" });
+            else sendJson(res, 502, { error: "the response from Murage was too large" });
             return;
           }
           chunks.push(chunk);
@@ -585,8 +585,8 @@ export function createProxyHandler(options: ProxyOptions) {
         res,
         timedOut ? 504 : 502,
         timedOut
-          ? { error: "OpenMausBot did not respond" }
-          : { error: "OpenMausBot is not running on this computer" },
+          ? { error: "Murage did not respond" }
+          : { error: "Murage is not running on this computer" },
       );
     });
     req.pipe(upstream);

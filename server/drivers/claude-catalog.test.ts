@@ -13,11 +13,11 @@ afterEach(() => {
 
 describe("readClaudeModelCatalog", () => {
   it("returns the official four when settings are missing", () => {
-    expect(readClaudeModelCatalog({ HOME: join(tmpdir(), "omb-claude-missing-home") })).toEqual(STATIC_CLAUDE_MODELS);
+    expect(readClaudeModelCatalog({ HOME: join(tmpdir(), "murage-claude-missing-home") })).toEqual(STATIC_CLAUDE_MODELS);
   });
 
   it("tags extra settings models as custom and leaves official rows untagged", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-claude-catalog-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-claude-catalog-"));
     scratchDirs.push(home);
     const dir = join(home, ".claude");
     mkdirSync(dir, { recursive: true });
@@ -41,7 +41,7 @@ describe("readClaudeModelCatalog", () => {
   });
 
   it("does not list settings.model as a Custom leftover", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-claude-leftover-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-claude-leftover-"));
     scratchDirs.push(home);
     const dir = join(home, ".claude");
     mkdirSync(dir, { recursive: true });
@@ -56,7 +56,7 @@ describe("readClaudeModelCatalog", () => {
 
 describe("ClaudeDriver catalog", () => {
   it("loads extras when the instance is created", async () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-claude-instance-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-claude-instance-"));
     scratchDirs.push(home);
     const dir = join(home, ".claude");
     mkdirSync(dir, { recursive: true });

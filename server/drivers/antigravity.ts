@@ -140,8 +140,8 @@ export function readAntigravityModelCatalog(env: Record<string, string | undefin
 // right before each spawn: every other byte of the user's config is
 // preserved, and a malformed file starts from a fresh object instead of
 // failing the turn (the ensureOpenCodeInjectModel discipline).
-export const ANTIGRAVITY_COMPUTER_MCP_KEY = "openmausbot-computer";
-export const ANTIGRAVITY_AGENTS_MCP_KEY = "openmausbot-agents";
+export const ANTIGRAVITY_COMPUTER_MCP_KEY = "murage-computer";
+export const ANTIGRAVITY_AGENTS_MCP_KEY = "murage-agents";
 
 export interface AntigravityMcpServer {
   command: string;
@@ -191,7 +191,7 @@ const mcpConfigFileSchema = z.looseObject({
 });
 
 /** The computer MCP server for this turn, or null when the turn has none.
- * Cloud boxes go through OpenMausBot's REST-to-MCP adapter (the same spec
+ * Cloud boxes go through Murage's REST-to-MCP adapter (the same spec
  * claude.ts and codex.ts build); Local VM and VPS connections arrive as a
  * ready-made Cua Driver stdio command and pass through unchanged. */
 export function antigravityComputerMcpServer(
@@ -205,12 +205,12 @@ export function antigravityComputerMcpServer(
       args: [SPAWNED_PROXIES.computer],
       env: {
         ELECTRON_RUN_AS_NODE: "1",
-        OGB_BOX_ID: proxyEnv.OGB_BOX_ID ?? "",
-        OGB_BOX_TOKEN: proxyEnv.OGB_BOX_TOKEN ?? "",
+        MURAGEBOX_BOX_ID: proxyEnv.MURAGEBOX_BOX_ID ?? "",
+        MURAGEBOX_BOX_TOKEN: proxyEnv.MURAGEBOX_BOX_TOKEN ?? "",
         // who-is-driving endpoint, so a person taking the wheel in the
         // panel pauses this bot's hands mid-turn
-        OMB_CONTROL_URL: proxyEnv.OMB_CONTROL_URL ?? "",
-        OMB_CONTROL_TOKEN: proxyEnv.OMB_CONTROL_TOKEN ?? "",
+        MURAGE_CONTROL_URL: proxyEnv.MURAGE_CONTROL_URL ?? "",
+        MURAGE_CONTROL_TOKEN: proxyEnv.MURAGE_CONTROL_TOKEN ?? "",
       },
     };
   }
@@ -307,7 +307,7 @@ function ensureAntigravityOwnedMcpServers(
     }
 
     // A malformed concurrent edit is not safe to rewrite. Leaving a stale
-    // OpenMausBot entry is preferable to destroying bytes we cannot interpret.
+    // Murage entry is preferable to destroying bytes we cannot interpret.
     let currentJson: unknown;
     try {
       currentJson = JSON.parse(current);

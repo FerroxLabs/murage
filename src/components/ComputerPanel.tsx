@@ -126,7 +126,7 @@ function nextRunLabel(at: number | null) {
   return `${sameDay ? "Today" : date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
-const PANEL_WIDTH_KEY = "omb-computer-panel-width";
+const PANEL_WIDTH_KEY = "murage-computer-panel-width";
 const PANEL_MIN_WIDTH = 360;
 const PANEL_MAX_WIDTH = 960;
 const PANEL_DEFAULT_WIDTH = 400;
@@ -203,7 +203,7 @@ export function ComputerPanel({
   const androidStatus = useAndroidUsbDevices();
   const androidConnected = androidStatus.devices.length > 0;
   // the built-in browser: a per-bot switch in Settings, and only the desktop app has one
-  const browserEnabled = builtInBrowserEnabled(state.config) && bot.browser !== false && Boolean(window.ogb?.browser);
+  const browserEnabled = builtInBrowserEnabled(state.config) && bot.browser !== false && Boolean(window.muragebox?.browser);
   // bumped when a Box API key is saved inline, to re-run the spin-up flow
   const [retry, setRetry] = useState(0);
   const vmReadinessAttempts = useRef(0);
@@ -224,7 +224,7 @@ export function ComputerPanel({
   // live viewer so a remount/switch mid-session doesn't wrongly resume it.
   useEffect(() => {
     let alive = true;
-    const dv = window.ogb?.desktopViewer;
+    const dv = window.muragebox?.desktopViewer;
     if (dv?.currentState) {
       void dv
         .currentState()
@@ -553,12 +553,12 @@ export function ComputerPanel({
   // the user denied — surface the Settings repair path instead of spinning.
   const [localMisses, setLocalMisses] = useState(0);
   useEffect(() => {
-    if (panelView !== "computer" || phase !== "local" || !window.ogb || isLinux || !pageVisible) return;
+    if (panelView !== "computer" || phase !== "local" || !window.muragebox || isLinux || !pageVisible) return;
     let alive = true;
     setLocalMisses(0);
     const shoot = async () => {
       try {
-        const url = await window.ogb!.screenFrame();
+        const url = await window.muragebox!.screenFrame();
         if (alive && url) setLocalFrame(url);
         else if (alive) setLocalMisses((n) => n + 1);
       } catch {
@@ -630,7 +630,7 @@ export function ComputerPanel({
   }, [bot.id, dispatch]);
 
   const setNativeBrowserControl = useCallback(async (held: boolean): Promise<boolean> => {
-    const setter = window.ogb?.browser?.setHumanControl;
+    const setter = window.muragebox?.browser?.setHumanControl;
     if (!setter) return true;
     const profile = bot.browserProfile === "guest" ? "guest" : bot.browserProfile ?? "";
     return (await setter(bot.id, held, profile)) === true;
@@ -675,7 +675,7 @@ export function ComputerPanel({
     // A plain-web development session still needs a synchronous blank tab;
     // the packaged app uses the reliable Electron viewer window below.
     let fallbackTab: Window | null = null;
-    if (!window.ogb?.desktopViewer && !window.ogb?.openExternal) {
+    if (!window.muragebox?.desktopViewer && !window.muragebox?.openExternal) {
       fallbackTab = window.open("", "_blank");
       if (fallbackTab) fallbackTab.opener = null;
     }
@@ -692,14 +692,14 @@ export function ComputerPanel({
       }
       if (!viewerUrl) throw new Error("The computer did not return a live desktop link");
 
-      if (window.ogb?.desktopViewer) {
-        const opened = await window.ogb.desktopViewer.open(viewerUrl, `${bot.name}'s live desktop`, bot.id);
-        if (!opened) throw new Error("OpenMausBot could not open the live desktop");
+      if (window.muragebox?.desktopViewer) {
+        const opened = await window.muragebox.desktopViewer.open(viewerUrl, `${bot.name}'s live desktop`, bot.id);
+        if (!opened) throw new Error("Murage could not open the live desktop");
       } else if (fallbackTab) {
         fallbackTab.location.replace(viewerUrl);
-      } else if (window.ogb?.openExternal) {
-        const opened = await window.ogb.openExternal(viewerUrl);
-        if (!opened) throw new Error("OpenMausBot could not open the live desktop link");
+      } else if (window.muragebox?.openExternal) {
+        const opened = await window.muragebox.openExternal(viewerUrl);
+        if (!opened) throw new Error("Murage could not open the live desktop link");
       } else if (!window.open(viewerUrl, "_blank", "noopener")) {
         throw new Error("Your browser blocked the live desktop tab");
       }
@@ -783,7 +783,7 @@ export function ComputerPanel({
   };
 
   const replaceVpsComputer = async () => {
-    if (!window.confirm(`Replace ${bot.name}'s VPS computer with the version required by this OpenMausBot update? Files stored only inside the disposable container will be deleted.`)) return;
+    if (!window.confirm(`Replace ${bot.name}'s VPS computer with the version required by this Murage update? Files stored only inside the disposable container will be deleted.`)) return;
     setPending("vps-replace");
     setError(null);
     try {
@@ -806,7 +806,7 @@ export function ComputerPanel({
   };
 
   const openVmSettings = () => {
-    window.sessionStorage.setItem("openmausbot.settings.section", "computer");
+    window.sessionStorage.setItem("murage.settings.section", "computer");
     dispatch({ type: "toggleAppSettings", open: true });
   };
 
@@ -819,7 +819,7 @@ export function ComputerPanel({
     starting: "Starting your bot's computer…",
     unconfigured: "No cloud computer configured",
     "vps-unconfigured": "No managed VPS computer is configured for this bot",
-    "vps-incompatible": "This VPS computer belongs to an earlier OpenMausBot version",
+    "vps-incompatible": "This VPS computer belongs to an earlier Murage version",
     "vps-stopped": "The managed VPS computer is stopped",
     "local-unavailable": localDisabledReason ?? "Local computer control isn't ready.",
     "vm-unavailable": "The Local VM isn't available for this bot",
@@ -982,7 +982,7 @@ export function ComputerPanel({
               </span>
               {phase === "local" && !isLinux && localMisses >= 3 && (
                 <button
-                  onClick={() => window.ogb?.permOpenSettings?.("screen")}
+                  onClick={() => window.muragebox?.permOpenSettings?.("screen")}
                   className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
                 >
                   Open Settings
@@ -1075,7 +1075,7 @@ export function ComputerPanel({
 
         {phase === "vm" &&
           vmStatus?.mode === "per-bot" &&
-          window.ogb?.desktopWorkspace &&
+          window.muragebox?.desktopWorkspace &&
           onOpenVmWorkspace && (
             <button
               type="button"
@@ -1126,7 +1126,7 @@ export function ComputerPanel({
             <button
               onClick={() => {
                 controlAction("release");
-                void window.ogb?.desktopViewer?.close(bot.id);
+                void window.muragebox?.desktopViewer?.close(bot.id);
               }}
               disabled={controlPending}
               className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-accent py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-50"
@@ -1141,7 +1141,7 @@ export function ComputerPanel({
             onClick={() => void openDesktop()}
             disabled={pending === "join"}
             className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-            title="Open the Local VM's live desktop inside OpenMausBot"
+            title="Open the Local VM's live desktop inside Murage"
           >
             {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Monitor size={14} />}
             Open live desktop

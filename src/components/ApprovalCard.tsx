@@ -27,7 +27,7 @@ const SKILL_SETTLED_LABEL = {
   update: "Skill updated",
 } as const;
 
-/** The tool's own name is noise to a human: mcp__ogb__computer_batch is
+/** The tool's own name is noise to a human: mcp__muragebox__computer_batch is
  * "computer batch", Bash is "run a command". */
 function toolLabel(tool?: string): string {
   if (!tool) return "an action";

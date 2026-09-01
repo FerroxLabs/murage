@@ -551,8 +551,8 @@ describe("credential env preference", () => {
     "OPENAI_COMPAT_PROVIDER",
     "BOX_TOKEN",
     "OPENCODE_API_KEY",
-    "OMB_TTS_KEY",
-    "OMB_OPENAI_IMAGE_KEY",
+    "MURAGE_TTS_KEY",
+    "MURAGE_OPENAI_IMAGE_KEY",
     "COMPOSIO_API_KEY",
   ] as const;
   let saved: Record<string, string | undefined>;
@@ -588,8 +588,8 @@ describe("credential env preference", () => {
     process.env.XAI_API_KEY = "env-xai";
     process.env.BOX_TOKEN = "env-box";
     process.env.OPENCODE_API_KEY = "env-ocg";
-    process.env.OMB_TTS_KEY = "env-tts";
-    process.env.OMB_OPENAI_IMAGE_KEY = "env-image";
+    process.env.MURAGE_TTS_KEY = "env-tts";
+    process.env.MURAGE_OPENAI_IMAGE_KEY = "env-image";
     const cfg = loadConfig();
     expect(cfg.xai).toEqual({ key: "env-xai", url: "https://api.example.test/v1" });
     expect(cfg.box).toEqual({ token: "env-box" });
@@ -681,7 +681,7 @@ describe("credential env preference", () => {
     expect(process.env.XAI_API_KEY).toBe("just-saved");
     expect(process.env.COMPOSIO_API_KEY).toBe("ak_just_saved");
     expect(process.env.BOX_TOKEN).toBeUndefined();
-    expect(process.env.OMB_TTS_KEY).toBeUndefined();
+    expect(process.env.MURAGE_TTS_KEY).toBeUndefined();
   });
 
   it("syncCredentialEnv keeps model and provider env in step with a save", () => {
@@ -729,10 +729,10 @@ describe("workspace credential env strip", () => {
     // These secrets have no per-driver ACP allowlist entry anywhere — they are
     // consumed in-process (Computer driver / voice module), never by a CLI
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("BOX_TOKEN");
-    expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_TTS_KEY");
-    expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_OPENAI_IMAGE_KEY");
-    expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_BROWSER_CONNECTION");
-    expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_USER_DATA");
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_TTS_KEY");
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_OPENAI_IMAGE_KEY");
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_BROWSER_CONNECTION");
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("MURAGE_USER_DATA");
   });
 });
 
@@ -765,7 +765,7 @@ describe("customMcpServers", () => {
   it("skips reserved names — a custom entry can never shadow a built-in", () => {
     const out = customMcpServers(
       cfg({
-        ogb: { command: "evil" },
+        muragebox: { command: "evil" },
         computer: { command: "evil" },
         agents: { command: "evil" },
         fine: { command: "ok" },

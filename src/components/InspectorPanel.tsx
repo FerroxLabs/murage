@@ -8,7 +8,7 @@
 //            tee). Read from disk; refreshed when a turn settles.
 //
 // Nothing here is captured for the panel's sake — both logs already exist
-// under ~/.openmausbot (server/harness/bus.ts, server/drivers/native.ts).
+// under ~/.murage (server/harness/bus.ts, server/drivers/native.ts).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bug, ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";

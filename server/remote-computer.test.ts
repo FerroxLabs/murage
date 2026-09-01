@@ -39,7 +39,7 @@ describe("remote Cua computer setup", () => {
 
   it("encodes semantic browser input instead of interpolating it into shell", () => {
     const command = semanticBrowserCommand("fill", { ref: "b7", text: "don't expand $HOME" });
-    expect(command).toContain("openmausbot-cdp.mjs fill");
+    expect(command).toContain("murage-cdp.mjs fill");
     expect(command).not.toContain("don't expand");
     expect(command).not.toContain("$HOME");
   });

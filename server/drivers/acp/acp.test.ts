@@ -204,7 +204,7 @@ describe("ACP turns (fake CLI)", () => {
   beforeEach(() => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
-    scratch = mkdtempSync(join(tmpdir(), "omb-acp-test-"));
+    scratch = mkdtempSync(join(tmpdir(), "murage-acp-test-"));
   });
 
   afterEach(async () => {
@@ -215,7 +215,7 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.CURSOR_API_KEY;
     delete process.env.CURSOR_AUTH_TOKEN;
     delete process.env.BOX_TOKEN;
-    delete process.env.OMB_TTS_KEY;
+    delete process.env.MURAGE_TTS_KEY;
     delete process.env.FAKE_ACP_MODELS;
     delete process.env.FAKE_ACP_MODEL_STICKS;
     delete process.env.FAKE_ACP_USAGE_ROOT;
@@ -299,7 +299,7 @@ describe("ACP turns (fake CLI)", () => {
     // workspace credentials with no CLI consumer at all — held by the
     // harness (env-injected at boot by the desktop shell), used in-process
     process.env.BOX_TOKEN = "box-should-not-leak";
-    process.env.OMB_TTS_KEY = "tts-should-not-leak";
+    process.env.MURAGE_TTS_KEY = "tts-should-not-leak";
 
     await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "go" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -313,7 +313,7 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.env.CURSOR_API_KEY).toBeUndefined();
     expect(seen.env.CURSOR_AUTH_TOKEN).toBeUndefined();
     expect(seen.env.BOX_TOKEN).toBeUndefined();
-    expect(seen.env.OMB_TTS_KEY).toBeUndefined();
+    expect(seen.env.MURAGE_TTS_KEY).toBeUndefined();
   });
 
   // ACP session/new accepts stdio MCP entries, so connected apps use the
@@ -330,7 +330,7 @@ describe("ACP turns (fake CLI)", () => {
         composio: {
           command: process.execPath,
           args: ["/tmp/connector-proxy.js"],
-          env: { OMB_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp" },
+          env: { MURAGE_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp" },
         },
       },
     });
@@ -339,7 +339,7 @@ describe("ACP turns (fake CLI)", () => {
       name: "composio",
       command: process.execPath,
       args: ["/tmp/connector-proxy.js"],
-      env: [{ name: "OMB_CONNECTOR_UPSTREAM_URL", value: "http://127.0.0.1:8799/api/internal/connectors/mcp" }],
+      env: [{ name: "MURAGE_CONNECTOR_UPSTREAM_URL", value: "http://127.0.0.1:8799/api/internal/connectors/mcp" }],
     });
   });
 
@@ -773,7 +773,7 @@ describe("ACP snapshot", () => {
   });
 
   it("kimi checks KIMI_CODE_HOME before the child HOME", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-kimi-auth-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-kimi-auth-"));
     const kimiHome = join(scratch, "custom-kimi-home");
     const childHome = join(scratch, "child-home");
     mkdirSync(join(childHome, ".kimi-code", "credentials"), { recursive: true });
@@ -798,7 +798,7 @@ describe("ACP snapshot", () => {
   });
 
   it("droid resolves the signed-in CLI before falling back to FACTORY_API_KEY", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-droid-auth-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-droid-auth-"));
     // FACTORY_HOME_OVERRIDE replaces the CLI's HOME, not its data root: droid
     // writes <home>/.factory/auth.v2.file either way (verified against 0.196.0).
     const overrideHome = join(scratch, "custom-home");
@@ -861,7 +861,7 @@ describe("ACP snapshot", () => {
   });
 
   it("droid reads custom models, favourites order, and the configured default", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-droid-models-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-droid-models-"));
     mkdirSync(join(scratch, ".factory"), { recursive: true });
     writeFileSync(
       join(scratch, ".factory", "settings.json"),
@@ -897,7 +897,7 @@ describe("ACP snapshot", () => {
   });
 
   it("droid falls back to the built-in catalog when settings.json is unreadable", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-droid-nosettings-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-droid-nosettings-"));
     mkdirSync(join(scratch, ".factory"), { recursive: true });
     writeFileSync(join(scratch, ".factory", "settings.json"), "{ not json");
 
@@ -918,7 +918,7 @@ describe("ACP snapshot", () => {
   });
 
   it("kimi resolves default credentials from the child HOME", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "omb-kimi-home-"));
+    const scratch = mkdtempSync(join(tmpdir(), "murage-kimi-home-"));
     const credentialDir = join(scratch, ".kimi-code", "credentials");
     mkdirSync(credentialDir, { recursive: true });
     writeFileSync(join(credentialDir, "kimi-code.json"), "{}");

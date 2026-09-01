@@ -1,6 +1,6 @@
 // Cua-backed Local VM lifecycle and health checks.
 //
-// OpenMausBot owns only the sandbox boundary: image preparation, container
+// Murage owns only the sandbox boundary: image preparation, container
 // lifecycle, resource limits, loopback viewer, and target-scoped lease in the
 // harness. Desktop automation itself is Cua Driver. Agents connect directly to
 // `cua-driver mcp` inside the container; this module never reimplements clicks,
@@ -35,21 +35,21 @@ export const BASE_IMAGE = `${BASE_IMAGE_REPOSITORY}@${BASE_IMAGE_DIGEST}`;
 // tags, then may otherwise resolve the same name to Docker Hub when running it.
 // Image and container labels below remain the authoritative compatibility
 // check, not the mutable tag.
-export const IMAGE_REPOSITORY = "localhost/openmausbot/cua-local-vm";
+export const IMAGE_REPOSITORY = "localhost/murage/cua-local-vm";
 export const IMAGE_LAYER_VERSION = "4";
-export const IMAGE_LAYER_LABEL = "com.openmausbot.image-layer";
+export const IMAGE_LAYER_LABEL = "com.murage.image-layer";
 export const IMAGE = `${IMAGE_REPOSITORY}:driver-${CUA_DRIVER_VERSION}-v${IMAGE_LAYER_VERSION}`;
-export const CONTAINER = "openmausbot-computer";
-export const MANAGED_LABEL = "com.openmausbot.local-vm";
-export const DRIVER_LABEL = "com.openmausbot.cua-driver";
-export const BASE_IMAGE_LABEL = "com.openmausbot.cua-base";
-export const WORKSPACE_LABEL = "com.openmausbot.workspace";
-export const TARGET_LABEL = "com.openmausbot.local-vm-target";
+export const CONTAINER = "murage-computer";
+export const MANAGED_LABEL = "com.murage.local-vm";
+export const DRIVER_LABEL = "com.murage.cua-driver";
+export const BASE_IMAGE_LABEL = "com.murage.cua-base";
+export const WORKSPACE_LABEL = "com.murage.workspace";
+export const TARGET_LABEL = "com.murage.local-vm-target";
 export const VM_WORKSPACE_DIR = join(DATA_DIR, "vm-home");
 export const VM_WORKSPACE_GUEST = "/home/cua/workspace";
 export const DISPLAY = ":1";
-export const CUA_SOCKET = "/run/user/1000/openmausbot-cua.sock";
-export const CUA_EXECUTABLE = "/usr/local/libexec/openmausbot/cua-driver";
+export const CUA_SOCKET = "/run/user/1000/murage-cua.sock";
+export const CUA_EXECUTABLE = "/usr/local/libexec/murage/cua-driver";
 
 const RUNTIMES = ["docker", "podman", "container"] as const;
 export type Runtime = (typeof RUNTIMES)[number];
@@ -164,11 +164,11 @@ RUN printf '%s\\n' \\
       'migrate_profile google-chrome' \\
       'migrate_profile chromium' \\
       'find "$profiles" \\( -name SingletonLock -o -name SingletonSocket -o -name SingletonCookie -o -name .parentlock \\) -delete' \\
-      > /usr/local/bin/prepare-openmausbot-workspace.sh \\
-    && chmod 0755 /usr/local/bin/prepare-openmausbot-workspace.sh
+      > /usr/local/bin/prepare-murage-workspace.sh \\
+    && chmod 0755 /usr/local/bin/prepare-murage-workspace.sh
 RUN printf '%s\\n' \\
       '#!/bin/sh' \\
-      '/usr/local/bin/prepare-openmausbot-workspace.sh' \\
+      '/usr/local/bin/prepare-murage-workspace.sh' \\
       'attempt=0' \\
       'until DISPLAY=:1 xset q >/dev/null 2>&1; do' \\
       '  attempt=$((attempt + 1))' \\
@@ -176,12 +176,12 @@ RUN printf '%s\\n' \\
       '  sleep 1' \\
       'done' \\
       'exec env CUA_DRIVER_INSTALL_CHANNEL=python_package CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${CUA_EXECUTABLE} serve --socket ${CUA_SOCKET} --permission-mode standard' \\
-      > /usr/local/bin/start-openmausbot-cua-driver.sh \\
-    && chmod 0755 /usr/local/bin/start-openmausbot-cua-driver.sh
+      > /usr/local/bin/start-murage-cua-driver.sh \\
+    && chmod 0755 /usr/local/bin/start-murage-cua-driver.sh
 RUN printf '%s\\n' \\
       '' \\
-      '[program:openmausbot-cua-driver]' \\
-      'command=/usr/local/bin/start-openmausbot-cua-driver.sh' \\
+      '[program:murage-cua-driver]' \\
+      'command=/usr/local/bin/start-murage-cua-driver.sh' \\
       'user=cua' \\
       'environment=HOME="/home/cua",USER="cua",DISPLAY=":1"' \\
       'autorestart=true' \\
@@ -336,7 +336,7 @@ function statusProblem(status: ContainerComputerStatus): string | null {
   }
   if (status.container === "missing") return "Create the Local VM";
   if (!status.imageMatches) return "The existing Local VM uses an older desktop or Cua Driver; recreate it";
-  if (!status.managed) return "The existing container was not created by OpenMausBot; recreate it";
+  if (!status.managed) return "The existing container was not created by Murage; recreate it";
   if (status.network === "unsafe") return "The existing Local VM exposes its viewer publicly; recreate it";
   if (status.security === "unsafe") return "The existing Local VM is missing safety limits; recreate it";
   if (status.persistence === "unsafe") return "The existing Local VM is missing its durable workspace; recreate it";
@@ -456,7 +456,7 @@ export async function containerComputerStatus(
     status.image = imageLabelsMatch(image.labels);
     status.image_id = image.id;
   } catch {
-    // The prepared OpenMausBot derivative has not been built yet.
+    // The prepared Murage derivative has not been built yet.
   }
 
   try {
@@ -569,7 +569,7 @@ export async function containerComputerStatus(
       ) {
         throw new Error(`Cua health report is ${report.overall ?? "invalid"}`);
       }
-      const readinessShot = "/tmp/openmausbot-readiness.png";
+      const readinessShot = "/tmp/murage-readiness.png";
       await runner(
         status.runtime,
         cuaExecArgs([
@@ -901,7 +901,7 @@ async function ensureVmWorkspace(platform: NodeJS.Platform, target: LocalVmTarge
 
 async function prepareManagedImage(runtime: Runtime, runner: CommandRunner): Promise<void> {
   await runner(runtime, ["pull", BASE_IMAGE], 10 * 60_000);
-  const context = await mkdtemp(join(tmpdir(), "openmausbot-cua-image-"));
+  const context = await mkdtemp(join(tmpdir(), "murage-cua-image-"));
   try {
     await writeFile(join(context, "Dockerfile"), managedImageDockerfile(), { mode: 0o600 });
     await runner(runtime, ["build", "-t", IMAGE, context], 10 * 60_000);
@@ -1009,7 +1009,7 @@ export async function containerComputerScreenshot(
   }
   if (cacheable) screenshotStatusCache.set(target.key, { status, expiresAt: now + SCREENSHOT_STATUS_TTL_MS });
   try {
-    const screenshot = "/tmp/openmausbot-preview.png";
+    const screenshot = "/tmp/murage-preview.png";
     await runner(
       status.runtime,
       cuaExecArgs([
@@ -1068,7 +1068,7 @@ export function containerComputerMcp(
     // through `ps` for the life of the bridge.
     env: {
       ELECTRON_RUN_AS_NODE: "1",
-      ...(control ? { OMB_CONTROL_URL: control.url, OMB_CONTROL_TOKEN: control.token } : {}),
+      ...(control ? { MURAGE_CONTROL_URL: control.url, MURAGE_CONTROL_TOKEN: control.token } : {}),
     },
   };
 }
@@ -1127,17 +1127,17 @@ export function setupCommands(
   };
 }
 
-/** Cloud boxes still use OpenMausBot's high-latency REST adapter. Local VMs
+/** Cloud boxes still use Murage's high-latency REST adapter. Local VMs
  * bypass it and mount Cua Driver's official MCP server through
  * containerComputerMcp(). */
 export function computerProxyEnv(
   computer: { boxId?: string; token?: string; control?: { url: string; token: string } },
 ): NodeJS.ProcessEnv {
   return {
-    OGB_BOX_ID: computer.boxId ?? "",
-    OGB_BOX_TOKEN: computer.token ?? "",
+    MURAGEBOX_BOX_ID: computer.boxId ?? "",
+    MURAGEBOX_BOX_TOKEN: computer.token ?? "",
     ...(computer.control
-      ? { OMB_CONTROL_URL: computer.control.url, OMB_CONTROL_TOKEN: computer.control.token }
+      ? { MURAGE_CONTROL_URL: computer.control.url, MURAGE_CONTROL_TOKEN: computer.control.token }
       : {}),
   };
 }

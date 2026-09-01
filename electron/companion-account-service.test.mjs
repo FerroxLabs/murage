@@ -23,9 +23,9 @@ const UUID = "11111111-1111-4111-8111-111111111111";
 const INSTALLATION_ID = "22222222-2222-4222-8222-222222222222";
 const DUPLICATE_INSTALLATION_ID = "33333333-3333-4333-8333-333333333333";
 const ACCOUNT_TOKEN = `signed.${"a".repeat(80)}`;
-const INSTALLATION_CREDENTIAL = `omb_install_${"b".repeat(22)}.${"c".repeat(43)}`;
+const INSTALLATION_CREDENTIAL = `murage_install_${"b".repeat(22)}.${"c".repeat(43)}`;
 const CONNECTOR_TOKEN = `eyJ${"d".repeat(100)}`;
-const ENDPOINT = "https://c-opaque.openmausbot.com";
+const ENDPOINT = "https://c-opaque.murage.ai";
 
 function credentialStore(initial = {}) {
   let document = structuredClone(initial);
@@ -106,19 +106,19 @@ function signedCredentials(overrides = {}) {
 describe("Companion account service", () => {
   it("uses the packaged hosted default and only explicit safe development origins", () => {
     expect(resolveCompanionControlPlaneURL({ isPackaged: true, environment: {} })).toBe(
-      "https://accounts.openmausbot.com",
+      "https://accounts.murage.ai",
     );
     expect(resolveCompanionControlPlaneURL({
       isPackaged: false,
-      environment: { OMB_CONTROL_PLANE_URL: "http://127.0.0.1:8787/" },
+      environment: { MURAGE_CONTROL_PLANE_URL: "http://127.0.0.1:8787/" },
     })).toBe("http://127.0.0.1:8787");
     expect(resolveCompanionControlPlaneURL({
       isPackaged: true,
-      environment: { OMB_CONTROL_PLANE_URL: "http://accounts.openmausbot.com" },
+      environment: { MURAGE_CONTROL_PLANE_URL: "http://accounts.murage.ai" },
     })).toBe("");
     expect(resolveCompanionControlPlaneURL({
       isPackaged: true,
-      environment: { OMB_CONTROL_PLANE_URL: new String("https://accounts.openmausbot.com") },
+      environment: { MURAGE_CONTROL_PLANE_URL: new String("https://accounts.murage.ai") },
     })).toBe("");
     expect(resolveCompanionControlPlaneURL({ isPackaged: false, environment: {} })).toBe("");
   });

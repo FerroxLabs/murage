@@ -69,10 +69,10 @@ async function waitForRunThread(runId: string, ms = 20_000) {
 posixOnly("unattended turns keep asking", () => {
   beforeAll(async () => {
     chmodSync(FAKE_CLI, 0o755);
-    home = mkdtempSync(join(tmpdir(), "omb-unattended-"));
-    mkdirSync(join(home, ".openmausbot"), { recursive: true });
+    home = mkdtempSync(join(tmpdir(), "murage-unattended-"));
+    mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(
-      join(home, ".openmausbot", "config.json"),
+      join(home, ".murage", "config.json"),
       JSON.stringify({
         instances: {
           // asks the client for permission mid-turn, which is exactly the
@@ -105,7 +105,7 @@ posixOnly("unattended turns keep asking", () => {
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home,
         USERPROFILE: home,
-        OMB_PORT: String(PORT),
+        MURAGE_PORT: String(PORT),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

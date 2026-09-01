@@ -182,7 +182,7 @@ describe("mergeLocalInject", () => {
   it("marks oMLX /v1/models/status loaded rows, not the default_model", async () => {
     const catalog = await mergeLocalInject(
       { default: "keep", options: [{ id: "keep", label: "Keep" }] },
-      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      { VITEST: "true", MURAGE_PROBE_LOCAL_INJECT: "1" },
       async (url) => {
         const href = String(url);
         if (href.includes("/v1/models/status")) {
@@ -227,7 +227,7 @@ describe("mergeLocalInject", () => {
   it("appends live host models as custom without touching official rows", async () => {
     const catalog = await mergeLocalInject(
       { default: "claude-sonnet-5", options: [{ id: "claude-sonnet-5", label: "Claude Sonnet 5" }] },
-      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      { VITEST: "true", MURAGE_PROBE_LOCAL_INJECT: "1" },
       async (url) => {
         if (String(url).includes(":8080")) {
           return new Response(JSON.stringify({ data: [{ id: "GLM-5.2-fp8" }, { id: "nomic-embed" }] }), { status: 200 });
@@ -249,7 +249,7 @@ describe("mergeLocalInject", () => {
           { id: "orcarouter/Qwen3.8-27B-Uncensored-GGUF", label: "orcarouter/Qwen3.8-27B-Uncensored-GGUF", custom: true },
         ],
       },
-      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      { VITEST: "true", MURAGE_PROBE_LOCAL_INJECT: "1" },
       async (url) => {
         if (String(url).includes(":8888")) {
           return new Response(JSON.stringify({ data: [{ id: "orcarouter/Qwen3.8-27B-Uncensored-GGUF" }] }), { status: 200 });
@@ -291,17 +291,17 @@ describe("codexLocalProviderArgs", () => {
     const args = codexLocalProviderArgs(env, "unsloth::local-model");
     const rendered = JSON.stringify(args);
     expect(rendered).toContain("model_providers.unsloth.base_url");
-    expect(rendered).toContain("OPENMAUSBOT_LOCAL_UNSLOTH_API_KEY");
+    expect(rendered).toContain("MURAGE_LOCAL_UNSLOTH_API_KEY");
     expect(rendered).not.toContain("unsloth-secret");
     expect(rendered).not.toContain("model_providers.ollama.base_url");
     expect(rendered).not.toContain("model_providers.lmstudio.base_url");
-    expect(env.OPENMAUSBOT_LOCAL_UNSLOTH_API_KEY).toBe("unsloth-secret");
+    expect(env.MURAGE_LOCAL_UNSLOTH_API_KEY).toBe("unsloth-secret");
   });
 });
 
 describe("ensureGrokInjectSlug", () => {
   it("writes a config block the first time and reuses it after", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-grok-inject-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-grok-inject-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".grok"), { recursive: true });
     writeFileSync(join(home, ".grok", "config.toml"), "[cli]\nchannel = \"alpha\"\n");
@@ -314,7 +314,7 @@ describe("ensureGrokInjectSlug", () => {
   });
 
   it("writes the resolved Unsloth credential instead of a placeholder", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-grok-unsloth-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-grok-unsloth-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".grok"), { recursive: true });
     ensureGrokInjectSlug("unsloth::local-model", {
@@ -326,7 +326,7 @@ describe("ensureGrokInjectSlug", () => {
   });
 
   it("puts the resolved oMLX slug after agent on the Grok child argv", async () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-grok-argv-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-grok-argv-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".grok"), { recursive: true });
     const dump = join(home, "dump.json");
@@ -369,7 +369,7 @@ describe("ensureGrokInjectSlug", () => {
 
 describe("ensureKimiInjectAlias", () => {
   it("writes an openai_legacy provider and model alias without touching hooks", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-inject-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-inject-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -388,7 +388,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("amends an existing alias with protocol and context size and leaves user keys", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-patch-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-patch-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -422,7 +422,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("does not overwrite a user's protocol or context size", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-keep-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-keep-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -446,7 +446,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("treats a quoted protocol key as already set and does not duplicate it", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-quoted-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-quoted-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -467,7 +467,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("finds a heading with a trailing comment and does not append a second table", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-heading-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-heading-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -483,7 +483,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("does not hide a model table behind an apostrophe in a preceding comment", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-apos-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-apos-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -506,7 +506,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("stops a model table before a following array-of-tables heading", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-aot-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-aot-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -530,7 +530,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("treats a unicode-escaped model key as the same table as the literal alias", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-unicode-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-unicode-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -547,7 +547,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("does not treat a malformed escape as a canonical alias", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-badesc-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-badesc-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -565,7 +565,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("treats whitespace around dotted heading keys as the same table", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-dots-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-dots-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -581,7 +581,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("does not treat a triple-quote inside a single-line string as multiline", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-squote-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-squote-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -603,7 +603,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("does not treat a triple-quote inside a comment as multiline", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-hash-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-hash-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -625,7 +625,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("does not treat a bracket line inside a multiline string as a table", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-ml-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-ml-"));
     scratchDirs.push(home);
     const root = join(home, ".kimi-code");
     mkdirSync(root, { recursive: true });
@@ -655,7 +655,7 @@ describe("ensureKimiInjectAlias", () => {
   });
 
   it("treats USERPROFILE as the same home for credentials and config", async () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-userprofile-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-userprofile-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".kimi-code", "credentials"), { recursive: true });
     writeFileSync(join(home, ".kimi-code", "credentials", "kimi-code.json"), "{}");
@@ -707,7 +707,7 @@ describe("applyKimiLocalModelEnv", () => {
   });
 
   it("puts the overlay on the Kimi child only for a local inject pick", async () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-kimi-overlay-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-kimi-overlay-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".kimi-code"), { recursive: true });
     const dump = join(home, "dump.json");
@@ -750,13 +750,13 @@ describe("applyKimiLocalModelEnv", () => {
 
 describe("ensureDroidInjectModel", () => {
   it("upserts a generic-chat-completion BYOK row and reuses it", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-droid-inject-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-droid-inject-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".factory"), { recursive: true });
     writeFileSync(join(home, ".factory", "settings.json"), JSON.stringify({ hooks: { Stop: [] } }));
     const first = ensureDroidInjectModel("omlx::MiniMax-M3-4bit", { HOME: home });
     const again = ensureDroidInjectModel("omlx::MiniMax-M3-4bit", { HOME: home });
-    expect(first).toBe("custom:openmausbot-omlx-MiniMax-M3-4bit");
+    expect(first).toBe("custom:murage-omlx-MiniMax-M3-4bit");
     expect(again).toBe(first);
     const settings = JSON.parse(readFileSync(join(home, ".factory", "settings.json"), "utf8")) as {
       hooks: unknown;
@@ -773,7 +773,7 @@ describe("ensureDroidInjectModel", () => {
   });
 
   it("persists a generated id onto a matching customModels row that has none", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-droid-inject-noid-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-droid-inject-noid-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".factory"), { recursive: true });
     writeFileSync(
@@ -786,7 +786,7 @@ describe("ensureDroidInjectModel", () => {
     const settings = JSON.parse(readFileSync(join(home, ".factory", "settings.json"), "utf8")) as {
       customModels: Array<{ id?: string; model: string }>;
     };
-    expect(id).toBe("custom:openmausbot-omlx-MiniMax-M3-4bit");
+    expect(id).toBe("custom:murage-omlx-MiniMax-M3-4bit");
     expect(settings.customModels).toHaveLength(1);
     expect(settings.customModels[0]?.id).toBe(id);
   });
@@ -796,9 +796,9 @@ describe("applyDroidLocalAuthEnv", () => {
   it("fills a placeholder Factory key only for a local inject pick", () => {
     const env: Record<string, string | undefined> = {};
     applyDroidLocalAuthEnv(env, "ollama::ornith:35b-bf16");
-    expect(env.FACTORY_API_KEY).toBe("openmausbot-local");
+    expect(env.FACTORY_API_KEY).toBe("murage-local");
     applyDroidLocalAuthEnv(env, "ollama::ornith:35b-bf16");
-    expect(env.FACTORY_API_KEY).toBe("openmausbot-local");
+    expect(env.FACTORY_API_KEY).toBe("murage-local");
   });
 
   it("leaves a real Factory key and cloud slugs alone", () => {
@@ -812,7 +812,7 @@ describe("applyDroidLocalAuthEnv", () => {
   });
 
   it("does not invent a Factory key when a Droid auth file already exists", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-droid-authfile-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-droid-authfile-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".factory"), { recursive: true });
     writeFileSync(join(home, ".factory", "auth.v2.file"), "signed-in");
@@ -822,7 +822,7 @@ describe("applyDroidLocalAuthEnv", () => {
   });
 
   it("puts the placeholder on the Droid child only for a local inject pick", async () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-droid-overlay-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-droid-overlay-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".factory"), { recursive: true });
     const dump = join(home, "dump.json");
@@ -841,7 +841,7 @@ describe("applyDroidLocalAuthEnv", () => {
         model: "ollama::ornith:35b-bf16",
       });
       await recorder.until((e) => e.type === "turn.completed");
-      expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).toBe("openmausbot-local");
+      expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).toBe("murage-local");
 
       await instance.adapter.sendTurn({
         threadId: "t-cloud",
@@ -850,7 +850,7 @@ describe("applyDroidLocalAuthEnv", () => {
       });
       await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-cloud");
       expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).not.toBe(
-        "openmausbot-local",
+        "murage-local",
       );
     } finally {
       await instance.dispose();
@@ -860,7 +860,7 @@ describe("applyDroidLocalAuthEnv", () => {
 
 describe("ensureOpenCodeInjectModel", () => {
   it("merges a host provider into opencode.json without dropping existing models", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-opencode-inject-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-opencode-inject-"));
     scratchDirs.push(home);
     const dir = join(home, ".config", "opencode");
     mkdirSync(dir, { recursive: true });
@@ -888,7 +888,7 @@ describe("ensureOpenCodeInjectModel", () => {
   });
 
   it("injects into a default object when opencode.json is malformed", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-opencode-bad-json-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-opencode-bad-json-"));
     scratchDirs.push(home);
     const dir = join(home, ".config", "opencode");
     mkdirSync(dir, { recursive: true });
@@ -903,7 +903,7 @@ describe("ensureOpenCodeInjectModel", () => {
 
 describe("ensureHermesInjectProvider", () => {
   it("writes a named custom provider and returns the ACP model id", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-hermes-inject-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-hermes-inject-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".hermes"), { recursive: true });
     writeFileSync(join(home, ".hermes", "config.yaml"), "model:\n  provider: auto\n  base_url: https://openrouter.ai/api/v1\n");
@@ -920,7 +920,7 @@ describe("ensureHermesInjectProvider", () => {
   });
 
   it("replaces a nested provider block without leaving orphan YAML lines", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-hermes-nested-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-hermes-nested-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".hermes"), { recursive: true });
     writeFileSync(
@@ -949,7 +949,7 @@ describe("ensureHermesInjectProvider", () => {
 
 describe("ensureQwenInjectModel", () => {
   it("upserts an OpenAI-compatible provider without dropping existing rows", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-qwen-inject-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-qwen-inject-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".qwen"), { recursive: true });
     writeFileSync(
@@ -967,14 +967,14 @@ describe("ensureQwenInjectModel", () => {
       modelProviders: { openai: Array<{ id: string }> };
     };
     expect(settings.modelProviders.openai.map((row) => row.id)).toEqual(["keep-me", "GLM-5.2-fp8"]);
-    expect(settings.env.OPENMAUSBOT_QWEN_OMLX_API_KEY).toBe("omlx");
+    expect(settings.env.MURAGE_QWEN_OMLX_API_KEY).toBe("omlx");
     if (process.platform !== "win32") {
       expect(statSync(join(home, ".qwen", "settings.json")).mode & 0o777).toBe(0o600);
     }
   });
 
   it("injects into a default object when settings.json is malformed", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-qwen-bad-json-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-qwen-bad-json-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".qwen"), { recursive: true });
     writeFileSync(join(home, ".qwen", "settings.json"), "{not-json");
@@ -995,9 +995,9 @@ describe("live Custom lists on every local CLI harness", () => {
       }
       return new Response("nope", { status: 500 });
     }) as typeof fetch;
-    const home = mkdtempSync(join(tmpdir(), "omb-all-inject-"));
+    const home = mkdtempSync(join(tmpdir(), "murage-all-inject-"));
     scratchDirs.push(home);
-    const environment = { HOME: home, OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" };
+    const environment = { HOME: home, MURAGE_PROBE_LOCAL_INJECT: "1" };
     const instances: Array<Awaited<ReturnType<typeof KimiAgentDriver.create>>> = [];
     try {
       instances.push(

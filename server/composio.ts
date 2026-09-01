@@ -8,11 +8,11 @@ import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 const DEFAULT_BACKEND_ORIGIN = "https://backend.composio.dev";
 
 function apiBase() {
-  return (process.env.OMB_COMPOSIO_API ?? `${DEFAULT_BACKEND_ORIGIN}/api/v3.1`).replace(/\/$/, "");
+  return (process.env.MURAGE_COMPOSIO_API ?? `${DEFAULT_BACKEND_ORIGIN}/api/v3.1`).replace(/\/$/, "");
 }
 
 function toolkitBase() {
-  return (process.env.OMB_COMPOSIO_TOOLKITS_API ?? `${DEFAULT_BACKEND_ORIGIN}/api/v3`).replace(/\/$/, "");
+  return (process.env.MURAGE_COMPOSIO_TOOLKITS_API ?? `${DEFAULT_BACKEND_ORIGIN}/api/v3`).replace(/\/$/, "");
 }
 
 const sessionResponseSchema = z.object({
@@ -165,7 +165,7 @@ export function applyManagedBrokerMessage(message: unknown): boolean {
   const parsed = managedBrokerMessageSchema.safeParse(message);
   if (
     !parsed.success ||
-    parsed.data.type !== "openmausbot:managed-composio" ||
+    parsed.data.type !== "murage:managed-composio" ||
     !Object.hasOwn(parsed.data, "access")
   ) {
     return false;
@@ -185,8 +185,8 @@ export function setManagedBrokerAccess(access: unknown): void {
 
 function brokerAccess(): { url: string; token: string } | null {
   if (managedBrokerAccess !== undefined) return managedBrokerAccess;
-  const url = process.env.OMB_COMPOSIO_BROKER_URL?.trim();
-  const token = process.env.OMB_COMPOSIO_BROKER_TOKEN?.trim();
+  const url = process.env.MURAGE_COMPOSIO_BROKER_URL?.trim();
+  const token = process.env.MURAGE_COMPOSIO_BROKER_TOKEN?.trim();
   if (!url || !token) return null;
   if (!managedBrokerToken.test(token)) throw new Error("The connected-apps service token is invalid");
   return { url: normalizeManagedBrokerUrl(url), token };
@@ -201,7 +201,7 @@ export function configured(cfg: AppConfig): boolean {
   return connectionMode(cfg) !== "unavailable";
 }
 
-/** Three answers, not two. The desktop shell sets OMB_CREDENTIAL_STORE to
+/** Three answers, not two. The desktop shell sets MURAGE_CREDENTIAL_STORE to
  * "unavailable" when it could not read credentials.bin this launch; without
  * that signal an unreadable store is indistinguishable from a user who never
  * connected anything, and the UI wipes a list it should have kept. */
@@ -209,7 +209,7 @@ export type ConnectorAvailability = "configured" | "unconfigured" | "unreadable"
 
 export function connectorAvailability(
   cfg: AppConfig,
-  storeState: string | undefined = process.env.OMB_CREDENTIAL_STORE,
+  storeState: string | undefined = process.env.MURAGE_CREDENTIAL_STORE,
 ): ConnectorAvailability {
   if (configured(cfg)) return "configured";
   return storeState === "unavailable" ? "unreadable" : "unconfigured";
@@ -387,7 +387,7 @@ export async function prepareProjectSession(
     ) {
       return {
         apiKey: trimmed,
-        userId: existing.config?.user_id ?? current.userId ?? `openmausbot_${randomUUID()}`,
+        userId: existing.config?.user_id ?? current.userId ?? `murage_${randomUUID()}`,
         sessionId: existing.session_id,
       };
     }
@@ -397,7 +397,7 @@ export async function prepareProjectSession(
     priorUserId = existing?.config?.user_id ?? priorUserId;
   }
 
-  const userId = priorUserId ?? `openmausbot_${randomUUID()}`;
+  const userId = priorUserId ?? `murage_${randomUUID()}`;
   const sessionRequest: SessionCreateRequest = {
     user_id: userId,
     manage_connections: {
@@ -484,12 +484,12 @@ export async function mcpIntegration(
       // The provider-facing bridge receives only this boot's loopback token.
       // Project/broker credentials stay in the harness process, so a coding
       // agent that prints its environment cannot export a durable secret.
-      OMB_CONNECTOR_UPSTREAM_URL: `${context.harnessUrl}/api/internal/connectors/mcp`,
-      OMB_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: `Bearer ${context.commsToken}` }),
-      OMB_HARNESS_URL: context.harnessUrl,
-      OMB_COMMS_TOKEN: context.commsToken,
-      OMB_BOT_ID: context.botId,
-      OMB_THREAD_ID: context.threadId,
+      MURAGE_CONNECTOR_UPSTREAM_URL: `${context.harnessUrl}/api/internal/connectors/mcp`,
+      MURAGE_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: `Bearer ${context.commsToken}` }),
+      MURAGE_HARNESS_URL: context.harnessUrl,
+      MURAGE_COMMS_TOKEN: context.commsToken,
+      MURAGE_BOT_ID: context.botId,
+      MURAGE_THREAD_ID: context.threadId,
     },
   };
 }

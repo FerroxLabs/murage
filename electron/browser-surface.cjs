@@ -109,7 +109,7 @@ const SCROLL_METRICS_EXPRESSION = `(() => {
   const el = document.scrollingElement || document.documentElement;
   return { top: Math.round(el.scrollTop), height: Math.round(el.scrollHeight), view: Math.round(window.innerHeight) };
 })()`;
-const SCROLL_AT_POINT_FUNCTION = `function __ombScrollAtPoint({ x, y, deltaX, deltaY }) {
+const SCROLL_AT_POINT_FUNCTION = `function __murageScrollAtPoint({ x, y, deltaX, deltaY }) {
   const root = document.scrollingElement || document.documentElement;
   const candidates = [];
   const seen = new Set();
@@ -174,7 +174,7 @@ function axNodeIntegritySignature(node) {
   });
 }
 
-const HIT_RELATED_FUNCTION = `function __ombHitRelated(hit) {
+const HIT_RELATED_FUNCTION = `function __murageHitRelated(hit) {
   const composedContains = (ancestor, candidate) => {
     for (let current = candidate; current;) {
       if (current === ancestor) return true;
@@ -188,7 +188,7 @@ const HIT_RELATED_FUNCTION = `function __ombHitRelated(hit) {
 // Executed with a candidate DOM element as `this`. Keep this in lockstep with
 // third_party/playwright-injected/secretInput.ts: raw snapshots and action
 // gating must agree about which fields only a person may fill.
-const SENSITIVE_FIELD_FUNCTION = `function __ombSensitiveField() {
+const SENSITIVE_FIELD_FUNCTION = `function __murageSensitiveField() {
   const element = this;
   if (!element || !element.tagName) return "unknown";
   const tag = String(element.tagName).toLowerCase();
@@ -461,7 +461,7 @@ function createBrowserSurfaceManager({
   now = () => Date.now(),
   injectedSource = loadInjectedSource(),
 }) {
-  if (!owner || owner.isDestroyed?.()) throw new Error("The OpenMausBot window is unavailable");
+  if (!owner || owner.isDestroyed?.()) throw new Error("The Murage window is unavailable");
   if (createView?.constructor !== Function) throw new Error("The browser surface viewer is unavailable");
   const emit = notify instanceof Function ? notify : () => {};
   const emitUserInteraction = onUserInteraction instanceof Function ? onUserInteraction : () => {};
@@ -484,7 +484,7 @@ function createBrowserSurfaceManager({
   let guestCounter = 0;
 
   const partitionForProfile = (botId, profile) => {
-    if (profile === GUEST_PROFILE) return `openmausbot-browser-guest-${botId}-${++guestCounter}`;
+    if (profile === GUEST_PROFILE) return `murage-browser-guest-${botId}-${++guestCounter}`;
     return profile ? browserProfilePartition(profile) : ownPartitionFor(botId);
   };
   const profileIdOf = (profile) => {
@@ -969,7 +969,7 @@ function createBrowserSurfaceManager({
 
   const create = (botId, profile) => {
     evictIfNeeded();
-    if (owner.isDestroyed?.()) throw new Error("The OpenMausBot window is unavailable");
+    if (owner.isDestroyed?.()) throw new Error("The Murage window is unavailable");
     const partition = partitionForProfile(botId, profile);
     const view = createView({
       webPreferences: {
@@ -1171,7 +1171,7 @@ function createBrowserSurfaceManager({
       if (!frameId) throw new Error("the browser page has no main frame");
       const { executionContextId } = await cdp(entry, "Page.createIsolatedWorld", {
         frameId,
-        worldName: "openmausbot-browser-snapshot",
+        worldName: "murage-browser-snapshot",
         grantUniveralAccess: false,
       });
       if (!executionContextId) throw new Error("could not create the protected browser helper world");
@@ -1418,7 +1418,7 @@ function createBrowserSurfaceManager({
     assertAgentLease(entry, lease);
     if (entry.refKind === "aria") {
       const { result } = await cdp(entry, "Runtime.evaluate", {
-        expression: `window.__ombBrowser && window.__ombBrowser.elementForRef(${JSON.stringify(target.ref)})`,
+        expression: `window.__murageBrowser && window.__murageBrowser.elementForRef(${JSON.stringify(target.ref)})`,
         returnByValue: false,
       });
       assertAgentLease(entry, lease);
@@ -1482,7 +1482,7 @@ function createBrowserSurfaceManager({
     if (!activeElement?.objectId) throw new Error("the focused page target could not be inspected safely");
     const { result, exceptionDetails } = await cdp(entry, "Runtime.callFunctionOn", {
       objectId: activeElement.objectId,
-      functionDeclaration: `function __ombKeyTarget() {
+      functionDeclaration: `function __murageKeyTarget() {
         const classification = (${SENSITIVE_FIELD_FUNCTION}).call(this);
         if (classification !== "unknown") return classification;
         const tag = String(this && this.tagName || "").toLowerCase();
@@ -1592,9 +1592,9 @@ function createBrowserSurfaceManager({
   const ensureInjected = async (entry) => {
     if (!injectedSource) return false;
     try {
-      if ((await evaluate(entry, "Boolean(window.__ombBrowser)")) === true) return true;
+      if ((await evaluate(entry, "Boolean(window.__murageBrowser)")) === true) return true;
       await cdp(entry, "Runtime.evaluate", { expression: injectedSource, returnByValue: true });
-      return (await evaluate(entry, "Boolean(window.__ombBrowser)")) === true;
+      return (await evaluate(entry, "Boolean(window.__murageBrowser)")) === true;
     } catch {
       return false;
     }
@@ -1623,7 +1623,7 @@ function createBrowserSurfaceManager({
     const richSnapshotAllowed = !beforePrivacy.hasClosedShadowRoot;
     if (richSnapshotAllowed && await ensureInjected(entry)) {
       try {
-        const result = await evaluate(entry, `window.__ombBrowser.snapshot(${SNAPSHOT_MAX_CHARS})`);
+        const result = await evaluate(entry, `window.__murageBrowser.snapshot(${SNAPSHOT_MAX_CHARS})`);
         if (result && isString(result.yaml) && Array.isArray(result.refs)) {
           yaml = result.yaml;
           truncated = result.truncated === true;
@@ -1708,7 +1708,7 @@ function createBrowserSurfaceManager({
     if (!entry.refs.has(wanted)) throw new Error("that browser ref is stale or unknown — take a new browser_snapshot");
     assertAgentLease(entry, lease);
     if (entry.refKind === "aria") {
-      const valid = await evaluate(entry, `Boolean(window.__ombBrowser && window.__ombBrowser.validateRef(${JSON.stringify(wanted)}))`);
+      const valid = await evaluate(entry, `Boolean(window.__murageBrowser && window.__murageBrowser.validateRef(${JSON.stringify(wanted)}))`);
       assertAgentLease(entry, lease);
       if (valid !== true) throw staleRefError();
       return wanted;
@@ -1731,7 +1731,7 @@ function createBrowserSurfaceManager({
     await assertRefCurrent(entry, target.ref ?? `b${target.backendNodeId}`, lease);
     assertAgentLease(entry, lease);
     if (entry.refKind === "aria") {
-      const hit = await evaluate(entry, `Boolean(window.__ombBrowser && window.__ombBrowser.hitTestRef(${JSON.stringify(target.ref)}, ${JSON.stringify(target.x)}, ${JSON.stringify(target.y)}))`);
+      const hit = await evaluate(entry, `Boolean(window.__murageBrowser && window.__murageBrowser.hitTestRef(${JSON.stringify(target.ref)}, ${JSON.stringify(target.x)}, ${JSON.stringify(target.y)}))`);
       assertAgentLease(entry, lease);
       if (hit !== true) throw new Error("another page element now covers that ref — take a new browser_snapshot");
       return;
@@ -1776,7 +1776,7 @@ function createBrowserSurfaceManager({
     const wanted = await assertRefCurrent(entry, ref, lease);
     if (entry.refKind === "aria") {
       assertAgentLease(entry, lease);
-      const box = await evaluate(entry, `window.__ombBrowser ? window.__ombBrowser.boxForRef(${JSON.stringify(wanted)}) : { found: false }`);
+      const box = await evaluate(entry, `window.__murageBrowser ? window.__murageBrowser.boxForRef(${JSON.stringify(wanted)}) : { found: false }`);
       await assertRefCurrent(entry, wanted, lease);
       if (!box || box.found !== true) throw new Error("that browser ref is stale or unknown — take a new browser_snapshot");
       if (box.connected !== true) throw new Error("that element is gone; take a new browser_snapshot");
@@ -2057,7 +2057,7 @@ function createBrowserSurfaceManager({
         await assertRefCurrent(entry, ref, lease);
         if (entry.refKind === "aria") {
           assertAgentLease(entry, lease);
-          const focused = await evaluate(entry, `window.__ombBrowser.focusRef(${JSON.stringify(target.ref)})`);
+          const focused = await evaluate(entry, `window.__murageBrowser.focusRef(${JSON.stringify(target.ref)})`);
           assertAgentLease(entry, lease);
           if (focused !== true) throw new Error("that element cannot take keyboard focus; click it first or pick a text field");
         } else {

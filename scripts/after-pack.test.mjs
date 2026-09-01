@@ -8,7 +8,7 @@ import { LICENSE_FILES } from "./cua-linux-release.mjs";
 const temporaryDirectories = [];
 
 function fixture() {
-  const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "omb-after-pack-"));
+  const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "murage-after-pack-"));
   temporaryDirectories.push(appOutDir);
   const resources = path.join(appOutDir, "resources");
   const cua = path.join(resources, "cua-linux-x64");

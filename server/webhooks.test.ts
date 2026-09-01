@@ -8,7 +8,7 @@ import { WebhookManager, type WebhookManagerOptions } from "./webhooks.ts";
 const dirs: string[] = [];
 
 function harness() {
-  const dir = mkdtempSync(join(tmpdir(), "omb-webhooks-"));
+  const dir = mkdtempSync(join(tmpdir(), "murage-webhooks-"));
   dirs.push(dir);
   const file = join(dir, "webhooks.json");
   let now = new Date("2026-08-16T10:00:00.000Z").getTime();

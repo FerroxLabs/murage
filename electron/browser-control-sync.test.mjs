@@ -13,33 +13,33 @@ const requestId = "123e4567-e89b-42d3-a456-426614174000";
 describe("private browser control sync", () => {
   it("mirrors a valid server hold into Electron", () => {
     const take = vi.fn();
-    expect(applyBrowserControlHold({ type: "openmausbot:browser-control", botId: "bot-a", held: true }, take)).toBe(true);
+    expect(applyBrowserControlHold({ type: "murage:browser-control", botId: "bot-a", held: true }, take)).toBe(true);
     expect(take).toHaveBeenCalledWith("bot-a");
   });
 
   it("never treats a generic server release as authority to clear the local gate", () => {
     const take = vi.fn();
-    expect(() => applyBrowserControlHold({ type: "openmausbot:browser-control", botId: "bot-a", held: false }, take))
+    expect(() => applyBrowserControlHold({ type: "murage:browser-control", botId: "bot-a", held: false }, take))
       .toThrow(/invalid browser-control hold/);
     expect(take).not.toHaveBeenCalled();
   });
 
   it("rejects malformed bot ids and ignores unrelated private messages", () => {
-    expect(() => applyBrowserControlHold({ type: "openmausbot:browser-control", botId: "../other", held: true }, () => {}))
+    expect(() => applyBrowserControlHold({ type: "murage:browser-control", botId: "../other", held: true }, () => {}))
       .toThrow(/invalid browser-control hold/);
-    expect(applyBrowserControlHold({ type: "openmausbot:browser-connection" }, () => {})).toBe(false);
+    expect(applyBrowserControlHold({ type: "murage:browser-connection" }, () => {})).toBe(false);
   });
 });
 
 describe("private browser lifecycle sync", () => {
   it("accepts exact bot/profile deletion messages", () => {
     expect(decodeBrowserLifecycleMessage({
-      type: "openmausbot:browser-bot-deleted",
+      type: "murage:browser-bot-deleted",
       requestId,
       botId: "bot_A-1",
     })).toEqual({ type: "bot-deleted", requestId, botId: "bot_A-1" });
     expect(decodeBrowserLifecycleMessage({
-      type: "openmausbot:browser-profile-deleted",
+      type: "murage:browser-profile-deleted",
       requestId,
       partitionId: "Client_1",
     })).toEqual({ type: "profile-deleted", requestId, partitionId: "Client_1" });
@@ -47,7 +47,7 @@ describe("private browser lifecycle sync", () => {
 
   it("builds an exact acknowledgement only for a valid request id", () => {
     expect(browserLifecycleResult(requestId, true)).toEqual({
-      type: "openmausbot:browser-lifecycle-result",
+      type: "murage:browser-lifecycle-result",
       requestId,
       ok: true,
     });
@@ -55,21 +55,21 @@ describe("private browser lifecycle sync", () => {
   });
 
   it("rejects malformed lifecycle ids and ignores unrelated messages", () => {
-    expect(() => decodeBrowserLifecycleMessage({ type: "openmausbot:browser-bot-deleted", botId: "../other" }))
+    expect(() => decodeBrowserLifecycleMessage({ type: "murage:browser-bot-deleted", botId: "../other" }))
       .toThrow(/bot-deleted/);
-    expect(() => decodeBrowserLifecycleMessage({ type: "openmausbot:browser-profile-deleted", partitionId: "work!" }))
+    expect(() => decodeBrowserLifecycleMessage({ type: "murage:browser-profile-deleted", partitionId: "work!" }))
       .toThrow(/profile-deleted/);
-    expect(() => decodeBrowserLifecycleMessage({ type: "openmausbot:browser-profile-deleted", partitionId: "guest" }))
+    expect(() => decodeBrowserLifecycleMessage({ type: "murage:browser-profile-deleted", partitionId: "guest" }))
       .toThrow(/profile-deleted/);
     expect(() => decodeBrowserLifecycleMessage({
-      type: "openmausbot:browser-profile-deleted",
+      type: "murage:browser-profile-deleted",
       requestId: "not-a-request-id",
       partitionId: "Work",
     })).toThrow(/request id/);
     expect(() => decodeBrowserLifecycleMessage({
-      type: "openmausbot:browser-profile-deleted",
+      type: "murage:browser-profile-deleted",
       profileId: "work",
     })).toThrow(/profile-deleted/);
-    expect(decodeBrowserLifecycleMessage({ type: "openmausbot:managed-composio" })).toBeNull();
+    expect(decodeBrowserLifecycleMessage({ type: "murage:managed-composio" })).toBeNull();
   });
 });

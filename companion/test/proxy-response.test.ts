@@ -11,7 +11,7 @@ import { createProxyHandler } from "../src/proxy.ts";
 import type { CompanionEndpoint } from "../src/endpoints.ts";
 import { scrub } from "../src/wire.ts";
 
-const TOKEN = "omb_test_token";
+const TOKEN = "murage_test_token";
 
 /** Nested past any plausible stack, so `scrub`'s recursion gives out while
  * JSON.parse does not. The payload is what the scrubber is meant to remove. */
@@ -50,7 +50,7 @@ const device = async (
 
 beforeAll(async () => {
   harness = createServer((req, res) => {
-    companionMarker = String(req.headers["x-openmausbot-companion"] ?? "");
+    companionMarker = String(req.headers["x-murage-companion"] ?? "");
     respond(res);
   });
   const harnessPort = await listen(harness);
@@ -91,7 +91,7 @@ describe("preparing a harness response for a device", () => {
     try {
       const { status, text } = await device("/api/bots/b1/computer/join", "POST");
       expect(status).toBe(403);
-      expect(text).toContain("enable it in OpenMausBot");
+      expect(text).toContain("enable it in Murage");
       expect(text).toContain("Settings → Phone");
     } finally {
       cloudDesktopAccess = true;

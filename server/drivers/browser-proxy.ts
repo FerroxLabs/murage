@@ -11,11 +11,11 @@
 //
 // Speaks raw JSON-RPC 2.0 over stdio (house style: agents-proxy/phone-proxy).
 // State comes from env, injected by the harness:
-//   OMB_BROWSER_URL    loopback host, e.g. http://127.0.0.1:52144
-//   OMB_BROWSER_TOKEN  capability scoped to this bot + browser profile
-//   OMB_BOT_ID         which bot's tab to drive (one view per bot)
-//   OMB_BROWSER_PROFILE named shared session the bot is pointed at ("" = own)
-//   OMB_CONTROL_URL / OMB_CONTROL_TOKEN  who-is-driving endpoint: while the
+//   MURAGE_BROWSER_URL    loopback host, e.g. http://127.0.0.1:52144
+//   MURAGE_BROWSER_TOKEN  capability scoped to this bot + browser profile
+//   MURAGE_BOT_ID         which bot's tab to drive (one view per bot)
+//   MURAGE_BROWSER_PROFILE named shared session the bot is pointed at ("" = own)
+//   MURAGE_CONTROL_URL / MURAGE_CONTROL_TOKEN  who-is-driving endpoint: while the
 //                      person holds the wheel in the panel, actions refuse
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -24,10 +24,10 @@ import { z } from "zod";
 import { safeBrowserUrl } from "../computer-observation.ts";
 import { createControlClient } from "../control-client.ts";
 
-const HOST = (process.env.OMB_BROWSER_URL ?? "").replace(/\/$/, "");
-const TOKEN = process.env.OMB_BROWSER_TOKEN ?? "";
-const BOT_ID = process.env.OMB_BOT_ID ?? "";
-const PROFILE = process.env.OMB_BROWSER_PROFILE ?? "";
+const HOST = (process.env.MURAGE_BROWSER_URL ?? "").replace(/\/$/, "");
+const TOKEN = process.env.MURAGE_BROWSER_TOKEN ?? "";
+const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
+const PROFILE = process.env.MURAGE_BROWSER_PROFILE ?? "";
 const control = createControlClient();
 
 // ── what the host answers ────────────────────────────────────────────────
@@ -493,7 +493,7 @@ async function handle(line: string) {
     return ok(id, {
       protocolVersion: params?.protocolVersion ?? "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "openmausbot-browser", version: "1" },
+      serverInfo: { name: "murage-browser", version: "1" },
     });
   }
   if (method === "notifications/initialized" || method === "notifications/cancelled") return;

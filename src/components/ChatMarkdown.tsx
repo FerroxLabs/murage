@@ -147,7 +147,7 @@ function LocalFileLink({ filePath, children }: { filePath: string; children?: Re
   const [savedTo, setSavedTo] = useState("");
 
   const save = async () => {
-    const saveFile = window.ogb?.saveFile;
+    const saveFile = window.muragebox?.saveFile;
     if (!saveFile) {
       // an older shell has no save bridge; saying so beats the silent click
       // this change exists to remove

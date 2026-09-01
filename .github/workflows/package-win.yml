@@ -79,8 +79,8 @@ jobs:
           fi
           [ -f "$res/app-update.yml" ] || { echo "::error::missing $res/app-update.yml"; fail=1; }
           if [ -f "$res/app-update.yml" ]; then
-            grep -q "openmausbot-releases" "$res/app-update.yml" || {
-              echo "::error::app-update.yml does not point at openmausbot-releases"; fail=1; }
+            grep -q "murage-releases" "$res/app-update.yml" || {
+              echo "::error::app-update.yml does not point at murage-releases"; fail=1; }
             # while the build is unsigned, a publisherName makes
             # electron-updater reject every update as untrusted
             if grep -q "publisherName" "$res/app-update.yml"; then
@@ -99,8 +99,8 @@ jobs:
         shell: bash
         run: |
           res=release/win-unpacked/resources
-          HOME="$RUNNER_TEMP/omb-smoke" USERPROFILE="$RUNNER_TEMP/omb-smoke" \
-            OMB_PORT=21987 node "$res/server/index.js" > "$RUNNER_TEMP/server.log" 2>&1 &
+          HOME="$RUNNER_TEMP/murage-smoke" USERPROFILE="$RUNNER_TEMP/murage-smoke" \
+            MURAGE_PORT=21987 node "$res/server/index.js" > "$RUNNER_TEMP/server.log" 2>&1 &
           pid=$!
           for _ in $(seq 1 90); do
             if curl -fsS --max-time 2 http://127.0.0.1:21987/api/health >/dev/null 2>&1; then
