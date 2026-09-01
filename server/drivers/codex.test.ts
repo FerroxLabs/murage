@@ -159,6 +159,80 @@ describe("CodexDriver turns (fake app-server)", () => {
     }
   });
 
+  it("routes a flux::flux-* turn through the Flux Responses provider table", async () => {
+    // The whole codex Flux surface in one assertion set: the provider table
+    // reaches argv, the secret does NOT, the raw workspace key is gone from
+    // the child, and thread/start selects the provider the table declares.
+    process.env.FLUX_API_KEY = "sk-flux-test-key";
+    try {
+      await create();
+      const dump = join(scratch, "flux.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model: "flux::flux-auto" });
+      await recorder.until((event) => event.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      const argv = (seen.argv as string[]).join(" ");
+      expect(argv).toContain('model_providers.flux.base_url="https://api.fluxrouter.ai/v1"');
+      expect(argv).toContain('model_providers.flux.wire_api="responses"');
+      expect(argv).toContain('model_providers.flux.env_key="MURAGE_FLUX_API_KEY"');
+      // codex has no metadata for flux-* and would otherwise assume a
+      // 258400-token window, larger than the smallest backend Flux routes to
+      expect(argv).toContain("model_context_window=129024");
+      // argv is world-readable in `ps`; only the env-key NAME may appear there
+      expect(argv).not.toContain("sk-flux-test-key");
+      expect(seen.env.MURAGE_FLUX_API_KEY).toBe("sk-flux-test-key");
+      // FLUX_API_KEY is workspace-scoped — the child gets the copy, never it
+      expect(seen.env.FLUX_API_KEY).toBeUndefined();
+
+      const threadStart = seen.calls.find((c: { method: string }) => c.method === "thread/start");
+      expect(threadStart.params).toMatchObject({ model: "flux-auto", modelProvider: "flux" });
+    } finally {
+      delete process.env.FLUX_API_KEY;
+    }
+  });
+
+  it("leaves a native codex turn untouched when no Flux model is picked", async () => {
+    process.env.FLUX_API_KEY = "sk-flux-test-key";
+    try {
+      await create();
+      const dump = join(scratch, "flux-native.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-flux-native", text: "hi", model: "gpt-5.6-sol" });
+      await recorder.until((event) => event.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect((seen.argv as string[]).join(" ")).not.toContain("model_providers.flux");
+      expect((seen.argv as string[]).join(" ")).not.toContain("model_context_window");
+      expect(seen.env.MURAGE_FLUX_API_KEY).toBeUndefined();
+    } finally {
+      delete process.env.FLUX_API_KEY;
+    }
+  });
+
+  it("does not half-apply the provider table for a bare flux-auto id", async () => {
+    // A bare id decodes to OFFICIAL_CODEX_PROVIDER and is refused at spawn
+    // (server/index.ts). If it ever reaches the driver it must stay native
+    // rather than carry a provider table thread/start will never select.
+    process.env.FLUX_API_KEY = "sk-flux-test-key";
+    try {
+      await create();
+      const dump = join(scratch, "flux-bare.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-flux-bare", text: "hi", model: "flux-auto" });
+      await recorder.until((event) => event.type === "turn.completed");
+
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect((seen.argv as string[]).join(" ")).not.toContain("model_providers.flux");
+      expect(seen.env.MURAGE_FLUX_API_KEY).toBeUndefined();
+    } finally {
+      delete process.env.FLUX_API_KEY;
+    }
+  });
+
   it("keeps the full command when a Windows interpreter prefix is long", async () => {
     await create({ mode: "windows-command" });
     await instance.adapter.sendTurn({ threadId: "t-windows-command", text: "read notes" });

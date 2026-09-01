@@ -34,6 +34,7 @@ import {
 import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
 
 import { BotAvatar, InitialsAvatar } from "./Avatar";
+import { ConfirmDelete } from "./ConfirmDelete";
 import { stateForBot } from "@/lib/mascot";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
@@ -295,10 +296,12 @@ function GroupListItem({
 function RoomContextMenu({
   menu,
   onClose,
+  onRequestDelete,
   onMoveToSection,
 }: {
   menu: { groupId: string; x: number; y: number };
   onClose: () => void;
+  onRequestDelete: (group: { id: string; name: string }) => void;
   onMoveToSection: (groupId: string) => void;
 }) {
   const { state, dispatch } = useStore();
@@ -412,7 +415,7 @@ function RoomContextMenu({
       </button>
       <button
         onClick={() => {
-          dispatch({ type: "deleteGroup", groupId: group.id });
+          if (group) onRequestDelete(group);
           onClose();
         }}
         className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger hover:bg-raised/70"
@@ -626,11 +629,13 @@ function BotContextMenu({
   menu,
   onClose,
   onArchive,
+  onRequestDelete,
   onMoveToSection,
 }: {
   menu: MenuState;
   onClose: () => void;
   onArchive: (bot: Bot) => void;
+  onRequestDelete: (bot: Bot) => void;
   onMoveToSection: (botId: string) => void;
 }) {
   const { state, dispatch } = useStore();
@@ -741,7 +746,7 @@ function BotContextMenu({
             hint: archiveHint,
           },
         ),
-        item(<Trash2 size={16} />, "Delete", () => dispatch({ type: "deleteBot", botId: bot.id }), {
+        item(<Trash2 size={16} />, "Delete", () => onRequestDelete(bot), {
           danger: true,
         }),
       ]}
@@ -1037,6 +1042,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [sectionPicker, setSectionPicker] = useState<MenuState | null>(null);
   const [roomMenu, setRoomMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
+  // Deleting a bot or a room is irreversible and was one click. The dialog
+  // lives here rather than in the context menus because those close on click,
+  // which would unmount the confirmation the moment it opened.
+  const [pendingDelete, setPendingDelete] = useState<
+    { kind: "bot" | "room"; id: string; name: string } | null
+  >(null);
   const [roomSectionPicker, setRoomSectionPicker] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
@@ -1756,6 +1767,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           menu={menu}
           onClose={() => setMenu(null)}
           onArchive={(bot) => void archiveBot(bot)}
+          onRequestDelete={(bot) => setPendingDelete({ kind: "bot", id: bot.id, name: bot.name })}
           onMoveToSection={(botId) => setSectionPicker({ botId, x: menu.x, y: menu.y })}
         />
       )}
@@ -1772,6 +1784,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           key={roomMenu.groupId}
           menu={roomMenu}
           onClose={() => setRoomMenu(null)}
+          onRequestDelete={(group) => setPendingDelete({ kind: "room", id: group.id, name: group.name })}
           onMoveToSection={(groupId) => setRoomSectionPicker({ groupId, x: roomMenu.x, y: roomMenu.y })}
         />
       )}
@@ -1783,6 +1796,23 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onAssign={(section) =>
             dispatch({ type: "patchGroup", groupId: roomSectionPicker.groupId, patch: { section } })
           }
+        />
+      )}
+      {pendingDelete && (
+        <ConfirmDelete
+          name={pendingDelete.name}
+          kind={pendingDelete.kind === "bot" ? "bot" : "conversation"}
+          detail={
+            pendingDelete.kind === "bot"
+              ? "Its entire conversation history goes with it, along with any skills and playbooks it was given. This cannot be undone — archive it instead if you might want it back."
+              : "Every message in this conversation is removed. The bots themselves are not deleted. This cannot be undone."
+          }
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            if (pendingDelete.kind === "bot") dispatch({ type: "deleteBot", botId: pendingDelete.id });
+            else dispatch({ type: "deleteGroup", groupId: pendingDelete.id });
+            setPendingDelete(null);
+          }}
         />
       )}
       {newRoom && <NewRoomPanel onClose={() => setNewRoom(false)} />}

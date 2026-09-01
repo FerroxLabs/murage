@@ -39,6 +39,12 @@ export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from
 
 const DRIVER_KIND = "codex";
 
+/** Smallest `x-flux-model-window` observed on a Flux alias
+ *  (docs/plans/flux-router-spec.md 6.6). Codex is told this rather than its
+ *  own 258400 fallback so it compacts before the smallest backend Flux can
+ *  route to overflows. */
+const FLUX_CONTEXT_FLOOR = 129_024;
+
 export interface CodexConfig {
   cli: string;
   fullAuto: boolean;
@@ -176,7 +182,21 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const flux = fluxIdIsRoutable(turn.model, DRIVER_KIND)
           ? applyFluxSurface(DRIVER_KIND, env, turn.model, fluxKey())
           : null;
-        const appServerArgs = ["app-server", ...codexLocalProviderArgs(env, turn.model), ...(flux?.args ?? [])];
+        const appServerArgs = [
+          "app-server",
+          ...codexLocalProviderArgs(env, turn.model),
+          ...(flux?.args ?? []),
+          // Codex has no metadata for a `flux-*` id and falls back to a
+          // 258400-token window (probed: `modelContextWindow` in
+          // thread/tokenUsage/updated). Flux advertises the real window only
+          // in the `x-flux-model-window` response header, which the CLI never
+          // sees, and it varied 129024 <-> 1000000 between calls on the same
+          // alias (flux-router-spec.md 6.6). Over-estimating is the one-way
+          // failure: codex would compact too late and the turn dies on an
+          // upstream context-length error mid-thread. So assume the observed
+          // floor, exactly as the spec says to. Only set for a Flux turn.
+          ...(flux?.applied ? ["-c", `model_context_window=${FLUX_CONTEXT_FLOOR}`] : []),
+        ];
         if (turn.integrations?.composio) {
           mountMcpServer(appServerArgs, env, "murage_connectors", turn.integrations.composio);
         }
