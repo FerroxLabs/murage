@@ -48,6 +48,51 @@ interface TeamCatalog {
   teams: TeamCatalogEntry[];
 }
 
+/** A skill from the shipped library. 2,010 of the 2,237 that ship are named by
+ *  no catalog entry, so before this panel could search and browse them they
+ *  were reachable from nowhere in the product. */
+interface SkillHit {
+  id: string;
+  name: string;
+  description: string;
+  terms: string[];
+}
+
+/** Topics shown before the list is expanded. 146 facets is a wall on a phone;
+ *  18 fills roughly three rows and still shows the shape of the library. */
+const FACETS_COLLAPSED = 18;
+
+/** A browse entry point, counted from the skills' own manifests. */
+interface Facet {
+  term: string;
+  count: number;
+}
+
+interface LibrarySearchResponse {
+  teams: Array<{ slug: string }>;
+  skills: SkillHit[];
+}
+
+/** Facet terms are lowercase slugs in the data (`software-engineering`).
+ *  Nobody wants to read that on a button. */
+function facetLabel(term: string): string {
+  return term.replace(/-/g, " ").replace(/(^|\s)\p{Ll}/gu, (match) => match.toUpperCase());
+}
+
+/** One sentence is enough to decide; the rest is qualifiers. Descriptions
+ *  average ~499 characters and are written lead-first.
+ *
+ *  Flattened first: skill manifests are written by many hands and some open
+ *  with Markdown ("**When to use.** …"), which renders as literal asterisks in
+ *  a plain one-line blurb. */
+function firstSentence(raw: string, max = 150): string {
+  const text = plainText(raw);
+  const trimmed = text.trim();
+  const stop = trimmed.search(/\.\s/);
+  const candidate = stop > 40 ? trimmed.slice(0, stop + 1) : trimmed;
+  return candidate.length > max ? `${candidate.slice(0, max - 1).trimEnd()}…` : candidate;
+}
+
 export interface ArchivedTeamBot {
   id: string;
   chiefOfStaff: boolean;
@@ -115,16 +160,100 @@ function TeamGlyph({ index }: { index: number }) {
   );
 }
 
+function TeamRow({
+  entry,
+  index,
+  busySlug,
+  onLoad,
+}: {
+  entry: TeamCatalogEntry;
+  index: number;
+  busySlug: string | null;
+  onLoad: (entry: TeamCatalogEntry) => Promise<void>;
+}) {
+  // 28 of the 58 one-person profiles declare zero skills — they carry a
+  // playbook instead, and playbooks have no surface of their own yet. Printing
+  // "0 playbooks" under half the catalog reads as broken. Where there is no
+  // count to give, the summary is the evidence, and it is already on the line
+  // above.
+  const facts = [
+    `${entry.members} ${entry.members === 1 ? "bot" : "bots"}`,
+    entry.skills.length > 0 ? `${entry.skills.length} playbooks` : "",
+    entry.requires.apps.length > 0 ? entry.requires.apps.join(", ") : "",
+    entry.setupMinutes ? `~${entry.setupMinutes} min` : "",
+  ].filter(Boolean);
+  return (
+    <article className="flex min-h-[104px] items-center gap-3 border-b border-hairline/35 px-1 py-4">
+      <TeamGlyph index={index} />
+      <div className="min-w-0 flex-1">
+        <h3 className="truncate text-[14px] font-medium text-ink">{entry.name}</h3>
+        <p className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{entry.outcome ?? entry.summary}</p>
+        <p className="mt-1 truncate text-[11.5px] text-ink-secondary/80">{facts.join(" · ")}</p>
+      </div>
+      <button
+        onClick={() => void onLoad(entry)}
+        disabled={busySlug !== null}
+        className="flex min-w-[72px] items-center justify-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
+      >
+        {busySlug === entry.slug && <Loader2 size={13} className="animate-spin" />}
+        {busySlug === entry.slug ? "Loading" : "Load"}
+      </button>
+    </article>
+  );
+}
+
+/** One skill result.
+ *
+ *  SEAM — skill assignment. This is deliberately a row with a dedicated
+ *  right-hand action slot, sized and placed exactly like `TeamRow`'s "Load"
+ *  button, rather than a bare paragraph. When `assign(skillId, botId)` exists
+ *  it drops into `action` and nothing else here moves.
+ *
+ *  The slot is a VISIBLE control by construction, not a context menu.
+ *  `Sidebar.tsx` exposes its bot row menu only through `onContextMenu`, and iOS
+ *  fires no `contextmenu` event at all — that is a live defect in this
+ *  codebase, and repeating it here would make assignment unreachable on the
+ *  phone this app just became usable on. The slot sits inside the row's flex
+ *  line so it stays on screen and finger-sized at 390 px.
+ *
+ *  No action is rendered today, and that is on purpose: there is no route that
+ *  installs a bundled local skill onto a bot. `POST /api/bots/:id/skills` takes
+ *  a GitHub URL, and `installSkillFromLibrary` has exactly one call site in the
+ *  server, inside `POST /api/teams/import`. Shipping a disabled or "coming
+ *  soon" button would be a dead affordance that teaches the control does not
+ *  work. */
+function SkillRow({ hit, action }: { hit: SkillHit; action?: React.ReactNode }) {
+  return (
+    <article className="flex min-h-[76px] items-center gap-3 border-b border-hairline/35 px-1 py-3">
+      <div className="min-w-0 flex-1">
+        <h4 className="truncate text-[13.5px] font-medium text-ink">{hit.name}</h4>
+        <p className="mt-0.5 line-clamp-2 text-[12.5px] text-ink-secondary">{firstSentence(hit.description)}</p>
+      </div>
+      {action}
+    </article>
+  );
+}
+
 export function TeamLibraryPanel({
   onClose,
   onImported,
   returnFocusRef,
   initialUrl,
+  preselectedBotId,
 }: {
   onClose: () => void;
   onImported: (result: TeamImportResult) => void;
   returnFocusRef: React.RefObject<HTMLButtonElement | null>;
   initialUrl?: string;
+  /** SEAM — the agent this panel was opened "for", when the user arrived from
+   *  an agent's Skills panel rather than from the sidebar. Assignment is one
+   *  action, `assign(skillId, botId)`, with one end pre-filled by where the
+   *  user entered; this is that end. Naming the agent on screen is what stops
+   *  the pre-fill being invisible state the user cannot see or undo.
+   *
+   *  Nothing passes it yet — see the report note on lifting `teamLibraryOpen`
+   *  out of `Sidebar.tsx` into `AppState`, which this direction needs. */
+  preselectedBotId?: string;
 }) {
   const { state, dispatch } = useStore();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -141,6 +270,17 @@ export function TeamLibraryPanel({
   const [importing, setImporting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [search, setSearch] = useState("");
+  // Ranked retrieval, served by the local FTS5 index (server/skill-search.ts).
+  // `teamOrder` is a list of slugs, not entries: the catalog is already loaded
+  // here, so shipping the entries back per keystroke would re-send 68 KB to
+  // say something this component can look up for free.
+  const [teamOrder, setTeamOrder] = useState<string[] | null>(null);
+  const [skillHits, setSkillHits] = useState<SkillHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [facets, setFacets] = useState<Facet[]>([]);
+  const [totalSkills, setTotalSkills] = useState(0);
+  const [activeFacet, setActiveFacet] = useState<string | null>(null);
+  const [showAllFacets, setShowAllFacets] = useState(false);
   const [error, setError] = useState("");
   const [scoutFolder, setScoutFolder] = useState("");
   const [scouting, setScouting] = useState(false);
@@ -159,6 +299,10 @@ export function TeamLibraryPanel({
   const scoutRequest = useRef(0);
 
   const currentBotCount = state.bots.filter((bot) => !bot.hidden).length;
+  /** SEAM: resolved here rather than passed as a name, so the panel always
+   *  shows the agent's CURRENT name and degrades to no label if that agent was
+   *  deleted while the panel was open. */
+  const preselectedBot = preselectedBotId ? state.bots.find((bot) => bot.id === preselectedBotId) : undefined;
 
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true);
@@ -176,6 +320,64 @@ export function TeamLibraryPanel({
   useEffect(() => {
     void loadCatalog();
   }, [loadCatalog]);
+
+  // Browse entry points. Loaded once, with nothing typed — a new user does not
+  // know what is in here and cannot query for it, so the categories have to be
+  // on screen before the first keystroke.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        // SAFETY: this endpoint is owned by the app and returns facet counts.
+        const response = (await api("/api/library/browse")) as { facets: Facet[]; totalSkills: number };
+        if (cancelled) return;
+        setFacets(response.facets ?? []);
+        setTotalSkills(response.totalSkills ?? 0);
+      } catch {
+        // Browse is an enhancement over the team list, never a blocker: if the
+        // index is unavailable the panel still lists every team as before.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Ranked search across both corpora. Debounced because it fires per
+  // keystroke; sequenced because responses can land out of order and a stale
+  // one must never overwrite a newer one.
+  const searchRequest = useRef(0);
+  useEffect(() => {
+    const query = search.trim();
+    if (!query && !activeFacet) {
+      setTeamOrder(null);
+      setSkillHits([]);
+      setSearching(false);
+      return;
+    }
+    const token = ++searchRequest.current;
+    setSearching(true);
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const params = new URLSearchParams(activeFacet ? { term: activeFacet, limit: "60" } : { q: query, limit: "40" });
+          // SAFETY: this endpoint is owned by the app and returns ranked hits.
+          const response = (await api(`/api/library/search?${params}`)) as LibrarySearchResponse;
+          if (token !== searchRequest.current) return;
+          setTeamOrder((response.teams ?? []).map((hit) => hit.slug));
+          setSkillHits(response.skills ?? []);
+        } catch {
+          if (token !== searchRequest.current) return;
+          // An unreachable index must not blank the team list.
+          setTeamOrder(null);
+          setSkillHits([]);
+        } finally {
+          if (token === searchRequest.current) setSearching(false);
+        }
+      })();
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [search, activeFacet]);
 
   useEffect(() => {
     dialogRef.current?.focus();
@@ -409,13 +611,44 @@ export function TeamLibraryPanel({
     }
   };
 
-  const normalizedSearch = search.trim().toLowerCase();
-  const visibleTeams = (catalog?.teams ?? []).filter((entry) => {
-    if (!normalizedSearch) return true;
-    return `${entry.name} ${entry.summary} ${entry.category} ${entry.skills.join(" ")} ${entry.requires.apps.join(" ")}`
-      .toLowerCase()
-      .includes(normalizedSearch);
-  });
+  const normalizedSearch = search.trim();
+  const browsing = !normalizedSearch && !activeFacet;
+
+  // Ranked order comes from the server's BM25 index. Until the first response
+  // lands, `teamOrder` is null and the full catalog shows — a search box that
+  // empties the list while it thinks reads as "no results", which is the bug
+  // this panel is being fixed for.
+  const catalogTeams = catalog?.teams ?? [];
+  const visibleTeams = (() => {
+    if (browsing) return catalogTeams;
+    if (activeFacet) return [];
+    if (!teamOrder) return catalogTeams;
+    const bySlug = new Map(catalogTeams.map((entry) => [entry.slug, entry] as const));
+    return teamOrder.map((slug) => bySlug.get(slug)).filter((entry): entry is TeamCatalogEntry => Boolean(entry));
+  })();
+
+  /** The chips actually rendered. The selected topic is always among them,
+   *  even when it ranks below the fold — a filter you cannot see is a filter
+   *  you cannot turn off. */
+  const visibleFacets = (() => {
+    if (showAllFacets) return facets;
+    const head = facets.slice(0, FACETS_COLLAPSED);
+    if (!activeFacet || head.some((facet) => facet.term === activeFacet)) return head;
+    const selected = facets.find((facet) => facet.term === activeFacet);
+    return selected ? [selected, ...head.slice(0, FACETS_COLLAPSED - 1)] : head;
+  })();
+
+  /** Teams grouped by their own category, for browsing with nothing typed.
+   *  25 categories already exist in the data; a flat list of 122 hides them. */
+  const teamsByCategory = (() => {
+    const groups = new Map<string, TeamCatalogEntry[]>();
+    for (const entry of catalogTeams) {
+      const list = groups.get(entry.category);
+      if (list) list.push(entry);
+      else groups.set(entry.category, [entry]);
+    }
+    return [...groups].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  })();
 
   return createPortal(
     <div
@@ -588,11 +821,28 @@ export function TeamLibraryPanel({
                   <Search size={17} className="shrink-0 text-ink-secondary" />
                   <input
                     value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search teams"
-                    aria-label="Search teams"
+                    onChange={(event) => {
+                      setSearch(event.target.value);
+                      // Typing is a new intent; a facet left active would
+                      // silently filter the results being typed for.
+                      if (event.target.value.trim()) setActiveFacet(null);
+                    }}
+                    placeholder={totalSkills ? `Search ${totalSkills.toLocaleString()} skills and teams` : "Search teams"}
+                    aria-label="Search teams and skills"
                     className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
                   />
+                  {(search || activeFacet) && (
+                    <button
+                      onClick={() => {
+                        setSearch("");
+                        setActiveFacet(null);
+                      }}
+                      aria-label="Clear search"
+                      className="shrink-0 rounded-full p-1 text-ink-secondary hover:bg-raised-hover hover:text-ink"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
                 </label>
               )}
             </div>
@@ -600,8 +850,59 @@ export function TeamLibraryPanel({
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5 sm:px-8">
               {tab === "explore" && (
                 <div>
-                  <div className="mb-3 text-[12px] font-medium text-ink-secondary">
-                    {search ? "Search results" : "Teams"}
+                  {/* Browse, with nothing typed. Krug: search only helps
+                      someone who already knows what to ask for. */}
+                  {facets.length > 0 && (
+                    <div className="mb-5">
+                      <div className="mb-2 flex items-baseline justify-between gap-3">
+                        <div className="text-[12px] font-medium text-ink-secondary">
+                          {activeFacet ? "Browsing" : "Browse skills by topic"}
+                        </div>
+                        {totalSkills > 0 && (
+                          <div className="text-[11.5px] text-ink-secondary/80">
+                            {totalSkills.toLocaleString()} skills included
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {visibleFacets.map((facet) => (
+                          <button
+                            key={facet.term}
+                            aria-pressed={activeFacet === facet.term}
+                            onClick={() => {
+                              setActiveFacet(activeFacet === facet.term ? null : facet.term);
+                              setSearch("");
+                            }}
+                            className={cn(
+                              "rounded-full px-3 py-1.5 text-[12.5px] transition-colors",
+                              activeFacet === facet.term
+                                ? "bg-ink text-card"
+                                : "bg-raised/70 text-ink-secondary hover:bg-raised-hover hover:text-ink",
+                            )}
+                          >
+                            {facetLabel(facet.term)}
+                            <span className="ml-1.5 text-[11px] opacity-60">{facet.count}</span>
+                          </button>
+                        ))}
+                        {facets.length > FACETS_COLLAPSED && (
+                          <button
+                            onClick={() => setShowAllFacets((open) => !open)}
+                            className="rounded-full px-3 py-1.5 text-[12.5px] text-ink-secondary underline underline-offset-2 hover:text-ink"
+                          >
+                            {showAllFacets ? "Show fewer" : `Show all ${facets.length} topics`}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mb-3 flex items-center gap-2 text-[12px] font-medium text-ink-secondary">
+                    {activeFacet
+                      ? `Skills in ${facetLabel(activeFacet)}`
+                      : search
+                        ? "Teams"
+                        : "Teams"}
+                    {searching && <Loader2 size={12} className="animate-spin" />}
                   </div>
                   {catalogLoading && (
                     <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
@@ -614,36 +915,107 @@ export function TeamLibraryPanel({
                       <button onClick={() => void loadCatalog()} className="mt-3 rounded-full bg-raised px-3.5 py-2 text-ink hover:bg-raised-hover">Try again</button>
                     </div>
                   )}
-                  {!catalogLoading && catalog && (
-                    <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
-                      {visibleTeams.map((entry, index) => (
-                        <article key={entry.slug} className="flex min-h-[104px] items-center gap-3 border-b border-hairline/35 px-1 py-4">
-                          <TeamGlyph index={index} />
-                          <div className="min-w-0 flex-1">
-                            <h3 className="truncate text-[14px] font-medium text-ink">{entry.name}</h3>
-                            <p className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{entry.outcome ?? entry.summary}</p>
-                            <p className="mt-1 truncate text-[11.5px] text-ink-secondary/80">
-                              {entry.members} bots · {entry.skills.length} playbooks
-                              {entry.requires.apps.length > 0 && ` · ${entry.requires.apps.join(", ")}`}
-                              {entry.setupMinutes && ` · ~${entry.setupMinutes} min`}
-                            </p>
+                  {!catalogLoading && catalog && !activeFacet && (
+                    <>
+                      {/* Browsing: grouped by the catalog's own categories, so
+                          the shape of the library is visible at a glance.
+                          Searching: one ranked list, best first — grouping
+                          ranked results by category would hide the ranking. */}
+                      {browsing
+                        ? teamsByCategory.map(([category, entries]) => (
+                            <section key={category} className="mb-6">
+                              <h3 className="mb-1 text-[12px] font-medium text-ink-secondary">
+                                {category} <span className="opacity-60">{entries.length}</span>
+                              </h3>
+                              <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
+                                {entries.map((entry, index) => (
+                                  <TeamRow
+                                    key={entry.slug}
+                                    entry={entry}
+                                    index={index}
+                                    busySlug={busySlug}
+                                    onLoad={loadLibraryTeam}
+                                  />
+                                ))}
+                              </div>
+                            </section>
+                          ))
+                        : (
+                          <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
+                            {visibleTeams.map((entry, index) => (
+                              <TeamRow
+                                key={entry.slug}
+                                entry={entry}
+                                index={index}
+                                busySlug={busySlug}
+                                onLoad={loadLibraryTeam}
+                              />
+                            ))}
                           </div>
-                          <button
-                            onClick={() => void loadLibraryTeam(entry)}
-                            disabled={busySlug !== null}
-                            className="flex min-w-[72px] items-center justify-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
-                          >
-                            {busySlug === entry.slug && <Loader2 size={13} className="animate-spin" />}
-                            {busySlug === entry.slug ? "Loading" : "Load"}
-                          </button>
-                        </article>
-                      ))}
-                    </div>
+                        )}
+                      {/* Only worth saying when there IS something below it to
+                          point at; otherwise the full empty state says it once,
+                          properly, with somewhere to go. */}
+                      {!browsing && visibleTeams.length === 0 && skillHits.length > 0 && (
+                        <p className="px-1 pb-2 text-[12.5px] text-ink-secondary">
+                          No team matches “{normalizedSearch}”. Individual skills below do.
+                        </p>
+                      )}
+                    </>
                   )}
-                  {!catalogLoading && catalog && visibleTeams.length === 0 && (
-                    <div className="flex min-h-56 flex-col items-center justify-center text-center">
-                      <div className="text-[14px] font-medium text-ink">No teams found</div>
-                      <div className="mt-1 text-[12.5px] text-ink-secondary">Try a different search.</div>
+
+                  {/* Skills. 2,010 of the 2,237 that ship are named by no team,
+                      so without this section they are reachable from nowhere. */}
+                  {(activeFacet || (!browsing && skillHits.length > 0)) && (
+                    <section className={cn(activeFacet ? "" : "mt-7 border-t border-hairline/35 pt-6")}>
+                      {!activeFacet && (
+                        <h3 className="mb-3 text-[12px] font-medium text-ink-secondary">
+                          Skills <span className="opacity-60">{skillHits.length}</span>
+                          {/* SEAM: when the panel is opened for a specific
+                              agent, say so. A pre-filled target the user cannot
+                              see is exactly the invisible state Krug warns
+                              about. */}
+                          {preselectedBot && <span className="opacity-60"> · for {preselectedBot.name}</span>}
+                        </h3>
+                      )}
+                      <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
+                        {skillHits.map((hit) => (
+                          <SkillRow key={hit.id} hit={hit} />
+                        ))}
+                      </div>
+                      {activeFacet && skillHits.length === 0 && !searching && (
+                        <p className="px-1 py-6 text-[12.5px] text-ink-secondary">Nothing in this topic yet.</p>
+                      )}
+                    </section>
+                  )}
+
+                  {/* The honest empty state. Where the words a person typed are
+                      simply not in either corpus, say so and offer the browse
+                      that does not require knowing what to ask for — never a
+                      confidently irrelevant top hit. */}
+                  {!catalogLoading && catalog && !browsing && !activeFacet && !searching
+                    && visibleTeams.length === 0 && skillHits.length === 0 && (
+                    <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
+                      <div className="text-[14px] font-medium text-ink">Nothing matches “{normalizedSearch}”</div>
+                      <div className="mt-1 max-w-sm text-[12.5px] text-ink-secondary">
+                        Those words aren’t in any team or skill here. Try a different word, or browse by topic.
+                      </div>
+                      {facets.length > 0 && (
+                        <div className="mt-4 flex flex-wrap justify-center gap-1.5">
+                          {facets.slice(0, 6).map((facet) => (
+                            <button
+                              key={facet.term}
+                              onClick={() => {
+                                setSearch("");
+                                setActiveFacet(facet.term);
+                              }}
+                              className="rounded-full bg-raised/70 px-3 py-1.5 text-[12.5px] text-ink-secondary hover:bg-raised-hover hover:text-ink"
+                            >
+                              {facetLabel(facet.term)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

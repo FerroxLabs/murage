@@ -233,6 +233,14 @@ import { RoutineRequestService } from "./routine-requests.ts";
 import { fetchBotDirectory, matchDirectoryBots, type MatchedDirectoryBot } from "./bot-directory.ts";
 import { scoutProject, suggestTeam } from "./project-scout.ts";
 import { fetchGithubTeam, fetchLibraryTeam, fetchTeamCatalog } from "./team-library.ts";
+import {
+  browseFacets,
+  searchCatalog,
+  searchSkills,
+  skillIndexStats,
+  skillsByFacet,
+  type SearchableTeam,
+} from "./skill-search.ts";
 import { isBotPackage, packageAgentAsMember, parseBotPackage, renderBotPackageMarkdown } from "./bot-package.ts";
 import { createTeamManifest, importedMemberProfile, parseTeamManifest } from "./team-manifest.ts";
 import { readThreadEvents } from "./thread-events.ts";
@@ -5129,6 +5137,33 @@ async function reloadProviders() {
 // another's changes or dispose a fleet while another reload is creating it.
 let providerConfigBusy = false;
 
+/** Catalog entries for ranked team search, memoised.
+ *
+ *  Search fires per keystroke, and the catalog loader is the one part of this
+ *  path that can reach the network, so calling it uncached would put a fetch
+ *  behind every character typed. The memo is deliberately short: the catalog
+ *  is owned by another module which is being made local-first, and this must
+ *  keep consuming whatever it returns rather than caching around it.
+ *
+ *  A failure never breaks search — it falls back to the last good entries, and
+ *  then to none. Skill results are unaffected either way, which matters
+ *  because the skills corpus is what answers most queries (see skill-search.ts). */
+const CATALOG_SEARCH_TTL_MS = 60_000;
+let catalogSearchMemo: { at: number; teams: SearchableTeam[] } | null = null;
+
+async function catalogForSearch(): Promise<SearchableTeam[]> {
+  if (catalogSearchMemo && Date.now() - catalogSearchMemo.at < CATALOG_SEARCH_TTL_MS) {
+    return catalogSearchMemo.teams;
+  }
+  try {
+    const catalog = await fetchTeamCatalog();
+    catalogSearchMemo = { at: Date.now(), teams: catalog.teams };
+    return catalog.teams;
+  } catch {
+    return catalogSearchMemo?.teams ?? [];
+  }
+}
+
 // ── HTTP plumbing ─────────────────────────────────────────────────────
 function json(res: ServerResponse, status: number, body: unknown) {
   const data = JSON.stringify(body);
@@ -6484,6 +6519,25 @@ const server = createServer(async (req, res) => {
       } catch (error) {
         return json(res, 502, { error: error instanceof Error ? error.message : "The team library is unavailable" });
       }
+    }
+    if (method === "GET" && path === "/api/library/browse") {
+      // Browse takes no query at all — it is the answer for someone who does
+      // not yet know what to ask for, which is every new user. Facets come
+      // from the skills' own manifests, so they cannot drift from the library.
+      const [facets, stats] = await Promise.all([browseFacets(), skillIndexStats()]);
+      return json(res, 200, { facets, totalSkills: stats.count, indexed: stats.available });
+    }
+    if (method === "GET" && path === "/api/library/search") {
+      const q = url.searchParams.get("q") ?? "";
+      const limitParam = Number(url.searchParams.get("limit"));
+      const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : undefined;
+      const term = url.searchParams.get("term");
+      // Facet drill-down and free-text search are the same surface to the
+      // panel; keeping them one route keeps the renderer's state machine to
+      // one request in flight rather than two that can interleave.
+      const skills = term ? await skillsByFacet(term, limit) : await searchSkills(q, limit);
+      const teams = term ? [] : searchCatalog(await catalogForSearch(), q, limit);
+      return json(res, 200, { query: q, term, teams, skills });
     }
     m = path.match(/^\/api\/team-library\/teams\/([a-z0-9][a-z0-9-]*)$/);
     if (m && method === "GET") {
