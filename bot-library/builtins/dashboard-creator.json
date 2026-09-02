@@ -36,6 +36,12 @@
         "appearance": {
           "color": "green"
         },
+        "skills": [
+          "excel-lookup-formulas",
+          "dashboard-design",
+          "bi-dashboard-spec",
+          "csv-transformer"
+        ],
         "playbooks": [
           "dashboard-creator"
         ]

@@ -701,7 +701,12 @@
       "manifest": "teams/academic-paper/academic-paper.emberteam.json",
       "readme": "teams/academic-paper/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/academic-paper/skills/research-paper-structure/SKILL.md",
+        "teams/academic-paper/skills/academic-paper-review/SKILL.md",
+        "teams/academic-paper/skills/citation-management/SKILL.md",
+        "teams/academic-paper/skills/citation-reference/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -731,7 +736,12 @@
       "manifest": "teams/book-copy-editor/book-copy-editor.emberteam.json",
       "readme": "teams/book-copy-editor/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/book-copy-editor/skills/copy-editing/SKILL.md",
+        "teams/book-copy-editor/skills/line-editor/SKILL.md",
+        "teams/book-copy-editor/skills/proofreading/SKILL.md",
+        "teams/book-copy-editor/skills/write-book-chapter/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -746,7 +756,11 @@
       "manifest": "teams/book-developmental-editor/book-developmental-editor.emberteam.json",
       "readme": "teams/book-developmental-editor/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/book-developmental-editor/skills/developmental-editor/SKILL.md",
+        "teams/book-developmental-editor/skills/structural-editing/SKILL.md",
+        "teams/book-developmental-editor/skills/write-book-chapter/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -761,7 +775,12 @@
       "manifest": "teams/book-nonfiction-architect/book-nonfiction-architect.emberteam.json",
       "readme": "teams/book-nonfiction-architect/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/book-nonfiction-architect/skills/write-book-chapter/SKILL.md",
+        "teams/book-nonfiction-architect/skills/non-fiction-author/SKILL.md",
+        "teams/book-nonfiction-architect/skills/creative-nonfiction/SKILL.md",
+        "teams/book-nonfiction-architect/skills/book-outliner/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -791,7 +810,12 @@
       "manifest": "teams/book-publisher/book-publisher.emberteam.json",
       "readme": "teams/book-publisher/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/book-publisher/skills/write-and-publish-book/SKILL.md",
+        "teams/book-publisher/skills/write-book-chapter/SKILL.md",
+        "teams/book-publisher/skills/write-technical-book/SKILL.md",
+        "teams/book-publisher/skills/traditional-publishing/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -806,7 +830,14 @@
       "manifest": "teams/book-story-architect/book-story-architect.emberteam.json",
       "readme": "teams/book-story-architect/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/book-story-architect/skills/write-book-chapter/SKILL.md",
+        "teams/book-story-architect/skills/short-story-writing/SKILL.md",
+        "teams/book-story-architect/skills/plot-outline/SKILL.md",
+        "teams/book-story-architect/skills/scene-writing/SKILL.md",
+        "teams/book-story-architect/skills/story-pitch/SKILL.md",
+        "teams/book-story-architect/skills/story-writer/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -851,7 +882,12 @@
       "manifest": "teams/dashboard-creator/dashboard-creator.emberteam.json",
       "readme": "teams/dashboard-creator/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/dashboard-creator/skills/excel-lookup-formulas/SKILL.md",
+        "teams/dashboard-creator/skills/dashboard-design/SKILL.md",
+        "teams/dashboard-creator/skills/bi-dashboard-spec/SKILL.md",
+        "teams/dashboard-creator/skills/csv-transformer/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -881,7 +917,12 @@
       "manifest": "teams/financial-model-creator/financial-model-creator.emberteam.json",
       "readme": "teams/financial-model-creator/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/financial-model-creator/skills/financial-model-template/SKILL.md",
+        "teams/financial-model-creator/skills/financial-model-structure/SKILL.md",
+        "teams/financial-model-creator/skills/excel-lookup-formulas/SKILL.md",
+        "teams/financial-model-creator/skills/spreadsheet-model-audit/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }
@@ -1013,7 +1054,14 @@
       "manifest": "teams/pitch-deck-creator/pitch-deck-creator.emberteam.json",
       "readme": "teams/pitch-deck-creator/README.md",
       "members": 1,
-      "skills": [],
+      "skills": [
+        "teams/pitch-deck-creator/skills/pitch-deck-builder/SKILL.md",
+        "teams/pitch-deck-creator/skills/sales-pitch-deck/SKILL.md",
+        "teams/pitch-deck-creator/skills/pitch-deck-creator/SKILL.md",
+        "teams/pitch-deck-creator/skills/pitch-deck-structure/SKILL.md",
+        "teams/pitch-deck-creator/skills/slide-deck-structure/SKILL.md",
+        "teams/pitch-deck-creator/skills/startup-pitch-narrative/SKILL.md"
+      ],
       "requires": {
         "apps": []
       }

@@ -37,6 +37,12 @@
         "appearance": {
           "color": "green"
         },
+        "skills": [
+          "write-book-chapter",
+          "non-fiction-author",
+          "creative-nonfiction",
+          "book-outliner"
+        ],
         "playbooks": [
           "book-nonfiction-architect"
         ]
