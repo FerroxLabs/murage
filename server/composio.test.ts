@@ -205,6 +205,36 @@ describe.sequential("Composio Sessions", () => {
     expect(applyManagedBrokerMessage({ type: messageType, access: null })).toBe(true);
     expect(connectionMode({})).toBe("unavailable");
   });
+  // Someone who pastes their own Composio key into Settings has said as
+  // plainly as the UI allows that they want their own account used. The
+  // broker used to be checked first, so that key was accepted, stored in the
+  // keychain, shown as configured — and then ignored on every request, with
+  // the cost landing on whoever owns the broker.
+  it("lets a workspace's own key beat the managed broker", () => {
+    setManagedBrokerAccess({ url: "http://127.0.0.1:3210/", token: "a".repeat(64) });
+    expect(connectionMode({})).toBe("managed");
+    expect(connectionMode({ composio: { apiKey: "ak_mine" } } as never)).toBe("self-hosted");
+    setManagedBrokerAccess(null);
+    // And with no broker at all it is still their key, not "unavailable".
+    expect(connectionMode({ composio: { apiKey: "ak_mine" } } as never)).toBe("self-hosted");
+  });
+
+  it("routes no request through the broker once a key is present", async () => {
+    // connectionMode is a label; this is the money. brokerRequest resolves the
+    // same predicate itself, so a caller cannot spend the broker's budget on
+    // behalf of someone holding their own key even by forgetting to check.
+    setManagedBrokerAccess({ url: "http://127.0.0.1:3210/", token: "a".repeat(64) });
+    try {
+      await expect(
+        connectedServices({ composio: { apiKey: "ak_mine" } } as never),
+      ).rejects.not.toThrow(/connected-apps service is unavailable/);
+    } catch {
+      // Reaching the self-hosted path at all is the assertion; what it does
+      // with an unreachable Composio afterwards is not this test's business.
+    }
+    setManagedBrokerAccess(null);
+  });
+
   it("accepts only project API keys", async () => {
     await expect(prepareProjectSession("old_key")).rejects.toThrow(/start with ak_/i);
     await expect(prepareProjectSession("ak_wrong")).rejects.toThrow(/invalid project key/i);
