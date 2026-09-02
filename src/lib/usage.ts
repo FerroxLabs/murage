@@ -113,3 +113,69 @@ export function costCaption(billing: "metered" | "subscription" | undefined): st
   if (billing === "metered") return "billed to your API key";
   return "as reported by the engine";
 }
+
+/** One line of the usage report. The `id` is what a test — or a later
+ * redesign — names a line by, so the prose can be improved without
+ * rewriting the assertions that guard it. */
+export interface UsageReportLine {
+  id: "stale" | "turns" | "breakdown" | "fresh" | "cache-note" | "no-cache" | "cost" | "no-cost";
+  text: string;
+}
+
+export interface UsageReportContext {
+  billing?: "metered" | "subscription";
+  /** A turn is in flight. `usage` is banked once per SETTLED turn, so while
+   * this is true every figure below is the one from before the current turn
+   * started. Saying so is the difference between a stale number and a lie. */
+  busy?: boolean;
+  activity?: Bot["activity"];
+}
+
+/** True when the bot has a turn running, so the banked figures are behind. */
+export function isMidTurn(context: UsageReportContext): boolean {
+  return Boolean(context.busy) || context.activity === "working";
+}
+
+/** The whole report behind the chip, as lines.
+ *
+ * ALWAYS THE SAME SHAPE. The old `title` assembled this list with `.filter`,
+ * so an engine that reports no cache and no cost silently rendered a two-line
+ * stub — measured live as "4 turns / 313k in · 1.3k out" against five lines on
+ * a Claude bot — with nothing saying why three lines were missing. Absence is
+ * a fact about the engine and it is now stated, not omitted. */
+export function usageReport(u: TaskUsage, context: UsageReportContext = {}): UsageReportLine[] {
+  const lines: UsageReportLine[] = [];
+  if (isMidTurn(context)) {
+    lines.push({
+      id: "stale",
+      text: "Working now — these are the last settled turn's figures. They update when this turn finishes.",
+    });
+  }
+  lines.push({ id: "turns", text: `${u.turns} turn${u.turns === 1 ? "" : "s"}` });
+  // The headline is fresh tokens; this is the full arithmetic behind it, so
+  // the two can be reconciled instead of looking like a discrepancy.
+  lines.push({ id: "breakdown", text: usageDetail(u) });
+  if (cachedInput(u) > 0) {
+    lines.push({ id: "fresh", text: `${formatTokens(freshTokens(u))} tok new — the figure on the chip` });
+    // the whole thread rides along on every turn, so most of "in" is the
+    // model re-reading what it already saw — say so, or the figure reads as
+    // a bug (issue #527)
+    lines.push({ id: "cache-note", text: "cached = context re-read each turn, not new text" });
+  } else {
+    // Not silence. Without this line the two above simply vanish and the
+    // reader is left to guess whether the engine has no cache or the app
+    // lost the number.
+    lines.push({
+      id: "no-cache",
+      text: "no cached input reported by this engine — the chip is the whole in + out figure",
+    });
+  }
+  lines.push(
+    hasFiniteCost(u.costUsd)
+      // Kept here whatever the billing, because there is room to say what it
+      // is. Only the chip itself withholds it on a subscription.
+      ? { id: "cost", text: `${formatUsd(u.costUsd)} ${costCaption(context.billing)}` }
+      : { id: "no-cost", text: "no cost reported by this engine" },
+  );
+  return lines;
+}

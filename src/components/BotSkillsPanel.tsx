@@ -578,7 +578,9 @@ export function SkillsBody(props: SkillsBodyProps) {
                 <button
                   type="button"
                   aria-label={`Remove ${skill.name}`}
-                  title="Remove skill"
+                  // Names the consequence AND the way back, because the click
+                  // is the whole action — there is no dialog behind it.
+                  title={`Remove ${skill.name} from ${botName}. Add it again from the library at any time.`}
                   disabled={props.busy.has(skill.name)}
                   onClick={() => props.onRemove(skill)}
                   className="flex size-8 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40"
@@ -665,10 +667,24 @@ export function BotSkillsPanel({ bot, onBrowse }: { bot: Bot; onBrowse?: () => v
         onBack={() => store.back()}
         onRetry={() => void store.load()}
         onToggle={(skill) => void store.toggle(skill)}
-        onRemove={(skill) => {
-          if (!window.confirm(`Remove the skill “${skill.name}” from ${bot.name}?`)) return;
-          void store.remove(skill);
-        }}
+        // NO NATIVE CONFIRM DIALOG HERE, and that is the fix, not an
+        // oversight — the string is asserted absent in UsagePopover.test.ts.
+        //
+        // This handler used to open with an early return gated on the
+        // browser's own confirm() prompt. A native JS dialog is not
+        // something this renderer can rely on: it
+        // is auto-dismissed under automation, and a dismissed dialog is
+        // indistinguishable from "no", so the guard returned false and the
+        // handler returned BEFORE issuing the request. A network log across
+        // the whole click showed only the `GET .../skills` re-reads and no
+        // `DELETE /api/bots/:id/skills/:name` at all — the route was always
+        // fine; the row simply never called it. See the parked e2e in
+        // src/e2e/intake.human.spec.ts.
+        //
+        // Nothing blocking replaces it, because a removal here is recoverable
+        // by the route this panel already names — "Add one from the library
+        // and it arrives switched on" — and the row says so on the control.
+        onRemove={(skill) => void store.remove(skill)}
       />
     </div>
   );

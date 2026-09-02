@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { botUsage, freshTokens, cachedInput, costCaption, formatTaskTokens, formatTokens, formatUsd, sumUsage, usageChip, usageDetail } from "./usage";
+import { botUsage, freshTokens, cachedInput, costCaption, formatTaskTokens, formatTokens, formatUsd, isMidTurn, sumUsage, usageChip, usageDetail, usageReport } from "./usage";
 
 describe("usage formatting", () => {
   it("formats token counts compactly", () => {
@@ -129,5 +129,75 @@ describe("the chip reports what was actually consumed", () => {
     const plain = { input: 100, output: 20, costUsd: null, turns: 1 };
     expect(freshTokens(plain)).toBe(120);
     expect(usageChip(plain, "subscription")).toBe("120 tok");
+  });
+});
+
+// THE REPORT MUST NOT SHRINK, AND MUST NOT LIE ABOUT WHEN IT WAS TAKEN.
+//
+// Both of these were live. On a Claude bot the chip's detail was five lines;
+// on an engine that reports neither a cache nor a cost the same detail was
+// "4 turns / 313k in · 1.3k out" and nothing said why three lines had gone.
+// And `usage` is banked once per SETTLED turn, so a bot mid-turn showed the
+// previous turn's figures with nothing marking them as previous.
+describe("the usage report says what is missing instead of rendering less", () => {
+  const ids = (lines: ReturnType<typeof usageReport>) => lines.map((line) => line.id);
+  const cached = { input: 313_000, output: 1_300, cachedInput: 300_000, costUsd: 0.42, turns: 4 };
+  const bare = { input: 313_000, output: 1_300, costUsd: null, turns: 4 };
+
+  it("keeps every carefully worded line when the engine reports a cache and a cost", () => {
+    expect(ids(usageReport(cached, { billing: "metered" }))).toEqual([
+      "turns",
+      "breakdown",
+      "fresh",
+      "cache-note",
+      "cost",
+    ]);
+    const text = usageReport(cached, { billing: "metered" }).map((line) => line.text);
+    expect(text[0]).toBe("4 turns");
+    expect(text[1]).toBe("313k in (300k cached) · 1.3k out");
+    expect(text[2]).toBe("14.3k tok new — the figure on the chip");
+    expect(text[3]).toBe("cached = context re-read each turn, not new text");
+    expect(text[4]).toBe("$0.42 billed to your API key");
+  });
+
+  it("names the absence of a cache rather than dropping two lines", () => {
+    const lines = usageReport(bare);
+    expect(ids(lines)).toContain("no-cache");
+    expect(ids(lines)).not.toContain("fresh");
+    // The point of the line: it explains the silence.
+    expect(lines.find((line) => line.id === "no-cache")?.text).toMatch(/no cached input reported/);
+  });
+
+  it("names the absence of a cost rather than dropping a line", () => {
+    const lines = usageReport(bare);
+    expect(ids(lines)).toContain("no-cost");
+    expect(lines.find((line) => line.id === "no-cost")?.text).toMatch(/no cost reported/);
+  });
+
+  it("never shrinks below the four lines a two-line stub used to be", () => {
+    // The measured stub was two lines. Whatever the engine withholds, the
+    // report still accounts for turns, the arithmetic, the cache and the cost.
+    expect(usageReport(bare).length).toBe(4);
+    expect(usageReport({ input: 0, output: 0, costUsd: null, turns: 0 }).length).toBe(4);
+  });
+
+  it("says the figures are the last settled turn's while a turn is running", () => {
+    const busy = usageReport(cached, { billing: "metered", busy: true });
+    expect(busy[0].id).toBe("stale");
+    expect(busy[0].text).toMatch(/last settled turn/);
+    // Same report otherwise — the caveat is added, nothing is taken away.
+    expect(ids(busy).slice(1)).toEqual(ids(usageReport(cached, { billing: "metered" })));
+  });
+
+  it("takes the same caveat from activity when busy has not been set yet", () => {
+    expect(isMidTurn({ activity: "working" })).toBe(true);
+    expect(isMidTurn({ busy: true })).toBe(true);
+    expect(isMidTurn({ activity: "waiting-on-you" })).toBe(false);
+    expect(isMidTurn({})).toBe(false);
+    expect(usageReport(cached, { activity: "working" })[0].id).toBe("stale");
+  });
+
+  it("adds no caveat to a settled bot", () => {
+    expect(usageReport(cached, { billing: "metered", busy: false, activity: "idle" })[0].id).toBe("turns");
   });
 });

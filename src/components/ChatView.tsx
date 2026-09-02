@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { plainTextClamped } from "@/lib/plain-text";
-import { cachedInput, costCaption, formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageDetail } from "@/lib/usage";
+import { formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageReport } from "@/lib/usage";
 import {
   api,
   useStore,
@@ -61,6 +61,7 @@ import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
 import { ModelPicker } from "./ModelPicker";
 import { RenameTitle } from "./RenameTitle";
 import { TaskPicker } from "./TaskPicker";
+import { UsagePopover } from "./UsagePopover";
 
 import { SpeakButton } from "./SpeakButton";
 import { CallButton, CallOverlay } from "./CallView";
@@ -1440,48 +1441,49 @@ export function ChatView({ bot }: { bot: Bot }) {
 }
 
 /** What the open task has spent — quiet until the first turn settles.
- * Click opens the bot's settings, where the Usage card has the breakdown. */
+ *
+ * Click still opens the bot's settings, where the Usage card lives. The
+ * breakdown is no longer only there: hovering or focusing the chip opens
+ * `UsagePopover` beside it, which is the affordance a native `title` could
+ * never be (see the note at the top of that file). */
 function UsageChip({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const usage = bot.tasks?.find((t) => t.threadId === bot.threadId)?.usage;
   const billing = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
   const text = usage ? usageChip(usage, billing) : "";
   if (!usage || !text) return null;
-  const detail = [
-    `${usage.turns} turn${usage.turns === 1 ? "" : "s"}`,
-    // The headline is fresh tokens; this is the full arithmetic behind it, so
-    // the two can be reconciled instead of looking like a discrepancy.
-    usageDetail(usage),
-    cachedInput(usage) > 0
-      ? `${formatTokens(freshTokens(usage))} tok new — the figure on the chip`
-      : null,
-    // the whole thread rides along on every turn, so most of "in" is the
-    // model re-reading what it already saw — say so, or the figure reads as
-    // a bug (issue #527)
-    cachedInput(usage) > 0 ? "cached = context re-read each turn, not new text" : null,
-    // Kept in the tooltip whatever the billing, because here there is room to
-    // say what it is. Only the chip itself withholds it on a subscription.
-    hasFiniteCost(usage.costUsd) ? `${formatUsd(usage.costUsd)} ${costCaption(billing)}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  // Every line, always the same shape — including the honest sentences for an
+  // engine that reports no cache or no cost, and the caveat that says these
+  // are the LAST SETTLED turn's figures while a turn is still running.
+  const lines = usageReport(usage, { billing, busy: bot.busy, activity: bot.activity });
   // folded: one figure — cost when the engine reports one, else tokens
   // Folded, the same rule: money only where money is owed.
   const short = billing === "metered" && hasFiniteCost(usage.costUsd)
     ? formatUsd(usage.costUsd)
     : formatTokens(freshTokens(usage));
   return (
-    <button
-      onClick={() => dispatch({ type: "toggleSettings", open: true })}
-      // Read-only status whose click target is the agent profile — the same
-      // place the header name goes. In a narrow column it is a duplicate that
-      // costs the conversation its name.
-      className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2 @max-md/chathead:hidden"
-      title={detail}
-    >
-      <span className="@max-4xl/chathead:hidden">{text}</span>
-      <span className="hidden @max-4xl/chathead:inline">{short}</span>
-    </button>
+    <UsagePopover
+      lines={lines}
+      onAllBots={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })}
+      // The fold moved here from the button so the wrapper folds away with
+      // it; the button keeps its own `@max-4xl/chathead:px-2`, and the two
+      // spans keep the swap between the full figure and `short`.
+      className="@max-md/chathead:hidden"
+      trigger={({ describedBy }) => (
+        <button
+          onClick={() => dispatch({ type: "toggleSettings", open: true })}
+          // Read-only status whose click target is the agent profile — the same
+          // place the header name goes. In a narrow column it is a duplicate that
+          // costs the conversation its name.
+          className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
+          aria-describedby={describedBy}
+          aria-label={`Usage: ${text}`}
+        >
+          <span className="@max-4xl/chathead:hidden">{text}</span>
+          <span className="hidden @max-4xl/chathead:inline">{short}</span>
+        </button>
+      )}
+    />
   );
 }
 
