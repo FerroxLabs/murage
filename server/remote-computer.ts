@@ -129,7 +129,20 @@ export function remoteComputerBootstrapCommand(botName: string): string {
     `touch /opt/muragebox/cua-${REMOTE_CUA_VERSION}-ready`,
     'rm -f "$wheel"',
   ].join("\n");
-  const safeName = botName.replace(/["'\\]/g, "");
+  // The banner travels as base64, never as shell text.
+  //
+  // It used to be `botName.replace(/["'\\]/g, "")` interpolated into the tmux
+  // command — which strips quotes and backslash but leaves `$` and backticks,
+  // and the result landed inside DOUBLE quotes, where both still expand. A bot
+  // named `Bruce $(id -un)` ran `id` on the provisioned box. Display names are
+  // whatever the user types, so that was arbitrary command execution on the
+  // box by way of naming a bot.
+  //
+  // Escaping this correctly is possible and is the wrong shape: it is one
+  // metacharacter away from being wrong again, forever. Encoding removes the
+  // interpolation instead — base64's alphabet cannot express a metacharacter,
+  // so there is nothing left for the remote shell to interpret.
+  const banner = Buffer.from(`\n  ▦ ${botName}'s computer — Murage\n\n`, "utf8").toString("base64");
   return [
     "if ! command -v xdotool >/dev/null || ! command -v convert >/dev/null || ! command -v curl >/dev/null || ! command -v python3 >/dev/null; then sudo apt-get update -qq || true; sudo apt-get install -y -qq ca-certificates curl python3 gnome-screenshot xclip wmctrl xdotool imagemagick scrot >/dev/null 2>&1 || true; fi",
     "sudo mkdir -p /opt/muragebox/run",
@@ -138,7 +151,7 @@ export function remoteComputerBootstrapCommand(botName: string): string {
     'pkill -f "^/opt/muragebox/venv/bin/python -m computer_server( |$)" >/dev/null 2>&1 || true',
     `[ -f /opt/muragebox/cua-${REMOTE_CUA_VERSION}-ready ] || [ -f /tmp/muragebox-cua-installing ] || { touch /tmp/muragebox-cua-installing; nohup bash -c ${shellQuote(installer)} > /tmp/muragebox-cua-install.log 2>&1 & }`,
     ensureRemoteCuaCommand(),
-    `tmux has-session -t work 2>/dev/null || tmux new-session -d -s work 'echo; echo "  ▦ ${safeName}'"'"'s computer — Murage"; echo; exec bash -i'`,
+    `tmux has-session -t work 2>/dev/null || tmux new-session -d -s work ${shellQuote(`printf %s ${banner} | base64 -d; exec bash -i`)}`,
     "echo bootstrapped",
   ].join("\n");
 }

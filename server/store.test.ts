@@ -1197,6 +1197,53 @@ describe("canReach", () => {
     expect(isWorkspaceChief(bot({ chiefScope: "workspace" }))).toBe(false);
     expect(canReach(bot({ section: "X", chiefScope: "workspace" }), salesLead)).toBe(false);
   });
+
+  // The third tier, and the one this describe had no example of. Sean's case
+  // is Bruce: an assistant who sits in his own group with nobody else and
+  // reports straight to the Chief. Two clauses of the predicate exist only
+  // for him and neither was covered — the chart's whole point is that he is
+  // reachable by the Chief and by nobody else.
+  describe("the individual assistant", () => {
+    const bruce = bot({ section: "Smart Trader", individual: true });
+
+    it("reaches the workspace chief, and is reached by her", () => {
+      expect(canReach(ember, bruce)).toBe(true);
+      expect(canReach(bruce, ember)).toBe(true);
+    });
+
+    it("is invisible to team leads and to specialists", () => {
+      expect(canReach(bruce, salesLead)).toBe(false);
+      expect(canReach(salesLead, bruce)).toBe(false);
+      expect(canReach(bruce, salesGrunt)).toBe(false);
+      expect(canReach(salesGrunt, bruce)).toBe(false);
+    });
+
+    it("does not reach another individual — alone means alone", () => {
+      expect(canReach(bruce, bot({ section: "Research", individual: true }))).toBe(false);
+    });
+
+    // `individual` is a claim about having no team, so sharing a section with
+    // somebody has to keep working — otherwise a lone bot in the unsectioned
+    // bucket would silently lose contact with every other unsectioned bot.
+    it("still reaches a bot that shares its section, because that rule is first", () => {
+      expect(canReach(bruce, bot({ section: "Smart Trader" }))).toBe(true);
+    });
+
+    it("means nothing on a bot that also leads — the chart wins over the flag", () => {
+      const both = bot({ section: "Sales", chiefOfStaff: true, individual: true });
+      expect(isIndividualAssistant(both)).toBe(false);
+      // ...so it is reachable as the LEAD it is, not as an individual.
+      expect(canReach(ember, both)).toBe(true);
+      expect(canReach(both, salesGrunt)).toBe(true);
+    });
+
+    it("is inert while nobody has been elected workspace chief", () => {
+      // The same superset promise the rest of this describe rests on: adding
+      // `individual` to a bot in a workspace with no Chief changes nothing.
+      expect(canReach(bruce, salesLead)).toBe(false);
+      expect(canReach(bot({ section: "Sales", chiefOfStaff: true }), bruce)).toBe(false);
+    });
+  });
 });
 
 // ── the Chief's second branch: individual assistants ──────────────────

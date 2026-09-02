@@ -29,6 +29,42 @@ describe("remote Cua computer setup", () => {
     }
   });
 
+  // A display name is whatever the user typed. It used to be scrubbed with
+  // `replace(/["'\\]/g, "")` and interpolated into the tmux command inside
+  // DOUBLE quotes, where `$(…)` and backticks still expand — so naming a bot
+  // `Bruce $(id -un)` ran `id` on the provisioned box.
+  it("cannot be made to run a command by naming a bot", () => {
+    const hostile = 'Bruce $(id -un) `whoami` "; touch /tmp/pwned; #';
+    const command = remoteComputerBootstrapCommand(hostile);
+
+    // The name reaches the box as base64, so no fragment of it survives as
+    // shell text anywhere in the script.
+    expect(command).not.toContain("$(id -un)");
+    expect(command).not.toContain("`whoami`");
+    expect(command).not.toContain("touch /tmp/pwned");
+
+    // ...and it is genuinely carried, not silently dropped: the encoded
+    // banner decodes back to the exact name.
+    const encoded = /printf %s ([A-Za-z0-9+/=]+) \| base64 -d/.exec(command);
+    expect(encoded, "the banner is no longer sent as base64").toBeTruthy();
+    expect(Buffer.from(encoded![1]!, "base64").toString("utf8")).toContain(hostile);
+
+    if (process.platform !== "win32") {
+      // Still a syntactically valid script with a hostile name in it...
+      expect(spawnSync("/bin/bash", ["-n"], { input: command }).status).toBe(0);
+      // ...and the substitution does not happen. Running the real bootstrap
+      // would need a box, so this executes only the tmux line's payload, which
+      // is the part the name is interpolated into.
+      const payload = /tmux new-session -d -s work (.+)$/m.exec(command);
+      expect(payload).toBeTruthy();
+      const ran = spawnSync("/bin/bash", ["-c", `eval ${payload![1]!.replace(/; exec bash -i/, "")}`], {
+        encoding: "utf8",
+      });
+      expect(ran.stdout).toContain("$(id -un)");
+      expect(ran.stdout).not.toContain(process.env.USER ?? "\u0000never");
+    }
+  });
+
   it("reattaches the private daemon after resume without opening a port", () => {
     const command = ensureRemoteCuaCommand();
     expect(command).toContain(`status --socket ${REMOTE_CUA_SOCKET}`);
