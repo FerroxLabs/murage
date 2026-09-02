@@ -176,31 +176,124 @@ day it is not.
 
 ## SEAN'S DECISIONS — settled, act on these
 
-- **Publish smart-trader: APPROVED.** IP-verified this session and banked:
-  `bot-library/builtins/smart-trader.json` has **zero** hits for Rebel Scanner,
-  REGIME-GATE, or any `smarttrader` path, and **all 11 declared skills exist in
-  `skills-library/`** — it installs complete. Not pushed only because
-  `scripts/publish-profiles.mjs` merges into a *network clone* of a public repo
-  and that is an irreversible outward action; do it first thing, read the script
-  before running it. **This is the fix for "trading returns nothing".**
-- **Fuigo artifact growth (~59 MB compressed per mac arch): APPROVED.** Closed,
-  no further action.
-- **Win32 ARM64: for the NEXT edition.** Nothing is broken today — the app ships
-  Windows x64 only and Windows-on-ARM emulates x64. When `fuigo-win32-arm64` is
-  published, add the target to `scripts/prepare-fuigo.mjs` (the placeholder
-  comment at `:66-68` explains the gap) **and** an arm64 entry under `win:` in
-  `electron-builder.yml:154`. Both, or it stages a binary nothing packages.
+- **Publish smart-trader: ALREADY DONE — do NOT re-run the publish.** Checked
+  against the live repo this session: `murage-teams` has **122 catalog entries**,
+  `smart-trader` among them, `teams/smart-trader/` present with **all 11 skills**
+  at correct paths. The previous handoff said it "was never published"; that was
+  **false**, and it sat in this section as an approved irreversible action. It was
+  nearly executed on trust. Verify the live catalog before acting on any claim
+  about it.
+- **"Trading returns nothing" is FIXED, and the cause was neither publishing nor
+  search.** The dev harness had been running since 06:40; the search route landed
+  at 08:40 (`cbad35d2`). `--experimental-strip-types` does not hot-reload, so the
+  process simply had no `/api/library/search` and 404'd it. After a restart:
+  `trading` → `smart-trader` at rank 1 plus 8 skills. **If a feature "does not
+  exist" in the running app, check the harness start time against the commit
+  before debugging the code.**
+- **Fuigo artifact growth (~59 MB compressed per mac arch): APPROVED.** Closed.
+- **Win32 ARM64: for the NEXT edition.** Needs BOTH a target in
+  `scripts/prepare-fuigo.mjs` (see the comment at `:66-68`) AND an arm64 entry
+  under `win:` in `electron-builder.yml:154`. Either alone stages a binary
+  nothing packages, or packages one nothing staged.
+- **Cloudflare tunnel + accounts: KEEP, dark. Do not delete, do not switch on.**
+  Reversed after Sean asked whether it is an asset. It is two separable things:
+  the **account system is the billing substrate** he will need for Composio and a
+  paid tier, and is worth keeping; the **tunnel is public ingress** and is gated
+  on the app being safe to expose. `accounts.murage.ai` has no DNS record — it is
+  a rebrand of upstream's `accounts.openmausbot.com` that nobody provisioned, and
+  it only activates in a packaged build, of which there are zero. So it is inert.
+  Sequence: Tailscale web UI first, Cloud Deploy second, tunnel considered for the
+  paid tier third, delete nothing until its replacement ships.
+- **`hosted` endpoint: re-rank, do NOT delete.** The plan's rationale for deleting
+  ("the only remaining path by which Murage becomes internet-reachable") is wrong —
+  the managed origin is a **0600 Unix socket**, and the 8812 gateway is loopback.
+  Deleting the kind alone would break the shipped default pairing flow
+  (`companion-pairing.ts:133` returns null without a hosted endpoint) and close no
+  hole. Re-rank tailnet to priority 0. **Blocked while the browser-door lane owns
+  `companion/src/`.**
+
+## SECURITY — closed this session, all negative-controlled
+
+- **`07bf5c7c`** — `POST /api/cli-test` and `PATCH /api/instances/:id` were
+  desktop-reachable from any surface. The first spawns a caller-supplied binary;
+  the second installs one as the engine for every later turn. Both now 404 off the
+  desktop. Control: with either gate removed the suite reports **200 for a live
+  probe of `/bin/echo`**.
+- **`f3ba4f59`** — `remoteComputerBootstrapCommand` scrubbed a bot's display name
+  with `replace(/["'\\]/g, "")` and interpolated it into the tmux banner **inside
+  double quotes**, where `$(…)` and backticks still expand. Naming a bot
+  `Bruce $(id -un)` ran `id` on the provisioned box. **Demonstrated live**, not
+  deduced. The banner now travels as base64 — encoding removes the interpolation
+  rather than escaping it, because escaping stays one metacharacter from wrong.
+  Same sink as upstream #682, hand-ported (`/opt/muragebox` vs their `/opt/ogb`).
+- **`f3ba4f59`** — `POST /api/bots/:id/computer/exec` runs arbitrary shell on the
+  box from the request body and had **no surface check**, while `join` two
+  branches above already refused the companion surface for something milder.
+  Now desktop-only.
+
+Four execution routes are now gated: `server/index.ts:7710`, `:8506`, `:8535`,
+`:9112`. **That is the precondition on any public ingress.**
+
+## UPSTREAM — reviewed, ranked, queued
+
+OpenMausBot `v0.1.46` (2026-09-01). 103 commits since our fork point; four already
+taken by subject. **Worth taking:**
+
+1. **`daadaff` #669 backend half — TAKE, applies with zero fuzz.** Fixes a real bug
+   in our tree: the MagicDNS name is read **once at boot**
+   (`companion/src/index.ts:239` → `listener.ts:86`), so installing or signing into
+   Tailscale while Murage runs leaves the route permanently "unavailable" until a
+   restart. Adds `POST /tailscale/refresh` and a coalescing re-probe. For a product
+   whose only door is the tailnet, that is the worst possible failure mode.
+   **Blocked while the browser-door lane owns `companion/src/`.**
+2. **`daadaff` #669 `preparePhonePairingRoute()`** — separate, self-contained, no
+   branding. Fixes a stale polled snapshot reporting `enabled: true` after the
+   sidecar died, which made Pair take the `read` branch and fail confusingly.
+3. **`cb0d376`** — adds `claude-fable-5-1` to the model catalog. One line.
+
+**REJECT:** `6dd974c` #677 (Dockerfile + Caddy + `OMB_WEBHOOK_PUBLIC_URL` — a
+purpose-built public-ingress feature, exactly what the threat model forbids),
+`a3822f8` #681 (adds a NEW CLI-spawning route with no surface gate — if ever taken
+it must be gated like `:8506`), plus all iOS and Android work.
+
+**Copy trap in #669:** it labels Tailscale *"Optional — Secure HTTPS above remains
+the recommended setup"*, where their "secure HTTPS" is the cloudflared/accounts
+path we keep dark. Take the logic, rewrite the copy so Tailscale is primary.
+**Coupling trap:** `PhoneSetupFlow.tsx:1066` gains a `variant === "onboarding"`
+guard that hides the Tailscale button in Settings because a new `CompanionSection`
+card replaces it — take that hunk without the card and Tailscale pairing vanishes
+from Settings entirely.
 
 ## OPEN — needs Sean, not code
 
-- **The skill-less profiles now have a plan — see §2b.** Corrected count: 27 of
-  57 local profiles, each with exactly one playbook. Content *and* code.
-- **Fuigo artifact size**: ~59 MB compressed added per mac arch.
-- **`fuigo-win32-arm64@1.0.1` is unpublished** (registry 404s). **Not a blocker** —
-  the app ships Windows x64 only and Windows-on-ARM emulates x64. Only affects
-  someone running `npx fuigo` directly on ARM.
-- **`docs/plans/skins/THEME-COLLAPSE.md` is stale** — it documents the old
+- **Is the paid tier this quarter or someday?** It decides whether the remaining
+  public-ingress hardening moves ahead of the three essentials. Nothing else in
+  the queue depends on the answer.
+- **The 27 skill-less profiles need a human approval pass** on the derived
+  skill mapping. A wrong skill silently changes what an assistant does, so the
+  mapping is proposed, not applied, for anything below high confidence.
+- **`docs/plans/skins/THEME-COLLAPSE.md` is stale** — documents the old
   panel/app assignment, fixed in `28dabbce`.
+
+## KNOWN MEDIUMS — recorded, deliberately not fixed (protocol: Critical/High only)
+
+- **Contract split #13, precisely stated.** `MURAGEBOX_*` is a *deliberate*
+  namespace for the child MCP process `server/computer-proxy.ts`, injected by
+  `server/container-computer.ts:1137-1138` and the drivers. But **nothing anywhere
+  sets `MURAGEBOX_BOX_API`**, so when the parent's `MURAGE_BOX_API`
+  (`server/box.ts:17`) points at a stub or a self-hosted provider, the child still
+  talks to `https://ascii.dev/api/box/v1`. Parent and child disagree about which
+  box API they are using. Only bites on an override, hence Medium.
+- `server/remote-computer.ts` — `if (elements.length >= 250) break;` with no
+  truncation signal, on the remote-box path.
+- Delete residue: removing a bot leaves `~/.murage/workspaces/` folders and
+  `messages.db` rows. Deliberate (keeps cleanup reversible), but nothing owns
+  reconciling the three stores.
+- `scripts/check-skin-contrast.mjs` still has dead `BASELINE_FLOORS` rows keyed
+  `midnight|…`, and `check:contrast` is not wired into `pnpm test`.
+- Fuigo CI gates: `release.yml` and `package-win.yml` have per-resource gates for
+  cloudflared and none for fuigo.
+- `resolveFuigoCli()` is exported, tested, and called by nobody.
 
 ## GOTCHAS THAT COST TIME
 
