@@ -383,6 +383,7 @@ import {
   companionEnabledAtRest,
   companionOriginTarget,
   companionPairing,
+  companionRefreshTailscale,
   companionCloudDesktopAccess,
   companionRevoke,
   companionRunning,
@@ -630,6 +631,18 @@ async function startDesktopCompanion({ waitForHosted = true, remember = true } =
   if (remember) rememberCompanionEnabled(true);
   await startManagedCompanionConnection({ waitForVerification: waitForHosted });
   return desktopCompanionState();
+}
+
+/** Re-probe Tailscale for the panel. Starting the sidecar when it is off is
+ * the honest reading of the request: the answer is a property of the sidecar,
+ * and "off" is not an answer about Tailscale. The hosted route is not waited
+ * on, because nothing here depends on it. */
+async function refreshDesktopCompanionTailscale() {
+  if (!companionRunning()) {
+    const started = await startDesktopCompanion({ waitForHosted: false });
+    if (!started.enabled || started.error) return started;
+  }
+  return decorateDesktopCompanionState(await companionRefreshTailscale());
 }
 
 async function stopDesktopCompanion({ remember = true } = {}) {
@@ -1808,9 +1821,10 @@ ipcMain.handle("skill-recorder:stop", () => stopRecorder());
 ipcMain.handle("skill-recorder:save", (_event, payload) => saveSkillRecording(payload));
 
 // ── companion sidecar ──────────────────────────────────────────────────
-// The renderer gets these five and nothing else: it can turn the companion
-// on and off, look at it, open or cancel a pairing window, and remove a
-// device. It cannot reach the sidecar's control port itself.
+// The renderer gets these and nothing else: it can turn the companion on and
+// off, look at it, ask it to re-read Tailscale, open or cancel a pairing
+// window, and remove a device. It cannot reach the sidecar's control port
+// itself.
 ipcMain.handle("companion:state", () => desktopCompanionState());
 ipcMain.handle("companion:start", () => startDesktopCompanion());
 ipcMain.handle("companion:stop", () => stopDesktopCompanion());
@@ -1818,6 +1832,7 @@ ipcMain.handle("companion:keep-awake", async (_event, enabled) => {
   rememberCompanionKeepAwake(Boolean(enabled));
   return desktopCompanionState();
 });
+ipcMain.handle("companion:refresh-tailscale", () => refreshDesktopCompanionTailscale());
 ipcMain.handle("companion:pairing", (_event, open, expectedToken) =>
   companionPairing(Boolean(open), expectedToken).then(decorateDesktopCompanionState),
 );

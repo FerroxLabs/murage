@@ -81,9 +81,15 @@ export function tailscaleAddress(addresses: string[] = lanAddresses()): string |
  * and no browser has the equivalent rule, so `hostCandidates()` now offers the
  * bare address too. See `docs/ios-companion-archive/ats-decision-record.md`.
  *
- * Read once when the listener comes up and cached — asking Tailscale is a
- * subprocess, and nothing here is worth spawning one per request. */
+ * Read when the listener comes up and cached — asking Tailscale is a
+ * subprocess, so ordinary state reads stay cheap. Cached is not read-once,
+ * though: Tailscale is routinely installed, signed into, or switched on after
+ * Murage is already running, and a name read only at boot would leave the
+ * tailnet — the route this product leads with — reading as permanently
+ * unavailable until someone restarted the app. An explicit setup action can
+ * refresh this cache when Tailscale changes later. */
 let cachedTailnetName: string | null = null;
+let activeTailnetRefresh: Promise<void> | null = null;
 
 /** The cached MagicDNS name, or null until `refreshTailnetName` finds one. */
 export function tailnetName(): string | null {
@@ -126,7 +132,7 @@ const searchPath = (): string =>
  * has MagicDNS on is worse than no message, and there was no way to tell
  * which of these paths had been tried. `onAttempt` is how the caller can say.
  */
-export async function refreshTailnetName(
+async function refreshTailnetNameOnce(
   onAttempt?: (cli: string, outcome: string) => void,
 ): Promise<void> {
   // A budget for the whole loop, not per probe. Seven candidates at five
@@ -185,4 +191,24 @@ export async function refreshTailnetName(
     }
   }
   cachedTailnetName = null;
+}
+
+/** Coalesce startup and user-triggered probes onto one hunt.
+ *
+ * Two probes in flight means two writers to one cache, each spawning a
+ * subprocess per candidate path, and the answer is then decided by whichever
+ * finishes last rather than by which one actually found a name — so a slow
+ * failure can overwrite a successful MagicDNS result that a caller was
+ * already told about. The slot is cleared when the hunt settles, because a
+ * promise latched forever would reintroduce the read-once bug in a new
+ * costume. */
+export function refreshTailnetName(
+  onAttempt?: (cli: string, outcome: string) => void,
+): Promise<void> {
+  if (activeTailnetRefresh) return activeTailnetRefresh;
+  const refresh: Promise<void> = refreshTailnetNameOnce(onAttempt).finally(() => {
+    if (activeTailnetRefresh === refresh) activeTailnetRefresh = null;
+  });
+  activeTailnetRefresh = refresh;
+  return refresh;
 }

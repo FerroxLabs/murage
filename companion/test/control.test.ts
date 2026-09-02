@@ -15,6 +15,8 @@ let port = 0;
 let devices: DeviceRegistry;
 let connectedDeviceIds: string[] = [];
 let disconnectedDeviceIds: string[] = [];
+let tailscaleRefreshes = 0;
+let completedTailscaleRefreshes = 0;
 
 const ask = async (
   method: string,
@@ -46,6 +48,11 @@ beforeAll(async () => {
     disconnectDevice: (deviceId) => {
       disconnectedDeviceIds.push(deviceId);
       connectedDeviceIds = connectedDeviceIds.filter((connectedId) => connectedId !== deviceId);
+    },
+    refreshTailscale: async () => {
+      tailscaleRefreshes += 1;
+      await Promise.resolve();
+      completedTailscaleRefreshes += 1;
     },
   });
   port = await new Promise<number>((resolve) =>
@@ -135,6 +142,32 @@ describe("origins the control server will change state for", () => {
     // desktop path. A CSRF check aimed at it would break the toggle.
     expect((await ask("POST", "/pairing")).status).toBe(201);
     await ask("DELETE", "/pairing");
+  });
+
+  it("re-reads Tailscale on request, and answers with state rather than a pairing code", async () => {
+    // Tailscale is routinely installed, signed in, or switched on after
+    // Murage is already running. Read only at boot, the tailnet — the route
+    // this product actually leads with — stays unavailable until the app is
+    // restarted. This is the door out of that.
+    const before = tailscaleRefreshes;
+    const refreshed = await ask("POST", "/tailscale/refresh");
+
+    expect(refreshed.status).toBe(200);
+    expect(tailscaleRefreshes).toBe(before + 1);
+    // Awaited, not fired and forgotten: a reply that raced the probe would
+    // hand back the stale name it was asked to replace.
+    expect(completedTailscaleRefreshes).toBe(tailscaleRefreshes);
+    // Re-probing is not pairing. A refresh that opened a pairing window
+    // would put a live code on screen because somebody checked their network.
+    expect(refreshed.body.pairing).toBeNull();
+  });
+
+  it("refuses a Tailscale refresh from a foreign page", async () => {
+    // It spawns subprocesses, so it is a state-changing write like the rest
+    // and gets the same origin rule.
+    const before = tailscaleRefreshes;
+    expect((await ask("POST", "/tailscale/refresh", { origin: "https://evil.example" })).status).toBe(403);
+    expect(tailscaleRefreshes).toBe(before);
   });
 
   it("does not let a stale conditional close cancel a replacement code", async () => {

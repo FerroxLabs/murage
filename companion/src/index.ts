@@ -230,6 +230,11 @@ const control = createControlServer({
   discovery: () => ({ advertising: mdns.advertising, name: service().name }),
   connectedDeviceIds: connectedDevices.ids,
   disconnectDevice: connectedDevices.disconnect,
+  // The startup probe below is not the last word. Tailscale brought up after
+  // this process started would otherwise read as absent for the lifetime of
+  // the app; `refreshTailnetName` coalesces, so a click during the startup
+  // hunt joins it rather than racing it.
+  refreshTailscale: () => refreshTailnetName(),
 });
 
 /** Bind a server, turning a bind failure into a sentence rather than a stack
@@ -315,9 +320,11 @@ async function main(): Promise<void> {
   // re-advertising under a new name later would show the phone two computers.
   await refreshMachineName();
 
-  // Asking Tailscale costs a subprocess, so it happens once, here, rather
-  // than per request. Silent on every failure: not installed, not logged in,
-  // not running all just mean "no name", and the address still works.
+  // Asking Tailscale costs a subprocess, so it happens here rather than per
+  // request. Not once, though — `POST /tailscale/refresh` asks again, because
+  // Tailscale is commonly installed or signed into after this point. Silent
+  // on every failure: not installed, not logged in, not running all just mean
+  // "no name", and the address still works.
   const tailscaleTried: string[] = [];
   await refreshTailnetName((cli, outcome) => tailscaleTried.push(`  ${cli} — ${outcome}`)).catch(() => {});
 
