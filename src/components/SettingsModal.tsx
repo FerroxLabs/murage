@@ -19,6 +19,7 @@ import { SkinPicker } from "./SkinPicker";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
 import { cn } from "@/lib/cn";
+import { useDesktopSurface } from "@/lib/use-surface";
 import {
   browserProfileDeletionBlockReason,
   browserProfilesForPatch,
@@ -28,20 +29,45 @@ const SECTIONS: Array<{
   id: AppSettingsSection;
   label: string;
   icon: typeof User;
+  /** Hidden on any surface that is not the confirmed desktop. */
+  desktopOnly?: boolean;
   keywords: string[];
 }> = [
   { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls"] },
   { id: "experimental", label: "Experimental", icon: FlaskConical, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
-  { id: "connections", label: "Connections", icon: KeyRound, keywords: ["keys", "api", "composio", "box", "xai", "vps"] },
-  { id: "engines", label: "Engines", icon: Terminal, keywords: ["models", "claude", "grok", "providers", "cli"] },
-  { id: "companion", label: "Phone", icon: Smartphone, keywords: ["companion", "phone", "pair", "mobile"] },
-  { id: "computer", label: "Local VM", icon: Monitor, keywords: ["vm", "virtual", "desktop"] },
+  // `desktopOnly` is not a tidiness flag. These four are the credential and
+  // execution surface of the app: API keys for xAI, Box, Composio and the
+  // OpenCode gateway, the VPS connection, the engine CLI installers, and the
+  // local VM controls. A paired phone was rendering every one of them —
+  // readable, editable, on a device that is only supposed to be able to read
+  // conversations. The door already refuses the routes behind them, so
+  // nothing could execute, but a key on screen is a key disclosed.
+  //
+  // Phone is here for a different reason: on a phone it is an offer to do the
+  // thing you have already done.
+  { id: "connections", label: "Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps"] },
+  { id: "engines", label: "Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli"] },
+  { id: "companion", label: "Phone", icon: Smartphone, desktopOnly: true, keywords: ["companion", "phone", "pair", "mobile"] },
+  { id: "computer", label: "Local VM", icon: Monitor, desktopOnly: true, keywords: ["vm", "virtual", "desktop"] },
   { id: "usage", label: "Usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
 ];
 
 function sectionMatches(section: (typeof SECTIONS)[number], query: string): boolean {
   if (!query) return true;
   return [section.label, ...section.keywords].some((part) => part.toLowerCase().includes(query));
+}
+
+/** The sections this surface may see.
+ *
+ * `undefined` — the surface has not answered yet — withholds the desktop-only
+ * ones. Neutral is the narrow side: showing an API key for one frame and then
+ * hiding it has already disclosed it, and a section appearing a moment late on
+ * the desktop costs nothing. */
+export function sectionsForSurface(
+  sections: typeof SECTIONS,
+  desktop: boolean | undefined,
+): typeof SECTIONS {
+  return desktop === true ? sections : sections.filter((entry) => !entry.desktopOnly);
 }
 
 /** Name + email, persisted to /api/config {profile} on blur. */
@@ -518,14 +544,16 @@ export function SettingsModal() {
   const dialogRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
-  const visibleSections = SECTIONS.filter((entry) => sectionMatches(entry, q));
+  const desktop = useDesktopSurface();
+  const allowed = sectionsForSurface(SECTIONS, desktop);
+  const visibleSections = allowed.filter((entry) => sectionMatches(entry, q));
 
   useEffect(() => {
-    const visible = SECTIONS.filter((entry) => sectionMatches(entry, q));
+    const visible = sectionsForSurface(SECTIONS, desktop).filter((entry) => sectionMatches(entry, q));
     if (visible.some((entry) => entry.id === section)) return;
     const first = visible[0];
     if (first) dispatch({ type: "toggleAppSettings", open: true, section: first.id });
-  }, [dispatch, q, section]);
+  }, [dispatch, desktop, q, section]);
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -687,7 +715,7 @@ export function SettingsModal() {
               </>
             )}
 
-            {section === "connections" && (
+            {desktop === true && section === "connections" && (
               <Card
                 title="Connections"
                 subtitle="Connected apps work automatically in the installed app. Other optional service keys stay on this computer."
@@ -712,15 +740,15 @@ export function SettingsModal() {
               </Card>
             )}
 
-            {section === "engines" && (
+            {desktop === true && section === "engines" && (
               <Card title="Engine CLIs" subtitle="Which binary each engine runs. Saved as you go.">
                 <EnginesSettings />
               </Card>
             )}
 
-            {section === "companion" && <CompanionSection profileEmail={state.config?.profile?.email} />}
+            {desktop === true && section === "companion" && <CompanionSection profileEmail={state.config?.profile?.email} />}
 
-            {section === "computer" && <LocalComputerSection />}
+            {desktop === true && section === "computer" && <LocalComputerSection />}
 
             {section === "usage" && <UsageSection />}
           </div>
