@@ -75,6 +75,7 @@ import { webhookMessageView } from "@/lib/webhook-message";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 import { useComposerDockPad } from "@/lib/composer-dock";
+import { CHIP, CHIP_NAME } from "@/lib/transcript-chrome";
 import {
   TRANSCRIPT_WINDOW_SIZE,
   expandWindowStart,
@@ -194,7 +195,7 @@ function ErrorRow({
 }) {
   return (
     <div className="flex justify-start">
-      <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
+      <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
         <div className="flex items-start gap-2">
           <AlertTriangle size={15} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{message}</span>
@@ -227,7 +228,7 @@ class MessageBoundary extends Component<{ children: ReactNode; fallbackText: str
   render() {
     if (this.state.failed) {
       return (
-        <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
+        <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
           {this.props.fallbackText}
         </div>
       );
@@ -259,7 +260,7 @@ function BubbleEditor({
     if (draft.trim()) onSubmit(draft.trim());
   };
   return (
-    <div className="w-full max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
+    <div className="w-full max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
       <textarea
         ref={ref}
         value={draft}
@@ -345,6 +346,13 @@ function Bubble({
   return (
     <div className={cn("group flex w-full flex-col", user ? "animate-msg-in items-end" : "items-start")}>
       <div className={cn("flex w-full items-center gap-1.5", user ? "justify-end" : "justify-start")}>
+        {/* HOVER-ONLY RAIL. Every control in here is `opacity-0` until a
+            pointer hovers the row, and a phone reports `hover: none` — so on
+            a phone these were invisible AND still reserving ~130px of the
+            row, which is most of why the transcript read as ~75% of the
+            screen. `md:contents` keeps them as flex items of this row on a
+            pointer device; below `md` they leave the layout entirely. */}
+        <div className="max-md:hidden md:contents">
         {/* editing rewinds the thread, so it waits for the turn to end —
             same rule as the version switcher below */}
         {user && message.kind === "text" && !webhookView && !bot.busy && (
@@ -389,9 +397,11 @@ function Bubble({
             </button>
           </>
         )}
+        </div>
         <div
+          data-testid="msg-bubble"
           className={cn(
-            "w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl text-[15px] leading-relaxed",
+            "w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl text-[15px] leading-relaxed",
             user && webhookView
               ? "overflow-hidden border border-accent/25 bg-card text-ink shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
               : user
@@ -463,6 +473,8 @@ function Bubble({
             </MessageBoundary>
           )}
         </div>
+        {/* the bot side of the same hover-only rail — see the note above */}
+        <div className="max-md:hidden md:contents">
         {!user && (
           <>
             <div className="flex flex-col gap-0.5 self-end pb-0.5">
@@ -510,9 +522,10 @@ function Bubble({
             </button>
           </>
         )}
+        </div>
         <span
           className={cn(
-            "self-end pb-1 text-[11px] tabular-nums text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100",
+            "self-end pb-1 text-[11px] tabular-nums text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100 max-md:hidden",
             user ? "order-first mr-1" : "ml-1",
           )}
         >
@@ -546,6 +559,7 @@ function Bubble({
   );
 }
 
+
 /** A tool run: spinner while live, check/cross once settled. */
 function ActivityChip({ message }: { message: Message }) {
   const { dispatch } = useStore();
@@ -559,11 +573,13 @@ function ActivityChip({ message }: { message: Message }) {
         <button
           onClick={() => dispatch({ type: "select", id: comm.groupId })}
           title={`Open the conversation with ${comm.withName}`}
-          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+          className={cn(CHIP, "text-left text-ink-secondary hover:bg-raised hover:text-ink")}
         >
-          <EmberAvatar color={comm.withColor} state="happy" size={16} />
-          <span className="max-w-[480px] truncate">{tool.name}</span>
-          <ChevronRight size={13} />
+          <span className="shrink-0">
+            <EmberAvatar color={comm.withColor} state="happy" size={16} />
+          </span>
+          <span className={CHIP_NAME}>{tool.name}</span>
+          <ChevronRight size={13} className="shrink-0" />
         </button>
       </div>
     );
@@ -572,19 +588,19 @@ function ActivityChip({ message }: { message: Message }) {
   return (
     <div className="flex justify-start">
       <div
-        className={cn(
-          "flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px]",
-          failed ? "text-danger" : "text-ink-secondary",
-        )}
+        data-testid="tool-chip"
+        className={cn(CHIP, failed ? "text-danger" : "text-ink-secondary")}
       >
-        {tool.ok === undefined ? (
-          <WorkingDots size={3.5} />
-        ) : failed ? (
-          <X size={13} />
-        ) : (
-          <Check size={13} className="text-success" />
-        )}
-        <span className="max-w-[480px] truncate font-mono">{tool.name}</span>
+        <span className="shrink-0">
+          {tool.ok === undefined ? (
+            <WorkingDots size={3.5} />
+          ) : failed ? (
+            <X size={13} />
+          ) : (
+            <Check size={13} className="text-success" />
+          )}
+        </span>
+        <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name}</span>
       </div>
     </div>
   );
@@ -596,7 +612,7 @@ function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
       <img
         src={`data:${mime ?? "image/png"};base64,${png}`}
         alt="Bot's screen"
-        className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl border border-hairline/40"
+        className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-hairline/40"
       />
     </div>
   );
@@ -1253,7 +1269,11 @@ export function ChatView({ bot }: { bot: Bot }) {
       <div className="relative min-h-0 flex-1">
       <div
         ref={scrollRef}
-        className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain px-5 [overflow-anchor:none]"
+        data-testid="chat-scroll"
+        /* A phone gets a trim, not a margin: `px-5` is a desktop gutter, and
+           on a 390px screen it spent 40px — a tenth of the screen — before
+           the bubble's own padding had started. See transcript-width.human. */
+        className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain px-5 max-md:px-3 [overflow-anchor:none]"
         onPointerDown={(e) => {
           // grabbing the scrollbar is a scroll gesture too — the lane lives
           // past the content box (clientWidth excludes it)
@@ -1353,7 +1373,7 @@ export function ChatView({ bot }: { bot: Bot }) {
             since={busySince}
           >
             {popping ? (
-              <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+              <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
                 <MessageBoundary fallbackText={popping.text}>
                   <ChatMarkdown text={popping.text} />
                 </MessageBoundary>
@@ -1367,7 +1387,7 @@ export function ChatView({ bot }: { bot: Bot }) {
           {bot.busy &&
             (state.pendingQueued[bot.threadId] ?? []).map((entry) => (
               <div key={entry.queueId} className="flex flex-col items-end">
-                <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink-secondary">
+                <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink-secondary">
                   {entry.text}
                 </div>
                 <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">

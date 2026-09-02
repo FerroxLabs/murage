@@ -42,6 +42,7 @@ import { useFocusMessage } from "@/lib/focus-message";
 import { shortPath } from "@/lib/short-path";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
 import { useComposerDockPad } from "@/lib/composer-dock";
+import { CHIP, CHIP_NAME } from "@/lib/transcript-chrome";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
@@ -71,13 +72,15 @@ function RoomToolChip({ message }: { message: Message }) {
   if (!tool) return null;
   return (
     <div className="flex justify-start">
+      {/* Same shape, and the same trap, as ChatView's ActivityChip: a nowrap
+          `max-w-[480px]` span is the chip's min-content width, so the pill
+          could not shrink below 480px and ran off a phone. See the note there
+          and src/e2e/transcript-width.human.spec.ts. */}
       <div
-        className={cn(
-          "flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px]",
-          tool.ok === false ? "text-danger" : "text-ink-secondary",
-        )}
+        data-testid="tool-chip"
+        className={cn(CHIP, tool.ok === false ? "text-danger" : "text-ink-secondary")}
       >
-        <span className="max-w-[480px] truncate font-mono">{tool.name}</span>
+        <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name}</span>
       </div>
     </div>
   );
@@ -221,6 +224,11 @@ const Transcript = memo(function Transcript({
           ) : m.kind === "text" && m.text ? (
             <div className={cn("group flex w-full flex-col", user ? "items-end" : "items-start")}>
               <div className={cn("flex w-full items-end gap-1.5", user ? "justify-end" : "justify-start")}>
+                {/* HOVER-ONLY RAIL — `opacity-0` until a pointer hovers the
+                    row, and a phone reports `hover: none`, so on a phone these
+                    were invisible and still reserving row width. `md:contents`
+                    keeps them flex items of this row on a pointer device. */}
+                <div className="max-md:hidden md:contents">
                 {user && (
                   <>
                     <button
@@ -235,9 +243,11 @@ const Transcript = memo(function Transcript({
                     <PinToggle group={group} message={m} />
                   </>
                 )}
+                </div>
                 <div
+                  data-testid="msg-bubble"
                   className={cn(
-                    "w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
+                    "w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
                     user ? "whitespace-pre-wrap bg-bubble-user text-ink" : "bg-card text-ink",
                   )}
                   title={new Date(m.at).toLocaleString()}
@@ -272,6 +282,8 @@ const Transcript = memo(function Transcript({
                     </>
                   ) : <ChatMarkdown text={m.text} />}
                 </div>
+                {/* the other side of the same hover-only rail */}
+                <div className="max-md:hidden md:contents">
                 {!user && (
                   <>
                     <button
@@ -286,7 +298,8 @@ const Transcript = memo(function Transcript({
                     <PinToggle group={group} message={m} />
                   </>
                 )}
-                <span className="self-end pb-1 text-[11px] tabular-nums text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100">
+                </div>
+                <span className="self-end pb-1 text-[11px] tabular-nums text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100 max-md:hidden">
                   {formatTime(m.at)}
                 </span>
               </div>
@@ -1161,7 +1174,10 @@ export function GroupView({ group }: { group: Group }) {
       <div className="relative min-h-0 flex-1">
       <div
         ref={scrollRef}
-        className="h-full overflow-x-hidden overflow-y-auto px-5 [overflow-anchor:none]"
+        data-testid="chat-scroll"
+        /* `px-5` is a desktop gutter; a phone gets a trim. Same change and the
+           same reason as ChatView — src/e2e/transcript-width.human.spec.ts. */
+        className="h-full overflow-x-hidden overflow-y-auto px-5 max-md:px-3 [overflow-anchor:none]"
         onWheel={(e) => {
           if (e.deltaY < 0) setBottomFollow(false);
           else if (atEnd()) setBottomFollow(true);
@@ -1264,7 +1280,7 @@ export function GroupView({ group }: { group: Group }) {
               answering={popping !== null}
             >
               {popping ? (
-                <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+                <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
                   <ChatMarkdown text={popping.text} />
                 </div>
               ) : null}
@@ -1272,7 +1288,7 @@ export function GroupView({ group }: { group: Group }) {
           )}
           {(state.pendingQueued[group.threadId] ?? []).map((entry) => (
             <div key={entry.queueId} className="flex flex-col items-end">
-              <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-[92%] whitespace-pre-wrap rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed text-ink-secondary">
+              <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full whitespace-pre-wrap rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed text-ink-secondary">
                 {entry.text}
               </div>
               <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
