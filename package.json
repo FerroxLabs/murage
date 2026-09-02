@@ -36,8 +36,9 @@
     "dev:desktop": "node scripts/prepare-cloudflared.mjs --current && electron .",
     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
-    "test": "vitest run && pnpm broker:test && pnpm test:electron && pnpm test:packaged-server",
+    "test": "pnpm check:contrast && vitest run && pnpm broker:test && pnpm test:electron && pnpm test:packaged-server",
     "test:electron": "node --test \"electron/*.node-test.mjs\"",
+    "test:human": "playwright test src/e2e/*.human.spec.ts",
     "bench:observation": "node --experimental-strip-types scripts/bench-observation.ts",
     "test:watch": "vitest",
     "test:cua": "pnpm build:cua && node scripts/smoke-cua.mjs",
@@ -96,6 +97,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "1.57.0",
     "@tailwindcss/vite": "^4.1.11",
     "@types/node": "^26.2.0",
     "@types/react": "^19.1.9",

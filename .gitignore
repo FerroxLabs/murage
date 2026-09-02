@@ -31,3 +31,10 @@ cloudflare/control-plane/worker-configuration.d.ts
 !.env.example
 *.p12
 *.pem
+
+# Playwright human specs: the scratch data dir is .murage-scratch (above),
+# these are the runner's own artefacts
+test-results
+playwright-report
+blob-report
+playwright/.cache
