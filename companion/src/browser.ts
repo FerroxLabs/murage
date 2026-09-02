@@ -251,7 +251,19 @@ export function originGate(
 
   // 3. Origin, when present, must be exactly ours. "When present" and not
   //    "required" because it is absent on same-origin GET and on EventSource.
-  if (req.headers.origin && req.headers.origin !== origin) {
+  //
+  //    The navigation exemption from rule 2 carries through here, and it has
+  //    to: a browser opening a link from another app sends `Origin` on the
+  //    top-level navigation — Safari sends the originating origin, and
+  //    `Origin: null` after a redirect or from a sandboxed webview. Exempting
+  //    the request from the Sec-Fetch check and then refusing it on this one
+  //    fixes nothing, which is exactly what happened: Sean's phone still got
+  //    "forbidden: cross-origin request" after rule 2 was opened. Measured —
+  //    cross-site navigate 200, the same request with any Origin header 403.
+  //
+  //    Safe for the same reason: whoever sent him cannot read the response.
+  //    Every API read and every write still faces the full check below.
+  if (!navigating && req.headers.origin && req.headers.origin !== origin) {
     return { status: 403, error: "forbidden: cross-origin request" };
   }
 
