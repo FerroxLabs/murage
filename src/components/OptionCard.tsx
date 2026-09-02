@@ -10,14 +10,35 @@ export function isOnboardingCard(message: Message): boolean {
   return message.kind === "options" && !!message.card && !message.card.requestId;
 }
 
-/** Hide the quiz once they have talked past it — picked an option, typed in
- * the composer, or dismissed it. Live asks are never this card. */
-export function shouldHideOnboardingCard(message: Message, transcript: Message[]): boolean {
-  if (!isOnboardingCard(message) || !message.card) return false;
-  if (message.card.dismissed || message.card.answered) return true;
+/** A later user message on this path: they have already talked past the quiz. */
+function talkedPast(message: Message, transcript: Message[]): boolean {
   const index = transcript.findIndex((entry) => entry.id === message.id);
   if (index < 0) return false;
   return transcript.slice(index + 1).some((later) => later.role === "user" && later.kind === "text");
+}
+
+/** Render nothing at all: the question was answered, so it is now a message in
+ * the transcript, or an older server never recorded the hide and only the
+ * transcript knows. A card the person hid is NOT hidden this way — it
+ * collapses to the line below, which puts it back. Live asks are never this
+ * card. */
+export function shouldHideOnboardingCard(message: Message, transcript: Message[]): boolean {
+  if (!isOnboardingCard(message) || !message.card) return false;
+  if (message.card.answered) return true;
+  // dismissed:false is an explicit "show me this again" and outranks the
+  // transcript; undefined means nothing was ever recorded either way.
+  if (message.card.dismissed === undefined) return talkedPast(message, transcript);
+  return false;
+}
+
+/** The X on this card, and typing in the composer, both hide it — and until
+ * now that was a one-way door with no control anywhere in the app to undo it.
+ * While it is hidden and still unanswered, the card keeps its place in the
+ * transcript as one line that brings it back. */
+export function shouldOfferOnboardingCardBack(message: Message, transcript: Message[]): boolean {
+  if (shouldHideOnboardingCard(message, transcript)) return false;
+  if (!isOnboardingCard(message) || !message.card) return false;
+  return message.card.dismissed === true && !message.card.answered;
 }
 
 export function OptionCard({
@@ -41,6 +62,21 @@ export function OptionCard({
     dispatch({ type: "answerCard", botId, messageId: message.id, answer: text.trim() });
   };
 
+  if (shouldOfferOnboardingCardBack(message, transcript)) {
+    return (
+      <div className="flex w-full max-w-[840px] flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink-secondary">
+        <span>Setup question hidden.</span>
+        <button
+          type="button"
+          onClick={() => dispatch({ type: "restoreCard", botId, messageId: message.id })}
+          className="-mx-1 rounded-md px-1 py-0.5 text-ink underline decoration-hairline underline-offset-2 hover:bg-control"
+        >
+          Bring it back
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full max-w-[840px] rounded-2xl border border-hairline/50 bg-card p-4">
       <div className="flex items-start justify-between gap-4">
@@ -51,10 +87,16 @@ export function OptionCard({
           </div>
         </div>
         <button
+          type="button"
+          // A bare X states no cost. This one is a hide the transcript keeps a
+          // way back from; the live-ask X answers the provider with a denial,
+          // and those are two different prices to name.
+          aria-label={card.requestId ? "Dismiss this request" : "Hide this question"}
+          title={card.requestId ? "Dismiss this request" : "Hide this question"}
           onClick={() =>
             dispatch({ type: "dismissCard", botId, messageId: message.id })
           }
-          className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
+          className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
         >
           <X size={16} />
         </button>

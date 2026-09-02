@@ -91,10 +91,43 @@ describe("what skills a bot has", () => {
 
     expect(markup).toContain("Ember has no skills yet.");
     expect(markup).toContain("team library");
+    // the panel has no add control at all, so a person who reads this and
+    // wants one has to be told where the library actually is
+    expect(markup).toContain("the + at the top of the sidebar, then Teams");
     // the panel has no import field and POST /api/bots/:id/skills is unwired,
     // so the copy must not send anyone looking for one
     expect(markup).not.toContain("GitHub import");
     expect(markup).not.toContain('aria-label="Search');
+  });
+
+  it("says installed skills arrive switched ON, which is what the import does", () => {
+    const markup = render({ skills: [] });
+
+    expect(markup).toContain("its skills arrive switched on");
+    // the exact sentence that was false from 0.1.44 until this test existed
+    expect(markup).not.toContain("land switched off");
+    expect(markup).not.toContain("switched off until you");
+
+    // Pin the behaviour, not just the words: the string above is only true
+    // because the team import enables every library skill it installs. If that
+    // loop stops enabling them, this fails here rather than going stale on
+    // screen for another forty releases.
+    const server = readFileSync(new URL("../../server/index.ts", import.meta.url), "utf8").replace(/\s+/g, " ");
+    const start = server.indexOf("for (const skillId of source.skillIds)");
+    expect(start).toBeGreaterThan(-1);
+    const installLoop = server.slice(start, start + 1200);
+    expect(installLoop).toContain("installSkillFromLibrary(created.id, skillId, SKILL_LIBRARY_ROOT)");
+    expect(installLoop).toContain("setSkillEnabled(created.id, installed.name, true)");
+
+    // and the other route the copy names: a learned skill is enabled when its
+    // proposal is confirmed, not left off for a second visit to this panel
+    const skills = readFileSync(new URL("../../server/skills.ts", import.meta.url), "utf8").replace(/\s+/g, " ");
+    expect(skills).toContain('staged.action === "create" ? installPreparedSkill(botId, staged.source, prepared, { enabled: true,');
+  });
+
+  it("describes /learn only where /learn exists", () => {
+    expect(render({ skills: [], authoringEnabled: true })).toContain("/learn in chat");
+    expect(render({ skills: [], authoringEnabled: false })).not.toContain("/learn");
   });
 
   it("names the bot while its skills are loading", () => {

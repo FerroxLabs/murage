@@ -593,6 +593,10 @@ export type Action =
   | { type: "threadActive"; threadId: string; activeLeafId: string }
   | { type: "answerCard"; botId: string; messageId: string; answer: string }
   | { type: "dismissCard"; botId: string; messageId: string }
+  /** Undo of dismissCard for the first-run question: the only way back to a
+   * card the X removed. Onboarding cards only — a live ask that was denied is
+   * settled with the provider and cannot be un-denied from here. */
+  | { type: "restoreCard"; botId: string; messageId: string }
   // permission cards answer by THREAD, so a request raised inside a room
   // can be answered the same way as one in a 1:1 chat
   | {
@@ -881,6 +885,10 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "dismissCard":
       return patchCard(state, action.botId, action.messageId, { dismissed: true });
+    // Explicitly false, never a delete: `undefined` means "nobody decided" and
+    // lets the transcript hide the card again on its own.
+    case "restoreCard":
+      return patchCard(state, action.botId, action.messageId, { dismissed: false });
     case "decideRequest":
       return state; // the server's request.resolved patch settles the card
     case "botAdded":
@@ -1672,6 +1680,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
           break;
         }
+        case "restoreCard":
+          // Same route the dismissal wrote through, so the card is still there
+          // after a reload rather than only until this window closes.
+          persistCard(action.botId, action.messageId, { dismissed: false });
+          break;
         case "newBot":
           api("/api/bots", { method: "POST" })
             .then(({ bot }) => rawDispatch({ type: "botAdded", bot }))

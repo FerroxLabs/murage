@@ -435,10 +435,19 @@ export function SkillsBody(props: SkillsBodyProps) {
   if (skills.length === 0) {
     return (
       <div className="mt-3">
+        {/* This box said the opposite until 0.1.44 and nothing caught it. The
+            import path installs each of a profile's skills and switches it on
+            in the same loop (server/index.ts, installSkillFromLibrary then
+            setSkillEnabled(…, true)), and a skill learned in chat is enabled
+            the moment its proposal is confirmed (applyStagedSkillWrite). There
+            is no add control on this panel, so the route has to be named. */}
         <div className="rounded-lg bg-inset px-3 py-2.5 text-[12px] leading-relaxed text-ink-secondary">
-          {botName} has no skills yet. Skills arrive with a profile you hire from the team library
-          {authoringEnabled ? ", or from /learn in chat" : ""} — once installed they land switched off until you
-          read them here.
+          {botName} has no skills yet. Hire a profile from the team library — the + at the top of the
+          sidebar, then Teams — and its skills arrive switched on.
+          {authoringEnabled
+            ? " A skill you teach with /learn in chat is switched on once you confirm it."
+            : ""}{" "}
+          Everything that lands here can be read, switched off, or removed.
         </div>
         {staged > 0 && (
           <div className="mt-2 text-[11.5px] text-warning">
