@@ -90,20 +90,36 @@ describe("what skills a bot has", () => {
     const markup = render({ skills: [] });
 
     expect(markup).toContain("Ember has no skills yet.");
-    expect(markup).toContain("team library");
-    // the panel has no add control at all, so a person who reads this and
-    // wants one has to be told where the library actually is
-    expect(markup).toContain("the + at the top of the sidebar, then Teams");
-    // the panel has no import field and POST /api/bots/:id/skills is unwired,
-    // so the copy must not send anyone looking for one
+    // This used to read "the + at the top of the sidebar, then Teams" —
+    // directions to a menu three levels away, written because the panel had no
+    // add control at all. It has one now, so the copy names the outcome and
+    // the control does the navigating.
+    expect(markup).not.toContain("the + at the top of the sidebar, then Teams");
+    // the panel has no import field, so the copy must not send anyone looking
+    // for one
     expect(markup).not.toContain("GitHub import");
     expect(markup).not.toContain('aria-label="Search');
+  });
+
+  it("offers a visible way to add one, in both the empty and the full state", () => {
+    // A VISIBLE control, not a right-click and not a sentence pointing
+    // elsewhere: `Sidebar.tsx` shipped its bot menu behind `onContextMenu`
+    // alone and a touch device fires no `contextmenu` event at all.
+    const onBrowse = vi.fn();
+    for (const skills of [[], [skill()]]) {
+      const markup = render({ skills, onBrowse });
+      expect(markup).toContain('aria-label="Add a skill to Ember"');
+      // the label a person actually reads, not just the accessible name
+      expect(markup).toContain("Add a skill</button>");
+    }
+    // and it is optional, so the body still renders without a store behind it
+    expect(render({ skills: [] })).not.toContain("Add a skill</button>");
   });
 
   it("says installed skills arrive switched ON, which is what the import does", () => {
     const markup = render({ skills: [] });
 
-    expect(markup).toContain("its skills arrive switched on");
+    expect(markup).toContain("arrives switched on");
     // the exact sentence that was false from 0.1.44 until this test existed
     expect(markup).not.toContain("land switched off");
     expect(markup).not.toContain("switched off until you");

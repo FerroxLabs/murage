@@ -11,6 +11,14 @@ import { z } from "zod";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
 import { escapeAttribute } from "../src/lib/composer-attachments.ts";
 import {
+  chooseIntakeProfile,
+  describeIntakeSkill,
+  librarySkillId,
+  librarySkillIds,
+  type IntakeProfile,
+  type IntakeSkill,
+} from "../src/lib/onboarding-intake.ts";
+import {
   CREDENTIAL_TARGETS,
   credentialResumeOutcome,
   credentialIsConfigured,
@@ -196,6 +204,7 @@ import {
   getStagedSkillWrite,
   installSkill,
   installSkillFromLibrary,
+  isSkillName,
   SKILL_LIBRARY_ROOT,
   listSkills,
   type SkillListing,
@@ -5169,6 +5178,101 @@ async function catalogForSearch(): Promise<SearchableTeam[]> {
   }
 }
 
+// ── new-bot intake: one question, one answer, one configured agent ────
+//
+// A bot created by "New Bot" arrives blank — no profile, no skills. The
+// intake asks the person one plain question and turns the answer into a
+// SUGGESTION. Nothing here installs anything: suggest is a read, and the
+// apply route below is the only writer and is desktop-surface-only.
+//
+// The ranking and the relevance gate live in src/lib/onboarding-intake.ts so
+// the renderer's card and this route cannot drift apart, and so the decision
+// is testable without a catalogue download or an FTS5 index. Only the parts
+// that need this process — the catalogue, the index, and the on-disk skill
+// library — are here.
+
+/** Candidates pulled from the ranked catalogue before the relevance gate.
+ *  bm25 always returns *something* for a query with any indexed token in it,
+ *  so rank 1 is a candidate, never an answer. */
+const INTAKE_PROFILE_CANDIDATES = 8;
+/** Loose skills offered when no profile survives the gate. */
+const INTAKE_FALLBACK_SKILLS = 8;
+/** Longest answer this route will read. Matches INTAKE_ANSWER_MAX in the card;
+ *  restated here because the server cannot trust the client to have trimmed. */
+const INTAKE_QUERY_MAX = 300;
+
+/** Read one bundled skill's manifest for display. `isSkillName` is the same
+ *  traversal gate `installSkillFromLibrary` applies, re-applied here so a
+ *  catalogue path can only ever name one child of the library root. */
+function librarySkillSummary(skillId: string): IntakeSkill | null {
+  if (!isSkillName(skillId)) return null;
+  const manifestPath = join(SKILL_LIBRARY_ROOT, skillId, "manifest.json");
+  if (!existsSync(manifestPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    return {
+      id: skillId,
+      name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : skillId,
+      description: typeof parsed.description === "string" ? parsed.description : "",
+      // Trigger terms are what tell the relevance gate that `chart-analysis`
+      // is about trading — the catalogue entry for Smart Trader never says
+      // the word.
+      terms: Array.isArray(parsed.triggerTerms)
+        ? parsed.triggerTerms.filter((term): term is string => typeof term === "string").slice(0, 40)
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The skills a profile actually brings: declared by the catalogue AND
+ *  present in this build's library. */
+function intakeProfileSkills(entry: SearchableTeam): IntakeSkill[] {
+  return librarySkillIds(entry.skills, MAX_LIBRARY_SKILLS_PER_REQUEST)
+    .map(librarySkillSummary)
+    .filter((skill): skill is IntakeSkill => skill !== null);
+}
+
+/** The best profile for a sentence, or null when nothing is a real match.
+ *  Returning null is a first-class answer: it is what sends the caller to the
+ *  skills fallback instead of confidently suggesting the wrong assistant. */
+async function intakeProfileFor(query: string): Promise<IntakeProfile | null> {
+  const entries = await catalogForSearch();
+  const bySlug = new Map(entries.map((entry) => [entry.slug, entry]));
+  const ranked = searchCatalog(entries, query, INTAKE_PROFILE_CANDIDATES)
+    .flatMap((hit) => {
+      const entry = bySlug.get(hit.slug);
+      return entry ? [entry] : [];
+    });
+  const chosen = chooseIntakeProfile(query, ranked, intakeProfileSkills, describeIntakeSkill);
+  if (!chosen) return null;
+  return {
+    slug: chosen.entry.slug,
+    name: chosen.entry.name,
+    summary: chosen.entry.summary,
+    category: chosen.entry.category,
+    outcome: chosen.entry.outcome ?? null,
+    skills: chosen.skills,
+  };
+}
+
+/** The first person in a shareable document, plus the skills it declares.
+ *  A legacy team manifest carries no skill ids at all — those live in the
+ *  catalogue entry — so the caller unions the two. */
+function shareableLead(
+  document: Awaited<ReturnType<typeof fetchLibraryTeam>>,
+): { member: ReturnType<typeof packageAgentAsMember>; skillIds: string[] } | null {
+  if (document.format === "murage.package") {
+    const agent = document.package.agents[0];
+    if (!agent) return null;
+    return { member: packageAgentAsMember(agent), skillIds: agent.skills ?? [] };
+  }
+  const member = document.team.members[0];
+  if (!member) return null;
+  return { member, skillIds: [] };
+}
+
 // ── HTTP plumbing ─────────────────────────────────────────────────────
 function json(res: ServerResponse, status: number, body: unknown) {
   const data = JSON.stringify(body);
@@ -6544,6 +6648,19 @@ const server = createServer(async (req, res) => {
       const teams = term ? [] : searchCatalog(await catalogForSearch(), q, limit);
       return json(res, 200, { query: q, term, teams, skills });
     }
+    if (method === "GET" && path === "/api/library/suggest") {
+      // The new-bot intake. One sentence in; one profile — or, when nothing
+      // really matches, a short list of skills to assemble from — out.
+      //
+      // A READ. It creates nothing, configures nothing, and is safe for any
+      // surface precisely because the apply route below is the only writer.
+      // Bounded here as well as in the card: a query string is caller-chosen
+      // input, and the ranking below reads a manifest per declared skill.
+      const q = (url.searchParams.get("q") ?? "").slice(0, INTAKE_QUERY_MAX);
+      const profile = await intakeProfileFor(q);
+      const skills = profile ? [] : await searchSkills(q, INTAKE_FALLBACK_SKILLS);
+      return json(res, 200, { query: q, profile, skills });
+    }
     m = path.match(/^\/api\/team-library\/teams\/([a-z0-9][a-z0-9-]*)$/);
     if (m && method === "GET") {
       try {
@@ -7696,6 +7813,99 @@ const server = createServer(async (req, res) => {
       if (!installed.length) return json(res, 422, { error: errors.join("; ") || "nothing importable found" });
       return json(res, 201, { installed, errors });
     }
+    // ── apply a library assistant profile to THE BOT YOU ARE IN ─────────
+    // Not /api/teams/import: that route is additive-only by construction and
+    // every member it reads becomes a NEW bot. Answering "what do you want
+    // help with?" inside a blank bot and getting a SECOND bot — with the
+    // blank one still in the sidebar — is the failure this route exists to
+    // avoid. Exactly one bot is touched: the one named in the path.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/assistant-profile$/);
+    if (m && method === "POST") {
+      // Same boundary, same reason as /skills/library below: applying a
+      // profile installs skills, and an enabled skill is instructions the
+      // engine will follow. That is a decision for the person at the machine
+      // — never a paired phone, never the browser door, and never an agent
+      // that can put text into another agent's thread (delegate_bot ->
+      // mirrorExchange can do exactly that, and the intake it would trip is
+      // rendered from this bot's own transcript).
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") {
+        return json(res, 404, { error: "no such route" });
+      }
+      const target = store.bot(m[1]!);
+      if (!target) return json(res, 404, { error: "no such bot" });
+      const parsed = z
+        .object({
+          slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/, "slug must be a library profile name"),
+          // The persona's own name is the point of hiring it, so renaming is
+          // the default. It stays a parameter because a person who already
+          // named this agent should be able to keep that name.
+          rename: z.boolean().optional(),
+        })
+        .safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "slug must be a library profile name" });
+
+      let document: Awaited<ReturnType<typeof fetchLibraryTeam>>;
+      try {
+        document = await fetchLibraryTeam(parsed.data.slug);
+      } catch (error) {
+        const status = (error as { status?: number }).status === 404 ? 404 : 502;
+        return json(res, status, {
+          error: error instanceof Error ? error.message : "That profile could not be loaded",
+        });
+      }
+      const lead = shareableLead(document);
+      if (!lead) return json(res, 422, { error: "That profile has nobody in it" });
+
+      // Skill ids come from the document when it has them and from the
+      // catalogue entry when it does not (legacy team manifests carry the
+      // persona but list their skills only in the catalogue). Union, in
+      // declared order, bounded by the same cap the library install route
+      // enforces so one entry can never install an unbounded set.
+      const entry = (await catalogForSearch()).find((team) => team.slug === parsed.data.slug);
+      const skillIds: string[] = [];
+      for (const declared of [...lead.skillIds, ...(entry?.skills ?? [])]) {
+        const id = librarySkillId(declared);
+        if (id && !skillIds.includes(id)) skillIds.push(id);
+        if (skillIds.length >= MAX_LIBRARY_SKILLS_PER_REQUEST) break;
+      }
+
+      // importedMemberProfile is the authority boundary the team import uses:
+      // persona fields only, colliding names numbered. The target bot's own
+      // name is excluded from the taken set — re-applying the same profile
+      // must not turn "Smart Trader" into "Smart Trader 2".
+      const takenNames = new Set(
+        store.bots.filter((bot) => bot.id !== target.id).map((bot) => bot.name.trim().toLowerCase()),
+      );
+      const persona = importedMemberProfile(lead.member, takenNames);
+      const patch: Parameters<typeof store.patchBot>[1] = {
+        title: persona.title,
+        description: persona.description,
+        color: persona.color,
+        ...(persona.mascotExpression ? { mascotExpression: persona.mascotExpression } : {}),
+        ...(parsed.data.rename === false ? {} : { name: persona.name }),
+      };
+      const patched = store.patchBot(target.id, patch);
+      if (!patched) return json(res, 404, { error: "no such bot" });
+
+      const installed: SkillListing[] = [];
+      const errors: string[] = [];
+      for (const skillId of skillIds) {
+        const result = installSkillFromLibrary(target.id, skillId, SKILL_LIBRARY_ROOT);
+        if ("error" in result) {
+          errors.push(result.error);
+          continue;
+        }
+        // On, for the same reason the team import switches them on: the
+        // person chose this profile from the catalogue this app ships.
+        const enabled = setSkillEnabled(target.id, result.name, true);
+        installed.push("error" in enabled ? result : enabled);
+      }
+
+      const bot = publicBot(store.bot(target.id)!);
+      broadcast({ kind: "bot", bot });
+      return json(res, 200, { bot, profile: { slug: parsed.data.slug, name: persona.name }, installed, errors });
+    }
+
     // Deliberately matched BEFORE /skills/:name below, which would otherwise
     // read "library" as a skill called "library".
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills\/library$/);

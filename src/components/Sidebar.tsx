@@ -5,6 +5,7 @@ import {
   Archive,
   ArrowDownToLine,
   BellDot,
+  BookOpen,
   Bot as BotIcon,
   CalendarDays,
   Check,
@@ -15,6 +16,7 @@ import {
   FolderPlus,
   Library,
   Loader2,
+  MoreHorizontal,
   Network,
   Pencil,
   PanelLeftClose,
@@ -727,6 +729,9 @@ function BotContextMenu({
           dispatch({ type: "markUnread", botId: bot.id }),
         ),
         divider("d1"),
+        item(<BookOpen size={16} className="text-ink-secondary" />, "Add a skill", () => {
+          dispatch({ type: "showTeamLibrary", botId: bot.id });
+        }),
         item(<Pencil size={16} className="text-ink-secondary" />, "Edit Profile", () => {
           dispatch({ type: "select", id: bot.id });
           dispatch({ type: "toggleSettings", open: true });
@@ -786,8 +791,8 @@ function BotListItem({
     iconOnly
       ? "justify-center px-1 py-1.5"
       : density === "compact"
-        ? "gap-2 px-2 py-1.5 pr-12"
-        : "gap-3 px-3 py-2.5 pr-12",
+        ? "gap-2 px-2 py-1.5 pr-[5.25rem]"
+        : "gap-3 px-3 py-2.5 pr-[5.25rem]",
     bot.chiefOfStaff
       ? selected
         ? "border-accent/40 bg-accent/15"
@@ -858,6 +863,22 @@ function BotListItem({
     event.preventDefault();
     onMenu({ botId: bot.id, x: event.clientX, y: event.clientY });
   };
+  /** Open the menu ON a control rather than at a pointer. Every caller that
+   *  is not a right-click goes through this. */
+  const openMenuAt = (element: HTMLElement) => {
+    const rect = element.getBoundingClientRect();
+    onMenu({ botId: bot.id, x: rect.left, y: rect.bottom });
+  };
+  // The menu must be reachable without a pointer AND without a right-click:
+  // Shift+F10 and the dedicated ContextMenu key (whose native event carries
+  // no useful coordinates) both open it on the row. Rooms already did this;
+  // bot rows did not, so every action in that menu was mouse-only.
+  const onMenuKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    onMenu({ botId: bot.id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  };
 
   // Keep the rename <input> out of role="button" — a button's descendants
   // are presentational, which hides the field from assistive tech.
@@ -880,7 +901,9 @@ function BotListItem({
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             dispatch({ type: "select", id: bot.id });
+            return;
           }
+          onMenuKeyDown(event);
         }}
         onContextMenu={onContextMenu}
         className={rowClass}
@@ -890,6 +913,23 @@ function BotListItem({
       {iconOnly && bot.unread && (
         <span className="pointer-events-none absolute bottom-1.5 right-1.5 size-2 rounded-full border border-panel bg-accent" />
       )}
+      {/* Every action in the bot menu used to live behind onContextMenu alone.
+          A touch device fires no `contextmenu` event, so on a phone the menu —
+          pin, Chief of Staff, move, add a skill, duplicate, delete — did not
+          exist at all. This is that menu, as a control you can see. */}
+      {!iconOnly && <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          openMenuAt(event.currentTarget);
+        }}
+        aria-label={`More actions for ${bot.name}`}
+        aria-haspopup="menu"
+        title={`More actions for ${bot.name}`}
+        className="absolute right-11 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100"
+      >
+        <MoreHorizontal size={16} />
+      </button>}
       {!iconOnly && <button
         type="button"
         disabled={archiveDisabled}

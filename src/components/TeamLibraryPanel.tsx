@@ -2,6 +2,8 @@ import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { plainText } from "@/lib/plain-text";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
+import { assignSkillsToBot } from "@/lib/onboarding-intake";
+import { invalidateSkillCount } from "@/lib/bot-skill-count";
 import type { Routine } from "@/lib/routines";
 import { api, useStore, type Bot, type Group } from "@/state/store";
 import {
@@ -17,6 +19,7 @@ import {
   Loader2,
   MessageSquare,
   Plug,
+  Plus,
   Search,
   UploadCloud,
   Users,
@@ -216,12 +219,10 @@ function TeamRow({
  *  phone this app just became usable on. The slot sits inside the row's flex
  *  line so it stays on screen and finger-sized at 390 px.
  *
- *  No action is rendered today, and that is on purpose: there is no route that
- *  installs a bundled local skill onto a bot. `POST /api/bots/:id/skills` takes
- *  a GitHub URL, and `installSkillFromLibrary` has exactly one call site in the
- *  server, inside `POST /api/teams/import`. Shipping a disabled or "coming
- *  soon" button would be a dead affordance that teaches the control does not
- *  work. */
+ *  `SkillAssignButton` now fills that slot. `POST /api/bots/:id/skills/library`
+ *  is the route it needed — desktop-surface-only, bounded, traversal-gated —
+ *  so the control is real rather than a "coming soon" affordance that teaches
+ *  the button does not work. */
 function SkillRow({ hit, action }: { hit: SkillHit; action?: React.ReactNode }) {
   return (
     <article className="flex min-h-[76px] items-center gap-3 border-b border-hairline/35 px-1 py-3">
@@ -231,6 +232,97 @@ function SkillRow({ hit, action }: { hit: SkillHit; action?: React.ReactNode }) 
       </div>
       {action}
     </article>
+  );
+}
+
+/** Assign one library skill to one agent — the library end of
+ *  `assign(skillId, botId)`.
+ *
+ *  The label names the OUTCOME, with the agent in it ("Add to Bruce"), never
+ *  the category ("Assign"). With exactly one agent in the workspace, or with
+ *  the panel opened from an agent's own Skills panel, there is nothing to
+ *  choose and the picker is skipped entirely — a chooser with one row is a
+ *  question that answers itself. */
+function SkillAssignButton({
+  skillId,
+  bots,
+  preselected,
+}: {
+  skillId: string;
+  bots: Bot[];
+  preselected?: Bot;
+}) {
+  const [phase, setPhase] = useState<"idle" | "picking" | "busy" | "done">("idle");
+  const [addedTo, setAddedTo] = useState("");
+  const [error, setError] = useState("");
+  const target = preselected ?? (bots.length === 1 ? bots[0] : undefined);
+
+  const assign = async (bot: Bot) => {
+    setPhase("busy");
+    setError("");
+    try {
+      const result = await assignSkillsToBot(bot.id, [skillId], api);
+      // A 201 with nothing installed is a failure wearing a success code.
+      if (result.installed.length === 0) {
+        throw new Error(result.errors.join("; ") || "That skill could not be added");
+      }
+      // The agent just gained a skill, so anything keyed on "this agent is
+      // unconfigured" — the chat intake card, the seeded setup quiz — has to
+      // stop saying so.
+      invalidateSkillCount(bot.id);
+      setAddedTo(bot.name);
+      setPhase("done");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setPhase("idle");
+    }
+  };
+
+  if (phase === "done") {
+    return (
+      <span className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-secondary">
+        <Check size={13} />
+        Added to {addedTo}
+      </span>
+    );
+  }
+
+  if (bots.length === 0) return null;
+
+  return (
+    <span className="relative flex shrink-0 flex-col items-end">
+      <button
+        type="button"
+        disabled={phase === "busy"}
+        onClick={() => {
+          if (target) void assign(target);
+          else setPhase((current) => (current === "picking" ? "idle" : "picking"));
+        }}
+        className="flex items-center gap-1.5 rounded-lg bg-control px-2.5 py-1.5 text-[12px] text-ink hover:bg-control/70 disabled:opacity-60"
+      >
+        {phase === "busy" ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+        {target ? `Add to ${target.name}` : "Add to…"}
+      </button>
+      {phase === "picking" && (
+        <div className="absolute right-0 top-full z-10 mt-1 max-h-56 w-48 overflow-y-auto rounded-lg border border-hairline/50 bg-card py-1 shadow-lg">
+          {bots.map((bot) => (
+            <button
+              key={bot.id}
+              type="button"
+              onClick={() => void assign(bot)}
+              className="block w-full truncate px-3 py-2 text-left text-[12.5px] text-ink hover:bg-raised-hover"
+            >
+              Add to {bot.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {error && (
+        <span role="alert" className="mt-1 max-w-[180px] text-right text-[11px] text-danger">
+          {error}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -303,6 +395,9 @@ export function TeamLibraryPanel({
    *  shows the agent's CURRENT name and degrades to no label if that agent was
    *  deleted while the panel was open. */
   const preselectedBot = preselectedBotId ? state.bots.find((bot) => bot.id === preselectedBotId) : undefined;
+  /** Who a skill can be assigned to. Archived bots are not on screen anywhere
+   *  else, so offering them here would name agents the person cannot see. */
+  const assignableBots = state.bots.filter((bot) => !bot.hidden);
 
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true);
@@ -980,7 +1075,17 @@ export function TeamLibraryPanel({
                       )}
                       <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
                         {skillHits.map((hit) => (
-                          <SkillRow key={hit.id} hit={hit} />
+                          <SkillRow
+                            key={hit.id}
+                            hit={hit}
+                            action={
+                              <SkillAssignButton
+                                skillId={hit.id}
+                                bots={assignableBots}
+                                preselected={preselectedBot}
+                              />
+                            }
+                          />
                         ))}
                       </div>
                       {activeFacet && skillHits.length === 0 && !searching && (

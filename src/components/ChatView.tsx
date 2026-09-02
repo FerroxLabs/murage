@@ -26,6 +26,7 @@ import { WorkingDots } from "@/components/WorkingIndicator";
 import { plainTextClamped } from "@/lib/plain-text";
 import { cachedInput, costCaption, formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageDetail } from "@/lib/usage";
 import {
+  api,
   useStore,
   useStreaming,
   formatTime,
@@ -46,8 +47,10 @@ import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
+import { intakeOwnsTheQuestion, useSkillCount } from "@/lib/bot-skill-count";
 import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
+import { BotIntakeCard } from "./BotIntakeCard";
 import { ChatFindBar } from "./ChatFindBar";
 import { RoleBadge } from "./RoleBadge";
 import { ReplyQuote } from "./ReplyQuote";
@@ -637,6 +640,8 @@ const MessagesList = memo(function MessagesList({
 }) {
   const { state, dispatch } = useStore();
   const showToolCalls = showToolCallsEnabled(state.config);
+  // Shared with BotIntakeCard, which asks the same question in a better form.
+  const skillCount = useSkillCount(bot.id, api);
   // Finished tool chips become compact runs; settled assistant narration
   // becomes one reversible turn row while the terminal answer stays visible.
   const items = useMemo(() => groupTranscript(messages), [messages]);
@@ -726,6 +731,13 @@ const MessagesList = memo(function MessagesList({
                 return <ApprovalCard bot={bot} message={m} />;
               }
               if (shouldHideOnboardingCard(m, transcript)) return null;
+              // The seeded four-option quiz asked exactly the question the
+              // intake now asks properly, with a free-text answer and a
+              // library behind it. Showing both would put the same question
+              // on screen twice in two widgets. Once the skill count is
+              // known, the intake owns it; an unreadable count changes
+              // nothing.
+              if (intakeOwnsTheQuestion(skillCount)) return null;
               return <OptionCard botId={bot.id} message={m} />;
             case "routine.run": {
               const executionThreadId = m.routineRun?.executionThreadId;
@@ -1394,6 +1406,11 @@ export function ChatView({ bot }: { bot: Bot }) {
           selected one. ArrowUp-to-edit stays gated on busy because editing
           rewinds the thread, which a live turn forbids (the server 409s it). */}
       <div ref={composerDockRef} className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2]">
+      {/* The setup question, docked with the composer rather than buried at
+          the top of the transcript: it has to still be reachable after the
+          bot has said hello, and it must not scroll away. It renders itself
+          only while this agent has no skills. */}
+      <BotIntakeCard bot={bot} />
       <Composer
         key={bot.threadId}
         bot={bot}
