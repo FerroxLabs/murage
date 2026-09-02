@@ -87,7 +87,22 @@ interface PairingReplay {
 }
 
 const DEVICES_FILE = join(DATA_DIR, "devices.json");
-export const PAIRING_TTL_MS = 120_000;
+export /** How long a pairing window stays open.
+ *
+ * Two minutes, and it was measured against a flow that does not exist: the
+ * person is already holding the phone with the camera open. The real flow is
+ * open Phone settings on the computer, walk to the phone, unlock it, find the
+ * camera, frame the code — or, when the code is relayed to another person,
+ * read a message and paste a link into a browser. Every one of those took
+ * longer than the window, and the failure reads as a rejection ("that pairing
+ * credential is not right") rather than as an expiry, which sends people
+ * hunting for a wrong password that was never wrong.
+ *
+ * Ten minutes changes nothing about what guards the six-digit code: that is
+ * the five-attempt lockout below, which burns the window on the fifth wrong
+ * guess. A longer window does not buy an attacker more attempts. It buys a
+ * person time to walk across the room. */
+const PAIRING_TTL_MS = 10 * 60_000;
 export const MAX_PAIRING_ATTEMPTS = 5;
 /** Bounds the file, and a fleet of 20 phones is already an odd story. */
 export const MAX_DEVICES = 20;

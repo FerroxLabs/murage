@@ -189,6 +189,33 @@ export function originGate(
   req: IncomingMessage,
   identity: BoundIdentity,
 ): { status: number; error: string } | null {
+  const verdict = originGateInner(req, identity);
+  if (verdict && process.env.MURAGE_DOOR_DIAGNOSE === "1") {
+    const h = req.headers;
+    // Deliberately NOT the cookie: this names why a request was refused, and
+    // a session token has no place in a log.
+    console.error("[door-refused]", JSON.stringify({
+      why: verdict.error,
+      method: req.method,
+      url: (req.url ?? "").split("#")[0],
+      host: h.host,
+      origin: h.origin ?? null,
+      referer: h.referer ?? null,
+      secFetchSite: h["sec-fetch-site"] ?? null,
+      secFetchMode: h["sec-fetch-mode"] ?? null,
+      secFetchDest: h["sec-fetch-dest"] ?? null,
+      accept: (h.accept ?? "").slice(0, 60),
+      ua: (h["user-agent"] ?? "").slice(0, 90),
+      boundHosts: [...identity.hosts],
+    }));
+  }
+  return verdict;
+}
+
+function originGateInner(
+  req: IncomingMessage,
+  identity: BoundIdentity,
+): { status: number; error: string } | null {
   // 1. Host allowlist. The harness has one because it is loopback-only; this
   //    door is not on loopback in the direct case, so it needs its own or DNS
   //    rebinding turns any name the phone resolves into a route to this port.
@@ -240,7 +267,27 @@ export function originGate(
     (req.headers["sec-fetch-mode"] === "navigate" ||
       req.headers["sec-fetch-dest"] === "document");
 
-  if (!navigating && site !== "same-origin" && site !== "none") {
+  //    ...and it is only ENFORCED when the browser actually sent it.
+  //
+  //    `Sec-Fetch-*` is a secure-context feature. Over plain `http://` to a
+  //    host that is not localhost — which is precisely what this door is
+  //    until the tailnet has certificates — Chrome sends none of the three.
+  //    Measured from Sean's Android Chrome 152 against this door: site, mode
+  //    and dest all ABSENT, on `/enter` and on `/favicon.ico`, over both the
+  //    MagicDNS name and the raw tailnet address.
+  //
+  //    So "absent means the caller is not a browser" was false, and it was
+  //    the whole bug. It refused every real phone while my own reconstructed
+  //    requests passed, because I had added the headers by hand. Two fixes
+  //    built on that reading changed nothing.
+  //
+  //    Absent now falls through to rules 3 and 4, which do not depend on it:
+  //    a cross-origin `fetch()` or `EventSource` carries `Origin` and is
+  //    refused there, and a request with no `Origin` — an <img>, a <script> —
+  //    cannot read this door's answer, because nothing here ever sends a CORS
+  //    header. Present is still enforced exactly as before, so the day this
+  //    door speaks HTTPS the stronger guarantee returns by itself.
+  if (site !== undefined && !navigating && site !== "same-origin" && site !== "none") {
     return { status: 403, error: "forbidden: cross-origin request" };
   }
   // `none` is a typed URL or a bookmark — a top-level navigation with no
@@ -304,7 +351,25 @@ export function sessionCookie(value: string, identity: BoundIdentity, maxAgeSeco
     `${cookieName(identity.scheme)}=${value}`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Strict",
+    // Lax, not Strict. Strict withholds the cookie on EVERY cross-site
+    // navigation, including tapping a link to your own machine from a chat
+    // app or a mail client — which is how a person actually arrives. Sean
+    // signed in, tapped the plain origin from a message, and the door told
+    // him "Not signed in" while his session sat valid on disk with three
+    // months left on it.
+    //
+    // The comment this replaces justified Strict by saying `Sec-Fetch-Site`
+    // is the gate that actually holds and this is only the layer beneath it.
+    // That is now known to be false HERE: Sec-Fetch is a secure-context
+    // feature and no browser sends it to a plain-HTTP tailnet address, which
+    // is what this door is until it has certificates. So Strict was paying
+    // the entire cost of the bookmark flow for a backstop to a gate that is
+    // not running.
+    //
+    // Lax still withholds the cookie from every cross-site SUBREQUEST and
+    // every cross-site POST, which is what CSRF actually needs. The host
+    // allowlist and the Origin rules above are what hold the rest.
+    "SameSite=Lax",
     `Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`,
   ];
   if (identity.scheme === "https") parts.push("Secure");
