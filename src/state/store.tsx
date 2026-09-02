@@ -457,6 +457,12 @@ export interface AppState {
   /** a search hit to scroll to once its thread is on screen; nonce lets the
    * same message be focused twice in a row */
   focusMessage: { threadId: string; messageId: string; nonce: number; consumed: boolean } | null;
+  /** The library is a modal, not a view, so it does not belong in
+   *  `activeView`. It lives here rather than inside Sidebar because the
+   *  Skills panel has to be able to open it with an agent already chosen —
+   *  "add a skill to Bruce" is the same action as assigning from the library,
+   *  entered from the other end. `botId` is that pre-fill. */
+  teamLibrary: { open: boolean; botId?: string };
   connected: boolean;
   error: string | null;
   mascotMotion: {
@@ -533,6 +539,8 @@ export type Action =
     }
   | { type: "showRoutines" }
   | { type: "showTeamMap" }
+  | { type: "showTeamLibrary"; botId?: string }
+  | { type: "hideTeamLibrary" }
   | { type: "showSkillRecorder" }
   | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
   | { type: "routinePatched"; routine: Routine }
@@ -767,6 +775,15 @@ export function reducer(state: AppState, action: Action): AppState {
         appSettingsOpen: false,
         pluginsOpen: false,
       };
+    case "showTeamLibrary":
+      // Absent, never `undefined`, so a later open without an agent cannot
+      // inherit the previous one's pre-fill.
+      return {
+        ...state,
+        teamLibrary: action.botId ? { open: true, botId: action.botId } : { open: true },
+      };
+    case "hideTeamLibrary":
+      return { ...state, teamLibrary: { open: false } };
     case "showTeamMap":
       return {
         ...state,
@@ -1334,6 +1351,7 @@ export const initialState: AppState = {
   provisioning: {},
   computerControl: {},
   focusMessage: null,
+  teamLibrary: { open: false },
   connected: false,
   error: null,
   mascotMotion: null,

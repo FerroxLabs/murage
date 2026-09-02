@@ -1061,7 +1061,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [roomSectionPicker, setRoomSectionPicker] = useState<{ groupId: string; x: number; y: number } | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
-  const [teamLibraryOpen, setTeamLibraryOpen] = useState(false);
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [exportingTeam, setExportingTeam] = useState(false);
@@ -1131,7 +1130,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   useEffect(() => {
     return window.muragebox?.onPackageInstall?.((url) => {
       setTeamInstallUrl(url);
-      setTeamLibraryOpen(true);
+      dispatch({ type: "showTeamLibrary" });
     });
   }, []);
 
@@ -1528,7 +1527,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 <button
                   onClick={() => {
                     setPlusOpen(false);
-                    setTeamLibraryOpen(true);
+                    dispatch({ type: "showTeamLibrary" });
                   }}
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
@@ -1843,16 +1842,17 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onRestored={(message) => setTeamFeedback({ error: false, text: message })}
         />
       )}
-      {teamLibraryOpen && (
+      {state.teamLibrary.open && (
         <TeamLibraryPanel
           returnFocusRef={importReturnRef}
+          preselectedBotId={state.teamLibrary.botId}
           initialUrl={teamInstallUrl ?? undefined}
           onClose={() => {
-            setTeamLibraryOpen(false);
+            dispatch({ type: "hideTeamLibrary" });
             setTeamInstallUrl(null);
           }}
           onImported={(result) => {
-            setTeamLibraryOpen(false);
+            dispatch({ type: "hideTeamLibrary" });
             setTeamInstallUrl(null);
             setTeamFeedback(
               result.archived.length > 0
