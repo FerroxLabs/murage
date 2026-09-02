@@ -8497,6 +8497,14 @@ const server = createServer(async (req, res) => {
     // the GUI app can't see) means every turn would fail, so the UI asks
     // before saving rather than registering a dead engine.
     if (method === "POST" && path === "/api/cli-test") {
+      // Choosing which binary runs is a decision for the person at the
+      // machine. This route spawns a caller-supplied path, so on any remote
+      // surface it is arbitrary code execution on the user's computer with
+      // one request — not a data leak. 404 rather than 403: a 403 confirms
+      // the route is here and worth attacking.
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") {
+        return json(res, 404, { error: "no such route" });
+      }
       // same gate as the local-VM lifecycle routes: this executes a local
       // binary, so a hostile page must not be able to submit it as a simple
       // text/plain cross-origin request
@@ -8519,6 +8527,13 @@ const server = createServer(async (req, res) => {
     // driver default. Kills in-flight turns like any provider reload.
     const instancePatch = /^\/api\/instances\/([\w.-]+)$/.exec(path);
     if (method === "PATCH" && instancePatch) {
+      // The other half of `/api/cli-test`: that route probes a binary, this
+      // one installs it as the engine every later turn runs. Remote reach
+      // here is deferred code execution, so it is desktop-only for the same
+      // reason and answers the same 404.
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") {
+        return json(res, 404, { error: "no such route" });
+      }
       // same non-simple-request gate as the local-VM lifecycle routes
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
