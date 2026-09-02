@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, AlertTriangle, Loader2, Mic } from "lucide-react";
+import { useActiveSkin } from "../lib/use-active-skin";
 import { EmberAvatar } from "./Avatar";
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -108,6 +109,7 @@ function SetupRow(entry: EngineEntry) {
 }
 
 export function Onboarding({ onDone }: { onDone: () => void }) {
+  const skin = useActiveSkin();
   const { capabilities } = useDesktopCapabilities();
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
@@ -207,7 +209,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           // the one screen whose first field is autoFocus.
           <div className="flex min-h-0 w-full flex-col items-center overflow-y-auto">
             <img
-              src="/murage-logo.png"
+              // The wordmark is baked ink, not a tintable glyph: the default
+              // asset is white and vanished into the light theme's card.
+              src={skin === "light" ? "/murage-logo-dark.png" : "/murage-logo.png"}
               alt="Murage"
               className="mb-7 h-14 w-auto max-md:hidden"
               draggable={false}
