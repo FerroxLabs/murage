@@ -222,8 +222,21 @@ body,
    pre-keyboard height — which is how a bottom-docked composer ends up behind
    the keyboard. --vvh is written by trackVisualViewport() (src/lib/visual-viewport.ts);
    the 100% fallback is what every browser that never fires visualViewport gets,
-   and is also the correct value on the desktop. */
+   and is also the correct value on the desktop.
+
+   Gated on the keyboard actually being up, rather than applied always. --vvh is
+   an ABSOLUTE pixel height written from a rAF callback, and rAF does not run
+   while the window is occluded — so a resize the app sleeps through leaves the
+   variable stale, and an unconditional rule pins the whole shell to a height
+   the window no longer has, with body's ground painting everything below it.
+   There is no such failure while the rule only applies in the one state it was
+   written for: the keyboard is up, the value was just written, and every other
+   state is self-healing `100%`. */
 #root {
+  height: 100%;
+}
+
+html[data-keyboard="open"] #root {
   height: var(--vvh, 100%);
 }
 
