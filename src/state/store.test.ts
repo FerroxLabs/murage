@@ -274,6 +274,70 @@ describe("onboarding quiz", () => {
     subtitle: "Pick whatever's closest; we can always expand from there.",
     options: ["Work & projects"],
   };
+describe("where a fresh sign-in lands", () => {
+  const member = (id: string, name: string) => ({
+    id,
+    threadId: `t-${id}`,
+    name,
+    title: "",
+    description: "",
+    notifications: true,
+    color: "green",
+    unread: false,
+    modelSelection: { instanceId: "x", model: "y" },
+    messages: [],
+  }) as unknown as Bot;
+
+  // A phone signs in with no stored selection, so this fallback IS its first
+  // impression. It used to be `bots[0]` — creation order — which on Sean's
+  // workspace meant landing on a teammate rather than on the Chief of Staff
+  // that runs it. On the desktop the same line barely showed, because
+  // `selectedId` persists and only a first run reaches it.
+  it("opens the Chief of Staff, not whichever bot was made first", () => {
+    const bruce = { ...member("bruce", "Bruce"), chiefOfStaff: true } as unknown as Bot;
+    const sable = { ...member("sable", "Sable"), chiefOfStaff: true, chiefScope: "workspace" } as unknown as Bot;
+    const next = reducer({ ...initialState, selectedId: "" }, {
+      type: "hydrate",
+      bots: [bruce, sable],
+      groups: [],
+      computerControl: {},
+    } as never);
+    expect(next.selectedId).toBe("sable");
+  });
+
+  it("keeps a selection the person already made", () => {
+    const sable = { ...member("sable", "Sable"), chiefOfStaff: true, chiefScope: "workspace" } as unknown as Bot;
+    const next = reducer({ ...initialState, selectedId: "bruce" }, {
+      type: "hydrate",
+      bots: [member("bruce", "Bruce"), sable],
+      groups: [],
+      computerControl: {},
+    } as never);
+    expect(next.selectedId).toBe("bruce");
+  });
+
+  it("falls back to the first bot when no Chief exists", () => {
+    const next = reducer({ ...initialState, selectedId: "" }, {
+      type: "hydrate",
+      bots: [member("one", "One"), member("two", "Two")],
+      groups: [],
+      computerControl: {},
+    } as never);
+    expect(next.selectedId).toBe("one");
+  });
+
+  it("never opens a hidden Chief", () => {
+    const hidden = { ...member("ghost", "Ghost"), chiefOfStaff: true, chiefScope: "workspace", hidden: true } as unknown as Bot;
+    const next = reducer({ ...initialState, selectedId: "" }, {
+      type: "hydrate",
+      bots: [hidden, member("real", "Real")],
+      groups: [],
+      computerControl: {},
+    } as never);
+    expect(next.selectedId).toBe("real");
+  });
+});
+
   const bot = {
     id: "echo",
     threadId: "t1",
