@@ -261,16 +261,20 @@ describe("hosted endpoint advertisement", () => {
       JSON.stringify({ url: "https://C-Opaque.Murage.Test/" }),
     );
     expect(published.status).toBe(200);
-    expect(published.body.endpoints[0]).toEqual({
+    // Position is deliberately not asserted: the tailnet now outranks a
+    // hosted route (public ingress must never lead), so on a machine with a
+    // tailnet address this is no longer element 0. What this test is about is
+    // that a complete origin is published at all, and withdrawn again.
+    expect(published.body.endpoints).toContainEqual({
       kind: "hosted",
-      priority: 0,
+      priority: 150,
       url: "https://c-opaque.murage.test",
     });
 
     expect(
       (await ask("PUT", "/hosted-endpoint", headers, JSON.stringify({ url: "http://unsafe.test" }))).status,
     ).toBe(400);
-    expect((await ask("GET", "/state")).body.endpoints[0]).toMatchObject({ kind: "hosted" });
+    expect((await ask("GET", "/state")).body.endpoints.some((e: { kind: string }) => e.kind === "hosted")).toBe(true);
 
     const withdrawn = await ask(
       "PUT",

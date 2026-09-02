@@ -68,7 +68,16 @@ export function companionEndpointCandidates(
   const tailscale = tailscaleAddress(addresses);
   const candidates: CompanionEndpoint[] = [];
 
-  if (hostedUrl) candidates.push({ url: hostedUrl, kind: "hosted", priority: 0 });
+  // A hosted route is public-internet ingress and must never outrank the
+  // private one. It led at priority 0 because it was the answer to "works
+  // away from home" for the iOS app, which is retired; the threat model since
+  // settled on tailnet-only, so the tailnet leads and hosted sits behind it,
+  // still ahead of LAN (200+) and Bonjour (300) for anyone who has configured
+  // one deliberately. Re-ranked rather than removed: nothing populates
+  // hostedUrl today — its control plane has no DNS record — but the kind is
+  // still what carries a tunnel URL to a client, and deleting it would break
+  // the pairing flow while closing no hole.
+  if (hostedUrl) candidates.push({ url: hostedUrl, kind: "hosted", priority: 150 });
   if (tailscale) {
     // The MagicDNS name leads when it resolves: it survives an address
     // change, and it is the name a Tailscale certificate is issued to, so it
@@ -81,7 +90,7 @@ export function companionEndpointCandidates(
     // control.ts's hostCandidates(), and it bites harder here: these are the
     // complete URLs handed to a new client, and a browser off the LAN has
     // nothing left to try.
-    candidates.push({ url: httpOrigin(magicDnsName ?? tailscale, port), kind: "tailnet", priority: 100 });
+    candidates.push({ url: httpOrigin(magicDnsName ?? tailscale, port), kind: "tailnet", priority: 0 });
   }
   addresses.forEach((address, index) => {
     if (address !== tailscale) {
