@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +23,8 @@ describe("harnessResourceEnvironment", () => {
       MURAGE_STATIC_DIR: `${resources}/ui`,
       MURAGE_SKILLS_DIR: `${resources}/skills`,
       MURAGE_SKILL_LIBRARY: `${resources}/skills-library`,
+      MURAGE_LIBRARY_DIR: `${resources}/library`,
+      MURAGE_BOT_LIBRARY_DIR: `${resources}/bot-library`,
       MURAGE_FUIGO_DIR: `${resources}/fuigo`,
     });
   });
@@ -58,6 +60,37 @@ describe("packaged resource contract", () => {
   it("packages the skill library from the repo tree the server reads in dev", () => {
     const entry = (builderConfig.extraResources ?? []).find((row) => row.to === "skills-library");
     expect(entry?.from).toBe("skills-library");
+  });
+
+  // Same failure, second shape. server/team-library.ts falls back to
+  // process.cwd() for both of these, so a packaged build that does not carry
+  // them reads as "no local library" and silently goes back to needing GitHub —
+  // and every offline install button dies with it. The `to:` name must equal the
+  // repo directory or the dev and packaged trees are different trees.
+  for (const directory of ["library", "bot-library"]) {
+    it(`packages ${directory} from the repo tree the server reads in dev`, () => {
+      const entry = (builderConfig.extraResources ?? []).find((row) => String(row.to) === directory);
+      expect(entry?.from).toBe(directory);
+    });
+  }
+
+  it("ships the generated catalog and the documents its every entry installs", () => {
+    const catalog = JSON.parse(readFileSync(join(repoRoot, "library", "catalog.json"), "utf8"));
+    expect(catalog.teams.length).toBeGreaterThan(100);
+    // Each packaged tree's `to:` is the env value, so a document under one of
+    // these directories is reachable in a packaged build exactly when it is
+    // reachable in dev.
+    const packagedRoots = new Set(packagedDestinations);
+    for (const entry of catalog.teams) {
+      const candidates = [
+        join("library", "packages", `${entry.slug}.md`),
+        join("library", "packages", `${entry.slug}.json`),
+        join("library", "assistants", `${entry.slug}.json`),
+        join("bot-library", "builtins", `${entry.slug}.json`),
+      ].filter((relative) => existsSync(join(repoRoot, relative)));
+      expect(candidates, `${entry.slug} has no committed package document`).not.toHaveLength(0);
+      expect(packagedRoots.has(candidates[0].split("/")[0])).toBe(true);
+    }
   });
 
   it("keeps main.mjs handing the resource env to the forked server child", () => {

@@ -17,6 +17,14 @@ export const HARNESS_RESOURCE_DIRECTORIES = Object.freeze({
   MURAGE_STATIC_DIR: "ui",
   MURAGE_SKILLS_DIR: "skills",
   MURAGE_SKILL_LIBRARY: "skills-library",
+  // The offline team library: library/catalog.json plus every package document
+  // the importer consumes (library/assistants, library/packages, and
+  // bot-library/builtins). server/team-library.ts falls back to cwd, so leaving
+  // either of these unset in a packaged build would read as "no local library"
+  // and put the panel straight back on the network — the 0.1.44
+  // MURAGE_SKILL_LIBRARY failure in a new place.
+  MURAGE_LIBRARY_DIR: "library",
+  MURAGE_BOT_LIBRARY_DIR: "bot-library",
   // The bundled Fuigo engine executable's directory. Unlike the trees above,
   // an unset value here can never read as "empty": server/env-path.ts throws a
   // named error rather than silently reporting no engine.
