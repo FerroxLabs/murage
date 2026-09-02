@@ -70,10 +70,23 @@ export function trackVisualViewport(): () => void {
   };
   vv.addEventListener("resize", schedule);
   vv.addEventListener("scroll", schedule);
+  // The visualViewport events alone are not enough to keep an ABSOLUTE pixel
+  // height honest. `schedule` defers through requestAnimationFrame, which does
+  // not run while the window is occluded or minimised, so a resize the app
+  // sleeps through never reaches `apply` — and every consumer of --vvh (the
+  // shell and a dozen overlays) is then sized to a window that no longer
+  // exists. The layout-viewport resize and the return from occlusion are the
+  // two moments that catch it.
+  window.addEventListener("resize", schedule);
+  document.addEventListener("visibilitychange", schedule);
+  window.addEventListener("pageshow", schedule);
   apply();
   return () => {
     vv.removeEventListener("resize", schedule);
     vv.removeEventListener("scroll", schedule);
+    window.removeEventListener("resize", schedule);
+    document.removeEventListener("visibilitychange", schedule);
+    window.removeEventListener("pageshow", schedule);
     if (frame) cancelAnimationFrame(frame);
   };
 }
