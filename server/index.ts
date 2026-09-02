@@ -169,6 +169,7 @@ import {
   type TaskRecord,
 } from "./store.ts";
 import {
+  companionMarked,
   frameSubject,
   requestSurface,
   subjectResolves,
@@ -8784,7 +8785,11 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: result.ok, reason: result.reason ?? null });
     }
     if (method === "GET" && path === "/api/config") {
-      return json(res, 200, configStatus());
+      // The one place the renderer can learn which door it came through.
+      // Both surfaces are allowed this route (companion/src/routes.ts), and
+      // the answer is computed per-request rather than baked into
+      // configStatus(), because the same process serves both.
+      return json(res, 200, { ...configStatus(), surface: requestSurface(req.headers, url.searchParams) });
     }
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
@@ -9290,7 +9295,9 @@ const server = createServer(async (req, res) => {
           return json(res, 409, { error: "the VPS computer is being used by this bot — interrupt the turn first" });
         }
         if (m[2] === "join") {
-          if (req.headers["x-murage-companion"] === "1") {
+          // Presence, not value: Node joins duplicate headers into "1, 1", which
+        // `=== "1"` reads as "not a companion". Same rule as requestSurface.
+        if (companionMarked(req.headers)) {
             return json(res, 409, {
               error: "VPS live desktop control is currently available in the desktop app; the SSH viewer is loopback-only",
             });

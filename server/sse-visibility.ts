@@ -27,6 +27,7 @@ export type Surface = "desktop" | "remote";
 export const DESKTOP_SURFACE = "desktop";
 export const SURFACE_HEADER = "x-murage-surface";
 export const SURFACE_QUERY = "surface";
+export const COMPANION_HEADER = "x-murage-companion";
 
 const headerValue = (
   headers: Partial<Record<string, string | string[] | undefined>>,
@@ -35,6 +36,20 @@ const headerValue = (
   const raw = headers[name];
   return Array.isArray(raw) ? raw[0] : raw;
 };
+
+/** The companion marker, read as PRESENCE rather than as a value.
+ *
+ * Node folds most duplicated request headers into one comma-joined string,
+ * so two `x-murage-companion: 1` headers arrive as the string `"1, 1"`. A
+ * check spelled `=== "1"` reads that as "not a companion", falls through to
+ * the desktop markers, and a request carrying `?surface=desktop` is then
+ * served as the local app. The door that exists today builds its forwarded
+ * headers in a fresh object and stamps this one itself, so nothing can smuggle
+ * a duplicate through it — but the value was never the point. Any spelling of
+ * the marker means a door put it there, and the answer is the narrow one. */
+export const companionMarked = (
+  headers: Partial<Record<string, string | string[] | undefined>>,
+): boolean => headers[COMPANION_HEADER] !== undefined;
 
 /** Which surface is asking — **defaulting to the narrow answer**.
  *
@@ -54,7 +69,8 @@ const headerValue = (
  *  1. A caller that says it is a companion IS one. `proxy.ts` writes
  *     `x-murage-companion: 1` into a *fresh* header object, so a device
  *     cannot clear it — and checking it first means a device cannot talk its
- *     way out with a forged `?surface=desktop` either.
+ *     way out with a forged `?surface=desktop` either. Read as presence, not
+ *     as a value: see `companionMarked`.
  *  2. The local desktop announces itself. `EventSource` cannot set a request
  *     header and the renderer's live stream is a native `EventSource`
  *     (`src/lib/live-events.ts`), so the query form is not a convenience —
@@ -71,7 +87,7 @@ export function requestSurface(
   headers: Partial<Record<string, string | string[] | undefined>>,
   query?: URLSearchParams | null,
 ): Surface {
-  if (headerValue(headers, "x-murage-companion") === "1") return "remote";
+  if (companionMarked(headers)) return "remote";
   if (headerValue(headers, SURFACE_HEADER) === DESKTOP_SURFACE) return DESKTOP_SURFACE;
   if (query?.get(SURFACE_QUERY) === DESKTOP_SURFACE) return DESKTOP_SURFACE;
   return "remote";
