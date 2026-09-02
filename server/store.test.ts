@@ -1419,6 +1419,47 @@ describe("Store.setChiefOfStaff scope", () => {
     return { ember, rex, nia };
   };
 
+  // The case a real workspace hits first, because it is the DEFAULT one: a
+  // workspace where nobody ever created a section. Every bot's sectionKey is
+  // "", so the Chief of Staff and every teammate share one section, and
+  // electing any teammate as that section's lead used to walk the same-section
+  // loop straight over the Chief and clear both its flag and its tier. Sean
+  // pressed "Team leader" on one bot and the workspace lost its Chief of
+  // Staff — irrecoverably from that control, because the sidebar's "Make
+  // Chief of Staff" re-elects with no scope, which restores the flag as a
+  // SECTION lead and never the workspace tier.
+  it("leaves the workspace Chief in place when a teammate leads the Chief's own section", () => {
+    const store = new Store(selection);
+    const sable = store.createBot({ name: "Sable" });
+    const bruce = store.createBot({ name: "Bruce" });
+    store.setChiefOfStaff(sable.id, undefined, "workspace");
+
+    store.setChiefOfStaff(bruce.id, undefined, "section");
+
+    expect(store.bot(sable.id)).toMatchObject({ chiefOfStaff: true, chiefScope: "workspace" });
+    expect(store.bot(bruce.id)).toMatchObject({ chiefOfStaff: true });
+    expect(store.bot(bruce.id)?.chiefScope).toBeUndefined();
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(sable.id)).toMatchObject({ chiefOfStaff: true, chiefScope: "workspace" });
+  });
+
+  // Same section, but this time the workspace tier really is being handed
+  // over. The old holder must land as lead of its own section — which is what
+  // the control's own copy promises the user — not as a plain member.
+  it("hands the workspace tier over inside one section without firing the old Chief", () => {
+    const store = new Store(selection);
+    const sable = store.createBot({ name: "Sable" });
+    const bruce = store.createBot({ name: "Bruce" });
+    store.setChiefOfStaff(sable.id, undefined, "workspace");
+
+    store.setChiefOfStaff(bruce.id, undefined, "workspace");
+
+    expect(store.bot(bruce.id)).toMatchObject({ chiefOfStaff: true, chiefScope: "workspace" });
+    expect(store.bot(sable.id)).toMatchObject({ chiefOfStaff: true });
+    expect(store.bot(sable.id)?.chiefScope).toBeUndefined();
+  });
+
   it("promotes one workspace chief and leaves the section leads leading", () => {
     const store = new Store(selection);
     const { ember, rex, nia } = team(store);
