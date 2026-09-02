@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  DEV_SECRET_PATH,
   LIVE_EVENTS_STALE_MS,
+  desktopSurfaceHeaders,
+  desktopSurfaceSecret,
+  ensureDesktopSurfaceSecret,
   isLivePing,
   liveEventsUrl,
   openLiveEvents,
+  setDesktopSurfaceSecretForTest,
   shouldReconnectLiveEvents,
   type LiveEventSourceLike,
   type LiveEventsPlatform,
@@ -101,6 +106,88 @@ describe("live events URL", () => {
       "/api/events?surface=desktop&since=ab12cd34%3A9&screens=off",
     );
     expect(liveEventsUrl({ screens: false })).toBe("/api/events?surface=desktop&screens=off");
+  });
+
+  // EventSource cannot set a request header, which is why the marker travels
+  // in the query string — and it is why the proof has to as well. Without it
+  // the harness reads this stream as a paired phone's and scopes it, and the
+  // symptom is a desktop that silently stops seeing its own hidden bots.
+  it("carries this launch's desktop secret once the renderer has one", () => {
+    const secret = "9".repeat(64);
+    try {
+      setDesktopSurfaceSecretForTest(secret);
+      expect(desktopSurfaceSecret()).toBe(secret);
+      expect(liveEventsUrl()).toBe(`/api/events?surface=desktop&surfaceSecret=${secret}`);
+      // appended last, so every parameter that existed before keeps its place
+      expect(liveEventsUrl({ since: "ab12cd34:9", screens: false })).toBe(
+        `/api/events?surface=desktop&since=ab12cd34%3A9&screens=off&surfaceSecret=${secret}`,
+      );
+      // and the same proof for the fetch callers, who can use a header
+      expect(desktopSurfaceHeaders()).toEqual({ "x-murage-surface-secret": secret });
+    } finally {
+      setDesktopSurfaceSecretForTest("");
+    }
+  });
+
+  // The dev half of the injection, from the renderer's side: served by Vite
+  // on another port, no Electron bridge to ask through, so it asks the
+  // harness over loopback. `import.meta.env.DEV` is a compile-time constant,
+  // so a production `vite build` deletes this branch outright — the shipped
+  // bundle has no code that could ask.
+  describe("acquiring the secret in development", () => {
+    const realFetch = globalThis.fetch;
+    afterEach(() => {
+      globalThis.fetch = realFetch;
+      setDesktopSurfaceSecretForTest("");
+    });
+
+    it("asks the harness once and remembers the answer", async () => {
+      const secret = "b".repeat(64);
+      const calls: string[] = [];
+      globalThis.fetch = (async (input: unknown) => {
+        calls.push(String(input));
+        return { ok: true, json: async () => ({ secret }) } as unknown as Response;
+      }) as typeof fetch;
+
+      expect(await ensureDesktopSurfaceSecret()).toBe(secret);
+      expect(calls).toEqual([DEV_SECRET_PATH]);
+      // and the stream URL is built from it immediately afterwards
+      expect(liveEventsUrl()).toContain(`surfaceSecret=${secret}`);
+      // memoized — a second caller must not re-ask
+      expect(await ensureDesktopSurfaceSecret()).toBe(secret);
+      expect(calls).toHaveLength(1);
+    });
+
+    it("leaves the renderer on the scoped surface when the harness withholds one", async () => {
+      // A packaged harness answers 404 here, and so does a cloud install. The
+      // renderer must degrade to the narrow view rather than throw during
+      // boot: a smaller app, not a broken one.
+      globalThis.fetch = (async () => ({ ok: false, json: async () => ({}) }) as unknown as Response) as typeof fetch;
+      expect(await ensureDesktopSurfaceSecret()).toBe("");
+      expect(liveEventsUrl()).toBe("/api/events?surface=desktop");
+    });
+
+    it("does not ask at all once it already holds one", async () => {
+      // The packaged path: the preload answered synchronously at page load.
+      setDesktopSurfaceSecretForTest("c".repeat(64));
+      let asked = false;
+      globalThis.fetch = (async () => {
+        asked = true;
+        return { ok: true, json: async () => ({ secret: "wrong" }) } as unknown as Response;
+      }) as typeof fetch;
+      expect(await ensureDesktopSurfaceSecret()).toBe("c".repeat(64));
+      expect(asked).toBe(false);
+    });
+  });
+
+  it("sends no proof at all rather than an empty one", () => {
+    // An empty header would be a wrong secret, not a missing one. The harness
+    // answers `remote` either way, but a request that never claims to hold a
+    // proof is the honest description of a renderer that has not been given
+    // one — and it keeps these URLs byte-identical to the pre-secret ones.
+    setDesktopSurfaceSecretForTest("");
+    expect(liveEventsUrl()).toBe("/api/events?surface=desktop");
+    expect(desktopSurfaceHeaders()).toEqual({});
   });
 });
 

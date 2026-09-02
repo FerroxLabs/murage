@@ -257,6 +257,21 @@ let serverReady = true;
 let secureCredentials = {};
 let secureCredentialState = null;
 
+// The harness mints a fresh desktop secret every launch and pushes it here
+// over the private utility-process port, before it starts listening. It is
+// the renderer's proof that it IS the renderer: `requestSurface()` in
+// server/sse-visibility.ts answers "desktop" for nothing else, so the
+// execution-class routes stop being reachable by any local process that can
+// type a header. Held in memory in this process only — never written to
+// userData, never logged, never put in a child environment.
+let desktopSurfaceSecret = "";
+
+function receiveDesktopSurfaceSecret(message) {
+  if (message?.type !== "murage:desktop-secret") return false;
+  if (typeof message.secret === "string" && message.secret) desktopSurfaceSecret = message.secret;
+  return true;
+}
+
 const CREDENTIALS_FILE = path.join(app.getPath("userData"), "credentials.bin");
 
 /** Set once per launch: true when the store could not be READ, which is not
@@ -907,6 +922,7 @@ async function startServerOn(port) {
   proc.stderr?.on("data", (d) => slog(`[err] ${String(d).trimEnd()}`));
   proc.on("message", (message) => {
     try {
+      if (receiveDesktopSurfaceSecret(message)) return;
       if (receiveBrowserControlHold(message)) return;
       if (receiveBrowserLifecycleCleanup(proc, message)) return;
     } catch (error) {
@@ -920,6 +936,10 @@ async function startServerOn(port) {
   let exited = false;
   proc.once("exit", (code) => {
     exited = true;
+    // The secret belonged to THAT child. A replacement mints its own, and
+    // holding a dead one would let the renderer keep presenting a proof the
+    // new harness has never heard of.
+    desktopSurfaceSecret = "";
     // Capabilities belong to turns in this exact server child. A crash or
     // restart invalidates them before any replacement child receives the
     // browser descriptor.
@@ -1381,6 +1401,17 @@ ipcMain.handle("browser:forget-profile", async (event, partitionId) => {
 
 ipcMain.on("screen:preview-intent", (event) => {
   event.returnValue = displayMediaGuard.begin(event.senderFrame);
+});
+
+// Synchronous on purpose: the preload reads this once while the page is
+// still loading, so the first `fetch` and the first `EventSource` already
+// carry the proof. An async invoke would leave a window in which the app's
+// own hydration looked like a paired phone's.
+//
+// "" in development — there is no forked child to have sent one, and the dev
+// renderer asks the harness directly instead (GET /api/desktop-secret).
+ipcMain.on("desktop:surface-secret", (event) => {
+  event.returnValue = desktopSurfaceSecret;
 });
 
 ipcMain.on("desktop:unread-count", (event, value) => {

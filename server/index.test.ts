@@ -26,6 +26,19 @@ const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const WEBHOOK_PORT = 39000 + Math.floor(Math.random() * 10_000);
 const WEBHOOK_BASE = `http://127.0.0.1:${WEBHOOK_PORT}`;
+/** This suite's stand-in for the renderer's copy of the per-launch desktop
+ * secret. The child harness runs outside Electron, so its dev injection is
+ * open and `MURAGE_DEV_DESKTOP_SECRET` pins the value both sides use — the
+ * same path `pnpm dev` and the Playwright rig take. A packaged child ignores
+ * that variable entirely; sse-visibility.test.ts proves it. */
+const DESKTOP_SECRET = "0123456789abcdef".repeat(4);
+/** Marker plus proof, in the header form and in the query form. `?surface=`
+ * alone stopped meaning anything the day the secret landed. */
+const DESKTOP_HEADERS = {
+  "x-murage-surface": "desktop",
+  "x-murage-surface-secret": DESKTOP_SECRET,
+} as const;
+const DESKTOP_QUERY = `surface=desktop&surfaceSecret=${DESKTOP_SECRET}`;
 
 let child: ChildProcess;
 /** stands in for the box provider so config saving never touches the network */
@@ -104,7 +117,7 @@ const desktopApi = async (method: string, path: string, body?: unknown): Promise
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: {
-      "x-murage-surface": "desktop",
+      ...DESKTOP_HEADERS,
       ...(body ? { "content-type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -350,6 +363,10 @@ beforeAll(async () => {
       // Production uses 15s. Keep the real timer path while making the
       // browser-visible heartbeat assertion fast and deterministic.
       MURAGE_SSE_HEARTBEAT_MS: "50",
+      // The dev injection, used exactly as `pnpm dev` and the Playwright
+      // webServer use it: pin the secret so the caller can hold the same one
+      // the harness minted. Refused outright in a packaged child.
+      MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
       FAKE_CLAUDE_MODE: "hang",
       FAKE_CLAUDE_DUMP: fakeClaudeDump,
     },
@@ -564,7 +581,7 @@ describe("harness HTTP API", () => {
     expect(attempted.body.error).toMatch(/direct-message.*members/i);
     // dm channels are withheld from a scoped roster by design, so this
     // assertion has to ask as the desktop
-    const state = await api("GET", "/api/bots?surface=desktop");
+    const state = await api("GET", `/api/bots?${DESKTOP_QUERY}`);
     const dm = state.body.groups.find((group: { id: string }) => group.id === "test-dm");
     expect(dm.memberIds).toEqual(["test-bot-a", "test-bot-b"]);
   });
@@ -1021,7 +1038,7 @@ describe("harness HTTP API", () => {
     expect(attempted.body.error).toMatch(/direct-message.*working folder/i);
     // dm channels are withheld from a scoped roster by design, so this
     // assertion has to ask as the desktop
-    const state = await api("GET", "/api/bots?surface=desktop");
+    const state = await api("GET", `/api/bots?${DESKTOP_QUERY}`);
     expect(state.body.groups.find((group: { id: string }) => group.id === "test-dm")).not.toHaveProperty("cwd");
     expect((await api("DELETE", "/api/groups/test-dm")).status).toBe(200);
   });
@@ -1032,7 +1049,7 @@ describe("harness HTTP API", () => {
     expect(attempted.body.error).toMatch(/fixed after its first turn/i);
     // dm channels are withheld from a scoped roster by design, so this
     // assertion has to ask as the desktop
-    const state = await api("GET", "/api/bots?surface=desktop");
+    const state = await api("GET", `/api/bots?${DESKTOP_QUERY}`);
     expect(state.body.groups.find((group: { id: string }) => group.id === "test-pinned-room")).not.toHaveProperty("cwd");
     expect((await api("DELETE", "/api/groups/test-pinned-room")).status).toBe(200);
   });
@@ -5485,17 +5502,96 @@ describe("instance CLI override API", () => {
     expect(ghost?.cli).toBeUndefined();
   });
 
-  // EventSource cannot set headers, so `?surface=desktop` is honoured as an
-  // opt-out. That is fine for a loopback renderer and fatal for a door a
+  // EventSource cannot set headers, so `?surface=desktop` travels in the
+  // query string. That is fine for a loopback renderer and fatal for a door a
   // browser can type a URL into: the door must stamp `x-murage-companion: 1`,
-  // which is checked first and cannot be overridden from the query string.
+  // which is checked first and cannot be overridden from the query string —
+  // not even by a request that also carries the real secret.
   it("cannot be unlocked from the query string once the door marks the request remote", async () => {
-    const forged = await fetch(`${BASE}/api/cli-test?surface=desktop`, {
+    const forged = await fetch(`${BASE}/api/cli-test?${DESKTOP_QUERY}`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-murage-companion": "1" },
       body: JSON.stringify({ cli: "/bin/echo" }),
     });
     expect(forged.status).toBe(404);
+  });
+
+  // The attack the desktop secret exists to stop, end to end and over a real
+  // socket. `x-murage-surface: desktop` is a string anyone on this machine
+  // can type, and every agent this app runs has a shell:
+  //
+  //   curl -H 'x-murage-surface: desktop' 127.0.0.1:8799/api/cli-test
+  //
+  // reached a route that spawns a caller-supplied binary. The marker still
+  // says what a caller wants; only the per-launch secret says who it is.
+  it("refuses a forged desktop marker at every execution-class route", async () => {
+    const forgeries: Array<Record<string, string>> = [
+      // the exact curl above: the marker, and nothing else
+      { "x-murage-surface": "desktop" },
+      // a guess at the secret, right shape and wrong bytes
+      { "x-murage-surface": "desktop", "x-murage-surface-secret": "f".repeat(64) },
+      // the empty proof, which must not compare equal to anything
+      { "x-murage-surface": "desktop", "x-murage-surface-secret": "" },
+      // a prefix of the real one — the compare is constant-time, not a
+      // startsWith, and the length guard is not the only thing deciding
+      { "x-murage-surface": "desktop", "x-murage-surface-secret": DESKTOP_SECRET.slice(0, -1) },
+    ];
+    for (const headers of forgeries) {
+      const label = JSON.stringify(headers);
+
+      // the binary prober
+      const probe = await fetch(`${BASE}/api/cli-test`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({ cli: "/bin/echo" }),
+      });
+      expect(probe.status, `cli-test ${label}`).toBe(404);
+
+      // the binary installer — deferred execution, same gate
+      const install = await fetch(`${BASE}/api/instances/claudeAgent`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({ cli: "/bin/echo" }),
+      });
+      expect(install.status, `instances ${label}`).toBe(404);
+
+      // and the same forgery in the query string, which is the form the
+      // door forwards verbatim
+      const query = new URLSearchParams({
+        surface: "desktop",
+        ...(headers["x-murage-surface-secret"] === undefined
+          ? {}
+          : { surfaceSecret: headers["x-murage-surface-secret"] }),
+      });
+      const viaQuery = await fetch(`${BASE}/api/cli-test?${query}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cli: "/bin/echo" }),
+      });
+      expect(viaQuery.status, `cli-test?${query} ${label}`).toBe(404);
+    }
+
+    // 404 and never 403, for all of them: a 403 would confirm the route is
+    // there and worth attacking, and would turn the secret compare into an
+    // oracle a caller could iterate against.
+    const withProof = await desktopApi("POST", "/api/cli-test", { cli: "/bin/echo" });
+    expect(withProof.status).toBe(200);
+  });
+
+  // The dev injection, from the renderer's side. In development the bundle is
+  // served by Vite on another port with no Electron bridge to ask through, so
+  // it asks the harness. This suite's child is exactly that shape.
+  it("hands a dev renderer the secret, and only ever over loopback", async () => {
+    const offered = await fetch(`${BASE}/api/desktop-secret`);
+    expect(offered.status).toBe(200);
+    expect(((await offered.json()) as { secret?: string }).secret).toBe(DESKTOP_SECRET);
+
+    // …and never through the door, whatever the allowlist ever grows to.
+    // 404, not 403 — the door learns nothing about what is behind it.
+    const throughTheDoor = await fetch(`${BASE}/api/desktop-secret`, {
+      headers: { "x-murage-companion": "1" },
+    });
+    expect(throughTheDoor.status).toBe(404);
   });
 });
 
@@ -5620,7 +5716,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
     // marker. Opening the desktop stream second and waiting on IT proves the
     // scoped stream was given a real chance to receive the frame.
     const scoped = await openSse(`${BASE}/api/events`);
-    const desktop = await openSse(`${BASE}/api/events?surface=desktop`);
+    const desktop = await openSse(`${BASE}/api/events?${DESKTOP_QUERY}`);
     try {
       await scoped.until((f) => f.kind === "hello");
       await desktop.until((f) => f.kind === "hello");
@@ -5644,7 +5740,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
     // connection for one second got the firehose back on resume.
     const bot = await seedHiddenBot("firehose probe beta");
 
-    const first = await openSse(`${BASE}/api/events?surface=desktop`);
+    const first = await openSse(`${BASE}/api/events?${DESKTOP_QUERY}`);
     const hello = await first.until((f) => f.kind === "hello");
     expect((await api("PATCH", `/api/bots/${bot.id}`, { unread: true })).status).toBe(200);
     await first.until((f) => f.kind === "bot" && f.bot?.id === bot.id);
@@ -5652,7 +5748,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
 
     const since = encodeURIComponent(hello.cursor);
     const resumed = await openSse(`${BASE}/api/events?since=${since}`);
-    const resumedDesktop = await openSse(`${BASE}/api/events?since=${since}&surface=desktop`);
+    const resumedDesktop = await openSse(`${BASE}/api/events?since=${since}&${DESKTOP_QUERY}`);
     try {
       expect((await resumed.until((f) => f.kind === "hello")).resumed).toBe(true);
       // the desktop's replay carries the frame, so it really was in the
@@ -5670,7 +5766,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
     const bot = await seedHiddenBot(needle);
 
     const q = `/api/search?q=${encodeURIComponent(needle)}`;
-    const desktop = await api("GET", `${q}&surface=desktop`);
+    const desktop = await api("GET", `${q}&${DESKTOP_QUERY}`);
     expect(desktop.status).toBe(200);
     expect(desktop.body.hits.some((hit: any) => hit.threadId === bot.threadId)).toBe(true);
 
@@ -5701,7 +5797,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
       const scoped = await fetch(`${BASE}${path}`);
       expect(scoped.status, path).toBe(404);
       const joiner = path.includes("?") ? "&" : "?";
-      const desktop = await fetch(`${BASE}${path}${joiner}surface=desktop`);
+      const desktop = await fetch(`${BASE}${path}${joiner}${DESKTOP_QUERY}`);
       expect(desktop.status, path).toBe(200);
     }
   });
@@ -5751,7 +5847,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
     // still a working hydration, not an empty one
     expect(scoped.body.bots.length).toBeGreaterThan(0);
 
-    const desktop = await api("GET", "/api/bots?messages=20&surface=desktop");
+    const desktop = await api("GET", `/api/bots?messages=20&${DESKTOP_QUERY}`);
     expect(desktop.body.bots.some((b: any) => b.id === bot.id)).toBe(true);
     expect(JSON.stringify(desktop.body)).toContain("firehose probe zeta");
   }, 40_000);
@@ -5769,14 +5865,14 @@ describe("remote surfaces see only the conversations a person can see", () => {
     // What the door actually sends: it stamps the companion marker into a
     // fresh header object, so the renderer's own desktop marker rides along
     // and must lose.
-    const throughTheDoor = await fetch(`${BASE}/api/config?surface=desktop`, {
-      headers: { "x-murage-companion": "1", "x-murage-surface": "desktop" },
+    const throughTheDoor = await fetch(`${BASE}/api/config?${DESKTOP_QUERY}`, {
+      headers: { "x-murage-companion": "1", ...DESKTOP_HEADERS },
     });
     expect((await throughTheDoor.json()).surface).toBe("remote");
 
     // Node joins duplicate headers into "1, 1"; a value check read that as
     // "not a companion" and handed back "desktop".
-    const duplicated = await fetch(`${BASE}/api/config?surface=desktop`, {
+    const duplicated = await fetch(`${BASE}/api/config?${DESKTOP_QUERY}`, {
       headers: [
         ["x-murage-companion", "1"],
         ["x-murage-companion", "1"],
@@ -5789,7 +5885,7 @@ describe("remote surfaces see only the conversations a person can see", () => {
     // proxy.ts forwards req.url whole, so the query string is the device's
     // to write. The header is checked first for exactly this reason.
     const bot = await seedHiddenBot("firehose probe epsilon");
-    const res = await fetch(`${BASE}/api/threads/${bot.threadId}/export?surface=desktop`, {
+    const res = await fetch(`${BASE}/api/threads/${bot.threadId}/export?${DESKTOP_QUERY}`, {
       headers: { "x-murage-companion": "1" },
     });
     expect(res.status).toBe(404);

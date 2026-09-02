@@ -7,9 +7,9 @@
 // read than the route allowlist grants it anywhere else.
 //
 // Two streams on one harness: the renderer's, which opts out of scoping with
-// `?surface=desktop`, and a paired device's, which arrives through the
-// sidecar with `x-murage-companion: 1`. A hidden bot's transcript must reach
-// the first and not the second.
+// `?surface=desktop` plus this launch's desktop secret, and a paired
+// device's, which arrives through the sidecar with `x-murage-companion: 1`.
+// A hidden bot's transcript must reach the first and not the second.
 //
 // Scoping is the DEFAULT, so the renderer is the side that has to say
 // something. That is the polarity on purpose: an unmarked stream — a door
@@ -34,6 +34,10 @@ let child: ChildProcess;
 let home: string;
 let stderr = "";
 let BASE = "";
+
+/** Marker plus proof. `?${DESKTOP_QUERY}` alone is a remote request now. */
+const DESKTOP_SECRET = "fedcba9876543210".repeat(4);
+const DESKTOP_QUERY = `surface=desktop&surfaceSecret=${DESKTOP_SECRET}`;
 
 const api = async (
   method: string,
@@ -70,6 +74,11 @@ posixOnly("the events stream is scoped per client", () => {
       USERPROFILE: home,
       MURAGE_PORT: String(port),
       MURAGE_WEBHOOK_PORT: String(port + 1),
+      // The desktop marker is not believed on its own any more — the harness
+      // wants this launch's secret with it. Pinning it through the dev
+      // injection is how the Vite renderer and the Playwright rig get one
+      // too; a packaged child refuses the variable outright.
+      MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
 
@@ -108,7 +117,7 @@ posixOnly("the events stream is scoped per client", () => {
     expect((await api("PATCH", `/api/bots/${bot.id}`, { modelSelection: model })).status).toBe(200);
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "react to me" })).status).toBe(202);
 
-    const desktop = { "x-murage-surface": "desktop" };
+    const desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": DESKTOP_SECRET };
     const phone = { "x-murage-companion": "1" };
     let messageId = "";
     for (let attempt = 0; attempt < 100 && !messageId; attempt++) {
@@ -152,7 +161,7 @@ posixOnly("the events stream is scoped per client", () => {
       let desktop: SseRecorder | undefined;
       let phone: SseRecorder | undefined;
       try {
-        desktop = await openSse(`${BASE}/api/events?surface=desktop`);
+        desktop = await openSse(`${BASE}/api/events?${DESKTOP_QUERY}`);
         phone = await openSse(`${BASE}/api/events`, { "x-murage-companion": "1" });
         await desktop.until((frame) => frame.kind === "hello");
         await phone.until((frame) => frame.kind === "hello");
@@ -198,7 +207,7 @@ posixOnly("the events stream is scoped per client", () => {
     async () => {
       // ?surface=desktop: /api/bots is scoped by default now, and a scoped
       // roster is exactly the one that does NOT list a hidden bot.
-      const listed = await api("GET", "/api/bots?surface=desktop");
+      const listed = await api("GET", `/api/bots?${DESKTOP_QUERY}`);
       const secret = listed.body.bots.find((bot: any) => bot.hidden);
       expect(secret, "the first test's hidden bot").toBeTruthy();
 
@@ -211,7 +220,7 @@ posixOnly("the events stream is scoped per client", () => {
         .toBe(202);
       // Wait on an unscoped stream so the hidden turn is known to be in the
       // replay buffer before the scoped client asks for the gap.
-      const witness = await openSse(`${BASE}/api/events?surface=desktop`);
+      const witness = await openSse(`${BASE}/api/events?${DESKTOP_QUERY}`);
       try {
         await witness.until(
           (frame) => frame.kind === "message" && frame.threadId === secret.threadId && frame.message?.role === "bot",

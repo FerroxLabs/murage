@@ -15,6 +15,7 @@ import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./
 import { pickBotName, DEFAULT_BOT_COLOR } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { botAvatarProfile, type BotAvatarCrop } from "../shared/bot-avatar.ts";
+import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import type { RoutineRequestCardData } from "../shared/routine-request.ts";
 import type { RoutineRunCardData } from "../shared/routine-run.ts";
 import type { SkillRequestCardData } from "../shared/skill-request.ts";
@@ -406,6 +407,13 @@ export interface BotRecord {
   name: string;
   title: string;
   description: string;
+  /** The bot's voice in a sentence or two — "direct, dry, skip the
+   * pleasantries". Appended to the persona string on every turn and read by
+   * NOTHING else: not the Chief's roster, not the avatar prompt, not the team
+   * manifest or the project scout, all of which read `description` to decide
+   * who does the work. Capped small on purpose (BOT_PROFILE_LIMITS.persona);
+   * absent, never an empty string. */
+  persona?: string;
   notifications: boolean;
   color: EmberColor;
   mascotExpression?: EmberExpression | null;
@@ -735,6 +743,21 @@ export class Store {
       if (b.autoStartVps !== undefined && b.autoStartVps !== true && b.autoStartVps !== false) {
         delete b.autoStartVps;
         botsMigrated = true;
+      }
+      // One shape for "no voice note": absent. A blank or whitespace-only
+      // persona would otherwise put an empty `Personality:` line in front of
+      // the model, and a hand-edited bots.json must not smuggle a second
+      // brief past the cap the UI enforces.
+      if (b.persona !== undefined) {
+        const persona =
+          typeof b.persona === "string" ? b.persona.trim().slice(0, BOT_PROFILE_LIMITS.persona) : "";
+        if (!persona) {
+          delete b.persona;
+          botsMigrated = true;
+        } else if (persona !== b.persona) {
+          b.persona = persona;
+          botsMigrated = true;
+        }
       }
       const avatar = botAvatarProfile(b);
       if (b.avatarUrl !== undefined && avatar.avatarUrl !== b.avatarUrl) {

@@ -17,6 +17,7 @@
 // "Entitled" is the same set the sidebar shows a person: every bot they have
 // not hidden and every room they made. It is a surface filter, not an
 // authorization model — see the note on `visibleToCompanion`.
+import { randomBytes, timingSafeEqual } from "node:crypto";
 
 /** Which door a request came through, and therefore how much of the
  * workspace it may be shown. `remote` is not one client — it is every
@@ -28,6 +29,80 @@ export const DESKTOP_SURFACE = "desktop";
 export const SURFACE_HEADER = "x-murage-surface";
 export const SURFACE_QUERY = "surface";
 export const COMPANION_HEADER = "x-murage-companion";
+
+/** Where the per-launch desktop secret travels. Two forms for the same
+ * reason the marker has two: `EventSource` cannot set a request header, so
+ * `/api/events` has only the query string. */
+export const SURFACE_SECRET_HEADER = "x-murage-surface-secret";
+export const SURFACE_SECRET_QUERY = "surfaceSecret";
+
+/** Is this process the harness that Electron embeds?
+ *
+ * `process.parentPort` is supplied by exactly one runtime — an Electron
+ * `utilityProcess` child — and `electron/main.mjs` forks the harness that
+ * way (`startServerOn`, guarded by `app.isPackaged`). There is no other path
+ * by which a packaged build starts this server, so this is a structural fact
+ * about how the process was launched rather than a claim its environment
+ * makes about itself. `MURAGE_DESKTOP_PARENT` is the same claim in env form
+ * and is kept only as a second, weaker witness.
+ *
+ * Everything dev-only below hangs off this, because what dev mode needs is
+ * an env var — and an env var must never be able to switch itself on inside
+ * a shipped app. */
+const embeddedInDesktopApp =
+  (process as NodeJS.Process & { parentPort?: unknown }).parentPort !== undefined ||
+  process.env.MURAGE_DESKTOP_PARENT === "1";
+
+/** Pins the secret to a known value so a dev renderer served by Vite — which
+ * is a different origin, a different process, and has no Electron bridge —
+ * can hold it too. Read once, at import. */
+const DEV_SECRET_ENV = "MURAGE_DEV_DESKTOP_SECRET";
+/** For a harness that runs outside Electron and is NOT a developer's box —
+ * the cloud install, where the only humans on loopback are agents. */
+const DEV_SECRET_OFF_ENV = "MURAGE_NO_DEV_DESKTOP_SECRET";
+
+const devSecretAllowed =
+  !embeddedInDesktopApp && process.env[DEV_SECRET_OFF_ENV] !== "1";
+
+/** One secret, minted once per launch, never written to disk and never
+ * logged. `randomBytes(32)` because this is the whole proof now: a caller
+ * that holds it is the local desktop app, and a caller that does not is
+ * `remote` no matter what it says about itself. */
+const desktopSecret = (() => {
+  const pinned = devSecretAllowed ? (process.env[DEV_SECRET_ENV] ?? "").trim() : "";
+  return pinned || randomBytes(32).toString("hex");
+})();
+const desktopSecretBytes = Buffer.from(desktopSecret, "utf8");
+
+/** The secret itself. Two callers, both in `index.ts`: the message that hands
+ * it to Electron's main process over the private utility-process port, and
+ * the dev-only route below. It must not reach a log, a config file, an agent
+ * environment, or an MCP server. */
+export function desktopSurfaceSecret(): string {
+  return desktopSecret;
+}
+
+/** Whether this harness may hand the secret to a loopback caller that asks.
+ *
+ * False inside the packaged app, always — see `embeddedInDesktopApp`. True
+ * for `pnpm dev:server`, the Playwright rig and the test harness, where the
+ * renderer is served by Vite on another port and has no bridge to ask
+ * through. A cloud install sets `MURAGE_NO_DEV_DESKTOP_SECRET=1`, because
+ * there the loopback neighbours are agents rather than a person. */
+export function devDesktopSecretOffered(): boolean {
+  return devSecretAllowed;
+}
+
+/** Constant-time, and `false` for anything that is not exactly the secret.
+ *
+ * The length compare leaks the length, which is a fixed 64 hex characters in
+ * every real launch — the same trade `authorizedComms` makes for the peer
+ * comms token, and for the same reason. */
+function secretProven(candidate: string | undefined): boolean {
+  if (!candidate) return false;
+  const got = Buffer.from(candidate, "utf8");
+  return got.length === desktopSecretBytes.length && timingSafeEqual(got, desktopSecretBytes);
+}
 
 const headerValue = (
   headers: Partial<Record<string, string | string[] | undefined>>,
@@ -64,7 +139,7 @@ export const companionMarked = (
  * forgetting a line there is the whole transcript rather than a broken
  * feature — silent, and only visible to whoever is reading the stream.
  *
- * So breadth is proved, never assumed. Three rules, and the order matters:
+ * So breadth is proved, never assumed. Four rules, and the order matters:
  *
  *  1. A caller that says it is a companion IS one. `proxy.ts` writes
  *     `x-murage-companion: 1` into a *fresh* header object, so a device
@@ -76,21 +151,41 @@ export const companionMarked = (
  *     (`src/lib/live-events.ts`), so the query form is not a convenience —
  *     it is the only form that route can use. The header form is for
  *     `fetch` callers such as `/api/search`.
- *  3. Everything else is `remote`.
+ *  3. …and PROVES it, with the per-launch secret. The marker says what the
+ *     caller wants; the secret says who it is. Both, or `remote`.
+ *  4. Everything else is `remote`.
  *
- * Neither marker is a secret and neither is an authorization check: a local
- * process can type either one, and a local process already holds the
- * harness's real credential, its loopback socket. What the inversion buys is
- * that a *remote* door gets the narrow stream without having to know this
- * file exists. */
+ * Rule 3 is the one this file used to be missing, and the commits that added
+ * rules 1–2 oversold what they bought. The marker is not a secret: any local
+ * process could type it, and
+ *
+ *     curl -H 'x-murage-surface: desktop' 127.0.0.1:8799/api/cli-test
+ *
+ * therefore reached a route that spawns a caller-supplied binary. "Local
+ * process" is not a small set on this machine — every agent the app runs has
+ * a shell. What the markers alone bought was real but narrower than claimed:
+ * a *remote* door gets the narrow stream without having to know this file
+ * exists. Naming a principal takes a secret only the renderer holds, minted
+ * fresh each launch, above.
+ *
+ * The polarity is unchanged, and deliberately so: a wrong secret, a missing
+ * secret and a malformed one are all simply `remote`. There is no 403 here
+ * and no distinguishable failure — a caller learns nothing about whether it
+ * guessed close, and the routes that care answer 404 rather than confirm
+ * they exist. */
 export function requestSurface(
   headers: Partial<Record<string, string | string[] | undefined>>,
   query?: URLSearchParams | null,
 ): Surface {
   if (companionMarked(headers)) return "remote";
-  if (headerValue(headers, SURFACE_HEADER) === DESKTOP_SURFACE) return DESKTOP_SURFACE;
-  if (query?.get(SURFACE_QUERY) === DESKTOP_SURFACE) return DESKTOP_SURFACE;
-  return "remote";
+  const marked =
+    headerValue(headers, SURFACE_HEADER) === DESKTOP_SURFACE ||
+    query?.get(SURFACE_QUERY) === DESKTOP_SURFACE;
+  if (!marked) return "remote";
+  const proven =
+    secretProven(headerValue(headers, SURFACE_SECRET_HEADER)) ||
+    secretProven(query?.get(SURFACE_SECRET_QUERY) ?? undefined);
+  return proven ? DESKTOP_SURFACE : "remote";
 }
 
 /** What one frame is about. `workspace` frames belong to no conversation. */

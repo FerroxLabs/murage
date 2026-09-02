@@ -25,6 +25,8 @@ const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const FAKE_AGY_CLI = join(SERVER_DIR, "testing", "fake-agy-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
+/** The renderer's proof, pinned for this child. See `api` below. */
+const DESKTOP_SECRET = "c0ffee00c0ffee11".repeat(4);
 
 describe("mentionedBots", () => {
   const peers = [
@@ -100,12 +102,14 @@ describe("comms e2e (fake ACP fleet)", () => {
    * exchanges — the thing `/api/bots` and `/api/events` now withhold from a
    * scoped client by design (see sse-visibility.ts). Without the marker the
    * assertions would be checking the phone's view of a conversation only the
-   * desktop is shown. */
+   * desktop is shown — and the marker on its own stopped being believed: the
+   * harness wants this launch's desktop secret alongside it. */
   const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
       headers: {
         "x-murage-surface": "desktop",
+        "x-murage-surface-secret": DESKTOP_SECRET,
         ...(body ? { "content-type": "application/json" } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -197,6 +201,9 @@ describe("comms e2e (fake ACP fleet)", () => {
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
+      // Pinned through the dev injection so the caller above can hold the
+      // same secret the harness minted. A packaged child ignores this.
+      MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
       // e2e-friendly ask ceiling: the timeout-conversion test needs the
       // synchronous wait to end while the gated peer turn is still open
       MURAGE_ASK_BOT_TIMEOUT_MS: "8000",
