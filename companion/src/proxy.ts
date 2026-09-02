@@ -278,6 +278,9 @@ export function createProxyHandler(options: ProxyOptions) {
     // A native app sends no Origin. Anything that does is a browser that has
     // found this port, and a browser has no business on it — refused before
     // the token is even looked at, and regardless of what the origin says.
+    // Browsers have their own door on 8813 (`browser.ts`), with its own
+    // allowlist, its own credential and its own origin policy. This check
+    // does not weaken to accommodate them; that is why the other door exists.
     if (req.headers.origin) {
       return sendJson(res, 403, { error: "forbidden: cross-origin request" });
     }
@@ -292,6 +295,11 @@ export function createProxyHandler(options: ProxyOptions) {
       // that disagree about what a credential looks like means the header a
       // phone sends authenticates on one code path and not the other.
       authenticated: Boolean(device),
+      // This handler is the device door and only ever that. The browser door
+      // is a different function in a different file (`browser.ts`) with its
+      // own list — a route added there cannot appear here, which is the
+      // whole reason the two are not one handler with a flag.
+      surface: "device",
     });
     if (denial) return sendJson(res, denial.status, { error: denial.error });
 

@@ -8,8 +8,15 @@
 //
 //   :8810  0.0.0.0    devices     token required, allowlisted, scrubbed
 //   :8811  127.0.0.1  you         pairing and revocation — never off-machine
+//   :8813  loopback   browsers    cookie required, its OWN allowlist, its own
+//                                 origin policy — `tailscale serve` in front,
+//                                 or the tailnet address directly. Never
+//                                 0.0.0.0, and never `tailscale funnel`.
 //   :8799  127.0.0.1  the harness spoken to as this machine, unmodified
 //   UDS/pipe            one Electron-owned sidecar generation, never TCP
+//
+// 8813 rather than 8812: electron/companion-origin-gateway.mjs already owns
+// 8812 for the managed loopback gateway.
 //
 // 8810 rather than 8800, which is where these started: the harness opens a
 // webhook receiver one port above its own, so 8800 is already taken by the
@@ -22,6 +29,7 @@
 import { createServer } from "node:http";
 
 import { createAddressWatcher } from "./advertise-watch.ts";
+import { browserBindHost, createBrowserHandler, type BoundIdentity, type BrowserBindMode } from "./browser.ts";
 import { createControlServer, hostCandidates } from "./control.ts";
 import { createConnectedDeviceTracker } from "./connected-devices.ts";
 import { DeviceRegistry } from "./devices.ts";
@@ -49,6 +57,23 @@ const HARNESS_PORT = num(process.env.MURAGE_PORT, 8799);
 const WEBHOOK_PORT = num(process.env.MURAGE_WEBHOOK_PORT, HARNESS_PORT + 1);
 const COMPANION_PORT = num(process.env.MURAGE_COMPANION_PORT, 8810);
 const CONTROL_PORT = num(process.env.MURAGE_CONTROL_PORT, 8811);
+/** 8813, and not 8812. `electron/companion-origin-gateway.mjs:12` already
+ * owns 8812 for the managed loopback gateway, so the security plan's ACL
+ * example — which says 8812 — would have put the browser door on top of it. */
+const BROWSER_PORT = num(process.env.MURAGE_BROWSER_PORT, 8813);
+/** `loopback` puts `tailscale serve` in front (it terminates TLS and dials
+ * the backend over 127.0.0.1 — measured); `tailnet` binds the 100.64.0.0/10
+ * address directly. Nothing binds 0.0.0.0, and `tailnet` with no tailnet
+ * address refuses to start rather than falling back. */
+const BROWSER_BIND: BrowserBindMode = process.env.MURAGE_BROWSER_BIND === "tailnet" ? "tailnet" : "loopback";
+/** `https` once the tailnet has certificates and serve is in front — it
+ * decides the cookie name (`__Host-`) and whether `Secure` is set.
+ *
+ * Configured, never derived from `X-Forwarded-Proto`. `tailscale serve` was
+ * measured to strip a client-supplied copy of that header, but the door also
+ * accepts direct connections, and a cookie attribute that a request header
+ * can flip is not an attribute. */
+const BROWSER_SCHEME: BoundIdentity["scheme"] = process.env.MURAGE_BROWSER_SCHEME === "https" ? "https" : "http";
 const SERVICE_TYPE = "_murage._tcp";
 let hostedUrl = hostedCompanionUrl(process.env.MURAGE_COMPANION_HOSTED_URL);
 const PRIVATE_ORIGIN = companionOriginSocket(process.env.MURAGE_COMPANION_INTERNAL_ORIGIN);
@@ -64,6 +89,31 @@ const HARNESS_PORTS = new Map([
   [HARNESS_PORT, "the harness itself"],
   [WEBHOOK_PORT, "the harness's webhook receiver"],
 ]);
+
+/** Every authority the browser door will answer to, and nothing else.
+ *
+ * Read per request rather than captured: the tailnet address can change under
+ * a running sidecar (a Tailscale restart, a re-auth, a node key rotation) and
+ * a captured set would then refuse the very host the door is bound to.
+ *
+ * Loopback is in the set only when the door is bound to loopback, which is
+ * the `tailscale serve` arrangement: serve forwards the client's `Host`
+ * intact, so the MagicDNS name has to be accepted there too. */
+const browserIdentity = (): BoundIdentity => {
+  const hosts = new Set<string>();
+  const name = tailnetName();
+  if (name) hosts.add(name.toLowerCase());
+  const tailnet = tailscaleAddress();
+  if (tailnet) hosts.add(tailnet);
+  if (BROWSER_BIND === "loopback") {
+    for (const host of ["127.0.0.1", "localhost", "::1", "[::1]"]) hosts.add(host);
+  }
+  for (const extra of (process.env.MURAGE_BROWSER_HOSTS ?? "").split(",")) {
+    const trimmed = extra.trim().toLowerCase();
+    if (trimmed) hosts.add(trimmed);
+  }
+  return { scheme: BROWSER_SCHEME, hosts };
+};
 
 /** A sentence naming what already owns this port, or null when nothing does. */
 const conflict = (name: string, port: number): string | null => {
@@ -150,6 +200,26 @@ const proxy = createProxyHandler({
 const companion = createServer(proxy);
 const managedOrigin = PRIVATE_ORIGIN ? createServer(proxy) : null;
 
+/** The browser door. A different handler in a different file, on purpose:
+ * anything bolted onto `proxy` above is on the device port *and* the
+ * tunnel-fronted managed origin by default, which is the exact failure this
+ * separation exists to prevent. */
+const browser = createServer(
+  createBrowserHandler({
+    harnessPort: HARNESS_PORT,
+    identity: browserIdentity,
+    devices,
+    connected: connectedDevices.open,
+  }),
+);
+
+// A startup invariant, not a comment. index.ts once had two listeners on one
+// handler, and that is how a device route becomes a public route without
+// anyone deciding it.
+if (managedOrigin && managedOrigin.listeners("request")[0] === browser.listeners("request")[0]) {
+  throw new Error("the managed origin and the browser door share a request handler");
+}
+
 const control = createControlServer({
   devices,
   companionPort: COMPANION_PORT,
@@ -172,7 +242,11 @@ const listen = (server: ReturnType<typeof createServer>, port: number, host: str
       // own ports are ruled out above, and "close whatever is using it"
       // sends someone hunting through `lsof` for a process they started.
       const hint = ` — another copy of the companion may already be running; ${
-        port === COMPANION_PORT ? "MURAGE_COMPANION_PORT" : "MURAGE_CONTROL_PORT"
+        port === COMPANION_PORT
+          ? "MURAGE_COMPANION_PORT"
+          : port === BROWSER_PORT
+            ? "MURAGE_BROWSER_PORT"
+            : "MURAGE_CONTROL_PORT"
       } chooses a different one`;
       reject(
         error.code === "EADDRINUSE"
@@ -205,8 +279,17 @@ const listen = (server: ReturnType<typeof createServer>, port: number, host: str
  * advertise and print where to point the phone. */
 async function main(): Promise<void> {
   const clash =
-    conflict("MURAGE_COMPANION_PORT", COMPANION_PORT) ?? conflict("MURAGE_CONTROL_PORT", CONTROL_PORT);
+    conflict("MURAGE_COMPANION_PORT", COMPANION_PORT) ??
+    conflict("MURAGE_CONTROL_PORT", CONTROL_PORT) ??
+    conflict("MURAGE_BROWSER_PORT", BROWSER_PORT);
   if (clash) throw new Error(`${clash}. Pick another port.`);
+  if (BROWSER_PORT === COMPANION_PORT || BROWSER_PORT === CONTROL_PORT) {
+    throw new Error(
+      `MURAGE_BROWSER_PORT is set to port ${BROWSER_PORT}, which another sidecar socket already uses. ` +
+        `The doors do not share a socket: they do not share an allowlist, a credential, or an origin policy. ` +
+        `Pick another port.`,
+    );
+  }
 
   // The sidecar's own two ports, for the same reason as the harness's: bound
   // in order, the second one loses with a bare EADDRINUSE that reads as
@@ -238,6 +321,11 @@ async function main(): Promise<void> {
   const tailscaleTried: string[] = [];
   await refreshTailnetName((cli, outcome) => tailscaleTried.push(`  ${cli} — ${outcome}`)).catch(() => {});
 
+  // After the tailnet name, because the bind host and the door's own host
+  // allowlist both depend on it. `browserBindHost` throws rather than falling
+  // back when the tailnet was asked for and is not there.
+  await listen(browser, BROWSER_PORT, browserBindHost(BROWSER_BIND, tailscaleAddress()));
+
   // Discovery failing is not an error anyone has to fix — port 5353 taken by
   // another responder, multicast off, a guest network that isolates its
   // clients. Pairing by typed address still works, and the control page says
@@ -255,6 +343,10 @@ async function main(): Promise<void> {
   const reach = tailnetName() ?? tailscale ?? addresses[0];
   console.log(`companion  http://0.0.0.0:${COMPANION_PORT}  →  harness 127.0.0.1:${HARNESS_PORT}`);
   console.log(`pair here  http://127.0.0.1:${CONTROL_PORT}`);
+  console.log(
+    `browser    ${BROWSER_SCHEME}://${BROWSER_BIND === "loopback" ? "127.0.0.1" : tailscale}:${BROWSER_PORT}/enter` +
+      (BROWSER_BIND === "loopback" ? "  (put `tailscale serve` in front — never `funnel`)" : ""),
+  );
   if (reach) console.log(`on your phone, enter  ${reach}:${COMPANION_PORT}`);
   if (tailscale && !tailnetName()) {
     // Do not tell someone to turn on MagicDNS when they may well have it on
@@ -277,10 +369,12 @@ const shutdown = async (signal: string): Promise<void> => {
   // own — drop the sockets so "stop" means stopped, now.
   companion.closeAllConnections?.();
   control.closeAllConnections?.();
+  browser.closeAllConnections?.();
   managedOrigin?.closeAllConnections?.();
   await Promise.all([
     new Promise<void>((r) => companion.close(() => r())),
     new Promise<void>((r) => control.close(() => r())),
+    new Promise<void>((r) => browser.close(() => r())),
     ...(managedOrigin ? [new Promise<void>((r) => managedOrigin.close(() => r()))] : []),
   ]);
   process.exit(0);
