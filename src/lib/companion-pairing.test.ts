@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  companionBrowserLink,
   companionPairingLink,
   companionPairingRoute,
   companionPairingRoutePin,
   companionPairingRoutePinAvailable,
+  type CompanionBrowserDoor,
 } from "./companion-pairing";
 
 describe("companionPairingLink", () => {
@@ -343,5 +345,92 @@ describe("companionPairingLink", () => {
         { url: "http://murage-aa.local:8810", kind: "bonjour", priority: 300 },
       ],
     }, "local")).toBeNull();
+  });
+});
+
+// The link a phone actually follows.
+//
+// The pairing QR carried a `murage://pair` URL for an iOS app that was
+// removed from this repository. Scanning it on a phone opened nothing, which
+// is why the pairing copy stopped naming a client — the honest thing to do
+// with a dead client, and not a fix. The fix is the browser door: the sidecar
+// serves this same app over the tailnet, and `/enter#<token>` is the page a
+// camera app can open.
+
+/** A well-formed pairing token: the shape `devices.ts` issues and accepts. */
+const TOKEN = `murage_pair_${"A".repeat(43)}`;
+const DOOR: CompanionBrowserDoor = { scheme: "http", host: "macbook.tail1234.ts.net", port: 8813 };
+
+describe("the link the QR carries", () => {
+  it("sends a phone to the door's first-contact page with the token in the fragment", () => {
+    // The fragment is the whole security design of /enter, not a formatting
+    // choice: it never reaches a server, an access log, or a Referer header,
+    // and the page strips it from history before its first network call.
+    expect(companionBrowserLink(DOOR, TOKEN)).toBe(
+      `http://macbook.tail1234.ts.net:8813/enter#${TOKEN}`,
+    );
+    // Never the query string, which would undo every one of those.
+    expect(companionBrowserLink(DOOR, TOKEN)).not.toContain("?");
+  });
+
+  it("leaves the port off when it is the scheme's own", () => {
+    // `tailscale serve` terminates TLS on 443. A URL that spelled it out
+    // would still work and would look like an address someone typed wrong.
+    expect(companionBrowserLink({ scheme: "https", host: "macbook.tail1234.ts.net", port: 443 }, TOKEN))
+      .toBe(`https://macbook.tail1234.ts.net/enter#${TOKEN}`);
+    expect(companionBrowserLink({ scheme: "http", host: "macbook.tail1234.ts.net", port: 80 }, TOKEN))
+      .toBe(`http://macbook.tail1234.ts.net/enter#${TOKEN}`);
+  });
+
+  it("brackets a bare IPv6 literal", () => {
+    // Unbracketed, the first colon of the address reads as the port
+    // separator and the link addresses a machine that does not exist.
+    expect(companionBrowserLink({ scheme: "http", host: "fd7a:115c:a1e0::4d3b", port: 8813 }, TOKEN))
+      .toBe(`http://[fd7a:115c:a1e0::4d3b]:8813/enter#${TOKEN}`);
+  });
+
+  it("takes the tailnet address as readily as the name", () => {
+    expect(companionBrowserLink({ scheme: "http", host: "100.79.121.109", port: 8813 }, TOKEN))
+      .toBe(`http://100.79.121.109:8813/enter#${TOKEN}`);
+  });
+
+  it("answers null rather than building a link nothing can open", () => {
+    // A malformed link is a QR code somebody points a phone at and gets a
+    // blank page from, with nothing on screen saying why. Null is a state
+    // the caller renders; a broken string is not.
+    expect(companionBrowserLink(null, TOKEN)).toBeNull();
+    expect(companionBrowserLink(undefined, TOKEN)).toBeNull();
+    expect(companionBrowserLink(DOOR, null)).toBeNull();
+    expect(companionBrowserLink(DOOR, undefined)).toBeNull();
+    // the six-digit code is not the credential this page redeems
+    expect(companionBrowserLink(DOOR, "123456")).toBeNull();
+    expect(companionBrowserLink(DOOR, `murage_pair_${"A".repeat(42)}`)).toBeNull();
+    expect(companionBrowserLink({ ...DOOR, host: "  " }, TOKEN)).toBeNull();
+    expect(companionBrowserLink({ ...DOOR, port: 0 }, TOKEN)).toBeNull();
+    expect(companionBrowserLink({ ...DOOR, port: 70_000 }, TOKEN)).toBeNull();
+    expect(companionBrowserLink({ ...DOOR, port: 8813.5 }, TOKEN)).toBeNull();
+  });
+
+  it("refuses a host carrying anything that would re-shape the URL", () => {
+    // The host comes over IPC from another process. A `/` or a `#` in it
+    // would move the path or truncate the fragment, and a `@` would turn the
+    // whole thing into userinfo in front of somebody else's host.
+    for (const host of [
+      "evil.example/x",
+      "macbook.ts.net#",
+      "macbook.ts.net?a=1",
+      "user@evil.example",
+      "macbook .ts.net",
+      "macbook\\\\evil",
+    ]) {
+      expect(companionBrowserLink({ ...DOOR, host }, TOKEN), host).toBeNull();
+    }
+  });
+
+  it("refuses a scheme that is not one of the two", () => {
+    // `javascript:` and `data:` are the reason this is an allowlist.
+    expect(
+      companionBrowserLink({ ...DOOR, scheme: "javascript" as CompanionBrowserDoor["scheme"] }, TOKEN),
+    ).toBeNull();
   });
 });

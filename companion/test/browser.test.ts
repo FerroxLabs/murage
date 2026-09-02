@@ -864,3 +864,51 @@ describe("the word that must never appear", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("the door a person actually taps", () => {
+  const identity = { scheme: "http" as const, host: "phone.tail0a48a4.ts.net", port: 8813, hosts: new Set(["phone.tail0a48a4.ts.net"]) };
+  const ask = (headers: Record<string, string>, url = "/enter", method = "GET") =>
+    originGate({ method, url, headers: { host: "phone.tail0a48a4.ts.net:8813", ...headers } } as never, identity as never);
+
+  // Sean pasted the pairing link to his phone, tapped it, and got
+  // "forbidden: cross-origin request". `none` is only ever sent for a URL
+  // TYPED into the address bar; tapping a link in Messages, mail, a notes app
+  // or a QR scanner is a navigation with an initiator, and every browser
+  // sends `cross-site` for that. The door refused the one flow it exists for.
+  it("lets a phone open the shell from a link in another app", () => {
+    for (const site of ["cross-site", "same-site"]) {
+      expect(
+        ask({ "sec-fetch-site": site, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" }),
+        `a tapped link sending Sec-Fetch-Site: ${site} must reach the shell`,
+      ).toBeNull();
+    }
+    // A browser too old to send Sec-Fetch at all is STILL refused — see the
+    // note in originGate. Pinned here so widening it is a deliberate act.
+    expect(ask({ accept: "text/html" })).toMatchObject({ status: 403 });
+    // the two that already worked keep working
+    expect(ask({ "sec-fetch-site": "none", "sec-fetch-mode": "navigate" })).toBeNull();
+    expect(ask({ "sec-fetch-site": "same-origin" })).toBeNull();
+  });
+
+  // The exemption is a NAVIGATION exemption. It must not become a hole for
+  // the data routes, which is where cross-site and same-site actually bite.
+  it("still refuses a cross-site request for anything but the shell", () => {
+    // an API read, dressed as a navigation, from another site
+    expect(
+      ask({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" }, "/api/bots"),
+    ).toMatchObject({ status: 403 });
+    // a subresource fetch, not a navigation
+    expect(ask({ "sec-fetch-site": "cross-site", "sec-fetch-dest": "empty" })).toMatchObject({ status: 403 });
+    // a write, which is never a safe method
+    expect(
+      ask({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", origin: "http://evil.example" }, "/enter", "POST"),
+    ).toMatchObject({ status: 403 });
+    // and the host allowlist still comes first
+    expect(
+      originGate(
+        { method: "GET", url: "/enter", headers: { host: "evil.example", "sec-fetch-mode": "navigate" } } as never,
+        identity as never,
+      ),
+    ).toMatchObject({ status: 403, error: "forbidden: unexpected host" });
+  });
+});
