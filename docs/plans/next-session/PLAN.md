@@ -176,6 +176,55 @@ subprocess, certs on the tailnet. **D1's cost, stated:** under plain HTTP every
 `ChatView.tsx:162`, `ConnectionDetail.tsx:27`, `EngineSetup.tsx:48`,
 `SettingsPrimitives.tsx:64`) — and PWA install is impossible. D2 fixes both.
 
+## Sean's direction — setup is a thing you go and ask for, not a thing that waits
+
+Recorded 2026-09-02, looking at Sable: 1.4M tokens of conversation, fully
+skilled, established profile, with the intake card still sitting in her
+composer. His words: "when a conversation has started this option needs to go
+or be part of a configuration somewhere ... A 'Set up my bot' button or
+something in the config? with a warning if skills are already loaded and a
+profile has been established?"
+
+This REPLACES H1's collapsed chip. The composer intake shows only while the
+bot is genuinely new; once it has skills, a title, a description or three user
+messages, the composer shows nothing at all. The entry point moves to the
+profile panel next to `BotRoleControl` (`SettingsPanel.tsx:449`), and opening
+it on an established bot warns first, naming what it would change. The warning
+is what makes removing the composer entry safe — setup stops ambushing a bot
+that is already working and becomes deliberate. H5's keep-the-name checkbox
+still applies on that path.
+
+## The personality question — one micro-field, not a second brief
+
+Sean asked for "a very micro prompt that was the personality of each bot ...
+Sable ... a little direct, snarky, satirical, with dry wit", and asked whether
+`description` already carries across as a prompt.
+
+**It does, verbatim, on every turn.** `server/index.ts:2701-2707` builds
+`You are <name>, a personal bot in Murage. Role: <title>. About: <description>`
+for a direct turn, and `:3705-3709` builds the same for a room turn. The field
+takes 4000 characters (`shared/bot-profile.ts`). Nothing in the UI says so: the
+label is "Description" and the placeholder is "What this agent is for", which
+reads as metadata about the bot rather than instructions to it.
+
+But `description` is also read by things that are not the prompt — avatar image
+generation (`avatar-image.ts:47`), the Chief of Staff's view of its team
+(`chief-of-staff.ts:41`), the team manifest and project scout. A Chief deciding
+who to delegate to does not need "be snarky", so voice instructions written
+into `description` bleed into routing.
+
+**Recommendation: a separate, deliberately SHORT `persona` field.** ~280
+characters, appended to the persona string at both sites and read by nothing
+else. The cap is the design — it forces a voice note rather than a second
+brief, which is what keeps this from becoming the prompt ceremony Sean does not
+want. Offer an AI-drafted starter from the bot's name, title and description,
+always editable, never auto-applied. Label the existing Description field
+honestly at the same time, so a person can see it is spoken to the bot.
+
+Dispatch as its own lane AFTER the intake lane frees `server/index.ts`. Touches
+`server/{index,bot-profile,store}.ts`, `shared/bot-profile.ts`,
+`src/components/SettingsPanel.tsx`.
+
 ## Sean's direction — the phone intro screen IS the web UI offer
 
 Recorded 2026-09-02, from the running app at startup. His words: "Still
