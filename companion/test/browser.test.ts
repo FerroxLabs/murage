@@ -885,6 +885,17 @@ describe("the door a person actually taps", () => {
     // A browser too old to send Sec-Fetch at all is STILL refused — see the
     // note in originGate. Pinned here so widening it is a deliberate act.
     expect(ask({ accept: "text/html" })).toMatchObject({ status: 403 });
+    // ...INCLUDING when the browser attaches an Origin to that navigation,
+    // which Safari does when the link is opened from another app, and which
+    // becomes `null` after a redirect or from a sandboxed webview. Opening
+    // rule 2 without opening this one fixed nothing — the phone still got
+    // "forbidden: cross-origin request".
+    for (const origin of ["https://claude.ai", "null"]) {
+      expect(
+        ask({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", origin }),
+        `a tapped link carrying Origin: ${origin} must still reach the shell`,
+      ).toBeNull();
+    }
     // the two that already worked keep working
     expect(ask({ "sec-fetch-site": "none", "sec-fetch-mode": "navigate" })).toBeNull();
     expect(ask({ "sec-fetch-site": "same-origin" })).toBeNull();
