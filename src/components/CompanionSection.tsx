@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import {
   PhoneSetupFlowView,
+  WEB_UI_TITLE,
   companionAccountActionError,
   companionBridge,
   loadCompanionBridgeState,
@@ -70,8 +71,12 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   if (!companionBridge()) {
     return (
       <Card
-        title="Use Murage from your phone"
-        subtitle="Open Settings in the Murage desktop app to set up a phone."
+        // The same sentence PhoneSetupFlow leads with, from the same
+        // constant. Two screens into one flow said two different things for
+        // as long as the copy was duplicated, and one of them went on
+        // describing a native app for months after that app was deleted.
+        title={WEB_UI_TITLE}
+        subtitle="Open Settings in the Murage desktop app to set this up."
       />
     );
   }

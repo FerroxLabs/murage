@@ -10,6 +10,8 @@ import {
   HARNESS_RESOURCE_DIRECTORIES,
   bundledFuigoPath,
   harnessResourceEnvironment,
+  DEV_STATIC_DIRECTORY,
+  devHarnessEnvironment,
 } from "./harness-resources.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -157,5 +159,58 @@ describe("bundled fuigo engine contract", () => {
     // Fuigo is Ferrox Labs' own Apache-2.0 work; the same full text ships
     // under its own name so the executable's terms are unambiguous.
     expect(licenses.find((row) => String(row.to) === "licenses/fuigo-LICENSE.txt").from).toBe("LICENSE");
+  });
+});
+
+// ── the static tree in development ───────────────────────────────────────
+//
+// A packaged build points MURAGE_STATIC_DIR at Resources/ui and the harness
+// serves the app. In development nothing set it, so STATIC_DIR was null and
+// the harness had no UI at all — invisible to the desktop app, which loads
+// the Vite dev server directly, and fatal to the browser door, whose whole
+// job is to proxy a phone to the harness and let the harness hand back the
+// shell. So the door was untestable in dev and had nothing to serve.
+describe("the dev static tree", () => {
+  it("points the harness at the build vite actually writes", () => {
+    // Not a second name for the same directory: `dist` is what `vite build`
+    // emits and what the packaged `ui` directory is made from, so a phone in
+    // dev gets the same bytes a packaged build would serve it.
+    expect(DEV_STATIC_DIRECTORY).toBe("dist");
+    expect(devHarnessEnvironment("/repo", () => true)).toEqual({
+      MURAGE_STATIC_DIR: join("/repo", "dist"),
+    });
+  });
+
+  it("says nothing at all when there is no build", () => {
+    // An unset variable is exactly the state an unbuilt checkout is in, and
+    // the harness already reads it as "no static tree". A path to a directory
+    // that is not there would instead be a 404 per asset with no explanation.
+    expect(devHarnessEnvironment("/repo", () => false)).toEqual({});
+  });
+
+  it("waits for index.html rather than for the directory", () => {
+    // `vite build` creates dist/ before it finishes filling it. A phone served
+    // a half-written build gets a blank page and no error worth reading.
+    const seen = [];
+    devHarnessEnvironment("/repo", (candidate) => {
+      seen.push(candidate);
+      return false;
+    });
+    expect(seen).toEqual([join("/repo", "dist", "index.html")]);
+  });
+
+  it("refuses a missing root rather than resolving against cwd", () => {
+    // path.join("", "dist") is "dist", a relative path whose meaning depends
+    // on whoever forked the child. That is the class of bug this whole module
+    // exists for.
+    expect(() => devHarnessEnvironment(undefined)).toThrow(/repository root/);
+    expect(() => devHarnessEnvironment("")).toThrow(/repository root/);
+  });
+
+  it("agrees with the packaged mapping about which variable it is", () => {
+    // Two names for one decision is how the packaged build and the dev build
+    // end up serving different trees.
+    expect(Object.keys(devHarnessEnvironment(repoRoot, () => true))).toEqual(["MURAGE_STATIC_DIR"]);
+    expect(HARNESS_RESOURCE_DIRECTORIES.MURAGE_STATIC_DIR).toBe("ui");
   });
 });

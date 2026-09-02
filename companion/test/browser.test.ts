@@ -14,6 +14,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   browserBindHost,
+  rebindBrowserDoor,
+  tailnetBindAddress,
   browserLabel,
   clearedCookie,
   cookieName,
@@ -657,7 +659,183 @@ describe("where this door may bind", () => {
     expect(browserBindHost("tailnet", "100.79.121.109")).toBe("100.79.121.109");
     // Falling back to 0.0.0.0 "so it works" is how a tailnet-only door
     // becomes a LAN door, and nobody would see it happen.
-    expect(() => browserBindHost("tailnet", null)).toThrow(/no tailnet address|has none/i);
+    expect(() => browserBindHost("tailnet", null)).toThrow(/no Tailscale address/i);
+  });
+
+  it("auto takes the tailnet when there is one and loopback when there is not", () => {
+    // The shipped setting, and the only one that is right on a laptop: a
+    // demand for the tailnet refuses to start before Tailscale is signed in,
+    // and a demand for loopback leaves a signed-in tailnet with no door on it.
+    expect(browserBindHost("auto", "100.79.121.109", "100.79.121.109")).toBe("100.79.121.109");
+    expect(browserBindHost("auto", "100.79.121.109")).toBe("100.79.121.109");
+    expect(browserBindHost("auto", null)).toBe("127.0.0.1");
+    // and it says why, rather than silently being loopback
+    const declined: string[] = [];
+    expect(browserBindHost("auto", null, null, (r) => declined.push(r))).toBe("127.0.0.1");
+    expect(declined).toEqual(["this machine has no Tailscale address"]);
+  });
+
+  it("refuses an address Tailscale and the interface table disagree about", () => {
+    // 100.64/10 is CGNAT space and Tailscale does not own it. A carrier-grade
+    // -NAT uplink or a second mesh VPN puts a real address in that range in
+    // front of the one Tailscale issued, and the interface picker takes the
+    // first one it finds — so the door would open on a network nobody chose.
+    const disagreement = tailnetBindAddress("100.64.0.7", "100.79.121.109");
+    expect(disagreement).toEqual({
+      refused: expect.stringContaining("Something else is using Tailscale's address range"),
+    });
+    // auto declines the address rather than the process
+    const declined: string[] = [];
+    expect(browserBindHost("auto", "100.64.0.7", "100.79.121.109", (r) => declined.push(r))).toBe(
+      "127.0.0.1",
+    );
+    expect(declined[0]).toMatch(/will not pick between them/);
+    // an operator who wrote `tailnet` down meant it, and gets a refusal
+    expect(() => browserBindHost("tailnet", "100.64.0.7", "100.79.121.109")).toThrow(
+      /Something else is using Tailscale's address range/,
+    );
+  });
+
+  it("refuses an address no interface actually carries", () => {
+    // Nothing can bind an address the kernel does not have. Saying so beats
+    // an EADDRNOTAVAIL from three frames away.
+    expect(tailnetBindAddress(null, "100.79.121.109")).toEqual({
+      refused: expect.stringContaining("no interface on this machine carries that address"),
+    });
+    expect(browserBindHost("auto", null, "100.79.121.109")).toBe("127.0.0.1");
+  });
+
+  it("treats a missing CLI answer as no evidence, not as a disagreement", () => {
+    // Tailscale may simply not be installed where we looked. The interface
+    // address is then the only evidence there is, and it is the same one the
+    // pairing page has always printed.
+    expect(tailnetBindAddress("100.79.121.109", null)).toEqual({ address: "100.79.121.109" });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+describe("moving the door without restarting the sidecar", () => {
+  /** The sidecar's own bind helper, minus the error decoration. */
+  const bind = (server: Server, port: number, host: string) =>
+    new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.removeListener("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.removeListener("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(port, host);
+    });
+
+  const freePort = async (): Promise<number> => {
+    const probe = createServer();
+    await bind(probe, 0, "127.0.0.1");
+    const port = (probe.address() as { port: number }).port;
+    await new Promise<void>((r) => probe.close(() => r()));
+    return port;
+  };
+
+  it("does nothing at all when the address has not changed", async () => {
+    const server = createServer();
+    const port = await freePort();
+    await bind(server, port, "127.0.0.1");
+    try {
+      let listens = 0;
+      const result = await rebindBrowserDoor({
+        server,
+        port,
+        boundHost: "127.0.0.1",
+        desiredHost: () => "127.0.0.1",
+        listen: async (...args) => {
+          listens += 1;
+          return bind(...args);
+        },
+      });
+      expect(result).toEqual({ host: "127.0.0.1", note: "already bound to 127.0.0.1" });
+      // The socket was never touched, so no browser session was dropped.
+      expect(listens).toBe(0);
+      expect(server.listening).toBe(true);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+
+  it("moves the door, and only the door", async () => {
+    const server = createServer((_req, res) => res.end("door"));
+    const port = await freePort();
+    await bind(server, port, "127.0.0.1");
+    // A second listener standing in for the device port: it must survive.
+    const untouched = createServer();
+    const otherPort = await freePort();
+    await bind(untouched, otherPort, "127.0.0.1");
+    try {
+      const result = await rebindBrowserDoor({
+        server,
+        port,
+        boundHost: "127.0.0.1",
+        // 0.0.0.0 is never a real destination here; ::1 is a second loopback
+        // this machine has, which is enough to prove the socket moved.
+        desiredHost: () => "::1",
+        listen: bind,
+      });
+      expect(result.host).toBe("::1");
+      expect(result.note).toBe("moved from 127.0.0.1 to ::1");
+      expect(server.listening).toBe(true);
+      expect(untouched.listening).toBe(true);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+      await new Promise<void>((r) => untouched.close(() => r()));
+    }
+  });
+
+  it("puts the door back where it was when the new address will not bind", async () => {
+    const server = createServer();
+    const port = await freePort();
+    await bind(server, port, "127.0.0.1");
+    try {
+      const result = await rebindBrowserDoor({
+        server,
+        port,
+        boundHost: "127.0.0.1",
+        // an address this machine does not have
+        desiredHost: () => "100.99.99.99",
+        listen: bind,
+      });
+      expect(result.host).toBe("127.0.0.1");
+      expect(result.note).toMatch(/^could not bind 100\.99\.99\.99 .*stayed on 127\.0\.0\.1$/);
+      // Still answering on the address the panel was told about.
+      expect(server.listening).toBe(true);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+
+  it("leaves the door where it is when the mode refuses to name an address", async () => {
+    // `tailnet` mode with no tailnet throws out of desiredHost. That is not a
+    // reason to close a working socket.
+    const server = createServer();
+    const port = await freePort();
+    await bind(server, port, "127.0.0.1");
+    try {
+      const result = await rebindBrowserDoor({
+        server,
+        port,
+        boundHost: "127.0.0.1",
+        desiredHost: () => {
+          throw new Error("the browser door is set to bind the Tailscale address and cannot");
+        },
+        listen: bind,
+      });
+      expect(result.host).toBe("127.0.0.1");
+      expect(result.note).toMatch(/set to bind the Tailscale address/);
+      expect(server.listening).toBe(true);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   });
 });
 

@@ -14,6 +14,7 @@
 // withhold.
 import { createServer, type Server, type ServerResponse } from "node:http";
 
+import type { BrowserDoor } from "./browser.ts";
 import type { DeviceRegistry } from "./devices.ts";
 import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
 import { lanAddresses, tailnetName, tailscaleAddress } from "./listener.ts";
@@ -40,6 +41,19 @@ export interface ControlOptions {
    * and the tailnet is the route this product leads with — so a name read
    * only at boot makes a working door look permanently shut. */
   refreshTailscale?: () => Promise<void>;
+  /** Where the browser door is answering, or null when it is not listening.
+   *
+   * The control page and the desktop panel both need this and neither can
+   * derive it. The door's port, scheme and dialable host are three separate
+   * decisions taken in `index.ts` — an env override, a `tailscale serve`
+   * arrangement, and a MagicDNS name that can arrive after boot — so a
+   * renderer that assembled `http://<tailnetName>:8813` from the other fields
+   * on this object would be re-implementing three of them and would be wrong
+   * the first time any one changed.
+   *
+   * Read per request, like the addresses above: the tailnet name can land
+   * after startup, and D1 can re-bind the door under a running sidecar. */
+  browserDoor?: () => BrowserDoor | null;
 }
 
 /** The host out of a `Host` header, port removed.
@@ -217,6 +231,10 @@ export function companionState(options: ControlOptions) {
     devices: options.devices.list(),
     connectedDeviceIds: options.connectedDeviceIds?.() ?? [],
     discovery: options.discovery(),
+    // Always a key, never an absence. `null` is the door saying it is not
+    // listening; a missing field would be indistinguishable from an older
+    // sidecar, and the panel would have to guess between them.
+    browser: options.browserDoor?.() ?? null,
   };
 }
 

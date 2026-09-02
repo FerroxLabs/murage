@@ -8,10 +8,14 @@
 //
 //   :8810  0.0.0.0    devices     token required, allowlisted, scrubbed
 //   :8811  127.0.0.1  you         pairing and revocation — never off-machine
-//   :8813  loopback   browsers    cookie required, its OWN allowlist, its own
-//                                 origin policy — `tailscale serve` in front,
-//                                 or the tailnet address directly. Never
-//                                 0.0.0.0, and never `tailscale funnel`.
+//   :8813  tailnet    browsers    cookie required, its OWN allowlist, its own
+//                                 origin policy. Binds the Tailscale address
+//                                 when there is one and loopback when there
+//                                 is not, and moves between them without a
+//                                 restart when Tailscale comes up later.
+//                                 `tailscale serve` goes in front of the
+//                                 loopback case. Never 0.0.0.0, and
+//                                 never `tailscale funnel`.
 //   :8799  127.0.0.1  the harness spoken to as this machine, unmodified
 //   UDS/pipe            one Electron-owned sidecar generation, never TCP
 //
@@ -29,12 +33,25 @@
 import { createServer } from "node:http";
 
 import { createAddressWatcher } from "./advertise-watch.ts";
-import { browserBindHost, createBrowserHandler, type BoundIdentity, type BrowserBindMode } from "./browser.ts";
+import {
+  browserBindHost,
+  browserDoorLocation,
+  createBrowserHandler,
+  rebindBrowserDoor,
+  type BoundIdentity,
+  type BrowserBindMode,
+} from "./browser.ts";
 import { createControlServer, hostCandidates } from "./control.ts";
 import { createConnectedDeviceTracker } from "./connected-devices.ts";
 import { DeviceRegistry } from "./devices.ts";
 import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
-import { lanAddresses, refreshTailnetName, tailnetName, tailscaleAddress } from "./listener.ts";
+import {
+  lanAddresses,
+  refreshTailnetName,
+  tailnetName,
+  tailnetSelfAddress,
+  tailscaleAddress,
+} from "./listener.ts";
 import {
   advertisableAddresses,
   clampBytes,
@@ -64,8 +81,19 @@ const BROWSER_PORT = num(process.env.MURAGE_BROWSER_PORT, 8813);
 /** `loopback` puts `tailscale serve` in front (it terminates TLS and dials
  * the backend over 127.0.0.1 — measured); `tailnet` binds the 100.64.0.0/10
  * address directly. Nothing binds 0.0.0.0, and `tailnet` with no tailnet
- * address refuses to start rather than falling back. */
-const BROWSER_BIND: BrowserBindMode = process.env.MURAGE_BROWSER_BIND === "tailnet" ? "tailnet" : "loopback";
+ * address refuses to start rather than falling back.
+ *
+ * Unset is `auto`, and that is what the desktop app forks with: the tailnet
+ * address when there is a trustworthy one, loopback when there is not. The
+ * two named modes stay exactly as strict as they were — an operator who wrote
+ * one of them down meant it — but neither of them is a sane *default*.
+ * `loopback` as the default is what left a signed-in tailnet with a door on
+ * 127.0.0.1 and nothing in front of it, and `tailnet` as the default would
+ * refuse to start on a machine that has not signed into Tailscale yet. */
+const BROWSER_BIND: BrowserBindMode =
+  process.env.MURAGE_BROWSER_BIND === "tailnet" ? "tailnet"
+  : process.env.MURAGE_BROWSER_BIND === "loopback" ? "loopback"
+  : "auto";
 /** `https` once the tailnet has certificates and serve is in front — it
  * decides the cookie name (`__Host-`) and whether `Secure` is set.
  *
@@ -90,6 +118,22 @@ const HARNESS_PORTS = new Map([
   [WEBHOOK_PORT, "the harness's webhook receiver"],
 ]);
 
+/** The address the browser door's socket is actually bound to, or null while
+ * it is not listening.
+ *
+ * Tracked rather than derived from `BROWSER_BIND`: the bind mode says what was
+ * asked for, and this says what happened. They differ in the case that
+ * matters — a door asked to prefer the tailnet on a machine that had none at
+ * boot is bound to loopback, and reporting the intention would tell a phone to
+ * dial an address nothing is listening on. */
+let browserBoundHost: string | null = null;
+
+/** Where a phone points its browser, for `GET /state`. Recomputed per request:
+ * the MagicDNS name can land after boot, and the door can be re-bound under a
+ * running sidecar without the port or scheme changing. */
+const browserDoor = () =>
+  browserDoorLocation(BROWSER_SCHEME, BROWSER_PORT, browserBoundHost, tailnetName(), tailscaleAddress());
+
 /** Every authority the browser door will answer to, and nothing else.
  *
  * Read per request rather than captured: the tailnet address can change under
@@ -105,7 +149,12 @@ const browserIdentity = (): BoundIdentity => {
   if (name) hosts.add(name.toLowerCase());
   const tailnet = tailscaleAddress();
   if (tailnet) hosts.add(tailnet);
-  if (BROWSER_BIND === "loopback") {
+  // Keyed on where the door is actually bound, not on what was asked for.
+  // Under `auto` those differ exactly when it matters: a door that fell back
+  // to loopback must still answer to `localhost`, and one that reached the
+  // tailnet must not start trusting a loopback Host it can no longer be
+  // reached on.
+  if (browserBoundHost === null ? BROWSER_BIND !== "tailnet" : browserBoundHost === "127.0.0.1") {
     for (const host of ["127.0.0.1", "localhost", "::1", "[::1]"]) hosts.add(host);
   }
   for (const extra of (process.env.MURAGE_BROWSER_HOSTS ?? "").split(",")) {
@@ -114,6 +163,13 @@ const browserIdentity = (): BoundIdentity => {
   }
   return { scheme: BROWSER_SCHEME, hosts };
 };
+
+/** Where the door should be bound right now, given Tailscale as it is right
+ * now. Throws only in the explicit `tailnet` mode. */
+const desiredBrowserBindHost = (): string =>
+  browserBindHost(BROWSER_BIND, tailscaleAddress(), tailnetSelfAddress(), (reason) =>
+    console.log(`browser door staying on loopback: ${reason}`),
+  );
 
 /** A sentence naming what already owns this port, or null when nothing does. */
 const conflict = (name: string, port: number): string | null => {
@@ -234,8 +290,34 @@ const control = createControlServer({
   // this process started would otherwise read as absent for the lifetime of
   // the app; `refreshTailnetName` coalesces, so a click during the startup
   // hunt joins it rather than racing it.
-  refreshTailscale: () => refreshTailnetName(),
+  // Two steps, and the second is the point. Re-reading the MagicDNS name
+  // fixes the *label*; moving the door fixes the *route*. Someone who
+  // installs Tailscale while Murage is running and clicks "check again" wants
+  // a door on the tailnet, not a correctly spelled name for a door that is
+  // still only on loopback. The control route awaits this before it replies,
+  // so the state it sends back describes the door as it now is.
+  refreshTailscale: async () => {
+    await refreshTailnetName();
+    await moveBrowserDoor();
+  },
+  browserDoor,
 });
+
+/** Put the door where Tailscale now says it should be, without restarting
+ * anything else. Nothing here can throw: it is called from a request handler
+ * and from startup, and a door that could not move is a log line, not a dead
+ * sidecar. */
+async function moveBrowserDoor(): Promise<void> {
+  const result = await rebindBrowserDoor({
+    server: browser,
+    port: BROWSER_PORT,
+    boundHost: browserBoundHost,
+    desiredHost: desiredBrowserBindHost,
+    listen,
+  });
+  browserBoundHost = result.host;
+  if (!result.note.startsWith("already bound")) console.log(`browser door: ${result.note}`);
+}
 
 /** Bind a server, turning a bind failure into a sentence rather than a stack
  * trace, and leaving a handler behind for the errors that come after. */
@@ -329,9 +411,13 @@ async function main(): Promise<void> {
   await refreshTailnetName((cli, outcome) => tailscaleTried.push(`  ${cli} — ${outcome}`)).catch(() => {});
 
   // After the tailnet name, because the bind host and the door's own host
-  // allowlist both depend on it. `browserBindHost` throws rather than falling
-  // back when the tailnet was asked for and is not there.
-  await listen(browser, BROWSER_PORT, browserBindHost(BROWSER_BIND, tailscaleAddress()));
+  // allowlist both depend on it. Under `auto` a machine with no tailnet gets
+  // loopback and the door still comes up; under the explicit `tailnet` mode
+  // this throws rather than falling back, which is what that mode is for.
+  // Tailscale arriving later moves the door — see `moveBrowserDoor`.
+  const bindHost = desiredBrowserBindHost();
+  await listen(browser, BROWSER_PORT, bindHost);
+  browserBoundHost = bindHost;
 
   // Discovery failing is not an error anyone has to fix — port 5353 taken by
   // another responder, multicast off, a guest network that isolates its
@@ -350,9 +436,12 @@ async function main(): Promise<void> {
   const reach = tailnetName() ?? tailscale ?? addresses[0];
   console.log(`companion  http://0.0.0.0:${COMPANION_PORT}  →  harness 127.0.0.1:${HARNESS_PORT}`);
   console.log(`pair here  http://127.0.0.1:${CONTROL_PORT}`);
+  // Where it is bound, not where it was asked to bind. Under `auto` those
+  // differ on exactly the machines where the difference matters.
+  const door = browserDoor();
   console.log(
-    `browser    ${BROWSER_SCHEME}://${BROWSER_BIND === "loopback" ? "127.0.0.1" : tailscale}:${BROWSER_PORT}/enter` +
-      (BROWSER_BIND === "loopback" ? "  (put `tailscale serve` in front — never `funnel`)" : ""),
+    `browser    ${door ? `${door.scheme}://${door.host}:${door.port}/enter` : "not listening"}` +
+      (browserBoundHost === "127.0.0.1" ? "  (put `tailscale serve` in front — never `funnel`)" : ""),
   );
   if (reach) console.log(`on your phone, enter  ${reach}:${COMPANION_PORT}`);
   if (tailscale && !tailnetName()) {

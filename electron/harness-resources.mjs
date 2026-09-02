@@ -10,6 +10,7 @@
 // Keeping the mapping in one exported object is what makes that testable: the
 // electron-builder `extraResources` `to:` names and the env names the server
 // reads are asserted against each other instead of drifting apart in silence.
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 /** env variable → the extraResources `to:` directory it must point at. */
@@ -30,6 +31,40 @@ export const HARNESS_RESOURCE_DIRECTORIES = Object.freeze({
   // named error rather than silently reporting no engine.
   MURAGE_FUIGO_DIR: "fuigo",
 });
+
+/** The static UI root when there is no Resources directory to read it out of.
+ *
+ * In a packaged build MURAGE_STATIC_DIR points at Resources/ui and the harness
+ * serves the app itself. In development nothing sets it, `STATIC_DIR` is null
+ * (`server/index.ts:276`), and the harness has no UI to serve — which is fine
+ * for the desktop app, because in dev it loads the Vite dev server directly.
+ *
+ * It is not fine for the browser door. A phone reaching 8813 is proxied to the
+ * harness, and the harness is the only thing that can hand it the shell — so
+ * the whole feature is untestable in development, and Wave 0b's Playwright
+ * specs would have nothing to open. `dist/` is what `vite build` writes and
+ * what the packaged `ui` directory is made from, so pointing at it in dev
+ * serves a phone the same bytes a packaged build would.
+ *
+ * `when present` is the operative word: an unbuilt checkout gets no variable
+ * at all rather than a path to a directory that is not there. The harness
+ * treats an unset value as "no static tree", which is exactly the state a
+ * checkout with no `dist/` is in. Run `pnpm build` and it starts working.
+ *
+ * Here rather than in main.mjs because main.mjs is not the only dev caller —
+ * the Playwright webServer and `pnpm dev:server` want the same answer, and a
+ * second copy of this decision is a second copy to get wrong. */
+export const DEV_STATIC_DIRECTORY = "dist";
+
+export function devHarnessEnvironment(repoRoot, exists = existsSync) {
+  if (typeof repoRoot !== "string" || !repoRoot) {
+    throw new Error("devHarnessEnvironment requires a repository root");
+  }
+  const dist = path.join(repoRoot, DEV_STATIC_DIRECTORY);
+  // index.html, not the directory: `vite build` writes the directory early and
+  // a half-written `dist/` served to a phone is a blank page with no error.
+  return exists(path.join(dist, "index.html")) ? { MURAGE_STATIC_DIR: dist } : {};
+}
 
 /** electron-builder packages a per-platform executable INTO
  * HARNESS_RESOURCE_DIRECTORIES.MURAGE_FUIGO_DIR, so its file name is a second

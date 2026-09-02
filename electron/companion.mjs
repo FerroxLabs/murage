@@ -27,6 +27,34 @@ import {
 // either and says which, rather than racing it for the socket.
 const CONTROL_PORT = 8811;
 const COMPANION_PORT = 8810;
+/** The browser door. 8813 and not 8812: companion-origin-gateway.mjs already
+ * owns 8812 for the managed loopback gateway, so the two would have collided.
+ *
+ * Passed to the fork for the same reason the two above are — the panel reports
+ * this port to a phone, and a default that lived only in the sidecar could
+ * drift from the number the desktop tells people to type. */
+const BROWSER_PORT = 8813;
+/** Left unset in the child would give the sidecar its own default. Stated
+ * here, and stated as the *preference* rather than a demand: `auto` binds the
+ * tailnet address when there is one and loopback when there is not, which is
+ * the only setting that is right on a laptop where Tailscale comes up minutes
+ * after the app does. An operator who wants one or the other exactly still
+ * sets MURAGE_BROWSER_BIND in the environment and it survives — this is a
+ * default the fork supplies, not an override it imposes. */
+const BROWSER_BIND = "auto";
+/** Plain HTTP. The door is reached over WireGuard, which is the encryption;
+ * `https` is for after `tailscale serve` is in front with a real certificate,
+ * and it is not a thing to claim before it is true — the value decides the
+ * cookie name and whether `Secure` is set, so claiming it early breaks the
+ * session rather than merely mislabelling it. */
+const BROWSER_SCHEME = "http";
+
+/** The door, as the panel sees it when there is no sidecar to ask.
+ *
+ * `null`, not an object with the port in it: "off" has to be a complete
+ * answer, and a shape that carried a port while nothing listened on it is the
+ * kind of half-truth the renderer would have to learn to disbelieve. */
+const BROWSER_DOOR_OFF = null;
 
 let proc = null;
 let lastError = null;
@@ -236,6 +264,12 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
         MURAGE_PORT: String(harnessPort),
         MURAGE_COMPANION_PORT: String(COMPANION_PORT),
         MURAGE_CONTROL_PORT: String(CONTROL_PORT),
+        // The browser door. Named here so this file and the sidecar cannot
+        // disagree about where it is, the same reason the two ports above are
+        // passed rather than left to defaults.
+        MURAGE_BROWSER_PORT: String(BROWSER_PORT),
+        MURAGE_BROWSER_BIND: childEnvironment.MURAGE_BROWSER_BIND || BROWSER_BIND,
+        MURAGE_BROWSER_SCHEME: childEnvironment.MURAGE_BROWSER_SCHEME || BROWSER_SCHEME,
       },
       // how the TS-source fallback gets --experimental-strip-types; empty for
       // compiled entries
@@ -371,6 +405,7 @@ export async function companionState() {
       devices: [],
       connectedDeviceIds: [],
       pairing: null,
+      browser: BROWSER_DOOR_OFF,
     };
     if (lastError) state.error = lastError;
     return state;
@@ -387,6 +422,9 @@ export async function companionState() {
       devices: [],
       connectedDeviceIds: [],
       pairing: null,
+      // Running but unreachable says nothing about the door, and the honest
+      // answer to "where is it" is the same one "off" gives: we do not know.
+      browser: BROWSER_DOOR_OFF,
       error: "the companion is not responding",
     };
   }

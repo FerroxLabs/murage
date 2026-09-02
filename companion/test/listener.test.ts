@@ -35,7 +35,7 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-const { refreshTailnetName, tailnetName } = await import("../src/listener.ts");
+const { refreshTailnetName, tailnetName, tailnetSelfAddress } = await import("../src/listener.ts");
 
 /** A `tailscale status --json` body carrying one MagicDNS name, trailing dot
  * and all — the shape the real CLI emits. */
@@ -84,5 +84,77 @@ describe("refreshing the MagicDNS name", () => {
     await refreshTailnetName();
     expect(attempted).toHaveLength(2);
     expect(tailnetName()).toBe("macbook.tail1234.ts.net");
+  });
+});
+
+// ── the address Tailscale itself claims ──────────────────────────────────
+//
+// `tailscaleAddress()` reads the interface table and takes the first address
+// in 100.64.0.0/10. That is fine for printing a pairing candidate and not
+// fine for choosing what a listener binds: 100.64/10 is CGNAT space, and a
+// carrier-grade-NAT uplink or a second mesh VPN can put a real address there
+// ahead of the one Tailscale issued. So the door asks Tailscale as well, and
+// refuses when the two answers disagree.
+//
+// Read out of the same `status --json` the name comes from — `tailscale ip
+// -4` is a formatter over `Self.TailscaleIPs` — so it costs no extra
+// subprocess and cannot disagree with the name it shipped alongside.
+describe("the address Tailscale reports for this node", () => {
+  it("reads the IPv4 out of the same status the name came from", async () => {
+    respond = async () => ({
+      stdout: JSON.stringify({
+        Self: {
+          DNSName: "macbook.tail1234.ts.net.",
+          // Both families, IPv6 included, exactly as the real CLI emits.
+          TailscaleIPs: ["100.79.121.109", "fd7a:115c:a1e0::4d3b:796d"],
+        },
+      }),
+    });
+    await refreshTailnetName();
+    expect(tailnetName()).toBe("macbook.tail1234.ts.net");
+    expect(tailnetSelfAddress()).toBe("100.79.121.109");
+    // One subprocess for both answers.
+    expect(attempted).toHaveLength(1);
+  });
+
+  it("skips an IPv6-only node rather than handing back something unbindable", async () => {
+    respond = async () => ({
+      stdout: JSON.stringify({
+        Self: { DNSName: "macbook.tail1234.ts.net.", TailscaleIPs: ["fd7a:115c:a1e0::4d3b:796d"] },
+      }),
+    });
+    await refreshTailnetName();
+    expect(tailnetSelfAddress()).toBeNull();
+  });
+
+  it("forgets the address when Tailscale stops answering", async () => {
+    respond = async () => ({
+      stdout: JSON.stringify({
+        Self: { DNSName: "macbook.tail1234.ts.net.", TailscaleIPs: ["100.79.121.109"] },
+      }),
+    });
+    await refreshTailnetName();
+    expect(tailnetSelfAddress()).toBe("100.79.121.109");
+
+    // Signed out, or uninstalled, between one probe and the next. A cached
+    // address that outlived Tailscale would keep the door bound to an
+    // interface on its way down, and "we could not ask" has to read as "we do
+    // not know" rather than as last week's answer.
+    respond = async () => ({ error: new Error("not running") });
+    await refreshTailnetName();
+    expect(tailnetName()).toBeNull();
+    expect(tailnetSelfAddress()).toBeNull();
+  });
+
+  it("ignores anything in that field that is not a dotted quad", async () => {
+    // This value decides what a listener binds, so it is validated rather
+    // than trusted — the CLI is a subprocess whose output is parsed JSON.
+    respond = async () => ({
+      stdout: JSON.stringify({
+        Self: { DNSName: "macbook.tail1234.ts.net.", TailscaleIPs: ["0.0.0.0 ; rm -rf /", { a: 1 }] },
+      }),
+    });
+    await refreshTailnetName();
+    expect(tailnetSelfAddress()).toBeNull();
   });
 });
