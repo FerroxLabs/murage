@@ -198,6 +198,7 @@ import {
   installSkillFromLibrary,
   SKILL_LIBRARY_ROOT,
   listSkills,
+  type SkillListing,
   listStagedSkillWrites,
   readSkillFile,
   rejectStagedSkillWrite,
@@ -342,6 +343,10 @@ function authorizedComms(header: string | string[] | undefined): boolean {
 // A→B is allowed but B→C (and A→B→A loops) never start.
 const MAX_COMMS_DEPTH = 1;
 const MAX_WORKSPACE_BOTS = 100;
+/** One assignment is the common case and a profile's whole set is the largest
+ *  honest one — the biggest bundled profile declares eleven. A bound exists so
+ *  a single request cannot hand a bot an unreviewable pile of instructions. */
+const MAX_LIBRARY_SKILLS_PER_REQUEST = 25;
 const createSidebarSectionSchema = z.object({
   name: z.string(),
   botIds: z.array(z.string().regex(/^[\w-]+$/)).min(1).max(MAX_WORKSPACE_BOTS),
@@ -7691,6 +7696,50 @@ const server = createServer(async (req, res) => {
       if (!installed.length) return json(res, 422, { error: errors.join("; ") || "nothing importable found" });
       return json(res, 201, { installed, errors });
     }
+    // Deliberately matched BEFORE /skills/:name below, which would otherwise
+    // read "library" as a skill called "library".
+    m = path.match(/^\/api\/bots\/([\w-]+)\/skills\/library$/);
+    if (m && method === "POST") {
+      // Keyboard-only, and this is the whole security boundary. An enabled
+      // skill is symlinked into the engine's own discovery directories, so
+      // installing one is handing an agent instructions it will follow.
+      // Choosing which is a decision for the person at the machine — not for
+      // a paired phone, not for the browser door, and not for an agent that
+      // can put text in another agent's thread.
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") {
+        return json(res, 404, { error: "no such route" });
+      }
+      const bot = store.bot(m[1]!);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const parsed = z
+        .object({ ids: z.array(z.string().min(1).max(120)).min(1).max(MAX_LIBRARY_SKILLS_PER_REQUEST) })
+        .safeParse(await readBody(req));
+      if (!parsed.success) {
+        return json(res, 400, {
+          error: `ids must be one to ${MAX_LIBRARY_SKILLS_PER_REQUEST} bundled skill names`,
+        });
+      }
+      const installed: SkillListing[] = [];
+      const errors: string[] = [];
+      for (const skillId of new Set(parsed.data.ids)) {
+        const result = installSkillFromLibrary(bot.id, skillId, SKILL_LIBRARY_ROOT);
+        if ("error" in result) {
+          errors.push(result.error);
+          continue;
+        }
+        // On, because the person just chose it from the catalogue this app
+        // ships. installSkillFromLibrary lands everything off so that the
+        // decision is made here, by the caller that knows where it came from,
+        // rather than in a helper that cannot tell first-party from a URL.
+        const enabled = setSkillEnabled(bot.id, result.name, true);
+        installed.push("error" in enabled ? result : enabled);
+      }
+      if (!installed.length) {
+        return json(res, 422, { error: errors.join("; ") || "nothing installable in that list" });
+      }
+      return json(res, 201, { installed, errors });
+    }
+
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills\/([a-z0-9-]+)$/);
     if (m && method === "GET") {
       const text = readSkillFile(m[1]!, m[2]!);
