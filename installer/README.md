@@ -46,13 +46,14 @@ tailnet instead of lingering as a dead entry.
 | --- | --- |
 | `MURAGE_BIND_MODE` | `loopback` (default) or `tailnet` |
 | `MURAGE_BIND_ADDRESS` | explicit address; must be loopback or a tailnet address of this host |
-| `MURAGE_PORT` | default `8799` |
+| `MURAGE_PORT` | default `8799` — the **harness** listener |
+| `MURAGE_BROWSER_PORT` | default `8813` — the companion's **browser door**, and the only thing the tailnet proxy is ever pointed at (the harness refuses a non-loopback `Host`, so a proxy aimed at 8799 answers 403). Setup will not configure the proxy at all unless `GET http://127.0.0.1:8813/enter` answers |
 | `MURAGE_DATA_DIR` | default `~/.murage-server` |
 | `MURAGE_ENV_FILE` | default `$MURAGE_DATA_DIR/murage.env`, mode `0600` |
 | `MURAGE_SERVER_ENTRY` | explicit path to the bundled server |
 | `MURAGE_TS_AUTHKEY`, `TS_AUTHKEY` | auth key for an unattended setup |
 | `MURAGE_TAILSCALE_BIN` | explicit path to the `tailscale` CLI (non-standard installs, tests) |
-| `MURAGE_TRUSTED_PROXY` | set to `1` by setup when the tailnet proxy is configured |
+| `MURAGE_TRUSTED_PROXY` | set to `1` by setup only when the tailnet proxy was actually configured |
 
 `ALLOW_REMOTE` is deliberately **not** a variable here. `HOST=0.0.0.0` is
 refused by name.

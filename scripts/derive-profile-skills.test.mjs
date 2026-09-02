@@ -9,7 +9,12 @@
 //    name of the `copy` profile -- is deleted from the book copy editor, which
 //    is exactly what a plain prefix rule did.
 import { deepStrictEqual, strictEqual } from "node:assert";
-import { test } from "node:test";
+// vitest, not `node:test`. This file is collected by `scripts/**/*.test.mjs`
+// in vite.config.ts along with its eight siblings, and vitest cannot read a
+// `node:test` suite — it reported "No test suite found in file" and went red
+// while the guards inside never ran once. A file whose whole purpose is to
+// catch two SILENT failures must not itself fail silently.
+import { test } from "vitest";
 
 import { toMatchExpression as server } from "../server/skill-search.ts";
 import { belongsToAnother, ownershipIndex, toMatchExpression } from "./derive-profile-skills.mjs";

@@ -111,7 +111,15 @@ describe("control-murage isolated verification loop", () => {
     try {
       const doctor = await runControlMurage(["doctor"], { env }) as any;
       expect(doctor.ok).toBe(true);
-      expect(doctor.availableEngines).toEqual(["claude"]);
+      // Contains, not equals. The fixture declares exactly one instance —
+      // `claude`, pointed at the fake CLI — but the harness merges that config
+      // over DEFAULT_FLEET (`server/config.ts:780`), and the fleet grows: this
+      // pinned an exact one-element list until `qwen` joined the defaults in
+      // 5669d586 and the assertion has been failing ever since. What this test
+      // needs to know is that the fixture's engine came up, because the lines
+      // below drive a real turn through it; the size of the default fleet is
+      // another file's business.
+      expect(doctor.availableEngines).toContain("claude");
 
       const created = await runControlMurage(["new-bot", "--name", "Verification Probe"], { env }) as any;
       const botId = created.bot.id as string;

@@ -40,6 +40,22 @@ const REPO_ROOT = resolve(INSTALLER_ROOT, "..");
 const DATA_DIR = process.env.MURAGE_DATA_DIR || join(homedir(), ".murage-server");
 const ENV_FILE = process.env.MURAGE_ENV_FILE || join(DATA_DIR, "murage.env");
 const DEFAULT_PORT = 8799;
+/**
+ * The port `tailscale serve` is pointed at, which is NOT `DEFAULT_PORT`.
+ *
+ * 8799 is the harness (`server/index.ts`). It gates on the request's `Host`
+ * header being a loopback name (`isLoopbackHost`), and `tailscale serve`
+ * forwards the original Host — the tailnet name — so every request through a
+ * proxy aimed at 8799 comes back 403. 8813 is the companion's browser door
+ * (`companion/src/browser.ts`), which rewrites Host to loopback before
+ * forwarding. It is the only correct target. (Not 8812: that is the
+ * cloudflared origin gateway, a different thing.)
+ *
+ * `DEFAULT_PORT` deliberately stays the harness port for `MURAGE_PORT`,
+ * `planStart()` and the env file. Only the two serve-facing call sites — the
+ * enrolment and `status` — use this one.
+ */
+const DOOR_PORT = ts.doorPort(process.env);
 const DEFAULT_TAG = "tag:murage";
 
 /** Provider env names Murage's own config recognises (server/config.ts). */
@@ -161,14 +177,19 @@ async function ensureTailscaleInstalled() {
 
 /**
  * Prompt for and apply the tailnet enrolment.
- * @returns {Promise<{ ok: boolean, verdict?: any, share?: any, reasons?: string[] }>}
+ * @param {number} [port] the port the proxy will front — the BROWSER DOOR,
+ *   not the harness. See `DOOR_PORT`.
+ * @returns {Promise<{ ok: boolean, served?: boolean, verdict?: any, share?: any, reasons?: string[] }>}
  */
-async function enrolTailnet(port) {
+async function enrolTailnet(port = DOOR_PORT) {
   const already = ts.verdictFromStatus(ts.status());
   if (already.ok) {
     ok(`already on the tailnet as ${c.b(already.dnsName ?? already.ips[0])}`);
     if (!(await confirm("  Re-run enrolment with a new auth key?", false))) {
-      return { ok: true, verdict: already, reenrolled: false };
+      // `served` has to be answered even on this path, or an already-enrolled
+      // box with a working proxy would be reported as having none.
+      const share = ts.shareStatus({ port });
+      return { ok: true, verdict: already, reenrolled: false, served: share.configured };
     }
   }
 
@@ -191,7 +212,20 @@ async function enrolTailnet(port) {
   const tagChoice = (tagAnswer || DEFAULT_TAG).trim();
   const tags = tagChoice.toLowerCase() === "none" ? [] : [tagChoice.startsWith("tag:") ? tagChoice : `tag:${tagChoice}`];
   const hostname = (await ask("  Tailnet hostname for this box [leave blank for the OS hostname]: ")) || undefined;
-  const https = await confirm("  Front it with HTTPS on the tailnet? (needs HTTPS certificates enabled for your tailnet)", true);
+
+  // The proxy is only offered if the thing it would front is actually there.
+  // A `tailscale serve` pointed at a dead port is a tailnet URL that answers
+  // 502 on a box that just told you it was secured.
+  const door = await ts.doorAnswers({ port });
+  let https = false;
+  if (door.answered) {
+    https = await confirm("  Front it with HTTPS on the tailnet? (needs HTTPS certificates enabled for your tailnet)", true);
+  } else {
+    warn(`the browser door is not running: ${c.dim(door.url)} did not answer.`);
+    console.log(c.dim("  Not configuring a tailnet proxy — it would point at a port nothing is"));
+    console.log(c.dim("  listening on, and the tailnet URL would answer 502. Start the companion's"));
+    console.log(c.dim(`  browser door on ${port} (or set MURAGE_BROWSER_PORT) and re-run \`murage setup\`.`));
+  }
 
   const result = await ts.enroll({
     authKey,
@@ -199,6 +233,7 @@ async function enrolTailnet(port) {
     tags,
     hostname,
     https,
+    serve: door.answered,
     log: (m) => console.log(c.dim(`  ${m}`)),
   });
   return result;
@@ -226,7 +261,8 @@ async function setup() {
   //    box we are about to tell the operator not to trust.
   const installed = await ensureTailscaleInstalled();
   let enrolment = { ok: false, reasons: ["tailscale not installed"] };
-  if (installed) enrolment = await enrolTailnet(port);
+  // NOTE the port: the proxy fronts the browser door, not `port` (the harness).
+  if (installed) enrolment = await enrolTailnet(DOOR_PORT);
 
   // 2. Provider key.
   console.log("");
@@ -261,7 +297,10 @@ async function setup() {
   // a request through it reaches the app with remoteAddress AND localAddress
   // both 127.0.0.1. So under serve, "the peer is loopback" no longer means "the
   // human at the console" — declare the proxy so no trust check reads it that way.
-  if (enrolment.ok) bag.MURAGE_TRUSTED_PROXY = "1";
+  // Only when a proxy was actually configured. If serve was skipped because the
+  // door is not up, nothing is proxying and declaring a trusted proxy would be
+  // a claim about a component that is not running.
+  if (enrolment.ok && enrolment.served) bag.MURAGE_TRUSTED_PROXY = "1";
   writeEnvFile(ENV_FILE, bag);
   ok(`wrote ${c.dim(ENV_FILE)} (mode 0600)`);
 
@@ -274,9 +313,14 @@ async function setup() {
     console.log(`      tailnet name : ${c.b(v?.dnsName ?? "?")}`);
     console.log(`      tailnet ips  : ${c.dim((v?.ips ?? []).join(", "))}`);
     console.log(`      acl tags     : ${c.dim((v?.tags ?? []).join(", ") || "(none)")}`);
-    console.log(`      listener     : ${c.dim(`127.0.0.1:${port}`)} fronted by the tailnet proxy`);
+    console.log(`      listener     : ${c.dim(`127.0.0.1:${port}`)} (harness)`);
+    if (enrolment.served) {
+      console.log(`      tailnet proxy: ${c.dim(`127.0.0.1:${DOOR_PORT}`)} (browser door)`);
+    } else {
+      console.log(`      tailnet proxy: ${c.r("none")} — the browser door on ${DOOR_PORT} is not running`);
+    }
     console.log(`      public share : ${c.g("none")}`);
-    if (url) {
+    if (url && enrolment.served) {
       console.log(`\n  Open it from any device on your tailnet:\n    ${c.o(url)}\n`);
       printQr(url);
     }
@@ -436,15 +480,20 @@ function status() {
     for (const r of verdict.reasons) console.log(`      ${c.dim("- " + r)}`);
   }
 
-  const port = Number(env.MURAGE_PORT || DEFAULT_PORT);
-  const share = ts.shareStatus({ port });
+  // The proxy fronts the browser door, not the harness — see `DOOR_PORT`. Ask
+  // about the port the proxy is supposed to point at, or a correct deployment
+  // reads as unconfigured.
+  const share = ts.shareStatus({ port: DOOR_PORT });
   if (share.publicExposure) {
     fail(c.r("A SHARE ON THIS NODE IS PUBLISHED TO THE PUBLIC INTERNET. Run `tailscale serve reset`."));
   } else if (share.configured) {
-    ok(`tailnet-only proxy is fronting 127.0.0.1:${port}${share.urls.length ? c.dim(` → ${share.urls.join(", ")}`) : ""}`);
+    ok(
+      `tailnet-only proxy is fronting the browser door 127.0.0.1:${DOOR_PORT}` +
+        `${share.urls.length ? c.dim(` → ${share.urls.join(", ")}`) : ""}`
+    );
     ok("no public share on this node");
   } else {
-    warn(`no tailnet proxy in front of 127.0.0.1:${port} — re-run \`murage setup\``);
+    warn(`no tailnet proxy in front of the browser door 127.0.0.1:${DOOR_PORT} — re-run \`murage setup\``);
   }
   console.log("");
 }
