@@ -37,18 +37,47 @@ optional flavour — it is the only thing that made the last two sessions fast.
   and been rewritten — that is the discipline working. A test nobody has seen
   fail is not a test.
 
-## STATE — everything is committed and pushed to `main`
+## STATE — everything is committed and pushed to `main` (`746d7221`)
 
-Suite **3224 passed / 1 failed**. The one failure is `server/control-murage.test.ts`,
-environment-only: it hardcodes `["claude"]` and this machine has a real `qwen`
-on PATH. All four gates exit 0 — `tsc -b`, `tsc -p tsconfig.server.json`,
-`tsc -p tsconfig.companion.build.json`, `node scripts/check-skin-contrast.mjs`.
+Suites: **src 632/632 · companion 281/281 · electron 385 (+4 skipped) · server
+1998/1**. The one failure is `server/control-murage.test.ts`, host-dependent —
+it hardcodes `["claude"]` and this machine has a real `qwen` on PATH. Proven
+pre-existing by swapping in `git show f3ba4f59:server/index.ts`. All four gates
+exit 0.
 
-Landed this session, newest first: light-theme surface inversion · the usage
-meter · the light-mode wordmark · **the local skill-install route** · Composio
-through the broker · the library state lift · FTS search over 2,237 skills ·
-local-first catalog (122/122 offline) · stale skills copy + un-dismiss · the
-three-tier org model.
+**Shipped in the 2026-09-02 session, newest first:**
+
+| Commit | What |
+|---|---|
+| `746d7221` | The pairing screen stopped advertising the deleted iOS app |
+| `388ae731` | **New Bot asks what you need, and becomes it** |
+| `e2dfca31` | Tailscale installed after boot no longer needs a restart (upstream #669) |
+| `ccc5f07d` | **The cloud installer**, with Wayland's defaults inverted |
+| `491a5abc` | Nine skill-less assistants got their skills |
+| `995c37c3` | Public ingress no longer outranks the tailnet |
+| `415e67e8` | **The browser door**, on 8813 with its own allowlist |
+| `f3ba4f59` | **Shell injection via a bot's display name**, and `computer/exec` gated |
+| `07bf5c7c` | `cli-test` and the instance CLI override gated to desktop |
+
+**Four execution routes are gated** — `server/index.ts:7710`, `:8506`, `:8535`,
+`:9112`. That is the precondition on any public ingress, and it is met.
+
+## THE ONE THING THAT BLOCKS THE WEB UI FROM BEING USABLE
+
+The browser door is built, tested (34 negative controls) and smoke-tested on a
+real tailnet — but **nothing launches it and nothing points at it yet**:
+
+1. **`electron/` does not start the door.** It needs `MURAGE_BROWSER_*` env and a
+   launch alongside the sidecar.
+2. **The pairing QR carries a bare credential**, not the `/enter#<token>` URL the
+   door's first-contact page expects. Until that is wired the pairing screen has
+   no client at all — which is why its copy now names none.
+3. **`tailscale serve` must front the door on 8813, NEVER the harness on 8799.**
+   Measured: `Host: 127.0.0.1` → 200, `Host: <tailnet name>` → **403 forbidden:
+   loopback host required**. That gate is the DNS-rebinding defence; do not widen
+   it. The door already rewrites Host to loopback, which is the correct fix.
+
+Do those three and the web UI is reachable from a phone.
 
 ---
 
