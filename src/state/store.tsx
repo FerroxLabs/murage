@@ -15,6 +15,7 @@ import {
 } from "react";
 import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
+import { botRole } from "@/lib/bot-role";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
@@ -760,8 +761,27 @@ export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "hydrate": {
       const known = (id: string) => action.bots.some((b) => b.id === id) || action.groups.some((g) => g.id === id);
+      // Where you land when nothing else says otherwise: the Chief of Staff.
+      //
+      // This used to be `bots[0]` — whichever record the harness happened to
+      // list first, which is creation order. On the desktop that barely shows,
+      // because `selectedId` persists and only a first run ever hits it. On a
+      // phone it is the whole first impression: a device signs in with no
+      // stored selection and lands on an arbitrary teammate.
+      //
+      // The Chief is the one bot that is meant to be the way in — it runs the
+      // workspace and hands work to everyone else — so it is the honest
+      // default. A workspace with no Chief falls back to first, exactly as
+      // before.
+      const visible = action.bots.filter((candidate) => !candidate.hidden);
+      const chief = visible.find((candidate) => botRole(candidate) === "chief");
+      // The fallback skips hidden bots too. `bots[0]` did not, so a workspace
+      // whose first record happens to be archived opened on a bot the sidebar
+      // does not even list.
       const selectedId =
-        state.selectedId && known(state.selectedId) ? state.selectedId : (action.bots[0]?.id ?? "");
+        state.selectedId && known(state.selectedId)
+          ? state.selectedId
+          : (chief?.id ?? visible[0]?.id ?? action.bots[0]?.id ?? "");
       return reconcileSnapshotQueues(
         {
           ...state,
